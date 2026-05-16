@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 const COLOR_BG = {
   'black':       '#2A2420',
   'white':       '#F0EDE8',
@@ -35,6 +37,7 @@ function getPlaceholderBg(colors = []) {
 
 export default function PieceCard({ piece, onTap, onFavorite }) {
   const bg = getPlaceholderBg(piece.colors)
+  const [imageFailed, setImageFailed] = useState(false)
 
   const handleFav = (e) => {
     e.stopPropagation()
@@ -44,18 +47,20 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
   return (
     <div className="piece-card" onClick={() => onTap(piece)}>
       {/* Photo or placeholder */}
-      {piece.photo ? (
+      {piece.photo && !imageFailed ? (
         <img
           className="piece-photo"
           src={`/uploads/${piece.photo}`}
           alt={piece.name}
           loading="lazy"
+          onError={() => setImageFailed(true)}
         />
       ) : (
         <div className="piece-placeholder" style={{ background: bg }}>
           <span className="piece-placeholder-letter">
             {piece.name.charAt(0)}
           </span>
+          {piece.photo && <span className="piece-placeholder-note">Photo unavailable</span>}
         </div>
       )}
 

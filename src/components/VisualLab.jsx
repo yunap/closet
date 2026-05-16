@@ -68,6 +68,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
   const [savedBoards, setSavedBoards]                       = useState([])
   const [savedBoardsLoading, setSavedBoardsLoading]         = useState(false)
   const [previewImage, setPreviewImage]                     = useState(null)
+  const [activeSection, setActiveSection]                   = useState('references')
 
   // ── Data loading ─────────────────────────────────────────────────────────────
 
@@ -263,73 +264,96 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
       {/* Filter chips */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
         {[
-          ['active', 'Active'],
-          ['strong', 'Use strongly'],
-          ['good_reference', 'Good'],
-          ['bad_reference', 'Bad / drift'],
-          ['real_photo', 'Real photos'],
-          ['ignored', 'Ignored'],
+          ['references', 'References'],
+          ['saved', 'Saved boards'],
+          ['upload', 'Upload'],
         ].map(([value, label]) => (
           <button
             key={value}
             className="chip"
-            onClick={() => setCalibrationFilter(value)}
+            onClick={() => setActiveSection(value)}
             style={{
-              fontSize: 11,
-              background: calibrationFilter === value ? 'var(--accent-light)' : undefined,
-              color: calibrationFilter === value ? 'var(--accent)' : undefined,
-              borderColor: calibrationFilter === value ? 'var(--accent)' : undefined,
+              fontSize: 12,
+              background: activeSection === value ? 'var(--accent)' : undefined,
+              color: activeSection === value ? '#fff' : undefined,
+              borderColor: activeSection === value ? 'var(--accent)' : undefined,
             }}
           >{label}</button>
         ))}
       </div>
 
       {/* Upload row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '92px 1fr', gap: 10, alignItems: 'start', marginBottom: 12 }}>
-        <label style={{ width: 92, height: 116, border: '1px dashed var(--border)', borderRadius: 10, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
-          {calibrationUploadPrev ? (
-            <img src={calibrationUploadPrev} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          ) : (
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>Upload reference</span>
-          )}
-          <input type="file" accept="image/*" onChange={handleUploadFile} style={{ display: 'none' }} />
-        </label>
-        <div style={{ display: 'grid', gap: 8 }}>
-          <select value={calibrationKind} onChange={e => setCalibrationKind(e.target.value)}
-            style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-            <option value="good_reference">Good reference</option>
-            <option value="bad_reference">Bad / drift reference</option>
-            <option value="real_photo">Real outfit photo</option>
-          </select>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-            {CALIBRATION_LABELS.map(([value, label]) => (
-              <button key={value} type="button" onClick={() => toggleLabel(value)}
-                style={{
-                  fontSize: 10, padding: '3px 8px', borderRadius: 12, cursor: 'pointer',
-                  border: calibrationLabels.includes(value) ? '1px solid var(--accent)' : '1px solid var(--border)',
-                  background: calibrationLabels.includes(value) ? 'var(--accent-light)' : 'var(--surface)',
-                  color: calibrationLabels.includes(value) ? 'var(--accent)' : 'var(--text-muted)',
-                }}
-              >{label}</button>
-            ))}
+      {activeSection === 'upload' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 14, alignItems: 'start', marginBottom: 12, padding: 12, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 10 }}>
+          <label style={{ width: 120, height: 150, border: '1px dashed var(--border)', borderRadius: 10, background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
+            {calibrationUploadPrev ? (
+              <img src={calibrationUploadPrev} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>Upload reference</span>
+            )}
+            <input type="file" accept="image/*" onChange={handleUploadFile} style={{ display: 'none' }} />
+          </label>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <select value={calibrationKind} onChange={e => setCalibrationKind(e.target.value)}
+              style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+              <option value="good_reference">Good reference</option>
+              <option value="bad_reference">Bad / drift reference</option>
+              <option value="real_photo">Real outfit photo</option>
+            </select>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+              {CALIBRATION_LABELS.map(([value, label]) => (
+                <button key={value} type="button" onClick={() => toggleLabel(value)}
+                  style={{
+                    fontSize: 10, padding: '3px 8px', borderRadius: 12, cursor: 'pointer',
+                    border: calibrationLabels.includes(value) ? '1px solid var(--accent)' : '1px solid var(--border)',
+                    background: calibrationLabels.includes(value) ? 'var(--accent-light)' : 'var(--surface)',
+                    color: calibrationLabels.includes(value) ? 'var(--accent)' : 'var(--text-muted)',
+                  }}
+                >{label}</button>
+              ))}
+            </div>
+            <textarea value={calibrationNotes} onChange={e => setCalibrationNotes(e.target.value)}
+              placeholder="Short note: why this feels right/wrong…" rows={2}
+              style={{ width: '100%', resize: 'vertical', padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}
+            />
+            <button className="chip" onClick={saveCalibrationImage}
+              disabled={!calibrationUploadFile || calibrationUploading}
+              style={{ justifySelf: 'start' }}>
+              {calibrationUploading ? 'Saving…' : 'Save calibration image'}
+            </button>
           </div>
-          <textarea value={calibrationNotes} onChange={e => setCalibrationNotes(e.target.value)}
-            placeholder="Short note: why this feels right/wrong…" rows={2}
-            style={{ width: '100%', resize: 'vertical', padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}
-          />
-          <button className="chip" onClick={saveCalibrationImage}
-            disabled={!calibrationUploadFile || calibrationUploading}
-            style={{ justifySelf: 'start' }}>
-            {calibrationUploading ? 'Saving…' : 'Save calibration image'}
-          </button>
         </div>
-      </div>
+      )}
 
       {/* Reference images grid */}
-      {!calibrationImages.length ? (
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No calibration images in this filter.</div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10, maxHeight: 480, overflowY: 'auto' }}>
+      {activeSection === 'references' && (
+        <>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+          {[
+            ['active', 'Active'],
+            ['strong', 'Use strongly'],
+            ['good_reference', 'Good'],
+            ['bad_reference', 'Bad / drift'],
+            ['real_photo', 'Real photos'],
+            ['ignored', 'Ignored'],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              className="chip"
+              onClick={() => setCalibrationFilter(value)}
+              style={{
+                fontSize: 11,
+                background: calibrationFilter === value ? 'var(--accent-light)' : undefined,
+                color: calibrationFilter === value ? 'var(--accent)' : undefined,
+                borderColor: calibrationFilter === value ? 'var(--accent)' : undefined,
+              }}
+            >{label}</button>
+          ))}
+        </div>
+        {!calibrationImages.length ? (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No calibration images in this filter.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10, maxHeight: 520, overflowY: 'auto' }}>
           {calibrationImages.map(row => {
             const isEditing = calibrationEditingId === row.id
             return (
@@ -406,11 +430,14 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
               </div>
             )
           })}
-        </div>
+          </div>
+        )}
+        </>
       )}
 
       {/* ── Saved boards sub-section ─────────────────────────────────────────── */}
-      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      {activeSection === 'saved' && (
+      <div style={{ marginTop: 4 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 8 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Saved visual boards</div>
@@ -505,6 +532,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
           </div>
         )}
       </div>
+      )}
       {previewImage && (
         <div
           role="dialog"
