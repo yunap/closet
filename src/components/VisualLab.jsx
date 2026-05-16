@@ -94,8 +94,6 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
     setSavedBoardsLoading(true)
     try {
       const params = new URLSearchParams({ limit: '80' })
-      if (activeContext?.type) params.set('contextType', activeContext.type)
-      if (activeContext?.id) params.set('contextId', activeContext.id)
       const res = await fetch(`/api/saved-boards?${params.toString()}`)
       const rows = await res.json()
       setSavedBoards(Array.isArray(rows) ? rows : [])
@@ -111,7 +109,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
   }
 
   // Refresh when panel opens or filter changes
-  useEffect(() => { refresh() }, [calibrationFilter, activeContext?.type, activeContext?.id])
+  useEffect(() => { refresh() }, [calibrationFilter])
 
   // Refresh saved boards whenever StylistChat saves a new one
   useEffect(() => {
