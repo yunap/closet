@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -60,14 +60,30 @@ const CALIBRATION_LABELS = [
   ['wrong_silhouette', 'Wrong silhouette'],
 ]
 
-export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, onClearPiece }) {
+export default function AskClaude({
+  initialOutfit,
+  initialPiece,
+  onClearOutfit,
+  onClearPiece,
+  activeContext: externalActiveContext,
+  onContextChange,
+  calibrationLibraryOpen: externalCalibrationLibraryOpen,
+  onToggleCalibration,
+  onBoardSaved,
+  onResetVisuals,
+}) {
   const [messages, setMessages]           = useState([
     { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
   ])
   const [chatHistory, setChatHistory]     = useState([])
 
   // Active context — persists through the conversation for save-to-notes
-  const [activeContext, setActiveContext] = useState(null) // { type: 'piece'|'outfit', id, name }
+  const [internalActiveContext, setInternalActiveContext] = useState(null) // { type: 'piece'|'outfit', id, name }
+  const activeContext = externalActiveContext ?? internalActiveContext
+  const setActiveContext = useCallback((nextContext) => {
+    setInternalActiveContext(nextContext)
+    onContextChange?.(nextContext)
+  }, [onContextChange])
 
   const [input, setInput]                 = useState('')
   const [imageFile, setImageFile]         = useState(null)
@@ -93,7 +109,15 @@ export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, 
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
   const [learningOpen, setLearningOpen] = useState(false)
   const [learningRows, setLearningRows] = useState([])
-  const [calibrationLibraryOpen, setCalibrationLibraryOpen] = useState(false)
+  const [internalCalibrationLibraryOpen, setInternalCalibrationLibraryOpen] = useState(false)
+  const calibrationLibraryOpen = externalCalibrationLibraryOpen ?? internalCalibrationLibraryOpen
+  const setCalibrationLibraryOpen = useCallback((nextOpen) => {
+    const resolvedOpen = typeof nextOpen === 'function'
+      ? nextOpen(externalCalibrationLibraryOpen ?? internalCalibrationLibraryOpen)
+      : nextOpen
+    setInternalCalibrationLibraryOpen(resolvedOpen)
+    onToggleCalibration?.(resolvedOpen)
+  }, [externalCalibrationLibraryOpen, internalCalibrationLibraryOpen, onToggleCalibration])
   const [calibrationImages, setCalibrationImages] = useState([])
   const [savedBoards, setSavedBoards] = useState([])
   const [savedBoardsLoading, setSavedBoardsLoading] = useState(false)
