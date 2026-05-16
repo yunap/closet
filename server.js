@@ -3939,46 +3939,55 @@ function dedupeAndDifferentiateEditorialDirections(directions = [], selectedPiec
 // ── AI: Ideal new-piece visual concepts for selected garment ─────────────────
 const EDITORIAL_NEW_PIECES_SYSTEM = `You are Yuna's visual editorial stylist.
 Your job is NOT to combine her closet. Your job is to show what NEW missing pieces would complete ONE selected wardrobe item.
-
+ 
 Return ONLY valid JSON. No markdown.
-
+ 
+YUNA'S CONFIRMED OUTFIT FORMULA — every direction must respect this:
+- Top: fitted, dark, or expressive (pattern, texture, color-block, or interesting detail). Never loose, unstructured, or generically layered.
+- Bottom: full-length preferred — wide-leg trouser, straight-leg trouser, midi or maxi skirt, or dark straight-leg jeans. The bottom is the foundation; it is quieter than the top.
+- The strongest formula is dark fitted top + light or neutral full-length bottom, OR a expressive patterned top + dark full-length bottom.
+- Shoes: pointed-toe dark flat, kitten heel, slim-soled loafer, or ankle boot with edge. NEVER round-toe flat, chunky sole, sneaker, Oxford, or white/beige casual shoe for a styled look.
+- Accessory: one leather bag in warm tone (cognac, brown, tan, black). A long pendant necklace creates the vertical line — include when the top is simpler.
+- Volume and expression come from ONE element per outfit — the top, OR a skirt with movement, never both at once.
+ 
 Rules:
 - Every concept must use the selected garment as the anchor.
 - Supporting pieces must be conceptual suggested additions, not saved wardrobe items.
 - Do not include wardrobe-piece names unless they are the selected garment.
 - Use the owned inventory list only to AVOID recommending things she already owns.
-- If a common archetype is already represented in her wardrobe, suggest a meaningfully different version: different color family, cleaner cut, stronger visual weight, different texture, or a more precise shape.
-- Avoid generic "straight jeans", "olive cargo pants", or "basic flats" when similar things already exist. Be specific and editorial: e.g. "deep chocolate straight-leg trouser with clean hem", "tobacco structured barrel trouser without cargo pockets", "ink navy matte column skirt", "cognac slim-soled loafer".
+- If a common archetype is already represented in her wardrobe, suggest a meaningfully different version: different color family, cleaner cut, stronger visual weight, different texture, or more precise shape.
+- Be specific and editorial: e.g. "deep chocolate straight-leg trouser with clean hem", "ink navy matte column skirt with slight weight", "cognac slim-soled pointed loafer", "black kitten mule with almond toe".
 - Generate 3 strong visual directions.
-- Each direction must be wearable, realistic, and aligned with Yuna's style: artistic minimalist, relaxed structure, modern bohemian restraint, grounded visual weight, controlled softness.
-- Prefer archetypes with precise role/shape/texture: dark grounded column, charcoal/black/espresso trouser, structured trouser, grounded loafer, sharper boot, matte column skirt, architectural pant, weighted textured skirt, clean walking flat.
-- At least two directions must include real visual tension: dark/light contrast, angular footwear, structured-vs-relaxed friction, or a precise earthy/deep color story.
-- Avoid generic fashion-blog styling, excessive softness, loud pattern stacking, random accessories, constant tucking/cinching, cream/taupe harmony, soft skirt + soft shoe, and vague elevated casual.
-- Avoid recommending new pieces that are merely generic versions of things she already owns. New additions should clarify a missing aesthetic role: stronger visual weight, cleaner architecture, richer texture, better shoe grounding, or a more specific palette bridge.
-
-Editorial realism requirements for rendered visuals:
-- The image should feel like a believable personal styling mockup, not a catalog ad, not a librarian/school-teacher capsule wardrobe, not a retirement catalog, and not an influencer post.
-- Show a creative, visually self-directed woman around late 50s to early 60s with natural posture, realistic proportions, and an alert contemporary presence. Do not make her look unusually young, thin, tall, glamorous, elderly, timid, or overly polished.
-- Preserve approximate body balance: natural shoulder width, torso length, hip/leg relationship, and relaxed stance.
-- Keep the styling modern, artistic, and grounded: confident silhouette, subtle visual tension, architectural structure where useful, and restrained creative contrast.
-- Avoid conservative default layering, safe school-administrator styling, prim librarian energy, muted retirement-catalog styling, and overly respectable/tasteful basics.
-- Real clothes should show real behavior: folds, drape, fabric weight, slight imperfect tension, and wearable fit.
-
-Anchor preservation for rendered visuals:
-- Preserve the selected garment's neckline, sleeve length, stripe scale/print scale, looseness/fittedness, length, color relationship, and visual weight.
-- Do not turn the anchor into a different sweater, different sleeve length, different neckline, different stripe width, or different garment category.
-- If the anchor is sleeveless, keep it sleeveless. If it has horizontal stripes, keep the stripe direction and scale. If it is boxy or relaxed, do not make it skin-tight. If it is fitted, do not make it oversized.
-- If the anchor is a top, it should remain visually central and recognizable. If the anchor is a bottom, its leg/hem shape and rise should remain clear and recognizable.
-
+- Each direction must be wearable, realistic, and grounded in the confirmed formula above.
+- Preferred bottom archetypes: dark grounded column trouser, charcoal/espresso/black straight-leg, cream or taupe wide-leg linen, flowing midi skirt in earthy tone, weighted textured midi skirt.
+- Preferred shoe archetypes: black pointed flat, cognac slim loafer, dark ankle boot, black kitten heel mule.
+- At least two directions must include real visual contrast: dark top + light bottom, or expressive patterned top + dark clean bottom.
+- At least one direction must be a full dark column: dark top + dark bottom + dark grounded shoe.
+ 
+Hard anti-drift rules — NEVER suggest these regardless of the anchor piece:
+- No beige/cream cardigan as a layer (this is the primary catalog-drift signal)
+- No scarves as a default styling element
+- No Oxford shoes or round-toe flats
+- No blazer unless the anchor piece specifically calls for structure
+- No soft skirt + soft unstructured shoe (the "librarian comfort" combination)
+- No all-neutral cream/taupe/beige harmony without a dark grounding element
+- No tucking when the anchor piece has a design hem or is noted as wear-over-only
+ 
+For each direction, write a visualPrompt that encodes:
+- exact silhouette (e.g. "fitted dark top, full-length wide-leg cream linen trouser, black pointed kitten heel")
+- fabric feel (e.g. "matte, weighted, with real drape")
+- one specific color story (e.g. "dark olive on cream, grounded by a cognac leather tote")
+- posture/energy: "relaxed confident stance, not front-facing catalog posture"
+ 
 JSON shape:
 {
   "directions": [
     {
-      "title": "Grounded olive column",
-      "missingPieces": ["specific missing-piece archetype", "specific missing-piece archetype"],
-      "reason": "one sentence explaining visual weight / silhouette / texture logic",
-      "watchFor": "one brief risk or none",
-      "visualPrompt": "specific visual description for a realistic outfit mockup, no text in image"
+      "title": "Short evocative label",
+      "missingPieces": ["specific archetype 1", "specific archetype 2"],
+      "reason": "One sentence: what this direction does and why it works for this anchor piece",
+      "watchFor": "One specific drift risk to avoid when rendering",
+      "visualPrompt": "Full outfit direction for the image renderer — silhouette, fabric, color story, shoe, posture"
     }
   ]
 }`
@@ -4007,37 +4016,145 @@ function anchorFidelityInstructions(selectedPiece = {}) {
 }
 
 function editorialImagePrompt({ selectedPiece, direction, occasion, season }) {
-  const missing = Array.isArray(direction.missingPieces) ? direction.missingPieces.join(', ') : ''
+  const missing = Array.isArray(direction.missingPieces)
+    ? direction.missingPieces.join(', ')
+    : ''
   const pieceDesc = [
     selectedPiece.name,
     selectedPiece.category,
-    selectedPiece.colors ? `colors: ${selectedPiece.colors}` : '',
-    selectedPiece.fabric ? `fabric: ${selectedPiece.fabric}` : '',
-    selectedPiece.notes ? `notes: ${String(selectedPiece.notes).slice(0, 700)}` : ''
+    selectedPiece.colors  ? `colors: ${selectedPiece.colors}`  : '',
+    selectedPiece.fabric  ? `fabric: ${selectedPiece.fabric}`  : '',
+    selectedPiece.notes   ? `notes: ${String(selectedPiece.notes).slice(0, 700)}` : ''
   ].filter(Boolean).join('; ')
   const anchorRules = anchorFidelityInstructions(selectedPiece)
-
-  const calibrationSummary = getCalibrationReferenceSummary(12)
-
+ 
   return [
-    'Create one realistic personal styling concept image. Full outfit visible from head/shoulders to shoes, neutral softly lit home or simple studio background.',
-    'This is a believable styling mockup for a creative, visually self-directed mature woman, not a fashion catalog, not a glamour editorial, not a librarian/school-teacher capsule wardrobe, not a retirement catalog, and not an influencer image.',
-    'Show a woman around late 50s to early 60s with natural posture, realistic proportions, and contemporary artistic presence. Do not make her look unusually young, thin, tall, glamorous, elderly, timid, overly polished, or conventionally respectable.',
-    'Clothing should look wearable and real: visible fabric weight, natural folds, slight imperfect tension, real drape, and practical shoe grounding.',
-    'Preserve artistic tension: stronger silhouette choices, grounded lower half, subtle contrast, angular relaxed stance, and intentional modern structure rather than safe conservative styling.',
-    'Avoid school-teacher/librarian styling, retirement-catalog energy, timid posture, overly conservative layering, generic tasteful basics, muted lifestyle-brand neutrality, soft cream/taupe sludge, and front-facing passive catalog posture.',
-    'Do not add text, labels, watermarks, logos, product tags, extra people, or dramatic poses inside the image.',
-    calibrationSummary ? `Use this calibration library as visual identity guidance, not as outfits to copy:\n${calibrationSummary}` : '',
-    `ANCHOR GARMENT TO PRESERVE AS VISUAL TRUTH: ${pieceDesc}.`,
-    anchorRules ? `Anchor-specific fidelity: ${anchorRules}` : '',
-    'The anchor garment must remain recognizable as the selected garment. Do not redesign it into a different garment, change its category, alter its neckline/sleeves/hem, or idealize its fit.',
-    `Style it ONLY with these suggested new-piece archetypes: ${missing}.`,
-    'The new pieces should complete the outfit but not visually overpower the anchor garment. Keep the outfit grounded, wearable, and proportionally believable.',
-    direction.visualPrompt ? `Specific direction: ${direction.visualPrompt}` : '',
+    'Full-figure personal styling concept image. Full outfit visible from head to shoes. Simple neutral or natural background, soft daylight or studio light. No text, labels, watermarks, or additional people.',
+ 
+    'Subject: a real woman with medium curly hair (natural, not styled), warm olive skin tone, strong facial features, direct and warm expression. Natural relaxed posture with slight asymmetry — weight shifted, hand in pocket or at side, not front-facing catalog stance.',
+ 
+    'Aesthetic: Urban Artisan. One expressive element per outfit — either an interesting top (pattern, texture, color-block) OR a skirt with movement — never both at once. The rest of the outfit is quieter and grounds the expression.',
+ 
+    'Silhouette: fitted or structured upper half + full-length bottom (wide-leg, straight-leg, flowing maxi/midi). The lower half is always full-length.',
+ 
+    'Shoes: pointed-toe dark flat, black or cognac kitten heel, slim-soled leather loafer, or ankle boot with edge. NEVER round-toe flat, chunky sole, white sneaker, Oxford shoe, or beige/neutral casual slip-on.',
+ 
+    'Clothing must look real: visible fabric weight, natural folds and drape, slight tension where fitted. No idealized tailoring, no AI-smooth perfection, no beauty retouching.',
+ 
+    `ANCHOR GARMENT — preserve exactly: ${pieceDesc}.`,
+    anchorRules ? `Anchor fidelity: ${anchorRules}` : '',
+    'The anchor garment must remain visually recognizable — same category, neckline, sleeve length, print scale, color, fit, and hem length. Do not redesign it or substitute a different garment.',
+ 
+    direction.visualPrompt
+      ? `PRIMARY RENDERING DIRECTIVE — follow this exactly: ${direction.visualPrompt}`
+      : missing
+        ? `Complete the outfit with these new-piece archetypes: ${missing}.`
+        : '',
     direction.reason ? `Stylist logic: ${direction.reason}` : '',
-    `Occasion/season: ${occasion} / ${season}.`,
-    'Aesthetic: artistic minimalist, relaxed structure, grounded visual weight, controlled softness, warm earthy palette, modern wearable styling, creative editorial realism. Avoid generic Pinterest femininity, luxury-basics catalog energy, conservative librarian styling, and retirement-catalog neutrality.'
+ 
+    `Occasion: ${occasion}. Season: ${season}.`,
+ 
+    [
+  'GARMENT FIDELITY — preserve the anchor garment exactly as shown in the photo:',
+  '- Do not add a belt or waist tie unless the anchor garment photo shows one',
+  '- Do not change the neckline, sleeve length, or closure style of the anchor garment',
+    ].join('\n'),
+ 
   ].filter(Boolean).join('\n')
+}
+ 
+async function getCalibrationReferenceImagesForGeneration(limit = 3) {
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM calibration_images
+      WHERE COALESCE(archived, 0) = 0
+        AND kind IN ('good_reference', 'real_photo')
+      ORDER BY
+        CASE WHEN kind = 'real_photo' THEN 0 ELSE 1 END,
+        COALESCE(favorite, 0) DESC,
+        id DESC
+      LIMIT ?
+    `).all(Number(limit))
+ 
+    const images = []
+    for (const row of rows) {
+      const filePath = imageUrlToUploadPath(row.image_url)
+      if (!filePath) continue
+      try {
+        // Resize to a reasonable input size — large enough for style reading,
+        // small enough to keep token cost manageable
+        const buffer = await sharp(filePath)
+          .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer()
+        images.push({
+          base64:   buffer.toString('base64'),
+          mime:     'image/jpeg',
+          kind:     row.kind,
+          favorite: Boolean(row.favorite),
+          labels:   safeJsonParse(row.labels, []),
+          notes:    row.notes || '',
+        })
+      } catch (imgErr) {
+        console.warn('Could not read calibration image for generation:', row.id, imgErr.message)
+      }
+    }
+    return images
+  } catch (err) {
+    console.warn('getCalibrationReferenceImagesForGeneration error:', err.message)
+    return []
+  }
+}
+
+async function runGPT4oImageGeneration({ client, prompt, size = '1024x1536', referenceImages = [], anchorGarmentImage = null }) {
+  const contentParts = []
+ 
+  // anchorGarmentImage can be a single { base64, mime, label } object
+  // or an array of them (worn photo + hanger photo)
+  const anchorPhotos = Array.isArray(anchorGarmentImage)
+    ? anchorGarmentImage
+    : anchorGarmentImage ? [anchorGarmentImage] : []
+ 
+  if (anchorPhotos.length > 0) {
+    contentParts.push({
+      type: 'input_text',
+      text: `ANCHOR GARMENT — the following ${anchorPhotos.length > 1 ? anchorPhotos.length + ' photos show' : 'photo shows'} the exact garment that must appear in the generated image. Preserve exactly: neckline shape, collar or no-collar, closure type, sleeve length and style, print scale and color family, lace or fabric detail, hem length, and overall silhouette. Do NOT redesign this garment, change its neckline, add a belt or waist definition not present in the photos, or substitute a different garment.`
+    })
+    for (const photo of anchorPhotos) {
+      contentParts.push({ type: 'input_image', image_url: `data:${photo.mime};base64,${photo.base64}` })
+      if (photo.label) {
+        contentParts.push({ type: 'input_text', text: photo.label })
+      }
+    }
+  }
+ 
+  for (const img of referenceImages.slice(0, 3)) {
+    contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+    const captionParts = [
+      img.kind === 'real_photo'
+        ? (img.favorite ? 'Real photo — use strongly for visual identity, proportion, and presence reference' : 'Real outfit photo — use for identity reference')
+        : (img.favorite ? 'Good style reference — use strongly for aesthetic direction' : 'Good style reference'),
+      img.labels?.length ? `[${img.labels.join(', ')}]` : '',
+      img.notes ? img.notes : '',
+    ].filter(Boolean)
+    if (captionParts.length) {
+      contentParts.push({ type: 'input_text', text: captionParts.join(' — ') })
+    }
+  }
+ 
+  contentParts.push({ type: 'input_text', text: prompt })
+ 
+  const response = await client.responses.create({
+    model: 'gpt-4o',
+    input: [{ role: 'user', content: contentParts }],
+    tools: [{ type: 'image_generation', size, quality: 'medium' }]
+  })
+ 
+  const imageItem = response.output?.find(item => item.type === 'image_generation_call')
+  if (!imageItem?.result) {
+    throw new Error('GPT-4o Responses API did not return an image_generation_call result')
+  }
+  return imageItem.result
 }
 
 async function createEditorialConceptImage({ selectedPiece, direction, index, occasion, season }) {
@@ -4045,47 +4162,102 @@ async function createEditorialConceptImage({ selectedPiece, direction, index, oc
   const filename = `generated-boards/editorial-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
   const outPath = path.join(uploadsDir, filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
-
+ 
   if (photoPreservingVisualsEnabled()) {
     return createPhotoPreservingCollageImage({
       title: direction.title || `Ideal direction ${index}`,
       subtitle: 'ideal addition concept · photo-preserving collage',
       selectedPiece,
       missingPieces: direction.missingPieces || [],
-      reason: direction.reason || 'Suggested additions shown as labeled placeholders rather than synthetic fashion imagery.',
+      reason: direction.reason || '',
       index,
       prefix: 'editorial-collage'
     })
   }
-
+ 
   if (!process.env.OPENAI_API_KEY) {
-    // Fallback: visual placeholder when image generation is unavailable.
-    const title = escapeXml(direction.title || `Ideal direction ${index}`)
+    const title  = escapeXml(direction.title || `Ideal direction ${index}`)
     const pieces = escapeXml((direction.missingPieces || []).join(' + '))
     const anchor = escapeXml(selectedPiece.name || 'selected item')
-    const svg = `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
-      <rect width="1024" height="1024" fill="#f5efe7"/>
-      <rect x="72" y="72" width="880" height="880" rx="34" fill="#fffaf4" stroke="#d8c9b7" stroke-width="3"/>
+    const svg = `<svg width="1024" height="1536" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1024" height="1536" fill="#f5efe7"/>
+      <rect x="72" y="72" width="880" height="1392" rx="34" fill="#fffaf4" stroke="#d8c9b7" stroke-width="3"/>
       <text x="112" y="160" font-family="Georgia, serif" font-size="48" fill="#3b3128">${title}</text>
       <text x="112" y="238" font-family="Arial, sans-serif" font-size="28" fill="#7b6a59">Anchor: ${anchor}</text>
-      <text x="112" y="310" font-family="Arial, sans-serif" font-size="30" fill="#6d5135">Suggested additions:</text>
-      <foreignObject x="112" y="340" width="800" height="220"><div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Arial, sans-serif; font-size: 34px; line-height: 1.35; color:#3b3128;">${pieces}</div></foreignObject>
-      <circle cx="320" cy="690" r="110" fill="#69734b" opacity="0.85"/>
-      <rect x="455" y="570" width="120" height="250" rx="54" fill="#2d3e50" opacity="0.88"/>
-      <ellipse cx="690" cy="760" rx="115" ry="44" fill="#9b5f32" opacity="0.86"/>
-      <text x="112" y="915" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Image generation unavailable: conceptual board placeholder.</text>
+      <text x="112" y="310" font-family="Arial, sans-serif" font-size="30" fill="#6d5135">Suggested additions: ${pieces}</text>
+      <text x="112" y="1480" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Image generation unavailable.</text>
     </svg>`
     await sharp(Buffer.from(svg)).png().toFile(outPath)
     return `/uploads/${filename}`
   }
-
+ 
+  // ── Load anchor garment photo ───────────────────────────────────────────────
+  let anchorGarmentImage = null
+  try {
+    const anchorParts = []
+ 
+    // Worn photo — shows how the garment actually drapes and fits on a body
+    if (selectedPiece.worn_photo) {
+      const filePath = path.join(uploadsDir, selectedPiece.worn_photo)
+      if (fs.existsSync(filePath)) {
+        const buffer = await sharp(filePath)
+          .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 85 })
+          .toBuffer()
+        anchorParts.push({
+          base64: buffer.toString('base64'),
+          mime: 'image/jpeg',
+          label: `${selectedPiece.name} — worn photo showing drape, fit, and neckline on a body`,
+        })
+      }
+    }
+ 
+    // Hanger photo — shows the garment's exact color, print, texture, and construction details
+    if (selectedPiece.photo) {
+      const filePath = path.join(uploadsDir, selectedPiece.photo)
+      if (fs.existsSync(filePath)) {
+        const buffer = await sharp(filePath)
+          .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 85 })
+          .toBuffer()
+        anchorParts.push({
+          base64: buffer.toString('base64'),
+          mime: 'image/jpeg',
+          label: `${selectedPiece.name} — hanger photo showing exact print scale, color, texture, and construction detail`,
+        })
+      }
+    }
+ 
+    if (anchorParts.length > 0) {
+      // Pass both as a combined anchor — runGPT4oImageGeneration handles the array
+      anchorGarmentImage = anchorParts
+    }
+  } catch (err) {
+    console.warn('Could not load anchor garment photos:', err.message)
+  }
+ 
+  // ── Primary path: GPT-4o with anchor photo + calibration references ─────────
   try {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-    const result = await runOpenAIImageGeneration({
+    const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
+    const base64Result = await runGPT4oImageGeneration({
       client,
       prompt,
       size: getOpenAIImageSize('generate'),
-      kind: 'generate'
+      referenceImages,
+      anchorGarmentImage,
+    })
+    await fs.promises.writeFile(outPath, Buffer.from(base64Result, 'base64'))
+    return `/uploads/${filename}`
+  } catch (err) {
+    console.error('GPT-4o editorial image generation failed, falling back to gpt-image-1:', err.message)
+  }
+ 
+  // ── Fallback: gpt-image-1 (no visual reference) ─────────────────────────────
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const result = await runOpenAIImageGeneration({
+      client, prompt, size: getOpenAIImageSize('generate'), kind: 'generate'
     })
     const first = result.data?.[0]
     if (first?.b64_json) {
@@ -4099,22 +4271,121 @@ async function createEditorialConceptImage({ selectedPiece, direction, index, oc
       await fs.promises.writeFile(outPath, Buffer.from(arrayBuffer))
       return `/uploads/${filename}`
     }
-    throw new Error('No image data returned')
-  } catch (err) {
-    console.error('Editorial image generation failed:', err.message)
-    const title = escapeXml(direction.title || `Ideal direction ${index}`)
-    const pieces = escapeXml((direction.missingPieces || []).join(' + '))
-    const svg = `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
-      <rect width="1024" height="1024" fill="#f5efe7"/>
-      <rect x="72" y="72" width="880" height="880" rx="34" fill="#fffaf4" stroke="#d8c9b7" stroke-width="3"/>
-      <text x="112" y="160" font-family="Georgia, serif" font-size="48" fill="#3b3128">${title}</text>
-      <foreignObject x="112" y="230" width="800" height="300"><div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Arial, sans-serif; font-size: 34px; line-height: 1.35; color:#3b3128;">${pieces}</div></foreignObject>
-      <text x="112" y="915" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Could not generate rendered image: ${escapeXml(err.message).slice(0, 120)}</text>
+    throw new Error('No image data in fallback response')
+  } catch (fallbackErr) {
+    console.error('gpt-image-1 fallback also failed:', fallbackErr.message)
+    const svg = `<svg width="1024" height="1536" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1024" height="1536" fill="#f5efe7"/>
+      <rect x="72" y="72" width="880" height="1392" rx="34" fill="#fffaf4" stroke="#d8c9b7" stroke-width="3"/>
+      <text x="112" y="160" font-family="Georgia, serif" font-size="48" fill="#3b3128">${escapeXml(direction.title || '')}</text>
+      <text x="112" y="1480" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Could not generate: ${escapeXml(fallbackErr.message).slice(0, 120)}</text>
     </svg>`
     await sharp(Buffer.from(svg)).png().toFile(outPath)
     return `/uploads/${filename}`
   }
 }
+ 
+ 
+app.post('/api/ai/editorial-directions-preview', async (req, res) => {
+  const { pieceId, occasion = 'casual', season = 'current season', question, history } = req.body
+  try {
+    const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
+    if (!piece) return res.status(404).json({ error: 'Piece not found' })
+    const selectedPiece = parsePiece(piece)
+    const ownedRows = db.prepare('SELECT * FROM pieces ORDER BY id DESC LIMIT 500').all().map(parsePiece)
+ 
+    const content = []
+    const photoFile = piece.worn_photo || piece.photo
+    if (photoFile) {
+      const filePath = path.join(uploadsDir, photoFile)
+      if (fs.existsSync(filePath)) {
+        const { base64, mime } = await prepareImageForClaude(filePath)
+        content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
+      }
+    }
+    const calibrationSummary = getCalibrationReferenceSummary()
+    content.push({ type: 'text', text: [
+      `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
+      `Occasion: ${occasion}`,
+      `Season: ${season}`,
+      `User request: ${question || 'Suggest ideal new pieces for this item.'}`,
+      calibrationSummary ? `Renderer calibration library:\n${calibrationSummary}` : '',
+      '',
+      'Generate only conceptual missing-piece additions. Do not use saved wardrobe pairings except for the selected garment. If the wardrobe already has jeans, olive cargo/utility pants, or similar basics, do not present those as new pieces; suggest more specific/different archetypes.'
+    ].filter(Boolean).join('\n') })
+ 
+    const raw = await askStylist({
+      system: EDITORIAL_NEW_PIECES_SYSTEM,
+      maxTokens: 1200,
+      messages: [
+        ...(history || []).map(h => ({ role: h.role, content: h.content })),
+        { role: 'user', content }
+      ]
+    })
+ 
+    let parsed = safeJsonFromModel(raw)
+    let directions = Array.isArray(parsed?.directions) ? parsed.directions : []
+    if (!directions.length) {
+      directions = buildIdealOnlyCompletionsForPiece(selectedPiece).map(o => ({
+        title: o.label || 'Ideal direction',
+        missingPieces: (o.missingPieces || []).map(p => p.name),
+        reason: o.reason || '',
+        watchFor: o.watchFor || '',
+        visualPrompt: o.reason || ''
+      }))
+    }
+    directions = dedupeAndDifferentiateEditorialDirections(directions, selectedPiece, ownedRows)
+ 
+    // Return directions only — NO image generation
+    res.json({
+      directions: directions.slice(0, 3).map(d => ({
+        title: d.title || 'Ideal direction',
+        missingPieces: Array.isArray(d.missingPieces) ? d.missingPieces : [],
+        reason: d.reason || '',
+        watchFor: d.watchFor || '',
+        visualPrompt: d.visualPrompt || '',
+      })),
+      pieceId,
+      occasion,
+      season,
+      provider: AI_PROVIDER,
+      mode: 'editorial_directions_preview'
+    })
+  } catch (err) {
+    console.error('Editorial directions preview error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/ai/editorial-render-one', async (req, res) => {
+  const { pieceId, direction, occasion = 'casual', season = 'current season' } = req.body
+  try {
+    const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
+    if (!piece) return res.status(404).json({ error: 'Piece not found' })
+    const selectedPiece = parsePiece(piece)
+ 
+    const imageUrl = await createEditorialConceptImage({
+      selectedPiece,
+      direction,
+      index: 1,
+      occasion,
+      season
+    })
+ 
+    res.json({
+      imageUrl,
+      label: direction.title || 'Rendered direction',
+      missingPieces: direction.missingPieces || [],
+      reason: direction.reason || '',
+      watchFor: direction.watchFor || '',
+      mode: 'editorial_render_one'
+    })
+  } catch (err) {
+    console.error('Editorial render-one error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 
 app.post('/api/ai/editorial-new-piece-visuals', async (req, res) => {
   const { pieceId, occasion = 'casual', season = 'current season', question, history } = req.body
@@ -4508,9 +4779,10 @@ async function createCalibrationConceptImage({ selectedPiece, variation, index, 
   const filename = `generated-boards/calibration-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
   const outPath = path.join(uploadsDir, filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
-
+ 
+  // No API key — SVG placeholder
   if (!process.env.OPENAI_API_KEY) {
-    const title = escapeXml(`${variation.variation || String.fromCharCode(64 + index)} · ${variation.title || 'Calibration variation'}`)
+    const title  = escapeXml(`${variation.variation || String.fromCharCode(64 + index)} · ${variation.title || 'Calibration variation'}`)
     const pieces = escapeXml((variation.missingPieces || []).join(' + '))
     const svg = `<svg width="1024" height="1536" xmlns="http://www.w3.org/2000/svg">
       <rect width="1024" height="1536" fill="#f5efe7"/>
@@ -4523,14 +4795,28 @@ async function createCalibrationConceptImage({ selectedPiece, variation, index, 
     await sharp(Buffer.from(svg)).png().toFile(outPath)
     return `/uploads/${filename}`
   }
-
+ 
+  // ── Primary path: GPT-4o with visual calibration references ────────────────
   try {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-    const result = await runOpenAIImageGeneration({
+    const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
+    const base64Result = await runGPT4oImageGeneration({
       client,
       prompt,
       size: getOpenAIImageSize('generate'),
-      kind: 'generate'
+      referenceImages,
+    })
+    await fs.promises.writeFile(outPath, Buffer.from(base64Result, 'base64'))
+    return `/uploads/${filename}`
+  } catch (err) {
+    console.error('GPT-4o calibration image generation failed, falling back to gpt-image-1:', err.message)
+  }
+ 
+  // ── Fallback: gpt-image-1 without visual reference ─────────────────────────
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const result = await runOpenAIImageGeneration({
+      client, prompt, size: getOpenAIImageSize('generate'), kind: 'generate'
     })
     const first = result.data?.[0]
     if (first?.b64_json) {
@@ -4544,15 +4830,15 @@ async function createCalibrationConceptImage({ selectedPiece, variation, index, 
       await fs.promises.writeFile(outPath, Buffer.from(arrayBuffer))
       return `/uploads/${filename}`
     }
-    throw new Error('No image data returned')
-  } catch (err) {
-    console.error('Calibration image generation failed:', err.message)
+    throw new Error('No image data in fallback response')
+  } catch (fallbackErr) {
+    console.error('gpt-image-1 calibration fallback also failed:', fallbackErr.message)
     const title = escapeXml(`${variation.variation || String.fromCharCode(64 + index)} · ${variation.title || 'Calibration variation'}`)
     const svg = `<svg width="1024" height="1536" xmlns="http://www.w3.org/2000/svg">
       <rect width="1024" height="1536" fill="#f5efe7"/>
       <rect x="72" y="72" width="880" height="1392" rx="34" fill="#fffaf4" stroke="#d8c9b7" stroke-width="3"/>
       <text x="112" y="160" font-family="Georgia, serif" font-size="46" fill="#3b3128">${title}</text>
-      <text x="112" y="1385" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Could not generate image: ${escapeXml(err.message).slice(0, 120)}</text>
+      <text x="112" y="1385" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Could not generate image: ${escapeXml(fallbackErr.message).slice(0, 120)}</text>
     </svg>`
     await sharp(Buffer.from(svg)).png().toFile(outPath)
     return `/uploads/${filename}`

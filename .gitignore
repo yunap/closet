@@ -3,3 +3,7 @@ data/
 .env
 *.zip
 *.bak
+wardrobe.db
+wardrobe.db-shm
+wardrobe.db-wal
+uploads/
