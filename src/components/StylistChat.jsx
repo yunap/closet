@@ -531,6 +531,19 @@ export default function AskClaude({
                           <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
                           {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 7 }}>
+                            {!isPreview && activeContext?.type === 'piece' && (() => {
+                              const idealKey = `ideal:${messageIndex}:${idx}:${boardIdx}`
+                              const isExploring = boardLoadingIndex === idealKey
+                              return (
+                                <button
+                                  onClick={() => exploreIdealAdditionsFromBoard({ board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx })}
+                                  disabled={isExploring}
+                                  style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isExploring ? 'default' : 'pointer', opacity: isExploring ? 0.65 : 1 }}
+                                >
+                                  {isExploring ? 'Exploring...' : 'Explore ideal additions'}
+                                </button>
+                              )
+                            })()}
                             {(() => {
                               const saveKey = `editorial-board:${messageIndex}:${idx}:${boardIdx}`
                               const isBoardSaved = savedBoardKeys.has(saveKey)
@@ -647,6 +660,59 @@ export default function AskClaude({
     } catch (err) {
       setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
     } finally { setBoardLoadingIndex(null) }
+  }
+
+  const exploreIdealAdditionsFromBoard = async ({ board, outfit, messageIndex, outfitIndex, boardIndex }) => {
+    if (!activeContext || activeContext.type !== 'piece' || !board) return
+    const loadingKey = `ideal:${messageIndex}:${outfitIndex}:${boardIndex}`
+    const boardTitle = board.label || outfit?.label || outfit?.title || 'this wardrobe look'
+    const userText = `Explore ideal additions from ${boardTitle}.`
+    const historySnapshot = chatHistory
+
+    setMessages(m => [...m, { role: 'user', text: userText, contextName: `Ideal additions from ${boardTitle}` }])
+    addToHistory('user', userText)
+    setBoardLoadingIndex(loadingKey)
+
+    try {
+      const res = await fetch('/api/ai/editorial-directions-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pieceId: activeContext.id,
+          occasion: outfit?.occasion || generateOccasion,
+          season: outfit?.season || generateSeason,
+          question: `Suggest ideal new additions inspired by this rendered wardrobe look. Use the board as the taste seed, but do not limit the additions to my existing wardrobe.`,
+          history: historySnapshot,
+          seedLook: { board, outfit }
+        })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not generate ideal additions')
+
+      const replyText = `Here are three ideal-additions directions inspired by ${boardTitle}. Review them and click "Generate image (~$0.07)" on any you want to render.`
+      const replyStructuredOutfits = (data.directions || []).map(d => ({
+        ...d,
+        label: d.title,
+        previewOnly: true,
+        pieceId: activeContext.id,
+        occasion: outfit?.occasion || generateOccasion,
+        season: outfit?.season || generateSeason,
+        seedBoard: {
+          label: board.label || '',
+          reason: board.reason || '',
+          pieces: board.pieces || [],
+        },
+      }))
+
+      setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits }])
+      addToHistory('assistant', replyText)
+    } catch (err) {
+      const errText = `Error: ${err.message}`
+      setMessages(m => [...m, { role: 'assistant', text: errText }])
+      addToHistory('assistant', errText)
+    } finally {
+      setBoardLoadingIndex(null)
+    }
   }
 
   const send = async () => {

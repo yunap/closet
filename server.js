@@ -4287,7 +4287,7 @@ async function createEditorialConceptImage({ selectedPiece, direction, index, oc
  
  
 app.post('/api/ai/editorial-directions-preview', async (req, res) => {
-  const { pieceId, occasion = 'casual', season = 'current season', question, history } = req.body
+  const { pieceId, occasion = 'casual', season = 'current season', question, history, seedLook } = req.body
   try {
     const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
     if (!piece) return res.status(404).json({ error: 'Piece not found' })
@@ -4304,11 +4304,34 @@ app.post('/api/ai/editorial-directions-preview', async (req, res) => {
       }
     }
     const calibrationSummary = getCalibrationReferenceSummary()
+    const seedBoard = seedLook?.board || null
+    const seedOutfit = seedLook?.outfit || null
+    const seedImageUrl = typeof seedBoard?.imageUrl === 'string' ? seedBoard.imageUrl : ''
+    if (seedImageUrl.startsWith('/uploads/')) {
+      const seedFilePath = path.join(uploadsDir, path.basename(seedImageUrl))
+      if (fs.existsSync(seedFilePath)) {
+        const { base64, mime } = await prepareImageForClaude(seedFilePath)
+        content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
+      }
+    }
+    const seedPieces = Array.isArray(seedBoard?.pieces) ? seedBoard.pieces : (Array.isArray(seedOutfit?.pieces) ? seedOutfit.pieces : [])
+    const seedMissingPieces = Array.isArray(seedBoard?.missingPieces) ? seedBoard.missingPieces : (Array.isArray(seedOutfit?.missingPieces) ? seedOutfit.missingPieces : [])
+    const seedLookSummary = seedLook ? [
+      'Rendered wardrobe look to use as a taste seed:',
+      `Board title: ${seedBoard?.label || seedBoard?.title || seedOutfit?.label || seedOutfit?.title || 'Wardrobe look'}`,
+      seedBoard?.reason || seedOutfit?.reason ? `Why it worked: ${seedBoard?.reason || seedOutfit?.reason}` : '',
+      seedOutfit?.silhouette ? `Silhouette: ${seedOutfit.silhouette}` : '',
+      seedOutfit?.dominantDirection ? `Direction: ${seedOutfit.dominantDirection}` : '',
+      seedPieces.length ? `Owned pieces in the seed look: ${seedPieces.map(p => p?.name || p).filter(Boolean).join(' + ')}` : '',
+      seedMissingPieces.length ? `Existing missing-piece notes: ${seedMissingPieces.map(p => p?.name || p).filter(Boolean).join(' + ')}` : '',
+      'Use this look as the visual and styling DNA. Suggest ideal new additions that elevate or sharpen it beyond the saved wardrobe board, while keeping the selected garment central.'
+    ].filter(Boolean).join('\n') : ''
     content.push({ type: 'text', text: [
       `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
       `Occasion: ${occasion}`,
       `Season: ${season}`,
       `User request: ${question || 'Suggest ideal new pieces for this item.'}`,
+      seedLookSummary,
       calibrationSummary ? `Renderer calibration library:\n${calibrationSummary}` : '',
       '',
       'Generate only conceptual missing-piece additions. Do not use saved wardrobe pairings except for the selected garment. If the wardrobe already has jeans, olive cargo/utility pants, or similar basics, do not present those as new pieces; suggest more specific/different archetypes.'
