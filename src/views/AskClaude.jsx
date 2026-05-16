@@ -18,7 +18,9 @@ export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, 
   // to refresh its saved-boards list if it's currently open.
   const [boardSaveCount, setBoardSaveCount]             = useState(0)
 
-  const handleToggleCalibration = () => setCalibrationLibraryOpen(v => !v)
+  const handleToggleCalibration = (nextOpen) => {
+    setCalibrationLibraryOpen(v => typeof nextOpen === 'boolean' ? nextOpen : !v)
+  }
 
   const handleResetVisuals = () => {
     setCalibrationLibraryOpen(false)

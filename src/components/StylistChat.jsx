@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -58,12 +58,28 @@ const CALIBRATION_LABELS = [
   ['wrong_silhouette', 'Wrong silhouette'],
 ]
 
-export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, onClearPiece }) {
+export default function AskClaude({
+  initialOutfit,
+  initialPiece,
+  onClearOutfit,
+  onClearPiece,
+  activeContext: externalActiveContext,
+  onContextChange,
+  calibrationLibraryOpen: externalCalibrationLibraryOpen,
+  onToggleCalibration,
+  onBoardSaved,
+  onResetVisuals,
+}) {
   const [messages, setMessages] = useState([
     { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
   ])
   const [chatHistory, setChatHistory] = useState([])
-  const [activeContext, setActiveContext] = useState(null)
+  const [internalActiveContext, setInternalActiveContext] = useState(null)
+  const activeContext = externalActiveContext ?? internalActiveContext
+  const setActiveContext = useCallback((nextContext) => {
+    setInternalActiveContext(nextContext)
+    onContextChange?.(nextContext)
+  }, [onContextChange])
   const [input, setInput] = useState('')
   const [imageFile, setImageFile] = useState(null)
   const [imagePrev, setImagePrev] = useState(null)
@@ -86,7 +102,16 @@ export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, 
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
   const [learningOpen, setLearningOpen] = useState(false)
   const [learningRows, setLearningRows] = useState([])
-  const [calibrationLibraryOpen, setCalibrationLibraryOpen] = useState(false)
+  const [internalCalibrationLibraryOpen, setInternalCalibrationLibraryOpen] = useState(false)
+  const hasExternalCalibrationLibraryOpen = externalCalibrationLibraryOpen !== undefined
+  const calibrationLibraryOpen = externalCalibrationLibraryOpen ?? internalCalibrationLibraryOpen
+  const setCalibrationLibraryOpen = useCallback((nextOpen) => {
+    const resolvedOpen = typeof nextOpen === 'function'
+      ? nextOpen(calibrationLibraryOpen)
+      : nextOpen
+    setInternalCalibrationLibraryOpen(resolvedOpen)
+    if (resolvedOpen !== calibrationLibraryOpen) onToggleCalibration?.(resolvedOpen)
+  }, [calibrationLibraryOpen, onToggleCalibration])
   const [calibrationImages, setCalibrationImages] = useState([])
   const [savedBoards, setSavedBoards] = useState([])
   const [savedBoardsLoading, setSavedBoardsLoading] = useState(false)
@@ -599,6 +624,7 @@ export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, 
     })
     if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Could not save board') }
     setSavedBoardKeys(prev => new Set([...prev, key]))
+    onBoardSaved?.()
     if (calibrationLibraryOpen) loadSavedBoardsForCalibration()
   }
 
@@ -769,6 +795,7 @@ export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, 
     setBoardResults({}); setEditorialVisualResults({})
     setBoardLoadingIndex(null); setLearningOpen(false); setLearningRows([])
     setCalibrationLibraryOpen(false)
+    onResetVisuals?.()
   }
 
   return (
@@ -786,7 +813,7 @@ export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, 
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <button className="chip" style={{ marginTop: 4 }} onClick={() => setCalibrationLibraryOpen(v => !v)}>
-              Calibration{calibrationImages.length ? ` · ${calibrationImages.length}` : ''}
+              {calibrationLibraryOpen ? 'Close calibration' : 'Calibration'}{calibrationImages.length ? ` · ${calibrationImages.length}` : ''}
             </button>
             {activeContext && (
               <button className="chip" style={{ marginTop: 4 }} onClick={() => setLearningOpen(v => !v)}>
@@ -801,7 +828,7 @@ export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, 
       </div>
 
       {/* Calibration Library */}
-      {calibrationLibraryOpen && (
+      {calibrationLibraryOpen && !hasExternalCalibrationLibraryOpen && (
         <div style={{ margin: '0 16px 10px', padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 10 }}>
             <div>
@@ -971,7 +998,7 @@ export default function AskClaude({ initialOutfit, initialPiece, onClearOutfit, 
       )}
 
       {/* Chat thread */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
+      <div style={{ flex: pending ? '0 0 auto' : 1, overflowY: pending ? 'visible' : 'auto', padding: '16px 16px 8px' }}>
         {messages.length === 1 && !pending && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Try asking...</div>

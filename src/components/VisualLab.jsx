@@ -67,6 +67,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
   const [calibrationEditNotes, setCalibrationEditNotes]     = useState('')
   const [savedBoards, setSavedBoards]                       = useState([])
   const [savedBoardsLoading, setSavedBoardsLoading]         = useState(false)
+  const [previewImage, setPreviewImage]                     = useState(null)
 
   // ── Data loading ─────────────────────────────────────────────────────────────
 
@@ -91,7 +92,10 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
   const loadSavedBoards = async () => {
     setSavedBoardsLoading(true)
     try {
-      const res = await fetch('/api/saved-boards?limit=80')
+      const params = new URLSearchParams({ limit: '80' })
+      if (activeContext?.type) params.set('contextType', activeContext.type)
+      if (activeContext?.id) params.set('contextId', activeContext.id)
+      const res = await fetch(`/api/saved-boards?${params.toString()}`)
       const rows = await res.json()
       setSavedBoards(Array.isArray(rows) ? rows : [])
     } catch {
@@ -106,7 +110,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
   }
 
   // Refresh when panel opens or filter changes
-  useEffect(() => { refresh() }, [calibrationFilter])
+  useEffect(() => { refresh() }, [calibrationFilter, activeContext?.type, activeContext?.id])
 
   // Refresh saved boards whenever StylistChat saves a new one
   useEffect(() => {
@@ -246,12 +250,13 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Calibration Library</div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {activeContext ? `Showing saved boards for ${activeContext.name}. ` : ''}
             Curate visual references. Star means "use strongly"; Archive means "ignore unless you restore it."
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button className="chip" onClick={refresh}>Refresh</button>
-          <button className="chip" onClick={onClose}>✕</button>
+          <button className="chip" onClick={onClose}>Close</button>
         </div>
       </div>
 
@@ -329,7 +334,14 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
             const isEditing = calibrationEditingId === row.id
             return (
               <div key={row.id} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: row.archived ? 'rgba(120,120,120,0.08)' : 'var(--surface-2)', opacity: row.archived ? 0.68 : 1 }}>
-                <img src={row.image_url} alt="Calibration" style={{ width: '100%', height: 170, objectFit: 'cover', display: 'block' }} />
+                <button
+                  type="button"
+                  onClick={() => setPreviewImage({ src: row.image_url, title: row.kind?.replaceAll('_', ' ') || 'Calibration image', meta: row.notes || '' })}
+                  style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'zoom-in' }}
+                  aria-label="Open calibration image preview"
+                >
+                  <img src={row.image_url} alt="Calibration" style={{ width: '100%', height: 170, objectFit: 'cover', display: 'block' }} />
+                </button>
                 <div style={{ padding: 8, display: 'grid', gap: 6 }}>
                   {isEditing ? (
                     <>
@@ -412,13 +424,22 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
         </div>
 
         {!savedBoards.length ? (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No saved boards yet.</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            {activeContext ? `No saved boards for ${activeContext.name} yet.` : 'No saved boards yet.'}
+          </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, maxHeight: 430, overflowY: 'auto' }}>
             {savedBoards.map(board => (
               <div key={board.id} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: board.archived ? 'rgba(120,120,120,0.08)' : 'var(--surface-2)', opacity: board.archived ? 0.65 : 1 }}>
                 {board.image_url && (
-                  <img src={board.image_url} alt={board.title || 'Saved board'} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} />
+                  <button
+                    type="button"
+                    onClick={() => setPreviewImage({ src: board.image_url, title: board.title || 'Saved board', meta: board.context_name || '' })}
+                    style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'zoom-in' }}
+                    aria-label="Open saved board preview"
+                  >
+                    <img src={board.image_url} alt={board.title || 'Saved board'} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} />
+                  </button>
                 )}
                 <div style={{ padding: 8, display: 'grid', gap: 6 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'start' }}>
@@ -484,6 +505,32 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
           </div>
         )}
       </div>
+      {previewImage && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewImage(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(20,18,16,0.82)', display: 'grid', placeItems: 'center', padding: 20 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(960px, 96vw)', maxHeight: '92vh', display: 'grid', gap: 10 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', color: '#fff' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{previewImage.title}</div>
+                {previewImage.meta && <div style={{ fontSize: 12, opacity: 0.78 }}>{previewImage.meta}</div>}
+              </div>
+              <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+            </div>
+            <img
+              src={previewImage.src}
+              alt={previewImage.title}
+              style={{ maxWidth: '100%', maxHeight: '84vh', objectFit: 'contain', justifySelf: 'center', borderRadius: 8, boxShadow: '0 18px 60px rgba(0,0,0,0.35)' }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
