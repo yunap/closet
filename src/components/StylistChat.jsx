@@ -129,6 +129,7 @@ export default function AskClaude({
   const [boardResults, setBoardResults] = useState({})
   const [editorialVisualResults, setEditorialVisualResults] = useState({})
   const [boardLoadingIndex, setBoardLoadingIndex] = useState(null)
+  const [previewImage, setPreviewImage] = useState(null)
   const [fileInputKey, setFileInputKey] = useState(0)
   const bottomRef = useRef(null)
   const textRef = useRef(null)
@@ -517,14 +518,16 @@ export default function AskClaude({
 
               {/* Rendered image for this direction */}
               {hasRendered && (
-                <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
+                <div className="generated-visual-grid" style={{ marginTop: 10 }}>
                   {boardResults[boardKey].map((board, boardIdx) => (
-                    <div key={boardIdx} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
+                    <div key={boardIdx} className="generated-visual-card">
                       {board.error ? (
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Render error: {board.error}</div>
                       ) : (
                         <>
-                          <img src={board.imageUrl} alt={board.label} style={{ width: '100%', borderRadius: 8, background: 'var(--surface-2)' }} />
+                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: board.imageUrl, title: board.label || outfit.label || 'Generated visual', meta: board.reason || outfit.reason || '' })} aria-label="Open generated visual preview">
+                            <img src={board.imageUrl} alt={board.label} className="generated-visual-image" />
+                          </button>
                           <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
                           {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 7 }}>
@@ -1078,12 +1081,14 @@ export default function AskClaude({
                   </div>
 
                   {editorialVisualResults[i]?.length > 0 && (
-                    <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                    <div className="generated-visual-grid" style={{ marginTop: 10 }}>
                       {editorialVisualResults[i].map((visual, idx) => (
-                        <div key={idx} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 10 }}>
+                        <div key={idx} className="generated-visual-card">
                           {visual.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Visual error: {visual.error}</div> : (
                             <>
-                              <img src={visual.imageUrl} alt={visual.label} style={{ width: '100%', borderRadius: 8, background: 'var(--surface-2)' }} />
+                              <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: visual.imageUrl, title: visual.label || 'Generated visual', meta: visual.reason || '' })} aria-label="Open generated visual preview">
+                                <img src={visual.imageUrl} alt={visual.label} className="generated-visual-image" />
+                              </button>
                               <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{visual.label}</div>
                               {Array.isArray(visual.missingPieces) && visual.missingPieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>Suggested additions: {visual.missingPieces.join(' + ')}</div>}
                               {visual.reason && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.45 }}>{visual.reason}</div>}
@@ -1108,12 +1113,14 @@ export default function AskClaude({
                   )}
 
                   {boardResults[i]?.length > 0 && !isMultiOutfitResponse(m) && (
-                    <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+                    <div className="generated-visual-grid" style={{ marginTop: 10 }}>
                       {boardResults[i].map((board, idx) => (
-                        <div key={idx} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 10 }}>
+                        <div key={idx} className="generated-visual-card">
                           {board.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Board error: {board.error}</div> : (
                             <>
-                              <img src={board.imageUrl} alt={board.label} style={{ width: '100%', borderRadius: 8, background: 'var(--surface-2)' }} />
+                              <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: board.imageUrl, title: board.label || 'Generated board', meta: board.reason || '' })} aria-label="Open generated board preview">
+                                <img src={board.imageUrl} alt={board.label} className="generated-visual-image" />
+                              </button>
                               <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
                               {board.reason && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.45 }}>{board.reason}</div>}
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8 }}>
@@ -1220,6 +1227,32 @@ export default function AskClaude({
           <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile && !pending)}>↑</button>
         </div>
       </div>
+      {previewImage && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewImage(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(20,18,16,0.82)', display: 'grid', placeItems: 'center', padding: 20 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(960px, 96vw)', maxHeight: '92vh', display: 'grid', gap: 10 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', color: '#fff' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{previewImage.title}</div>
+                {previewImage.meta && <div style={{ fontSize: 12, opacity: 0.78 }}>{previewImage.meta}</div>}
+              </div>
+              <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+            </div>
+            <img
+              src={previewImage.src}
+              alt={previewImage.title}
+              style={{ maxWidth: '100%', maxHeight: '84vh', objectFit: 'contain', justifySelf: 'center', borderRadius: 8, boxShadow: '0 18px 60px rgba(0,0,0,0.35)' }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
