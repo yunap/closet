@@ -552,6 +552,13 @@ export default function AskClaude({
 
               {message?.wholeWardrobe && (
                 <div style={{ marginTop: 9, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    onClick={() => generateWholeWardrobeImage(boardKey, outfit)}
+                    disabled={isRendering}
+                    style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
+                  >
+                    {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate image' : 'Generate image')}
+                  </button>
                   {WHOLE_WARDROBE_FEEDBACK_LABELS.map(([type, label]) => {
                     const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
                     const isSaved = feedbackSaved.has(key)
@@ -652,11 +659,18 @@ export default function AskClaude({
                               )
                             })()}
                             {(() => {
-                              const saveKey = `editorial-board:${messageIndex}:${idx}:${boardIdx}`
+                              const saveKey = message?.wholeWardrobe ? `whole-wardrobe-board:${messageIndex}:${idx}:${boardIdx}` : `editorial-board:${messageIndex}:${idx}:${boardIdx}`
                               const isBoardSaved = savedBoardKeys.has(saveKey)
                               return (
                                 <button
-                                  onClick={() => saveGeneratedBoard({ key: saveKey, board, boardType: 'editorial_direction', messageIndex, boardIndex: idx })}
+                                  onClick={() => saveGeneratedBoard({
+                                    key: saveKey,
+                                    board,
+                                    boardType: message?.wholeWardrobe ? 'whole_wardrobe_board' : 'editorial_direction',
+                                    messageIndex,
+                                    boardIndex: idx,
+                                    contextOverride: message?.wholeWardrobe ? { type: 'wardrobe', id: null, name: 'Whole wardrobe' } : null
+                                  })}
                                   disabled={isBoardSaved}
                                   style={{ fontSize: 10, color: isBoardSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isBoardSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isBoardSaved ? 'default' : 'pointer' }}
                                 >
@@ -760,15 +774,16 @@ export default function AskClaude({
     await saveStylistFeedback(args)
   }
 
-  const saveGeneratedBoard = async ({ key, board, boardType = 'wardrobe', messageIndex = null, boardIndex = null }) => {
-    if (!activeContext || !board || !board.imageUrl) return
+  const saveGeneratedBoard = async ({ key, board, boardType = 'wardrobe', messageIndex = null, boardIndex = null, contextOverride = null }) => {
+    const context = contextOverride || activeContext || { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+    if (!board || !board.imageUrl) return
     const feedbackBucket = Number.isInteger(messageIndex) && Number.isInteger(boardIndex)
       ? `${boardType === 'editorial_direction' ? 'generated_visual_board' : 'board'}:${messageIndex}:${boardIndex}` : null
     const existingFeedbackLabels = feedbackBucket && Array.isArray(boardFeedbackLabels[feedbackBucket]) ? boardFeedbackLabels[feedbackBucket] : []
     const res = await fetch('/api/saved-boards', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boardType, contextType: activeContext.type, contextId: activeContext.id, contextName: activeContext.name, title: board.label || board.title || 'Saved board', imageUrl: board.imageUrl, pieces: board.pieces || [], missingPieces: board.missingPieces || [], reason: board.reason || '', watchFor: board.watchFor || '', payload: { board, messageIndex, boardIndex, feedback_labels: existingFeedbackLabels }, feedbackLabels: existingFeedbackLabels })
+      body: JSON.stringify({ boardType, contextType: context.type, contextId: context.id, contextName: context.name, title: board.label || board.title || 'Saved board', imageUrl: board.imageUrl, pieces: board.pieces || [], missingPieces: board.missingPieces || [], reason: board.reason || '', watchFor: board.watchFor || '', payload: { board, messageIndex, boardIndex, feedback_labels: existingFeedbackLabels }, feedbackLabels: existingFeedbackLabels })
     })
     if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Could not save board') }
     setSavedBoardKeys(prev => new Set([...prev, key]))
@@ -792,6 +807,28 @@ export default function AskClaude({
     } catch (err) {
       setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
     } finally { setBoardLoadingIndex(null) }
+  }
+
+  const generateWholeWardrobeImage = async (resultKey, outfit) => {
+    const ids = Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+      ? outfit.pieceIds
+      : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(p => p?.id).filter(Boolean) : [])
+    if (!ids.length) return
+    setBoardLoadingIndex(resultKey)
+    try {
+      const res = await fetch('/api/ai/generate-wardrobe-outfit-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outfit, pieceIds: ids, occasion: wardrobeOutfitOccasion, season: wardrobeOutfitSeason })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not generate outfit image')
+      setBoardResults(prev => ({ ...prev, [resultKey]: [data.board || data] }))
+    } catch (err) {
+      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
+    } finally {
+      setBoardLoadingIndex(null)
+    }
   }
 
   const exploreIdealAdditionsFromBoard = async ({ board, outfit, messageIndex, outfitIndex, boardIndex }) => {

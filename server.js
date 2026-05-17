@@ -3725,6 +3725,126 @@ async function createOutfitBoardImage({ board, pieces, index }) {
   return `/uploads/${filename}`
 }
 
+async function garmentReferenceImage(piece) {
+  const photo = piece?.worn_photo || piece?.photo
+  if (!photo) return null
+  const filePath = path.join(uploadsDir, photo)
+  if (!fs.existsSync(filePath)) return null
+  const buffer = await sharp(filePath)
+    .rotate()
+    .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 84 })
+    .toBuffer()
+  return {
+    base64: buffer.toString('base64'),
+    mime: 'image/jpeg',
+    label: `${piece.name} (${wardrobeCategoryGroup(piece)})`,
+    piece
+  }
+}
+
+function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
+  const pieceLines = pieces.map((piece, index) => {
+    const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
+    return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
+  }).join('\n')
+  return [
+    'Generate one realistic full-outfit styling image using the provided saved wardrobe garment references.',
+    'This is NOT a shopping/editorial concept and NOT a generated fantasy outfit. Use the listed saved garments as the outfit components.',
+    '',
+    'Garment fidelity rules:',
+    '- Preserve each referenced garment category, color family, print/stripe/pattern scale, neckline/sleeve/hem behavior, fabric weight, and visible texture as much as possible.',
+    '- Do not replace a listed wardrobe piece with a different garment.',
+    '- Do not add extra hero garments, patterned layers, belts, scarves, or accessories unless the listed outfit explicitly includes them.',
+    '- Shoes must match the listed shoe reference if shoes are included.',
+    '',
+    'Person / scene:',
+    '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
+    '- Simple neutral or natural background, soft daylight, no text, no watermark, no collage labels.',
+    '- Keep the result wearable and grounded, closer to a real try-on/photo reference than a fashion ad.',
+    '',
+    `Outfit label: ${outfit.label || 'Whole wardrobe outfit'}`,
+    outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
+    outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
+    outfit.reason ? `Stylist mechanics: ${outfit.reason}` : '',
+    outfit.watchFor ? `Avoid drift: ${outfit.watchFor}` : '',
+    `Occasion: ${occasion}. Season: ${season}.`,
+    '',
+    `Saved wardrobe pieces to use:\n${pieceLines}`
+  ].filter(Boolean).join('\n')
+}
+
+async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index = 1 }) {
+  const filename = `generated-boards/whole-wardrobe-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
+  const outPath = path.join(uploadsDir, filename)
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+
+  const board = {
+    label: outfit.label || `Whole wardrobe outfit ${index}`,
+    reason: outfit.reason || '',
+  }
+
+  if (photoPreservingVisualsEnabled() || !process.env.OPENAI_API_KEY) {
+    return createPhotoPreservingCollageImage({
+      title: board.label,
+      subtitle: 'whole-wardrobe outfit · saved garment photos',
+      pieces,
+      reason: outfit.reason || 'Uses saved wardrobe garment photos for evaluation.',
+      index,
+      prefix: 'whole-wardrobe-collage'
+    })
+  }
+
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const contentParts = []
+    const garmentRefs = []
+    for (const piece of pieces.slice(0, 5)) {
+      const ref = await garmentReferenceImage(piece)
+      if (ref) garmentRefs.push(ref)
+    }
+
+    if (garmentRefs.length) {
+      contentParts.push({
+        type: 'input_text',
+        text: `WARDROBE GARMENT REFERENCES — use these saved pieces together in one outfit. Preserve each garment as much as possible; do not invent substitutes.`
+      })
+      for (const ref of garmentRefs) {
+        contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
+        contentParts.push({ type: 'input_text', text: ref.label })
+      }
+    }
+
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    for (const img of calibrationRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches listed wardrobe pieces.' : 'Taste calibration reference only.' })
+    }
+
+    contentParts.push({ type: 'input_text', text: wholeWardrobeImagePrompt({ outfit, pieces, occasion, season }) })
+
+    const response = await client.responses.create({
+      model: 'gpt-4o',
+      input: [{ role: 'user', content: contentParts }],
+      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+    })
+    const imageItem = response.output?.find(item => item.type === 'image_generation_call')
+    if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
+    return `/uploads/${filename}`
+  } catch (err) {
+    console.error('Whole-wardrobe GPT-4o image generation failed, falling back to collage:', err.message)
+    return createPhotoPreservingCollageImage({
+      title: board.label,
+      subtitle: 'whole-wardrobe fallback · saved garment photos',
+      pieces,
+      reason: `Image generation fallback: ${err.message}`,
+      index,
+      prefix: 'whole-wardrobe-fallback'
+    })
+  }
+}
+
 const uploadsDir = path.join(__dirname, 'uploads')
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir)
 
@@ -5391,6 +5511,37 @@ app.post('/api/ai/generate-outfit-boards', async (req, res) => {
     res.json({ boards, provider: AI_PROVIDER, mode: 'generate_outfit_boards' })
   } catch (err) {
     console.error('Generate outfit boards error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── AI: Generate one image from a whole-wardrobe outfit card ──────────────────
+app.post('/api/ai/generate-wardrobe-outfit-image', async (req, res) => {
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season' } = req.body || {}
+  try {
+    const ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
+      .map(Number)
+      .filter(Boolean))]
+      .slice(0, 6)
+    if (!ids.length) return res.status(400).json({ error: 'pieceIds are required' })
+
+    const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
+    const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
+    const pieces = ids.map(id => byId.get(id)).filter(Boolean)
+    if (pieces.length < 2) return res.status(400).json({ error: 'At least two saved wardrobe pieces are required' })
+
+    const imageUrl = await createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index: 1 })
+    const board = {
+      label: outfit.label || 'Whole wardrobe generated outfit',
+      reason: outfit.reason || '',
+      watchFor: outfit.watchFor || '',
+      pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
+      imageUrl,
+      wholeWardrobe: true
+    }
+    res.json({ ...board, board, provider: AI_PROVIDER, mode: 'generate_wardrobe_outfit_image' })
+  } catch (err) {
+    console.error('Generate whole-wardrobe outfit image error:', err)
     res.status(500).json({ error: err.message })
   }
 })
