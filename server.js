@@ -2901,7 +2901,9 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     }
   }
 
-  while (new Set(selected.map(formulaFor)).size < Math.min(3, limit) && selected.length) {
+  let formulaBackfillAttempts = 0
+  while (new Set(selected.map(formulaFor)).size < Math.min(3, limit) && selected.length && formulaBackfillAttempts < limit) {
+    formulaBackfillAttempts += 1
     const usedFamilies = new Set(selected.map(formulaFor))
     const candidate = bestWholeWardrobeRequirementCandidate(
       outfits,
@@ -2910,11 +2912,14 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
       options
     )
     if (!candidate) break
+    const candidateFamily = formulaFor(candidate)
     const replaceIndex = selected
       .map((outfit, index) => ({ outfit, index, count: selected.filter(o => formulaFor(o) === formulaFor(outfit)).length }))
-      .filter(item => item.count > 1 || formulaFor(item.outfit) === 'compact_top_dark_column')
+      .filter(item => item.count > 1 || (formulaFor(item.outfit) === 'compact_top_dark_column' && usedFamilies.size >= 3))
       .sort((a, b) => wholeWardrobeSelectionScore(a.outfit, selected.filter((_, i) => i !== a.index), options) - wholeWardrobeSelectionScore(b.outfit, selected.filter((_, i) => i !== b.index), options))[0]?.index
-    const targetIndex = Number.isInteger(replaceIndex) ? replaceIndex : selected.length - 1
+    if (!Number.isInteger(replaceIndex)) break
+    const targetIndex = replaceIndex
+    if (formulaFor(selected[targetIndex]) === candidateFamily) break
     rejected.push({ label: selected[targetIndex]?.label || 'unnamed', reason: `replaced to include ${formulaFor(candidate)} formula` })
     selected[targetIndex] = candidate
   }
