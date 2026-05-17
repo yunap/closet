@@ -1835,6 +1835,73 @@ function wholeWardrobeCandidateText(candidates = []) {
   ].filter(Boolean).join('\n')).join('\n\n')
 }
 
+function wholeWardrobeCandidatePieceByGroup(candidate = {}, group) {
+  return (Array.isArray(candidate.pieces) ? candidate.pieces : []).find(piece => wardrobeCategoryGroup(piece) === group) || null
+}
+
+function wholeWardrobeCandidateGarmentKey(candidate = {}) {
+  const top = wholeWardrobeCandidatePieceByGroup(candidate, 'top')
+  const dress = wholeWardrobeCandidatePieceByGroup(candidate, 'dress')
+  return top ? `top:${Number(top.id)}` : dress ? `dress:${Number(dress.id)}` : 'no-primary'
+}
+
+function wholeWardrobeCandidateDiversityScore(candidate = {}, selected = [], options = {}) {
+  const outfit = { pieces: candidate.pieces || [], pieceIds: candidate.pieces?.map(p => p.id) || [], localScore: candidate.score || candidate.localScore || 0 }
+  const dimensions = wholeWardrobeDiversityDimensions(outfit, options)
+  const selectedDimensions = selected.map(existing => wholeWardrobeDiversityDimensions({ pieces: existing.pieces || [] }, options))
+  const primaryKey = wholeWardrobeCandidateGarmentKey(candidate)
+  const bottom = wholeWardrobeCandidatePieceByGroup(candidate, 'bottom')
+  const shoe = wholeWardrobeCandidatePieceByGroup(candidate, 'shoes')
+  const primaryUse = selected.filter(existing => wholeWardrobeCandidateGarmentKey(existing) === primaryKey).length
+  const bottomUse = bottom ? selected.filter(existing => (existing.pieces || []).some(p => Number(p.id) === Number(bottom.id))).length : 0
+  const shoeUse = shoe ? selected.filter(existing => (existing.pieces || []).some(p => Number(p.id) === Number(shoe.id))).length : 0
+  let score = Number(candidate.score) || 0
+  const keys = ['upper', 'lower', 'grounding', 'expressiveLocation', 'texture', 'rhythm', 'archetype', 'color', 'movement']
+  for (const key of keys) {
+    const sameCount = selectedDimensions.filter(d => d[key] === dimensions[key]).length
+    score += sameCount ? -18 * sameCount : 14
+  }
+  if (primaryUse === 0) score += 38
+  if (primaryUse === 1) score -= 85
+  if (primaryUse >= 2) score -= 180
+  if (bottomUse === 0) score += 14
+  if (bottomUse >= 1) score -= 42 * bottomUse
+  if (shoeUse === 0) score += 8
+  if (shoeUse >= 2) score -= 22 * shoeUse
+  if (wholeWardrobeHasDress(outfit) && !selected.some(c => (c.pieces || []).some(p => wardrobeCategoryGroup(p) === 'dress'))) score += 36
+  if (wholeWardrobeHasNonGraphicTop(outfit) && !selected.some(c => wholeWardrobeHasNonGraphicTop({ pieces: c.pieces || [] }))) score += 24
+  if (dimensions.texture.includes('soft') && !selectedDimensions.some(d => String(d.texture).includes('soft'))) score += 20
+  if (dimensions.color === 'tonal dark' && !selectedDimensions.some(d => d.color === 'tonal dark')) score += 18
+  if (dimensions.archetype === 'compact_top_dark_column' && selectedDimensions.some(d => d.archetype === 'compact_top_dark_column')) score -= 100
+  return score
+}
+
+function selectDiverseWholeWardrobeCandidates(candidates = [], options = {}, limit = 64) {
+  const pool = [...candidates].sort((a, b) => b.score - a.score)
+  const selected = []
+  const seen = new Set()
+  const add = (candidate) => {
+    if (!candidate || seen.has(candidate.key) || selected.length >= limit) return false
+    selected.push(candidate)
+    seen.add(candidate.key)
+    return true
+  }
+  const bestWhere = (predicate) => pool.find(candidate => !seen.has(candidate.key) && predicate(candidate))
+  add(bestWhere(candidate => wholeWardrobeHasDress({ pieces: candidate.pieces })))
+  add(bestWhere(candidate => wholeWardrobeHasNonGraphicTop({ pieces: candidate.pieces })))
+  add(bestWhere(candidate => wholeWardrobeTextureStrategy({ pieces: candidate.pieces }).includes('soft')))
+  add(bestWhere(candidate => wholeWardrobeDominantColorStrategy({ pieces: candidate.pieces }) === 'tonal dark'))
+
+  while (selected.length < limit) {
+    const next = pool
+      .filter(candidate => !seen.has(candidate.key))
+      .sort((a, b) => wholeWardrobeCandidateDiversityScore(b, selected, options) - wholeWardrobeCandidateDiversityScore(a, selected, options))[0]
+    if (!next) break
+    add(next)
+  }
+  return selected
+}
+
 function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
   const bucket = wholeWardrobePieceBucket(allPieces)
   const candidates = []
@@ -1871,11 +1938,7 @@ function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
     for (const accessory of accessories.slice(0, 3)) addCandidate([...candidate.pieces, accessory])
   }
 
-  const ranked = candidates.sort((a, b) => b.score - a.score)
-  const chosen = ranked.slice(0, 48)
-  const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
-  const exploratory = ranked.find(candidate => exploratoryFamilies.has(inferOutfitArchetype({ pieces: candidate.pieces }, candidate.pieces, options.occasion).formulaFamily))
-  if (exploratory && chosen.length && !chosen.some(candidate => candidate.key === exploratory.key)) chosen[chosen.length - 1] = exploratory
+  const chosen = selectDiverseWholeWardrobeCandidates(candidates, options, 64)
   return chosen
     .map((candidate, index) => candidateObjectFromPieces(candidate.pieces, index, options))
 }
@@ -2927,6 +2990,17 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     if (selected.some(existing => (existing.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|') === key)) return false
     return formulaFor(candidate) !== formula
   })
+  const hasUnusedAlternativePrimary = (piece) => {
+    if (!piece) return false
+    return pool.some(candidate => {
+      const key = (candidate.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
+      if (selected.some(existing => (existing.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|') === key)) return false
+      const candidateTop = wholeWardrobePieceByGroup(candidate, 'top')
+      const candidateDress = wholeWardrobePieceByGroup(candidate, 'dress')
+      const candidatePrimary = candidateTop || candidateDress
+      return candidatePrimary && Number(candidatePrimary.id) !== Number(piece.id)
+    })
+  }
   const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
   const exploratory = bestWholeWardrobeRequirementCandidate(
     pool,
@@ -2990,6 +3064,10 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     const shoeShapeCount = shoeShapeUse.get(shoeShape) || 0
     const rhythmCount = rhythmUse.get(rhythm) || 0
     const territoryCount = territoryUse.get(territory) || 0
+    if (top && topCount >= 1 && hasUnusedAlternativePrimary(top)) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: `rotating away from repeated top ${top.name}` })
+      continue
+    }
     if (top && topCount >= 2) {
       rejected.push({ label: outfit.label || 'unnamed', reason: `too many outfits use ${top.name}` })
       continue
