@@ -1378,6 +1378,7 @@ Reject:
 Rules:
 - Use only candidate outfit ids and owned garment ids/names provided.
 - Keep fewer than 5 if only 3-4 are genuinely strong.
+- Surface at least 3 distinct formula families across your selections when viable. Do not pick more than 2 outfits from the same formula family.
 - Preserve exact owned piece ids and names.
 - Do not invent missing pieces.
 - Do not use words like flattering, elongating, slimming, confidence, balance the body, or draws attention upward.
@@ -2105,7 +2106,7 @@ function wholeWardrobeCandidateFormulaCounts(candidates = []) {
 
 function wholeWardrobeCandidateText(candidates = []) {
   return candidates.map((candidate, index) => [
-    `${index + 1}. ${candidate.candidateId} | local score ${candidate.localScore}`,
+    `${index + 1}. ${candidate.candidateId} | formula family ${wholeWardrobeCandidateAxes(candidate).formula}`,
     `Pieces: ${candidate.pieces.map(p => `${p.id}:${p.name} (${p.category})`).join(' + ')}`,
     candidate.localReasons?.length ? `Local reasons: ${candidate.localReasons.join('; ')}` : '',
   ].filter(Boolean).join('\n')).join('\n\n')
@@ -3124,15 +3125,17 @@ async function makeWholeWardrobeCandidateContactSheet(candidates = [], candidate
     const y = headerHeight + index * rowHeight
     const pieces = fullPiecesForCandidate(candidate, candidatePieces).slice(0, 5)
     const title = `${candidate.candidateId}: ${pieces.map(piece => piece.name).join(' + ')}`
+    const formula = wholeWardrobeCandidateAxes(candidate).formula
     rowSvgs.push(`
       <rect x="24" y="${y}" width="${width - 48}" height="${rowHeight - 14}" rx="18" fill="#fffaf7" stroke="#ddd1c6"/>
       <text x="44" y="${y + 30}" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#3f352e">${escapeSvgText(title)}</text>
-      <text x="44" y="${y + 54}" font-family="Arial, sans-serif" font-size="12" fill="#81756b">local score ${candidate.localScore ?? candidate.score ?? 0}${candidate.localReasons?.length ? ` · ${escapeSvgText(candidate.localReasons.join('; '))}` : ''}</text>
+      <text x="44" y="${y + 54}" font-family="Arial, sans-serif" font-size="12" fill="#81756b">formula: ${escapeSvgText(formula)}${candidate.localReasons?.length ? ` · ${escapeSvgText(candidate.localReasons.join('; '))}` : ''}</text>
     `)
-    for (const [pieceIndex, piece] of pieces.entries()) {
-      const tile = await makeGarmentTile(piece, 150, 132)
-      composites.push({ input: tile, left: 44 + pieceIndex * 166, top: y + 62 })
-    }
+    composites.push(...await Promise.all(pieces.map(async (piece, pieceIndex) => ({
+      input: await makeGarmentTile(piece, 150, 132),
+      left: 44 + pieceIndex * 166,
+      top: y + 62
+    }))))
   }
 
   const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
@@ -3150,10 +3153,10 @@ async function rankWholeWardrobeCandidatesWithVision({ candidates = [], candidat
     fullPiecesForCandidate(candidate, candidatePieces).some(piece => piece.photo || piece.worn_photo)
   )
   const reviewSource = candidatesWithPhotos.length >= 6 ? candidatesWithPhotos : candidates
-  const reviewCandidates = selectDiverseWholeWardrobeCandidates(reviewSource, 10, { occasion })
+  const reviewCandidates = selectDiverseWholeWardrobeCandidates(reviewSource, 18, { occasion })
   if (!reviewCandidates.length) return null
 
-  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 10)
+  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 18)
   const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
   const raw = await askStylist({
     system: `You are Yuna's visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize Yuna's known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`,
@@ -3798,11 +3801,7 @@ async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season
   try {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     const contentParts = []
-    const garmentRefs = []
-    for (const piece of pieces.slice(0, 5)) {
-      const ref = await garmentReferenceImage(piece)
-      if (ref) garmentRefs.push(ref)
-    }
+    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
 
     if (garmentRefs.length) {
       contentParts.push({
