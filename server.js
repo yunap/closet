@@ -2861,6 +2861,96 @@ async function makeGarmentTile(piece, width = 190, height = 230) {
   return sharp(Buffer.from(tileSvg)).composite([{ input: image, left: 10, top: 12 }]).png().toBuffer()
 }
 
+function fullPiecesForCandidate(candidate = {}, candidatePieces = []) {
+  const byId = new Map(candidatePieces.map(piece => [Number(piece.id), piece]))
+  return (candidate.pieceIds || candidate.pieces?.map(piece => piece.id) || [])
+    .map(id => byId.get(Number(id)))
+    .filter(Boolean)
+}
+
+async function makeWholeWardrobeCandidateContactSheet(candidates = [], candidatePieces = [], maxCandidates = 12) {
+  const shown = candidates.slice(0, maxCandidates)
+  const width = 1120
+  const rowHeight = 196
+  const headerHeight = 76
+  const height = headerHeight + shown.length * rowHeight + 28
+  const composites = []
+  const rowSvgs = []
+
+  for (const [index, candidate] of shown.entries()) {
+    const y = headerHeight + index * rowHeight
+    const pieces = fullPiecesForCandidate(candidate, candidatePieces).slice(0, 5)
+    const title = `${candidate.candidateId}: ${pieces.map(piece => piece.name).join(' + ')}`
+    rowSvgs.push(`
+      <rect x="24" y="${y}" width="${width - 48}" height="${rowHeight - 14}" rx="18" fill="#fffaf7" stroke="#ddd1c6"/>
+      <text x="44" y="${y + 30}" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#3f352e">${escapeSvgText(title)}</text>
+      <text x="44" y="${y + 54}" font-family="Arial, sans-serif" font-size="12" fill="#81756b">local score ${candidate.localScore ?? candidate.score ?? 0}${candidate.localReasons?.length ? ` · ${escapeSvgText(candidate.localReasons.join('; '))}` : ''}</text>
+    `)
+    for (const [pieceIndex, piece] of pieces.entries()) {
+      const tile = await makeGarmentTile(piece, 150, 132)
+      composites.push({ input: tile, left: 44 + pieceIndex * 166, top: y + 62 })
+    }
+  }
+
+  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100%" height="100%" fill="#f4efe8"/>
+    <text x="32" y="38" font-family="Georgia, serif" font-size="30" fill="#2f2924">Whole wardrobe candidate sheet</text>
+    <text x="32" y="62" font-family="Arial, sans-serif" font-size="14" fill="#786d63">Choose visually coherent outfits by candidate ID. Use the garment photos, not just the labels.</text>
+    ${rowSvgs.join('')}
+  </svg>`
+  const buffer = await sharp(Buffer.from(svg)).composite(composites).jpeg({ quality: 84 }).toBuffer()
+  return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownCandidateIds: shown.map(candidate => candidate.candidateId) }
+}
+
+async function rankWholeWardrobeCandidatesWithVision({ candidates = [], candidatePieces = [], occasion, season, mood, memoryText = '', limit = 5 }) {
+  const candidatesWithPhotos = candidates.filter(candidate =>
+    fullPiecesForCandidate(candidate, candidatePieces).some(piece => piece.photo || piece.worn_photo)
+  )
+  const reviewCandidates = (candidatesWithPhotos.length >= 6 ? candidatesWithPhotos : candidates).slice(0, 14)
+  if (!reviewCandidates.length) return null
+
+  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 14)
+  const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
+  const raw = await askStylist({
+    system: `You are Yuna's visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize Yuna's known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`,
+    maxTokens: 900,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: sheet.mime, data: sheet.base64 } },
+        { type: 'text', text: [
+          `Occasion: ${occasion || 'casual'}`,
+          `Season: ${season || 'current season'}`,
+          `Mood: ${mood || 'artistic minimalist'}`,
+          memoryText ? `Taste memory:\n${memoryText}` : '',
+          `Candidate truth:\n${candidateTruth}`,
+          '',
+          `Return JSON exactly like:
+{
+  "rankedCandidateIds": ["cand-1", "cand-7"],
+  "rejectedCandidateIds": [{"candidateId": "cand-3", "reason": "visual reason"}],
+  "visualLearning": "one concise observation"
+}`,
+          `Rank up to ${Math.max(limit, 5)} candidates. Prefer visual coherence, good fit/trust, garment rotation, and actual outfit appeal over safe repeated formulas.`
+        ].filter(Boolean).join('\n\n') }
+      ]
+    }]
+  })
+  const parsed = safeJsonFromModel(raw)
+  const rankedIds = Array.isArray(parsed.rankedCandidateIds) ? parsed.rankedCandidateIds.filter(id => sheet.shownCandidateIds.includes(id)) : []
+  if (!rankedIds.length) return null
+  const byId = new Map(candidates.map(candidate => [candidate.candidateId, candidate]))
+  const ranked = rankedIds.map(id => byId.get(id)).filter(Boolean)
+  const rest = candidates.filter(candidate => !rankedIds.includes(candidate.candidateId))
+  return {
+    candidates: [...ranked, ...rest],
+    visualRejected: parsed.rejectedCandidateIds || [],
+    visualLearning: parsed.visualLearning || '',
+    reviewedCandidateIds: sheet.shownCandidateIds,
+    rankedCandidateIds: rankedIds
+  }
+}
+
 
 function normalizeForMatch(value) {
   return String(value || '')
@@ -4805,12 +4895,11 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
-    const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode })
-    const candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
+    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode })
+    let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
     const candidatePieces = candidatePieceIds
       .map(id => allPieces.find(p => Number(p.id) === Number(id)))
       .filter(Boolean)
-    const candidateById = new Map(candidates.map(c => [c.candidateId, c]))
     const confirmedOutfitsText = getConfirmedOutfitMemory(10)
     const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
     const globalSavedBoardText = getSavedBoardMemory(null, null, 16)
@@ -4829,6 +4918,32 @@ ${calibrationMemoryText}` : '',
       globalFeedbackText ? `General saved stylist feedback memory:
 ${globalFeedbackText}` : ''
     ].filter(Boolean).join('\n\n')
+    let visualCriticDebug = null
+    try {
+      const visualRanked = await rankWholeWardrobeCandidatesWithVision({
+        candidates,
+        candidatePieces,
+        occasion,
+        season,
+        mood,
+        memoryText,
+        limit: requestedLimit
+      })
+      if (visualRanked?.candidates?.length) {
+        candidates = visualRanked.candidates.map((candidate, index) => ({ ...candidate, candidateId: `cand-${index + 1}` }))
+        candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
+        visualCriticDebug = {
+          reviewedCandidateIds: visualRanked.reviewedCandidateIds,
+          rankedCandidateIds: visualRanked.rankedCandidateIds,
+          visualLearning: visualRanked.visualLearning || '',
+          rejectedCandidateIds: visualRanked.visualRejected || []
+        }
+      }
+    } catch (err) {
+      console.warn('Whole-wardrobe visual critic fallback:', err.message)
+      visualCriticDebug = { error: err.message }
+    }
+    const candidateById = new Map(candidates.map(c => [c.candidateId, c]))
 
     const userPayload = [
       `Occasion: ${occasion || 'casual'}`,
@@ -4914,6 +5029,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
         candidateCount: candidates.length,
         suppressedPieceCount: suppressedPieces.length,
         suppressedPieces,
+        visualCritic: visualCriticDebug,
         archetypeCounts,
         formulaFamiliesReturned,
         locallyGeneratedCount: localBackfillOutfits.length,
