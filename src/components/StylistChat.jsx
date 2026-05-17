@@ -40,6 +40,14 @@ const GENERATED_BOARD_FEEDBACK_LABELS = [
   ['bad_grounding', 'Bad grounding'],
 ]
 
+const WHOLE_WARDROBE_FEEDBACK_LABELS = [
+  ['works', 'Use more like this'],
+  ['not_me', 'Not me'],
+  ['wrong_item_read', 'Bad piece choice'],
+  ['bad_occasion', 'Bad occasion'],
+  ['fit_issue', 'Fit issue'],
+]
+
 const CALIBRATION_LABELS = [
   ['most_like_me', 'Most like me'],
   ['close_but_off', 'Close but off'],
@@ -485,6 +493,44 @@ export default function AskClaude({
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 5 }}><strong>Watch:</strong> {outfit.watchFor}</div>
               )}
 
+              {message?.wholeWardrobe && (
+                <div style={{ marginTop: 9, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {WHOLE_WARDROBE_FEEDBACK_LABELS.map(([type, label]) => {
+                    const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
+                    const isSaved = feedbackSaved.has(key)
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => saveStylistFeedback({
+                          key,
+                          feedbackType: type,
+                          targetType: 'whole_wardrobe_outfit',
+                          label: outfit.label || `Outfit ${idx + 1}`,
+                          note: [outfit.reason, outfit.watchFor].filter(Boolean).join(' Watch: '),
+                          payload: {
+                            outfit,
+                            messageIndex,
+                            outfitIndex: idx,
+                            pieceIds: outfit.pieceIds || [],
+                            pieces: outfit.pieces || [],
+                            formulaFamily: outfit.formulaFamily || '',
+                            archetypeId: outfit.archetypeId || '',
+                            occasion: wardrobeOutfitOccasion,
+                            season: wardrobeOutfitSeason,
+                            mood: wardrobeOutfitMood,
+                          },
+                          contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                        })}
+                        disabled={isSaved}
+                        style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}
+                      >
+                        {isSaved ? '✓ ' : ''}{label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
               {activeContext?.type === 'piece' && !isTextOnly && (
                 <div style={{ marginTop: 9, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                   {isPreview ? (
@@ -601,6 +647,8 @@ export default function AskClaude({
       works: 'Learning saved: boosting similar outfit logic.',
       almost: 'Learning saved: treating this as close but not fully solved.',
       not_me: 'Learning saved: reducing this direction for future suggestions.',
+      bad_occasion: 'Learning saved: reducing this formula for this occasion.',
+      fit_issue: 'Learning saved: treating this as a fit-risk combination.',
       too_safe: 'Learning saved: reducing safe/over-balanced styling.',
       too_generic: 'Learning saved: reducing generic outfit logic.',
       too_soft: 'Learning saved: reducing excessive softness.',
@@ -615,12 +663,12 @@ export default function AskClaude({
     return copy[feedbackType] || 'Learning saved.'
   }
 
-  const saveStylistFeedback = async ({ key, feedbackType, targetType = 'message', label = '', note = '', payload = {}, appendToPiece = false }) => {
-    if (!activeContext) return
+  const saveStylistFeedback = async ({ key, feedbackType, targetType = 'message', label = '', note = '', payload = {}, appendToPiece = false, contextOverride = null }) => {
+    const context = contextOverride || activeContext || { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
     const res = await fetch('/api/stylist-feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ feedbackType, targetType, contextType: activeContext.type, contextId: activeContext.id, contextName: activeContext.name, label, note, payload, appendToPiece })
+      body: JSON.stringify({ feedbackType, targetType, contextType: context.type, contextId: context.id, contextName: context.name, label, note, payload, appendToPiece })
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || 'Could not save feedback')

@@ -567,6 +567,8 @@ function feedbackWeight(feedbackType) {
     proportion_problem: -24,
     wrong_proportions: -24,
     wrong_item_read: -24,
+    bad_occasion: -22,
+    fit_issue: -34,
   }
   return weights[feedbackType] || 0
 }
@@ -985,6 +987,45 @@ function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 
       }
       return `- ${r.feedback_type} on ${target}${label}${note}`
     }).join('\n')
+  } catch {
+    return ''
+  }
+}
+
+function getWholeWardrobeFeedbackMemory(limit = 24) {
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0
+        AND target_type = 'whole_wardrobe_outfit'
+      ORDER BY COALESCE(is_gold,0) DESC, id DESC
+      LIMIT ?
+    `).all(Number(limit))
+
+    if (!rows.length) return ''
+    const positives = []
+    const negatives = []
+    for (const row of rows) {
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const outfit = payload.outfit || {}
+      const pieces = Array.isArray(payload.pieces) && payload.pieces.length
+        ? payload.pieces
+        : (Array.isArray(outfit.pieces) ? outfit.pieces : [])
+      const pieceText = pieces.map(p => p?.name).filter(Boolean).join(' + ')
+      const formula = payload.formulaFamily || outfit.formulaFamily || ''
+      const occasion = payload.occasion || outfit.bestFor || ''
+      const note = row.note ? ` — ${String(row.note).slice(0, 220)}` : ''
+      const line = `- ${row.feedback_type}${row.label ? ` / ${row.label}` : ''}${occasion ? ` (${occasion})` : ''}${formula ? ` | formula: ${formula}` : ''}${pieceText ? ` | pieces: ${pieceText}` : ''}${note}`
+      if (feedbackWeight(row.feedback_type) > 0) positives.push(line)
+      if (feedbackWeight(row.feedback_type) < 0) negatives.push(line)
+    }
+
+    const parts = []
+    if (positives.length) parts.push(`Whole-wardrobe outfit feedback to reinforce. Prefer similar garment relationships and formulas when pieces/occasion fit:
+${positives.slice(0, 10).join('\n')}`)
+    if (negatives.length) parts.push(`Whole-wardrobe outfit feedback to suppress. Avoid repeating these exact combinations, piece roles, formulas, or occasion mismatches:
+${negatives.slice(0, 12).join('\n')}`)
+    return parts.join('\n\n')
   } catch {
     return ''
   }
@@ -4264,6 +4305,8 @@ app.post('/api/stylist-feedback', (req, res) => {
       works: 'Learning saved: boosting similar outfit logic. The board itself is not saved unless you click Save board.',
       almost: 'Learning saved: treating this as close but not fully solved.',
       not_me: 'Learning saved: reducing this direction for future suggestions.',
+      bad_occasion: 'Learning saved: reducing this formula for this occasion.',
+      fit_issue: 'Learning saved: treating this as a fit-risk combination.',
       too_safe: 'Learning saved: reducing safe/over-balanced styling.',
       too_generic: 'Learning saved: reducing generic outfit logic.',
       too_soft: 'Learning saved: reducing excessive softness.',
@@ -5014,6 +5057,7 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
       .filter(Boolean)
     const confirmedOutfitsText = getConfirmedOutfitMemory(10)
     const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
+    const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(28)
     const globalSavedBoardText = getSavedBoardMemory(null, null, 16)
     const calibrationMemoryText = getCalibrationMemoryForStylist(32)
     const requireShoes = allPieces.some(p => wardrobeCategoryGroup(p) === 'shoes')
@@ -5030,6 +5074,8 @@ ${confirmedOutfitsText}` : '',
 ${globalSavedBoardText}` : '',
       calibrationMemoryText ? `Calibration Library memory. Higher authority than broad style theory:
 ${calibrationMemoryText}` : '',
+      wholeWardrobeFeedbackText ? `Whole-wardrobe outfit feedback. This is direct ranking/correction memory for this feature:
+${wholeWardrobeFeedbackText}` : '',
       globalFeedbackText ? `General saved stylist feedback memory:
 ${globalFeedbackText}` : ''
     ].filter(Boolean).join('\n\n')
