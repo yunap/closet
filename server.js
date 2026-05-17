@@ -1868,6 +1868,107 @@ function candidateObjectFromPieces(pieces, index, options) {
   }
 }
 
+function wholeWardrobeCandidateAxes(candidate = {}) {
+  const pieces = Array.isArray(candidate.pieces) ? candidate.pieces : []
+  const outfit = { pieces }
+  const top = wholeWardrobePieceByGroup(outfit, 'top')
+  const bottom = wholeWardrobePieceByGroup(outfit, 'bottom')
+  const shoe = wholeWardrobePieceByGroup(outfit, 'shoes')
+  const text = pieces.map(pieceTextBlob).join(' ').toLowerCase()
+  return {
+    topId: top ? Number(top.id) : null,
+    bottomId: bottom ? Number(bottom.id) : null,
+    shoeId: shoe ? Number(shoe.id) : null,
+    formula: wholeWardrobeFormulaFamily(outfit, pieces),
+    silhouette: wholeWardrobeSilhouetteFromPieces(outfit),
+    grounding: wholeWardrobeGroundingStrategy(outfit),
+    shoeShape: wholeWardrobeShoeShape(outfit),
+    rhythm: wholeWardrobeVisualRhythm(outfit),
+    hasDress: pieces.some(p => wardrobeCategoryGroup(p) === 'dress'),
+    hasNonGraphicTop: Boolean(top && !/\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(pieceTextBlob(top))),
+    hasSoftTexture: /\b(crochet|gauze|gauzy|soft|cashmere|drape|drapey|silk|ruffle|fluid)\b/.test(text),
+    hasTonalDark: /\b(black|charcoal|espresso|chocolate|deep navy|navy)\b/.test(text) && !/\b(floral|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(text)
+  }
+}
+
+function selectDiverseWholeWardrobeCandidates(candidates = [], limit = 60, options = {}) {
+  const selected = []
+  const pool = [...candidates]
+  const useCount = {
+    top: new Map(),
+    bottom: new Map(),
+    shoe: new Map(),
+    formula: new Map(),
+    silhouette: new Map(),
+    grounding: new Map(),
+    shoeShape: new Map(),
+    rhythm: new Map()
+  }
+  const count = (map, key) => key == null ? 0 : (map.get(key) || 0)
+  const bump = (map, key) => {
+    if (key != null) map.set(key, (map.get(key) || 0) + 1)
+  }
+  const selectedHas = predicate => selected.some(candidate => predicate(wholeWardrobeCandidateAxes(candidate)))
+
+  while (pool.length && selected.length < limit) {
+    let bestIndex = 0
+    let bestScore = -Infinity
+    for (let i = 0; i < pool.length; i += 1) {
+      const candidate = pool[i]
+      const axes = wholeWardrobeCandidateAxes(candidate)
+      let score = Number(candidate.score ?? candidate.localScore) || 0
+
+      if (!count(useCount.formula, axes.formula)) score += 22
+      if (!count(useCount.silhouette, axes.silhouette)) score += 16
+      if (!count(useCount.grounding, axes.grounding)) score += 12
+      if (!count(useCount.shoeShape, axes.shoeShape)) score += 10
+      if (!count(useCount.rhythm, axes.rhythm)) score += 10
+      if (axes.topId && !count(useCount.top, axes.topId)) score += 9
+      if (axes.bottomId && !count(useCount.bottom, axes.bottomId)) score += 9
+      if (axes.hasDress && !selectedHas(a => a.hasDress)) score += 24
+      if (axes.hasNonGraphicTop && !selectedHas(a => a.hasNonGraphicTop)) score += 16
+      if (axes.hasSoftTexture && !selectedHas(a => a.hasSoftTexture)) score += 12
+      if (axes.hasTonalDark && !selectedHas(a => a.hasTonalDark)) score += 12
+
+      score -= count(useCount.top, axes.topId) * 46
+      score -= count(useCount.bottom, axes.bottomId) * 34
+      score -= count(useCount.shoe, axes.shoeId) * 14
+      score -= count(useCount.formula, axes.formula) * 44
+      score -= count(useCount.silhouette, axes.silhouette) * 24
+      score -= count(useCount.grounding, axes.grounding) * 14
+      score -= count(useCount.shoeShape, axes.shoeShape) * 12
+      score -= count(useCount.rhythm, axes.rhythm) * 12
+
+      if (score > bestScore) {
+        bestScore = score
+        bestIndex = i
+      }
+    }
+
+    const [chosen] = pool.splice(bestIndex, 1)
+    const axes = wholeWardrobeCandidateAxes(chosen)
+    selected.push(chosen)
+    bump(useCount.top, axes.topId)
+    bump(useCount.bottom, axes.bottomId)
+    bump(useCount.shoe, axes.shoeId)
+    bump(useCount.formula, axes.formula)
+    bump(useCount.silhouette, axes.silhouette)
+    bump(useCount.grounding, axes.grounding)
+    bump(useCount.shoeShape, axes.shoeShape)
+    bump(useCount.rhythm, axes.rhythm)
+  }
+
+  return selected
+}
+
+function wholeWardrobeCandidateFormulaCounts(candidates = []) {
+  return candidates.reduce((counts, candidate) => {
+    const formula = wholeWardrobeCandidateAxes(candidate).formula || 'unknown'
+    counts[formula] = (counts[formula] || 0) + 1
+    return counts
+  }, {})
+}
+
 function wholeWardrobeCandidateText(candidates = []) {
   return candidates.map((candidate, index) => [
     `${index + 1}. ${candidate.candidateId} | local score ${candidate.localScore}`,
@@ -1913,7 +2014,7 @@ function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
   }
 
   const ranked = candidates.sort((a, b) => b.score - a.score)
-  const chosen = ranked.slice(0, 48)
+  const chosen = selectDiverseWholeWardrobeCandidates(ranked, 60, options)
   const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
   const exploratory = ranked.find(candidate => exploratoryFamilies.has(inferOutfitArchetype({ pieces: candidate.pieces }, candidate.pieces, options.occasion).formulaFamily))
   if (exploratory && chosen.length && !chosen.some(candidate => candidate.key === exploratory.key)) chosen[chosen.length - 1] = exploratory
@@ -2906,10 +3007,11 @@ async function rankWholeWardrobeCandidatesWithVision({ candidates = [], candidat
   const candidatesWithPhotos = candidates.filter(candidate =>
     fullPiecesForCandidate(candidate, candidatePieces).some(piece => piece.photo || piece.worn_photo)
   )
-  const reviewCandidates = (candidatesWithPhotos.length >= 6 ? candidatesWithPhotos : candidates).slice(0, 14)
+  const reviewSource = candidatesWithPhotos.length >= 6 ? candidatesWithPhotos : candidates
+  const reviewCandidates = selectDiverseWholeWardrobeCandidates(reviewSource, 18, { occasion })
   if (!reviewCandidates.length) return null
 
-  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 14)
+  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 18)
   const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
   const raw = await askStylist({
     system: `You are Yuna's visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize Yuna's known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`,
@@ -4896,6 +4998,7 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
     let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode })
+    const candidateFormulaCounts = wholeWardrobeCandidateFormulaCounts(candidates)
     let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
     const candidatePieces = candidatePieceIds
       .map(id => allPieces.find(p => Number(p.id) === Number(id)))
@@ -4935,6 +5038,7 @@ ${globalFeedbackText}` : ''
         visualCriticDebug = {
           reviewedCandidateIds: visualRanked.reviewedCandidateIds,
           rankedCandidateIds: visualRanked.rankedCandidateIds,
+          reviewedFormulaCounts: wholeWardrobeCandidateFormulaCounts(visualRanked.candidates.filter(candidate => visualRanked.reviewedCandidateIds.includes(candidate.candidateId))),
           visualLearning: visualRanked.visualLearning || '',
           rejectedCandidateIds: visualRanked.visualRejected || []
         }
@@ -5027,6 +5131,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       pipeline: 'whole_wardrobe_composer_evaluator',
       debug: {
         candidateCount: candidates.length,
+        candidateFormulaCounts,
         suppressedPieceCount: suppressedPieces.length,
         suppressedPieces,
         visualCritic: visualCriticDebug,
