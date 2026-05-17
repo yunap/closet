@@ -551,6 +551,8 @@ function feedbackWeight(feedbackType) {
   const weights = {
     signature: 38,
     works: 22,
+    good_formula: 14,
+    good_pieces: 16,
     almost: 4,
     not_me: -32,
     too_safe: -22,
@@ -1037,6 +1039,7 @@ function buildWholeWardrobeFeedbackInfluence(limit = 120) {
     combination: new Map(),
     formula: new Map(),
     occasionFormula: new Map(),
+    pieceFormula: new Map(),
     rowsUsed: 0
   }
   const add = (map, key, value) => {
@@ -1059,16 +1062,25 @@ function buildWholeWardrobeFeedbackInfluence(limit = 120) {
       const pieceIds = [...new Set((payload.pieceIds || outfit.pieceIds || collectPieceIdsFromFeedbackPayload(row.payload))
         .map(Number)
         .filter(Boolean))]
+      const focusedPieceId = Number(payload.pieceId)
       const formula = payload.formulaFamily || outfit.formulaFamily || ''
       const occasion = payload.occasion || outfit.bestFor || ''
       const signedWeight = weight + (row.is_gold ? Math.sign(weight) * 18 : 0)
 
-      if (pieceIds.length) {
+      if (Number.isFinite(focusedPieceId) && focusedPieceId > 0) {
+        const focusedWeight = row.feedback_type === 'wrong_item_read' || row.feedback_type === 'fit_issue'
+          ? Math.round(signedWeight * 1.35)
+          : Math.round(signedWeight * 0.9)
+        add(influence.piece, focusedPieceId, focusedWeight)
+        if (formula) add(influence.pieceFormula, `${focusedPieceId}||${formula}`, Math.round(focusedWeight * 0.8))
+      } else if (pieceIds.length) {
         const comboKey = pieceIds.slice().sort((a, b) => a - b).join('|')
         add(influence.combination, comboKey, Math.round(signedWeight * 1.15))
-        for (const id of pieceIds) add(influence.piece, id, Math.round(signedWeight * 0.35))
+        const pieceMultiplier = row.feedback_type === 'good_formula' ? 0.12 : (row.feedback_type === 'good_pieces' ? 0.55 : 0.35)
+        for (const id of pieceIds) add(influence.piece, id, Math.round(signedWeight * pieceMultiplier))
       }
-      add(influence.formula, formula, Math.round(signedWeight * 0.45))
+      const formulaMultiplier = row.feedback_type === 'good_formula' ? 0.9 : (row.feedback_type === 'good_pieces' ? 0.2 : 0.45)
+      add(influence.formula, formula, Math.round(signedWeight * formulaMultiplier))
       if (occasion && formula) add(influence.occasionFormula, `${occasion}||${formula}`, Math.round(signedWeight * 0.65))
       influence.rowsUsed += 1
     }
@@ -1095,6 +1107,8 @@ function wholeWardrobeFeedbackInfluenceForCandidate(pieces = [], options = {}) {
   addScore(influence.combination.get(comboKey), 'whole-wardrobe exact-combination feedback')
   addScore(influence.formula.get(formula), `whole-wardrobe ${formula} feedback`)
   addScore(influence.occasionFormula.get(occasionFormula), `whole-wardrobe ${options.occasion || 'occasion'} formula feedback`)
+  const pieceFormulaScore = ids.reduce((sum, id) => sum + (influence.pieceFormula.get(`${id}||${formula}`) || 0), 0)
+  addScore(Math.max(-55, Math.min(35, pieceFormulaScore)), 'whole-wardrobe piece/formula feedback')
   const pieceScore = ids.reduce((sum, id) => sum + (influence.piece.get(id) || 0), 0)
   addScore(Math.max(-45, Math.min(30, Math.round(pieceScore / Math.max(1, ids.length)))), 'whole-wardrobe piece feedback')
 
@@ -4382,6 +4396,8 @@ app.post('/api/stylist-feedback', (req, res) => {
     const learningMessages = {
       signature: 'Learning saved: boosting this as a signature direction. The board itself is not saved unless you click Save board.',
       works: 'Learning saved: boosting similar outfit logic. The board itself is not saved unless you click Save board.',
+      good_formula: 'Learning saved: boosting this formula without overcommitting to every exact piece.',
+      good_pieces: 'Learning saved: these pieces look promising together.',
       almost: 'Learning saved: treating this as close but not fully solved.',
       not_me: 'Learning saved: reducing this direction for future suggestions.',
       bad_occasion: 'Learning saved: reducing this formula for this occasion.',

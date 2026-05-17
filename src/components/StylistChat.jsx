@@ -42,6 +42,8 @@ const GENERATED_BOARD_FEEDBACK_LABELS = [
 
 const WHOLE_WARDROBE_FEEDBACK_LABELS = [
   ['works', 'Use more like this'],
+  ['good_formula', 'Good formula'],
+  ['good_pieces', 'Good pieces'],
   ['not_me', 'Not me'],
   ['wrong_item_read', 'Bad piece choice'],
   ['bad_occasion', 'Bad occasion'],
@@ -503,6 +505,41 @@ export default function AskClaude({
                           )}
                         </div>
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
+                        {message?.wholeWardrobe && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const key = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`
+                              toggleStylistFeedback({
+                                key,
+                                feedbackType: 'wrong_item_read',
+                                targetType: 'whole_wardrobe_outfit',
+                                label: `Bad piece: ${piece?.name || 'Garment'}`,
+                                note: `${piece?.name || 'This piece'} was the bad piece choice in ${outfit.label || `outfit ${idx + 1}`}.`,
+                                payload: {
+                                  outfit,
+                                  messageIndex,
+                                  outfitIndex: idx,
+                                  pieceId: piece?.id || null,
+                                  pieceName: piece?.name || '',
+                                  pieceCategory: piece?.category || '',
+                                  pieceIds: outfit.pieceIds || [],
+                                  pieces: outfit.pieces || [],
+                                  formulaFamily: outfit.formulaFamily || '',
+                                  archetypeId: outfit.archetypeId || '',
+                                  occasion: wardrobeOutfitOccasion,
+                                  season: wardrobeOutfitSeason,
+                                  mood: wardrobeOutfitMood,
+                                },
+                                contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                              })
+                            }}
+                            style={{ fontSize: 9, lineHeight: 1, color: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--donate)' : 'var(--text-light)', padding: '3px 4px', borderRadius: 8, border: '1px solid var(--border)', background: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
+                            title="Mark this specific garment as the bad piece choice"
+                          >
+                            {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ bad' : 'bad piece'}
+                          </button>
+                        )}
                       </div>
                     )
                   })}
@@ -664,6 +701,8 @@ export default function AskClaude({
     const copy = {
       signature: 'Learning saved: boosting this as a signature direction.',
       works: 'Learning saved: boosting similar outfit logic.',
+      good_formula: 'Learning saved: boosting this formula without overcommitting to every exact piece.',
+      good_pieces: 'Learning saved: these pieces look promising together.',
       almost: 'Learning saved: treating this as close but not fully solved.',
       not_me: 'Learning saved: reducing this direction for future suggestions.',
       bad_occasion: 'Learning saved: reducing this formula for this occasion.',
