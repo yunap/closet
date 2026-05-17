@@ -95,6 +95,9 @@ export default function AskClaude({
   const [editorialVisualMode, setEditorialVisualMode] = useState(false)
   const [generateOccasion, setGenerateOccasion] = useState('casual')
   const [generateSeason, setGenerateSeason] = useState('current season')
+  const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
+  const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
+  const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
   const [savedIndices, setSavedIndices] = useState(new Set())
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
   const [boardFeedbackLabels, setBoardFeedbackLabels] = useState({})
@@ -390,6 +393,7 @@ export default function AskClaude({
   }
 
   const getCompactOutfitIntro = (message, hasBoards = false) => {
+    if (message?.wholeWardrobe) return 'Strongest whole-wardrobe outfits for right now. Text only for this phase.'
     const text = String(message?.text || '')
     const titleMatch = text.match(/Generated outfit ideas for:\*\*\s*([^\n]+)/i)
     const itemName = titleMatch ? titleMatch[1].replace(/\*/g, '').trim() : activeContext?.name
@@ -437,11 +441,12 @@ export default function AskClaude({
 
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-        {outfits.slice(0, 4).map((outfit, idx) => {
+        {outfits.slice(0, message?.wholeWardrobe ? 5 : 4).map((outfit, idx) => {
           const strength = strengthLabel(outfit.strength, idx)
           const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean) : []
           const boardKey = `${messageIndex}:${idx}`
           const isPreview = Boolean(outfit.previewOnly)
+          const isTextOnly = Boolean(outfit.textOnly || message?.textOnly || message?.wholeWardrobe)
           const hasRendered = Boolean(boardResults[boardKey]?.length)
           const isRendering = boardLoadingIndex === boardKey
 
@@ -480,7 +485,7 @@ export default function AskClaude({
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 5 }}><strong>Watch:</strong> {outfit.watchFor}</div>
               )}
 
-              {activeContext?.type === 'piece' && (
+              {activeContext?.type === 'piece' && !isTextOnly && (
                 <div style={{ marginTop: 9, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                   {isPreview ? (
                     // Preview mode: render this single direction on demand
@@ -712,6 +717,46 @@ export default function AskClaude({
       addToHistory('assistant', errText)
     } finally {
       setBoardLoadingIndex(null)
+    }
+  }
+
+  const generateWholeWardrobeOutfits = async () => {
+    if (loading) return
+    const occasion = wardrobeOutfitOccasion || 'casual'
+    const season = wardrobeOutfitSeason || 'current season'
+    const mood = wardrobeOutfitMood || 'artistic minimalist'
+    const userText = `Generate 5 outfits from my wardrobe for ${occasion}, ${season}${mood ? `, ${mood}` : ''}.`
+
+    setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Whole wardrobe' }])
+    addToHistory('user', userText)
+    setLoading(true)
+
+    try {
+      const res = await fetch('/api/ai/generate-wardrobe-outfits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ occasion, season, mood, limit: 5 })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not generate wardrobe outfits')
+      const replyText = data.feedback || 'Here are the strongest wardrobe outfits I found.'
+      const replyStructuredOutfits = Array.isArray(data.structuredOutfits)
+        ? data.structuredOutfits.map(outfit => ({ ...outfit, textOnly: true, wholeWardrobe: true }))
+        : null
+      setMessages(m => [...m, {
+        role: 'assistant',
+        text: replyText,
+        structuredOutfits: replyStructuredOutfits,
+        wholeWardrobe: true,
+        textOnly: true,
+      }])
+      addToHistory('assistant', replyText)
+    } catch (err) {
+      const errText = `Error: ${err.message}`
+      setMessages(m => [...m, { role: 'assistant', text: errText }])
+      addToHistory('assistant', errText)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -1073,6 +1118,39 @@ export default function AskClaude({
             <div style={{ fontSize: 11, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Try asking...</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {SUGGESTIONS.map(s => <button key={s} onClick={() => setInput(s)} style={{ textAlign: 'left', padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer' }}>{s}</button>)}
+            </div>
+            <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Whole wardrobe</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Text-only outfit generation. No image render.</div>
+                </div>
+                <button
+                  onClick={generateWholeWardrobeOutfits}
+                  disabled={loading}
+                  style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
+                >
+                  {loading ? 'Generating...' : 'Generate 5 outfits from my wardrobe'}
+                </button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
+                <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+                  <option value="casual">Casual</option>
+                  <option value="city">City</option>
+                  <option value="smart casual">Smart casual</option>
+                  <option value="evening">Evening</option>
+                  <option value="gallery / art event">Gallery / art event</option>
+                  <option value="travel">Travel</option>
+                </select>
+                <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+                  <option value="current season">Current season</option>
+                  <option value="spring">Spring</option>
+                  <option value="summer">Summer</option>
+                  <option value="fall">Fall</option>
+                  <option value="winter">Winter</option>
+                </select>
+                <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
+              </div>
             </div>
           </div>
         )}
