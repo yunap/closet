@@ -1982,7 +1982,7 @@ function candidateObjectFromPieces(pieces, index, options) {
     candidateId: `cand-${index + 1}`,
     label: pieces.map(p => p.name).join(' + '),
     pieceIds: pieces.map(p => Number(p.id)).filter(Boolean),
-    pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p) })),
+    pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
     localScore: scored.score,
     localReasons: scored.reasons,
   }
@@ -2169,7 +2169,7 @@ function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = []) {
     localScore: Number(outfit?.localScore) || 0,
     archetypeId: outfit?.archetypeId || null,
     formulaFamily: outfit?.formulaFamily || null,
-    pieces: ownedPieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p) }))
+    pieces: ownedPieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null }))
   }
 }
 

@@ -488,6 +488,25 @@ export default function AskClaude({
                   <strong>Pieces:</strong> {pieces.join(' + ')}
                 </div>
               )}
+              {message?.wholeWardrobe && Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 8 }}>
+                  {outfit.pieces.map((piece, pieceIdx) => {
+                    const photo = piece?.worn_photo || piece?.photo
+                    return (
+                      <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} style={{ width: 58, display: 'grid', gap: 4 }}>
+                        <div style={{ width: 58, height: 58, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {photo ? (
+                            <img src={`/uploads/${photo}`} alt={piece?.name || 'Garment'} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                          ) : (
+                            <span style={{ fontSize: 9, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.1, padding: 4 }}>{piece?.category || 'piece'}</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               {outfit.reason && <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 7 }}>{outfit.reason}</div>}
               {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 5 }}><strong>Watch:</strong> {outfit.watchFor}</div>
