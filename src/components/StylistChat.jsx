@@ -96,6 +96,8 @@ export default function AskClaude({
   const [pendingOutfit, setPendingOutfit] = useState(null)
   const [pendingPiece, setPendingPiece] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [loadingStatus, setLoadingStatus] = useState('')
+  const [imageStatusByKey, setImageStatusByKey] = useState({})
   const [pieces, setPieces] = useState([])
   const [outfits, setOutfits] = useState([])
   const [compareOutfitId, setCompareOutfitId] = useState('')
@@ -147,6 +149,21 @@ export default function AskClaude({
   const [fileInputKey, setFileInputKey] = useState(0)
   const bottomRef = useRef(null)
   const textRef = useRef(null)
+  const loadingTimersRef = useRef([])
+
+  const clearLoadingTimers = () => {
+    loadingTimersRef.current.forEach(clearTimeout)
+    loadingTimersRef.current = []
+  }
+
+  const startStatusSequence = (steps, setter = setLoadingStatus) => {
+    clearLoadingTimers()
+    if (!Array.isArray(steps) || !steps.length) return
+    setter(steps[0].text)
+    loadingTimersRef.current = steps.slice(1).map(step => setTimeout(() => setter(step.text), step.ms))
+  }
+
+  useEffect(() => () => clearLoadingTimers(), [])
 
   useEffect(() => {
     fetch('/api/pieces').then(r => r.json()).then(setPieces)
@@ -559,6 +576,7 @@ export default function AskClaude({
                   >
                     {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate image' : 'Generate image')}
                   </button>
+                  {imageStatusByKey[boardKey] && <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{imageStatusByKey[boardKey]}</span>}
                   {WHOLE_WARDROBE_FEEDBACK_LABELS.map(([type, label]) => {
                     const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
                     const isSaved = feedbackSaved.has(key)
@@ -814,7 +832,18 @@ export default function AskClaude({
       ? outfit.pieceIds
       : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(p => p?.id).filter(Boolean) : [])
     if (!ids.length) return
+    let statusTimers = []
+    const clearImageTimers = () => {
+      statusTimers.forEach(clearTimeout)
+      statusTimers = []
+    }
     setBoardLoadingIndex(resultKey)
+    setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Loading garment reference photos...' }))
+    statusTimers = [
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending the outfit pieces to GPT-4o...' })), 4000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Rendering the outfit image. This can take a minute.' })), 14000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Still rendering. Image generation is the slow step.' })), 45000),
+    ]
     try {
       const res = await fetch('/api/ai/generate-wardrobe-outfit-image', {
         method: 'POST',
@@ -834,6 +863,12 @@ export default function AskClaude({
     } catch (err) {
       setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
     } finally {
+      clearImageTimers()
+      setImageStatusByKey(prev => {
+        const next = { ...prev }
+        delete next[resultKey]
+        return next
+      })
       setBoardLoadingIndex(null)
     }
   }
@@ -901,6 +936,12 @@ export default function AskClaude({
     setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Whole wardrobe' }])
     addToHistory('user', userText)
     setLoading(true)
+    startStatusSequence([
+      { ms: 0, text: 'Building outfit candidates from your wardrobe...' },
+      { ms: 5000, text: 'Checking the visual mix from garment photos...' },
+      { ms: 18000, text: 'Composing the strongest set and applying your feedback...' },
+      { ms: 36000, text: 'Still working. The visual critic can take a little while.' },
+    ])
 
     try {
       const res = await fetch('/api/ai/generate-wardrobe-outfits', {
@@ -927,6 +968,8 @@ export default function AskClaude({
       setMessages(m => [...m, { role: 'assistant', text: errText }])
       addToHistory('assistant', errText)
     } finally {
+      clearLoadingTimers()
+      setLoadingStatus('')
       setLoading(false)
     }
   }
@@ -1472,6 +1515,7 @@ export default function AskClaude({
           {loading && (
             <div className="ai-message assistant">
               <div className="typing-dots"><span /><span /><span /></div>
+              {loadingStatus && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>{loadingStatus}</div>}
             </div>
           )}
         </div>
