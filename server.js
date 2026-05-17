@@ -2002,19 +2002,60 @@ function wholeWardrobeVisualRhythm(outfit = {}) {
 
 function wholeWardrobeHeroPieceId(outfit = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  const expressive = pieces.find(p => /\b(floral|print|graphic|stripe|pattern|abstract|bold|textured|lace|ruffle|architectural)\b/.test(`${p.name || ''} ${p.category || ''}`.toLowerCase()))
+  const expressive = [...pieces]
+    .filter(p => wholeWardrobeExpressiveTerritoryScore(p) >= 6)
+    .sort((a, b) => wholeWardrobeExpressiveTerritoryScore(b) - wholeWardrobeExpressiveTerritoryScore(a))[0]
   const topOrDress = pieces.find(p => ['top', 'dress'].includes(wardrobeCategoryGroup(p)))
   return Number((expressive || topOrDress || pieces[0])?.id) || null
 }
 
-function wholeWardrobePieceDominance(piece = {}) {
+function wholeWardrobeExpressiveTerritoryScore(piece = {}) {
+  const traits = wholeWardrobePieceTraits(piece)
+  const text = traits.text
+  let score = 0
+  if (/\b(floral|tapestry|abstract|bold print|large print|patterned|multi-color|multicolor)\b/.test(text)) score += 8
+  else if (/\b(print|graphic|pattern)\b/.test(text)) score += 5
+  if (/\b(stripe|striped)\b/.test(text)) score += traits.compact ? 2 : 4
+  if (/\b(ruffle|ruffled|pleat|pleated|drape|draped|flowing|fluid|swishy|silk|chiffon|lace|crochet)\b/.test(text)) score += 6
+  if (/\b(wide|wide-leg|flare|bootcut|midi|maxi|full|volume|voluminous|palazzo)\b/.test(text)) score += 5
+  if (traits.soft && traits.graphic) score += 3
+  if (/\b(black white|high contrast|contrast|bright|pink|red|orange|yellow|cobalt|green)\b/.test(text)) score += 3
+  if (traits.group === 'dress') score += 6
+  if (traits.group === 'bottom') score += 4
+  if (traits.group === 'top' && traits.compact) score -= 3
+  if (traits.group === 'shoes') score -= 6
+  return score
+}
+
+function wholeWardrobeSharpenerScore(piece = {}) {
+  const traits = wholeWardrobePieceTraits(piece)
+  const text = traits.text
+  let score = 0
+  if (traits.compact) score += 5
+  if (/\b(stripe|striped|black white|crisp|sharp|fitted|sleeveless|tank|shell)\b/.test(text)) score += 5
+  if (traits.structured) score += 3
+  if (traits.group === 'shoes' && traits.sharpShoe) score += 6
+  if (wholeWardrobeExpressiveTerritoryScore(piece) >= 10) score -= 4
+  return score
+}
+
+function wholeWardrobeAnchorScore(piece = {}) {
   const traits = wholeWardrobePieceTraits(piece)
   let score = 0
-  if (traits.statement) score += 3
-  if (traits.graphic) score += 3
-  if (traits.soft && /\b(crochet|lace|gauzy|ruffle)\b/.test(traits.text)) score += 2
-  if (traits.group === 'top' || traits.group === 'dress') score += 1
-  if (traits.dark && traits.column) score += 1
+  if (traits.dark && traits.column) score += 8
+  if (traits.structured) score += 5
+  if (traits.sharpShoe) score += 5
+  if (traits.group === 'bottom') score += 2
+  if (wholeWardrobeExpressiveTerritoryScore(piece) >= 10) score -= 5
+  return score
+}
+
+function wholeWardrobePieceDominance(piece = {}) {
+  const traits = wholeWardrobePieceTraits(piece)
+  const expressiveScore = wholeWardrobeExpressiveTerritoryScore(piece)
+  let score = expressiveScore
+  if (traits.group === 'top' && traits.compact && /\b(stripe|striped)\b/.test(traits.text) && expressiveScore < 8) score -= 3
+  if (traits.group === 'dress') score += 2
   return score >= 5 ? 'statement' : score >= 3 ? 'anchor' : 'support'
 }
 
@@ -2058,7 +2099,8 @@ function wholeWardrobeInteractionRelationshipSignature(outfit = {}) {
     `stabilizer:${id(roles.stabilizerPiece)}`,
     `grounding:${id(roles.groundingPiece)}`,
     `structure:${id(roles.structureProvider)}`,
-    `softener:${id(roles.textureSoftener)}`
+    `softener:${id(roles.textureSoftener)}`,
+    `sharpener:${id(roles.visualSharpener)}`
   ].join('|')
 }
 
@@ -2188,27 +2230,37 @@ function firstDistinctPiece(pieces = [], predicate, excluded = []) {
 }
 
 function assignWholeWardrobeInteractionRoles(pieces = []) {
-  const sortedByDominance = [...pieces].sort((a, b) => {
-    const dominanceScore = (piece) => ({ statement: 3, anchor: 2, support: 1 }[wholeWardrobePieceDominance(piece)] || 0)
-    return dominanceScore(b) - dominanceScore(a)
-  })
+  const sortedByFocalTerritory = [...pieces].sort((a, b) => wholeWardrobeExpressiveTerritoryScore(b) - wholeWardrobeExpressiveTerritoryScore(a))
   const groundingPiece = firstDistinctPiece(pieces, (_piece, traits) => traits.group === 'shoes')
-  const expressivePiece = firstDistinctPiece(sortedByDominance, (_piece, traits) => traits.statement && traits.group !== 'shoes')
-  const visualAnchor = firstDistinctPiece(pieces, (_piece, traits) => traits.dark && traits.column && traits.group !== 'shoes', [expressivePiece])
+  const expressivePiece = firstDistinctPiece(sortedByFocalTerritory, (piece, traits) => {
+    if (traits.group === 'shoes') return false
+    const score = wholeWardrobeExpressiveTerritoryScore(piece)
+    return score >= 6 && !(traits.group === 'top' && traits.compact && /\b(stripe|striped)\b/.test(traits.text) && score < 9)
+  })
+  const visualSharpener = firstDistinctPiece(
+    [...pieces].sort((a, b) => wholeWardrobeSharpenerScore(b) - wholeWardrobeSharpenerScore(a)),
+    (piece) => wholeWardrobeSharpenerScore(piece) >= 5,
+    [expressivePiece]
+  )
+  const visualAnchor = firstDistinctPiece(
+    [...pieces].sort((a, b) => wholeWardrobeAnchorScore(b) - wholeWardrobeAnchorScore(a)),
+    (piece) => wholeWardrobeAnchorScore(piece) >= 5 && wardrobeCategoryGroup(piece) !== 'shoes',
+    [expressivePiece]
+  )
   const structureProvider = firstDistinctPiece(pieces, (_piece, traits) => traits.structured || traits.sharpShoe, [expressivePiece])
   const textureSoftener = firstDistinctPiece(pieces, (_piece, traits) => traits.soft, [expressivePiece, structureProvider, groundingPiece])
   const stabilizerPiece = firstDistinctPiece(
     pieces,
     (_piece, traits) => traits.dark || traits.column || traits.structured || traits.sharpShoe,
     [expressivePiece]
-  ) || visualAnchor || structureProvider || groundingPiece
-  const dominantPiece = expressivePiece || visualAnchor || firstDistinctPiece(sortedByDominance, () => true, [groundingPiece])
+  ) || visualAnchor || visualSharpener || structureProvider || groundingPiece
+  const dominantPiece = expressivePiece || visualAnchor || firstDistinctPiece(sortedByFocalTerritory, () => true, [groundingPiece])
   const supportPiece = firstDistinctPiece(
     pieces,
     (piece) => Number(piece.id) !== Number(dominantPiece?.id),
     [dominantPiece]
   )
-  const expressiveCount = pieces.filter(piece => wholeWardrobePieceTraits(piece).statement && wardrobeCategoryGroup(piece) !== 'shoes').length
+  const expressiveCount = pieces.filter(piece => wholeWardrobeExpressiveTerritoryScore(piece) >= 6 && wardrobeCategoryGroup(piece) !== 'shoes').length
   return {
     dominantPiece,
     supportPiece,
@@ -2218,6 +2270,7 @@ function assignWholeWardrobeInteractionRoles(pieces = []) {
     textureSoftener,
     structureProvider,
     visualAnchor,
+    visualSharpener,
     expressiveCount
   }
 }
@@ -2229,10 +2282,15 @@ function describeRoleInteraction(roles = {}) {
   const softener = roles.textureSoftener
   const structure = roles.structureProvider
   const anchor = roles.visualAnchor
+  const sharpener = roles.visualSharpener
+  if (differentPieces(expressive, sharpener) && wardrobeCategoryGroup(expressive) === 'bottom') {
+    return `${expressive.name} carries most of the visual movement, while ${sharpener.name} keeps the upper half sharp enough to prevent the outfit from drifting overly soft.`
+  }
   if (differentPieces(expressive, stabilizer)) {
     if (wardrobeCategoryGroup(expressive) === 'bottom') return `${expressive.name} acts as the expressive piece, while ${stabilizer.name} keeps the support quiet enough to control the print energy.`
     return `${expressive.name} acts as the expressive piece, while ${stabilizer.name} absorbs enough visual noise to keep it controlled.`
   }
+  if (differentPieces(expressive, sharpener)) return `${sharpener.name} sharpens the outline without taking the focal role away from ${expressive.name}.`
   if (differentPieces(softener, grounding)) return `${softener.name} softens the outfit, while ${grounding.name} keeps that softness from drifting overly romantic or beachy.`
   if (differentPieces(expressive, structure)) return `${structure.name} gives ${expressive.name} a cleaner frame.`
   if (differentPieces(anchor, grounding)) return `${anchor.name} sets the visual anchor, and ${grounding.name} makes the finish intentional.`
@@ -2653,6 +2711,7 @@ function validateWholeWardrobeInteractionGraph(outfit = {}, candidatePieces = []
   const distinctPair = (a, b) => !a || !b || Number(a.id) !== Number(b.id)
   if (!distinctPair(roles.dominantPiece, roles.supportPiece)) problems.push('dominant/support self-reference')
   if (!distinctPair(roles.expressivePiece, roles.stabilizerPiece)) problems.push('expressive/stabilizer self-reference')
+  if (!distinctPair(roles.expressivePiece, roles.visualSharpener)) problems.push('expressive/sharpener self-reference')
   if (!distinctPair(roles.textureSoftener, roles.groundingPiece)) problems.push('softener/grounding self-reference')
   const hasStabilizer = Boolean(roles.stabilizerPiece || roles.groundingPiece || roles.visualAnchor || roles.structureProvider)
   if (!hasStabilizer) problems.push('no grounding or stabilizing piece')
