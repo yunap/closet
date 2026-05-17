@@ -108,6 +108,7 @@ export default function AskClaude({
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
   const [savedIndices, setSavedIndices] = useState(new Set())
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
+  const [feedbackIdsByKey, setFeedbackIdsByKey] = useState({})
   const [boardFeedbackLabels, setBoardFeedbackLabels] = useState({})
   const [boardLearningStatus, setBoardLearningStatus] = useState({})
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
@@ -520,7 +521,7 @@ export default function AskClaude({
                     return (
                       <button
                         key={key}
-                        onClick={() => saveStylistFeedback({
+                        onClick={() => toggleStylistFeedback({
                           key,
                           feedbackType: type,
                           targetType: 'whole_wardrobe_outfit',
@@ -540,8 +541,7 @@ export default function AskClaude({
                           },
                           contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
                         })}
-                        disabled={isSaved}
-                        style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}
+                        style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
                       >
                         {isSaved ? '✓ ' : ''}{label}
                       </button>
@@ -692,12 +692,33 @@ export default function AskClaude({
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || 'Could not save feedback')
     setFeedbackSaved(prev => new Set([...prev, key]))
+    if (data.id) setFeedbackIdsByKey(prev => ({ ...prev, [key]: data.id }))
     const bucket = feedbackBucketKey(targetType, payload)
     if (bucket) {
       setBoardFeedbackLabels(prev => { const existing = Array.isArray(prev[bucket]) ? prev[bucket] : []; return { ...prev, [bucket]: [...new Set([...existing, feedbackType])] } })
       setBoardLearningStatus(prev => ({ ...prev, [bucket]: data.learningMessage || feedbackLearningCopy(feedbackType) }))
     }
     loadLearningRows()
+  }
+
+  const toggleStylistFeedback = async (args) => {
+    if (feedbackSaved.has(args.key)) {
+      const id = feedbackIdsByKey[args.key]
+      if (id) await fetch(`/api/stylist-feedback/${id}`, { method: 'DELETE' })
+      setFeedbackSaved(prev => {
+        const next = new Set(prev)
+        next.delete(args.key)
+        return next
+      })
+      setFeedbackIdsByKey(prev => {
+        const next = { ...prev }
+        delete next[args.key]
+        return next
+      })
+      await loadLearningRows()
+      return
+    }
+    await saveStylistFeedback(args)
   }
 
   const saveGeneratedBoard = async ({ key, board, boardType = 'wardrobe', messageIndex = null, boardIndex = null }) => {
@@ -972,7 +993,7 @@ export default function AskClaude({
     setMessages([{ role: 'assistant', text: 'Starting fresh! What can I help you with?' }])
     setChatHistory([])
     setActiveContext(null)
-    setSavedIndices(new Set()); setFeedbackSaved(new Set()); setSavedBoardKeys(new Set())
+    setSavedIndices(new Set()); setFeedbackSaved(new Set()); setFeedbackIdsByKey({}); setSavedBoardKeys(new Set())
     setBoardResults({}); setEditorialVisualResults({})
     setBoardLoadingIndex(null); setLearningOpen(false); setLearningRows([])
     setCalibrationLibraryOpen(false)
