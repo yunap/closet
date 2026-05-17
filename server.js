@@ -1835,73 +1835,6 @@ function wholeWardrobeCandidateText(candidates = []) {
   ].filter(Boolean).join('\n')).join('\n\n')
 }
 
-function wholeWardrobeCandidatePieceByGroup(candidate = {}, group) {
-  return (Array.isArray(candidate.pieces) ? candidate.pieces : []).find(piece => wardrobeCategoryGroup(piece) === group) || null
-}
-
-function wholeWardrobeCandidateGarmentKey(candidate = {}) {
-  const top = wholeWardrobeCandidatePieceByGroup(candidate, 'top')
-  const dress = wholeWardrobeCandidatePieceByGroup(candidate, 'dress')
-  return top ? `top:${Number(top.id)}` : dress ? `dress:${Number(dress.id)}` : 'no-primary'
-}
-
-function wholeWardrobeCandidateDiversityScore(candidate = {}, selected = [], options = {}) {
-  const outfit = { pieces: candidate.pieces || [], pieceIds: candidate.pieces?.map(p => p.id) || [], localScore: candidate.score || candidate.localScore || 0 }
-  const dimensions = wholeWardrobeDiversityDimensions(outfit, options)
-  const selectedDimensions = selected.map(existing => wholeWardrobeDiversityDimensions({ pieces: existing.pieces || [] }, options))
-  const primaryKey = wholeWardrobeCandidateGarmentKey(candidate)
-  const bottom = wholeWardrobeCandidatePieceByGroup(candidate, 'bottom')
-  const shoe = wholeWardrobeCandidatePieceByGroup(candidate, 'shoes')
-  const primaryUse = selected.filter(existing => wholeWardrobeCandidateGarmentKey(existing) === primaryKey).length
-  const bottomUse = bottom ? selected.filter(existing => (existing.pieces || []).some(p => Number(p.id) === Number(bottom.id))).length : 0
-  const shoeUse = shoe ? selected.filter(existing => (existing.pieces || []).some(p => Number(p.id) === Number(shoe.id))).length : 0
-  let score = Number(candidate.score) || 0
-  const keys = ['upper', 'lower', 'grounding', 'expressiveLocation', 'texture', 'rhythm', 'archetype', 'color', 'movement']
-  for (const key of keys) {
-    const sameCount = selectedDimensions.filter(d => d[key] === dimensions[key]).length
-    score += sameCount ? -18 * sameCount : 14
-  }
-  if (primaryUse === 0) score += 38
-  if (primaryUse === 1) score -= 85
-  if (primaryUse >= 2) score -= 180
-  if (bottomUse === 0) score += 14
-  if (bottomUse >= 1) score -= 42 * bottomUse
-  if (shoeUse === 0) score += 8
-  if (shoeUse >= 2) score -= 22 * shoeUse
-  if (wholeWardrobeHasDress(outfit) && !selected.some(c => (c.pieces || []).some(p => wardrobeCategoryGroup(p) === 'dress'))) score += 36
-  if (wholeWardrobeHasNonGraphicTop(outfit) && !selected.some(c => wholeWardrobeHasNonGraphicTop({ pieces: c.pieces || [] }))) score += 24
-  if (dimensions.texture.includes('soft') && !selectedDimensions.some(d => String(d.texture).includes('soft'))) score += 20
-  if (dimensions.color === 'tonal dark' && !selectedDimensions.some(d => d.color === 'tonal dark')) score += 18
-  if (dimensions.archetype === 'compact_top_dark_column' && selectedDimensions.some(d => d.archetype === 'compact_top_dark_column')) score -= 100
-  return score
-}
-
-function selectDiverseWholeWardrobeCandidates(candidates = [], options = {}, limit = 64) {
-  const pool = [...candidates].sort((a, b) => b.score - a.score)
-  const selected = []
-  const seen = new Set()
-  const add = (candidate) => {
-    if (!candidate || seen.has(candidate.key) || selected.length >= limit) return false
-    selected.push(candidate)
-    seen.add(candidate.key)
-    return true
-  }
-  const bestWhere = (predicate) => pool.find(candidate => !seen.has(candidate.key) && predicate(candidate))
-  add(bestWhere(candidate => wholeWardrobeHasDress({ pieces: candidate.pieces })))
-  add(bestWhere(candidate => wholeWardrobeHasNonGraphicTop({ pieces: candidate.pieces })))
-  add(bestWhere(candidate => wholeWardrobeTextureStrategy({ pieces: candidate.pieces }).includes('soft')))
-  add(bestWhere(candidate => wholeWardrobeDominantColorStrategy({ pieces: candidate.pieces }) === 'tonal dark'))
-
-  while (selected.length < limit) {
-    const next = pool
-      .filter(candidate => !seen.has(candidate.key))
-      .sort((a, b) => wholeWardrobeCandidateDiversityScore(b, selected, options) - wholeWardrobeCandidateDiversityScore(a, selected, options))[0]
-    if (!next) break
-    add(next)
-  }
-  return selected
-}
-
 function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
   const bucket = wholeWardrobePieceBucket(allPieces)
   const candidates = []
@@ -1938,7 +1871,11 @@ function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
     for (const accessory of accessories.slice(0, 3)) addCandidate([...candidate.pieces, accessory])
   }
 
-  const chosen = selectDiverseWholeWardrobeCandidates(candidates, options, 64)
+  const ranked = candidates.sort((a, b) => b.score - a.score)
+  const chosen = ranked.slice(0, 48)
+  const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
+  const exploratory = ranked.find(candidate => exploratoryFamilies.has(inferOutfitArchetype({ pieces: candidate.pieces }, candidate.pieces, options.occasion).formulaFamily))
+  if (exploratory && chosen.length && !chosen.some(candidate => candidate.key === exploratory.key)) chosen[chosen.length - 1] = exploratory
   return chosen
     .map((candidate, index) => candidateObjectFromPieces(candidate.pieces, index, options))
 }
@@ -2006,25 +1943,13 @@ function wholeWardrobeSilhouetteFromPieces(outfit = {}) {
   const dress = wholeWardrobePieceByGroup(outfit, 'dress')
   const layer = wholeWardrobePieceByGroup(outfit, 'outerwear')
   const text = (Array.isArray(outfit.pieces) ? outfit.pieces : []).map(pieceNameBlob).join(' ')
-  const topText = top ? pieceNameBlob(top) : ''
-  const bottomText = bottom ? pieceNameBlob(bottom) : ''
-  if (dress) {
-    const dressBehavior = /\b(black|charcoal|navy|straight|column)\b/.test(pieceNameBlob(dress)) ? 'dark dress column'
-      : /\b(floral|print|pattern|ruffle|soft|drape)\b/.test(pieceNameBlob(dress)) ? 'expressive dress line'
-      : 'one-piece dress line'
-    return layer ? `${dressBehavior} under structured outer layer` : `${dressBehavior} with grounded shoe finish`
-  }
-  const upper = top && /\b(stripe|striped)\b/.test(topText) && /\b(sleeveless|tank|shell|fitted|compact)\b/.test(topText) ? 'sharp striped sleeveless upper'
-    : top && /\b(floral|print|graphic|pattern)\b/.test(topText) && /\b(sleeveless|tank|shell|fitted|compact)\b/.test(topText) ? 'compact graphic upper'
-    : top && /\b(sleeveless|fitted|tank|shell|compact|tee)\b/.test(topText) ? 'sharp compact upper'
-    : top && /\b(relaxed|oversized|loose|tunic|linen|sweater|knit)\b/.test(topText) ? 'relaxed upper shape'
-    : top && /\b(structured|crisp|tailored)\b/.test(topText) ? 'structured upper'
+  if (dress) return layer ? 'dress column with structured outer layer' : 'one-piece column with grounded shoe'
+  const upper = top && /\b(sleeveless|fitted|tank|shell|compact|tee)\b/.test(pieceNameBlob(top)) ? 'compact upper'
+    : top && /\b(relaxed|oversized|loose|tunic|linen|sweater|knit)\b/.test(pieceNameBlob(top)) ? 'relaxed upper'
     : top ? 'controlled upper'
     : 'upper line'
-  const lower = bottom && /\b(floral|print|pattern|tapestry)\b/.test(bottomText) && /\b(bootcut|flare|wide|flowing|soft)\b/.test(bottomText) ? 'fluid printed lower movement'
-    : bottom && /\b(bootcut|flare)\b/.test(bottomText) ? 'grounded flare line'
-    : bottom && /\b(wide|wide-leg|flowing|soft)\b/.test(bottomText) ? 'relaxed lower movement'
-    : bottom && /\b(denim|jean|black|charcoal|straight|trouser|column|dark)\b/.test(bottomText) ? 'long dark lower line'
+  const lower = bottom && /\b(bootcut|flare|wide|wide-leg|flowing|soft)\b/.test(pieceNameBlob(bottom)) ? 'soft lower movement'
+    : bottom && /\b(denim|jean|black|charcoal|straight|trouser|column|dark)\b/.test(pieceNameBlob(bottom)) ? 'long dark line'
     : bottom ? 'structured lower line'
     : 'lower line'
   if (/\b(tapestry|print pant|printed pant|pattern pant)\b/.test(text)) return 'restrained upper over expressive print pant'
@@ -2063,177 +1988,11 @@ function wholeWardrobeVisualRhythm(outfit = {}) {
   return 'simple separated rhythm'
 }
 
-function wholeWardrobeUpperSilhouetteFamily(outfit = {}) {
-  const top = wholeWardrobePieceByGroup(outfit, 'top')
-  const dress = wholeWardrobePieceByGroup(outfit, 'dress')
-  const piece = top || dress
-  const text = piece ? pieceNameBlob(piece) : ''
-  if (dress) return /\b(floral|print|ruffle|drape|soft)\b/.test(text) ? 'expressive one-piece' : 'simple one-piece'
-  if (/\b(sleeveless|tank|shell|fitted|compact)\b/.test(text)) return /\b(stripe|striped|graphic|print)\b/.test(text) ? 'compact graphic upper' : 'compact quiet upper'
-  if (/\b(relaxed|oversized|loose|tunic|boxy)\b/.test(text)) return 'relaxed upper'
-  if (/\b(structured|crisp|tailored|blazer)\b/.test(text)) return 'structured upper'
-  return top ? 'controlled upper' : 'no upper'
-}
-
-function wholeWardrobeLowerSilhouetteFamily(outfit = {}) {
-  const bottom = wholeWardrobePieceByGroup(outfit, 'bottom')
-  const dress = wholeWardrobePieceByGroup(outfit, 'dress')
-  const piece = bottom || dress
-  const text = piece ? pieceNameBlob(piece) : ''
-  if (dress) return /\b(midi|maxi|drape|ruffle|flowing)\b/.test(text) ? 'moving dress line' : 'dress column'
-  if (/\b(bootcut|flare)\b/.test(text)) return 'flare lower line'
-  if (/\b(wide|wide-leg|palazzo|flowing|soft)\b/.test(text)) return 'wide moving lower'
-  if (/\b(straight|column|trouser|denim|jean|black|charcoal|dark)\b/.test(text)) return 'straight column lower'
-  return bottom ? 'structured lower' : 'no lower'
-}
-
-function wholeWardrobeExpressiveLocation(outfit = {}) {
-  const roles = assignWholeWardrobeInteractionRoles(Array.isArray(outfit.pieces) ? outfit.pieces : [])
-  return roles.expressivePiece ? wardrobeCategoryGroup(roles.expressivePiece) : 'quiet'
-}
-
-function wholeWardrobeTextureStrategy(outfit = {}) {
-  const text = (Array.isArray(outfit.pieces) ? outfit.pieces : []).map(pieceTextBlob).join(' ')
-  if (/\b(crochet|lace|gauzy|ruffle|drape|silk|chiffon|cashmere|knit)\b/.test(text) && /\b(pointed|boot|loafer|structured|denim|trouser)\b/.test(text)) return 'soft texture sharpened'
-  if (/\b(crochet|lace|gauzy|ruffle|drape|silk|chiffon)\b/.test(text)) return 'soft expressive texture'
-  if (/\b(denim|trouser|structured|crisp|tailored|utility)\b/.test(text)) return 'structured texture'
-  return 'quiet texture'
-}
-
-function wholeWardrobeDominantColorStrategy(outfit = {}) {
-  const text = (Array.isArray(outfit.pieces) ? outfit.pieces : []).map(pieceTextBlob).join(' ')
-  if (/\b(black|charcoal|dark|navy|espresso|plum|chocolate)\b/.test(text) && !/\b(floral|pink|red|orange|yellow|green|bright)\b/.test(text)) return 'tonal dark'
-  if (/\b(black|white|cream|ivory|stripe|striped)\b/.test(text) && /\b(pink|red|orange|yellow|green|floral|print)\b/.test(text)) return 'graphic color contrast'
-  if (/\b(olive|cognac|rust|mustard|brown|earth|linen)\b/.test(text)) return 'earthy warm'
-  if (/\b(cream|ivory|white|beige|taupe|oatmeal)\b/.test(text)) return 'light neutral'
-  return 'mixed wardrobe color'
-}
-
-function wholeWardrobeDiversityDimensions(outfit = {}, options = {}) {
-  return {
-    upper: wholeWardrobeUpperSilhouetteFamily(outfit),
-    lower: wholeWardrobeLowerSilhouetteFamily(outfit),
-    grounding: wholeWardrobeGroundingStrategy(outfit),
-    expressiveLocation: wholeWardrobeExpressiveLocation(outfit),
-    texture: wholeWardrobeTextureStrategy(outfit),
-    rhythm: wholeWardrobeVisualRhythm(outfit),
-    archetype: wholeWardrobeFormulaFamily(outfit, options.candidatePieces, options.occasion),
-    color: wholeWardrobeDominantColorStrategy(outfit),
-    relationship: wholeWardrobeInteractionRelationshipSignature(outfit),
-    movement: wholeWardrobeSilhouetteFromPieces(outfit)
-  }
-}
-
 function wholeWardrobeHeroPieceId(outfit = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  const expressive = [...pieces]
-    .filter(p => wholeWardrobeExpressiveTerritoryScore(p) >= 6)
-    .sort((a, b) => wholeWardrobeExpressiveTerritoryScore(b) - wholeWardrobeExpressiveTerritoryScore(a))[0]
+  const expressive = pieces.find(p => /\b(floral|print|graphic|stripe|pattern|abstract|bold|textured|lace|ruffle|architectural)\b/.test(`${p.name || ''} ${p.category || ''}`.toLowerCase()))
   const topOrDress = pieces.find(p => ['top', 'dress'].includes(wardrobeCategoryGroup(p)))
   return Number((expressive || topOrDress || pieces[0])?.id) || null
-}
-
-function wholeWardrobeExpressiveTerritoryScore(piece = {}) {
-  const traits = wholeWardrobePieceTraits(piece)
-  const text = traits.text
-  let score = 0
-  if (/\b(floral|tapestry|abstract|bold print|large print|patterned|multi-color|multicolor)\b/.test(text)) score += 8
-  else if (/\b(print|graphic|pattern)\b/.test(text)) score += 5
-  if (/\b(stripe|striped)\b/.test(text)) score += traits.compact ? 2 : 4
-  if (/\b(ruffle|ruffled|pleat|pleated|drape|draped|flowing|fluid|swishy|silk|chiffon|lace|crochet)\b/.test(text)) score += 6
-  if (/\b(wide|wide-leg|flare|bootcut|midi|maxi|full|volume|voluminous|palazzo)\b/.test(text)) score += 5
-  if (traits.soft && traits.graphic) score += 3
-  if (/\b(black white|high contrast|contrast|bright|pink|red|orange|yellow|cobalt|green)\b/.test(text)) score += 3
-  if (traits.group === 'dress') score += 6
-  if (traits.group === 'bottom') score += 4
-  if (traits.group === 'top' && traits.compact) score -= 3
-  if (traits.group === 'shoes') score -= 6
-  return score
-}
-
-function wholeWardrobeSharpenerScore(piece = {}) {
-  const traits = wholeWardrobePieceTraits(piece)
-  const text = traits.text
-  let score = 0
-  if (traits.compact) score += 5
-  if (/\b(stripe|striped|black white|crisp|sharp|fitted|sleeveless|tank|shell)\b/.test(text)) score += 5
-  if (traits.structured) score += 3
-  if (traits.group === 'shoes' && traits.sharpShoe) score += 6
-  if (wholeWardrobeExpressiveTerritoryScore(piece) >= 10) score -= 4
-  return score
-}
-
-function wholeWardrobeAnchorScore(piece = {}) {
-  const traits = wholeWardrobePieceTraits(piece)
-  let score = 0
-  if (traits.dark && traits.column) score += 8
-  if (traits.structured) score += 5
-  if (traits.sharpShoe) score += 5
-  if (traits.group === 'bottom') score += 2
-  if (wholeWardrobeExpressiveTerritoryScore(piece) >= 10) score -= 5
-  return score
-}
-
-function wholeWardrobePieceDominance(piece = {}) {
-  const traits = wholeWardrobePieceTraits(piece)
-  const expressiveScore = wholeWardrobeExpressiveTerritoryScore(piece)
-  let score = expressiveScore
-  if (traits.group === 'top' && traits.compact && /\b(stripe|striped)\b/.test(traits.text) && expressiveScore < 8) score -= 3
-  if (traits.group === 'dress') score += 2
-  return score >= 5 ? 'statement' : score >= 3 ? 'anchor' : 'support'
-}
-
-function wholeWardrobeDominantPieceIds(outfit = {}) {
-  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  return pieces
-    .filter(piece => ['statement', 'anchor'].includes(wholeWardrobePieceDominance(piece)))
-    .map(piece => Number(piece.id))
-    .filter(Boolean)
-}
-
-function wholeWardrobeVisualTerritory(outfit = {}) {
-  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  const territory = new Set()
-  for (const piece of pieces) {
-    const traits = wholeWardrobePieceTraits(piece)
-    if (traits.graphic) territory.add('pattern')
-    if (traits.soft) territory.add('softness')
-    if (traits.dark && traits.column) territory.add('dark_column')
-    if (traits.structured) territory.add('structure')
-    if (traits.sharpShoe) territory.add('sharp_grounding')
-    if (traits.relaxed) territory.add('relaxed_volume')
-  }
-  return [...territory].sort().join('|') || 'quiet_support'
-}
-
-function wholeWardrobeSupportSignature(outfit = {}) {
-  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  return pieces
-    .filter(piece => !wholeWardrobeDominantPieceIds(outfit).includes(Number(piece.id)))
-    .map(piece => `${wardrobeCategoryGroup(piece)}:${wholeWardrobeVisualTerritory({ pieces: [piece] })}`)
-    .sort()
-    .join('|')
-}
-
-function wholeWardrobeInteractionRelationshipSignature(outfit = {}) {
-  const roles = assignWholeWardrobeInteractionRoles(Array.isArray(outfit.pieces) ? outfit.pieces : [])
-  const id = (piece) => Number(piece?.id) || 'none'
-  return [
-    `expressive:${id(roles.expressivePiece)}`,
-    `stabilizer:${id(roles.stabilizerPiece)}`,
-    `grounding:${id(roles.groundingPiece)}`,
-    `structure:${id(roles.structureProvider)}`,
-    `softener:${id(roles.textureSoftener)}`,
-    `sharpener:${id(roles.visualSharpener)}`
-  ].join('|')
-}
-
-function wholeWardrobeHasDifferentSupportLogic(outfit = {}, existing = {}) {
-  return wholeWardrobeSilhouetteFromPieces(outfit) !== wholeWardrobeSilhouetteFromPieces(existing)
-    && wholeWardrobeGroundingStrategy(outfit) !== wholeWardrobeGroundingStrategy(existing)
-    && wholeWardrobeInteractionRelationshipSignature(outfit) !== wholeWardrobeInteractionRelationshipSignature(existing)
-    && (wholeWardrobeFormulaFamily(outfit) !== wholeWardrobeFormulaFamily(existing)
-      || wholeWardrobeSupportSignature(outfit) !== wholeWardrobeSupportSignature(existing))
 }
 
 function pieceNameBlob(piece = {}) {
@@ -2311,11 +2070,10 @@ function occasionScoreForOutfit(pieces = [], occasion = '') {
   const text = pieces.map(pieceTextBlob).join(' ')
   let score = 0
   if (key === 'evening') {
-    if (/\b(black|charcoal|dark|espresso|navy|plum|patent)\b/.test(text)) score += 12
-    if (/\b(pointed|patent|loafer|boot|mule|dress|polished|leather|silk|tailored)\b/.test(text)) score += 12
-    if (/\b(straight|column|bootcut|trouser|clean hem|dark denim)\b/.test(text)) score += 8
-    if (/\b(sneaker|slipper|beach|flip|soft sandal|light casual)\b/.test(text)) score -= 18
-    if (/\b(crochet|gauzy|beachy|linen short|soft slip-on)\b/.test(text) && !/\b(black|charcoal|patent|pointed|boot|loafer|structured|tailored)\b/.test(text)) score -= 14
+    if (/\b(black|charcoal|dark|espresso|navy|plum|patent)\b/.test(text)) score += 10
+    if (/\b(pointed|patent|loafer|boot|mule|dress)\b/.test(text)) score += 8
+    if (/\b(sneaker|slipper|beach|flip|soft sandal|light casual)\b/.test(text)) score -= 14
+    if (/\b(gauzy|beachy|linen short|soft slip-on)\b/.test(text)) score -= 8
   }
   if (key === 'gallery / art event') {
     if (/\b(print|graphic|stripe|abstract|tapestry|architectural|structured|utility|earthy|olive|cognac)\b/.test(text)) score += 10
@@ -2325,253 +2083,22 @@ function occasionScoreForOutfit(pieces = [], occasion = '') {
   return score
 }
 
-function wholeWardrobePieceTraits(piece = {}) {
-  const text = pieceTextBlob(piece)
-  const group = wardrobeCategoryGroup(piece)
-  return {
-    group,
-    text,
-    dark: /\b(black|charcoal|dark|espresso|navy|indigo|plum|chocolate|deep)\b/.test(text),
-    graphic: /\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry|bold)\b/.test(text),
-    soft: /\b(crochet|soft|gauzy|drape|drapey|linen|cashmere|knit|chiffon|lace|cream|ivory|oatmeal)\b/.test(text),
-    structured: /\b(structured|blazer|jacket|utility|trouser|denim|crisp|tailored|architectural|straight|bootcut)\b/.test(text),
-    sharpShoe: group === 'shoes' && /\b(pointed|patent|loafer|boot|mule|oxford|leather)\b/.test(text),
-    casualSoft: /\b(crochet|gauzy|beachy|slipper|soft sandal|flip|sneaker)\b/.test(text),
-    relaxed: /\b(relaxed|oversized|loose|tunic|boxy|linen|knit)\b/.test(text),
-    compact: /\b(fitted|sleeveless|tank|shell|compact|structured)\b/.test(text),
-    column: /\b(black|charcoal|dark|navy|denim|jean|straight|bootcut|trouser|column)\b/.test(text),
-    statement: /\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry|bold|crochet|lace|ruffle|architectural)\b/.test(text)
-  }
-}
-
-function differentPieces(pieceA, pieceB) {
-  return Boolean(pieceA && pieceB && Number(pieceA.id) && Number(pieceB.id) && Number(pieceA.id) !== Number(pieceB.id))
-}
-
-function firstDistinctPiece(pieces = [], predicate, excluded = []) {
-  const excludedIds = new Set(excluded.filter(Boolean).map(piece => Number(piece.id)))
-  return pieces.find(piece => Number(piece.id) && !excludedIds.has(Number(piece.id)) && predicate(piece, wholeWardrobePieceTraits(piece))) || null
-}
-
-function assignWholeWardrobeInteractionRoles(pieces = []) {
-  const sortedByFocalTerritory = [...pieces].sort((a, b) => wholeWardrobeExpressiveTerritoryScore(b) - wholeWardrobeExpressiveTerritoryScore(a))
-  const groundingPiece = firstDistinctPiece(pieces, (_piece, traits) => traits.group === 'shoes')
-  const expressivePiece = firstDistinctPiece(sortedByFocalTerritory, (piece, traits) => {
-    if (traits.group === 'shoes') return false
-    const score = wholeWardrobeExpressiveTerritoryScore(piece)
-    return score >= 6 && !(traits.group === 'top' && traits.compact && /\b(stripe|striped)\b/.test(traits.text) && score < 9)
-  })
-  const visualSharpener = firstDistinctPiece(
-    [...pieces].sort((a, b) => wholeWardrobeSharpenerScore(b) - wholeWardrobeSharpenerScore(a)),
-    (piece) => wholeWardrobeSharpenerScore(piece) >= 5,
-    [expressivePiece]
-  )
-  const visualAnchor = firstDistinctPiece(
-    [...pieces].sort((a, b) => wholeWardrobeAnchorScore(b) - wholeWardrobeAnchorScore(a)),
-    (piece) => wholeWardrobeAnchorScore(piece) >= 5 && wardrobeCategoryGroup(piece) !== 'shoes',
-    [expressivePiece]
-  )
-  const structureProvider = firstDistinctPiece(pieces, (_piece, traits) => traits.structured || traits.sharpShoe, [expressivePiece])
-  const textureSoftener = firstDistinctPiece(pieces, (_piece, traits) => traits.soft, [expressivePiece, structureProvider, groundingPiece])
-  const stabilizerPiece = firstDistinctPiece(
-    pieces,
-    (_piece, traits) => traits.dark || traits.column || traits.structured || traits.sharpShoe,
-    [expressivePiece]
-  ) || visualAnchor || visualSharpener || structureProvider || groundingPiece
-  const dominantPiece = expressivePiece || visualAnchor || firstDistinctPiece(sortedByFocalTerritory, () => true, [groundingPiece])
-  const supportPiece = firstDistinctPiece(
-    pieces,
-    (piece) => Number(piece.id) !== Number(dominantPiece?.id),
-    [dominantPiece]
-  )
-  const expressiveCount = pieces.filter(piece => wholeWardrobeExpressiveTerritoryScore(piece) >= 6 && wardrobeCategoryGroup(piece) !== 'shoes').length
-  return {
-    dominantPiece,
-    supportPiece,
-    groundingPiece,
-    expressivePiece,
-    stabilizerPiece,
-    textureSoftener,
-    structureProvider,
-    visualAnchor,
-    visualSharpener,
-    expressiveCount
-  }
-}
-
-function describeRoleInteraction(roles = {}) {
-  const expressive = roles.expressivePiece
-  const stabilizer = roles.stabilizerPiece
-  const grounding = roles.groundingPiece
-  const softener = roles.textureSoftener
-  const structure = roles.structureProvider
-  const anchor = roles.visualAnchor
-  const sharpener = roles.visualSharpener
-  if (differentPieces(expressive, sharpener) && wardrobeCategoryGroup(expressive) === 'bottom') {
-    return `${expressive.name} carries most of the visual movement, while ${sharpener.name} keeps the upper half sharp enough to prevent the outfit from drifting overly soft.`
-  }
-  if (differentPieces(expressive, stabilizer)) {
-    if (wardrobeCategoryGroup(expressive) === 'bottom') return `${expressive.name} acts as the expressive piece, while ${stabilizer.name} keeps the support quiet enough to control the print energy.`
-    return `${expressive.name} acts as the expressive piece, while ${stabilizer.name} absorbs enough visual noise to keep it controlled.`
-  }
-  if (differentPieces(expressive, sharpener)) return `${sharpener.name} sharpens the outline without taking the focal role away from ${expressive.name}.`
-  if (differentPieces(softener, grounding)) return `${softener.name} softens the outfit, while ${grounding.name} keeps that softness from drifting overly romantic or beachy.`
-  if (differentPieces(expressive, structure)) return `${structure.name} gives ${expressive.name} a cleaner frame.`
-  if (differentPieces(anchor, grounding)) return `${anchor.name} sets the visual anchor, and ${grounding.name} makes the finish intentional.`
-  return ''
-}
-
-function describeGarmentInteraction(pieceA = {}, pieceB = {}, outfit = {}) {
-  if (!differentPieces(pieceA, pieceB)) return ''
-  const a = wholeWardrobePieceTraits(pieceA)
-  const b = wholeWardrobePieceTraits(pieceB)
-  const nameA = pieceA.name || 'one piece'
-  const nameB = pieceB.name || 'the other piece'
-  const shoe = [pieceA, pieceB].find(p => wardrobeCategoryGroup(p) === 'shoes')
-  const nonShoe = shoe ? [pieceA, pieceB].find(p => Number(p?.id) !== Number(shoe?.id)) : null
-
-  if ((a.graphic && b.dark && b.column) || (b.graphic && a.dark && a.column)) {
-    const graphicPiece = a.graphic ? nameA : nameB
-    const darkPiece = a.dark && a.column ? nameA : nameB
-    return `${darkPiece} absorbs visual noise from ${graphicPiece}.`
-  }
-  if ((a.soft && b.sharpShoe) || (b.soft && a.sharpShoe)) {
-    const softPiece = a.soft ? nameA : nameB
-    const sharpPiece = a.sharpShoe ? nameA : nameB
-    return `${sharpPiece} prevents ${softPiece} from drifting overly romantic or beachy.`
-  }
-  if ((a.graphic && b.structured) || (b.graphic && a.structured)) {
-    const graphicPiece = a.graphic ? nameA : nameB
-    const structurePiece = a.structured ? nameA : nameB
-    return `${structurePiece} gives ${graphicPiece} a cleaner frame.`
-  }
-  if ((a.relaxed && b.column) || (b.relaxed && a.column)) {
-    const relaxedPiece = a.relaxed ? nameA : nameB
-    const columnPiece = a.column ? nameA : nameB
-    return `${columnPiece} stabilizes the looseness in ${relaxedPiece}.`
-  }
-  if (shoe && nonShoe) {
-    const shoeTraits = wholeWardrobePieceTraits(shoe)
-    if (shoeTraits.sharpShoe) return `${shoe.name} gives ${nonShoe.name} a more intentional finish.`
-    return `${shoe.name} needs to work harder to support ${nonShoe.name}.`
-  }
-  if ((a.soft && b.graphic) || (b.soft && a.graphic)) {
-    const softPiece = a.soft ? nameA : nameB
-    const graphicPiece = a.graphic ? nameA : nameB
-    return `${softPiece} softens ${graphicPiece} without adding another loud pattern.`
-  }
-  return `${nameA} and ${nameB} need a clear shared job in the outfit.`
-}
-
-function evaluateWholeWardrobeInteractionMechanics(pieces = [], occasion = 'casual') {
-  const archetypeScores = Object.fromEntries(WHOLE_WARDROBE_OUTFIT_ARCHETYPES.map(a => [a.id, occasionBiasForArchetype(a, occasion)]))
-  const byGroup = (group) => pieces.find(p => wardrobeCategoryGroup(p) === group)
-  const top = byGroup('top')
-  const bottom = byGroup('bottom')
-  const dress = byGroup('dress')
-  const shoe = byGroup('shoes')
-  const layer = byGroup('outerwear')
-  const traits = pieces.map(piece => ({ piece, traits: wholeWardrobePieceTraits(piece) }))
-  const text = pieces.map(pieceTextBlob).join(' ')
-  const roles = assignWholeWardrobeInteractionRoles(pieces)
-  const interactions = []
-  const addInteraction = (pieceA, pieceB, archetypeId, score, kind) => {
-    if (!differentPieces(pieceA, pieceB) || !score) return
-    archetypeScores[archetypeId] = (archetypeScores[archetypeId] || 0) + score
-    const text = describeGarmentInteraction(pieceA, pieceB, { pieces })
-    if (text) interactions.push({ pieceA, pieceB, archetypeId, score, kind, text })
-  }
-
-  const roleInteractionText = describeRoleInteraction(roles)
-  if (roleInteractionText && differentPieces(roles.dominantPiece, roles.supportPiece || roles.stabilizerPiece || roles.groundingPiece)) {
-    interactions.push({
-      pieceA: roles.dominantPiece,
-      pieceB: roles.supportPiece || roles.stabilizerPiece || roles.groundingPiece,
-      archetypeId: 'earthy_structured_minimal',
-      score: 10,
-      kind: 'role relationship',
-      text: roleInteractionText
-    })
-  }
-
-  addInteraction(top, bottom, 'grounded_graphic_column', top && bottom && wholeWardrobePieceTraits(top).graphic && wholeWardrobePieceTraits(bottom).dark && wholeWardrobePieceTraits(bottom).column ? 24 : 0, 'graphic absorbed by dark base')
-  addInteraction(top, bottom, 'relaxed_dark_base', top && bottom && wholeWardrobePieceTraits(top).relaxed && wholeWardrobePieceTraits(bottom).column ? 22 : 0, 'relaxed upper stabilized by base')
-  addInteraction(top, bottom, 'earthy_structured_minimal', top && bottom && (wholeWardrobePieceTraits(top).structured || wholeWardrobePieceTraits(bottom).structured) && !wholeWardrobePieceTraits(top).graphic ? 14 : 0, 'structured separates')
-  addInteraction(dress, shoe, 'dress_grounded_sharp', dress && shoe && wholeWardrobePieceTraits(shoe).sharpShoe ? 30 : dress && shoe ? 18 : 0, 'dress grounded by shoe')
-  addInteraction(dress, layer, 'dress_grounded_sharp', dress && layer && wholeWardrobePieceTraits(layer).structured ? 18 : 0, 'dress framed by layer')
-
-  for (const { piece, traits: pieceTraits } of traits) {
-    if (!pieceTraits.soft) continue
-    if (shoe && wholeWardrobePieceTraits(shoe).sharpShoe) addInteraction(piece, shoe, 'soft_structure_contrast', 22, 'softness sharpened by shoe')
-    if (layer && wholeWardrobePieceTraits(layer).structured) addInteraction(piece, layer, 'soft_structure_contrast', 18, 'softness held by layer')
-    if (bottom && wholeWardrobePieceTraits(bottom).column) addInteraction(piece, bottom, 'soft_structure_contrast', 12, 'softness held by base')
-  }
-
-  const silhouetteTension = [
-    top && bottom && wholeWardrobePieceTraits(top).compact && wholeWardrobePieceTraits(bottom).column,
-    top && bottom && wholeWardrobePieceTraits(top).relaxed && wholeWardrobePieceTraits(bottom).column,
-    dress && (shoe || layer),
-    traits.some(item => item.traits.soft) && traits.some(item => item.traits.structured || item.traits.sharpShoe)
-  ].filter(Boolean).length * 8
-  const visualRhythm = [
-    traits.some(item => item.traits.graphic) && traits.some(item => item.traits.dark || item.traits.structured),
-    traits.filter(item => item.traits.statement).length <= 1,
-    /\b(black|charcoal|navy|espresso|dark)\b/.test(text) && !/\b(beach|slipper|flip)\b/.test(text)
-  ].filter(Boolean).length * 7
-  const groundingCoherence = shoe
-    ? wholeWardrobePieceTraits(shoe).sharpShoe ? 22 : wholeWardrobePieceTraits(shoe).casualSoft ? -8 : 8
-    : -10
-  const formulaDistinctiveness = new Set([
-    wholeWardrobeSilhouetteFromPieces({ pieces }),
-    wholeWardrobeGroundingStrategy({ pieces }),
-    wholeWardrobeVisualRhythm({ pieces })
-  ]).size * 5
-  const eveningAdjustment = String(occasion || '').toLowerCase() === 'evening'
-    ? occasionScoreForOutfit(pieces, 'evening')
-    : 0
-
-  for (const id of Object.keys(archetypeScores)) {
-    archetypeScores[id] += silhouetteTension + Math.max(0, groundingCoherence) * 0.5 + formulaDistinctiveness + eveningAdjustment
-  }
-  if (traits.filter(item => item.traits.statement).length > 1) archetypeScores.grounded_graphic_column -= 12
-  if (traits.some(item => item.traits.casualSoft) && String(occasion || '').toLowerCase() === 'evening' && groundingCoherence < 15) archetypeScores.soft_structure_contrast -= 20
-
-  const sorted = Object.entries(archetypeScores).sort((a, b) => b[1] - a[1])
-  const best = sorted[0] || ['earthy_structured_minimal', 0]
-  const second = sorted[1]?.[1] || 0
-  const interactionStrength = interactions.reduce((sum, item) => sum + Math.max(0, item.score), 0)
-  const archetypeConfidence = Math.max(0, Math.min(1, (best[1] - second + interactionStrength * 0.18) / 48))
-  return {
-    archetypeScores,
-    interactions: interactions.filter(item => item.score > 0).sort((a, b) => b.score - a.score),
-    roles,
-    bestArchetypeId: archetypeConfidence < 0.28 ? 'earthy_structured_minimal' : best[0],
-    archetypeConfidence,
-    interactionStrength,
-    silhouetteTension,
-    visualRhythm,
-    groundingCoherence,
-    formulaDistinctiveness
-  }
-}
-
 function inferOutfitArchetype(outfit, candidatePieces = [], occasion = 'casual') {
   const pieces = wholeWardrobeFullPieces(outfit, candidatePieces)
   const roles = inferWholeWardrobeOutfitRoles(pieces)
-  const mechanics = evaluateWholeWardrobeInteractionMechanics(pieces, occasion)
   const roleSet = new Set(roles)
   const hasRole = (role) => roleSet.has(role)
   let best = null
   for (const archetype of WHOLE_WARDROBE_OUTFIT_ARCHETYPES) {
-    let score = Number(mechanics.archetypeScores[archetype.id]) || 0
-    for (const role of archetype.preferredRoles || []) if (hasRole(role)) score += 2
-    for (const role of archetype.avoidRoles || []) if (hasRole(role)) score -= 8
-    if (archetype.id === mechanics.bestArchetypeId) score += 18
+    let score = occasionBiasForArchetype(archetype, occasion) + occasionScoreForOutfit(pieces, occasion)
+    for (const role of archetype.preferredRoles || []) if (hasRole(role)) score += 8
+    for (const role of archetype.avoidRoles || []) if (hasRole(role)) score -= 12
+    if (archetype.id === 'grounded_graphic_column' && hasRole('graphic_element') && hasRole('lower_column') && hasRole('grounding_piece')) score += 12
+    if (archetype.id === 'dress_grounded_sharp' && hasRole('one_piece_column')) score += 18
+    if (archetype.id === 'relaxed_dark_base' && hasRole('relaxed_upper') && hasRole('lower_column')) score += 14
+    if (archetype.id === 'soft_structure_contrast' && hasRole('soft_texture') && hasRole('structure_support')) score += 12
+    if (archetype.id === 'earthy_structured_minimal' && hasRole('structure_support') && !hasRole('extra_pattern')) score += 8
     if (!best || score > best.archetypeScore) best = { ...archetype, archetypeScore: score }
-  }
-  if (mechanics.archetypeConfidence < 0.28) {
-    const neutral = WHOLE_WARDROBE_OUTFIT_ARCHETYPES.find(a => a.id === 'earthy_structured_minimal') || WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0]
-    best = { ...neutral, archetypeScore: Math.max(0, best?.archetypeScore || 0) }
   }
   const fallback = best || WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0]
   return {
@@ -2581,14 +2108,6 @@ function inferOutfitArchetype(outfit, candidatePieces = [], occasion = 'casual')
     silhouette: fallback.silhouette,
     labelSuggestion: fallback.label,
     archetypeScore: fallback.archetypeScore || 0,
-    archetypeConfidence: mechanics.archetypeConfidence,
-    interactionStrength: mechanics.interactionStrength,
-    formulaDistinctiveness: mechanics.formulaDistinctiveness,
-    silhouetteTension: mechanics.silhouetteTension,
-    visualRhythm: mechanics.visualRhythm,
-    groundingCoherence: mechanics.groundingCoherence,
-    interactions: mechanics.interactions,
-    interactionRoles: mechanics.roles,
     visualGoal: fallback.visualGoal,
     roles
   }
@@ -2732,49 +2251,27 @@ function buildOutfitMechanicsReason(outfit = {}, pieces = [], archetype = {}) {
   const softPiece = pieces.find(p => /\b(soft|gauzy|drape|linen|cashmere|knit|cream|ivory|oatmeal)\b/.test(pieceNameBlob(p)))
   const shoeText = shoe ? pieceNameBlob(shoe) : ''
   const sentences = []
-  const roles = archetype.interactionRoles || assignWholeWardrobeInteractionRoles(pieces)
-  const interactionLines = Array.isArray(archetype.interactions)
-    ? archetype.interactions
-      .filter(item => differentPieces(item.pieceA, item.pieceB))
-      .map(item => item.text)
-      .filter(Boolean)
-    : []
 
-  for (const line of interactionLines.slice(0, 2)) {
-    const selfReference = pieces.some(piece => {
-      const name = String(piece.name || '').trim()
-      if (!name) return false
-      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      return new RegExp(`${escaped}[^.]{0,80}${escaped}`, 'i').test(line)
-    })
-    if (!selfReference && !sentences.includes(line)) sentences.push(line)
-  }
-
-  if (!sentences.length) {
-    const roleLine = describeRoleInteraction(roles)
-    if (roleLine) sentences.push(roleLine)
-  }
-
-  if (!sentences.length && dress) {
+  if (dress) {
     const support = layer ? `${layer.name} adds the structure around it` : shoe ? `${shoe.name} gives the one-piece line a grounded finish` : 'the supporting pieces need to stay clean'
     sentences.push(`${dress.name} carries the column, and ${support}.`)
-  } else if (!sentences.length && bottom) {
+  } else if (bottom) {
     const columnVerb = /\b(black|charcoal|dark|navy|denim|straight|trouser|column)\b/.test(pieceNameBlob(bottom)) ? 'creates the long base' : 'sets the lower proportion'
     const upperJob = top ? `${top.name} ${/\b(fitted|sleeveless|tank|shell|compact)\b/.test(pieceNameBlob(top)) ? 'keeps the upper half compact' : 'sets the upper shape'}` : 'the upper piece needs to stay controlled'
     sentences.push(`${bottom.name} ${columnVerb}, while ${upperJob}.`)
-  } else if (!sentences.length && top) {
+  } else if (top) {
     sentences.push(`${top.name} sets the upper anchor, so the remaining pieces need to keep the line grounded.`)
   }
 
-  if (sentences.length < 2 && printPiece && printPiece !== top && printPiece !== bottom && printPiece !== dress) {
-    sentences.push(`${printPiece.name} can stay expressive because the other pieces do not compete with its pattern.`)
-  } else if (sentences.length < 2 && printPiece) {
-    sentences.push(`${printPiece.name} needs quiet support pieces so the pattern remains controlled.`)
-  } else if (sentences.length < 2 && softPiece) {
-    sentences.push(`${softPiece.name} needs the darker or sharper pieces to keep it from reading too loose.`)
+  if (printPiece && printPiece !== top && printPiece !== bottom && printPiece !== dress) {
+    sentences.push(`${printPiece.name} supplies the visual tension; the quiet support pieces keep it from turning into pattern stacking.`)
+  } else if (printPiece) {
+    sentences.push(`${printPiece.name} supplies the visual tension, so the surrounding pieces need to stay quieter.`)
+  } else if (softPiece) {
+    sentences.push(`${softPiece.name} brings the softness; the structured or dark pieces keep the formula from drifting loose.`)
   }
 
-  if (sentences.length < 3 && shoe) {
+  if (shoe) {
     if (/\b(pointed|patent|mule|flat)\b/.test(shoeText)) sentences.push(`${shoe.name} keeps the finish sharp at the floor.`)
     else if (/\b(boot|bootie)\b/.test(shoeText)) sentences.push(`${shoe.name} gives the hem enough weight.`)
     else if (/\b(loafer|oxford)\b/.test(shoeText)) sentences.push(`${shoe.name} adds the tailored grounding.`)
@@ -2805,9 +2302,6 @@ function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePieces = 
     ...outfit,
     archetypeId: archetype.archetypeId,
     formulaFamily: archetype.formulaFamily,
-    archetypeConfidence: Number(archetype.archetypeConfidence || 0),
-    interactionStrength: Number(archetype.interactionStrength || 0),
-    formulaDistinctiveness: Number(archetype.formulaDistinctiveness || 0),
     label,
     dominantDirection: archetype.direction,
     silhouette,
@@ -2824,27 +2318,6 @@ function hasWholeWardrobePlaceholder(outfit = {}) {
 function hasGenericWholeWardrobeText(outfit = {}) {
   const text = [outfit.reason, outfit.watchFor].join(' ').toLowerCase()
   return /\b(balances artfulness with modernity|playful touch|overall look|creates an artistic visual|refined silhouette|visual balance|contrasts well|modern artistic element|clean silhouette|may overwhelm the look|potential boxiness|ensure the playful elements do not overwhelm)\b/.test(text)
-}
-
-function validateWholeWardrobeInteractionGraph(outfit = {}, candidatePieces = [], occasion = 'casual') {
-  const pieces = wholeWardrobeFullPieces(outfit, candidatePieces)
-  const roles = assignWholeWardrobeInteractionRoles(pieces)
-  const archetype = wholeWardrobeArchetypeFor({ ...outfit, pieces }, candidatePieces, occasion)
-  const ids = Object.fromEntries(Object.entries(roles).map(([key, piece]) => [key, Number(piece?.id) || null]))
-  const problems = []
-  const distinctPair = (a, b) => !a || !b || Number(a.id) !== Number(b.id)
-  if (!distinctPair(roles.dominantPiece, roles.supportPiece)) problems.push('dominant/support self-reference')
-  if (!distinctPair(roles.expressivePiece, roles.stabilizerPiece)) problems.push('expressive/stabilizer self-reference')
-  if (!distinctPair(roles.expressivePiece, roles.visualSharpener)) problems.push('expressive/sharpener self-reference')
-  if (!distinctPair(roles.textureSoftener, roles.groundingPiece)) problems.push('softener/grounding self-reference')
-  const hasStabilizer = Boolean(roles.stabilizerPiece || roles.groundingPiece || roles.visualAnchor || roles.structureProvider)
-  if (!hasStabilizer) problems.push('no grounding or stabilizing piece')
-  if (roles.expressiveCount > 1 && !roles.stabilizerPiece && !roles.visualAnchor) problems.push('too many focal pieces without a stabilizer')
-  if (archetype.formulaFamily === 'dress_grounding_shoe' && !roles.groundingPiece) problems.push('dress archetype lacks grounding piece')
-  if (archetype.formulaFamily === 'compact_top_dark_column' && (!roles.expressivePiece || !roles.visualAnchor)) problems.push('graphic-column archetype lacks expressive/anchor relationship')
-  const hasCycle = Object.entries(ids).some(([role, id]) => id && ['dominantPiece', 'supportPiece', 'expressivePiece', 'stabilizerPiece'].some(otherRole => otherRole !== role && ids[otherRole] === id && role.includes('dominant') && otherRole.includes('support')))
-  if (hasCycle) problems.push('interaction graph cycle')
-  return { valid: problems.length === 0, problems, roles, archetype }
 }
 
 function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion = 'casual') {
@@ -2868,12 +2341,7 @@ function wholeWardrobeSelectionScore(outfit, selected, options = {}) {
   const grounding = wholeWardrobeGroundingStrategy(outfit)
   const shoeShape = wholeWardrobeShoeShape(outfit)
   const rhythm = wholeWardrobeVisualRhythm(outfit)
-  const territory = wholeWardrobeVisualTerritory(outfit)
-  const confidence = Number(outfit.archetypeConfidence) || 0
-  const interactionStrength = Number(outfit.interactionStrength) || 0
-  const formulaDistinctiveness = Number(outfit.formulaDistinctiveness) || 0
   let score = outfitStylisticStrengthScore(outfit, null) + (Number(outfit.localScore) || 0) * 0.25 + (Number(outfit.archetypeScore) || 0)
-  score += interactionStrength * 0.2 + formulaDistinctiveness * 1.5 + confidence * 16
   const countPiece = (groupPiece) => groupPiece
     ? selected.filter(existing => (existing.pieces || []).some(p => Number(p.id) === Number(groupPiece.id))).length
     : 0
@@ -2885,7 +2353,6 @@ function wholeWardrobeSelectionScore(outfit, selected, options = {}) {
   const sameGroundingCount = selected.filter(existing => wholeWardrobeGroundingStrategy(existing) === grounding).length
   const sameShoeShapeCount = selected.filter(existing => wholeWardrobeShoeShape(existing) === shoeShape).length
   const sameRhythmCount = selected.filter(existing => wholeWardrobeVisualRhythm(existing) === rhythm).length
-  const sameTerritoryCount = selected.filter(existing => wholeWardrobeVisualTerritory(existing) === territory).length
   const printFormulaCount = wholeWardrobeHasPrintOrStripe(outfit)
     ? selected.filter(existing => wholeWardrobeHasPrintOrStripe(existing)).length
     : 0
@@ -2897,67 +2364,9 @@ function wholeWardrobeSelectionScore(outfit, selected, options = {}) {
   if (sameGroundingCount >= 1) score -= 18 * sameGroundingCount
   if (sameShoeShapeCount >= 1) score -= 14 * sameShoeShapeCount
   if (sameRhythmCount >= 1) score -= 16 * sameRhythmCount
-  if (sameTerritoryCount >= 1) score -= 22 * sameTerritoryCount
   if (printFormulaCount >= 1) score -= 20 * printFormulaCount
   if (sameFormulaCount >= 1) score -= 45 * sameFormulaCount
   if (formula === 'compact_top_dark_column' && sameFormulaCount >= 1) score -= 25
-  if (confidence < 0.28) score -= 14
-
-  for (const dominantId of wholeWardrobeDominantPieceIds(outfit)) {
-    const previousUses = selected.filter(existing => (existing.pieces || []).some(piece => Number(piece.id) === dominantId))
-    for (const existing of previousUses) {
-      score -= wholeWardrobeHasDifferentSupportLogic(outfit, existing) ? 40 : 90
-    }
-  }
-  return score
-}
-
-function wholeWardrobeSetSelectionScore(outfit, selected, options = {}) {
-  const explorationMode = options.explorationMode === 'aggressive' ? 'aggressive' : 'moderate'
-  const explorationWeight = explorationMode === 'aggressive' ? 1.35 : 1
-  const base = wholeWardrobeSelectionScore(outfit, selected, options)
-  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  const dimensions = wholeWardrobeDiversityDimensions(outfit, options)
-  const selectedDimensions = selected.map(existing => wholeWardrobeDiversityDimensions(existing, options))
-  const dimensionKeys = ['upper', 'lower', 'grounding', 'expressiveLocation', 'texture', 'rhythm', 'archetype', 'color', 'relationship', 'movement']
-  let score = base
-
-  for (const key of dimensionKeys) {
-    const value = dimensions[key]
-    if (!value) continue
-    const sameCount = selectedDimensions.filter(existing => existing[key] === value).length
-    score += sameCount ? -18 * sameCount * explorationWeight : 12 * explorationWeight
-  }
-
-  for (const piece of pieces) {
-    const useCount = selected.filter(existing => (existing.pieces || []).some(p => Number(p.id) === Number(piece.id))).length
-    if (useCount === 0) score += 10 * explorationWeight
-    if (useCount === 1) {
-      const previous = selected.find(existing => (existing.pieces || []).some(p => Number(p.id) === Number(piece.id)))
-      score -= wholeWardrobeHasDifferentSupportLogic(outfit, previous) ? 40 : 70
-    }
-    if (useCount >= 2) score -= 140
-  }
-
-  const formulaCount = selected.filter(existing => wholeWardrobeFormulaFamily(existing, options.candidatePieces, options.occasion) === dimensions.archetype).length
-  if (dimensions.archetype === 'compact_top_dark_column' && formulaCount >= 1) score -= 90
-  if (formulaCount >= 1) score -= 45 * formulaCount
-
-  const hasDress = wholeWardrobeHasDress(outfit)
-  const hasDressAlready = selected.some(wholeWardrobeHasDress)
-  if (hasDress && !hasDressAlready) score += 26 * explorationWeight
-  if (dimensions.texture.includes('soft') && !selectedDimensions.some(d => String(d.texture).includes('soft'))) score += 18 * explorationWeight
-  if (dimensions.color === 'tonal dark' && !selectedDimensions.some(d => d.color === 'tonal dark')) score += 16 * explorationWeight
-  if (wholeWardrobeHasNonGraphicTop(outfit) && !selected.some(wholeWardrobeHasNonGraphicTop)) score += 16 * explorationWeight
-  if (String(options.occasion || '').toLowerCase() === 'evening' && dimensions.color === 'tonal dark') score += 16
-
-  const roles = assignWholeWardrobeInteractionRoles(pieces)
-  const focalId = Number(roles.expressivePiece?.id || roles.dominantPiece?.id) || null
-  if (focalId && selected.some(existing => {
-    const existingRoles = assignWholeWardrobeInteractionRoles(existing.pieces || [])
-    return Number(existingRoles.expressivePiece?.id || existingRoles.dominantPiece?.id) === focalId
-  })) score -= 60
-
   return score
 }
 
@@ -2966,7 +2375,7 @@ function bestWholeWardrobeRequirementCandidate(pool, selected, predicate, option
   return pool
     .filter(outfit => predicate(outfit))
     .filter(outfit => !selectedKeys.has((outfit.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')))
-    .sort((a, b) => wholeWardrobeSetSelectionScore(b, selected, options) - wholeWardrobeSetSelectionScore(a, selected, options))[0] || null
+    .sort((a, b) => wholeWardrobeSelectionScore(b, selected, options) - wholeWardrobeSelectionScore(a, selected, options))[0] || null
 }
 
 function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
@@ -2981,7 +2390,6 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
   const groundingUse = new Map()
   const shoeShapeUse = new Map()
   const rhythmUse = new Map()
-  const territoryUse = new Map()
   const topBottomUse = new Set()
   const pool = [...outfits]
   const formulaFor = (outfit) => wholeWardrobeFormulaFamily(outfit, options.candidatePieces, options.occasion)
@@ -2990,17 +2398,6 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     if (selected.some(existing => (existing.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|') === key)) return false
     return formulaFor(candidate) !== formula
   })
-  const hasUnusedAlternativePrimary = (piece) => {
-    if (!piece) return false
-    return pool.some(candidate => {
-      const key = (candidate.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
-      if (selected.some(existing => (existing.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|') === key)) return false
-      const candidateTop = wholeWardrobePieceByGroup(candidate, 'top')
-      const candidateDress = wholeWardrobePieceByGroup(candidate, 'dress')
-      const candidatePrimary = candidateTop || candidateDress
-      return candidatePrimary && Number(candidatePrimary.id) !== Number(piece.id)
-    })
-  }
   const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
   const exploratory = bestWholeWardrobeRequirementCandidate(
     pool,
@@ -3020,7 +2417,6 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     const grounding = wholeWardrobeGroundingStrategy(exploratory)
     const shoeShape = wholeWardrobeShoeShape(exploratory)
     const rhythm = wholeWardrobeVisualRhythm(exploratory)
-    const territory = wholeWardrobeVisualTerritory(exploratory)
     const topBottomKey = wholeWardrobeTopBottomKey(exploratory)
     if (top) topUse.set(Number(top.id), 1)
     if (bottom) bottomUse.set(Number(bottom.id), 1)
@@ -3031,26 +2427,21 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     groundingUse.set(grounding, 1)
     shoeShapeUse.set(shoeShape, 1)
     rhythmUse.set(rhythm, 1)
-    territoryUse.set(territory, 1)
     if (topBottomKey) topBottomUse.add(topBottomKey)
   }
   while (pool.length && selected.length < limit) {
-    pool.sort((a, b) => wholeWardrobeSetSelectionScore(b, selected, options) - wholeWardrobeSetSelectionScore(a, selected, options))
+    pool.sort((a, b) => wholeWardrobeSelectionScore(b, selected, options) - wholeWardrobeSelectionScore(a, selected, options))
     const outfit = pool.shift()
     const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
     const top = pieces.find(p => wardrobeCategoryGroup(p) === 'top')
     const bottom = pieces.find(p => wardrobeCategoryGroup(p) === 'bottom')
     const shoe = pieces.find(p => wardrobeCategoryGroup(p) === 'shoes')
     const heroId = wholeWardrobeHeroPieceId(outfit)
-    const repeatedDominantPieces = wholeWardrobeDominantPieceIds(outfit)
-      .map(id => selected.filter(existing => (existing.pieces || []).some(piece => Number(piece.id) === id)))
-      .filter(matches => matches.length)
     const formula = formulaFor(outfit)
     const silhouetteFamily = wholeWardrobeSilhouetteFromPieces(outfit)
     const grounding = wholeWardrobeGroundingStrategy(outfit)
     const shoeShape = wholeWardrobeShoeShape(outfit)
     const rhythm = wholeWardrobeVisualRhythm(outfit)
-    const territory = wholeWardrobeVisualTerritory(outfit)
     const topBottomKey = wholeWardrobeTopBottomKey(outfit)
     const outfitKey = (outfit.pieceIds || pieces.map(p => p.id)).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
     if (selected.some(existing => (existing.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|') === outfitKey)) continue
@@ -3063,11 +2454,6 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     const groundingCount = groundingUse.get(grounding) || 0
     const shoeShapeCount = shoeShapeUse.get(shoeShape) || 0
     const rhythmCount = rhythmUse.get(rhythm) || 0
-    const territoryCount = territoryUse.get(territory) || 0
-    if (top && topCount >= 1 && hasUnusedAlternativePrimary(top)) {
-      rejected.push({ label: outfit.label || 'unnamed', reason: `rotating away from repeated top ${top.name}` })
-      continue
-    }
     if (top && topCount >= 2) {
       rejected.push({ label: outfit.label || 'unnamed', reason: `too many outfits use ${top.name}` })
       continue
@@ -3082,19 +2468,6 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     }
     if (heroId && heroCount >= 2) {
       rejected.push({ label: outfit.label || 'unnamed', reason: 'hero garment used more than twice' })
-      continue
-    }
-    if ([top, bottom, shoe].filter(Boolean).some(piece => {
-      const useCount = selected.filter(existing => (existing.pieces || []).some(p => Number(p.id) === Number(piece.id))).length
-      if (useCount < 1) return false
-      const previous = selected.find(existing => (existing.pieces || []).some(p => Number(p.id) === Number(piece.id)))
-      return !wholeWardrobeHasDifferentSupportLogic(outfit, previous)
-    })) {
-      rejected.push({ label: outfit.label || 'unnamed', reason: 'reused garment without enough set-level novelty' })
-      continue
-    }
-    if (repeatedDominantPieces.some(matches => !matches.some(existing => wholeWardrobeHasDifferentSupportLogic(outfit, existing)))) {
-      rejected.push({ label: outfit.label || 'unnamed', reason: 'repeated statement piece without new support logic' })
       continue
     }
     if (formula === 'compact_top_dark_column' && formulaCount >= 1 && hasUnusedAlternativeFormula(formula)) {
@@ -3121,10 +2494,6 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
       rejected.push({ label: outfit.label || 'unnamed', reason: `duplicate ${rhythm}` })
       continue
     }
-    if (territoryCount >= 1 && repeatedDominantPieces.length) {
-      rejected.push({ label: outfit.label || 'unnamed', reason: `repeated visual territory ${territory}` })
-      continue
-    }
     selected.push(outfit)
     if (top) topUse.set(Number(top.id), topCount + 1)
     if (bottom) bottomUse.set(Number(bottom.id), bottomCount + 1)
@@ -3135,7 +2504,6 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     groundingUse.set(grounding, groundingCount + 1)
     shoeShapeUse.set(shoeShape, shoeShapeCount + 1)
     rhythmUse.set(rhythm, rhythmCount + 1)
-    territoryUse.set(territory, territoryCount + 1)
     if (topBottomKey) topBottomUse.add(topBottomKey)
   }
 
@@ -3157,9 +2525,7 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
     }
   }
 
-  let formulaBackfillAttempts = 0
-  while (new Set(selected.map(formulaFor)).size < Math.min(3, limit) && selected.length && formulaBackfillAttempts < limit) {
-    formulaBackfillAttempts += 1
+  while (new Set(selected.map(formulaFor)).size < Math.min(3, limit) && selected.length) {
     const usedFamilies = new Set(selected.map(formulaFor))
     const candidate = bestWholeWardrobeRequirementCandidate(
       outfits,
@@ -3168,14 +2534,11 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
       options
     )
     if (!candidate) break
-    const candidateFamily = formulaFor(candidate)
     const replaceIndex = selected
       .map((outfit, index) => ({ outfit, index, count: selected.filter(o => formulaFor(o) === formulaFor(outfit)).length }))
-      .filter(item => item.count > 1 || (formulaFor(item.outfit) === 'compact_top_dark_column' && usedFamilies.size >= 3))
-      .sort((a, b) => wholeWardrobeSetSelectionScore(a.outfit, selected.filter((_, i) => i !== a.index), options) - wholeWardrobeSetSelectionScore(b.outfit, selected.filter((_, i) => i !== b.index), options))[0]?.index
-    if (!Number.isInteger(replaceIndex)) break
-    const targetIndex = replaceIndex
-    if (formulaFor(selected[targetIndex]) === candidateFamily) break
+      .filter(item => item.count > 1 || formulaFor(item.outfit) === 'compact_top_dark_column')
+      .sort((a, b) => wholeWardrobeSelectionScore(a.outfit, selected.filter((_, i) => i !== a.index), options) - wholeWardrobeSelectionScore(b.outfit, selected.filter((_, i) => i !== b.index), options))[0]?.index
+    const targetIndex = Number.isInteger(replaceIndex) ? replaceIndex : selected.length - 1
     rejected.push({ label: selected[targetIndex]?.label || 'unnamed', reason: `replaced to include ${formulaFor(candidate)} formula` })
     selected[targetIndex] = candidate
   }
@@ -3184,15 +2547,10 @@ function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
 }
 
 function normalizeWholeWardrobeStrengths(outfits = []) {
-  return outfits.map((outfit, index) => {
-    const confidence = Number(outfit.archetypeConfidence) || 0
-    const interactionStrength = Number(outfit.interactionStrength) || 0
-    const baseStrength = index === 0 ? 'signature' : (index <= 2 ? 'strong' : 'usable')
-    const strength = confidence < 0.28 || interactionStrength < 18
-      ? (baseStrength === 'signature' ? 'strong' : 'usable')
-      : baseStrength
-    return { ...outfit, strength }
-  })
+  return outfits.map((outfit, index) => ({
+    ...outfit,
+    strength: index === 0 ? 'signature' : (index <= 2 ? 'strong' : 'usable')
+  }))
 }
 
 function wholeWardrobeOutfitsFromCandidates(candidates = [], candidatePieces = [], options = {}) {
@@ -3223,14 +2581,9 @@ function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes
     const hasShoes = groups.includes('shoes')
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
     const key = (repaired.pieceIds || pieces.map(p => p.id)).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
-    const graph = validateWholeWardrobeInteractionGraph(repaired, candidatePieces, occasion)
 
     if ((!hasSeparates && !hasDress) || (requireShoes && !hasShoes)) {
       rejected.push({ label: repaired?.label || 'unnamed', reason: 'not a complete wardrobe outfit' })
-      continue
-    }
-    if (!graph.valid) {
-      rejected.push({ label: repaired?.label || 'unnamed', reason: `invalid interaction graph: ${graph.problems[0]}` })
       continue
     }
     if (seen.has(key)) {
@@ -5377,8 +4730,7 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
     occasion = 'casual',
     season = 'current season',
     mood = '',
-    limit = 5,
-    explorationMode = 'moderate'
+    limit = 5
   } = req.body || {}
 
   try {
@@ -5455,7 +4807,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
     let gated = locallyGateWholeWardrobeOutfits(
       [...structuredOutfits, ...localBackfillOutfits],
       requestedLimit,
-      { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion, explorationMode }
+      { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion }
     )
     diversityRejectedCount += gated.rejected?.length || 0
     structuredOutfits = gated.outfits
@@ -5463,7 +4815,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       structuredOutfits = locallyGateWholeWardrobeOutfits(
         localBackfillOutfits.slice(0, Math.max(requestedLimit, 12)),
         requestedLimit,
-        { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion, explorationMode }
+        { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion }
       ).outfits
     }
     const formulaFamiliesReturned = [...new Set(structuredOutfits.map(outfit => outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, candidatePieces, occasion)).filter(Boolean))]
