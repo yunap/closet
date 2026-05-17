@@ -1113,12 +1113,16 @@ export default function AskClaude({
 
       {/* Chat thread */}
       <div style={{ flex: pending ? '0 0 auto' : 1, overflowY: pending ? 'visible' : 'auto', padding: '16px 16px 8px' }}>
-        {messages.length === 1 && !pending && (
+        {messages.length === 1 && (
           <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Try asking...</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {SUGGESTIONS.map(s => <button key={s} onClick={() => setInput(s)} style={{ textAlign: 'left', padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer' }}>{s}</button>)}
-            </div>
+            {!pending && (
+              <>
+                <div style={{ fontSize: 11, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Try asking...</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {SUGGESTIONS.map(s => <button key={s} onClick={() => setInput(s)} style={{ textAlign: 'left', padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer' }}>{s}</button>)}
+                </div>
+              </>
+            )}
             <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                 <div>
