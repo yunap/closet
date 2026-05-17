@@ -1031,6 +1031,80 @@ ${negatives.slice(0, 12).join('\n')}`)
   }
 }
 
+function buildWholeWardrobeFeedbackInfluence(limit = 120) {
+  const influence = {
+    piece: new Map(),
+    combination: new Map(),
+    formula: new Map(),
+    occasionFormula: new Map(),
+    rowsUsed: 0
+  }
+  const add = (map, key, value) => {
+    if (!key || !value) return
+    map.set(key, (map.get(key) || 0) + value)
+  }
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0
+        AND target_type = 'whole_wardrobe_outfit'
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(Number(limit))
+    for (const row of rows) {
+      const weight = feedbackWeight(row.feedback_type)
+      if (!weight) continue
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const outfit = payload.outfit || {}
+      const pieceIds = [...new Set((payload.pieceIds || outfit.pieceIds || collectPieceIdsFromFeedbackPayload(row.payload))
+        .map(Number)
+        .filter(Boolean))]
+      const formula = payload.formulaFamily || outfit.formulaFamily || ''
+      const occasion = payload.occasion || outfit.bestFor || ''
+      const signedWeight = weight + (row.is_gold ? Math.sign(weight) * 18 : 0)
+
+      if (pieceIds.length) {
+        const comboKey = pieceIds.slice().sort((a, b) => a - b).join('|')
+        add(influence.combination, comboKey, Math.round(signedWeight * 1.15))
+        for (const id of pieceIds) add(influence.piece, id, Math.round(signedWeight * 0.35))
+      }
+      add(influence.formula, formula, Math.round(signedWeight * 0.45))
+      if (occasion && formula) add(influence.occasionFormula, `${occasion}||${formula}`, Math.round(signedWeight * 0.65))
+      influence.rowsUsed += 1
+    }
+  } catch {}
+  return influence
+}
+
+function wholeWardrobeFeedbackInfluenceForCandidate(pieces = [], options = {}) {
+  const influence = options.wholeWardrobeFeedbackInfluence
+  if (!influence) return null
+  const ids = pieces.map(p => Number(p.id)).filter(Boolean)
+  const outfit = { pieces }
+  const comboKey = ids.slice().sort((a, b) => a - b).join('|')
+  const formula = wholeWardrobeFormulaFamily(outfit, pieces, options.occasion)
+  const occasionFormula = `${options.occasion || ''}||${formula}`
+  let score = 0
+  const reasons = []
+  const addScore = (value, reason) => {
+    if (!value) return
+    score += value
+    reasons.push(reason)
+  }
+
+  addScore(influence.combination.get(comboKey), 'whole-wardrobe exact-combination feedback')
+  addScore(influence.formula.get(formula), `whole-wardrobe ${formula} feedback`)
+  addScore(influence.occasionFormula.get(occasionFormula), `whole-wardrobe ${options.occasion || 'occasion'} formula feedback`)
+  const pieceScore = ids.reduce((sum, id) => sum + (influence.piece.get(id) || 0), 0)
+  addScore(Math.max(-45, Math.min(30, Math.round(pieceScore / Math.max(1, ids.length)))), 'whole-wardrobe piece feedback')
+
+  if (!score) return null
+  return {
+    score: Math.max(-80, Math.min(80, score)),
+    reasons: [...new Set(reasons)].slice(0, 4)
+  }
+}
+
 
 async function criticPassForSelectedItem({ selectedPiece, draft, userQuestion }) {
   if (process.env.STYLIST_CRITIC_DISABLED === 'true') return draft
@@ -1889,6 +1963,11 @@ function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   for (const piece of pieces) {
     const decision = wholeWardrobePieceTrustDecision(piece, options)
     if (decision.supportOnly && ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) add(-18, `${piece.name} support-only`)
+  }
+  const feedbackInfluence = wholeWardrobeFeedbackInfluenceForCandidate(pieces, options)
+  if (feedbackInfluence) {
+    add(feedbackInfluence.score, 'whole-wardrobe feedback memory')
+    reasons.push(...feedbackInfluence.reasons)
   }
 
   const mood = String(options.mood || '').toLowerCase()
@@ -5049,7 +5128,8 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
-    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode })
+    const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
+    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence })
     const candidateFormulaCounts = wholeWardrobeCandidateFormulaCounts(candidates)
     let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
     const candidatePieces = candidatePieceIds
@@ -5202,6 +5282,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       debug: {
         candidateCount: candidates.length,
         candidateFormulaCounts,
+        feedbackInfluenceRowsUsed: wholeWardrobeFeedbackInfluence.rowsUsed,
         suppressedPieceCount: suppressedPieces.length,
         suppressedPieces,
         visualCritic: visualCriticDebug,
