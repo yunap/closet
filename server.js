@@ -2828,6 +2828,14 @@ function safeJsonFromModel(raw) {
   return JSON.parse(match[0])
 }
 
+function withTimeout(promise, ms, label = 'operation') {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
 
 function normalizeCalibrationRow(row) {
   return {
@@ -3008,10 +3016,10 @@ async function rankWholeWardrobeCandidatesWithVision({ candidates = [], candidat
     fullPiecesForCandidate(candidate, candidatePieces).some(piece => piece.photo || piece.worn_photo)
   )
   const reviewSource = candidatesWithPhotos.length >= 6 ? candidatesWithPhotos : candidates
-  const reviewCandidates = selectDiverseWholeWardrobeCandidates(reviewSource, 18, { occasion })
+  const reviewCandidates = selectDiverseWholeWardrobeCandidates(reviewSource, 10, { occasion })
   if (!reviewCandidates.length) return null
 
-  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 18)
+  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 10)
   const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
   const raw = await askStylist({
     system: `You are Yuna's visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize Yuna's known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`,
@@ -4994,6 +5002,7 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
   } = req.body || {}
 
   try {
+    const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
@@ -5010,6 +5019,9 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
     const requireShoes = allPieces.some(p => wardrobeCategoryGroup(p) === 'shoes')
     const requireDress = allPieces.some(p => wardrobeCategoryGroup(p) === 'dress')
     const requireNonGraphicTop = allPieces.some(p => wardrobeCategoryGroup(p) === 'top' && !/\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(pieceNameBlob(p)))
+    const timings = {
+      candidateBuildMs: Date.now() - routeStartedAt
+    }
 
     const memoryText = [
       confirmedOutfitsText ? `Confirmed/favorite outfit memory:
@@ -5023,7 +5035,8 @@ ${globalFeedbackText}` : ''
     ].filter(Boolean).join('\n\n')
     let visualCriticDebug = null
     try {
-      const visualRanked = await rankWholeWardrobeCandidatesWithVision({
+      const visualStartedAt = Date.now()
+      const visualRanked = await withTimeout(rankWholeWardrobeCandidatesWithVision({
         candidates,
         candidatePieces,
         occasion,
@@ -5031,7 +5044,8 @@ ${globalFeedbackText}` : ''
         mood,
         memoryText,
         limit: requestedLimit
-      })
+      }), 25000, 'Whole-wardrobe visual critic')
+      timings.visualCriticMs = Date.now() - visualStartedAt
       if (visualRanked?.candidates?.length) {
         candidates = visualRanked.candidates.map((candidate, index) => ({ ...candidate, candidateId: `cand-${index + 1}` }))
         candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
@@ -5046,6 +5060,7 @@ ${globalFeedbackText}` : ''
     } catch (err) {
       console.warn('Whole-wardrobe visual critic fallback:', err.message)
       visualCriticDebug = { error: err.message }
+      timings.visualCriticMs = timings.visualCriticMs || null
     }
     const candidateById = new Map(candidates.map(c => [c.candidateId, c]))
 
@@ -5066,13 +5081,22 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       'Return the strongest whole-wardrobe outfits right now. Text only; no image generation.'
     ].filter(Boolean).join('\n')
 
-    const raw = await askStylist({
-      system: WHOLE_WARDROBE_COMPOSER_SYSTEM,
-      maxTokens: 2200,
-      messages: [{ role: 'user', content: [{ type: 'text', text: userPayload }] }]
-    })
-
-    const parsed = safeJsonFromModel(raw)
+    let parsed = {}
+    let composerError = null
+    try {
+      const composerStartedAt = Date.now()
+      const raw = await withTimeout(askStylist({
+        system: WHOLE_WARDROBE_COMPOSER_SYSTEM,
+        maxTokens: 1600,
+        messages: [{ role: 'user', content: [{ type: 'text', text: userPayload }] }]
+      }), 35000, 'Whole-wardrobe composer')
+      timings.composerMs = Date.now() - composerStartedAt
+      parsed = safeJsonFromModel(raw)
+    } catch (err) {
+      console.warn('Whole-wardrobe composer fallback:', err.message)
+      composerError = err.message
+      timings.composerMs = timings.composerMs || null
+    }
     const aiReturnedCount = Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0
     const withCandidatePieces = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
     const candidate = outfit?.candidateId ? candidateById.get(outfit.candidateId) : null
@@ -5135,6 +5159,8 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
         suppressedPieceCount: suppressedPieces.length,
         suppressedPieces,
         visualCritic: visualCriticDebug,
+        composerError,
+        timings,
         archetypeCounts,
         formulaFamiliesReturned,
         locallyGeneratedCount: localBackfillOutfits.length,
