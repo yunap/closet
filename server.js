@@ -1783,6 +1783,43 @@ function wholeWardrobePieceBucket(allPieces = []) {
   return bucket
 }
 
+function wholeWardrobePieceTrustDecision(piece = {}, { occasion = 'casual', explorationMode = 'moderate' } = {}) {
+  const status = String(piece.recommendation_status || 'trusted')
+  const fit = String(piece.fit_confidence || 'unknown')
+  const role = String(piece.role_permission || 'auto')
+  const notes = `${piece.engine_notes || ''} ${piece.notes || ''}`.toLowerCase()
+  const permissions = Array.isArray(piece.occasion_permissions) ? piece.occasion_permissions : []
+  const reasons = []
+  const aggressive = explorationMode === 'aggressive'
+
+  if (status === 'avoid' || status === 'do_not_recommend') reasons.push('recommendation status blocks auto-use')
+  if (role === 'never_auto' || role === 'only_when_requested') reasons.push('role permission blocks automatic styling')
+  if (status === 'needs_fit_review' && !aggressive) reasons.push('needs fit review')
+  if (status === 'experimental' && !aggressive) reasons.push('experimental piece held for exploration mode')
+  if (fit === 'low' && !aggressive) reasons.push('low fit confidence')
+  if (permissions.length && occasion && !permissions.includes(occasion)) reasons.push(`not permitted for ${occasion}`)
+  if (/\b(too small|too tight|does not fit|doesn't fit|bad fit|avoid auto|not evening|not for evening|testing only)\b/.test(notes) && !aggressive) {
+    reasons.push('engine notes suppress auto-use')
+  }
+
+  return {
+    allowed: reasons.length === 0,
+    supportOnly: role === 'support_only',
+    reasons
+  }
+}
+
+function filterWholeWardrobePiecesForGeneration(allPieces = [], options = {}) {
+  const allowedPieces = []
+  const suppressedPieces = []
+  for (const piece of allPieces) {
+    const decision = wholeWardrobePieceTrustDecision(piece, options)
+    if (decision.allowed) allowedPieces.push(piece)
+    else suppressedPieces.push({ id: piece.id, name: piece.name, category: wardrobeCategoryGroup(piece), reasons: decision.reasons })
+  }
+  return { allowedPieces, suppressedPieces }
+}
+
 function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   const text = pieces.map(pieceTextBlob).join(' ')
   const names = pieces.map(p => p.name).join(' + ')
@@ -1808,6 +1845,10 @@ function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   if (lightNeutralCount >= 3 && !/\b(black|charcoal|espresso|plum|cognac|boot|loafer|pointed|graphic|structured)\b/.test(text)) add(-24, 'generic light-neutral softness')
   if (/\b(librarian|catalog|mature|ladylike|polished neutral|luxe neutral)\b/.test(text)) add(-28, 'catalog/librarian drift risk')
   if (groups.includes('shoes') && !/\b(pointed|loafer|boot|mule|oxford|black|cognac|structured|grounded)\b/.test(text)) add(-8, 'weak shoe grounding')
+  for (const piece of pieces) {
+    const decision = wholeWardrobePieceTrustDecision(piece, options)
+    if (decision.supportOnly && ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) add(-18, `${piece.name} support-only`)
+  }
 
   const mood = String(options.mood || '').toLowerCase()
   if (mood && text.includes(mood)) add(2, 'mood match')
@@ -3377,6 +3418,11 @@ db.exec(`
     season       TEXT DEFAULT 'year-round',
     notes        TEXT DEFAULT '',
     status       TEXT DEFAULT 'active',
+    recommendation_status TEXT DEFAULT 'trusted',
+    fit_confidence TEXT DEFAULT 'unknown',
+    role_permission TEXT DEFAULT 'auto',
+    occasion_permissions TEXT DEFAULT '[]',
+    engine_notes TEXT DEFAULT '',
     favorite     INTEGER DEFAULT 0,
     photo        TEXT,
     date_added   TEXT DEFAULT (datetime('now'))
@@ -3469,6 +3515,11 @@ const NEW_COLUMNS = [
   'stretch TEXT', 'fit_on_body TEXT', 'tuck_behavior TEXT', 'waistband_type TEXT',
   'styling_rules_learned TEXT', 'pairs_well_with TEXT', 'tried_and_rejected TEXT',
   'background_color TEXT',
+  'recommendation_status TEXT DEFAULT "trusted"',
+  'fit_confidence TEXT DEFAULT "unknown"',
+  'role_permission TEXT DEFAULT "auto"',
+  'occasion_permissions TEXT DEFAULT "[]"',
+  'engine_notes TEXT DEFAULT ""',
 ]
 NEW_COLUMNS.forEach(col => {
   try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
@@ -3592,9 +3643,14 @@ const parsePiece = p => p ? ({
   ...p,
   colors:                JSON.parse(p.colors                || '[]'),
   occasions:             JSON.parse(p.occasions             || '[]'),
+  occasion_permissions:   JSON.parse(p.occasion_permissions  || '[]'),
   styling_rules_learned: JSON.parse(p.styling_rules_learned || '[]'),
   pairs_well_with:       JSON.parse(p.pairs_well_with       || '[]'),
   tried_and_rejected:    JSON.parse(p.tried_and_rejected    || '[]'),
+  recommendation_status: p.recommendation_status || 'trusted',
+  fit_confidence:        p.fit_confidence        || 'unknown',
+  role_permission:       p.role_permission       || 'auto',
+  engine_notes:          p.engine_notes          || '',
   favorite: Boolean(p.favorite)
 }) : null
 
@@ -3642,6 +3698,11 @@ function buildPieceText(p) {
   // Occasion/season
   if (p.occasions?.length) parts.push(p.occasions.join(', '))
   if (p.status && p.status !== 'active') parts.push(`⚠ ${p.status}`)
+  if (p.recommendation_status && p.recommendation_status !== 'trusted') parts.push(`recommendation trust: ${p.recommendation_status}`)
+  if (p.fit_confidence && p.fit_confidence !== 'unknown') parts.push(`fit confidence: ${p.fit_confidence}`)
+  if (p.role_permission && p.role_permission !== 'auto') parts.push(`auto-styling role: ${p.role_permission}`)
+  if (p.occasion_permissions?.length) parts.push(`auto occasions: ${p.occasion_permissions.join(', ')}`)
+  if (p.engine_notes) parts.push(`engine note: ${p.engine_notes}`)
   if (p.notes) parts.push(`note: ${p.notes}`)
 
   let text = `• ${p.name} (${p.category} | ${parts.join(' | ')})`
@@ -3769,6 +3830,7 @@ app.get('/api/pieces/:id', (req, res) => {
 
 app.post('/api/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), (req, res) => {
   const { name, category, colors, occasions, season, notes, status,
+    recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_type, length_hits_at, silhouette,
     fabric_category, fabric_weight, stretch,
@@ -3778,12 +3840,14 @@ app.post('/api/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }
   const worn_photo = req.files?.worn_photo?.[0]?.filename || null
   const r = db.prepare(`
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, photo, worn_photo,
+      recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
       pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
       neckline, sleeve_type, length_hits_at, silhouette,
       fabric_category, fabric_weight, stretch, fit_on_body, tuck_behavior, waistband_type,
       styling_rules_learned, pairs_well_with, tried_and_rejected)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active', photo, worn_photo,
+    recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
     fabric_category||null, fabric_weight||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
@@ -3795,6 +3859,7 @@ app.put('/api/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo
   const existing = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
   if (!existing) return res.status(404).json({ error: 'Not found' })
   const { name, category, colors, occasions, season, notes, status, favorite, clear_photo, clear_worn_photo,
+    recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_type, length_hits_at, silhouette,
     fabric_category, fabric_weight, stretch,
@@ -3804,6 +3869,7 @@ app.put('/api/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo
   const worn_photo = req.files?.worn_photo?.[0]?.filename  || (clear_worn_photo === 'true' ? null : existing.worn_photo)
   db.prepare(`
     UPDATE pieces SET name=?,category=?,colors=?,occasions=?,season=?,notes=?,status=?,favorite=?,photo=?,worn_photo=?,
+      recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,
       pattern_type=?,pattern_scale=?,pattern_complexity=?,reads_as=?,background_color=?,hem_finish=?,
       neckline=?,sleeve_type=?,length_hits_at=?,silhouette=?,
       fabric_category=?,fabric_weight=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,
@@ -3811,6 +3877,7 @@ app.put('/api/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo
     WHERE id=?
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active',
     favorite==='true'?1:0, photo, worn_photo,
+    recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
     fabric_category||null, fabric_weight||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
@@ -4730,13 +4797,15 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
     occasion = 'casual',
     season = 'current season',
     mood = '',
-    limit = 5
+    limit = 5,
+    explorationMode = 'moderate'
   } = req.body || {}
 
   try {
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const candidates = buildWholeWardrobeCandidateOutfits(allPieces, { occasion, season, mood })
+    const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
+    const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode })
     const candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
     const candidatePieces = candidatePieceIds
       .map(id => allPieces.find(p => Number(p.id) === Number(id)))
@@ -4843,6 +4912,8 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       pipeline: 'whole_wardrobe_composer_evaluator',
       debug: {
         candidateCount: candidates.length,
+        suppressedPieceCount: suppressedPieces.length,
+        suppressedPieces,
         archetypeCounts,
         formulaFamiliesReturned,
         locallyGeneratedCount: localBackfillOutfits.length,

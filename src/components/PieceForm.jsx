@@ -3,6 +3,25 @@ import { useState } from 'react'
 const CATEGORIES  = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home']
 const SEASONS     = ['warm', 'cool', 'year-round']
+const RECOMMENDATION_STATUSES = [
+  { value: 'trusted', label: 'Trusted' },
+  { value: 'experimental', label: 'Experimental' },
+  { value: 'needs_fit_review', label: 'Needs fit review' },
+  { value: 'avoid', label: 'Do not recommend' },
+]
+const FIT_CONFIDENCE = [
+  { value: 'unknown', label: 'Unknown' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+]
+const ROLE_PERMISSIONS = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'focal_ok', label: 'Focal ok' },
+  { value: 'support_only', label: 'Support only' },
+  { value: 'only_when_requested', label: 'Only when requested' },
+  { value: 'never_auto', label: 'Never auto-use' },
+]
 const STATUSES    = [
   { value: 'active',            label: 'Active' },
   { value: 'needs-repair',      label: '⚠ Needs repair' },
@@ -153,6 +172,11 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     season:             piece?.season             || 'year-round',
     notes:              piece?.notes              || '',
     status:             piece?.status             || 'active',
+    recommendation_status: piece?.recommendation_status || 'trusted',
+    fit_confidence:        piece?.fit_confidence        || 'unknown',
+    role_permission:       piece?.role_permission       || 'auto',
+    occasion_permissions:  piece?.occasion_permissions  || [],
+    engine_notes:          piece?.engine_notes          || '',
     // Pattern
     pattern_type:       piece?.pattern_type       || null,
     pattern_scale:      piece?.pattern_scale      || null,
@@ -405,6 +429,38 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <select className="form-select" value={form.status} onChange={e => set('status', e.target.value)}>
               {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
+          </div>
+
+          {/* ── Recommendation Trust ───────────────────────────────── */}
+          <Section label="Recommendation Trust" />
+
+          <div className="form-group">
+            <label className="form-label">Auto-recommendation status</label>
+            <select className="form-select" value={form.recommendation_status} onChange={e => set('recommendation_status', e.target.value)}>
+              {RECOMMENDATION_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Fit confidence</label>
+            <ChipRow options={FIT_CONFIDENCE} value={form.fit_confidence} onChange={v => set('fit_confidence', v || 'unknown')} />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Auto-styling role</label>
+            <select className="form-select" value={form.role_permission} onChange={e => set('role_permission', e.target.value)}>
+              {ROLE_PERMISSIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Allowed auto occasions <span style={{ fontSize: 10, color: 'var(--text-light)', fontStyle: 'italic', fontWeight: 400 }}>empty = any occasion</span></label>
+            <ChipRow options={OCCASIONS} value={form.occasion_permissions} onChange={v => set('occasion_permissions', v)} multi />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Engine notes <span style={{ fontSize: 10, color: 'var(--text-light)', fontStyle: 'italic', fontWeight: 400 }}>private instructions for auto styling</span></label>
+            <textarea className="form-textarea" placeholder="e.g. too small; do not use as a focal evening garment" value={form.engine_notes} onChange={e => set('engine_notes', e.target.value)} style={{ minHeight: 72 }} />
           </div>
 
           {/* ── Pattern & Visual ─────────────────────────────────────── */}
