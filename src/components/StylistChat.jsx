@@ -821,6 +821,13 @@ export default function AskClaude({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ outfit, pieceIds: ids, occasion: wardrobeOutfitOccasion, season: wardrobeOutfitSeason })
       })
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(text.startsWith('<!DOCTYPE')
+          ? 'Image route returned HTML instead of JSON. Restart the backend/dev server so the new /api/ai/generate-wardrobe-outfit-image route is loaded.'
+          : `Image route returned ${contentType || 'non-JSON'} response.`)
+      }
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate outfit image')
       setBoardResults(prev => ({ ...prev, [resultKey]: [data.board || data] }))
