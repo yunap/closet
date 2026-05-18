@@ -508,6 +508,31 @@ export default function OutfitLookbook({ onSendToStylist }) {
                   : <div className="outfit-placeholder">{OCCASION_ICONS[o.occasion] || '✦'}</div>
                 }
                 <button
+                  style={{ position: 'absolute', top: 8, left: 8, fontSize: 11, background: 'var(--accent)', color: '#fff', padding: '5px 9px', borderRadius: 14, border: '1px solid rgba(255,255,255,0.35)', boxShadow: '0 2px 8px rgba(0,0,0,0.12)', backdropFilter: 'blur(8px)' }}
+                  onClick={e => {
+                    e.stopPropagation()
+                    onSendToStylist({
+                      ...o,
+                      stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
+                    })
+                  }}
+                >
+                  Evaluate
+                </button>
+                <button
+                  style={{ position: 'absolute', top: 42, left: 8, fontSize: 11, background: 'rgba(254,252,249,0.9)', color: 'var(--accent)', padding: '5px 9px', borderRadius: 14, border: '1px solid var(--accent)', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', backdropFilter: 'blur(8px)' }}
+                  onClick={e => {
+                    e.stopPropagation()
+                    onSendToStylist({
+                      ...o,
+                      imageGenerationMode: true,
+                      stylistPrompt: 'Generate outfit variants from this saved outfit photo and linked garment references.'
+                    })
+                  }}
+                >
+                  Variants
+                </button>
+                <button
                   style={{ position: 'absolute', top: 8, right: 8, fontSize: 16, background: 'rgba(254,252,249,0.85)', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}
                   onClick={e => { e.stopPropagation(); handleFav(o) }}
                 >{o.favorite ? '♥' : '♡'}</button>

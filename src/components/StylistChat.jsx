@@ -191,7 +191,7 @@ export default function AskClaude({
     setIdealOnlyMode(false)
     setEditorialVisualMode(false)
     setActiveContext({ type: 'outfit', id: initialOutfit.id, name: initialOutfit.name })
-    setInput('What do you think of this outfit?')
+    setInput(initialOutfit.stylistPrompt || 'What do you think of this outfit?')
     setImageFile(null); setImagePrev(null)
     onClearOutfit?.()
   }, [initialOutfit])
@@ -480,7 +480,7 @@ export default function AskClaude({
 
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-        {message?.wholeWardrobe && message?.debug?.timings && (
+        {(message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings && (
           <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
             Timing: {timingSummary(message.debug.timings)}
           </div>
@@ -493,6 +493,7 @@ export default function AskClaude({
           const isTextOnly = Boolean(outfit.textOnly || message?.textOnly || message?.wholeWardrobe)
           const hasRendered = Boolean(boardResults[boardKey]?.length)
           const isRendering = boardLoadingIndex === boardKey
+          const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
 
           return (
             <div key={idx} style={{
@@ -591,6 +592,13 @@ export default function AskClaude({
                     style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
                   >
                     {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate image' : 'Generate image')}
+                  </button>
+                  <button
+                    onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
+                    disabled={isEvaluating}
+                    style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1 }}
+                  >
+                    {isEvaluating ? 'Evaluating...' : 'Evaluate outfit'}
                   </button>
                   {imageStatusByKey[boardKey] && <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{imageStatusByKey[boardKey]}</span>}
                   {WHOLE_WARDROBE_FEEDBACK_LABELS.map(([type, label]) => {
@@ -894,6 +902,59 @@ export default function AskClaude({
     }
   }
 
+  const evaluateWholeWardrobeOutfit = async (resultKey, outfit) => {
+    const ids = Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+      ? outfit.pieceIds
+      : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(p => p?.id).filter(Boolean) : [])
+    if (!ids.length) return
+    const loadingKey = `evaluate:${resultKey}`
+    const outfitTitle = outfit?.label || outfit?.title || 'this outfit'
+    const userText = `Evaluate ${outfitTitle}.`
+
+    setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Whole wardrobe evaluation' }])
+    addToHistory('user', userText)
+    setBoardLoadingIndex(loadingKey)
+
+    try {
+      const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outfit,
+          pieceIds: ids,
+          occasion: wardrobeOutfitOccasion,
+          season: wardrobeOutfitSeason,
+          mood: wardrobeOutfitMood,
+          question: 'Evaluate this generated whole-wardrobe outfit.'
+        })
+      })
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(text.startsWith('<!DOCTYPE')
+          ? 'Evaluation route returned HTML instead of JSON. Restart the backend/dev server so the new /api/ai/evaluate-wardrobe-outfit route is loaded.'
+          : `Evaluation route returned ${contentType || 'non-JSON'} response.`)
+      }
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not evaluate outfit')
+      const replyText = data.feedback || 'Outfit evaluation complete.'
+      setMessages(m => [...m, {
+        role: 'assistant',
+        text: replyText,
+        wardrobeEvaluation: true,
+        textOnly: true,
+        debug: data.debug || null,
+      }])
+      addToHistory('assistant', replyText)
+    } catch (err) {
+      const errText = `Error: ${err.message}`
+      setMessages(m => [...m, { role: 'assistant', text: errText }])
+      addToHistory('assistant', errText)
+    } finally {
+      setBoardLoadingIndex(null)
+    }
+  }
+
   const exploreIdealAdditionsFromBoard = async ({ board, outfit, messageIndex, outfitIndex, boardIndex }) => {
     if (!activeContext || activeContext.type !== 'piece' || !board) return
     const loadingKey = `ideal:${messageIndex}:${outfitIndex}:${boardIndex}`
@@ -1040,16 +1101,85 @@ export default function AskClaude({
     try {
       let replyText
       let replyStructuredOutfits = null
+      let replyWardrobeEvaluation = false
+      let replyDebug = null
 
       if (outfitToSend && compareId) {
         const res = await fetch('/api/ai/compare-outfits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitAId: outfitToSend.id, outfitBId: compareId, question: q || 'Which outfit works better for me?', history: historySnapshot }) })
         const data = await res.json()
         replyText = data.feedback || data.error || 'Something went wrong.'
 
-      } else if (outfitToSend) {
-        const res = await fetch('/api/ai/evaluate-outfit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitId: outfitToSend.id, question: q || 'What do you think of this outfit?', history: historySnapshot }) })
+      } else if (outfitToSend?.imageGenerationMode) {
+        const outfitPieceIds = Array.isArray(outfitToSend.pieces)
+          ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
+          : []
+        const res = await fetch('/api/ai/generate-saved-outfit-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outfit: {
+              id: outfitToSend.id,
+              label: outfitToSend.name,
+              title: outfitToSend.name,
+              photo: outfitToSend.photo || '',
+              bestFor: outfitToSend.occasion || '',
+              pieces: outfitToSend.pieces || [],
+              pieceIds: outfitPieceIds,
+              reason: outfitToSend.notes || '',
+            },
+            pieceIds: outfitPieceIds,
+            occasion: outfitToSend.occasion || generateOccasion,
+            season: outfitToSend.season || generateSeason,
+          })
+        })
+        const contentType = res.headers.get('content-type') || ''
+        if (!contentType.includes('application/json')) {
+          const text = await res.text()
+          throw new Error(text.startsWith('<!DOCTYPE')
+            ? 'Image route returned HTML instead of JSON. Restart the backend/dev server so the new /api/ai/generate-saved-outfit-image route is loaded.'
+            : `Image route returned ${contentType || 'non-JSON'} response.`)
+        }
         const data = await res.json()
-        replyText = data.feedback || data.error || 'Something went wrong.'
+        if (!res.ok) throw new Error(data.error || 'Could not generate outfit variants')
+        replyText = data.feedback || 'Generated outfit variants from the saved outfit photo and linked garment references.'
+        setBoardResults(prev => ({ ...prev, [assistantIndex]: data.boards || [data.board || data] }))
+
+      } else if (outfitToSend) {
+        const outfitPieceIds = Array.isArray(outfitToSend.pieces)
+          ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
+          : []
+        const useWardrobeEvaluator = Boolean(outfitToSend.stylistPrompt && outfitPieceIds.length >= 2)
+        if (useWardrobeEvaluator) {
+          const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              outfit: {
+                label: outfitToSend.name,
+                title: outfitToSend.name,
+                photo: outfitToSend.photo || '',
+                bestFor: outfitToSend.occasion || '',
+                pieces: outfitToSend.pieces || [],
+                pieceIds: outfitPieceIds,
+                reason: outfitToSend.notes || '',
+              },
+              pieceIds: outfitPieceIds,
+              occasion: outfitToSend.occasion || generateOccasion,
+              season: outfitToSend.season || generateSeason,
+              mood: wardrobeOutfitMood,
+              question: q || 'Evaluate this outfit.'
+            })
+          })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || 'Could not evaluate outfit')
+          replyText = data.feedback || 'Outfit evaluation complete.'
+          replyWardrobeEvaluation = true
+          replyDebug = data.debug || null
+        } else {
+          const res = await fetch('/api/ai/evaluate-outfit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitId: outfitToSend.id, question: q || 'What do you think of this outfit?', history: historySnapshot }) })
+          const data = await res.json()
+          replyText = data.feedback || data.error || 'Something went wrong.'
+        }
 
       } else if (pieceToSend && shouldGenerateEditorialVisuals) {
         // ── PREVIEW MODE: text directions only, no images yet ────────────────
@@ -1111,7 +1241,7 @@ export default function AskClaude({
         replyText = data.answer || data.error || 'Something went wrong.'
       }
 
-      setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits }])
+      setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits, wardrobeEvaluation: replyWardrobeEvaluation, textOnly: replyWardrobeEvaluation, debug: replyDebug }])
       addToHistory('assistant', replyText)
 
     } catch (err) {
