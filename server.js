@@ -1404,6 +1404,44 @@ JSON shape:
   "saveableLearning": "one concise whole-wardrobe rule"
 }`
 
+const WHOLE_WARDROBE_EVALUATOR_SYSTEM = `You are evaluating one proposed whole-wardrobe outfit for Yuna's closet app.
+Return ONLY valid JSON. No markdown.
+
+Evaluate the actual garment interaction, not generic style theory.
+
+Yuna's style filter:
+- artistic minimalist, relaxed structure, modern bohemian restraint
+- one clear silhouette idea, grounded shoes, edited texture, warm/deep palette
+- controlled tension is better than pleasant harmony
+
+Avoid:
+- body-shape/flattery language
+- generic phrases like balanced, elevated, sophisticated, playful touch, visual interest, modernity
+- pretending a questionable combination works just because the pieces are individually good
+
+For the critique:
+- say what works, what fails or feels risky, and whether the occasion fit is convincing
+- name the actual garments and their jobs
+- distinguish "good pieces" from "good combination"
+- if a piece seems fit-risky, too dominant, too casual, or wrong for the occasion, say so plainly
+
+JSON shape:
+{
+  "summary": "2-3 sentence direct evaluation",
+  "verdict": "keep | revise | avoid",
+  "scores": {
+    "combination": 1-5,
+    "occasionFit": 1-5,
+    "silhouette": 1-5,
+    "pieceTrust": 1-5
+  },
+  "works": ["specific thing that works"],
+  "risks": ["specific thing to watch or fix"],
+  "recommendation": "one concrete next step",
+  "tryNext": "optional plain-language next experiment, not a render prompt",
+  "saveableLearning": "one concise learning rule"
+}`
+
 const WHOLE_WARDROBE_OUTFIT_ARCHETYPES = [
   {
     id: 'grounded_graphic_column',
@@ -3777,6 +3815,120 @@ function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual
   ].filter(Boolean).join('\n')
 }
 
+function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
+  const anchorPiece = (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'top')
+    || (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'dress')
+    || (pieces || [])[0]
+  const pieceLines = pieces.map((piece, index) => {
+    const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 500)
+    return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
+  }).join('\n')
+  return [
+    'Create one image showing three outfit alternatives inspired by the saved outfit photo.',
+    'Show the three alternatives side by side as a clean triptych/contact sheet. Each alternative should be a full-body outfit on the same person.',
+    'Do not copy the input outfit. Make each alternative meaningfully different.',
+    anchorPiece ? `Keep this linked garment as the visible anchor in all three alternatives: ${anchorPiece.name} (${wardrobeCategoryGroup(anchorPiece)}). Do not replace or redesign that anchor garment.` : '',
+    'Surface at least three distinct outfit formula families across the alternatives. Vary support pieces, shoe/grounding strategy, layer logic, color story, and visual rhythm. Do not generate near-duplicates.',
+    'Use taste guardrails as boundaries, not a fixed recipe: avoid generic casual/resort/preppy styling, bland retail styling, and overly soft beige looks.',
+    'Do not make all three alternatives earthy, vintage, bohemian, or autumnal. Do not repeat the same skirt shape, same shoe family, same color family, or same layer idea across all three.',
+    'At least one option should feel sharper, urban, graphic, or minimal rather than warm/bohemian. One option may be softer or more romantic, but the set must not collapse into one mood.',
+    'Use the source photo only for identity, proportions, and fit context.',
+    'Use the linked garment references when useful. You may change supporting styling pieces freely, but keep the anchor garment.',
+    'Full body, realistic clothing, no text, no labels, no watermark, no mirror selfie.',
+    '',
+    `Saved outfit: ${outfit.label || outfit.title || outfit.name || 'saved outfit'}`,
+    pieceLines ? `Linked garment truth:\n${pieceLines}` : '',
+    `Occasion: ${occasion}. Season: ${season}.`
+  ].filter(Boolean).join('\n')
+}
+
+async function createSavedOutfitImage({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', index = 1 }) {
+  const startedAt = Date.now()
+  const timings = {}
+  const filename = `generated-boards/saved-outfit-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
+  const outPath = path.join(uploadsDir, filename)
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+  const sourcePath = outfit.photo ? imageUrlToUploadPath(outfit.photo) : null
+
+  if (photoPreservingVisualsEnabled() || !process.env.OPENAI_API_KEY) {
+    const collageStartedAt = Date.now()
+      const imageUrl = await createPhotoPreservingCollageImage({
+      title: 'Outfit alternatives',
+      subtitle: 'saved outfit variant · photo-preserving collage',
+      sourcePath,
+      pieces,
+      reason: 'Uses the saved outfit photo and linked garment photos as references.',
+      index,
+      prefix: 'saved-outfit-collage'
+    })
+    timings.collageMs = Date.now() - collageStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl, timings, renderer: 'photo_preserving_collage' }
+  }
+
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const contentParts = []
+    if (sourcePath) {
+      const sourceStartedAt = Date.now()
+      const buffer = await sharp(sourcePath)
+        .rotate()
+        .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 86 })
+        .toBuffer()
+      timings.sourceImageMs = Date.now() - sourceStartedAt
+      contentParts.push({ type: 'input_text', text: 'Source outfit photo. Reference only. Do not recreate it exactly.' })
+      contentParts.push({ type: 'input_image', image_url: `data:image/jpeg;base64,${buffer.toString('base64')}` })
+    }
+
+    const garmentStartedAt = Date.now()
+    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
+    timings.garmentReferenceMs = Date.now() - garmentStartedAt
+    for (const ref of garmentRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
+      contentParts.push({ type: 'input_text', text: `Linked garment reference: ${ref.label}` })
+    }
+
+    const calibrationStartedAt = Date.now()
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    for (const img of calibrationRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion calibration reference.' : 'Taste calibration reference.' })
+    }
+
+    contentParts.push({ type: 'input_text', text: savedOutfitImagePrompt({ outfit, pieces, occasion, season }) })
+    const gptStartedAt = Date.now()
+    const response = await client.responses.create({
+      model: 'gpt-4o',
+      input: [{ role: 'user', content: contentParts }],
+      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+    })
+    timings.gpt4oImageMs = Date.now() - gptStartedAt
+    const imageItem = response.output?.find(item => item.type === 'image_generation_call')
+    if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    const writeStartedAt = Date.now()
+    await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
+    timings.writeMs = Date.now() - writeStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
+  } catch (err) {
+    console.error('Saved outfit GPT-4o image generation failed, falling back to collage:', err.message)
+    timings.gpt4oError = err.message
+    const imageUrl = await createPhotoPreservingCollageImage({
+      title: 'Outfit alternatives',
+      subtitle: 'saved outfit variant fallback · source and garment photos',
+      sourcePath,
+      pieces,
+      reason: `Image generation fallback: ${err.message}`,
+      index,
+      prefix: 'saved-outfit-fallback'
+    })
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl, timings, renderer: 'fallback_collage' }
+  }
+}
+
 async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index = 1 }) {
   const startedAt = Date.now()
   const timings = {}
@@ -5566,6 +5718,164 @@ app.post('/api/ai/generate-wardrobe-outfit-image', async (req, res) => {
   }
 })
 
+app.post('/api/ai/generate-saved-outfit-image', async (req, res) => {
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season' } = req.body || {}
+  try {
+    let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
+      .map(Number)
+      .filter(Boolean))]
+      .slice(0, 6)
+    let pieces = []
+    if (ids.length) {
+      const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
+      const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
+      pieces = ids.map(id => byId.get(id)).filter(Boolean)
+    } else if (outfit.id) {
+      pieces = getLinkedPiecesForOutfit(outfit.id).slice(0, 6)
+      ids = pieces.map(piece => Number(piece.id)).filter(Boolean)
+    }
+    if (!ids.length) return res.status(400).json({ error: 'No linked wardrobe pieces were found for this outfit' })
+
+    if (pieces.length < 2) return res.status(400).json({ error: 'At least two linked wardrobe pieces are required' })
+
+    const rendered = await createSavedOutfitImage({ outfit, pieces, occasion, season, index: 1 })
+    const boards = [{
+      label: 'Outfit alternatives',
+      reason: 'One GPT-4o call generated three distinct outfit alternatives from the saved outfit photo and linked garment references.',
+      watchFor: 'The three alternatives should use different outfit formulas rather than repeat the same styling idea.',
+      pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
+      imageUrl: rendered.imageUrl,
+      debug: { timings: rendered.timings, renderer: rendered.renderer },
+      savedOutfit: true,
+      variant: true
+    }]
+    res.json({
+      boards,
+      feedback: 'Generated three outfit alternatives in one image from the saved outfit photo and linked garment references.',
+      provider: 'openai',
+      mode: 'generate_saved_outfit_variants',
+      debug: { variantCount: 3, requestCount: 1 }
+    })
+  } catch (err) {
+    console.error('Generate saved outfit image error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '' } = req.body || {}
+  try {
+    const startedAt = Date.now()
+    const ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
+      .map(Number)
+      .filter(Boolean))]
+      .slice(0, 6)
+    if (!ids.length) return res.status(400).json({ error: 'pieceIds are required' })
+
+    const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
+    const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
+    const pieces = ids.map(id => byId.get(id)).filter(Boolean)
+    if (pieces.length < 2) return res.status(400).json({ error: 'At least two saved wardrobe pieces are required' })
+
+    const content = []
+    const outfitPhoto = outfit.photo || outfit.imageUrl || ''
+    if (outfitPhoto) {
+      const outfitFileName = String(outfitPhoto).startsWith('/uploads/')
+        ? path.basename(outfitPhoto)
+        : path.basename(String(outfitPhoto))
+      const outfitFilePath = path.join(uploadsDir, outfitFileName)
+      if (fs.existsSync(outfitFilePath)) {
+        const { base64, mime } = await prepareImageForClaude(outfitFilePath)
+        content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
+      }
+    }
+    const imageRefs = await Promise.all(pieces.slice(0, 5).map(async (piece) => {
+      const photo = piece.worn_photo || piece.photo
+      if (!photo) return null
+      const filePath = path.join(uploadsDir, photo)
+      if (!fs.existsSync(filePath)) return null
+      const { base64, mime } = await prepareImageForClaude(filePath)
+      return { piece, base64, mime }
+    }))
+    for (const ref of imageRefs.filter(Boolean)) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: ref.mime, data: ref.base64 } })
+    }
+
+    const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(20)
+    const calibrationMemoryText = getCalibrationMemoryForStylist(20)
+    const globalSavedBoardText = getSavedBoardMemory(null, null, 10)
+    const pieceLines = pieces.map((piece, index) => `${index + 1}. ${buildPieceText(piece)}`).join('\n')
+    const outfitSummary = [
+      `Label: ${outfit.label || outfit.title || 'Whole wardrobe outfit'}`,
+      outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
+      outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
+      outfit.reason ? `Current reason: ${outfit.reason}` : '',
+      outfit.watchFor ? `Current watch note: ${outfit.watchFor}` : '',
+      outfit.formulaFamily ? `Formula family: ${outfit.formulaFamily}` : '',
+      outfit.archetypeId ? `Archetype: ${outfit.archetypeId}` : ''
+    ].filter(Boolean).join('\n')
+
+    content.push({ type: 'text', text: [
+      `Mode: evaluate_whole_wardrobe_outfit`,
+      `Occasion: ${occasion}`,
+      `Season: ${season}`,
+      mood ? `Mood: ${mood}` : '',
+      question ? `User question: ${question}` : 'User question: Evaluate this outfit.',
+      outfitPhoto ? 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.' : 'No worn outfit photo was provided. Use linked garment references and garment truth cautiously.',
+      '',
+      `Proposed outfit:\n${outfitSummary}`,
+      '',
+      `Owned garment truth. Use these exact garments for the critique:\n${pieceLines}`,
+      '',
+      wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',
+      globalSavedBoardText ? `Saved visual board memory:\n${globalSavedBoardText}` : '',
+      calibrationMemoryText ? `Calibration memory:\n${calibrationMemoryText}` : '',
+      '',
+      'Return direct advice only. Do not create render directions or image-generation prompts.'
+    ].filter(Boolean).join('\n') })
+
+    const raw = await withTimeout(askStylist({
+      system: WHOLE_WARDROBE_EVALUATOR_SYSTEM,
+      maxTokens: 1400,
+      messages: [{ role: 'user', content }]
+    }), 45000, 'Whole-wardrobe outfit evaluator')
+    const parsed = safeJsonFromModel(raw)
+    const scoreText = parsed?.scores && typeof parsed.scores === 'object'
+      ? Object.entries(parsed.scores).map(([key, value]) => `${key}: ${value}/5`).join(' · ')
+      : ''
+    const feedback = [
+      parsed.summary || 'Evaluation complete.',
+      parsed.verdict ? `Verdict: ${parsed.verdict}` : '',
+      scoreText ? `Scores: ${scoreText}` : '',
+      Array.isArray(parsed.works) && parsed.works.length ? `Works: ${parsed.works.join(' ')}` : '',
+      Array.isArray(parsed.risks) && parsed.risks.length ? `Risks: ${parsed.risks.join(' ')}` : '',
+      parsed.recommendation ? `Next: ${parsed.recommendation}` : '',
+      parsed.tryNext ? `Try next: ${parsed.tryNext}` : ''
+    ].filter(Boolean).join('\n\n')
+
+    res.json({
+      feedback,
+      evaluation: {
+        summary: parsed.summary || '',
+        verdict: parsed.verdict || '',
+        scores: parsed.scores || {},
+        works: Array.isArray(parsed.works) ? parsed.works : [],
+        risks: Array.isArray(parsed.risks) ? parsed.risks : [],
+        recommendation: parsed.recommendation || '',
+        tryNext: parsed.tryNext || '',
+        saveableLearning: parsed.saveableLearning || ''
+      },
+      provider: AI_PROVIDER,
+      mode: 'evaluate_wardrobe_outfit',
+      pipeline: 'whole_wardrobe_outfit_evaluator',
+      debug: { timings: { totalMs: Date.now() - startedAt }, outfitImageIncluded: Boolean(outfitPhoto), imageCount: imageRefs.filter(Boolean).length + (outfitPhoto ? 1 : 0) }
+    })
+  } catch (err) {
+    console.error('Evaluate whole-wardrobe outfit error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 
 
 function ownedInventorySummaryForEditorial(excludePieceId = null) {
@@ -5807,7 +6117,7 @@ function editorialImagePrompt({ selectedPiece, direction, occasion, season }) {
  
   ].filter(Boolean).join('\n')
 }
- 
+
 async function getCalibrationReferenceImagesForGeneration(limit = 3) {
   try {
     const rows = db.prepare(`
@@ -6153,7 +6463,6 @@ app.post('/api/ai/editorial-render-one', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
-
 
 app.post('/api/ai/editorial-new-piece-visuals', async (req, res) => {
   const { pieceId, occasion = 'casual', season = 'current season', question, history } = req.body
