@@ -3778,6 +3778,8 @@ function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual
 }
 
 async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index = 1 }) {
+  const startedAt = Date.now()
+  const timings = {}
   const filename = `generated-boards/whole-wardrobe-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
   const outPath = path.join(uploadsDir, filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
@@ -3788,7 +3790,8 @@ async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season
   }
 
   if (photoPreservingVisualsEnabled() || !process.env.OPENAI_API_KEY) {
-    return createPhotoPreservingCollageImage({
+    const collageStartedAt = Date.now()
+    const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
       subtitle: 'whole-wardrobe outfit · saved garment photos',
       pieces,
@@ -3796,12 +3799,17 @@ async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season
       index,
       prefix: 'whole-wardrobe-collage'
     })
+    timings.collageMs = Date.now() - collageStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl, timings, renderer: 'photo_preserving_collage' }
   }
 
   try {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     const contentParts = []
+    const garmentStartedAt = Date.now()
     const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
+    timings.garmentReferenceMs = Date.now() - garmentStartedAt
 
     if (garmentRefs.length) {
       contentParts.push({
@@ -3814,7 +3822,9 @@ async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season
       }
     }
 
+    const calibrationStartedAt = Date.now()
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches listed wardrobe pieces.' : 'Taste calibration reference only.' })
@@ -3822,18 +3832,25 @@ async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season
 
     contentParts.push({ type: 'input_text', text: wholeWardrobeImagePrompt({ outfit, pieces, occasion, season }) })
 
+    const gptStartedAt = Date.now()
     const response = await client.responses.create({
       model: 'gpt-4o',
       input: [{ role: 'user', content: contentParts }],
       tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
     })
+    timings.gpt4oImageMs = Date.now() - gptStartedAt
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    const writeStartedAt = Date.now()
     await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
-    return `/uploads/${filename}`
+    timings.writeMs = Date.now() - writeStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
   } catch (err) {
     console.error('Whole-wardrobe GPT-4o image generation failed, falling back to collage:', err.message)
-    return createPhotoPreservingCollageImage({
+    timings.gpt4oError = err.message
+    const fallbackStartedAt = Date.now()
+    const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
       subtitle: 'whole-wardrobe fallback · saved garment photos',
       pieces,
@@ -3841,6 +3858,9 @@ async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season
       index,
       prefix: 'whole-wardrobe-fallback'
     })
+    timings.fallbackCollageMs = Date.now() - fallbackStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl, timings, renderer: 'fallback_collage' }
   }
 }
 
@@ -5529,16 +5549,17 @@ app.post('/api/ai/generate-wardrobe-outfit-image', async (req, res) => {
     const pieces = ids.map(id => byId.get(id)).filter(Boolean)
     if (pieces.length < 2) return res.status(400).json({ error: 'At least two saved wardrobe pieces are required' })
 
-    const imageUrl = await createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index: 1 })
+    const rendered = await createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index: 1 })
     const board = {
       label: outfit.label || 'Whole wardrobe generated outfit',
       reason: outfit.reason || '',
       watchFor: outfit.watchFor || '',
       pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
-      imageUrl,
+      imageUrl: rendered.imageUrl,
+      debug: { timings: rendered.timings, renderer: rendered.renderer },
       wholeWardrobe: true
     }
-    res.json({ ...board, board, provider: AI_PROVIDER, mode: 'generate_wardrobe_outfit_image' })
+    res.json({ ...board, board, provider: AI_PROVIDER, mode: 'generate_wardrobe_outfit_image', debug: board.debug })
   } catch (err) {
     console.error('Generate whole-wardrobe outfit image error:', err)
     res.status(500).json({ error: err.message })

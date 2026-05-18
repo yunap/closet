@@ -50,6 +50,17 @@ const WHOLE_WARDROBE_FEEDBACK_LABELS = [
   ['fit_issue', 'Fit issue'],
 ]
 
+const formatMs = (ms) => {
+  const n = Number(ms)
+  if (!Number.isFinite(n)) return null
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`
+}
+
+const timingSummary = (timings = {}) => Object.entries(timings || {})
+  .filter(([, value]) => typeof value === 'number')
+  .map(([key, value]) => `${key.replace(/Ms$/, '')}: ${formatMs(value)}`)
+  .join(' · ')
+
 const CALIBRATION_LABELS = [
   ['most_like_me', 'Most like me'],
   ['close_but_off', 'Close but off'],
@@ -469,6 +480,11 @@ export default function AskClaude({
 
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+        {message?.wholeWardrobe && message?.debug?.timings && (
+          <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+            Timing: {timingSummary(message.debug.timings)}
+          </div>
+        )}
         {outfits.slice(0, message?.wholeWardrobe ? 5 : 4).map((outfit, idx) => {
           const strength = strengthLabel(outfit.strength, idx)
           const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean) : []
@@ -662,6 +678,11 @@ export default function AskClaude({
                           </button>
                           <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
                           {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
+                          {board.debug?.timings && (
+                            <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
+                              Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
+                            </div>
+                          )}
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 7 }}>
                             {!isPreview && activeContext?.type === 'piece' && (() => {
                               const idealKey = `ideal:${messageIndex}:${idx}:${boardIdx}`
@@ -961,6 +982,7 @@ export default function AskClaude({
         structuredOutfits: replyStructuredOutfits,
         wholeWardrobe: true,
         textOnly: true,
+        debug: data.debug || null,
       }])
       addToHistory('assistant', replyText)
     } catch (err) {
