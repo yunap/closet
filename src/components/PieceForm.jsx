@@ -46,6 +46,96 @@ const COLOR_OPTIONS = [
 ]
 const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue']
 
+const CLOTHING_CATEGORIES = ['top', 'bottom', 'dress', 'outerwear']
+
+const CONSTRUCTION_BY_CATEGORY = {
+  top: {
+    sectionLabel: 'Construction',
+    showNeckline: true,
+    showSleeve: true,
+    silhouetteLabel: 'Silhouette',
+    silhouetteOptions: ['fitted','slim','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
+    lengthLabel: 'Length hits at',
+    lengthOptions: ['crop','waist','hip','tunic','mid-thigh'],
+    hemLabel: 'Hem finish',
+    hemHint: 'determines tuck ability',
+    hemOptions: [
+      { value: 'straight_loose', label: 'straight - tuckable' },
+      { value: 'banded_elastic', label: 'banded/elastic' },
+      { value: 'ribbed',         label: 'ribbed - wear over' },
+      { value: 'design_hem',     label: 'design hem - wear over' },
+    ],
+  },
+  bottom: {
+    sectionLabel: 'Construction',
+    silhouetteLabel: 'Bottom shape',
+    silhouetteOptions: ['straight leg','wide leg','bootcut','flare','tapered','barrel','A-line skirt','pencil skirt','full skirt','slip skirt','relaxed','structured'],
+    lengthLabel: 'Length',
+    lengthOptions: ['short','above-knee','knee','midi','maxi','ankle','full-length','cropped'],
+    hemLabel: 'Hem / leg opening',
+    hemOptions: [
+      { value: 'straight_loose', label: 'straight/open' },
+      { value: 'cuffed', label: 'cuffed' },
+      { value: 'raw', label: 'raw/frayed' },
+      { value: 'tapered', label: 'tapered' },
+      { value: 'banded_elastic', label: 'elastic/banded' },
+      { value: 'slit', label: 'slit' },
+      { value: 'asymmetrical', label: 'asymmetrical' },
+      { value: 'design_hem', label: 'design hem' },
+    ],
+  },
+  dress: {
+    sectionLabel: 'Construction',
+    showNeckline: true,
+    silhouetteLabel: 'Dress shape',
+    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
+    lengthLabel: 'Length',
+    lengthOptions: ['mini','above-knee','knee','midi','maxi'],
+  },
+  outerwear: {
+    sectionLabel: 'Construction',
+    showSleeve: true,
+    silhouetteLabel: 'Outerwear shape',
+    silhouetteOptions: ['cropped','fitted','boxy','relaxed','oversized','structured','longline'],
+    lengthLabel: 'Length hits at',
+    lengthOptions: ['waist','hip','mid-thigh','knee','longline'],
+  },
+  shoes: {
+    sectionLabel: 'Shoe Details',
+    silhouetteLabel: 'Shoe shape',
+    silhouetteOptions: ['pointed','almond','round','square','open-toe','mule','loafer','boot','sandal','heel','flat','sneaker'],
+    lengthLabel: 'Coverage / shaft',
+    lengthOptions: ['open','closed','ankle','mid-calf','knee','over-knee'],
+  },
+}
+
+const FABRIC_BY_CATEGORY = {
+  shoes: {
+    sectionLabel: 'Material',
+    fabricLabel: 'Material',
+    fabricOptions: ['leather','suede','patent','canvas','mesh','synthetic','textile','rubber','other'],
+    weightLabel: 'Visual weight',
+    weightOptions: ['delicate','slim','medium','chunky'],
+    showStretch: false,
+  },
+  accessory: {
+    sectionLabel: 'Material',
+    fabricLabel: 'Material',
+    fabricOptions: ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','other'],
+    weightLabel: 'Visual weight',
+    weightOptions: ['delicate','slim','medium','chunky'],
+    showStretch: false,
+  },
+  default: {
+    sectionLabel: 'Fabric',
+    fabricLabel: 'Fabric',
+    fabricOptions: ['jersey','knit','linen','silk','satin','cotton','wool','denim','ponte','synthetic','fleece','other'],
+    weightLabel: 'Weight',
+    weightOptions: ['ultralight','light','medium','heavy'],
+    showStretch: true,
+  },
+}
+
 // ── Rule list (add/remove chips) ──────────────────────────────────────────────
 function RuleList({ rules, onChange, placeholder, color = 'accent' }) {
   const [input, setInput] = useState('')
@@ -161,7 +251,7 @@ function ChipRow({ options, value, onChange, multi = false }) {
 
 export default function PieceForm({ piece, onSave, onCancel }) {
   const isEdit   = Boolean(piece?.id)
-  const isTop    = (cat) => ['top','dress','outerwear'].includes(cat)
+  const isTop    = (cat) => cat === 'top'
   const isBottom = (cat) => cat === 'bottom'
 
   const [form, setForm] = useState({
@@ -334,6 +424,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   }
 
   const cat = form.category
+  const constructionConfig = CONSTRUCTION_BY_CATEGORY[cat]
+  const fabricConfig = FABRIC_BY_CATEGORY[cat] || FABRIC_BY_CATEGORY.default
+  const showFitFields = CLOTHING_CATEGORIES.includes(cat)
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
@@ -493,116 +586,123 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           </div>
 
           {/* ── Construction ─────────────────────────────────────────── */}
-          <Section label="Construction" />
+          {constructionConfig && (
+            <>
+              <Section label={constructionConfig.sectionLabel} />
 
-          {(isTop(cat) || cat === 'dress') && (
-            <div className="form-group">
-              <label className="form-label">Neckline</label>
-              <ChipRow options={['V','scoop','crew','boat','mock','cowl','off-shoulder','square','wrap','other']} value={form.neckline} onChange={v => set('neckline', v)} />
-            </div>
+              {constructionConfig.showNeckline && (
+                <div className="form-group">
+                  <label className="form-label">Neckline</label>
+                  <ChipRow options={['V','scoop','crew','boat','mock','cowl','off-shoulder','square','wrap','other']} value={form.neckline} onChange={v => set('neckline', v)} />
+                </div>
+              )}
+
+              {constructionConfig.showSleeve && (
+                <div className="form-group">
+                  <label className="form-label">Sleeve</label>
+                  <ChipRow options={['sleeveless','cap','short','3/4','long','bell','bishop']} value={form.sleeve_type} onChange={v => set('sleeve_type', v)} />
+                </div>
+              )}
+
+              <div className="form-group">
+                <FieldLabel field="silhouette">{constructionConfig.silhouetteLabel}</FieldLabel>
+                <ChipRow options={constructionConfig.silhouetteOptions} value={form.silhouette} onChange={v => set('silhouette', v)} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">{constructionConfig.lengthLabel}</label>
+                <ChipRow options={constructionConfig.lengthOptions} value={form.length_hits_at} onChange={v => set('length_hits_at', v)} />
+              </div>
+
+              {constructionConfig.hemOptions && (
+                <div className="form-group">
+                  <label className="form-label">
+                    {constructionConfig.hemLabel}
+                    {constructionConfig.hemHint && <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>{constructionConfig.hemHint}</span>}
+                  </label>
+                  <ChipRow
+                    options={constructionConfig.hemOptions}
+                    value={form.hem_finish}
+                    onChange={v => set('hem_finish', v)}
+                  />
+                </div>
+              )}
+            </>
           )}
-
-          {(isTop(cat)) && (
-            <div className="form-group">
-              <label className="form-label">Sleeve</label>
-              <ChipRow options={['sleeveless','cap','short','3/4','long','bell','bishop']} value={form.sleeve_type} onChange={v => set('sleeve_type', v)} />
-            </div>
-          )}
-
-          <div className="form-group">
-            <FieldLabel field="silhouette">Silhouette</FieldLabel>
-            <ChipRow options={['fitted','slim','relaxed','boxy','A-line','drop-shoulder','oversized']} value={form.silhouette} onChange={v => set('silhouette', v)} />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Length hits at</label>
-            <ChipRow options={['crop','waist','hip','mid-thigh','knee','midi','maxi','full-length']} value={form.length_hits_at} onChange={v => set('length_hits_at', v)} />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">
-              Hem finish
-              {isTop(cat) && <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>determines tuck ability</span>}
-            </label>
-            <ChipRow
-              options={[
-                { value: 'straight_loose', label: 'straight — tuckable' },
-                { value: 'banded_elastic', label: 'banded/elastic' },
-                { value: 'ribbed',         label: 'ribbed — wear over' },
-                { value: 'design_hem',     label: 'design hem — wear over' },
-              ]}
-              value={form.hem_finish}
-              onChange={v => set('hem_finish', v)}
-            />
-          </div>
 
           {/* ── Fabric ───────────────────────────────────────────────── */}
-          <Section label="Fabric" />
+          <Section label={fabricConfig.sectionLabel} />
 
           <div className="form-group">
-            <FieldLabel field="fabric_category">Fabric</FieldLabel>
-            <ChipRow options={['jersey','knit','linen','silk','satin','cotton','wool','denim','ponte','synthetic','fleece','other']} value={form.fabric_category} onChange={v => set('fabric_category', v)} />
+            <FieldLabel field="fabric_category">{fabricConfig.fabricLabel}</FieldLabel>
+            <ChipRow options={fabricConfig.fabricOptions} value={form.fabric_category} onChange={v => set('fabric_category', v)} />
           </div>
 
           <div className="form-group">
-            <FieldLabel field="fabric_weight">Weight</FieldLabel>
-            <ChipRow options={['ultralight','light','medium','heavy']} value={form.fabric_weight} onChange={v => set('fabric_weight', v)} />
+            <FieldLabel field="fabric_weight">{fabricConfig.weightLabel}</FieldLabel>
+            <ChipRow options={fabricConfig.weightOptions} value={form.fabric_weight} onChange={v => set('fabric_weight', v)} />
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Stretch</label>
-            <ChipRow options={['none','minimal','stretchy']} value={form.stretch} onChange={v => set('stretch', v)} />
-          </div>
-
-          {/* ── Fit ──────────────────────────────────────────────────── */}
-          <Section label="Fit on body" />
-
-          <div className="form-group">
-            <label className="form-label">How does it fit?</label>
-            <ChipRow
-              options={[
-                { value: 'clings_stretchy', label: 'clings (stretchy)' },
-                { value: 'clings_drapey',   label: 'clings (drapey)' },
-                { value: 'skims',           label: 'skims' },
-                { value: 'hangs_straight',  label: 'hangs straight' },
-                { value: 'drapes',          label: 'drapes/flowy' },
-                { value: 'structured',      label: 'structured' },
-              ]}
-              value={form.fit_on_body}
-              onChange={v => set('fit_on_body', v)}
-            />
-          </div>
-
-          {isTop(cat) && (
+          {fabricConfig.showStretch && (
             <div className="form-group">
-              <label className="form-label">Tuck behavior</label>
-              <ChipRow
-                options={[
-                  { value: 'tucks_anywhere',        label: 'tucks freely' },
-                  { value: 'tucks_with_structure',  label: 'needs structured waist/belt' },
-                  { value: 'wear_over_only',         label: 'wear over only' },
-                ]}
-                value={form.tuck_behavior}
-                onChange={v => set('tuck_behavior', v)}
-              />
+              <label className="form-label">Stretch</label>
+              <ChipRow options={['none','minimal','stretchy']} value={form.stretch} onChange={v => set('stretch', v)} />
             </div>
           )}
 
-          {isBottom(cat) && (
-            <div className="form-group">
-              <label className="form-label">Waistband</label>
-              <ChipRow
-                options={[
-                  { value: 'structured_high_waist', label: 'structured high' },
-                  { value: 'structured_mid_waist',  label: 'structured mid' },
-                  { value: 'soft_elastic_pull_on',  label: 'soft elastic' },
-                  { value: 'tight_no_room',          label: 'tight — no tuck' },
-                  { value: 'drawstring_relaxed',     label: 'drawstring' },
-                ]}
-                value={form.waistband_type}
-                onChange={v => set('waistband_type', v)}
-              />
-            </div>
+          {/* ── Fit ──────────────────────────────────────────────────── */}
+          {showFitFields && (
+            <>
+              <Section label="Fit on body" />
+
+              <div className="form-group">
+                <label className="form-label">How does it fit?</label>
+                <ChipRow
+                  options={[
+                    { value: 'clings_stretchy', label: 'clings (stretchy)' },
+                    { value: 'clings_drapey',   label: 'clings (drapey)' },
+                    { value: 'skims',           label: 'skims' },
+                    { value: 'hangs_straight',  label: 'hangs straight' },
+                    { value: 'drapes',          label: 'drapes/flowy' },
+                    { value: 'structured',      label: 'structured' },
+                  ]}
+                  value={form.fit_on_body}
+                  onChange={v => set('fit_on_body', v)}
+                />
+              </div>
+
+              {isTop(cat) && (
+                <div className="form-group">
+                  <label className="form-label">Tuck behavior</label>
+                  <ChipRow
+                    options={[
+                      { value: 'tucks_anywhere',        label: 'tucks freely' },
+                      { value: 'tucks_with_structure',  label: 'needs structured waist/belt' },
+                      { value: 'wear_over_only',         label: 'wear over only' },
+                    ]}
+                    value={form.tuck_behavior}
+                    onChange={v => set('tuck_behavior', v)}
+                  />
+                </div>
+              )}
+
+              {isBottom(cat) && (
+                <div className="form-group">
+                  <label className="form-label">Waistband</label>
+                  <ChipRow
+                    options={[
+                      { value: 'structured_high_waist', label: 'structured high' },
+                      { value: 'structured_mid_waist',  label: 'structured mid' },
+                      { value: 'soft_elastic_pull_on',  label: 'soft elastic' },
+                      { value: 'tight_no_room',          label: 'tight - no tuck' },
+                      { value: 'drawstring_relaxed',     label: 'drawstring' },
+                    ]}
+                    value={form.waistband_type}
+                    onChange={v => set('waistband_type', v)}
+                  />
+                </div>
+              )}
+            </>
           )}
 
           {/* ── Styling Rules ────────────────────────────────────────── */}
