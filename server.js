@@ -551,6 +551,8 @@ function feedbackWeight(feedbackType) {
   const weights = {
     signature: 38,
     works: 22,
+    good_formula: 14,
+    good_pieces: 16,
     almost: 4,
     not_me: -32,
     too_safe: -22,
@@ -567,6 +569,8 @@ function feedbackWeight(feedbackType) {
     proportion_problem: -24,
     wrong_proportions: -24,
     wrong_item_read: -24,
+    bad_occasion: -22,
+    fit_issue: -34,
   }
   return weights[feedbackType] || 0
 }
@@ -990,6 +994,131 @@ function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 
   }
 }
 
+function getWholeWardrobeFeedbackMemory(limit = 24) {
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0
+        AND target_type = 'whole_wardrobe_outfit'
+      ORDER BY COALESCE(is_gold,0) DESC, id DESC
+      LIMIT ?
+    `).all(Number(limit))
+
+    if (!rows.length) return ''
+    const positives = []
+    const negatives = []
+    for (const row of rows) {
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const outfit = payload.outfit || {}
+      const pieces = Array.isArray(payload.pieces) && payload.pieces.length
+        ? payload.pieces
+        : (Array.isArray(outfit.pieces) ? outfit.pieces : [])
+      const pieceText = pieces.map(p => p?.name).filter(Boolean).join(' + ')
+      const formula = payload.formulaFamily || outfit.formulaFamily || ''
+      const occasion = payload.occasion || outfit.bestFor || ''
+      const note = row.note ? ` — ${String(row.note).slice(0, 220)}` : ''
+      const line = `- ${row.feedback_type}${row.label ? ` / ${row.label}` : ''}${occasion ? ` (${occasion})` : ''}${formula ? ` | formula: ${formula}` : ''}${pieceText ? ` | pieces: ${pieceText}` : ''}${note}`
+      if (feedbackWeight(row.feedback_type) > 0) positives.push(line)
+      if (feedbackWeight(row.feedback_type) < 0) negatives.push(line)
+    }
+
+    const parts = []
+    if (positives.length) parts.push(`Whole-wardrobe outfit feedback to reinforce. Prefer similar garment relationships and formulas when pieces/occasion fit:
+${positives.slice(0, 10).join('\n')}`)
+    if (negatives.length) parts.push(`Whole-wardrobe outfit feedback to suppress. Avoid repeating these exact combinations, piece roles, formulas, or occasion mismatches:
+${negatives.slice(0, 12).join('\n')}`)
+    return parts.join('\n\n')
+  } catch {
+    return ''
+  }
+}
+
+function buildWholeWardrobeFeedbackInfluence(limit = 120) {
+  const influence = {
+    piece: new Map(),
+    combination: new Map(),
+    formula: new Map(),
+    occasionFormula: new Map(),
+    pieceFormula: new Map(),
+    rowsUsed: 0
+  }
+  const add = (map, key, value) => {
+    if (!key || !value) return
+    map.set(key, (map.get(key) || 0) + value)
+  }
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0
+        AND target_type = 'whole_wardrobe_outfit'
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(Number(limit))
+    for (const row of rows) {
+      const weight = feedbackWeight(row.feedback_type)
+      if (!weight) continue
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const outfit = payload.outfit || {}
+      const pieceIds = [...new Set((payload.pieceIds || outfit.pieceIds || collectPieceIdsFromFeedbackPayload(row.payload))
+        .map(Number)
+        .filter(Boolean))]
+      const focusedPieceId = Number(payload.pieceId)
+      const formula = payload.formulaFamily || outfit.formulaFamily || ''
+      const occasion = payload.occasion || outfit.bestFor || ''
+      const signedWeight = weight + (row.is_gold ? Math.sign(weight) * 18 : 0)
+
+      if (Number.isFinite(focusedPieceId) && focusedPieceId > 0) {
+        const focusedWeight = row.feedback_type === 'wrong_item_read' || row.feedback_type === 'fit_issue'
+          ? Math.round(signedWeight * 1.35)
+          : Math.round(signedWeight * 0.9)
+        add(influence.piece, focusedPieceId, focusedWeight)
+        if (formula) add(influence.pieceFormula, `${focusedPieceId}||${formula}`, Math.round(focusedWeight * 0.8))
+      } else if (pieceIds.length) {
+        const comboKey = pieceIds.slice().sort((a, b) => a - b).join('|')
+        add(influence.combination, comboKey, Math.round(signedWeight * 1.15))
+        const pieceMultiplier = row.feedback_type === 'good_formula' ? 0.12 : (row.feedback_type === 'good_pieces' ? 0.55 : 0.35)
+        for (const id of pieceIds) add(influence.piece, id, Math.round(signedWeight * pieceMultiplier))
+      }
+      const formulaMultiplier = row.feedback_type === 'good_formula' ? 0.9 : (row.feedback_type === 'good_pieces' ? 0.2 : 0.45)
+      add(influence.formula, formula, Math.round(signedWeight * formulaMultiplier))
+      if (occasion && formula) add(influence.occasionFormula, `${occasion}||${formula}`, Math.round(signedWeight * 0.65))
+      influence.rowsUsed += 1
+    }
+  } catch {}
+  return influence
+}
+
+function wholeWardrobeFeedbackInfluenceForCandidate(pieces = [], options = {}) {
+  const influence = options.wholeWardrobeFeedbackInfluence
+  if (!influence) return null
+  const ids = pieces.map(p => Number(p.id)).filter(Boolean)
+  const outfit = { pieces }
+  const comboKey = ids.slice().sort((a, b) => a - b).join('|')
+  const formula = wholeWardrobeFormulaFamily(outfit, pieces, options.occasion)
+  const occasionFormula = `${options.occasion || ''}||${formula}`
+  let score = 0
+  const reasons = []
+  const addScore = (value, reason) => {
+    if (!value) return
+    score += value
+    reasons.push(reason)
+  }
+
+  addScore(influence.combination.get(comboKey), 'whole-wardrobe exact-combination feedback')
+  addScore(influence.formula.get(formula), `whole-wardrobe ${formula} feedback`)
+  addScore(influence.occasionFormula.get(occasionFormula), `whole-wardrobe ${options.occasion || 'occasion'} formula feedback`)
+  const pieceFormulaScore = ids.reduce((sum, id) => sum + (influence.pieceFormula.get(`${id}||${formula}`) || 0), 0)
+  addScore(Math.max(-55, Math.min(35, pieceFormulaScore)), 'whole-wardrobe piece/formula feedback')
+  const pieceScore = ids.reduce((sum, id) => sum + (influence.piece.get(id) || 0), 0)
+  addScore(Math.max(-45, Math.min(30, Math.round(pieceScore / Math.max(1, ids.length)))), 'whole-wardrobe piece feedback')
+
+  if (!score) return null
+  return {
+    score: Math.max(-80, Math.min(80, score)),
+    reasons: [...new Set(reasons)].slice(0, 4)
+  }
+}
+
 
 async function criticPassForSelectedItem({ selectedPiece, draft, userQuestion }) {
   if (process.env.STYLIST_CRITIC_DISABLED === 'true') return draft
@@ -1228,6 +1357,110 @@ JSON shape:
   "skip": "one concise skip note or empty string",
   "saveableLearning": "one concise garment-specific rule"
 }`
+
+const WHOLE_WARDROBE_COMPOSER_SYSTEM = `You are the whole-wardrobe outfit composer for Yuna's closet app.
+Return ONLY valid JSON. No markdown.
+
+You receive a curated set of complete candidate outfits already built from saved wardrobe pieces. Your job is to pick the strongest outfits right now, not to browse the raw closet.
+
+Yuna's style filter:
+- artistic minimalist, relaxed structure, modern bohemian restraint
+- one dominant silhouette idea
+- vertical continuity, grounded shoes, edited texture, warm/deep palette
+- controlled playful moments are good when the silhouette is disciplined
+
+Reject:
+- wide + wide, soft + soft + soft, weak shoe grounding
+- generic beige/cream softness, mature catalog drift, librarian drift
+- duplicate formulas and outfits whose only virtue is wearable harmony
+- body-shape/flattery language
+
+Rules:
+- Use only candidate outfit ids and owned garment ids/names provided.
+- Keep fewer than 5 if only 3-4 are genuinely strong.
+- Surface at least 3 distinct formula families across your selections when viable. Do not pick more than 2 outfits from the same formula family.
+- Preserve exact owned piece ids and names.
+- Do not invent missing pieces.
+- Do not use words like flattering, elongating, slimming, confidence, balance the body, or draws attention upward.
+
+JSON shape:
+{
+  "outfits": [
+    {
+      "candidateId": "cand-1",
+      "label": "Modern Minimal Column",
+      "strength": "signature | strong | usable | experimental",
+      "dominantDirection": "relaxed top + dark column",
+      "silhouette": "compact upper line over grounded straight-leg denim",
+      "bestFor": "city casual",
+      "pieceIds": [1, 2, 3],
+      "pieces": [{"id": 1, "name": "exact saved garment name", "category": "top"}],
+      "reason": "specific visual reason based on garment interaction",
+      "watchFor": "one real risk or none"
+    }
+  ],
+  "rejected": [{"candidateId": "cand-9", "label": "...", "reason": "..."}],
+  "skip": "one tempting weak formula to skip, or empty string",
+  "saveableLearning": "one concise whole-wardrobe rule"
+}`
+
+const WHOLE_WARDROBE_OUTFIT_ARCHETYPES = [
+  {
+    id: 'grounded_graphic_column',
+    label: 'Grounded Graphic Column',
+    direction: 'restrained graphic minimalism',
+    silhouette: 'compact upper over long grounded lower line',
+    visualGoal: 'artistic but controlled',
+    formulaFamily: 'compact_top_dark_column',
+    preferredRoles: ['upper_anchor', 'graphic_element', 'lower_column', 'grounding_piece'],
+    avoidRoles: ['soft_texture', 'extra_pattern'],
+    occasionBias: { evening: 12, 'gallery / art event': 14, casual: 4 }
+  },
+  {
+    id: 'soft_structure_contrast',
+    label: 'Soft Structure Contrast',
+    direction: 'soft piece anchored by structure',
+    silhouette: 'soft expressive garment held by structured support pieces',
+    visualGoal: 'modern artistic restraint',
+    formulaFamily: 'soft_piece_structured_anchor',
+    preferredRoles: ['soft_texture', 'grounding_piece', 'structure_support'],
+    avoidRoles: ['soft_texture_stack'],
+    occasionBias: { casual: 8, 'gallery / art event': 10 }
+  },
+  {
+    id: 'earthy_structured_minimal',
+    label: 'Earthy Structured Minimal',
+    direction: 'earthy restraint with clear garment structure',
+    silhouette: 'structured separates with one relaxed element',
+    visualGoal: 'modern bohemian restraint without looseness',
+    formulaFamily: 'earthy_structured_separates',
+    preferredRoles: ['grounding_piece', 'structure_support', 'lower_column'],
+    avoidRoles: ['beige_sludge', 'soft_texture_stack'],
+    occasionBias: { casual: 8, 'gallery / art event': 10 }
+  },
+  {
+    id: 'dress_grounded_sharp',
+    label: 'Grounded Dress Edit',
+    direction: 'simple dress sharpened by shoe/layer choice',
+    silhouette: 'one-piece column with grounded finish',
+    visualGoal: 'clean evening/gallery option without extra fuss',
+    formulaFamily: 'dress_grounding_shoe',
+    preferredRoles: ['one_piece_column', 'grounding_piece', 'sharp_finish'],
+    avoidRoles: ['extra_pattern', 'soft_shoe'],
+    occasionBias: { evening: 14, 'gallery / art event': 10 }
+  },
+  {
+    id: 'relaxed_dark_base',
+    label: 'Relaxed Dark Base',
+    direction: 'oversized or relaxed top stabilized by a narrow/dark base',
+    silhouette: 'relaxed upper over stable dark lower column',
+    visualGoal: 'wearable artistic ease without shapelessness',
+    formulaFamily: 'relaxed_top_dark_base',
+    preferredRoles: ['relaxed_upper', 'lower_column', 'grounding_piece'],
+    avoidRoles: ['wide_soft_bottom', 'soft_texture_stack'],
+    occasionBias: { casual: 10, city: 8 }
+  }
+]
 
 
 function outfitStylisticStrengthScore(outfit = {}, selectedPiece = null) {
@@ -1658,6 +1891,1030 @@ async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidate
   }
 }
 
+function wholeWardrobePieceBucket(allPieces = []) {
+  const bucket = { top: [], bottom: [], dress: [], outerwear: [], shoes: [], accessory: [], other: [] }
+  for (const piece of allPieces) {
+    const group = wardrobeCategoryGroup(piece)
+    if (bucket[group]) bucket[group].push(piece)
+    else bucket.other.push(piece)
+  }
+  const piecePriority = (piece) => {
+    const blob = pieceTextBlob(piece)
+    let score = piece.favorite ? 12 : 0
+    if (/\b(black|charcoal|espresso|chocolate|deep navy|navy|olive|plum|cognac|rust|mustard)\b/.test(blob)) score += 5
+    if (/\b(artistic|graphic|architectural|structured|utility|linen|corduroy|textured|denim|cashmere|knit)\b/.test(blob)) score += 4
+    if (/\b(pointed|loafer|boot|mule|oxford|structured)\b/.test(blob)) score += 3
+    if (/\b(soft|gauzy|drape|oversized|beige|cream|ivory|taupe)\b/.test(blob)) score -= 1
+    return score
+  }
+  for (const key of Object.keys(bucket)) {
+    bucket[key].sort((a, b) => piecePriority(b) - piecePriority(a) || String(a.name).localeCompare(String(b.name)))
+  }
+  return bucket
+}
+
+function wholeWardrobePieceTrustDecision(piece = {}, { occasion = 'casual', explorationMode = 'moderate' } = {}) {
+  const status = String(piece.recommendation_status || 'trusted')
+  const fit = String(piece.fit_confidence || 'unknown')
+  const role = String(piece.role_permission || 'auto')
+  const notes = `${piece.engine_notes || ''} ${piece.notes || ''}`.toLowerCase()
+  const permissions = Array.isArray(piece.occasion_permissions) ? piece.occasion_permissions : []
+  const reasons = []
+  const aggressive = explorationMode === 'aggressive'
+
+  if (status === 'avoid' || status === 'do_not_recommend') reasons.push('recommendation status blocks auto-use')
+  if (role === 'never_auto' || role === 'only_when_requested') reasons.push('role permission blocks automatic styling')
+  if (status === 'needs_fit_review' && !aggressive) reasons.push('needs fit review')
+  if (status === 'experimental' && !aggressive) reasons.push('experimental piece held for exploration mode')
+  if (fit === 'low' && !aggressive) reasons.push('low fit confidence')
+  if (permissions.length && occasion && !permissions.includes(occasion)) reasons.push(`not permitted for ${occasion}`)
+  if (/\b(too small|too tight|does not fit|doesn't fit|bad fit|avoid auto|not evening|not for evening|testing only)\b/.test(notes) && !aggressive) {
+    reasons.push('engine notes suppress auto-use')
+  }
+
+  return {
+    allowed: reasons.length === 0,
+    supportOnly: role === 'support_only',
+    reasons
+  }
+}
+
+function filterWholeWardrobePiecesForGeneration(allPieces = [], options = {}) {
+  const allowedPieces = []
+  const suppressedPieces = []
+  for (const piece of allPieces) {
+    const decision = wholeWardrobePieceTrustDecision(piece, options)
+    if (decision.allowed) allowedPieces.push(piece)
+    else suppressedPieces.push({ id: piece.id, name: piece.name, category: wardrobeCategoryGroup(piece), reasons: decision.reasons })
+  }
+  return { allowedPieces, suppressedPieces }
+}
+
+function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
+  const text = pieces.map(pieceTextBlob).join(' ')
+  const names = pieces.map(p => p.name).join(' + ')
+  const groups = pieces.map(wardrobeCategoryGroup)
+  let score = 0
+  const reasons = []
+  const add = (n, reason) => { score += n; if (reason) reasons.push(reason) }
+
+  if (groups.includes('top') && groups.includes('bottom')) add(14, 'complete separates')
+  if (groups.includes('dress')) add(12, 'complete dress base')
+  if (groups.includes('shoes')) add(10, 'grounded with shoes')
+  if (pieces.some(p => p.favorite)) add(5, 'favorite piece')
+  if (/\b(black|charcoal|espresso|chocolate|deep navy|navy|olive|plum|cognac|rust|mustard)\b/.test(text)) add(7, 'deep/warm palette')
+  if (/\b(artistic|graphic|architectural|structured|utility|textured|corduroy|linen|denim)\b/.test(text)) add(8, 'artistic texture/structure')
+  if (/\b(pointed|loafer|boot|mule|oxford|cognac|black)\b/.test(text) && groups.includes('shoes')) add(6, 'strong shoe grounding')
+  if (/\b(contrast|column|dark|structured|utility|graphic)\b/.test(text)) add(5, 'clear visual thesis')
+
+  const wideCount = (text.match(/\b(wide|wide-leg|oversized|loose|flowing|voluminous|relaxed)\b/g) || []).length
+  const softCount = (text.match(/\b(soft|gauzy|drape|drapey|chiffon|loose knit|oversized|cream|ivory|beige|taupe|sand)\b/g) || []).length
+  const lightNeutralCount = (text.match(/\b(cream|ivory|beige|taupe|sand|oatmeal|white)\b/g) || []).length
+  if (wideCount >= 2) add(-20, 'wide + wide risk')
+  if (softCount >= 3) add(-24, 'soft stack risk')
+  if (lightNeutralCount >= 3 && !/\b(black|charcoal|espresso|plum|cognac|boot|loafer|pointed|graphic|structured)\b/.test(text)) add(-24, 'generic light-neutral softness')
+  if (/\b(librarian|catalog|mature|ladylike|polished neutral|luxe neutral)\b/.test(text)) add(-28, 'catalog/librarian drift risk')
+  if (groups.includes('shoes') && !/\b(pointed|loafer|boot|mule|oxford|black|cognac|structured|grounded)\b/.test(text)) add(-8, 'weak shoe grounding')
+  for (const piece of pieces) {
+    const decision = wholeWardrobePieceTrustDecision(piece, options)
+    if (decision.supportOnly && ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) add(-18, `${piece.name} support-only`)
+  }
+  const feedbackInfluence = wholeWardrobeFeedbackInfluenceForCandidate(pieces, options)
+  if (feedbackInfluence) {
+    add(feedbackInfluence.score, 'whole-wardrobe feedback memory')
+    reasons.push(...feedbackInfluence.reasons)
+  }
+
+  const mood = String(options.mood || '').toLowerCase()
+  if (mood && text.includes(mood)) add(2, 'mood match')
+
+  return { score, reasons: reasons.slice(0, 6), names }
+}
+
+function candidateObjectFromPieces(pieces, index, options) {
+  const scored = scoreWholeWardrobeCandidate(pieces, options)
+  return {
+    candidateId: `cand-${index + 1}`,
+    label: pieces.map(p => p.name).join(' + '),
+    pieceIds: pieces.map(p => Number(p.id)).filter(Boolean),
+    pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
+    localScore: scored.score,
+    localReasons: scored.reasons,
+  }
+}
+
+function wholeWardrobeCandidateAxes(candidate = {}) {
+  const pieces = Array.isArray(candidate.pieces) ? candidate.pieces : []
+  const outfit = { pieces }
+  const top = wholeWardrobePieceByGroup(outfit, 'top')
+  const bottom = wholeWardrobePieceByGroup(outfit, 'bottom')
+  const shoe = wholeWardrobePieceByGroup(outfit, 'shoes')
+  const text = pieces.map(pieceTextBlob).join(' ').toLowerCase()
+  return {
+    topId: top ? Number(top.id) : null,
+    bottomId: bottom ? Number(bottom.id) : null,
+    shoeId: shoe ? Number(shoe.id) : null,
+    formula: wholeWardrobeFormulaFamily(outfit, pieces),
+    silhouette: wholeWardrobeSilhouetteFromPieces(outfit),
+    grounding: wholeWardrobeGroundingStrategy(outfit),
+    shoeShape: wholeWardrobeShoeShape(outfit),
+    rhythm: wholeWardrobeVisualRhythm(outfit),
+    hasDress: pieces.some(p => wardrobeCategoryGroup(p) === 'dress'),
+    hasNonGraphicTop: Boolean(top && !/\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(pieceTextBlob(top))),
+    hasSoftTexture: /\b(crochet|gauze|gauzy|soft|cashmere|drape|drapey|silk|ruffle|fluid)\b/.test(text),
+    hasTonalDark: /\b(black|charcoal|espresso|chocolate|deep navy|navy)\b/.test(text) && !/\b(floral|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(text)
+  }
+}
+
+function selectDiverseWholeWardrobeCandidates(candidates = [], limit = 60, options = {}) {
+  const selected = []
+  const pool = [...candidates]
+  const useCount = {
+    top: new Map(),
+    bottom: new Map(),
+    shoe: new Map(),
+    formula: new Map(),
+    silhouette: new Map(),
+    grounding: new Map(),
+    shoeShape: new Map(),
+    rhythm: new Map()
+  }
+  const count = (map, key) => key == null ? 0 : (map.get(key) || 0)
+  const bump = (map, key) => {
+    if (key != null) map.set(key, (map.get(key) || 0) + 1)
+  }
+  const selectedHas = predicate => selected.some(candidate => predicate(wholeWardrobeCandidateAxes(candidate)))
+
+  while (pool.length && selected.length < limit) {
+    let bestIndex = 0
+    let bestScore = -Infinity
+    for (let i = 0; i < pool.length; i += 1) {
+      const candidate = pool[i]
+      const axes = wholeWardrobeCandidateAxes(candidate)
+      let score = Number(candidate.score ?? candidate.localScore) || 0
+
+      if (!count(useCount.formula, axes.formula)) score += 22
+      if (!count(useCount.silhouette, axes.silhouette)) score += 16
+      if (!count(useCount.grounding, axes.grounding)) score += 12
+      if (!count(useCount.shoeShape, axes.shoeShape)) score += 10
+      if (!count(useCount.rhythm, axes.rhythm)) score += 10
+      if (axes.topId && !count(useCount.top, axes.topId)) score += 9
+      if (axes.bottomId && !count(useCount.bottom, axes.bottomId)) score += 9
+      if (axes.hasDress && !selectedHas(a => a.hasDress)) score += 24
+      if (axes.hasNonGraphicTop && !selectedHas(a => a.hasNonGraphicTop)) score += 16
+      if (axes.hasSoftTexture && !selectedHas(a => a.hasSoftTexture)) score += 12
+      if (axes.hasTonalDark && !selectedHas(a => a.hasTonalDark)) score += 12
+
+      score -= count(useCount.top, axes.topId) * 46
+      score -= count(useCount.bottom, axes.bottomId) * 34
+      score -= count(useCount.shoe, axes.shoeId) * 14
+      score -= count(useCount.formula, axes.formula) * 44
+      score -= count(useCount.silhouette, axes.silhouette) * 24
+      score -= count(useCount.grounding, axes.grounding) * 14
+      score -= count(useCount.shoeShape, axes.shoeShape) * 12
+      score -= count(useCount.rhythm, axes.rhythm) * 12
+
+      if (score > bestScore) {
+        bestScore = score
+        bestIndex = i
+      }
+    }
+
+    const [chosen] = pool.splice(bestIndex, 1)
+    const axes = wholeWardrobeCandidateAxes(chosen)
+    selected.push(chosen)
+    bump(useCount.top, axes.topId)
+    bump(useCount.bottom, axes.bottomId)
+    bump(useCount.shoe, axes.shoeId)
+    bump(useCount.formula, axes.formula)
+    bump(useCount.silhouette, axes.silhouette)
+    bump(useCount.grounding, axes.grounding)
+    bump(useCount.shoeShape, axes.shoeShape)
+    bump(useCount.rhythm, axes.rhythm)
+  }
+
+  return selected
+}
+
+function wholeWardrobeCandidateFormulaCounts(candidates = []) {
+  return candidates.reduce((counts, candidate) => {
+    const formula = wholeWardrobeCandidateAxes(candidate).formula || 'unknown'
+    counts[formula] = (counts[formula] || 0) + 1
+    return counts
+  }, {})
+}
+
+function wholeWardrobeCandidateText(candidates = []) {
+  return candidates.map((candidate, index) => [
+    `${index + 1}. ${candidate.candidateId} | formula family ${wholeWardrobeCandidateAxes(candidate).formula}`,
+    `Pieces: ${candidate.pieces.map(p => `${p.id}:${p.name} (${p.category})`).join(' + ')}`,
+    candidate.localReasons?.length ? `Local reasons: ${candidate.localReasons.join('; ')}` : '',
+  ].filter(Boolean).join('\n')).join('\n\n')
+}
+
+function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
+  const bucket = wholeWardrobePieceBucket(allPieces)
+  const candidates = []
+  const shoes = bucket.shoes.length ? bucket.shoes.slice(0, 14) : [null]
+  const tops = bucket.top.slice(0, 34)
+  const bottoms = bucket.bottom.slice(0, 28)
+  const dresses = bucket.dress.slice(0, 18)
+  const outerwear = bucket.outerwear.slice(0, 10)
+  const accessories = bucket.accessory.slice(0, 8)
+
+  const addCandidate = (pieces) => {
+    const clean = pieces.filter(Boolean)
+    const key = clean.map(p => p.id).sort((a,b) => a-b).join('|')
+    if (!key || candidates.some(c => c.key === key)) return
+    const scored = scoreWholeWardrobeCandidate(clean, options)
+    if (scored.score < -18) return
+    candidates.push({ key, pieces: clean, score: scored.score })
+  }
+
+  for (const top of tops) {
+    for (const bottom of bottoms) {
+      for (const shoe of shoes) addCandidate([top, bottom, shoe])
+    }
+  }
+  for (const dress of dresses) {
+    for (const shoe of shoes) addCandidate([dress, shoe])
+  }
+
+  const base = candidates
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 80)
+  for (const candidate of base.slice(0, 30)) {
+    for (const layer of outerwear.slice(0, 4)) addCandidate([...candidate.pieces, layer])
+    for (const accessory of accessories.slice(0, 3)) addCandidate([...candidate.pieces, accessory])
+  }
+
+  const ranked = candidates.sort((a, b) => b.score - a.score)
+  const chosen = selectDiverseWholeWardrobeCandidates(ranked, 60, options)
+  const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
+  const exploratory = ranked.find(candidate => exploratoryFamilies.has(inferOutfitArchetype({ pieces: candidate.pieces }, candidate.pieces, options.occasion).formulaFamily))
+  if (exploratory && chosen.length && !chosen.some(candidate => candidate.key === exploratory.key)) chosen[chosen.length - 1] = exploratory
+  return chosen
+    .map((candidate, index) => candidateObjectFromPieces(candidate.pieces, index, options))
+}
+
+function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = []) {
+  const candidateById = new Map(candidatePieces.map(p => [Number(p.id), p]))
+  const ids = []
+  const addId = (value) => {
+    const n = Number(value)
+    if (Number.isFinite(n) && n > 0 && candidateById.has(n) && !ids.includes(n)) ids.push(n)
+  }
+  if (Array.isArray(outfit?.pieceIds)) outfit.pieceIds.forEach(addId)
+  if (Array.isArray(outfit?.pieces)) outfit.pieces.forEach(piece => addId(piece?.id))
+  const ownedPieces = ids.map(id => candidateById.get(id)).filter(Boolean)
+  const label = String(outfit?.label || outfit?.title || 'Whole wardrobe outfit').trim()
+  const strength = String(outfit?.strength || '').toLowerCase().trim()
+  return {
+    label,
+    strength: ['signature', 'strong', 'usable', 'experimental'].includes(strength) ? strength : 'strong',
+    dominantDirection: outfit?.dominantDirection || outfit?.dominant_direction || outfit?.direction || '',
+    silhouette: outfit?.silhouette || '',
+    bestFor: outfit?.bestFor || outfit?.best_for || '',
+    reason: outfit?.reason || outfit?.why || '',
+    watchFor: outfit?.watchFor || outfit?.watch_for || 'none',
+    pieceIds: ids.slice(0, 6),
+    missingPieces: [],
+    textOnly: true,
+    wholeWardrobe: true,
+    localScore: Number(outfit?.localScore) || 0,
+    archetypeId: outfit?.archetypeId || null,
+    formulaFamily: outfit?.formulaFamily || null,
+    pieces: ownedPieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null }))
+  }
+}
+
+function wholeWardrobeFormulaType(outfit = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const groups = pieces.map(p => wardrobeCategoryGroup(p))
+  const text = pieces.map(p => `${p.name || ''} ${p.category || ''}`).join(' ').toLowerCase()
+  if (groups.includes('dress')) return 'dress + grounding layer/shoe'
+  if (/\b(tapestry|print pant|printed pant|pattern pant|floral pant|graphic pant)\b/.test(text)) return 'artistic pant + restrained top'
+  if (groups.includes('top') && groups.includes('bottom') && /\b(black|charcoal|dark|navy|denim|jean|column|straight|trouser)\b/.test(text) && /\b(relaxed|oversized|loose|linen|knit|tunic|cardigan|jacket|overshirt)\b/.test(text)) return 'relaxed layer + narrow base'
+  if (/\b(monochrome|black|charcoal|espresso|same tone|tonal dark)\b/.test(text) && !/\b(floral|print|graphic|stripe|pattern|abstract)\b/.test(text)) return 'structured monochrome'
+  if (/\b(soft|gauzy|linen|cashmere|knit|drape|cream|ivory)\b/.test(text) && /\b(pointed|loafer|boot|mule|oxford|sharp)\b/.test(text)) return 'soft texture + sharp shoe'
+  if (/\b(floral|print|graphic|stripe|pattern|abstract)\b/.test(text)) return 'artistic print + simple anchor'
+  if (groups.includes('top') && groups.includes('bottom') && /\b(black|charcoal|dark|denim|straight|trouser|column)\b/.test(text)) return 'compact top + dark column'
+  if (groups.includes('top') && groups.includes('bottom')) return 'compact top + structured bottom'
+  return 'complete wardrobe formula'
+}
+
+function wholeWardrobeDirectionFromPieces(outfit = {}) {
+  const family = wholeWardrobeFormulaType(outfit)
+  if (family === 'dress + grounding layer/shoe') return 'quiet modern bohemian'
+  if (family === 'artistic pant + restrained top') return 'grounded artistic contrast'
+  if (family === 'relaxed layer + narrow base') return 'relaxed structured casual'
+  if (family === 'structured monochrome') return 'restrained graphic minimalism'
+  if (family === 'soft texture + sharp shoe') return 'soft texture with sharp grounding'
+  if (family === 'compact top + dark column') return 'restrained graphic minimalism'
+  return 'earthy structured casual'
+}
+
+function wholeWardrobeSilhouetteFromPieces(outfit = {}) {
+  const top = wholeWardrobePieceByGroup(outfit, 'top')
+  const bottom = wholeWardrobePieceByGroup(outfit, 'bottom')
+  const dress = wholeWardrobePieceByGroup(outfit, 'dress')
+  const layer = wholeWardrobePieceByGroup(outfit, 'outerwear')
+  const text = (Array.isArray(outfit.pieces) ? outfit.pieces : []).map(pieceNameBlob).join(' ')
+  if (dress) return layer ? 'dress column with structured outer layer' : 'one-piece column with grounded shoe'
+  const upper = top && /\b(sleeveless|fitted|tank|shell|compact|tee)\b/.test(pieceNameBlob(top)) ? 'compact upper'
+    : top && /\b(relaxed|oversized|loose|tunic|linen|sweater|knit)\b/.test(pieceNameBlob(top)) ? 'relaxed upper'
+    : top ? 'controlled upper'
+    : 'upper line'
+  const lower = bottom && /\b(bootcut|flare|wide|wide-leg|flowing|soft)\b/.test(pieceNameBlob(bottom)) ? 'soft lower movement'
+    : bottom && /\b(denim|jean|black|charcoal|straight|trouser|column|dark)\b/.test(pieceNameBlob(bottom)) ? 'long dark line'
+    : bottom ? 'structured lower line'
+    : 'lower line'
+  if (/\b(tapestry|print pant|printed pant|pattern pant)\b/.test(text)) return 'restrained upper over expressive print pant'
+  return `${upper} over ${lower}`
+}
+
+function wholeWardrobeGroundingStrategy(outfit = {}) {
+  const shoe = wholeWardrobePieceByGroup(outfit, 'shoes')
+  const text = shoe ? pieceNameBlob(shoe) : ''
+  if (!shoe) return 'no shoe'
+  if (/\b(pointed|flat|mule)\b/.test(text)) return 'pointed-flat grounding'
+  if (/\b(loafer|oxford)\b/.test(text)) return 'loafer grounding'
+  if (/\b(boot|bootie)\b/.test(text)) return 'boot grounding'
+  if (/\b(sneaker)\b/.test(text)) return 'sneaker grounding'
+  return 'simple shoe grounding'
+}
+
+function wholeWardrobeShoeShape(outfit = {}) {
+  const shoe = wholeWardrobePieceByGroup(outfit, 'shoes')
+  const text = shoe ? pieceNameBlob(shoe) : ''
+  if (/\b(pointed)\b/.test(text)) return 'pointed'
+  if (/\b(round|rounded)\b/.test(text)) return 'rounded'
+  if (/\b(boot|bootie)\b/.test(text)) return 'boot'
+  if (/\b(loafer|oxford)\b/.test(text)) return 'loafer'
+  if (/\b(sneaker)\b/.test(text)) return 'sneaker'
+  if (/\b(mule|flat)\b/.test(text)) return 'flat'
+  return text || 'unknown'
+}
+
+function wholeWardrobeVisualRhythm(outfit = {}) {
+  const text = (Array.isArray(outfit.pieces) ? outfit.pieces : []).map(pieceNameBlob).join(' ')
+  if (/\b(floral|print|graphic|stripe|pattern|abstract|tapestry)\b/.test(text) && /\b(black|charcoal|dark|denim|straight|plain|solid)\b/.test(text)) return 'expressive plus quiet anchor'
+  if (/\b(black|charcoal|dark|navy|espresso|monochrome)\b/.test(text)) return 'dark continuous rhythm'
+  if (/\b(soft|gauzy|linen|cashmere|knit|cream|ivory)\b/.test(text) && /\b(pointed|boot|loafer|structured)\b/.test(text)) return 'soft texture sharp finish'
+  if (/\b(utility|structured|blazer|jacket|trouser)\b/.test(text)) return 'structured utilitarian rhythm'
+  return 'simple separated rhythm'
+}
+
+function wholeWardrobeHeroPieceId(outfit = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const expressive = pieces.find(p => /\b(floral|print|graphic|stripe|pattern|abstract|bold|textured|lace|ruffle|architectural)\b/.test(`${p.name || ''} ${p.category || ''}`.toLowerCase()))
+  const topOrDress = pieces.find(p => ['top', 'dress'].includes(wardrobeCategoryGroup(p)))
+  return Number((expressive || topOrDress || pieces[0])?.id) || null
+}
+
+function pieceNameBlob(piece = {}) {
+  return `${piece.name || ''} ${piece.category || ''}`.toLowerCase()
+}
+
+function wholeWardrobeFullPieces(outfit = {}, candidatePieces = []) {
+  const byId = new Map(candidatePieces.map(p => [Number(p.id), p]))
+  const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number).filter(Boolean) : []
+  const fromIds = ids.map(id => byId.get(id)).filter(Boolean)
+  if (fromIds.length) return fromIds
+  return Array.isArray(outfit.pieces) ? outfit.pieces : []
+}
+
+function wholeWardrobePieceByGroup(outfit = {}, group) {
+  return (Array.isArray(outfit.pieces) ? outfit.pieces : []).find(p => wardrobeCategoryGroup(p) === group) || null
+}
+
+function pieceStyleProfile(piece = {}) {
+  if (piece?.style_profile_json && typeof piece.style_profile_json === 'object') return piece.style_profile_json
+  return safeJsonParse(piece?.style_profile_json, {}) || {}
+}
+
+function inferWholeWardrobePieceRoles(piece = {}) {
+  const profile = pieceStyleProfile(piece)
+  const profileRoles = Array.isArray(profile.roles) ? profile.roles : []
+  const group = wardrobeCategoryGroup(piece)
+  const text = [
+    pieceNameBlob(piece),
+    piece.background_color,
+    piece.reads_as,
+    piece.pattern_type,
+    piece.pattern_complexity,
+    piece.silhouette,
+    piece.fabric_category,
+    piece.fabric_weight,
+    piece.fit_on_body,
+    piece.notes,
+    ...(piece.colors || []),
+    ...(piece.styling_rules_learned || [])
+  ].filter(Boolean).join(' ').toLowerCase()
+  const roles = new Set(profileRoles)
+  if (group === 'dress') roles.add('one_piece_column')
+  if (group === 'top' && /\b(fitted|sleeveless|tank|shell|compact|structured)\b/.test(text)) roles.add('upper_anchor')
+  if (group === 'top' && /\b(relaxed|oversized|loose|tunic|boxy|linen|knit)\b/.test(text)) roles.add('relaxed_upper')
+  if (group === 'bottom' && /\b(black|charcoal|dark|navy|denim|jean|straight|bootcut|trouser|column)\b/.test(text)) roles.add('lower_column')
+  if (group === 'shoes') roles.add('grounding_piece')
+  if (group === 'shoes' && /\b(pointed|patent|loafer|boot|mule|oxford)\b/.test(text)) roles.add('sharp_finish')
+  if (['outerwear', 'bottom', 'top'].includes(group) && /\b(structured|blazer|jacket|utility|trouser|denim|crisp|architectural)\b/.test(text)) roles.add('structure_support')
+  if (/\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry|bold)\b/.test(text)) roles.add('graphic_element')
+  if (/\b(soft|gauzy|drape|drapey|linen|cashmere|knit|chiffon|lace|cream|ivory|oatmeal)\b/.test(text)) roles.add('soft_texture')
+  if (/\b(beige|taupe|sand|cream|ivory|soft neutral|oatmeal)\b/.test(text)) roles.add('beige_sludge')
+  if (group === 'shoes' && /\b(slipper|soft flat|slip-on|beach|sandal)\b/.test(text)) roles.add('soft_shoe')
+  if (group === 'bottom' && /\b(wide|wide-leg|soft|gauzy|flowing|palazzo)\b/.test(text)) roles.add('wide_soft_bottom')
+  return [...roles]
+}
+
+function inferWholeWardrobeOutfitRoles(pieces = []) {
+  const roles = new Set()
+  for (const piece of pieces) inferWholeWardrobePieceRoles(piece).forEach(role => roles.add(role))
+  const softCount = pieces.filter(p => inferWholeWardrobePieceRoles(p).includes('soft_texture')).length
+  const patternCount = pieces.filter(p => inferWholeWardrobePieceRoles(p).includes('graphic_element')).length
+  if (softCount >= 2) roles.add('soft_texture_stack')
+  if (patternCount >= 2) roles.add('extra_pattern')
+  return [...roles]
+}
+
+function occasionBiasForArchetype(archetype, occasion) {
+  const key = String(occasion || '').toLowerCase()
+  return Number(archetype.occasionBias?.[key] || archetype.occasionBias?.[occasion] || 0)
+}
+
+function occasionScoreForOutfit(pieces = [], occasion = '') {
+  const key = String(occasion || '').toLowerCase()
+  const text = pieces.map(pieceTextBlob).join(' ')
+  let score = 0
+  if (key === 'evening') {
+    if (/\b(black|charcoal|dark|espresso|navy|plum|patent)\b/.test(text)) score += 10
+    if (/\b(pointed|patent|loafer|boot|mule|dress)\b/.test(text)) score += 8
+    if (/\b(sneaker|slipper|beach|flip|soft sandal|light casual)\b/.test(text)) score -= 14
+    if (/\b(gauzy|beachy|linen short|soft slip-on)\b/.test(text)) score -= 8
+  }
+  if (key === 'gallery / art event') {
+    if (/\b(print|graphic|stripe|abstract|tapestry|architectural|structured|utility|earthy|olive|cognac)\b/.test(text)) score += 10
+    const expressiveCount = (text.match(/\b(print|graphic|stripe|abstract|tapestry|floral|pattern)\b/g) || []).length
+    if (expressiveCount > 1 && !/\b(black|charcoal|solid|plain|denim|structured|pointed|loafer|boot)\b/.test(text)) score -= 12
+  }
+  return score
+}
+
+function inferOutfitArchetype(outfit, candidatePieces = [], occasion = 'casual') {
+  const pieces = wholeWardrobeFullPieces(outfit, candidatePieces)
+  const roles = inferWholeWardrobeOutfitRoles(pieces)
+  const roleSet = new Set(roles)
+  const hasRole = (role) => roleSet.has(role)
+  let best = null
+  for (const archetype of WHOLE_WARDROBE_OUTFIT_ARCHETYPES) {
+    let score = occasionBiasForArchetype(archetype, occasion) + occasionScoreForOutfit(pieces, occasion)
+    for (const role of archetype.preferredRoles || []) if (hasRole(role)) score += 8
+    for (const role of archetype.avoidRoles || []) if (hasRole(role)) score -= 12
+    if (archetype.id === 'grounded_graphic_column' && hasRole('graphic_element') && hasRole('lower_column') && hasRole('grounding_piece')) score += 12
+    if (archetype.id === 'dress_grounded_sharp' && hasRole('one_piece_column')) score += 18
+    if (archetype.id === 'relaxed_dark_base' && hasRole('relaxed_upper') && hasRole('lower_column')) score += 14
+    if (archetype.id === 'soft_structure_contrast' && hasRole('soft_texture') && hasRole('structure_support')) score += 12
+    if (archetype.id === 'earthy_structured_minimal' && hasRole('structure_support') && !hasRole('extra_pattern')) score += 8
+    if (!best || score > best.archetypeScore) best = { ...archetype, archetypeScore: score }
+  }
+  const fallback = best || WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0]
+  return {
+    archetypeId: fallback.id,
+    formulaFamily: fallback.formulaFamily,
+    direction: fallback.direction,
+    silhouette: fallback.silhouette,
+    labelSuggestion: fallback.label,
+    archetypeScore: fallback.archetypeScore || 0,
+    visualGoal: fallback.visualGoal,
+    roles
+  }
+}
+
+function wholeWardrobeArchetypeFor(outfit = {}, candidatePieces = [], occasion = 'casual') {
+  const inferred = inferOutfitArchetype(outfit, candidatePieces, occasion)
+  return WHOLE_WARDROBE_OUTFIT_ARCHETYPES.find(a => a.id === inferred.archetypeId)
+    ? inferred
+    : { ...WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0], archetypeId: WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0].id, labelSuggestion: WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0].label, archetypeScore: 0, roles: [] }
+}
+
+function wholeWardrobeFormulaFamily(outfit = {}, candidatePieces = [], occasion = 'casual') {
+  return outfit.formulaFamily || wholeWardrobeArchetypeFor(outfit, candidatePieces, occasion).formulaFamily || wholeWardrobeFormulaType(outfit)
+}
+
+
+function wholeWardrobeHasDress(outfit = {}) {
+  return (Array.isArray(outfit.pieces) ? outfit.pieces : []).some(p => wardrobeCategoryGroup(p) === 'dress')
+}
+
+function wholeWardrobeTopBottomKey(outfit = {}) {
+  const top = wholeWardrobePieceByGroup(outfit, 'top')
+  const bottom = wholeWardrobePieceByGroup(outfit, 'bottom')
+  if (!top || !bottom) return null
+  return `${Number(top.id)}:${Number(bottom.id)}`
+}
+
+function wholeWardrobeHasPrintOrStripe(outfit = {}) {
+  const text = (Array.isArray(outfit.pieces) ? outfit.pieces : []).map(pieceNameBlob).join(' ')
+  return /\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(text)
+}
+
+function wholeWardrobeHasGraphicTop(outfit = {}) {
+  const top = wholeWardrobePieceByGroup(outfit, 'top')
+  return top ? /\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(pieceNameBlob(top)) : false
+}
+
+function wholeWardrobeHasNonGraphicTop(outfit = {}) {
+  const top = wholeWardrobePieceByGroup(outfit, 'top')
+  return Boolean(top && !wholeWardrobeHasGraphicTop(outfit))
+}
+
+function wholeWardrobeIsExploratory(outfit = {}) {
+  const text = (Array.isArray(outfit.pieces) ? outfit.pieces : []).map(pieceNameBlob).join(' ')
+  if (wholeWardrobeHasDress(outfit)) return true
+  if (/\b(soft|gauzy|linen|cashmere|knit|drape|cream|ivory|oatmeal)\b/.test(text) && /\b(pointed|loafer|boot|mule|oxford|black|cognac)\b/.test(text)) return true
+  if (wholeWardrobeHasNonGraphicTop(outfit) && /\b(neutral|black|white|cream|ivory|navy|charcoal|taupe|beige|oatmeal|solid)\b/.test(text)) return true
+  if (/\b(black|charcoal|dark|espresso|navy)\b/.test(text) && !/\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(text)) return true
+  return false
+}
+
+function wholeWardrobeLabelFromPieces(outfit = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const text = pieces.map(p => `${p.name || ''} ${p.category || ''}`).join(' ').toLowerCase()
+  const has = (pattern) => pattern.test(text)
+  const mood = has(/\b(floral|print|graphic|stripe|abstract|pattern)\b/) ? 'Graphic'
+    : has(/\b(olive|cognac|rust|mustard|linen|utility|earth)\b/) ? 'Earthy'
+    : has(/\b(black|charcoal|navy|dark|denim|espresso)\b/) ? 'Dark'
+    : has(/\b(lace|ruffle|textured|architectural|structured)\b/) ? 'Textured'
+    : 'Wardrobe'
+  const anchor = has(/\b(denim|jean)\b/) ? 'Denim'
+    : has(/\b(column|black|charcoal|dark|straight|trouser|pant)\b/) ? 'Column'
+    : has(/\b(dress)\b/) ? 'Dress'
+    : has(/\b(utility|structured|blazer|jacket)\b/) ? 'Structured'
+    : 'Complete'
+  const setting = has(/\b(gallery|art|graphic|architectural)\b/) ? 'Gallery'
+    : has(/\b(casual|denim|loafer|sneaker)\b/) ? 'Casual'
+    : has(/\b(minimal|black|charcoal|column)\b/) ? 'Minimal'
+    : 'Wardrobe'
+  return `${mood} ${anchor} ${setting}`.replace(/\b(\w+)\s+\1\b/g, '$1').trim()
+}
+
+function wholeWardrobeReasonFromPieces(outfit = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const byGroup = (group) => pieces.find(p => wardrobeCategoryGroup(p) === group)
+  const top = byGroup('top')
+  const bottom = byGroup('bottom')
+  const dress = byGroup('dress')
+  const shoe = byGroup('shoes')
+  const layer = byGroup('outerwear')
+  const printPiece = pieces.find(p => /\b(floral|print|graphic|stripe|pattern|abstract)\b/.test(`${p.name || ''} ${p.category || ''}`.toLowerCase()))
+  const shoeText = shoe ? pieceNameBlob(shoe) : ''
+  const base = dress
+    ? `${dress.name} carries the main line`
+    : bottom
+      ? `${bottom.name} creates the lower column`
+      : top
+        ? `${top.name} sets the top line`
+        : `${pieces[0]?.name || 'The base pieces'} carry the outfit`
+  const support = dress && layer
+    ? `${layer.name} adds structure over the dress`
+    : top && bottom
+      ? `${top.name} sets the upper proportion against that base`
+      : layer
+        ? `${layer.name} adds the outer structure`
+        : ''
+  const grounding = shoe
+    ? /\b(pointed|flat|loafer|mule|oxford)\b/.test(shoeText)
+      ? `${shoe.name} keeps the line sharp at the floor`
+      : /\b(boot|bootie|clog)\b/.test(shoeText)
+        ? `${shoe.name} anchors the lower half with enough weight`
+        : `${shoe.name} grounds the outfit`
+    : 'the shoe choice needs to stay grounded'
+  const print = printPiece ? `The pattern stays controlled because the rest of the outfit is quieter around ${printPiece.name}.` : ''
+  return [base, support, grounding, print].filter(Boolean).join('. ')
+}
+
+function wholeWardrobeWatchFromPieces(outfit = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const text = pieces.map(p => `${p.name || ''} ${p.category || ''}`).join(' ').toLowerCase()
+  if (/\b(tapestry|print pant|printed pant|pattern pant)\b/.test(text)) return 'Keep jewelry quiet if print pants are used; do not add another patterned layer.'
+  if (/\b(floral|print|graphic|stripe|pattern|abstract)\b/.test(text)) return 'Avoid another patterned layer; the shoe must stay quiet enough to anchor the print.'
+  if (/\b(gallery|art event)\b/.test(text)) return 'Shoe must have enough polish for a gallery setting.'
+  if (/\b(bootcut|wide|wide-leg|flare)\b/.test(text)) return 'The hem needs enough shoe weight so the lower line does not collapse.'
+  if (/\b(boot|bootie)\b/.test(text)) return 'Boot shaft and hem must not chop the line.'
+  if (/\b(tuck|waistband|high waist|elastic waist)\b/.test(text)) return 'Top must not bunch at the waistband.'
+  if (/\b(oversized|loose|tunic|boxy)\b/.test(text)) return 'Top length should stop cleanly above the widest hip area or commit to a full column.'
+  if (/\b(cream|ivory|beige|taupe|soft|gauzy)\b/.test(text)) return 'Keep one dark or structured anchor so the outfit does not drift into soft neutral mush.'
+  return 'Do not add extra texture; let the listed pieces carry the formula.'
+}
+
+function wholeWardrobeGarmentModifier(pieces = []) {
+  const dress = pieces.find(p => wardrobeCategoryGroup(p) === 'dress')
+  const printPiece = pieces.find(p => /\b(floral|print|graphic|stripe|pattern|abstract|tapestry)\b/.test(pieceNameBlob(p)))
+  const darkBase = pieces.find(p => wardrobeCategoryGroup(p) === 'bottom' && /\b(black|charcoal|dark|navy|denim|jean|straight|trouser|column)\b/.test(pieceNameBlob(p)))
+  const softPiece = pieces.find(p => /\b(soft|gauzy|drape|linen|cashmere|knit|cream|ivory|oatmeal)\b/.test(pieceNameBlob(p)))
+  const anchor = dress || printPiece || darkBase || softPiece || pieces.find(p => ['top', 'bottom'].includes(wardrobeCategoryGroup(p))) || pieces[0]
+  const raw = String(anchor?.name || '').replace(/\b(top|shirt|pants|pant|skirt|dress|shoe|shoes|flat|boot|loafer)\b/gi, '').trim()
+  return raw.split(/\s+/).slice(0, 3).join(' ')
+}
+
+function buildOutfitMechanicsReason(outfit = {}, pieces = [], archetype = {}) {
+  const byGroup = (group) => pieces.find(p => wardrobeCategoryGroup(p) === group)
+  const top = byGroup('top')
+  const bottom = byGroup('bottom')
+  const dress = byGroup('dress')
+  const shoe = byGroup('shoes')
+  const layer = byGroup('outerwear')
+  const printPiece = pieces.find(p => /\b(floral|print|graphic|stripe|pattern|abstract|tapestry)\b/.test(pieceNameBlob(p)))
+  const softPiece = pieces.find(p => /\b(soft|gauzy|drape|linen|cashmere|knit|cream|ivory|oatmeal)\b/.test(pieceNameBlob(p)))
+  const shoeText = shoe ? pieceNameBlob(shoe) : ''
+  const sentences = []
+
+  if (dress) {
+    const support = layer ? `${layer.name} adds the structure around it` : shoe ? `${shoe.name} gives the one-piece line a grounded finish` : 'the supporting pieces need to stay clean'
+    sentences.push(`${dress.name} carries the column, and ${support}.`)
+  } else if (bottom) {
+    const columnVerb = /\b(black|charcoal|dark|navy|denim|straight|trouser|column)\b/.test(pieceNameBlob(bottom)) ? 'creates the long base' : 'sets the lower proportion'
+    const upperJob = top ? `${top.name} ${/\b(fitted|sleeveless|tank|shell|compact)\b/.test(pieceNameBlob(top)) ? 'keeps the upper half compact' : 'sets the upper shape'}` : 'the upper piece needs to stay controlled'
+    sentences.push(`${bottom.name} ${columnVerb}, while ${upperJob}.`)
+  } else if (top) {
+    sentences.push(`${top.name} sets the upper anchor, so the remaining pieces need to keep the line grounded.`)
+  }
+
+  if (printPiece && printPiece !== top && printPiece !== bottom && printPiece !== dress) {
+    sentences.push(`${printPiece.name} supplies the visual tension; the quiet support pieces keep it from turning into pattern stacking.`)
+  } else if (printPiece) {
+    sentences.push(`${printPiece.name} supplies the visual tension, so the surrounding pieces need to stay quieter.`)
+  } else if (softPiece) {
+    sentences.push(`${softPiece.name} brings the softness; the structured or dark pieces keep the formula from drifting loose.`)
+  }
+
+  if (shoe) {
+    if (/\b(pointed|patent|mule|flat)\b/.test(shoeText)) sentences.push(`${shoe.name} keeps the finish sharp at the floor.`)
+    else if (/\b(boot|bootie)\b/.test(shoeText)) sentences.push(`${shoe.name} gives the hem enough weight.`)
+    else if (/\b(loafer|oxford)\b/.test(shoeText)) sentences.push(`${shoe.name} adds the tailored grounding.`)
+    else sentences.push(`${shoe.name} grounds the outfit; keep it intentional rather than casual.`)
+  } else if (archetype?.formulaFamily !== 'dress_grounding_shoe') {
+    sentences.push('The shoe choice needs to add a clear anchor before this leaves the house.')
+  }
+
+  return sentences
+    .join(' ')
+    .replace(/\b(harmonious|flattering|sophisticated|balance|modernity|overall look|playful touch)\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePieces = [], occasion = 'casual') {
+  const pieces = wholeWardrobeFullPieces(outfit, candidatePieces)
+  const archetype = wholeWardrobeArchetypeFor({ ...outfit, pieces }, candidatePieces, occasion)
+  const modifier = wholeWardrobeGarmentModifier(pieces)
+  const label = modifier
+    ? `${archetype.labelSuggestion}: ${modifier}`
+    : archetype.labelSuggestion
+  const silhouetteVariant = wholeWardrobeSilhouetteFromPieces({ ...outfit, pieces })
+  const silhouette = silhouetteVariant && silhouetteVariant !== archetype.direction
+    ? silhouetteVariant
+    : archetype.silhouette
+  return {
+    ...outfit,
+    archetypeId: archetype.archetypeId,
+    formulaFamily: archetype.formulaFamily,
+    label,
+    dominantDirection: archetype.direction,
+    silhouette,
+    reason: buildOutfitMechanicsReason(outfit, pieces, archetype),
+    watchFor: wholeWardrobeWatchFromPieces({ ...outfit, pieces })
+  }
+}
+
+function hasWholeWardrobePlaceholder(outfit = {}) {
+  const text = [outfit.label, outfit.dominantDirection, outfit.silhouette, outfit.bestFor, outfit.reason, outfit.watchFor].join(' ').toLowerCase()
+  return /\b(short style lane|one clear silhouette idea|short use case|whole wardrobe outfit|strong wardrobe outfit|complete wardrobe formula|locally ranked wardrobe composition)\b/.test(text)
+}
+
+function hasGenericWholeWardrobeText(outfit = {}) {
+  const text = [outfit.reason, outfit.watchFor].join(' ').toLowerCase()
+  return /\b(balances artfulness with modernity|playful touch|overall look|creates an artistic visual|refined silhouette|visual balance|contrasts well|modern artistic element|clean silhouette|may overwhelm the look|potential boxiness|ensure the playful elements do not overwhelm)\b/.test(text)
+}
+
+function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion = 'casual') {
+  const repaired = rewriteWholeWardrobeOutfitWithArchetype({ ...outfit }, candidatePieces, occasion)
+  if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.label || '').trim()) repaired.label = wholeWardrobeLabelFromPieces(repaired)
+  if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.dominantDirection || '').trim() || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.dominantDirection = wholeWardrobeArchetypeFor(repaired, candidatePieces, occasion).direction
+  if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.silhouette || '').trim() || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.silhouette = wholeWardrobeSilhouetteFromPieces(repaired)
+  if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.bestFor || '').trim()) repaired.bestFor = 'right-now wardrobe dressing'
+  if (hasWholeWardrobePlaceholder(repaired) || hasGenericWholeWardrobeText(repaired) || !String(repaired.reason || '').trim()) repaired.reason = buildOutfitMechanicsReason(repaired, wholeWardrobeFullPieces(repaired, candidatePieces), wholeWardrobeArchetypeFor(repaired, candidatePieces, occasion))
+  if (hasWholeWardrobePlaceholder(repaired) || hasGenericWholeWardrobeText(repaired) || !String(repaired.watchFor || '').trim() || /^none$/i.test(String(repaired.watchFor || '').trim())) repaired.watchFor = wholeWardrobeWatchFromPieces(repaired)
+  return repaired
+}
+
+function wholeWardrobeSelectionScore(outfit, selected, options = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const top = wholeWardrobePieceByGroup(outfit, 'top')
+  const bottom = wholeWardrobePieceByGroup(outfit, 'bottom')
+  const shoe = wholeWardrobePieceByGroup(outfit, 'shoes')
+  const formula = wholeWardrobeFormulaFamily(outfit, options.candidatePieces, options.occasion)
+  const silhouetteFamily = wholeWardrobeSilhouetteFromPieces(outfit)
+  const grounding = wholeWardrobeGroundingStrategy(outfit)
+  const shoeShape = wholeWardrobeShoeShape(outfit)
+  const rhythm = wholeWardrobeVisualRhythm(outfit)
+  let score = outfitStylisticStrengthScore(outfit, null) + (Number(outfit.localScore) || 0) * 0.25 + (Number(outfit.archetypeScore) || 0)
+  const countPiece = (groupPiece) => groupPiece
+    ? selected.filter(existing => (existing.pieces || []).some(p => Number(p.id) === Number(groupPiece.id))).length
+    : 0
+  const sameTopCount = countPiece(top)
+  const sameBottomCount = countPiece(bottom)
+  const sameShoeCount = countPiece(shoe)
+  const sameFormulaCount = selected.filter(existing => wholeWardrobeFormulaFamily(existing, options.candidatePieces, options.occasion) === formula).length
+  const sameSilhouetteCount = selected.filter(existing => wholeWardrobeSilhouetteFromPieces(existing) === silhouetteFamily).length
+  const sameGroundingCount = selected.filter(existing => wholeWardrobeGroundingStrategy(existing) === grounding).length
+  const sameShoeShapeCount = selected.filter(existing => wholeWardrobeShoeShape(existing) === shoeShape).length
+  const sameRhythmCount = selected.filter(existing => wholeWardrobeVisualRhythm(existing) === rhythm).length
+  const printFormulaCount = wholeWardrobeHasPrintOrStripe(outfit)
+    ? selected.filter(existing => wholeWardrobeHasPrintOrStripe(existing)).length
+    : 0
+
+  if (sameTopCount >= 1) score -= 40 * sameTopCount
+  if (sameBottomCount >= 1) score -= 20 * sameBottomCount
+  if (sameShoeCount >= 1) score -= 20 * sameShoeCount
+  if (sameSilhouetteCount >= 1) score -= 35 * sameSilhouetteCount
+  if (sameGroundingCount >= 1) score -= 18 * sameGroundingCount
+  if (sameShoeShapeCount >= 1) score -= 14 * sameShoeShapeCount
+  if (sameRhythmCount >= 1) score -= 16 * sameRhythmCount
+  if (printFormulaCount >= 1) score -= 20 * printFormulaCount
+  if (sameFormulaCount >= 1) score -= 45 * sameFormulaCount
+  if (formula === 'compact_top_dark_column' && sameFormulaCount >= 1) score -= 25
+  return score
+}
+
+function bestWholeWardrobeRequirementCandidate(pool, selected, predicate, options = {}) {
+  const selectedKeys = new Set(selected.map(o => (o.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')))
+  return pool
+    .filter(outfit => predicate(outfit))
+    .filter(outfit => !selectedKeys.has((outfit.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')))
+    .sort((a, b) => wholeWardrobeSelectionScore(b, selected, options) - wholeWardrobeSelectionScore(a, selected, options))[0] || null
+}
+
+function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {}) {
+  const selected = []
+  const rejected = []
+  const topUse = new Map()
+  const bottomUse = new Map()
+  const shoeUse = new Map()
+  const heroUse = new Map()
+  const formulaUse = new Map()
+  const silhouetteUse = new Map()
+  const groundingUse = new Map()
+  const shoeShapeUse = new Map()
+  const rhythmUse = new Map()
+  const topBottomUse = new Set()
+  const pool = [...outfits]
+  const formulaFor = (outfit) => wholeWardrobeFormulaFamily(outfit, options.candidatePieces, options.occasion)
+  const hasUnusedAlternativeFormula = (formula) => pool.some(candidate => {
+    const key = (candidate.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
+    if (selected.some(existing => (existing.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|') === key)) return false
+    return formulaFor(candidate) !== formula
+  })
+  const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
+  const exploratory = bestWholeWardrobeRequirementCandidate(
+    pool,
+    selected,
+    outfit => exploratoryFamilies.has(formulaFor(outfit)) || wholeWardrobeIsExploratory(outfit),
+    options
+  )
+  if (exploratory) {
+    selected.push(exploratory)
+    const pieces = Array.isArray(exploratory.pieces) ? exploratory.pieces : []
+    const top = pieces.find(p => wardrobeCategoryGroup(p) === 'top')
+    const bottom = pieces.find(p => wardrobeCategoryGroup(p) === 'bottom')
+    const shoe = pieces.find(p => wardrobeCategoryGroup(p) === 'shoes')
+    const heroId = wholeWardrobeHeroPieceId(exploratory)
+    const formula = formulaFor(exploratory)
+    const silhouetteFamily = wholeWardrobeSilhouetteFromPieces(exploratory)
+    const grounding = wholeWardrobeGroundingStrategy(exploratory)
+    const shoeShape = wholeWardrobeShoeShape(exploratory)
+    const rhythm = wholeWardrobeVisualRhythm(exploratory)
+    const topBottomKey = wholeWardrobeTopBottomKey(exploratory)
+    if (top) topUse.set(Number(top.id), 1)
+    if (bottom) bottomUse.set(Number(bottom.id), 1)
+    if (shoe) shoeUse.set(Number(shoe.id), 1)
+    if (heroId) heroUse.set(heroId, 1)
+    formulaUse.set(formula, 1)
+    silhouetteUse.set(silhouetteFamily, 1)
+    groundingUse.set(grounding, 1)
+    shoeShapeUse.set(shoeShape, 1)
+    rhythmUse.set(rhythm, 1)
+    if (topBottomKey) topBottomUse.add(topBottomKey)
+  }
+  while (pool.length && selected.length < limit) {
+    pool.sort((a, b) => wholeWardrobeSelectionScore(b, selected, options) - wholeWardrobeSelectionScore(a, selected, options))
+    const outfit = pool.shift()
+    const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+    const top = pieces.find(p => wardrobeCategoryGroup(p) === 'top')
+    const bottom = pieces.find(p => wardrobeCategoryGroup(p) === 'bottom')
+    const shoe = pieces.find(p => wardrobeCategoryGroup(p) === 'shoes')
+    const heroId = wholeWardrobeHeroPieceId(outfit)
+    const formula = formulaFor(outfit)
+    const silhouetteFamily = wholeWardrobeSilhouetteFromPieces(outfit)
+    const grounding = wholeWardrobeGroundingStrategy(outfit)
+    const shoeShape = wholeWardrobeShoeShape(outfit)
+    const rhythm = wholeWardrobeVisualRhythm(outfit)
+    const topBottomKey = wholeWardrobeTopBottomKey(outfit)
+    const outfitKey = (outfit.pieceIds || pieces.map(p => p.id)).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
+    if (selected.some(existing => (existing.pieceIds || []).map(Number).filter(Boolean).sort((a,b) => a-b).join('|') === outfitKey)) continue
+    const topCount = top ? (topUse.get(Number(top.id)) || 0) : 0
+    const bottomCount = bottom ? (bottomUse.get(Number(bottom.id)) || 0) : 0
+    const shoeCount = shoe ? (shoeUse.get(Number(shoe.id)) || 0) : 0
+    const heroCount = heroId ? (heroUse.get(heroId) || 0) : 0
+    const formulaCount = formulaUse.get(formula) || 0
+    const silhouetteCount = silhouetteUse.get(silhouetteFamily) || 0
+    const groundingCount = groundingUse.get(grounding) || 0
+    const shoeShapeCount = shoeShapeUse.get(shoeShape) || 0
+    const rhythmCount = rhythmUse.get(rhythm) || 0
+    if (top && topCount >= 2) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: `too many outfits use ${top.name}` })
+      continue
+    }
+    if (bottom && bottomCount >= 2) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: `too many outfits use ${bottom.name}` })
+      continue
+    }
+    if (topBottomKey && topBottomUse.has(topBottomKey)) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: 'exact top+bottom formula already used' })
+      continue
+    }
+    if (heroId && heroCount >= 2) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: 'hero garment used more than twice' })
+      continue
+    }
+    if (formula === 'compact_top_dark_column' && formulaCount >= 1 && hasUnusedAlternativeFormula(formula)) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: 'compact-top dark-column slot already used' })
+      continue
+    }
+    if (formulaCount >= 1 && hasUnusedAlternativeFormula(formula)) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: `duplicate ${formula} formula` })
+      continue
+    }
+    if (silhouetteCount >= 1 && selected.length >= 2) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: `duplicate ${silhouetteFamily} silhouette` })
+      continue
+    }
+    if (groundingCount >= 2) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: `too much ${grounding}` })
+      continue
+    }
+    if (shoeShapeCount >= 2) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: `too many ${shoeShape} shoes` })
+      continue
+    }
+    if (rhythmCount >= 1 && selected.length >= 3) {
+      rejected.push({ label: outfit.label || 'unnamed', reason: `duplicate ${rhythm}` })
+      continue
+    }
+    selected.push(outfit)
+    if (top) topUse.set(Number(top.id), topCount + 1)
+    if (bottom) bottomUse.set(Number(bottom.id), bottomCount + 1)
+    if (shoe) shoeUse.set(Number(shoe.id), shoeCount + 1)
+    if (heroId) heroUse.set(heroId, heroCount + 1)
+    formulaUse.set(formula, formulaCount + 1)
+    silhouetteUse.set(silhouetteFamily, silhouetteCount + 1)
+    groundingUse.set(grounding, groundingCount + 1)
+    shoeShapeUse.set(shoeShape, shoeShapeCount + 1)
+    rhythmUse.set(rhythm, rhythmCount + 1)
+    if (topBottomKey) topBottomUse.add(topBottomKey)
+  }
+
+  if (options.requireDress && !selected.some(wholeWardrobeHasDress)) {
+    const dressCandidate = bestWholeWardrobeRequirementCandidate(outfits, selected, wholeWardrobeHasDress, options)
+    if (dressCandidate) {
+      const replaceIndex = selected.length >= limit ? selected.length - 1 : selected.length
+      if (selected[replaceIndex]) rejected.push({ label: selected[replaceIndex].label || 'unnamed', reason: 'replaced to include a dress formula' })
+      selected[replaceIndex] = dressCandidate
+    }
+  }
+
+  if (options.requireNonGraphicTop && !selected.some(wholeWardrobeHasNonGraphicTop)) {
+    const plainTopCandidate = bestWholeWardrobeRequirementCandidate(outfits, selected, wholeWardrobeHasNonGraphicTop, options)
+    if (plainTopCandidate) {
+      const replaceIndex = selected.length >= limit ? selected.length - 1 : selected.length
+      if (selected[replaceIndex]) rejected.push({ label: selected[replaceIndex].label || 'unnamed', reason: 'replaced to include a non-graphic top formula' })
+      selected[replaceIndex] = plainTopCandidate
+    }
+  }
+
+  while (new Set(selected.map(formulaFor)).size < Math.min(3, limit) && selected.length) {
+    const usedFamilies = new Set(selected.map(formulaFor))
+    const candidate = bestWholeWardrobeRequirementCandidate(
+      outfits,
+      selected,
+      outfit => !usedFamilies.has(formulaFor(outfit)),
+      options
+    )
+    if (!candidate) break
+    const replaceIndex = selected
+      .map((outfit, index) => ({ outfit, index, count: selected.filter(o => formulaFor(o) === formulaFor(outfit)).length }))
+      .filter(item => item.count > 1 || formulaFor(item.outfit) === 'compact_top_dark_column')
+      .sort((a, b) => wholeWardrobeSelectionScore(a.outfit, selected.filter((_, i) => i !== a.index), options) - wholeWardrobeSelectionScore(b.outfit, selected.filter((_, i) => i !== b.index), options))[0]?.index
+    const targetIndex = Number.isInteger(replaceIndex) ? replaceIndex : selected.length - 1
+    rejected.push({ label: selected[targetIndex]?.label || 'unnamed', reason: `replaced to include ${formulaFor(candidate)} formula` })
+    selected[targetIndex] = candidate
+  }
+
+  return { outfits: selected, rejected }
+}
+
+function normalizeWholeWardrobeStrengths(outfits = []) {
+  return outfits.map((outfit, index) => ({
+    ...outfit,
+    strength: index === 0 ? 'signature' : (index <= 2 ? 'strong' : 'usable')
+  }))
+}
+
+function wholeWardrobeOutfitsFromCandidates(candidates = [], candidatePieces = [], options = {}) {
+  return candidates.map(candidate => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject({
+    label: wholeWardrobeLabelFromPieces({ pieces: candidate.pieces }),
+    strength: 'usable',
+    dominantDirection: wholeWardrobeDirectionFromPieces({ pieces: candidate.pieces }),
+    silhouette: wholeWardrobeSilhouetteFromPieces({ pieces: candidate.pieces }),
+    bestFor: options.occasion || 'casual',
+    pieceIds: candidate.pieceIds,
+    pieces: candidate.pieces,
+    reason: wholeWardrobeReasonFromPieces({ pieces: candidate.pieces }),
+    watchFor: wholeWardrobeWatchFromPieces({ pieces: candidate.pieces }),
+    localScore: candidate.localScore,
+  }, candidatePieces), candidatePieces, options.occasion))
+}
+
+function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes = true, requireDress = false, requireNonGraphicTop = false, candidatePieces = [], occasion = 'casual' } = {}) {
+  const seen = new Set()
+  const accepted = []
+  const rejected = []
+  for (const outfit of outfits) {
+    const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion)
+    const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
+    const groups = pieces.map(p => wardrobeCategoryGroup(p))
+    const hasSeparates = groups.includes('top') && groups.includes('bottom')
+    const hasDress = groups.includes('dress')
+    const hasShoes = groups.includes('shoes')
+    const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
+    const key = (repaired.pieceIds || pieces.map(p => p.id)).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
+
+    if ((!hasSeparates && !hasDress) || (requireShoes && !hasShoes)) {
+      rejected.push({ label: repaired?.label || 'unnamed', reason: 'not a complete wardrobe outfit' })
+      continue
+    }
+    if (seen.has(key)) {
+      rejected.push({ label: repaired?.label || 'unnamed', reason: 'duplicate formula' })
+      continue
+    }
+    if (/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/.test(text)) {
+      rejected.push({ label: repaired?.label || 'unnamed', reason: 'uses body-shape/flattery framing' })
+      continue
+    }
+    if ((text.match(/\b(wide|wide-leg|oversized|loose|flowing|voluminous|relaxed)\b/g) || []).length >= 3) {
+      rejected.push({ label: repaired?.label || 'unnamed', reason: 'too much width/volume' })
+      continue
+    }
+    if ((text.match(/\b(soft|gauzy|drape|drapey|cream|ivory|beige|taupe|sand)\b/g) || []).length >= 5 && !/\b(black|charcoal|espresso|boot|loafer|pointed|structured|graphic)\b/.test(text)) {
+      rejected.push({ label: repaired?.label || 'unnamed', reason: 'soft neutral drift' })
+      continue
+    }
+
+    seen.add(key)
+    accepted.push(repaired)
+  }
+  const diverse = applyWholeWardrobeDiversity(sortByStylisticStrength(accepted, null), limit, { requireDress, requireNonGraphicTop, candidatePieces, occasion })
+  return {
+    outfits: normalizeWholeWardrobeStrengths(diverse.outfits),
+    rejected: [...rejected, ...diverse.rejected]
+  }
+}
+
+function formatWholeWardrobeOutfitFeedback({ occasion, season, mood, outfits = [], skip = '', saveableLearning = '' }) {
+  const lines = [
+    `**Generated strongest wardrobe outfits**`,
+    `**Occasion / season:** ${occasion || 'casual'} / ${season || 'current season'}`,
+    mood ? `**Mood:** ${mood}` : '',
+    ''
+  ].filter(Boolean)
+  outfits.forEach((outfit, index) => {
+    lines.push(`**${index === 0 || outfit.strength === 'signature' ? 'Signature / strongest outfit' : outfit.label || `Outfit ${index + 1}`}**`)
+    if (outfit.label) lines.push(`Label: ${outfit.label}`)
+    if (outfit.strength) lines.push(`Strength: ${outfit.strength}`)
+    if (outfit.dominantDirection) lines.push(`Direction: ${outfit.dominantDirection}`)
+    if (outfit.silhouette) lines.push(`Silhouette: ${outfit.silhouette}`)
+    if (outfit.bestFor) lines.push(`Best for: ${outfit.bestFor}`)
+    const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean).join(' + ') : ''
+    if (pieces) lines.push(`Pieces: ${pieces}`)
+    if (outfit.reason) lines.push(`Why it works: ${outfit.reason}`)
+    lines.push(`Watch for: ${outfit.watchFor || 'none'}`)
+    lines.push('')
+  })
+  if (skip) lines.push(`**I would skip**\n${skip}\n`)
+  if (saveableLearning) lines.push(`**Saveable learning**\n- ${saveableLearning}`)
+  return lines.join('\n').trim()
+}
+
 const OUTFIT_BOARD_PLANNER_SYSTEM = `You create simple wardrobe-board plans for Yuna's local closet app.
 Return ONLY valid JSON. No markdown.
 
@@ -1704,6 +2961,14 @@ function safeJsonFromModel(raw) {
   const match = text.match(/\{[\s\S]*\}/)
   if (!match) throw new Error('Model did not return JSON')
   return JSON.parse(match[0])
+}
+
+function withTimeout(promise, ms, label = 'operation') {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
 
@@ -1838,6 +3103,99 @@ async function makeGarmentTile(piece, width = 190, height = 230) {
   const labelSvg = labelLines.map((line, i) => `<text x="${width / 2}" y="${height - 28 + i * 13}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#5b5149">${escapeSvgText(line)}</text>`).join('')
   const tileSvg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" rx="18" fill="#fbfaf8"/><rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="18" fill="none" stroke="#e2d9d0"/>${labelSvg}</svg>`
   return sharp(Buffer.from(tileSvg)).composite([{ input: image, left: 10, top: 12 }]).png().toBuffer()
+}
+
+function fullPiecesForCandidate(candidate = {}, candidatePieces = []) {
+  const byId = new Map(candidatePieces.map(piece => [Number(piece.id), piece]))
+  return (candidate.pieceIds || candidate.pieces?.map(piece => piece.id) || [])
+    .map(id => byId.get(Number(id)))
+    .filter(Boolean)
+}
+
+async function makeWholeWardrobeCandidateContactSheet(candidates = [], candidatePieces = [], maxCandidates = 12) {
+  const shown = candidates.slice(0, maxCandidates)
+  const width = 1120
+  const rowHeight = 196
+  const headerHeight = 76
+  const height = headerHeight + shown.length * rowHeight + 28
+  const composites = []
+  const rowSvgs = []
+
+  for (const [index, candidate] of shown.entries()) {
+    const y = headerHeight + index * rowHeight
+    const pieces = fullPiecesForCandidate(candidate, candidatePieces).slice(0, 5)
+    const title = `${candidate.candidateId}: ${pieces.map(piece => piece.name).join(' + ')}`
+    const formula = wholeWardrobeCandidateAxes(candidate).formula
+    rowSvgs.push(`
+      <rect x="24" y="${y}" width="${width - 48}" height="${rowHeight - 14}" rx="18" fill="#fffaf7" stroke="#ddd1c6"/>
+      <text x="44" y="${y + 30}" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#3f352e">${escapeSvgText(title)}</text>
+      <text x="44" y="${y + 54}" font-family="Arial, sans-serif" font-size="12" fill="#81756b">formula: ${escapeSvgText(formula)}${candidate.localReasons?.length ? ` · ${escapeSvgText(candidate.localReasons.join('; '))}` : ''}</text>
+    `)
+    composites.push(...await Promise.all(pieces.map(async (piece, pieceIndex) => ({
+      input: await makeGarmentTile(piece, 150, 132),
+      left: 44 + pieceIndex * 166,
+      top: y + 62
+    }))))
+  }
+
+  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100%" height="100%" fill="#f4efe8"/>
+    <text x="32" y="38" font-family="Georgia, serif" font-size="30" fill="#2f2924">Whole wardrobe candidate sheet</text>
+    <text x="32" y="62" font-family="Arial, sans-serif" font-size="14" fill="#786d63">Choose visually coherent outfits by candidate ID. Use the garment photos, not just the labels.</text>
+    ${rowSvgs.join('')}
+  </svg>`
+  const buffer = await sharp(Buffer.from(svg)).composite(composites).jpeg({ quality: 84 }).toBuffer()
+  return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownCandidateIds: shown.map(candidate => candidate.candidateId) }
+}
+
+async function rankWholeWardrobeCandidatesWithVision({ candidates = [], candidatePieces = [], occasion, season, mood, memoryText = '', limit = 5 }) {
+  const candidatesWithPhotos = candidates.filter(candidate =>
+    fullPiecesForCandidate(candidate, candidatePieces).some(piece => piece.photo || piece.worn_photo)
+  )
+  const reviewSource = candidatesWithPhotos.length >= 6 ? candidatesWithPhotos : candidates
+  const reviewCandidates = selectDiverseWholeWardrobeCandidates(reviewSource, 18, { occasion })
+  if (!reviewCandidates.length) return null
+
+  const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 18)
+  const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
+  const raw = await askStylist({
+    system: `You are Yuna's visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize Yuna's known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`,
+    maxTokens: 900,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: sheet.mime, data: sheet.base64 } },
+        { type: 'text', text: [
+          `Occasion: ${occasion || 'casual'}`,
+          `Season: ${season || 'current season'}`,
+          `Mood: ${mood || 'artistic minimalist'}`,
+          memoryText ? `Taste memory:\n${memoryText}` : '',
+          `Candidate truth:\n${candidateTruth}`,
+          '',
+          `Return JSON exactly like:
+{
+  "rankedCandidateIds": ["cand-1", "cand-7"],
+  "rejectedCandidateIds": [{"candidateId": "cand-3", "reason": "visual reason"}],
+  "visualLearning": "one concise observation"
+}`,
+          `Rank up to ${Math.max(limit, 5)} candidates. Prefer visual coherence, good fit/trust, garment rotation, and actual outfit appeal over safe repeated formulas.`
+        ].filter(Boolean).join('\n\n') }
+      ]
+    }]
+  })
+  const parsed = safeJsonFromModel(raw)
+  const rankedIds = Array.isArray(parsed.rankedCandidateIds) ? parsed.rankedCandidateIds.filter(id => sheet.shownCandidateIds.includes(id)) : []
+  if (!rankedIds.length) return null
+  const byId = new Map(candidates.map(candidate => [candidate.candidateId, candidate]))
+  const ranked = rankedIds.map(id => byId.get(id)).filter(Boolean)
+  const rest = candidates.filter(candidate => !rankedIds.includes(candidate.candidateId))
+  return {
+    candidates: [...ranked, ...rest],
+    visualRejected: parsed.rejectedCandidateIds || [],
+    visualLearning: parsed.visualLearning || '',
+    reviewedCandidateIds: sheet.shownCandidateIds,
+    rankedCandidateIds: rankedIds
+  }
 }
 
 
@@ -2370,6 +3728,142 @@ async function createOutfitBoardImage({ board, pieces, index }) {
   return `/uploads/${filename}`
 }
 
+async function garmentReferenceImage(piece) {
+  const photo = piece?.worn_photo || piece?.photo
+  if (!photo) return null
+  const filePath = path.join(uploadsDir, photo)
+  if (!fs.existsSync(filePath)) return null
+  const buffer = await sharp(filePath)
+    .rotate()
+    .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 84 })
+    .toBuffer()
+  return {
+    base64: buffer.toString('base64'),
+    mime: 'image/jpeg',
+    label: `${piece.name} (${wardrobeCategoryGroup(piece)})`,
+    piece
+  }
+}
+
+function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
+  const pieceLines = pieces.map((piece, index) => {
+    const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
+    return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
+  }).join('\n')
+  return [
+    'Generate one realistic full-outfit styling image using the provided saved wardrobe garment references.',
+    'This is NOT a shopping/editorial concept and NOT a generated fantasy outfit. Use the listed saved garments as the outfit components.',
+    '',
+    'Garment fidelity rules:',
+    '- Preserve each referenced garment category, color family, print/stripe/pattern scale, neckline/sleeve/hem behavior, fabric weight, and visible texture as much as possible.',
+    '- Do not replace a listed wardrobe piece with a different garment.',
+    '- Do not add extra hero garments, patterned layers, belts, scarves, or accessories unless the listed outfit explicitly includes them.',
+    '- Shoes must match the listed shoe reference if shoes are included.',
+    '',
+    'Person / scene:',
+    '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
+    '- Simple neutral or natural background, soft daylight, no text, no watermark, no collage labels.',
+    '- Keep the result wearable and grounded, closer to a real try-on/photo reference than a fashion ad.',
+    '',
+    `Outfit label: ${outfit.label || 'Whole wardrobe outfit'}`,
+    outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
+    outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
+    outfit.reason ? `Stylist mechanics: ${outfit.reason}` : '',
+    outfit.watchFor ? `Avoid drift: ${outfit.watchFor}` : '',
+    `Occasion: ${occasion}. Season: ${season}.`,
+    '',
+    `Saved wardrobe pieces to use:\n${pieceLines}`
+  ].filter(Boolean).join('\n')
+}
+
+async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index = 1 }) {
+  const startedAt = Date.now()
+  const timings = {}
+  const filename = `generated-boards/whole-wardrobe-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
+  const outPath = path.join(uploadsDir, filename)
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+
+  const board = {
+    label: outfit.label || `Whole wardrobe outfit ${index}`,
+    reason: outfit.reason || '',
+  }
+
+  if (photoPreservingVisualsEnabled() || !process.env.OPENAI_API_KEY) {
+    const collageStartedAt = Date.now()
+    const imageUrl = await createPhotoPreservingCollageImage({
+      title: board.label,
+      subtitle: 'whole-wardrobe outfit · saved garment photos',
+      pieces,
+      reason: outfit.reason || 'Uses saved wardrobe garment photos for evaluation.',
+      index,
+      prefix: 'whole-wardrobe-collage'
+    })
+    timings.collageMs = Date.now() - collageStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl, timings, renderer: 'photo_preserving_collage' }
+  }
+
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const contentParts = []
+    const garmentStartedAt = Date.now()
+    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
+    timings.garmentReferenceMs = Date.now() - garmentStartedAt
+
+    if (garmentRefs.length) {
+      contentParts.push({
+        type: 'input_text',
+        text: `WARDROBE GARMENT REFERENCES — use these saved pieces together in one outfit. Preserve each garment as much as possible; do not invent substitutes.`
+      })
+      for (const ref of garmentRefs) {
+        contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
+        contentParts.push({ type: 'input_text', text: ref.label })
+      }
+    }
+
+    const calibrationStartedAt = Date.now()
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    for (const img of calibrationRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches listed wardrobe pieces.' : 'Taste calibration reference only.' })
+    }
+
+    contentParts.push({ type: 'input_text', text: wholeWardrobeImagePrompt({ outfit, pieces, occasion, season }) })
+
+    const gptStartedAt = Date.now()
+    const response = await client.responses.create({
+      model: 'gpt-4o',
+      input: [{ role: 'user', content: contentParts }],
+      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+    })
+    timings.gpt4oImageMs = Date.now() - gptStartedAt
+    const imageItem = response.output?.find(item => item.type === 'image_generation_call')
+    if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    const writeStartedAt = Date.now()
+    await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
+    timings.writeMs = Date.now() - writeStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
+  } catch (err) {
+    console.error('Whole-wardrobe GPT-4o image generation failed, falling back to collage:', err.message)
+    timings.gpt4oError = err.message
+    const fallbackStartedAt = Date.now()
+    const imageUrl = await createPhotoPreservingCollageImage({
+      title: board.label,
+      subtitle: 'whole-wardrobe fallback · saved garment photos',
+      pieces,
+      reason: `Image generation fallback: ${err.message}`,
+      index,
+      prefix: 'whole-wardrobe-fallback'
+    })
+    timings.fallbackCollageMs = Date.now() - fallbackStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl, timings, renderer: 'fallback_collage' }
+  }
+}
+
 const uploadsDir = path.join(__dirname, 'uploads')
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir)
 
@@ -2397,6 +3891,11 @@ db.exec(`
     season       TEXT DEFAULT 'year-round',
     notes        TEXT DEFAULT '',
     status       TEXT DEFAULT 'active',
+    recommendation_status TEXT DEFAULT 'trusted',
+    fit_confidence TEXT DEFAULT 'unknown',
+    role_permission TEXT DEFAULT 'auto',
+    occasion_permissions TEXT DEFAULT '[]',
+    engine_notes TEXT DEFAULT '',
     favorite     INTEGER DEFAULT 0,
     photo        TEXT,
     date_added   TEXT DEFAULT (datetime('now'))
@@ -2489,6 +3988,11 @@ const NEW_COLUMNS = [
   'stretch TEXT', 'fit_on_body TEXT', 'tuck_behavior TEXT', 'waistband_type TEXT',
   'styling_rules_learned TEXT', 'pairs_well_with TEXT', 'tried_and_rejected TEXT',
   'background_color TEXT',
+  'recommendation_status TEXT DEFAULT "trusted"',
+  'fit_confidence TEXT DEFAULT "unknown"',
+  'role_permission TEXT DEFAULT "auto"',
+  'occasion_permissions TEXT DEFAULT "[]"',
+  'engine_notes TEXT DEFAULT ""',
 ]
 NEW_COLUMNS.forEach(col => {
   try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
@@ -2612,9 +4116,14 @@ const parsePiece = p => p ? ({
   ...p,
   colors:                JSON.parse(p.colors                || '[]'),
   occasions:             JSON.parse(p.occasions             || '[]'),
+  occasion_permissions:   JSON.parse(p.occasion_permissions  || '[]'),
   styling_rules_learned: JSON.parse(p.styling_rules_learned || '[]'),
   pairs_well_with:       JSON.parse(p.pairs_well_with       || '[]'),
   tried_and_rejected:    JSON.parse(p.tried_and_rejected    || '[]'),
+  recommendation_status: p.recommendation_status || 'trusted',
+  fit_confidence:        p.fit_confidence        || 'unknown',
+  role_permission:       p.role_permission       || 'auto',
+  engine_notes:          p.engine_notes          || '',
   favorite: Boolean(p.favorite)
 }) : null
 
@@ -2662,6 +4171,11 @@ function buildPieceText(p) {
   // Occasion/season
   if (p.occasions?.length) parts.push(p.occasions.join(', '))
   if (p.status && p.status !== 'active') parts.push(`⚠ ${p.status}`)
+  if (p.recommendation_status && p.recommendation_status !== 'trusted') parts.push(`recommendation trust: ${p.recommendation_status}`)
+  if (p.fit_confidence && p.fit_confidence !== 'unknown') parts.push(`fit confidence: ${p.fit_confidence}`)
+  if (p.role_permission && p.role_permission !== 'auto') parts.push(`auto-styling role: ${p.role_permission}`)
+  if (p.occasion_permissions?.length) parts.push(`auto occasions: ${p.occasion_permissions.join(', ')}`)
+  if (p.engine_notes) parts.push(`engine note: ${p.engine_notes}`)
   if (p.notes) parts.push(`note: ${p.notes}`)
 
   let text = `• ${p.name} (${p.category} | ${parts.join(' | ')})`
@@ -2789,6 +4303,7 @@ app.get('/api/pieces/:id', (req, res) => {
 
 app.post('/api/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), (req, res) => {
   const { name, category, colors, occasions, season, notes, status,
+    recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_type, length_hits_at, silhouette,
     fabric_category, fabric_weight, stretch,
@@ -2798,12 +4313,14 @@ app.post('/api/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }
   const worn_photo = req.files?.worn_photo?.[0]?.filename || null
   const r = db.prepare(`
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, photo, worn_photo,
+      recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
       pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
       neckline, sleeve_type, length_hits_at, silhouette,
       fabric_category, fabric_weight, stretch, fit_on_body, tuck_behavior, waistband_type,
       styling_rules_learned, pairs_well_with, tried_and_rejected)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active', photo, worn_photo,
+    recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
     fabric_category||null, fabric_weight||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
@@ -2815,6 +4332,7 @@ app.put('/api/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo
   const existing = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
   if (!existing) return res.status(404).json({ error: 'Not found' })
   const { name, category, colors, occasions, season, notes, status, favorite, clear_photo, clear_worn_photo,
+    recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_type, length_hits_at, silhouette,
     fabric_category, fabric_weight, stretch,
@@ -2824,6 +4342,7 @@ app.put('/api/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo
   const worn_photo = req.files?.worn_photo?.[0]?.filename  || (clear_worn_photo === 'true' ? null : existing.worn_photo)
   db.prepare(`
     UPDATE pieces SET name=?,category=?,colors=?,occasions=?,season=?,notes=?,status=?,favorite=?,photo=?,worn_photo=?,
+      recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,
       pattern_type=?,pattern_scale=?,pattern_complexity=?,reads_as=?,background_color=?,hem_finish=?,
       neckline=?,sleeve_type=?,length_hits_at=?,silhouette=?,
       fabric_category=?,fabric_weight=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,
@@ -2831,6 +4350,7 @@ app.put('/api/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo
     WHERE id=?
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active',
     favorite==='true'?1:0, photo, worn_photo,
+    recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
     fabric_category||null, fabric_weight||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
@@ -3015,8 +4535,12 @@ app.post('/api/stylist-feedback', (req, res) => {
     const learningMessages = {
       signature: 'Learning saved: boosting this as a signature direction. The board itself is not saved unless you click Save board.',
       works: 'Learning saved: boosting similar outfit logic. The board itself is not saved unless you click Save board.',
+      good_formula: 'Learning saved: boosting this formula without overcommitting to every exact piece.',
+      good_pieces: 'Learning saved: these pieces look promising together.',
       almost: 'Learning saved: treating this as close but not fully solved.',
       not_me: 'Learning saved: reducing this direction for future suggestions.',
+      bad_occasion: 'Learning saved: reducing this formula for this occasion.',
+      fit_issue: 'Learning saved: treating this as a fit-risk combination.',
       too_safe: 'Learning saved: reducing safe/over-balanced styling.',
       too_generic: 'Learning saved: reducing generic outfit logic.',
       too_soft: 'Learning saved: reducing excessive softness.',
@@ -3745,6 +5269,195 @@ ${globalFeedbackText}` : ''
 })
 
 
+app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
+  const {
+    occasion = 'casual',
+    season = 'current season',
+    mood = '',
+    limit = 5,
+    explorationMode = 'moderate'
+  } = req.body || {}
+
+  try {
+    const routeStartedAt = Date.now()
+    const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
+    const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+    const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
+    const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
+    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence })
+    const candidateFormulaCounts = wholeWardrobeCandidateFormulaCounts(candidates)
+    let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
+    const candidatePieces = candidatePieceIds
+      .map(id => allPieces.find(p => Number(p.id) === Number(id)))
+      .filter(Boolean)
+    const confirmedOutfitsText = getConfirmedOutfitMemory(10)
+    const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
+    const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(28)
+    const globalSavedBoardText = getSavedBoardMemory(null, null, 16)
+    const calibrationMemoryText = getCalibrationMemoryForStylist(32)
+    const requireShoes = allPieces.some(p => wardrobeCategoryGroup(p) === 'shoes')
+    const requireDress = allPieces.some(p => wardrobeCategoryGroup(p) === 'dress')
+    const requireNonGraphicTop = allPieces.some(p => wardrobeCategoryGroup(p) === 'top' && !/\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(pieceNameBlob(p)))
+    const timings = {
+      candidateBuildMs: Date.now() - routeStartedAt
+    }
+
+    const memoryText = [
+      confirmedOutfitsText ? `Confirmed/favorite outfit memory:
+${confirmedOutfitsText}` : '',
+      globalSavedBoardText ? `Saved visual board memory. Use strongly boards should bias ranking:
+${globalSavedBoardText}` : '',
+      calibrationMemoryText ? `Calibration Library memory. Higher authority than broad style theory:
+${calibrationMemoryText}` : '',
+      wholeWardrobeFeedbackText ? `Whole-wardrobe outfit feedback. This is direct ranking/correction memory for this feature:
+${wholeWardrobeFeedbackText}` : '',
+      globalFeedbackText ? `General saved stylist feedback memory:
+${globalFeedbackText}` : ''
+    ].filter(Boolean).join('\n\n')
+    let visualCriticDebug = null
+    try {
+      const visualStartedAt = Date.now()
+      const visualRanked = await withTimeout(rankWholeWardrobeCandidatesWithVision({
+        candidates,
+        candidatePieces,
+        occasion,
+        season,
+        mood,
+        memoryText,
+        limit: requestedLimit
+      }), 25000, 'Whole-wardrobe visual critic')
+      timings.visualCriticMs = Date.now() - visualStartedAt
+      if (visualRanked?.candidates?.length) {
+        candidates = visualRanked.candidates.map((candidate, index) => ({ ...candidate, candidateId: `cand-${index + 1}` }))
+        candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
+        visualCriticDebug = {
+          reviewedCandidateIds: visualRanked.reviewedCandidateIds,
+          rankedCandidateIds: visualRanked.rankedCandidateIds,
+          reviewedFormulaCounts: wholeWardrobeCandidateFormulaCounts(visualRanked.candidates.filter(candidate => visualRanked.reviewedCandidateIds.includes(candidate.candidateId))),
+          visualLearning: visualRanked.visualLearning || '',
+          rejectedCandidateIds: visualRanked.visualRejected || []
+        }
+      }
+    } catch (err) {
+      console.warn('Whole-wardrobe visual critic fallback:', err.message)
+      visualCriticDebug = { error: err.message }
+      timings.visualCriticMs = timings.visualCriticMs || null
+    }
+    const candidateById = new Map(candidates.map(c => [c.candidateId, c]))
+
+    const userPayload = [
+      `Occasion: ${occasion || 'casual'}`,
+      `Season: ${season || 'current season'}`,
+      `Mood: ${mood || 'artistic minimalist'}`,
+      `Target count: ${requestedLimit}. Return fewer if only 3-4 are genuinely strong.`,
+      '',
+      memoryText,
+      '',
+      `Curated complete outfit candidates. Pick only from these candidates and preserve exact garment ids/names:
+${wholeWardrobeCandidateText(candidates)}`,
+      '',
+      `Piece truth for candidate pieces only:
+${candidatePieces.map(buildPieceText).join('\n')}`,
+      '',
+      'Return the strongest whole-wardrobe outfits right now. Text only; no image generation.'
+    ].filter(Boolean).join('\n')
+
+    let parsed = {}
+    let composerError = null
+    try {
+      const composerStartedAt = Date.now()
+      const raw = await withTimeout(askStylist({
+        system: WHOLE_WARDROBE_COMPOSER_SYSTEM,
+        maxTokens: 1600,
+        messages: [{ role: 'user', content: [{ type: 'text', text: userPayload }] }]
+      }), 35000, 'Whole-wardrobe composer')
+      timings.composerMs = Date.now() - composerStartedAt
+      parsed = safeJsonFromModel(raw)
+    } catch (err) {
+      console.warn('Whole-wardrobe composer fallback:', err.message)
+      composerError = err.message
+      timings.composerMs = timings.composerMs || null
+    }
+    const aiReturnedCount = Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0
+    const withCandidatePieces = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
+    const candidate = outfit?.candidateId ? candidateById.get(outfit.candidateId) : null
+    if (!candidate) return outfit
+    return {
+      ...outfit,
+      localScore: candidate.localScore,
+      pieceIds: Array.isArray(outfit.pieceIds) && outfit.pieceIds.length ? outfit.pieceIds : candidate.pieceIds,
+      pieces: Array.isArray(outfit.pieces) && outfit.pieces.length ? outfit.pieces : candidate.pieces
+    }
+    })
+    let structuredOutfits = withCandidatePieces.map(o => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, candidatePieces), candidatePieces, occasion))
+    const localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, candidatePieces, { occasion })
+
+    if (!structuredOutfits.length) {
+      structuredOutfits = localBackfillOutfits.slice(0, Math.max(requestedLimit, 8))
+    }
+
+    let diversityRejectedCount = 0
+    let gated = locallyGateWholeWardrobeOutfits(
+      [...structuredOutfits, ...localBackfillOutfits],
+      requestedLimit,
+      { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion }
+    )
+    diversityRejectedCount += gated.rejected?.length || 0
+    structuredOutfits = gated.outfits
+    if (!structuredOutfits.length) {
+      structuredOutfits = locallyGateWholeWardrobeOutfits(
+        localBackfillOutfits.slice(0, Math.max(requestedLimit, 12)),
+        requestedLimit,
+        { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion }
+      ).outfits
+    }
+    const formulaFamiliesReturned = [...new Set(structuredOutfits.map(outfit => outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, candidatePieces, occasion)).filter(Boolean))]
+    const archetypeCounts = structuredOutfits.reduce((counts, outfit) => {
+      const id = outfit.archetypeId || wholeWardrobeArchetypeFor(outfit, candidatePieces, occasion).archetypeId
+      counts[id] = (counts[id] || 0) + 1
+      return counts
+    }, {})
+
+    const feedback = formatWholeWardrobeOutfitFeedback({
+      occasion,
+      season,
+      mood,
+      outfits: structuredOutfits,
+      skip: parsed.skip || '',
+      saveableLearning: parsed.saveableLearning || ''
+    })
+
+    res.json({
+      feedback,
+      structuredOutfits,
+      rejectedOutfits: [...(parsed.rejected || []), ...(gated.rejected || [])],
+      provider: AI_PROVIDER,
+      mode: 'generate_wardrobe_outfits',
+      pipeline: 'whole_wardrobe_composer_evaluator',
+      debug: {
+        candidateCount: candidates.length,
+        candidateFormulaCounts,
+        feedbackInfluenceRowsUsed: wholeWardrobeFeedbackInfluence.rowsUsed,
+        suppressedPieceCount: suppressedPieces.length,
+        suppressedPieces,
+        visualCritic: visualCriticDebug,
+        composerError,
+        timings,
+        archetypeCounts,
+        formulaFamiliesReturned,
+        locallyGeneratedCount: localBackfillOutfits.length,
+        aiReturnedCount,
+        finalReturnedCount: structuredOutfits.length,
+        diversityRejectedCount
+      }
+    })
+  } catch (err) {
+    console.error('Generate whole-wardrobe outfits error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+
 
 // ── AI: Generate visual outfit boards from a selected piece ──────────────────
 app.post('/api/ai/generate-outfit-boards', async (req, res) => {
@@ -3817,6 +5530,38 @@ app.post('/api/ai/generate-outfit-boards', async (req, res) => {
     res.json({ boards, provider: AI_PROVIDER, mode: 'generate_outfit_boards' })
   } catch (err) {
     console.error('Generate outfit boards error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── AI: Generate one image from a whole-wardrobe outfit card ──────────────────
+app.post('/api/ai/generate-wardrobe-outfit-image', async (req, res) => {
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season' } = req.body || {}
+  try {
+    const ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
+      .map(Number)
+      .filter(Boolean))]
+      .slice(0, 6)
+    if (!ids.length) return res.status(400).json({ error: 'pieceIds are required' })
+
+    const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
+    const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
+    const pieces = ids.map(id => byId.get(id)).filter(Boolean)
+    if (pieces.length < 2) return res.status(400).json({ error: 'At least two saved wardrobe pieces are required' })
+
+    const rendered = await createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index: 1 })
+    const board = {
+      label: outfit.label || 'Whole wardrobe generated outfit',
+      reason: outfit.reason || '',
+      watchFor: outfit.watchFor || '',
+      pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
+      imageUrl: rendered.imageUrl,
+      debug: { timings: rendered.timings, renderer: rendered.renderer },
+      wholeWardrobe: true
+    }
+    res.json({ ...board, board, provider: AI_PROVIDER, mode: 'generate_wardrobe_outfit_image', debug: board.debug })
+  } catch (err) {
+    console.error('Generate whole-wardrobe outfit image error:', err)
     res.status(500).json({ error: err.message })
   }
 })
