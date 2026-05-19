@@ -1188,7 +1188,8 @@ Hard checks:
 // ── AI provider abstraction for stylist endpoints ─────────────────────────────
 const AI_PROVIDER = (process.env.AI_PROVIDER || 'anthropic').toLowerCase()
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_STYLIST_MODEL || 'claude-sonnet-4-6'
-const OPENAI_MODEL = process.env.OPENAI_STYLIST_MODEL || 'gpt-4o-mini'
+const OPENAI_MODEL = process.env.OPENAI_STYLIST_MODEL || 'gpt-4o'
+const ACTIVE_STYLIST_MODEL = AI_PROVIDER === 'openai' ? OPENAI_MODEL : ANTHROPIC_MODEL
 
 function assertProviderKey() {
   if (AI_PROVIDER === 'openai' && !process.env.OPENAI_API_KEY) {
@@ -1407,38 +1408,141 @@ JSON shape:
 const WHOLE_WARDROBE_EVALUATOR_SYSTEM = `You are evaluating one proposed whole-wardrobe outfit for Yuna's closet app.
 Return ONLY valid JSON. No markdown.
 
-Evaluate the actual garment interaction, not generic style theory.
+Evaluate lived personal style, not editorial fashion correctness.
+Write like a precise fitting-room stylist looking at the photo and linked garment records.
+The goal is not maximum visual cleanliness, trend conformity, or simplifying every outfit.
 
-Yuna's style filter:
-- artistic minimalist, relaxed structure, modern bohemian restraint
-- one clear silhouette idea, grounded shoes, edited texture, warm/deep palette
-- controlled tension is better than pleasant harmony
+Evaluation philosophy:
+- Successful personal outfits can rely on mixed textures, softness against structure, asymmetry, historical references, and imperfect harmony.
+- Do not automatically penalize visual tension. Classify it as productive tension or problematic tension.
+- Distinguish visual correctness from stylistic identity. An outfit can be slightly unresolved but still emotionally coherent and worth preserving.
+- Evaluate operational reality: whether the outfit survives movement, sitting, walking, sleeve/hem behavior, and whether it requires constant adjustment.
+- Evaluate garment fit and placement without commenting on the wearer's body. No body-shape/flattery language does not mean ignoring fit mechanics.
+- Linked garment trust overrides visual optimism. If a linked piece has recommendation trust "needs_fit_review", fit confidence "low", role restrictions, or engine notes about fit, the critique must treat that as authoritative context and explain how it affects the outfit.
+- The best recommendation helps the outfit become more itself; it does not flatten the outfit into a safer generic version.
+- Occasion semantics: "city" often means travel-city, walking-heavy days, museums, cafes, transit, and outdoor sightseeing in the same day. Do not treat outdoor practicality as automatically wrong for city; ask whether it still looks intentional enough off the trail.
+- Occasion semantics: "evening" does not automatically mean heels, cocktail polish, or a sharper shoe. It can mean dinner, gallery, casual event, relaxed evening, or grounded city evening. Boots can be correct if they ground the outfit and keep it from becoming over-dressed.
 
 Avoid:
 - body-shape/flattery language
-- generic phrases like balanced, elevated, sophisticated, playful touch, visual interest, modernity
+- saying "Yuna's aesthetic", "Yuna's style", "adhering to", "aligning with", or any sentence that merely proves you know the profile
+- generic phrases like balanced, elevated, sophisticated, playful touch, visual interest, modernity, adds depth, overall look, refinement, cohesion/cohesive, professional, elegant finish
 - pretending a questionable combination works just because the pieces are individually good
+- vague fixes like "add an accessory", "add a statement piece", "choose a simpler top", or "introduce color" unless you name exactly what visual problem it solves
+- recommending replacement of a linked/core garment as the first move. This is an evaluation of the saved outfit, not a request to rebuild it from scratch.
+- saying "replace the blouse/top/bottom/shoe" unless the verdict is avoid. For revise, first suggest an adjustment using the current pieces.
+- treating "cleaner", "sleeker", "simpler", or "more minimal" as automatically better
+
+Replacement language rules:
+- Instead of "cohesive", name the actual relationship: "the vest frames the blouse", "the trouser line gives the outfit a soft base", or "the quiet palette lets the texture mix read intentionally."
+- Instead of "visual interest", name the source: ruffled neckline, tweed texture, long trouser line, pointed shoe, print scale, color contrast, shine, drape, or visible hem behavior.
+- Do not suggest a statement necklace as a generic fix. Only mention jewelry if it solves a named problem, such as "the blouse neckline disappears under the vest"; otherwise keep jewelry quiet.
+- If tensionType is productive or mixed, possibleCompetingPiece must name the garment relationship creating that tension. Do not answer "None."
+
+Required reasoning order:
+1. Parse visible facts before judging. This section must describe what is actually visible, including the floor line if a full-body photo is present.
+2. Infer the outfit intent. Ask: what kind of success is this outfit attempting?
+3. Evaluate within that intent, not against universal "good style".
+4. Recommend the smallest adjustment that preserves the intent.
+
+Visible facts must include:
+- floorLine: trouser/skirt hem break, pooling, and relationship to the shoe. If the hem or shoe is unclear, say low confidence.
+- upperLayering: what the blouse/top/vest/jacket relationship visibly does.
+- waistArea: what is visible at the waist/tuck/layer overlap. Do not invent shifting, tugging, or tuck failure from a still photo.
+- fitPlacement: whether garment placement looks natural for the garment design. Note if a skirt/pant/dress appears to sit above its intended waist, ride up, pull, bunch, strain, twist, collapse, or force a proportion. Describe garment mechanics only.
+- texturePattern: which texture, ruffle, shine, print, or drape is actually visible.
+- shoeAnalysis:
+  visibility: not visible | partly visible | visible/readable
+  read: shoe category/shape only if clear; if not, say "light ankle shoe", "dark low shoe", etc. Do not overclaim sneaker/boot/flat/heel from partial visibility.
+  effect: what the shoe does to the outfit, such as walking support, soft casual grounding, sharp finish, weak grounding, too home/casual, or strong city-travel practicality.
+  confidence: high | medium | low
+- If shoeAnalysis.visibility is visible/readable or partly visible, do not say "shoe visibility unclear" as the issue. Evaluate the shoe effect instead.
+- photoSettingRead: what the photo setting itself reads as: city, casual, outdoor, evening, home, smart-casual, or unclear.
+- confidenceLimits: what the photo does not let you judge.
+- cropConfidence: whether the photo is full-body, three-quarter, waist-up, or cropped at the feet/hem.
+
+Intent inference must include:
+- intentLabel, such as soft-structured smart casual, grounded romantic tailoring, relaxed sculptural, quiet artistic, graphic minimal, operationally fussy layering.
+- successCriteria: the outfit-specific rules it should be judged by.
+
+Evaluation within intent must include:
+- roles: heroPiece, supportPieces, groundingPiece, possibleCompetingPiece.
+- tensionType: productive, mixed, or problematic.
+- mainSuccess: the best thing the outfit achieves within its intent.
+- firstVisibleIssue: the most visible unresolved area in the actual photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
+- If fitPlacement shows a garment riding too high, pulling, or sitting in a forced way, that can outrank color/print/styling issues. Treat it as garment fit behavior, not wearer-body critique.
+- If linked garment trust says a piece needs fit review or has low fit confidence, check whether the photo is consistent with that warning. Do not call fit placement natural unless you can explain why the linked warning does not apply.
+- If the photo crop excludes shoes or hem, missing footwear/floor line is a confidence limit, not a styling flaw. Do not make invisible shoes the firstVisibleIssue; evaluate the visible garment relationships instead.
+- occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
+- For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
+- For passed occasion "evening", distinguish useful grounding from "too casual." Do not recommend swapping boots for heels/sharper shoes unless the visible boot shape truly weakens the dress/hem/leg line or contradicts the outfit intent.
+- maintenanceBurden: what needs monitoring, tugging, arranging, cuffing, smoothing, or better shoe visibility.
+
+Recommendation rules:
+- recommendation.smallestAdjustment must address evaluation.firstVisibleIssue.
+- Do not recommend a replacement garment unless verdict is avoid.
+- Tuck advice is allowed only when garment truth supports tucking AND visibleFacts.waistArea is the firstVisibleIssue. If recommending it, phrase it as a low-maintenance test, such as "try a cleaner front tuck if it stays put naturally", not as a fussy requirement.
 
 For the critique:
 - say what works, what fails or feels risky, and whether the occasion fit is convincing
 - name the actual garments and their jobs
 - distinguish "good pieces" from "good combination"
 - if a piece seems fit-risky, too dominant, too casual, or wrong for the occasion, say so plainly
+- make the recommendation the first visible thing to adjust inside this outfit: hem break, shoe visibility/weight, cuffing, buttoning/opening a layer, sleeve handling, blouse placement, removing/adding one visible support piece only if already linked or clearly optional
+- if a garment interaction is risky, explain the salvage path before proposing a replacement
+- if the photo is too distant, backlit, or unclear for a detail, say that detail is low-confidence instead of inventing certainty
 
 JSON shape:
 {
-  "summary": "2-3 sentence direct evaluation",
-  "verdict": "keep | revise | avoid",
-  "scores": {
-    "combination": 1-5,
-    "occasionFit": 1-5,
-    "silhouette": 1-5,
-    "pieceTrust": 1-5
+  "visibleFacts": {
+    "floorLine": "what is visible about hem break, pooling, shoe visibility, shoe finish, or low-confidence note",
+    "upperLayering": "visible blouse/top/vest/jacket relationship",
+    "waistArea": "visible waist/tuck/layer overlap, or low-confidence note",
+    "fitPlacement": "garment placement mechanics: natural, forced, riding high, pulling, bunching, low-confidence, etc.",
+    "texturePattern": "visible texture/pattern/drape relationship",
+    "shoeAnalysis": {
+      "visibility": "not visible | partly visible | visible/readable",
+      "read": "shoe type/shape if clear, or low-confidence description",
+      "effect": "what the shoe does to the outfit",
+      "confidence": "high | medium | low"
+    },
+    "photoSettingRead": "what occasion/setting the photo itself reads as",
+    "cropConfidence": "full-body | three-quarter | waist-up | cropped at feet/hem | other",
+    "confidenceLimits": "what the photo does not clearly show"
   },
+  "inferredIntent": {
+    "label": "soft-structured smart casual | grounded romantic tailoring | relaxed sculptural | quiet artistic | etc.",
+    "successCriteria": ["outfit-specific criterion", "outfit-specific criterion"]
+  },
+  "evaluation": {
+    "summary": "2-3 sentence direct evaluation. Must connect visible facts to inferred intent.",
+    "verdict": "keep | revise | avoid",
+    "roles": {
+      "heroPiece": "garment name and why it is the focal/intent piece",
+      "supportPieces": ["garment name and job"],
+      "groundingPiece": "garment name and grounding job",
+      "possibleCompetingPiece": "garment name and whether the tension is productive or problematic"
+    },
+    "tensionType": "productive | mixed | problematic",
+    "maintenanceBurden": "low | medium | high",
+    "mainSuccess": "best thing this outfit achieves within its intent",
+    "firstVisibleIssue": "most visible unresolved area from the photo",
+    "scores": {
+      "tensionQuality": 1-5,
+      "silhouetteIntegrity": 1-5,
+      "embodiedEase": 1-5,
+      "stylePresence": 1-5,
+      "occasionReality": 1-5
+    }
+  },
+  "recommendation": {
+    "smallestAdjustment": "one concrete current-outfit adjustment tied to firstVisibleIssue",
+    "avoidForNow": "one tempting but premature change to avoid",
+    "tryNext": "optional next garment/fit experiment tied to the diagnosis; not a generic accessory suggestion and not a render prompt"
+  },
+  "verdict": "keep | revise | avoid",
   "works": ["specific thing that works"],
   "risks": ["specific thing to watch or fix"],
-  "recommendation": "one concrete next step",
-  "tryNext": "optional plain-language next experiment, not a render prompt",
   "saveableLearning": "one concise learning rule"
 }`
 
@@ -4346,6 +4450,26 @@ function buildPieceText(p) {
   return text
 }
 
+function buildLinkedPieceFitCautions(pieces = []) {
+  const cautionNotePattern = /\b(too small|too tight|does not fit|doesn't fit|bad fit|fit review|rides up|ride up|pulls|pulling|bunches|bunching|waist|high waist|sits too high|too high|low confidence)\b/i
+  return pieces.map((piece) => {
+    const cautions = []
+    const status = String(piece.recommendation_status || 'trusted')
+    const fit = String(piece.fit_confidence || 'unknown')
+    const role = String(piece.role_permission || 'auto')
+
+    if (status !== 'trusted') cautions.push(`recommendation trust: ${status}`)
+    if (fit !== 'unknown') cautions.push(`fit confidence: ${fit}`)
+    if (role !== 'auto') cautions.push(`auto-styling role: ${role}`)
+    if (piece.engine_notes) cautions.push(`engine note: ${piece.engine_notes}`)
+    if (piece.notes && cautionNotePattern.test(piece.notes)) cautions.push(`note: ${piece.notes}`)
+
+    return cautions.length
+      ? `- ${piece.name} (${piece.category}): ${cautions.join(' | ')}`
+      : ''
+  }).filter(Boolean).join('\n')
+}
+
 
 function buildOutfitText(outfit, linkedPieces = []) {
   const lines = [
@@ -5042,7 +5166,15 @@ app.post('/api/ai/fit-note', upload.single('photo'), async (req, res) => {
     const { base64, mime } = await prepareImageForClaude(filePath)
     fs.unlinkSync(filePath)
 
-    const { piece_name, piece_category } = req.body
+    const {
+      piece_name,
+      piece_category,
+      piece_notes = '',
+      engine_notes = '',
+      recommendation_status = 'trusted',
+      fit_confidence = 'unknown',
+      role_permission = 'auto'
+    } = req.body
     const isTop    = ['top','outerwear','dress'].includes(piece_category)
     const isBottom = piece_category === 'bottom'
 
@@ -5050,24 +5182,44 @@ app.post('/api/ai/fit-note', upload.single('photo'), async (req, res) => {
       ? `The piece being evaluated is: "${piece_name}" (${piece_category}). Focus your entire evaluation on this piece only — treat any other visible clothing as neutral context, not part of the assessment.`
       : 'Focus on the primary garment visible in this photo.'
 
+    const trustContext = [
+      piece_notes ? `existing styling notes: ${piece_notes}` : '',
+      engine_notes ? `engine notes: ${engine_notes}` : '',
+      recommendation_status && recommendation_status !== 'trusted' ? `recommendation trust: ${recommendation_status}` : '',
+      fit_confidence && fit_confidence !== 'unknown' ? `fit confidence: ${fit_confidence}` : '',
+      role_permission && role_permission !== 'auto' ? `auto-styling role: ${role_permission}` : ''
+    ].filter(Boolean).join('\n')
+
     const schemaText = `Return ONLY a valid JSON object — no markdown, no explanation:
 {
-  "note": "2-4 sentence factual fit evaluation in lowercase covering: how it sits/drapes/clings on the body, any visible fit issues and whether they are prominent or absorbed by the print/color, where the eye goes, net verdict (works as-is / needs minor adjustment / needs different pairing)",
+  "note": "1-3 sentence factual fit-mechanics note in lowercase. Mention placement, rise/waist/hem/drape/pulling/bunching/strain if visible or if existing notes flag it. Do not praise style, attractiveness, body, or print. Do not say print/color absorbs fit issues. Net verdict must be one of: works as-is, needs minor adjustment, needs fit review, or do not auto-style.",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured",
   "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
   ${isTop  ? '"tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only",' : ''}
   ${isBottom ? '"waistband_type": "structured_high_waist|structured_mid_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed",' : ''}
-  "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized"
+  "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
+  "fit_confidence": "unknown|low|medium|high",
+  "recommendation_status": "trusted|needs_fit_review"
 }`
 
     const raw = await askStylist({
-      system: `Evaluate this try-on photo for fit of a specific garment. Focus ONLY on the clothing — do NOT assess facial expression, body language, apparent comfort, or confidence. Do not comment on the wearer's body or features.\n\n${focusLine}`,
+      system: `Evaluate this try-on photo for fit of a specific garment. Focus ONLY on the clothing — do NOT assess facial expression, body language, apparent comfort, or confidence. Do not comment on the wearer's body or features.
+
+${focusLine}
+
+Existing garment trust context is authoritative. If existing notes or trust fields say the garment needs fit review, is too small/tight, rides up, pulls, sits too high, or has low fit confidence, do not overwrite that with a positive "works as-is" read unless the photo clearly disproves it. A still photo cannot prove comfort. Prefer "needs fit review" when comfort/placement is uncertain.
+
+Avoid style praise and optimism. Do not write phrases like "drapes nicely", "visually appealing", "looks stylish", "complements the shape", or "print absorbs fit issues".`,
       maxTokens: 500,
       messages: [{
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: mime, data: base64 } },
-          { type: 'text', text: `Evaluate the fit of the ${piece_name || 'garment'} in this photo.\n\n${schemaText}` }
+          { type: 'text', text: [
+            `Evaluate the fit of the ${piece_name || 'garment'} in this photo.`,
+            trustContext ? `Existing garment trust context:\n${trustContext}` : '',
+            schemaText
+          ].filter(Boolean).join('\n\n') }
         ]
       }]
     })
@@ -5766,16 +5918,19 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
   const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '' } = req.body || {}
   try {
     const startedAt = Date.now()
-    const ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
+    let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
       .map(Number)
       .filter(Boolean))]
       .slice(0, 6)
-    if (!ids.length) return res.status(400).json({ error: 'pieceIds are required' })
-
-    const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
-    const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
-    const pieces = ids.map(id => byId.get(id)).filter(Boolean)
-    if (pieces.length < 2) return res.status(400).json({ error: 'At least two saved wardrobe pieces are required' })
+    let pieces = []
+    if (ids.length) {
+      const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
+      const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
+      pieces = ids.map(id => byId.get(id)).filter(Boolean)
+    } else if (outfit.id) {
+      pieces = getLinkedPiecesForOutfit(outfit.id).slice(0, 6)
+      ids = pieces.map(piece => Number(piece.id)).filter(Boolean)
+    }
 
     const content = []
     const outfitPhoto = outfit.photo || outfit.imageUrl || ''
@@ -5789,6 +5944,7 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
         content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
       }
     }
+    if (!outfitPhoto && pieces.length < 2) return res.status(400).json({ error: 'An outfit photo or at least two linked wardrobe pieces are required' })
     const imageRefs = await Promise.all(pieces.slice(0, 5).map(async (piece) => {
       const photo = piece.worn_photo || piece.photo
       if (!photo) return null
@@ -5805,6 +5961,12 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
     const calibrationMemoryText = getCalibrationMemoryForStylist(20)
     const globalSavedBoardText = getSavedBoardMemory(null, null, 10)
     const pieceLines = pieces.map((piece, index) => `${index + 1}. ${buildPieceText(piece)}`).join('\n')
+    const linkedFitCautionsText = buildLinkedPieceFitCautions(pieces)
+    const evidenceMode = pieces.length >= 2
+      ? 'linked_garment_truth'
+      : outfitPhoto
+        ? 'photo_only_low_garment_truth'
+        : 'limited'
     const outfitSummary = [
       `Label: ${outfit.label || outfit.title || 'Whole wardrobe outfit'}`,
       outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
@@ -5820,12 +5982,22 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       `Occasion: ${occasion}`,
       `Season: ${season}`,
       mood ? `Mood: ${mood}` : '',
+      `Evidence mode: ${evidenceMode}`,
       question ? `User question: ${question}` : 'User question: Evaluate this outfit.',
-      outfitPhoto ? 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.' : 'No worn outfit photo was provided. Use linked garment references and garment truth cautiously.',
+      outfitPhoto && pieces.length
+        ? 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.'
+        : outfitPhoto
+          ? 'The image is the actual worn outfit photo. There are no linked garment records, so identify garments cautiously and mark garment-truth uncertainty in confidenceLimits.'
+          : 'No worn outfit photo was provided. Use linked garment references and garment truth cautiously.',
       '',
       `Proposed outfit:\n${outfitSummary}`,
       '',
-      `Owned garment truth. Use these exact garments for the critique:\n${pieceLines}`,
+      pieceLines
+        ? `Owned garment truth. Use these exact garments for the critique:\n${pieceLines}`
+        : 'Owned garment truth: no linked pieces. Use visual evidence only; do not overclaim exact garment identity, fabric, or shoe type.',
+      linkedFitCautionsText
+        ? `Linked fit/trust cautions. Treat these as authoritative and reconcile visible fit placement against them before judging whether a garment fits naturally:\n${linkedFitCautionsText}`
+        : '',
       '',
       wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',
       globalSavedBoardText ? `Saved visual board memory:\n${globalSavedBoardText}` : '',
@@ -5840,35 +6012,93 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       messages: [{ role: 'user', content }]
     }), 45000, 'Whole-wardrobe outfit evaluator')
     const parsed = safeJsonFromModel(raw)
-    const scoreText = parsed?.scores && typeof parsed.scores === 'object'
-      ? Object.entries(parsed.scores).map(([key, value]) => `${key}: ${value}/5`).join(' · ')
+    const visibleFacts = parsed?.visibleFacts && typeof parsed.visibleFacts === 'object' ? parsed.visibleFacts : {}
+    const inferredIntent = parsed?.inferredIntent && typeof parsed.inferredIntent === 'object' ? parsed.inferredIntent : {}
+    const nestedEvaluation = parsed?.evaluation && typeof parsed.evaluation === 'object' ? parsed.evaluation : {}
+    const recommendationBlock = parsed?.recommendation && typeof parsed.recommendation === 'object' ? parsed.recommendation : {}
+    const verdict = nestedEvaluation.verdict || parsed.verdict || ''
+    const scores = nestedEvaluation.scores || parsed.scores || {}
+    const scoreText = scores && typeof scores === 'object'
+      ? Object.entries(scores).map(([key, value]) => `${key}: ${value}/5`).join(' · ')
       : ''
+    const roles = nestedEvaluation.roles && typeof nestedEvaluation.roles === 'object'
+      ? nestedEvaluation.roles
+      : parsed?.roles && typeof parsed.roles === 'object' ? parsed.roles : {}
+    const shoeAnalysis = visibleFacts.shoeAnalysis && typeof visibleFacts.shoeAnalysis === 'object'
+      ? visibleFacts.shoeAnalysis
+      : {}
+    const shoeText = [
+      shoeAnalysis.visibility ? `visibility: ${shoeAnalysis.visibility}` : '',
+      shoeAnalysis.read ? `read: ${shoeAnalysis.read}` : (visibleFacts.shoeRead ? `read: ${visibleFacts.shoeRead}` : ''),
+      shoeAnalysis.effect ? `effect: ${shoeAnalysis.effect}` : '',
+      shoeAnalysis.confidence ? `confidence: ${shoeAnalysis.confidence}` : '',
+    ].filter(Boolean).join(' · ')
+    const factsText = [
+      visibleFacts.floorLine ? `Floor line: ${visibleFacts.floorLine}` : '',
+      visibleFacts.upperLayering ? `Upper layering: ${visibleFacts.upperLayering}` : '',
+      visibleFacts.waistArea ? `Waist area: ${visibleFacts.waistArea}` : '',
+      visibleFacts.fitPlacement ? `Fit placement: ${visibleFacts.fitPlacement}` : '',
+      visibleFacts.texturePattern ? `Texture/pattern: ${visibleFacts.texturePattern}` : '',
+      shoeText ? `Shoe analysis: ${shoeText}` : '',
+      visibleFacts.photoSettingRead ? `Photo setting read: ${visibleFacts.photoSettingRead}` : '',
+      visibleFacts.cropConfidence ? `Crop confidence: ${visibleFacts.cropConfidence}` : '',
+      visibleFacts.confidenceLimits ? `Confidence limits: ${visibleFacts.confidenceLimits}` : '',
+    ].filter(Boolean).join('\n')
+    const intentText = [
+      inferredIntent.label ? `Intent: ${inferredIntent.label}` : '',
+      Array.isArray(inferredIntent.successCriteria) && inferredIntent.successCriteria.length
+        ? `Success criteria: ${inferredIntent.successCriteria.join(' ')}`
+        : '',
+    ].filter(Boolean).join('\n')
+    const roleText = [
+      roles.heroPiece ? `Hero: ${roles.heroPiece}` : '',
+      Array.isArray(roles.supportPieces) && roles.supportPieces.length ? `Support: ${roles.supportPieces.join(' ')}` : '',
+      roles.groundingPiece ? `Grounding: ${roles.groundingPiece}` : '',
+      roles.possibleCompetingPiece ? `Tension point: ${roles.possibleCompetingPiece}` : '',
+    ].filter(Boolean).join('\n')
     const feedback = [
-      parsed.summary || 'Evaluation complete.',
-      parsed.verdict ? `Verdict: ${parsed.verdict}` : '',
+      nestedEvaluation.summary || parsed.summary || 'Evaluation complete.',
+      verdict ? `Verdict: ${verdict}` : '',
+      intentText,
+      factsText ? `Visible facts:\n${factsText}` : '',
+      nestedEvaluation.tensionType || parsed.tensionType ? `Tension: ${nestedEvaluation.tensionType || parsed.tensionType}` : '',
+      nestedEvaluation.maintenanceBurden || parsed.maintenanceBurden ? `Maintenance burden: ${nestedEvaluation.maintenanceBurden || parsed.maintenanceBurden}` : '',
       scoreText ? `Scores: ${scoreText}` : '',
+      roleText ? `Roles:\n${roleText}` : '',
+      nestedEvaluation.mainSuccess ? `Main success: ${nestedEvaluation.mainSuccess}` : '',
+      nestedEvaluation.firstVisibleIssue ? `First visible issue: ${nestedEvaluation.firstVisibleIssue}` : '',
       Array.isArray(parsed.works) && parsed.works.length ? `Works: ${parsed.works.join(' ')}` : '',
       Array.isArray(parsed.risks) && parsed.risks.length ? `Risks: ${parsed.risks.join(' ')}` : '',
-      parsed.recommendation ? `Next: ${parsed.recommendation}` : '',
-      parsed.tryNext ? `Try next: ${parsed.tryNext}` : ''
+      (recommendationBlock.smallestAdjustment || typeof parsed.recommendation === 'string') ? `Next: ${recommendationBlock.smallestAdjustment || parsed.recommendation}` : '',
+      recommendationBlock.avoidForNow ? `Avoid for now: ${recommendationBlock.avoidForNow}` : '',
+      recommendationBlock.tryNext || parsed.tryNext ? `Try next: ${recommendationBlock.tryNext || parsed.tryNext}` : ''
     ].filter(Boolean).join('\n\n')
 
     res.json({
       feedback,
       evaluation: {
-        summary: parsed.summary || '',
-        verdict: parsed.verdict || '',
-        scores: parsed.scores || {},
+        visibleFacts,
+        inferredIntent,
+        summary: nestedEvaluation.summary || parsed.summary || '',
+        verdict,
+        roles,
+        tensionType: nestedEvaluation.tensionType || parsed.tensionType || '',
+        maintenanceBurden: nestedEvaluation.maintenanceBurden || parsed.maintenanceBurden || '',
+        mainSuccess: nestedEvaluation.mainSuccess || '',
+        firstVisibleIssue: nestedEvaluation.firstVisibleIssue || '',
+        scores,
         works: Array.isArray(parsed.works) ? parsed.works : [],
         risks: Array.isArray(parsed.risks) ? parsed.risks : [],
-        recommendation: parsed.recommendation || '',
-        tryNext: parsed.tryNext || '',
+        recommendation: recommendationBlock.smallestAdjustment || (typeof parsed.recommendation === 'string' ? parsed.recommendation : ''),
+        avoidForNow: recommendationBlock.avoidForNow || '',
+        tryNext: recommendationBlock.tryNext || parsed.tryNext || '',
         saveableLearning: parsed.saveableLearning || ''
       },
       provider: AI_PROVIDER,
+      model: ACTIVE_STYLIST_MODEL,
       mode: 'evaluate_wardrobe_outfit',
       pipeline: 'whole_wardrobe_outfit_evaluator',
-      debug: { timings: { totalMs: Date.now() - startedAt }, outfitImageIncluded: Boolean(outfitPhoto), imageCount: imageRefs.filter(Boolean).length + (outfitPhoto ? 1 : 0) }
+      debug: { timings: { totalMs: Date.now() - startedAt }, evidenceMode, linkedPieceCount: pieces.length, outfitImageIncluded: Boolean(outfitPhoto), imageCount: imageRefs.filter(Boolean).length + (outfitPhoto ? 1 : 0) }
     })
   } catch (err) {
     console.error('Evaluate whole-wardrobe outfit error:', err)

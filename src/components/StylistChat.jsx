@@ -161,6 +161,7 @@ export default function AskClaude({
   const bottomRef = useRef(null)
   const textRef = useRef(null)
   const loadingTimersRef = useRef([])
+  const lastAutoOutfitActionRef = useRef('')
 
   const clearLoadingTimers = () => {
     loadingTimersRef.current.forEach(clearTimeout)
@@ -197,6 +198,9 @@ export default function AskClaude({
     setImageFile(null); setImagePrev(null)
     onClearOutfit?.()
     if (shouldAutoSend) {
+      const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? 'variants' : 'critique'}:${prompt}`
+      if (lastAutoOutfitActionRef.current === actionKey) return
+      lastAutoOutfitActionRef.current = actionKey
       setTimeout(() => send({ outfit: initialOutfit, input: prompt }), 0)
     }
   }, [initialOutfit])
@@ -1159,7 +1163,7 @@ export default function AskClaude({
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
           ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
           : []
-        const useWardrobeEvaluator = Boolean(outfitToSend.stylistPrompt && outfitPieceIds.length >= 2)
+        const useWardrobeEvaluator = Boolean(outfitToSend.photo || outfitPieceIds.length >= 2)
         if (useWardrobeEvaluator) {
           const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
             method: 'POST',
