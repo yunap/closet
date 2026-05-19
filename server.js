@@ -1443,11 +1443,16 @@ Required reasoning order:
 4. Recommend the smallest adjustment that preserves the intent.
 
 Visible facts must include:
-- floorLine: trouser/skirt hem break, pooling, shoe visibility, and whether the shoe gives enough finish. If unclear, say low confidence.
+- floorLine: trouser/skirt hem break, pooling, and relationship to the shoe. If the hem or shoe is unclear, say low confidence.
 - upperLayering: what the blouse/top/vest/jacket relationship visibly does.
 - waistArea: what is visible at the waist/tuck/layer overlap. Do not invent shifting, tugging, or tuck failure from a still photo.
 - texturePattern: which texture, ruffle, shine, print, or drape is actually visible.
-- shoeRead: shoe category/shape only if clear. If unclear, say "light ankle shoe", "dark low shoe", etc. Do not overclaim sneaker/boot/flat/heel from partial visibility.
+- shoeAnalysis:
+  visibility: not visible | partly visible | visible/readable
+  read: shoe category/shape only if clear; if not, say "light ankle shoe", "dark low shoe", etc. Do not overclaim sneaker/boot/flat/heel from partial visibility.
+  effect: what the shoe does to the outfit, such as walking support, soft casual grounding, sharp finish, weak grounding, too home/casual, or strong city-travel practicality.
+  confidence: high | medium | low
+- If shoeAnalysis.visibility is visible/readable or partly visible, do not say "shoe visibility unclear" as the issue. Evaluate the shoe effect instead.
 - photoSettingRead: what the photo setting itself reads as: city, casual, outdoor, evening, home, smart-casual, or unclear.
 - confidenceLimits: what the photo does not let you judge.
 - cropConfidence: whether the photo is full-body, three-quarter, waist-up, or cropped at the feet/hem.
@@ -1487,7 +1492,12 @@ JSON shape:
     "upperLayering": "visible blouse/top/vest/jacket relationship",
     "waistArea": "visible waist/tuck/layer overlap, or low-confidence note",
     "texturePattern": "visible texture/pattern/drape relationship",
-    "shoeRead": "shoe type/shape if clear, or low-confidence description",
+    "shoeAnalysis": {
+      "visibility": "not visible | partly visible | visible/readable",
+      "read": "shoe type/shape if clear, or low-confidence description",
+      "effect": "what the shoe does to the outfit",
+      "confidence": "high | medium | low"
+    },
     "photoSettingRead": "what occasion/setting the photo itself reads as",
     "cropConfidence": "full-body | three-quarter | waist-up | cropped at feet/hem | other",
     "confidenceLimits": "what the photo does not clearly show"
@@ -5954,12 +5964,21 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
     const roles = nestedEvaluation.roles && typeof nestedEvaluation.roles === 'object'
       ? nestedEvaluation.roles
       : parsed?.roles && typeof parsed.roles === 'object' ? parsed.roles : {}
+    const shoeAnalysis = visibleFacts.shoeAnalysis && typeof visibleFacts.shoeAnalysis === 'object'
+      ? visibleFacts.shoeAnalysis
+      : {}
+    const shoeText = [
+      shoeAnalysis.visibility ? `visibility: ${shoeAnalysis.visibility}` : '',
+      shoeAnalysis.read ? `read: ${shoeAnalysis.read}` : (visibleFacts.shoeRead ? `read: ${visibleFacts.shoeRead}` : ''),
+      shoeAnalysis.effect ? `effect: ${shoeAnalysis.effect}` : '',
+      shoeAnalysis.confidence ? `confidence: ${shoeAnalysis.confidence}` : '',
+    ].filter(Boolean).join(' · ')
     const factsText = [
       visibleFacts.floorLine ? `Floor line: ${visibleFacts.floorLine}` : '',
       visibleFacts.upperLayering ? `Upper layering: ${visibleFacts.upperLayering}` : '',
       visibleFacts.waistArea ? `Waist area: ${visibleFacts.waistArea}` : '',
       visibleFacts.texturePattern ? `Texture/pattern: ${visibleFacts.texturePattern}` : '',
-      visibleFacts.shoeRead ? `Shoe read: ${visibleFacts.shoeRead}` : '',
+      shoeText ? `Shoe analysis: ${shoeText}` : '',
       visibleFacts.photoSettingRead ? `Photo setting read: ${visibleFacts.photoSettingRead}` : '',
       visibleFacts.cropConfidence ? `Crop confidence: ${visibleFacts.cropConfidence}` : '',
       visibleFacts.confidenceLimits ? `Confidence limits: ${visibleFacts.confidenceLimits}` : '',
