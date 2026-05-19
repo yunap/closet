@@ -1419,6 +1419,7 @@ Evaluation philosophy:
 - Evaluate operational reality: whether the outfit survives movement, sitting, walking, sleeve/hem behavior, and whether it requires constant adjustment.
 - The best recommendation helps the outfit become more itself; it does not flatten the outfit into a safer generic version.
 - Occasion semantics: "city" often means travel-city, walking-heavy days, museums, cafes, transit, and outdoor sightseeing in the same day. Do not treat outdoor practicality as automatically wrong for city; ask whether it still looks intentional enough off the trail.
+- Occasion semantics: "evening" does not automatically mean heels, cocktail polish, or a sharper shoe. It can mean dinner, gallery, casual event, relaxed evening, or grounded city evening. Boots can be correct if they ground the outfit and keep it from becoming over-dressed.
 
 Avoid:
 - body-shape/flattery language
@@ -1469,6 +1470,7 @@ Evaluation within intent must include:
 - If the photo crop excludes shoes or hem, missing footwear/floor line is a confidence limit, not a styling flaw. Do not make invisible shoes the firstVisibleIssue; evaluate the visible garment relationships instead.
 - occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
 - For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
+- For passed occasion "evening", distinguish useful grounding from "too casual." Do not recommend swapping boots for heels/sharper shoes unless the visible boot shape truly weakens the dress/hem/leg line or contradicts the outfit intent.
 - maintenanceBurden: what needs monitoring, tugging, arranging, cuffing, smoothing, or better shoe visibility.
 
 Recommendation rules:
