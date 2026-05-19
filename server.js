@@ -1417,6 +1417,7 @@ Evaluation philosophy:
 - Do not automatically penalize visual tension. Classify it as productive tension or problematic tension.
 - Distinguish visual correctness from stylistic identity. An outfit can be slightly unresolved but still emotionally coherent and worth preserving.
 - Evaluate operational reality: whether the outfit survives movement, sitting, walking, sleeve/hem behavior, and whether it requires constant adjustment.
+- Evaluate garment fit and placement without commenting on the wearer's body. No body-shape/flattery language does not mean ignoring fit mechanics.
 - The best recommendation helps the outfit become more itself; it does not flatten the outfit into a safer generic version.
 - Occasion semantics: "city" often means travel-city, walking-heavy days, museums, cafes, transit, and outdoor sightseeing in the same day. Do not treat outdoor practicality as automatically wrong for city; ask whether it still looks intentional enough off the trail.
 - Occasion semantics: "evening" does not automatically mean heels, cocktail polish, or a sharper shoe. It can mean dinner, gallery, casual event, relaxed evening, or grounded city evening. Boots can be correct if they ground the outfit and keep it from becoming over-dressed.
@@ -1447,6 +1448,7 @@ Visible facts must include:
 - floorLine: trouser/skirt hem break, pooling, and relationship to the shoe. If the hem or shoe is unclear, say low confidence.
 - upperLayering: what the blouse/top/vest/jacket relationship visibly does.
 - waistArea: what is visible at the waist/tuck/layer overlap. Do not invent shifting, tugging, or tuck failure from a still photo.
+- fitPlacement: whether garment placement looks natural for the garment design. Note if a skirt/pant/dress appears to sit above its intended waist, ride up, pull, bunch, strain, twist, collapse, or force a proportion. Describe garment mechanics only.
 - texturePattern: which texture, ruffle, shine, print, or drape is actually visible.
 - shoeAnalysis:
   visibility: not visible | partly visible | visible/readable
@@ -1467,6 +1469,7 @@ Evaluation within intent must include:
 - tensionType: productive, mixed, or problematic.
 - mainSuccess: the best thing the outfit achieves within its intent.
 - firstVisibleIssue: the most visible unresolved area in the actual photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
+- If fitPlacement shows a garment riding too high, pulling, or sitting in a forced way, that can outrank color/print/styling issues. Treat it as garment fit behavior, not wearer-body critique.
 - If the photo crop excludes shoes or hem, missing footwear/floor line is a confidence limit, not a styling flaw. Do not make invisible shoes the firstVisibleIssue; evaluate the visible garment relationships instead.
 - occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
 - For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
@@ -1493,6 +1496,7 @@ JSON shape:
     "floorLine": "what is visible about hem break, pooling, shoe visibility, shoe finish, or low-confidence note",
     "upperLayering": "visible blouse/top/vest/jacket relationship",
     "waistArea": "visible waist/tuck/layer overlap, or low-confidence note",
+    "fitPlacement": "garment placement mechanics: natural, forced, riding high, pulling, bunching, low-confidence, etc.",
     "texturePattern": "visible texture/pattern/drape relationship",
     "shoeAnalysis": {
       "visibility": "not visible | partly visible | visible/readable",
@@ -5979,6 +5983,7 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       visibleFacts.floorLine ? `Floor line: ${visibleFacts.floorLine}` : '',
       visibleFacts.upperLayering ? `Upper layering: ${visibleFacts.upperLayering}` : '',
       visibleFacts.waistArea ? `Waist area: ${visibleFacts.waistArea}` : '',
+      visibleFacts.fitPlacement ? `Fit placement: ${visibleFacts.fitPlacement}` : '',
       visibleFacts.texturePattern ? `Texture/pattern: ${visibleFacts.texturePattern}` : '',
       shoeText ? `Shoe analysis: ${shoeText}` : '',
       visibleFacts.photoSettingRead ? `Photo setting read: ${visibleFacts.photoSettingRead}` : '',
