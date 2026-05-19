@@ -1071,10 +1071,16 @@ export default function AskClaude({
 
     const assistantIndex = messages.length + 1
     const compareId = overrides.compareOutfitId ?? compareOutfitId
+    const effectiveGenerateOutfitMode = overrides.generateOutfitMode ?? generateOutfitMode
+    const effectiveEditorialVisualMode = overrides.editorialVisualMode ?? editorialVisualMode
+    const effectiveIncludeMissingPieces = overrides.includeMissingPieces ?? includeMissingPieces
+    const effectiveIdealOnlyMode = overrides.idealOnlyMode ?? idealOnlyMode
+    const effectiveGenerateOccasion = overrides.generateOccasion ?? generateOccasion
+    const effectiveGenerateSeason = overrides.generateSeason ?? generateSeason
     const editorialRequestPattern = /suggest ideal|ideal addition|ideal new|new pieces|completion|completions|missing-piece|missing piece|not.*wardrobe|beyond my wardrobe|ignore my wardrobe|do not use my wardrobe|don't use my wardrobe|dont use my wardrobe|selected garment only|new item/i
     const typedEditorialRequest = editorialRequestPattern.test(q)
-    const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (editorialVisualMode || typedEditorialRequest))
-    const shouldGenerateOutfits = Boolean(pieceToSend && generateOutfitMode && !shouldGenerateEditorialVisuals)
+    const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (effectiveEditorialVisualMode || typedEditorialRequest))
+    const shouldGenerateOutfits = Boolean(pieceToSend && effectiveGenerateOutfitMode && !shouldGenerateEditorialVisuals)
     const shouldGenerateActiveEditorialVisuals = Boolean(!pieceToSend && activeContext?.type === 'piece' && editorialRequestPattern.test(q))
     const compareOutfit = compareId ? outfits.find(o => String(o.id) === String(compareId)) : null
 
@@ -1086,7 +1092,7 @@ export default function AskClaude({
     const userContextName = compareOutfit && outfitToSend ? `${outfitToSend.name} vs ${compareOutfit.name}`
       : shouldGenerateEditorialVisuals ? `Ideal additions preview for ${pieceToSend?.name}`
       : shouldGenerateActiveEditorialVisuals ? `Ideal additions preview for ${activeContext?.name}`
-      : shouldGenerateOutfits ? `${idealOnlyMode ? 'New ideal ideas for' : includeMissingPieces ? 'Ideal directions for' : 'Generate outfits for'} ${pieceToSend?.name}`
+      : shouldGenerateOutfits ? `${effectiveIdealOnlyMode ? 'New ideal ideas for' : effectiveIncludeMissingPieces ? 'Ideal directions for' : 'Generate outfits for'} ${pieceToSend?.name}`
       : (outfitToSend?.name || pieceToSend?.name)
 
     setMessages(m => [...m, {
@@ -1133,8 +1139,8 @@ export default function AskClaude({
               reason: outfitToSend.notes || '',
             },
             pieceIds: outfitPieceIds,
-            occasion: outfitToSend.occasion || generateOccasion,
-            season: outfitToSend.season || generateSeason,
+            occasion: outfitToSend.occasion || effectiveGenerateOccasion,
+            season: outfitToSend.season || effectiveGenerateSeason,
           })
         })
         const contentType = res.headers.get('content-type') || ''
@@ -1169,8 +1175,8 @@ export default function AskClaude({
                 reason: outfitToSend.notes || '',
               },
               pieceIds: outfitPieceIds,
-              occasion: outfitToSend.occasion || generateOccasion,
-              season: outfitToSend.season || generateSeason,
+              occasion: outfitToSend.occasion || effectiveGenerateOccasion,
+              season: outfitToSend.season || effectiveGenerateSeason,
               mood: wardrobeOutfitMood,
               question: q || 'Evaluate this outfit.'
             })
@@ -1190,7 +1196,7 @@ export default function AskClaude({
         // ── PREVIEW MODE: text directions only, no images yet ────────────────
         const res = await fetch('/api/ai/editorial-directions-preview', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pieceId: pieceToSend.id, occasion: generateOccasion, season: generateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
+          body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
@@ -1200,12 +1206,12 @@ export default function AskClaude({
           label: d.title,
           previewOnly: true,
           pieceId: pieceToSend.id,
-          occasion: generateOccasion,
-          season: generateSeason,
+          occasion: effectiveGenerateOccasion,
+          season: effectiveGenerateSeason,
         }))
 
       } else if (pieceToSend && shouldGenerateOutfits) {
-        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: generateOccasion, season: generateSeason, question: q || (includeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces, idealOnly: idealOnlyMode, history: historySnapshot }) })
+        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot }) })
         const data = await res.json()
         replyText = data.feedback || data.error || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null
@@ -1219,7 +1225,7 @@ export default function AskClaude({
         // ── PREVIEW MODE for active context ──────────────────────────────────
         const res = await fetch('/api/ai/editorial-directions-preview', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pieceId: activeContext.id, occasion: generateOccasion, season: generateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
+          body: JSON.stringify({ pieceId: activeContext.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
@@ -1229,8 +1235,8 @@ export default function AskClaude({
           label: d.title,
           previewOnly: true,
           pieceId: activeContext.id,
-          occasion: generateOccasion,
-          season: generateSeason,
+          occasion: effectiveGenerateOccasion,
+          season: effectiveGenerateSeason,
         }))
 
       } else if (fileToSend) {
@@ -1689,10 +1695,20 @@ export default function AskClaude({
             {pendingPiece && (
               <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  <button onClick={() => { setGenerateOutfitMode(true); setEditorialVisualMode(false); setIncludeMissingPieces(false); setIdealOnlyMode(false); setInput('Style this piece using my existing wardrobe.') }} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: generateOutfitMode && !editorialVisualMode ? '1px solid var(--accent)' : '1px solid var(--border)', background: generateOutfitMode && !editorialVisualMode ? 'var(--accent)' : 'var(--surface)', color: generateOutfitMode && !editorialVisualMode ? '#fff' : 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}>{generateOutfitMode && !editorialVisualMode ? 'Style with my wardrobe (active)' : 'Style with my wardrobe'}</button>
-                  <button onClick={() => { setEditorialVisualMode(true); setGenerateOutfitMode(false); setIncludeMissingPieces(false); setIdealOnlyMode(true); setInput('Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.') }} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: editorialVisualMode ? '1px solid var(--accent)' : '1px solid var(--border)', background: editorialVisualMode ? 'var(--accent)' : 'var(--surface)', color: editorialVisualMode ? '#fff' : 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}>{editorialVisualMode ? 'Suggest ideal additions (active)' : 'Suggest ideal additions'}</button>
+                  <button
+                    onClick={() => send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false })}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                  >
+                    Style with wardrobe
+                  </button>
+                  <button
+                    onClick={() => send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true })}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                  >
+                    Suggest ideal additions
+                  </button>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.35 }}>{editorialVisualMode ? 'Previews three styling directions — choose which to render as images.' : 'Uses saved wardrobe pieces and generates visual outfit boards.'}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.35 }}>Choose a direct action, or use the message box below for a custom question.</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                   <select value={generateOccasion} onChange={e => setGenerateOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
                     <option value="casual">Casual</option>
