@@ -1457,6 +1457,8 @@ Visible facts must include:
   effect: what the shoe does to the outfit, such as walking support, soft casual grounding, sharp finish, weak grounding, too home/casual, or strong city-travel practicality.
   confidence: high | medium | low
 - If shoeAnalysis.visibility is visible/readable or partly visible, do not say "shoe visibility unclear" as the issue. Evaluate the shoe effect instead.
+- If the shoe reads as dark/black and is at least partly visible, do not recommend "darker shoes", "more visible shoes", or "more shoe presence" unless you name a concrete visible shape problem: hem hides the shoe, shoe is too delicate for the hem width, color disappears into the floor, or toe/shaft shape conflicts with the line.
+- If linked garment truth does not include shoes, treat shoe identity as low confidence, but do not turn that uncertainty into a styling flaw. Say "shoe read is low confidence" rather than inventing a shoe fix.
 - photoSettingRead: what the photo setting itself reads as: city, casual, outdoor, evening, home, smart-casual, or unclear.
 - confidenceLimits: what the photo does not let you judge.
 - cropConfidence: whether the photo is full-body, three-quarter, waist-up, or cropped at the feet/hem.
@@ -1473,6 +1475,7 @@ Evaluation within intent must include:
 - If fitPlacement shows a garment riding too high, pulling, or sitting in a forced way, that can outrank color/print/styling issues. Treat it as garment fit behavior, not wearer-body critique.
 - If linked garment trust says a piece needs fit review or has low fit confidence, check whether the photo is consistent with that warning. Do not call fit placement natural unless you can explain why the linked warning does not apply.
 - If the photo crop excludes shoes or hem, missing footwear/floor line is a confidence limit, not a styling flaw. Do not make invisible shoes the firstVisibleIssue; evaluate the visible garment relationships instead.
+- Do not make shoes the firstVisibleIssue merely because they are partly visible. Shoes can be a firstVisibleIssue only when the visible shoe/hem relationship materially weakens the outfit and you can describe the exact mechanism.
 - occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
 - For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
 - For passed occasion "evening", distinguish useful grounding from "too casual." Do not recommend swapping boots for heels/sharper shoes unless the visible boot shape truly weakens the dress/hem/leg line or contradicts the outfit intent.
@@ -1481,6 +1484,7 @@ Evaluation within intent must include:
 Recommendation rules:
 - recommendation.smallestAdjustment must address evaluation.firstVisibleIssue.
 - Do not recommend a replacement garment unless verdict is avoid.
+- If the firstVisibleIssue is shoe-related, the adjustment must name the visible mechanism. Bad: "try shoes with more presence." Good: "test the same dark shoe with the cuff lowered so the pant break does not swallow the toe" or "link the shoes so I can judge whether the low dark shape is intentional."
 - Tuck advice is allowed only when garment truth supports tucking AND visibleFacts.waistArea is the firstVisibleIssue. If recommending it, phrase it as a low-maintenance test, such as "try a cleaner front tuck if it stays put naturally", not as a fussy requirement.
 
 For the critique:
