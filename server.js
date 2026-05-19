@@ -1188,7 +1188,8 @@ Hard checks:
 // ── AI provider abstraction for stylist endpoints ─────────────────────────────
 const AI_PROVIDER = (process.env.AI_PROVIDER || 'anthropic').toLowerCase()
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_STYLIST_MODEL || 'claude-sonnet-4-6'
-const OPENAI_MODEL = process.env.OPENAI_STYLIST_MODEL || 'gpt-4o-mini'
+const OPENAI_MODEL = process.env.OPENAI_STYLIST_MODEL || 'gpt-4o'
+const ACTIVE_STYLIST_MODEL = AI_PROVIDER === 'openai' ? OPENAI_MODEL : ANTHROPIC_MODEL
 
 function assertProviderKey() {
   if (AI_PROVIDER === 'openai' && !process.env.OPENAI_API_KEY) {
@@ -5866,6 +5867,7 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
         saveableLearning: parsed.saveableLearning || ''
       },
       provider: AI_PROVIDER,
+      model: ACTIVE_STYLIST_MODEL,
       mode: 'evaluate_wardrobe_outfit',
       pipeline: 'whole_wardrobe_outfit_evaluator',
       debug: { timings: { totalMs: Date.now() - startedAt }, outfitImageIncluded: Boolean(outfitPhoto), imageCount: imageRefs.filter(Boolean).length + (outfitPhoto ? 1 : 0) }
