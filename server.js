@@ -1422,12 +1422,18 @@ Evaluation philosophy:
 Avoid:
 - body-shape/flattery language
 - saying "Yuna's aesthetic", "Yuna's style", "adhering to", "aligning with", or any sentence that merely proves you know the profile
-- generic phrases like balanced, elevated, sophisticated, playful touch, visual interest, modernity, adds depth, overall look, refinement, cohesion, professional, elegant finish
+- generic phrases like balanced, elevated, sophisticated, playful touch, visual interest, modernity, adds depth, overall look, refinement, cohesion/cohesive, professional, elegant finish
 - pretending a questionable combination works just because the pieces are individually good
 - vague fixes like "add an accessory", "add a statement piece", "choose a simpler top", or "introduce color" unless you name exactly what visual problem it solves
 - recommending replacement of a linked/core garment as the first move. This is an evaluation of the saved outfit, not a request to rebuild it from scratch.
 - saying "replace the blouse/top/bottom/shoe" unless the verdict is avoid. For revise, first suggest an adjustment using the current pieces.
 - treating "cleaner", "sleeker", "simpler", or "more minimal" as automatically better
+
+Replacement language rules:
+- Instead of "cohesive", name the actual relationship: "the vest frames the blouse", "the trouser line gives the outfit a soft base", or "the quiet palette lets the texture mix read intentionally."
+- Instead of "visual interest", name the source: ruffled neckline, tweed texture, long trouser line, pointed shoe, print scale, color contrast, shine, drape, or visible hem behavior.
+- Do not suggest a statement necklace as a generic fix. Only mention jewelry if it solves a named problem, such as "the blouse neckline disappears under the vest"; otherwise keep jewelry quiet.
+- If tensionType is productive or mixed, possibleCompetingPiece must name the garment relationship creating that tension. Do not answer "None."
 
 Required analysis:
 - identify the outfit intent in one phrase, such as soft-structured smart casual, grounded romantic tailoring, relaxed artistic column, or operationally fussy layering
@@ -1477,7 +1483,7 @@ JSON shape:
   "works": ["specific thing that works"],
   "risks": ["specific thing to watch or fix"],
   "recommendation": "one concrete current-outfit adjustment, not a garment replacement unless verdict is avoid",
-  "tryNext": "optional next experiment only after current-outfit adjustment; not a render prompt",
+  "tryNext": "optional next garment/fit experiment tied to the diagnosis; not a generic accessory suggestion and not a render prompt",
   "saveableLearning": "one concise learning rule"
 }`
 
