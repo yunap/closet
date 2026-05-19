@@ -1435,26 +1435,34 @@ Replacement language rules:
 - Do not suggest a statement necklace as a generic fix. Only mention jewelry if it solves a named problem, such as "the blouse neckline disappears under the vest"; otherwise keep jewelry quiet.
 - If tensionType is productive or mixed, possibleCompetingPiece must name the garment relationship creating that tension. Do not answer "None."
 
-Required analysis:
-- visible evidence priority: the first risk and recommendation must come from the clearest unresolved area in the actual outfit photo, not from a theoretical styling rule.
-- for full-body photos, inspect the floor line before inventing upper-body maintenance issues: trouser pooling, hem break, shoe visibility, and whether the shoe gives enough finish.
-- do not invent shifting, tugging, blouse movement, or tuck failure from a still photo. Mention those only if visible or explicitly supported by garment truth.
-- tuck advice is allowed only when garment truth supports tucking AND the visible waist/blouse line is the clearest unresolved area. If recommending it, phrase it as a low-maintenance test, such as "try a cleaner front tuck if it stays put naturally", not as a fussy requirement.
-- identify the outfit intent in one phrase, such as soft-structured smart casual, grounded romantic tailoring, relaxed artistic column, or operationally fussy layering
-- identify garment roles:
-  heroPiece: the garment carrying the main visual/emotional idea
-  supportPieces: garments framing or stabilizing the hero
-  groundingPiece: shoe/bottom/layer that gives weight or finish
-  possibleCompetingPiece: garment that may be productive tension or may compete
-- classify tension:
-  productive when it adds dimensionality, individuality, emotional coherence, or useful friction
-  problematic when it causes fussiness, visual collapse, unclear hierarchy, or operational burden
-- layer interaction: what the top/blouse/vest/jacket does to the upper half
-- lower-half behavior: trouser/skirt volume, column, flare, hem break, or pooling
-- shoe/hem relationship: whether the shoe is visible enough and has enough weight/polish
-- texture/pattern relationship: whether softness, ruffle, shine, print, or knit texture is controlled or competing
-- occasion reality: whether the outfit reads casual, city, smart-casual, evening, home, or outdoor from the actual photo and passed occasion
-- maintenance burden: what needs monitoring, tugging, arranging, cuffing, smoothing, or better shoe visibility
+Required reasoning order:
+1. Parse visible facts before judging. This section must describe what is actually visible, including the floor line if a full-body photo is present.
+2. Infer the outfit intent. Ask: what kind of success is this outfit attempting?
+3. Evaluate within that intent, not against universal "good style".
+4. Recommend the smallest adjustment that preserves the intent.
+
+Visible facts must include:
+- floorLine: trouser/skirt hem break, pooling, shoe visibility, and whether the shoe gives enough finish. If unclear, say low confidence.
+- upperLayering: what the blouse/top/vest/jacket relationship visibly does.
+- waistArea: what is visible at the waist/tuck/layer overlap. Do not invent shifting, tugging, or tuck failure from a still photo.
+- texturePattern: which texture, ruffle, shine, print, or drape is actually visible.
+- confidenceLimits: what the photo does not let you judge.
+
+Intent inference must include:
+- intentLabel, such as soft-structured smart casual, grounded romantic tailoring, relaxed sculptural, quiet artistic, graphic minimal, operationally fussy layering.
+- successCriteria: the outfit-specific rules it should be judged by.
+
+Evaluation within intent must include:
+- roles: heroPiece, supportPieces, groundingPiece, possibleCompetingPiece.
+- tensionType: productive, mixed, or problematic.
+- mainSuccess: the best thing the outfit achieves within its intent.
+- firstVisibleIssue: the most visible unresolved area in the actual photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
+- maintenanceBurden: what needs monitoring, tugging, arranging, cuffing, smoothing, or better shoe visibility.
+
+Recommendation rules:
+- recommendation.smallestAdjustment must address evaluation.firstVisibleIssue.
+- Do not recommend a replacement garment unless verdict is avoid.
+- Tuck advice is allowed only when garment truth supports tucking AND visibleFacts.waistArea is the firstVisibleIssue. If recommending it, phrase it as a low-maintenance test, such as "try a cleaner front tuck if it stays put naturally", not as a fussy requirement.
 
 For the critique:
 - say what works, what fails or feels risky, and whether the occasion fit is convincing
@@ -1467,27 +1475,46 @@ For the critique:
 
 JSON shape:
 {
-  "summary": "2-3 sentence direct evaluation. Must name the outfit intent, the main tension, and whether it can be improved without changing core garments.",
+  "visibleFacts": {
+    "floorLine": "what is visible about hem break, pooling, shoe visibility, shoe finish, or low-confidence note",
+    "upperLayering": "visible blouse/top/vest/jacket relationship",
+    "waistArea": "visible waist/tuck/layer overlap, or low-confidence note",
+    "texturePattern": "visible texture/pattern/drape relationship",
+    "confidenceLimits": "what the photo does not clearly show"
+  },
+  "inferredIntent": {
+    "label": "soft-structured smart casual | grounded romantic tailoring | relaxed sculptural | quiet artistic | etc.",
+    "successCriteria": ["outfit-specific criterion", "outfit-specific criterion"]
+  },
+  "evaluation": {
+    "summary": "2-3 sentence direct evaluation. Must connect visible facts to inferred intent.",
+    "verdict": "keep | revise | avoid",
+    "roles": {
+      "heroPiece": "garment name and why it is the focal/intent piece",
+      "supportPieces": ["garment name and job"],
+      "groundingPiece": "garment name and grounding job",
+      "possibleCompetingPiece": "garment name and whether the tension is productive or problematic"
+    },
+    "tensionType": "productive | mixed | problematic",
+    "maintenanceBurden": "low | medium | high",
+    "mainSuccess": "best thing this outfit achieves within its intent",
+    "firstVisibleIssue": "most visible unresolved area from the photo",
+    "scores": {
+      "tensionQuality": 1-5,
+      "silhouetteIntegrity": 1-5,
+      "embodiedEase": 1-5,
+      "stylePresence": 1-5,
+      "occasionReality": 1-5
+    }
+  },
+  "recommendation": {
+    "smallestAdjustment": "one concrete current-outfit adjustment tied to firstVisibleIssue",
+    "avoidForNow": "one tempting but premature change to avoid",
+    "tryNext": "optional next garment/fit experiment tied to the diagnosis; not a generic accessory suggestion and not a render prompt"
+  },
   "verdict": "keep | revise | avoid",
-  "roles": {
-    "heroPiece": "garment name and why it is the focal/intent piece",
-    "supportPieces": ["garment name and job"],
-    "groundingPiece": "garment name and grounding job",
-    "possibleCompetingPiece": "garment name and whether the tension is productive or problematic"
-  },
-  "tensionType": "productive | mixed | problematic",
-  "maintenanceBurden": "low | medium | high",
-  "scores": {
-    "tensionQuality": 1-5,
-    "silhouetteIntegrity": 1-5,
-    "embodiedEase": 1-5,
-    "stylePresence": 1-5,
-    "occasionReality": 1-5
-  },
   "works": ["specific thing that works"],
   "risks": ["specific thing to watch or fix"],
-  "recommendation": "one concrete current-outfit adjustment, not a garment replacement unless verdict is avoid",
-  "tryNext": "optional next garment/fit experiment tied to the diagnosis; not a generic accessory suggestion and not a render prompt",
   "saveableLearning": "one concise learning rule"
 }`
 
@@ -5889,10 +5916,31 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       messages: [{ role: 'user', content }]
     }), 45000, 'Whole-wardrobe outfit evaluator')
     const parsed = safeJsonFromModel(raw)
-    const scoreText = parsed?.scores && typeof parsed.scores === 'object'
-      ? Object.entries(parsed.scores).map(([key, value]) => `${key}: ${value}/5`).join(' · ')
+    const visibleFacts = parsed?.visibleFacts && typeof parsed.visibleFacts === 'object' ? parsed.visibleFacts : {}
+    const inferredIntent = parsed?.inferredIntent && typeof parsed.inferredIntent === 'object' ? parsed.inferredIntent : {}
+    const nestedEvaluation = parsed?.evaluation && typeof parsed.evaluation === 'object' ? parsed.evaluation : {}
+    const recommendationBlock = parsed?.recommendation && typeof parsed.recommendation === 'object' ? parsed.recommendation : {}
+    const verdict = nestedEvaluation.verdict || parsed.verdict || ''
+    const scores = nestedEvaluation.scores || parsed.scores || {}
+    const scoreText = scores && typeof scores === 'object'
+      ? Object.entries(scores).map(([key, value]) => `${key}: ${value}/5`).join(' · ')
       : ''
-    const roles = parsed?.roles && typeof parsed.roles === 'object' ? parsed.roles : {}
+    const roles = nestedEvaluation.roles && typeof nestedEvaluation.roles === 'object'
+      ? nestedEvaluation.roles
+      : parsed?.roles && typeof parsed.roles === 'object' ? parsed.roles : {}
+    const factsText = [
+      visibleFacts.floorLine ? `Floor line: ${visibleFacts.floorLine}` : '',
+      visibleFacts.upperLayering ? `Upper layering: ${visibleFacts.upperLayering}` : '',
+      visibleFacts.waistArea ? `Waist area: ${visibleFacts.waistArea}` : '',
+      visibleFacts.texturePattern ? `Texture/pattern: ${visibleFacts.texturePattern}` : '',
+      visibleFacts.confidenceLimits ? `Confidence limits: ${visibleFacts.confidenceLimits}` : '',
+    ].filter(Boolean).join('\n')
+    const intentText = [
+      inferredIntent.label ? `Intent: ${inferredIntent.label}` : '',
+      Array.isArray(inferredIntent.successCriteria) && inferredIntent.successCriteria.length
+        ? `Success criteria: ${inferredIntent.successCriteria.join(' ')}`
+        : '',
+    ].filter(Boolean).join('\n')
     const roleText = [
       roles.heroPiece ? `Hero: ${roles.heroPiece}` : '',
       Array.isArray(roles.supportPieces) && roles.supportPieces.length ? `Support: ${roles.supportPieces.join(' ')}` : '',
@@ -5900,31 +5948,41 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       roles.possibleCompetingPiece ? `Tension point: ${roles.possibleCompetingPiece}` : '',
     ].filter(Boolean).join('\n')
     const feedback = [
-      parsed.summary || 'Evaluation complete.',
-      parsed.verdict ? `Verdict: ${parsed.verdict}` : '',
-      parsed.tensionType ? `Tension: ${parsed.tensionType}` : '',
-      parsed.maintenanceBurden ? `Maintenance burden: ${parsed.maintenanceBurden}` : '',
+      nestedEvaluation.summary || parsed.summary || 'Evaluation complete.',
+      verdict ? `Verdict: ${verdict}` : '',
+      intentText,
+      factsText ? `Visible facts:\n${factsText}` : '',
+      nestedEvaluation.tensionType || parsed.tensionType ? `Tension: ${nestedEvaluation.tensionType || parsed.tensionType}` : '',
+      nestedEvaluation.maintenanceBurden || parsed.maintenanceBurden ? `Maintenance burden: ${nestedEvaluation.maintenanceBurden || parsed.maintenanceBurden}` : '',
       scoreText ? `Scores: ${scoreText}` : '',
       roleText ? `Roles:\n${roleText}` : '',
+      nestedEvaluation.mainSuccess ? `Main success: ${nestedEvaluation.mainSuccess}` : '',
+      nestedEvaluation.firstVisibleIssue ? `First visible issue: ${nestedEvaluation.firstVisibleIssue}` : '',
       Array.isArray(parsed.works) && parsed.works.length ? `Works: ${parsed.works.join(' ')}` : '',
       Array.isArray(parsed.risks) && parsed.risks.length ? `Risks: ${parsed.risks.join(' ')}` : '',
-      parsed.recommendation ? `Next: ${parsed.recommendation}` : '',
-      parsed.tryNext ? `Try next: ${parsed.tryNext}` : ''
+      (recommendationBlock.smallestAdjustment || typeof parsed.recommendation === 'string') ? `Next: ${recommendationBlock.smallestAdjustment || parsed.recommendation}` : '',
+      recommendationBlock.avoidForNow ? `Avoid for now: ${recommendationBlock.avoidForNow}` : '',
+      recommendationBlock.tryNext || parsed.tryNext ? `Try next: ${recommendationBlock.tryNext || parsed.tryNext}` : ''
     ].filter(Boolean).join('\n\n')
 
     res.json({
       feedback,
       evaluation: {
-        summary: parsed.summary || '',
-        verdict: parsed.verdict || '',
+        visibleFacts,
+        inferredIntent,
+        summary: nestedEvaluation.summary || parsed.summary || '',
+        verdict,
         roles,
-        tensionType: parsed.tensionType || '',
-        maintenanceBurden: parsed.maintenanceBurden || '',
-        scores: parsed.scores || {},
+        tensionType: nestedEvaluation.tensionType || parsed.tensionType || '',
+        maintenanceBurden: nestedEvaluation.maintenanceBurden || parsed.maintenanceBurden || '',
+        mainSuccess: nestedEvaluation.mainSuccess || '',
+        firstVisibleIssue: nestedEvaluation.firstVisibleIssue || '',
+        scores,
         works: Array.isArray(parsed.works) ? parsed.works : [],
         risks: Array.isArray(parsed.risks) ? parsed.risks : [],
-        recommendation: parsed.recommendation || '',
-        tryNext: parsed.tryNext || '',
+        recommendation: recommendationBlock.smallestAdjustment || (typeof parsed.recommendation === 'string' ? parsed.recommendation : ''),
+        avoidForNow: recommendationBlock.avoidForNow || '',
+        tryNext: recommendationBlock.tryNext || parsed.tryNext || '',
         saveableLearning: parsed.saveableLearning || ''
       },
       provider: AI_PROVIDER,
