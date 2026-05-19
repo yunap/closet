@@ -397,7 +397,10 @@ function OutfitDetail({ outfit, onClose, onDelete, onSendToStylist, onPiecesUpda
               )}
             </div>
 
-            <button onClick={() => onSendToStylist(outfit)} style={{
+            <button onClick={() => onSendToStylist({
+              ...outfit,
+              stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
+            })} style={{
               width: '100%', padding: '13px', marginBottom: 10,
               background: 'var(--accent-light)', color: 'var(--accent)',
               border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
