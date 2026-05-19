@@ -1450,6 +1450,7 @@ Visible facts must include:
 - shoeRead: shoe category/shape only if clear. If unclear, say "light ankle shoe", "dark low shoe", etc. Do not overclaim sneaker/boot/flat/heel from partial visibility.
 - photoSettingRead: what the photo setting itself reads as: city, casual, outdoor, evening, home, smart-casual, or unclear.
 - confidenceLimits: what the photo does not let you judge.
+- cropConfidence: whether the photo is full-body, three-quarter, waist-up, or cropped at the feet/hem.
 
 Intent inference must include:
 - intentLabel, such as soft-structured smart casual, grounded romantic tailoring, relaxed sculptural, quiet artistic, graphic minimal, operationally fussy layering.
@@ -1460,6 +1461,7 @@ Evaluation within intent must include:
 - tensionType: productive, mixed, or problematic.
 - mainSuccess: the best thing the outfit achieves within its intent.
 - firstVisibleIssue: the most visible unresolved area in the actual photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
+- If the photo crop excludes shoes or hem, missing footwear/floor line is a confidence limit, not a styling flaw. Do not make invisible shoes the firstVisibleIssue; evaluate the visible garment relationships instead.
 - occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
 - For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
 - maintenanceBurden: what needs monitoring, tugging, arranging, cuffing, smoothing, or better shoe visibility.
@@ -1487,6 +1489,7 @@ JSON shape:
     "texturePattern": "visible texture/pattern/drape relationship",
     "shoeRead": "shoe type/shape if clear, or low-confidence description",
     "photoSettingRead": "what occasion/setting the photo itself reads as",
+    "cropConfidence": "full-body | three-quarter | waist-up | cropped at feet/hem | other",
     "confidenceLimits": "what the photo does not clearly show"
   },
   "inferredIntent": {
@@ -5942,6 +5945,7 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       visibleFacts.texturePattern ? `Texture/pattern: ${visibleFacts.texturePattern}` : '',
       visibleFacts.shoeRead ? `Shoe read: ${visibleFacts.shoeRead}` : '',
       visibleFacts.photoSettingRead ? `Photo setting read: ${visibleFacts.photoSettingRead}` : '',
+      visibleFacts.cropConfidence ? `Crop confidence: ${visibleFacts.cropConfidence}` : '',
       visibleFacts.confidenceLimits ? `Confidence limits: ${visibleFacts.confidenceLimits}` : '',
     ].filter(Boolean).join('\n')
     const intentText = [
