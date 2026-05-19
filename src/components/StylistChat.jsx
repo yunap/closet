@@ -183,7 +183,8 @@ export default function AskClaude({
 
   useEffect(() => {
     if (!initialOutfit) return
-    setPendingOutfit(initialOutfit)
+    const shouldAutoSend = initialOutfit.autoSend === true
+    setPendingOutfit(shouldAutoSend ? null : initialOutfit)
     setPendingPiece(null)
     setCompareOutfitId('')
     setGenerateOutfitMode(false)
@@ -191,9 +192,13 @@ export default function AskClaude({
     setIdealOnlyMode(false)
     setEditorialVisualMode(false)
     setActiveContext({ type: 'outfit', id: initialOutfit.id, name: initialOutfit.name })
-    setInput(initialOutfit.stylistPrompt || 'What do you think of this outfit?')
+    const prompt = initialOutfit.stylistPrompt || 'What do you think of this outfit?'
+    setInput(shouldAutoSend ? '' : prompt)
     setImageFile(null); setImagePrev(null)
     onClearOutfit?.()
+    if (shouldAutoSend) {
+      setTimeout(() => send({ outfit: initialOutfit, input: prompt }), 0)
+    }
   }, [initialOutfit])
 
   useEffect(() => {
@@ -1057,15 +1062,15 @@ export default function AskClaude({
     }
   }
 
-  const send = async () => {
-    const q = input.trim()
-    if (!q && !imageFile && !pendingOutfit && !pendingPiece) return
+  const send = async (overrides = {}) => {
+    const q = (overrides.input ?? input).trim()
+    const outfitToSend = overrides.outfit ?? pendingOutfit
+    const pieceToSend = overrides.piece ?? pendingPiece
+    const fileToSend = overrides.imageFile ?? imageFile
+    if (!q && !fileToSend && !outfitToSend && !pieceToSend) return
 
-    const outfitToSend = pendingOutfit
-    const pieceToSend = pendingPiece
-    const fileToSend = imageFile
     const assistantIndex = messages.length + 1
-    const compareId = compareOutfitId
+    const compareId = overrides.compareOutfitId ?? compareOutfitId
     const editorialRequestPattern = /suggest ideal|ideal addition|ideal new|new pieces|completion|completions|missing-piece|missing piece|not.*wardrobe|beyond my wardrobe|ignore my wardrobe|do not use my wardrobe|don't use my wardrobe|dont use my wardrobe|selected garment only|new item/i
     const typedEditorialRequest = editorialRequestPattern.test(q)
     const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (editorialVisualMode || typedEditorialRequest))
@@ -1709,9 +1714,23 @@ export default function AskClaude({
               </div>
             )}
             {pendingOutfit && (
-              <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  <button
+                    onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', compareOutfitId: '' })}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                  >
+                    Critique outfit
+                  </button>
+                  <button
+                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true }, input: 'Generate outfit variants from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                  >
+                    Generate 3 variants
+                  </button>
+                </div>
                 <select value={compareOutfitId} onChange={e => { setCompareOutfitId(e.target.value); if (e.target.value && (!input.trim() || input === 'What do you think of this outfit?')) setInput('Which outfit works better for me?') }} style={{ width: '100%', padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
-                  <option value="">Evaluate this outfit only</option>
+                  <option value="">Compare with another outfit...</option>
                   {compareOptions.map(o => <option key={o.id} value={o.id}>Compare with: {o.name}</option>)}
                 </select>
                 {compareOutfitId && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5 }}>{compareConfidenceText || 'Compare mode will use both outfit photos, linked garments, notes, and statuses.'}</div>}
