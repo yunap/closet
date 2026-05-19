@@ -1436,6 +1436,10 @@ Replacement language rules:
 - If tensionType is productive or mixed, possibleCompetingPiece must name the garment relationship creating that tension. Do not answer "None."
 
 Required analysis:
+- visible evidence priority: the first risk and recommendation must come from the clearest unresolved area in the actual outfit photo, not from a theoretical styling rule.
+- for full-body photos, inspect the floor line before inventing upper-body maintenance issues: trouser pooling, hem break, shoe visibility, and whether the shoe gives enough finish.
+- do not invent shifting, tugging, blouse movement, or tuck failure from a still photo. Mention those only if visible or explicitly supported by garment truth.
+- tuck advice is allowed only when garment truth supports tucking AND the visible waist/blouse line is the clearest unresolved area. If recommending it, phrase it as a low-maintenance test, such as "try a cleaner front tuck if it stays put naturally", not as a fussy requirement.
 - identify the outfit intent in one phrase, such as soft-structured smart casual, grounded romantic tailoring, relaxed artistic column, or operationally fussy layering
 - identify garment roles:
   heroPiece: the garment carrying the main visual/emotional idea
@@ -1457,7 +1461,7 @@ For the critique:
 - name the actual garments and their jobs
 - distinguish "good pieces" from "good combination"
 - if a piece seems fit-risky, too dominant, too casual, or wrong for the occasion, say so plainly
-- make the recommendation the first thing to adjust inside this outfit: cuff/hem break, shoe visibility, buttoning/opening a layer, sleeve handling, blouse placement, removing/adding one visible support piece only if already linked or clearly optional
+- make the recommendation the first visible thing to adjust inside this outfit: hem break, shoe visibility/weight, cuffing, buttoning/opening a layer, sleeve handling, blouse placement, removing/adding one visible support piece only if already linked or clearly optional
 - if a garment interaction is risky, explain the salvage path before proposing a replacement
 - if the photo is too distant, backlit, or unclear for a detail, say that detail is low-confidence instead of inventing certainty
 
