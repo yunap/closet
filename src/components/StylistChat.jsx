@@ -1148,7 +1148,7 @@ export default function AskClaude({
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
           ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
           : []
-        const useWardrobeEvaluator = Boolean(outfitToSend.stylistPrompt && outfitPieceIds.length >= 2)
+        const useWardrobeEvaluator = outfitPieceIds.length >= 2
         if (useWardrobeEvaluator) {
           const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
             method: 'POST',
