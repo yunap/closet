@@ -1446,6 +1446,8 @@ Visible facts must include:
 - upperLayering: what the blouse/top/vest/jacket relationship visibly does.
 - waistArea: what is visible at the waist/tuck/layer overlap. Do not invent shifting, tugging, or tuck failure from a still photo.
 - texturePattern: which texture, ruffle, shine, print, or drape is actually visible.
+- shoeRead: shoe category/shape only if clear. If unclear, say "light ankle shoe", "dark low shoe", etc. Do not overclaim sneaker/boot/flat/heel from partial visibility.
+- photoSettingRead: what the photo setting itself reads as: city, casual, outdoor, evening, home, smart-casual, or unclear.
 - confidenceLimits: what the photo does not let you judge.
 
 Intent inference must include:
@@ -1457,6 +1459,7 @@ Evaluation within intent must include:
 - tensionType: productive, mixed, or problematic.
 - mainSuccess: the best thing the outfit achieves within its intent.
 - firstVisibleIssue: the most visible unresolved area in the actual photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
+- occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
 - maintenanceBurden: what needs monitoring, tugging, arranging, cuffing, smoothing, or better shoe visibility.
 
 Recommendation rules:
@@ -1480,6 +1483,8 @@ JSON shape:
     "upperLayering": "visible blouse/top/vest/jacket relationship",
     "waistArea": "visible waist/tuck/layer overlap, or low-confidence note",
     "texturePattern": "visible texture/pattern/drape relationship",
+    "shoeRead": "shoe type/shape if clear, or low-confidence description",
+    "photoSettingRead": "what occasion/setting the photo itself reads as",
     "confidenceLimits": "what the photo does not clearly show"
   },
   "inferredIntent": {
@@ -5933,6 +5938,8 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       visibleFacts.upperLayering ? `Upper layering: ${visibleFacts.upperLayering}` : '',
       visibleFacts.waistArea ? `Waist area: ${visibleFacts.waistArea}` : '',
       visibleFacts.texturePattern ? `Texture/pattern: ${visibleFacts.texturePattern}` : '',
+      visibleFacts.shoeRead ? `Shoe read: ${visibleFacts.shoeRead}` : '',
+      visibleFacts.photoSettingRead ? `Photo setting read: ${visibleFacts.photoSettingRead}` : '',
       visibleFacts.confidenceLimits ? `Confidence limits: ${visibleFacts.confidenceLimits}` : '',
     ].filter(Boolean).join('\n')
     const intentText = [
