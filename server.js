@@ -5166,7 +5166,15 @@ app.post('/api/ai/fit-note', upload.single('photo'), async (req, res) => {
     const { base64, mime } = await prepareImageForClaude(filePath)
     fs.unlinkSync(filePath)
 
-    const { piece_name, piece_category } = req.body
+    const {
+      piece_name,
+      piece_category,
+      piece_notes = '',
+      engine_notes = '',
+      recommendation_status = 'trusted',
+      fit_confidence = 'unknown',
+      role_permission = 'auto'
+    } = req.body
     const isTop    = ['top','outerwear','dress'].includes(piece_category)
     const isBottom = piece_category === 'bottom'
 
@@ -5174,24 +5182,44 @@ app.post('/api/ai/fit-note', upload.single('photo'), async (req, res) => {
       ? `The piece being evaluated is: "${piece_name}" (${piece_category}). Focus your entire evaluation on this piece only — treat any other visible clothing as neutral context, not part of the assessment.`
       : 'Focus on the primary garment visible in this photo.'
 
+    const trustContext = [
+      piece_notes ? `existing styling notes: ${piece_notes}` : '',
+      engine_notes ? `engine notes: ${engine_notes}` : '',
+      recommendation_status && recommendation_status !== 'trusted' ? `recommendation trust: ${recommendation_status}` : '',
+      fit_confidence && fit_confidence !== 'unknown' ? `fit confidence: ${fit_confidence}` : '',
+      role_permission && role_permission !== 'auto' ? `auto-styling role: ${role_permission}` : ''
+    ].filter(Boolean).join('\n')
+
     const schemaText = `Return ONLY a valid JSON object — no markdown, no explanation:
 {
-  "note": "2-4 sentence factual fit evaluation in lowercase covering: how it sits/drapes/clings on the body, any visible fit issues and whether they are prominent or absorbed by the print/color, where the eye goes, net verdict (works as-is / needs minor adjustment / needs different pairing)",
+  "note": "1-3 sentence factual fit-mechanics note in lowercase. Mention placement, rise/waist/hem/drape/pulling/bunching/strain if visible or if existing notes flag it. Do not praise style, attractiveness, body, or print. Do not say print/color absorbs fit issues. Net verdict must be one of: works as-is, needs minor adjustment, needs fit review, or do not auto-style.",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured",
   "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
   ${isTop  ? '"tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only",' : ''}
   ${isBottom ? '"waistband_type": "structured_high_waist|structured_mid_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed",' : ''}
-  "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized"
+  "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
+  "fit_confidence": "unknown|low|medium|high",
+  "recommendation_status": "trusted|needs_fit_review"
 }`
 
     const raw = await askStylist({
-      system: `Evaluate this try-on photo for fit of a specific garment. Focus ONLY on the clothing — do NOT assess facial expression, body language, apparent comfort, or confidence. Do not comment on the wearer's body or features.\n\n${focusLine}`,
+      system: `Evaluate this try-on photo for fit of a specific garment. Focus ONLY on the clothing — do NOT assess facial expression, body language, apparent comfort, or confidence. Do not comment on the wearer's body or features.
+
+${focusLine}
+
+Existing garment trust context is authoritative. If existing notes or trust fields say the garment needs fit review, is too small/tight, rides up, pulls, sits too high, or has low fit confidence, do not overwrite that with a positive "works as-is" read unless the photo clearly disproves it. A still photo cannot prove comfort. Prefer "needs fit review" when comfort/placement is uncertain.
+
+Avoid style praise and optimism. Do not write phrases like "drapes nicely", "visually appealing", "looks stylish", "complements the shape", or "print absorbs fit issues".`,
       maxTokens: 500,
       messages: [{
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: mime, data: base64 } },
-          { type: 'text', text: `Evaluate the fit of the ${piece_name || 'garment'} in this photo.\n\n${schemaText}` }
+          { type: 'text', text: [
+            `Evaluate the fit of the ${piece_name || 'garment'} in this photo.`,
+            trustContext ? `Existing garment trust context:\n${trustContext}` : '',
+            schemaText
+          ].filter(Boolean).join('\n\n') }
         ]
       }]
     })

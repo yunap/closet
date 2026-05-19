@@ -367,6 +367,11 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       fd.append('photo', file)
       if (form.name)     fd.append('piece_name', form.name)
       if (form.category) fd.append('piece_category', form.category)
+      if (form.notes) fd.append('piece_notes', form.notes)
+      if (form.engine_notes) fd.append('engine_notes', form.engine_notes)
+      if (form.recommendation_status) fd.append('recommendation_status', form.recommendation_status)
+      if (form.fit_confidence) fd.append('fit_confidence', form.fit_confidence)
+      if (form.role_permission) fd.append('role_permission', form.role_permission)
       const res  = await fetch('/api/ai/fit-note', { method: 'POST', body: fd })
       const data = await res.json()
       if (data.error) return
@@ -386,6 +391,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         if (data.tuck_behavior)  updated.tuck_behavior  = data.tuck_behavior
         if (data.waistband_type) updated.waistband_type = data.waistband_type
         if (data.silhouette)     updated.silhouette     = data.silhouette
+        if (data.fit_confidence && (f.fit_confidence === 'unknown' || data.fit_confidence === 'low')) updated.fit_confidence = data.fit_confidence
+        if (data.recommendation_status === 'needs_fit_review' && f.recommendation_status === 'trusted') updated.recommendation_status = data.recommendation_status
         return updated
       })
     } catch {}
