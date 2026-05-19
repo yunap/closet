@@ -1418,6 +1418,7 @@ Evaluation philosophy:
 - Distinguish visual correctness from stylistic identity. An outfit can be slightly unresolved but still emotionally coherent and worth preserving.
 - Evaluate operational reality: whether the outfit survives movement, sitting, walking, sleeve/hem behavior, and whether it requires constant adjustment.
 - Evaluate garment fit and placement without commenting on the wearer's body. No body-shape/flattery language does not mean ignoring fit mechanics.
+- Linked garment trust overrides visual optimism. If a linked piece has recommendation trust "needs_fit_review", fit confidence "low", role restrictions, or engine notes about fit, the critique must treat that as authoritative context and explain how it affects the outfit.
 - The best recommendation helps the outfit become more itself; it does not flatten the outfit into a safer generic version.
 - Occasion semantics: "city" often means travel-city, walking-heavy days, museums, cafes, transit, and outdoor sightseeing in the same day. Do not treat outdoor practicality as automatically wrong for city; ask whether it still looks intentional enough off the trail.
 - Occasion semantics: "evening" does not automatically mean heels, cocktail polish, or a sharper shoe. It can mean dinner, gallery, casual event, relaxed evening, or grounded city evening. Boots can be correct if they ground the outfit and keep it from becoming over-dressed.
@@ -1470,6 +1471,7 @@ Evaluation within intent must include:
 - mainSuccess: the best thing the outfit achieves within its intent.
 - firstVisibleIssue: the most visible unresolved area in the actual photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
 - If fitPlacement shows a garment riding too high, pulling, or sitting in a forced way, that can outrank color/print/styling issues. Treat it as garment fit behavior, not wearer-body critique.
+- If linked garment trust says a piece needs fit review or has low fit confidence, check whether the photo is consistent with that warning. Do not call fit placement natural unless you can explain why the linked warning does not apply.
 - If the photo crop excludes shoes or hem, missing footwear/floor line is a confidence limit, not a styling flaw. Do not make invisible shoes the firstVisibleIssue; evaluate the visible garment relationships instead.
 - occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
 - For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
@@ -4448,6 +4450,26 @@ function buildPieceText(p) {
   return text
 }
 
+function buildLinkedPieceFitCautions(pieces = []) {
+  const cautionNotePattern = /\b(too small|too tight|does not fit|doesn't fit|bad fit|fit review|rides up|ride up|pulls|pulling|bunches|bunching|waist|high waist|sits too high|too high|low confidence)\b/i
+  return pieces.map((piece) => {
+    const cautions = []
+    const status = String(piece.recommendation_status || 'trusted')
+    const fit = String(piece.fit_confidence || 'unknown')
+    const role = String(piece.role_permission || 'auto')
+
+    if (status !== 'trusted') cautions.push(`recommendation trust: ${status}`)
+    if (fit !== 'unknown') cautions.push(`fit confidence: ${fit}`)
+    if (role !== 'auto') cautions.push(`auto-styling role: ${role}`)
+    if (piece.engine_notes) cautions.push(`engine note: ${piece.engine_notes}`)
+    if (piece.notes && cautionNotePattern.test(piece.notes)) cautions.push(`note: ${piece.notes}`)
+
+    return cautions.length
+      ? `- ${piece.name} (${piece.category}): ${cautions.join(' | ')}`
+      : ''
+  }).filter(Boolean).join('\n')
+}
+
 
 function buildOutfitText(outfit, linkedPieces = []) {
   const lines = [
@@ -5911,6 +5933,7 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
     const calibrationMemoryText = getCalibrationMemoryForStylist(20)
     const globalSavedBoardText = getSavedBoardMemory(null, null, 10)
     const pieceLines = pieces.map((piece, index) => `${index + 1}. ${buildPieceText(piece)}`).join('\n')
+    const linkedFitCautionsText = buildLinkedPieceFitCautions(pieces)
     const evidenceMode = pieces.length >= 2
       ? 'linked_garment_truth'
       : outfitPhoto
@@ -5944,6 +5967,9 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       pieceLines
         ? `Owned garment truth. Use these exact garments for the critique:\n${pieceLines}`
         : 'Owned garment truth: no linked pieces. Use visual evidence only; do not overclaim exact garment identity, fabric, or shoe type.',
+      linkedFitCautionsText
+        ? `Linked fit/trust cautions. Treat these as authoritative and reconcile visible fit placement against them before judging whether a garment fits naturally:\n${linkedFitCautionsText}`
+        : '',
       '',
       wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',
       globalSavedBoardText ? `Saved visual board memory:\n${globalSavedBoardText}` : '',
