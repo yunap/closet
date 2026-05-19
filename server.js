@@ -5852,16 +5852,19 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
   const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '' } = req.body || {}
   try {
     const startedAt = Date.now()
-    const ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
+    let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
       .map(Number)
       .filter(Boolean))]
       .slice(0, 6)
-    if (!ids.length) return res.status(400).json({ error: 'pieceIds are required' })
-
-    const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
-    const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
-    const pieces = ids.map(id => byId.get(id)).filter(Boolean)
-    if (pieces.length < 2) return res.status(400).json({ error: 'At least two saved wardrobe pieces are required' })
+    let pieces = []
+    if (ids.length) {
+      const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
+      const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
+      pieces = ids.map(id => byId.get(id)).filter(Boolean)
+    } else if (outfit.id) {
+      pieces = getLinkedPiecesForOutfit(outfit.id).slice(0, 6)
+      ids = pieces.map(piece => Number(piece.id)).filter(Boolean)
+    }
 
     const content = []
     const outfitPhoto = outfit.photo || outfit.imageUrl || ''
@@ -5875,6 +5878,7 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
         content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
       }
     }
+    if (!outfitPhoto && pieces.length < 2) return res.status(400).json({ error: 'An outfit photo or at least two linked wardrobe pieces are required' })
     const imageRefs = await Promise.all(pieces.slice(0, 5).map(async (piece) => {
       const photo = piece.worn_photo || piece.photo
       if (!photo) return null
@@ -5891,6 +5895,11 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
     const calibrationMemoryText = getCalibrationMemoryForStylist(20)
     const globalSavedBoardText = getSavedBoardMemory(null, null, 10)
     const pieceLines = pieces.map((piece, index) => `${index + 1}. ${buildPieceText(piece)}`).join('\n')
+    const evidenceMode = pieces.length >= 2
+      ? 'linked_garment_truth'
+      : outfitPhoto
+        ? 'photo_only_low_garment_truth'
+        : 'limited'
     const outfitSummary = [
       `Label: ${outfit.label || outfit.title || 'Whole wardrobe outfit'}`,
       outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
@@ -5906,12 +5915,19 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       `Occasion: ${occasion}`,
       `Season: ${season}`,
       mood ? `Mood: ${mood}` : '',
+      `Evidence mode: ${evidenceMode}`,
       question ? `User question: ${question}` : 'User question: Evaluate this outfit.',
-      outfitPhoto ? 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.' : 'No worn outfit photo was provided. Use linked garment references and garment truth cautiously.',
+      outfitPhoto && pieces.length
+        ? 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.'
+        : outfitPhoto
+          ? 'The image is the actual worn outfit photo. There are no linked garment records, so identify garments cautiously and mark garment-truth uncertainty in confidenceLimits.'
+          : 'No worn outfit photo was provided. Use linked garment references and garment truth cautiously.',
       '',
       `Proposed outfit:\n${outfitSummary}`,
       '',
-      `Owned garment truth. Use these exact garments for the critique:\n${pieceLines}`,
+      pieceLines
+        ? `Owned garment truth. Use these exact garments for the critique:\n${pieceLines}`
+        : 'Owned garment truth: no linked pieces. Use visual evidence only; do not overclaim exact garment identity, fabric, or shoe type.',
       '',
       wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',
       globalSavedBoardText ? `Saved visual board memory:\n${globalSavedBoardText}` : '',
@@ -6002,7 +6018,7 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       model: ACTIVE_STYLIST_MODEL,
       mode: 'evaluate_wardrobe_outfit',
       pipeline: 'whole_wardrobe_outfit_evaluator',
-      debug: { timings: { totalMs: Date.now() - startedAt }, outfitImageIncluded: Boolean(outfitPhoto), imageCount: imageRefs.filter(Boolean).length + (outfitPhoto ? 1 : 0) }
+      debug: { timings: { totalMs: Date.now() - startedAt }, evidenceMode, linkedPieceCount: pieces.length, outfitImageIncluded: Boolean(outfitPhoto), imageCount: imageRefs.filter(Boolean).length + (outfitPhoto ? 1 : 0) }
     })
   } catch (err) {
     console.error('Evaluate whole-wardrobe outfit error:', err)
