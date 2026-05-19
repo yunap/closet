@@ -1408,13 +1408,16 @@ JSON shape:
 const WHOLE_WARDROBE_EVALUATOR_SYSTEM = `You are evaluating one proposed whole-wardrobe outfit for Yuna's closet app.
 Return ONLY valid JSON. No markdown.
 
-Evaluate the actual visible garment interaction, not generic style theory.
+Evaluate lived personal style, not editorial fashion correctness.
 Write like a precise fitting-room stylist looking at the photo and linked garment records.
+The goal is not maximum visual cleanliness, trend conformity, or simplifying every outfit.
 
-Yuna's style filter:
-- artistic minimalist, relaxed structure, modern bohemian restraint
-- one clear silhouette idea, grounded shoes, edited texture, warm/deep palette
-- controlled tension is better than pleasant harmony
+Evaluation philosophy:
+- Successful personal outfits can rely on mixed textures, softness against structure, asymmetry, historical references, and imperfect harmony.
+- Do not automatically penalize visual tension. Classify it as productive tension or problematic tension.
+- Distinguish visual correctness from stylistic identity. An outfit can be slightly unresolved but still emotionally coherent and worth preserving.
+- Evaluate operational reality: whether the outfit survives movement, sitting, walking, sleeve/hem behavior, and whether it requires constant adjustment.
+- The best recommendation helps the outfit become more itself; it does not flatten the outfit into a safer generic version.
 
 Avoid:
 - body-shape/flattery language
@@ -1424,13 +1427,24 @@ Avoid:
 - vague fixes like "add an accessory", "add a statement piece", "choose a simpler top", or "introduce color" unless you name exactly what visual problem it solves
 - recommending replacement of a linked/core garment as the first move. This is an evaluation of the saved outfit, not a request to rebuild it from scratch.
 - saying "replace the blouse/top/bottom/shoe" unless the verdict is avoid. For revise, first suggest an adjustment using the current pieces.
+- treating "cleaner", "sleeker", "simpler", or "more minimal" as automatically better
 
-Required visible mechanics:
+Required analysis:
+- identify the outfit intent in one phrase, such as soft-structured smart casual, grounded romantic tailoring, relaxed artistic column, or operationally fussy layering
+- identify garment roles:
+  heroPiece: the garment carrying the main visual/emotional idea
+  supportPieces: garments framing or stabilizing the hero
+  groundingPiece: shoe/bottom/layer that gives weight or finish
+  possibleCompetingPiece: garment that may be productive tension or may compete
+- classify tension:
+  productive when it adds dimensionality, individuality, emotional coherence, or useful friction
+  problematic when it causes fussiness, visual collapse, unclear hierarchy, or operational burden
 - layer interaction: what the top/blouse/vest/jacket does to the upper half
 - lower-half behavior: trouser/skirt volume, column, flare, hem break, or pooling
 - shoe/hem relationship: whether the shoe is visible enough and has enough weight/polish
 - texture/pattern relationship: whether softness, ruffle, shine, print, or knit texture is controlled or competing
-- occasion reality: whether the outfit reads casual, city, smart-casual, evening, home, or outdoor from the actual photo
+- occasion reality: whether the outfit reads casual, city, smart-casual, evening, home, or outdoor from the actual photo and passed occasion
+- maintenance burden: what needs monitoring, tugging, arranging, cuffing, smoothing, or better shoe visibility
 
 For the critique:
 - say what works, what fails or feels risky, and whether the occasion fit is convincing
@@ -1443,13 +1457,22 @@ For the critique:
 
 JSON shape:
 {
-  "summary": "2-3 sentence direct evaluation. Must name the main visual problem and whether it can be fixed without changing core garments.",
+  "summary": "2-3 sentence direct evaluation. Must name the outfit intent, the main tension, and whether it can be improved without changing core garments.",
   "verdict": "keep | revise | avoid",
+  "roles": {
+    "heroPiece": "garment name and why it is the focal/intent piece",
+    "supportPieces": ["garment name and job"],
+    "groundingPiece": "garment name and grounding job",
+    "possibleCompetingPiece": "garment name and whether the tension is productive or problematic"
+  },
+  "tensionType": "productive | mixed | problematic",
+  "maintenanceBurden": "low | medium | high",
   "scores": {
-    "combination": 1-5,
-    "occasionFit": 1-5,
-    "silhouette": 1-5,
-    "pieceTrust": 1-5
+    "tensionQuality": 1-5,
+    "silhouetteIntegrity": 1-5,
+    "embodiedEase": 1-5,
+    "stylePresence": 1-5,
+    "occasionReality": 1-5
   },
   "works": ["specific thing that works"],
   "risks": ["specific thing to watch or fix"],
@@ -5859,10 +5882,20 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
     const scoreText = parsed?.scores && typeof parsed.scores === 'object'
       ? Object.entries(parsed.scores).map(([key, value]) => `${key}: ${value}/5`).join(' · ')
       : ''
+    const roles = parsed?.roles && typeof parsed.roles === 'object' ? parsed.roles : {}
+    const roleText = [
+      roles.heroPiece ? `Hero: ${roles.heroPiece}` : '',
+      Array.isArray(roles.supportPieces) && roles.supportPieces.length ? `Support: ${roles.supportPieces.join(' ')}` : '',
+      roles.groundingPiece ? `Grounding: ${roles.groundingPiece}` : '',
+      roles.possibleCompetingPiece ? `Tension point: ${roles.possibleCompetingPiece}` : '',
+    ].filter(Boolean).join('\n')
     const feedback = [
       parsed.summary || 'Evaluation complete.',
       parsed.verdict ? `Verdict: ${parsed.verdict}` : '',
+      parsed.tensionType ? `Tension: ${parsed.tensionType}` : '',
+      parsed.maintenanceBurden ? `Maintenance burden: ${parsed.maintenanceBurden}` : '',
       scoreText ? `Scores: ${scoreText}` : '',
+      roleText ? `Roles:\n${roleText}` : '',
       Array.isArray(parsed.works) && parsed.works.length ? `Works: ${parsed.works.join(' ')}` : '',
       Array.isArray(parsed.risks) && parsed.risks.length ? `Risks: ${parsed.risks.join(' ')}` : '',
       parsed.recommendation ? `Next: ${parsed.recommendation}` : '',
@@ -5874,6 +5907,9 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       evaluation: {
         summary: parsed.summary || '',
         verdict: parsed.verdict || '',
+        roles,
+        tensionType: parsed.tensionType || '',
+        maintenanceBurden: parsed.maintenanceBurden || '',
         scores: parsed.scores || {},
         works: Array.isArray(parsed.works) ? parsed.works : [],
         risks: Array.isArray(parsed.risks) ? parsed.risks : [],
