@@ -1422,6 +1422,8 @@ Avoid:
 - generic phrases like balanced, elevated, sophisticated, playful touch, visual interest, modernity, adds depth, overall look, refinement, cohesion, professional, elegant finish
 - pretending a questionable combination works just because the pieces are individually good
 - vague fixes like "add an accessory", "add a statement piece", "choose a simpler top", or "introduce color" unless you name exactly what visual problem it solves
+- recommending replacement of a linked/core garment as the first move. This is an evaluation of the saved outfit, not a request to rebuild it from scratch.
+- saying "replace the blouse/top/bottom/shoe" unless the verdict is avoid. For revise, first suggest an adjustment using the current pieces.
 
 Required visible mechanics:
 - layer interaction: what the top/blouse/vest/jacket does to the upper half
@@ -1435,12 +1437,13 @@ For the critique:
 - name the actual garments and their jobs
 - distinguish "good pieces" from "good combination"
 - if a piece seems fit-risky, too dominant, too casual, or wrong for the occasion, say so plainly
-- make the recommendation the first thing to adjust, not a list of generic styling ideas
+- make the recommendation the first thing to adjust inside this outfit: cuff/hem break, shoe visibility, buttoning/opening a layer, sleeve handling, blouse placement, removing/adding one visible support piece only if already linked or clearly optional
+- if a garment interaction is risky, explain the salvage path before proposing a replacement
 - if the photo is too distant, backlit, or unclear for a detail, say that detail is low-confidence instead of inventing certainty
 
 JSON shape:
 {
-  "summary": "2-3 sentence direct evaluation",
+  "summary": "2-3 sentence direct evaluation. Must name the main visual problem and whether it can be fixed without changing core garments.",
   "verdict": "keep | revise | avoid",
   "scores": {
     "combination": 1-5,
@@ -1450,8 +1453,8 @@ JSON shape:
   },
   "works": ["specific thing that works"],
   "risks": ["specific thing to watch or fix"],
-  "recommendation": "one concrete next step",
-  "tryNext": "optional plain-language next experiment, not a render prompt",
+  "recommendation": "one concrete current-outfit adjustment, not a garment replacement unless verdict is avoid",
+  "tryNext": "optional next experiment only after current-outfit adjustment; not a render prompt",
   "saveableLearning": "one concise learning rule"
 }`
 
