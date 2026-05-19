@@ -1418,6 +1418,7 @@ Evaluation philosophy:
 - Distinguish visual correctness from stylistic identity. An outfit can be slightly unresolved but still emotionally coherent and worth preserving.
 - Evaluate operational reality: whether the outfit survives movement, sitting, walking, sleeve/hem behavior, and whether it requires constant adjustment.
 - The best recommendation helps the outfit become more itself; it does not flatten the outfit into a safer generic version.
+- Occasion semantics: "city" often means travel-city, walking-heavy days, museums, cafes, transit, and outdoor sightseeing in the same day. Do not treat outdoor practicality as automatically wrong for city; ask whether it still looks intentional enough off the trail.
 
 Avoid:
 - body-shape/flattery language
@@ -1460,6 +1461,7 @@ Evaluation within intent must include:
 - mainSuccess: the best thing the outfit achieves within its intent.
 - firstVisibleIssue: the most visible unresolved area in the actual photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
 - occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
+- For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
 - maintenanceBurden: what needs monitoring, tugging, arranging, cuffing, smoothing, or better shoe visibility.
 
 Recommendation rules:
