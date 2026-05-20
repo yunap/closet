@@ -61,6 +61,26 @@ const timingSummary = (timings = {}) => Object.entries(timings || {})
   .map(([key, value]) => `${key.replace(/Ms$/, '')}: ${formatMs(value)}`)
   .join(' · ')
 
+const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
+
+const compactEvaluationMemory = (evaluation = null) => {
+  if (!evaluation || typeof evaluation !== 'object') return ''
+  const facts = evaluation.visibleFacts || {}
+  const intent = evaluation.inferredIntent || {}
+  const shoe = facts.shoeAnalysis || {}
+  return [
+    intent.label ? `Intent: ${intent.label}` : '',
+    evaluation.verdict ? `Verdict: ${evaluation.verdict}` : '',
+    facts.floorLine ? `Floor line: ${facts.floorLine}` : '',
+    facts.fitPlacement ? `Fit placement: ${facts.fitPlacement}` : '',
+    shoe.visibility || shoe.read || shoe.effect
+      ? `Shoe read: ${[shoe.visibility, shoe.read, shoe.effect, shoe.confidence].filter(Boolean).join(' · ')}`
+      : '',
+    evaluation.firstVisibleIssue ? `First visible issue: ${evaluation.firstVisibleIssue}` : '',
+    evaluation.recommendation ? `Last recommendation: ${evaluation.recommendation}` : '',
+  ].filter(Boolean).join('\n')
+}
+
 const CALIBRATION_LABELS = [
   ['most_like_me', 'Most like me'],
   ['close_but_off', 'Close but off'],
@@ -95,6 +115,7 @@ export default function AskClaude({
     { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
   ])
   const [chatHistory, setChatHistory] = useState([])
+  const [threadMemory, setThreadMemory] = useState(null)
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
   const setActiveContext = useCallback((nextContext) => {
@@ -161,6 +182,7 @@ export default function AskClaude({
   const bottomRef = useRef(null)
   const textRef = useRef(null)
   const loadingTimersRef = useRef([])
+  const lastAutoOutfitActionRef = useRef('')
 
   const clearLoadingTimers = () => {
     loadingTimersRef.current.forEach(clearTimeout)
@@ -183,7 +205,8 @@ export default function AskClaude({
 
   useEffect(() => {
     if (!initialOutfit) return
-    setPendingOutfit(initialOutfit)
+    const shouldAutoSend = initialOutfit.autoSend === true
+    setPendingOutfit(shouldAutoSend ? null : initialOutfit)
     setPendingPiece(null)
     setCompareOutfitId('')
     setGenerateOutfitMode(false)
@@ -191,9 +214,16 @@ export default function AskClaude({
     setIdealOnlyMode(false)
     setEditorialVisualMode(false)
     setActiveContext({ type: 'outfit', id: initialOutfit.id, name: initialOutfit.name })
-    setInput(initialOutfit.stylistPrompt || 'What do you think of this outfit?')
+    const prompt = initialOutfit.stylistPrompt || 'What do you think of this outfit?'
+    setInput(shouldAutoSend ? '' : prompt)
     setImageFile(null); setImagePrev(null)
     onClearOutfit?.()
+    if (shouldAutoSend) {
+      const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? 'variants' : 'critique'}:${prompt}`
+      if (lastAutoOutfitActionRef.current === actionKey) return
+      lastAutoOutfitActionRef.current = actionKey
+      setTimeout(() => send({ outfit: initialOutfit, input: prompt }), 0)
+    }
   }, [initialOutfit])
 
   useEffect(() => {
@@ -206,7 +236,7 @@ export default function AskClaude({
     setIdealOnlyMode(false)
     setEditorialVisualMode(false)
     setActiveContext({ type: 'piece', id: initialPiece.id, name: initialPiece.name })
-    setInput('Style this piece using my existing wardrobe.')
+    setInput('')
     setImageFile(null); setImagePrev(null)
     onClearPiece?.()
   }, [initialPiece])
@@ -1057,19 +1087,25 @@ export default function AskClaude({
     }
   }
 
-  const send = async () => {
-    const q = input.trim()
-    if (!q && !imageFile && !pendingOutfit && !pendingPiece) return
+  const send = async (overrides = {}) => {
+    const q = (overrides.input ?? input).trim()
+    const outfitToSend = overrides.outfit ?? pendingOutfit
+    const pieceToSend = overrides.piece ?? pendingPiece
+    const fileToSend = overrides.imageFile ?? imageFile
+    if (!q && !fileToSend) return
 
-    const outfitToSend = pendingOutfit
-    const pieceToSend = pendingPiece
-    const fileToSend = imageFile
     const assistantIndex = messages.length + 1
-    const compareId = compareOutfitId
+    const compareId = overrides.compareOutfitId ?? compareOutfitId
+    const effectiveGenerateOutfitMode = overrides.generateOutfitMode ?? generateOutfitMode
+    const effectiveEditorialVisualMode = overrides.editorialVisualMode ?? editorialVisualMode
+    const effectiveIncludeMissingPieces = overrides.includeMissingPieces ?? includeMissingPieces
+    const effectiveIdealOnlyMode = overrides.idealOnlyMode ?? idealOnlyMode
+    const effectiveGenerateOccasion = overrides.generateOccasion ?? generateOccasion
+    const effectiveGenerateSeason = overrides.generateSeason ?? generateSeason
     const editorialRequestPattern = /suggest ideal|ideal addition|ideal new|new pieces|completion|completions|missing-piece|missing piece|not.*wardrobe|beyond my wardrobe|ignore my wardrobe|do not use my wardrobe|don't use my wardrobe|dont use my wardrobe|selected garment only|new item/i
     const typedEditorialRequest = editorialRequestPattern.test(q)
-    const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (editorialVisualMode || typedEditorialRequest))
-    const shouldGenerateOutfits = Boolean(pieceToSend && generateOutfitMode && !shouldGenerateEditorialVisuals)
+    const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (effectiveEditorialVisualMode || typedEditorialRequest))
+    const shouldGenerateOutfits = Boolean(pieceToSend && effectiveGenerateOutfitMode && !shouldGenerateEditorialVisuals)
     const shouldGenerateActiveEditorialVisuals = Boolean(!pieceToSend && activeContext?.type === 'piece' && editorialRequestPattern.test(q))
     const compareOutfit = compareId ? outfits.find(o => String(o.id) === String(compareId)) : null
 
@@ -1081,7 +1117,7 @@ export default function AskClaude({
     const userContextName = compareOutfit && outfitToSend ? `${outfitToSend.name} vs ${compareOutfit.name}`
       : shouldGenerateEditorialVisuals ? `Ideal additions preview for ${pieceToSend?.name}`
       : shouldGenerateActiveEditorialVisuals ? `Ideal additions preview for ${activeContext?.name}`
-      : shouldGenerateOutfits ? `${idealOnlyMode ? 'New ideal ideas for' : includeMissingPieces ? 'Ideal directions for' : 'Generate outfits for'} ${pieceToSend?.name}`
+      : shouldGenerateOutfits ? `${effectiveIdealOnlyMode ? 'New ideal ideas for' : effectiveIncludeMissingPieces ? 'Ideal directions for' : 'Generate outfits for'} ${pieceToSend?.name}`
       : (outfitToSend?.name || pieceToSend?.name)
 
     setMessages(m => [...m, {
@@ -1128,8 +1164,8 @@ export default function AskClaude({
               reason: outfitToSend.notes || '',
             },
             pieceIds: outfitPieceIds,
-            occasion: outfitToSend.occasion || generateOccasion,
-            season: outfitToSend.season || generateSeason,
+            occasion: outfitToSend.occasion || effectiveGenerateOccasion,
+            season: outfitToSend.season || effectiveGenerateSeason,
           })
         })
         const contentType = res.headers.get('content-type') || ''
@@ -1148,6 +1184,8 @@ export default function AskClaude({
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
           ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
           : []
+        const priorEvaluationText = outfitToSend.threadMemory?.latestEvaluationText || ''
+        const shouldAttachOutfitPhoto = outfitToSend.attachVisualContext !== false
         const useWardrobeEvaluator = Boolean(outfitToSend.photo || outfitPieceIds.length >= 2)
         if (useWardrobeEvaluator) {
           const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
@@ -1157,16 +1195,17 @@ export default function AskClaude({
               outfit: {
                 label: outfitToSend.name,
                 title: outfitToSend.name,
-                photo: outfitToSend.photo || '',
+                photo: shouldAttachOutfitPhoto ? (outfitToSend.photo || '') : '',
                 bestFor: outfitToSend.occasion || '',
                 pieces: outfitToSend.pieces || [],
                 pieceIds: outfitPieceIds,
                 reason: outfitToSend.notes || '',
               },
               pieceIds: outfitPieceIds,
-              occasion: outfitToSend.occasion || generateOccasion,
-              season: outfitToSend.season || generateSeason,
+              occasion: outfitToSend.occasion || effectiveGenerateOccasion,
+              season: outfitToSend.season || effectiveGenerateSeason,
               mood: wardrobeOutfitMood,
+              previousEvaluation: priorEvaluationText,
               question: q || 'Evaluate this outfit.'
             })
           })
@@ -1175,6 +1214,13 @@ export default function AskClaude({
           replyText = data.feedback || 'Outfit evaluation complete.'
           replyWardrobeEvaluation = true
           replyDebug = data.debug || null
+          setThreadMemory({
+            type: 'outfit',
+            id: outfitToSend.id,
+            name: outfitToSend.name,
+            latestEvaluation: data.evaluation || null,
+            latestEvaluationText: compactEvaluationMemory(data.evaluation),
+          })
         } else {
           const res = await fetch('/api/ai/evaluate-outfit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitId: outfitToSend.id, question: q || 'What do you think of this outfit?', history: historySnapshot }) })
           const data = await res.json()
@@ -1185,7 +1231,7 @@ export default function AskClaude({
         // ── PREVIEW MODE: text directions only, no images yet ────────────────
         const res = await fetch('/api/ai/editorial-directions-preview', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pieceId: pieceToSend.id, occasion: generateOccasion, season: generateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
+          body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
@@ -1195,12 +1241,12 @@ export default function AskClaude({
           label: d.title,
           previewOnly: true,
           pieceId: pieceToSend.id,
-          occasion: generateOccasion,
-          season: generateSeason,
+          occasion: effectiveGenerateOccasion,
+          season: effectiveGenerateSeason,
         }))
 
       } else if (pieceToSend && shouldGenerateOutfits) {
-        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: generateOccasion, season: generateSeason, question: q || (includeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces, idealOnly: idealOnlyMode, history: historySnapshot }) })
+        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot }) })
         const data = await res.json()
         replyText = data.feedback || data.error || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null
@@ -1214,7 +1260,7 @@ export default function AskClaude({
         // ── PREVIEW MODE for active context ──────────────────────────────────
         const res = await fetch('/api/ai/editorial-directions-preview', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pieceId: activeContext.id, occasion: generateOccasion, season: generateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
+          body: JSON.stringify({ pieceId: activeContext.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
@@ -1224,8 +1270,8 @@ export default function AskClaude({
           label: d.title,
           previewOnly: true,
           pieceId: activeContext.id,
-          occasion: generateOccasion,
-          season: generateSeason,
+          occasion: effectiveGenerateOccasion,
+          season: effectiveGenerateSeason,
         }))
 
       } else if (fileToSend) {
@@ -1234,6 +1280,52 @@ export default function AskClaude({
         fd.append('question', q || 'What do you think of this outfit?')
         const data = await (await fetch('/api/ai/outfit-feedback', { method: 'POST', body: fd })).json()
         replyText = data.feedback || data.error || 'Something went wrong.'
+
+      } else if (activeContext?.type === 'outfit') {
+        const activeOutfit = outfits.find(o => String(o.id) === String(activeContext.id))
+        if (!activeOutfit) throw new Error('Active outfit context was not found. Reopen the outfit and try again.')
+        const outfitPieceIds = Array.isArray(activeOutfit.pieces)
+          ? activeOutfit.pieces.map(p => p?.id).filter(Boolean)
+          : []
+        const visualFollowUp = VISUAL_FOLLOWUP_PATTERN.test(q)
+        const mustAttachPhoto = visualFollowUp || outfitPieceIds.length < 2
+        const memoryText = threadMemory?.type === 'outfit' && String(threadMemory.id) === String(activeOutfit.id)
+          ? threadMemory.latestEvaluationText
+          : ''
+        const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outfit: {
+              label: activeOutfit.name,
+              title: activeOutfit.name,
+              photo: mustAttachPhoto ? (activeOutfit.photo || '') : '',
+              bestFor: activeOutfit.occasion || '',
+              pieces: activeOutfit.pieces || [],
+              pieceIds: outfitPieceIds,
+              reason: activeOutfit.notes || '',
+            },
+            pieceIds: outfitPieceIds,
+            occasion: activeOutfit.occasion || effectiveGenerateOccasion,
+            season: activeOutfit.season || effectiveGenerateSeason,
+            mood: wardrobeOutfitMood,
+            previousEvaluation: memoryText,
+            responseMode: 'followup',
+            question: q || 'Continue evaluating this outfit.'
+          })
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Could not continue outfit evaluation')
+        replyText = data.feedback || 'Outfit follow-up complete.'
+        replyWardrobeEvaluation = true
+        replyDebug = data.debug || null
+        setThreadMemory({
+          type: 'outfit',
+          id: activeOutfit.id,
+          name: activeOutfit.name,
+          latestEvaluation: data.evaluation || null,
+          latestEvaluationText: compactEvaluationMemory(data.evaluation),
+        })
 
       } else {
         const res = await fetch('/api/ai/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q, pieces, history: historySnapshot }) })
@@ -1270,6 +1362,7 @@ export default function AskClaude({
   const resetChat = () => {
     setMessages([{ role: 'assistant', text: 'Starting fresh! What can I help you with?' }])
     setChatHistory([])
+    setThreadMemory(null)
     setActiveContext(null)
     setSavedIndices(new Set()); setFeedbackSaved(new Set()); setFeedbackIdsByKey({}); setSavedBoardKeys(new Set())
     setBoardResults({}); setEditorialVisualResults({})
@@ -1489,39 +1582,41 @@ export default function AskClaude({
                 </div>
               </>
             )}
-            <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Whole wardrobe</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Text-only outfit generation. No image render.</div>
+            {!pending && (
+              <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Whole wardrobe</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Text-only outfit generation. No image render.</div>
+                  </div>
+                  <button
+                    onClick={generateWholeWardrobeOutfits}
+                    disabled={loading}
+                    style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
+                  >
+                    {loading ? 'Generating...' : 'Generate 5 outfits from my wardrobe'}
+                  </button>
                 </div>
-                <button
-                  onClick={generateWholeWardrobeOutfits}
-                  disabled={loading}
-                  style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
-                >
-                  {loading ? 'Generating...' : 'Generate 5 outfits from my wardrobe'}
-                </button>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
+                  <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+                    <option value="casual">Casual</option>
+                    <option value="city">City</option>
+                    <option value="smart casual">Smart casual</option>
+                    <option value="evening">Evening</option>
+                    <option value="gallery / art event">Gallery / art event</option>
+                    <option value="travel">Travel</option>
+                  </select>
+                  <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+                    <option value="current season">Current season</option>
+                    <option value="spring">Spring</option>
+                    <option value="summer">Summer</option>
+                    <option value="fall">Fall</option>
+                    <option value="winter">Winter</option>
+                  </select>
+                  <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
+                </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
-                <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                  <option value="casual">Casual</option>
-                  <option value="city">City</option>
-                  <option value="smart casual">Smart casual</option>
-                  <option value="evening">Evening</option>
-                  <option value="gallery / art event">Gallery / art event</option>
-                  <option value="travel">Travel</option>
-                </select>
-                <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                  <option value="current season">Current season</option>
-                  <option value="spring">Spring</option>
-                  <option value="summer">Summer</option>
-                  <option value="fall">Fall</option>
-                  <option value="winter">Winter</option>
-                </select>
-                <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
-              </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1675,19 +1770,30 @@ export default function AskClaude({
       </div>
 
       {pending && (
-        <div style={{ margin: '0 16px 8px', padding: '10px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ margin: '0 16px 8px', padding: '12px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           {pendingPhoto && <img src={`/uploads/${pendingPhoto}`} alt={pending.name} style={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 6, background: 'var(--surface-2)', flexShrink: 0 }} />}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Piece ready to style' : 'Outfit ready to evaluate'}</div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Choose how to use this piece' : 'Choose how to use this outfit'}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pending.name}</div>
             {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
             {pendingPiece && (
               <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  <button onClick={() => { setGenerateOutfitMode(true); setEditorialVisualMode(false); setIncludeMissingPieces(false); setIdealOnlyMode(false); setInput('Style this piece using my existing wardrobe.') }} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: generateOutfitMode && !editorialVisualMode ? '1px solid var(--accent)' : '1px solid var(--border)', background: generateOutfitMode && !editorialVisualMode ? 'var(--accent)' : 'var(--surface)', color: generateOutfitMode && !editorialVisualMode ? '#fff' : 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}>{generateOutfitMode && !editorialVisualMode ? 'Style with my wardrobe (active)' : 'Style with my wardrobe'}</button>
-                  <button onClick={() => { setEditorialVisualMode(true); setGenerateOutfitMode(false); setIncludeMissingPieces(false); setIdealOnlyMode(true); setInput('Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.') }} style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: editorialVisualMode ? '1px solid var(--accent)' : '1px solid var(--border)', background: editorialVisualMode ? 'var(--accent)' : 'var(--surface)', color: editorialVisualMode ? '#fff' : 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}>{editorialVisualMode ? 'Suggest ideal additions (active)' : 'Suggest ideal additions'}</button>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <button
+                    onClick={() => send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false })}
+                    style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'left' }}
+                  >
+                    <div style={{ fontWeight: 650 }}>Use my wardrobe</div>
+                    <div style={{ fontSize: 10, opacity: 0.78, marginTop: 2 }}>Build outfits from saved pieces.</div>
+                  </button>
+                  <button
+                    onClick={() => send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true })}
+                    style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'left' }}
+                  >
+                    <div style={{ fontWeight: 650 }}>Suggest ideal additions</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Imagine new pieces around this item.</div>
+                  </button>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.35 }}>{editorialVisualMode ? 'Previews three styling directions — choose which to render as images.' : 'Uses saved wardrobe pieces and generates visual outfit boards.'}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                   <select value={generateOccasion} onChange={e => setGenerateOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
                     <option value="casual">Casual</option>
@@ -1709,9 +1815,23 @@ export default function AskClaude({
               </div>
             )}
             {pendingOutfit && (
-              <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  <button
+                    onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', compareOutfitId: '' })}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                  >
+                    Critique outfit
+                  </button>
+                  <button
+                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true }, input: 'Generate outfit variants from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                  >
+                    Generate 3 variants
+                  </button>
+                </div>
                 <select value={compareOutfitId} onChange={e => { setCompareOutfitId(e.target.value); if (e.target.value && (!input.trim() || input === 'What do you think of this outfit?')) setInput('Which outfit works better for me?') }} style={{ width: '100%', padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
-                  <option value="">Evaluate this outfit only</option>
+                  <option value="">Compare with another outfit...</option>
                   {compareOptions.map(o => <option key={o.id} value={o.id}>Compare with: {o.name}</option>)}
                 </select>
                 {compareOutfitId && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5 }}>{compareConfidenceText || 'Compare mode will use both outfit photos, linked garments, notes, and statuses.'}</div>}
@@ -1738,8 +1858,8 @@ export default function AskClaude({
             <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
             📷
           </label>
-          <textarea ref={textRef} className="ai-input" placeholder={pending ? `Ask about ${pending.name}...` : 'Ask about your wardrobe...'} value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
-          <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile && !pending)}>↑</button>
+          <textarea ref={textRef} className="ai-input" placeholder={pending ? `Ask a custom question about ${pending.name}...` : 'Ask about your wardrobe...'} value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
+          <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
         </div>
       </div>
       {previewImage && (

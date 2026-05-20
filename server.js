@@ -448,6 +448,18 @@ function categoryConstraintForSelectedPiece(piece) {
   return `Every outfit idea must include the selected item "${piece.name}".`
 }
 
+function idealAdditionAnchorConstraint(piece) {
+  const group = wardrobeCategoryGroup(piece)
+  const name = piece?.name || 'selected item'
+  const base = `The selected item "${name}" is the non-replaceable anchor. Every direction must keep it in the outfit and suggest only complementary additions around it.`
+  if (group === 'bottom') return `${base} Because the anchor is a bottom, do not suggest trousers, jeans, pants, shorts, skirts, dresses, or jumpsuits as missingPieces. Suggest tops, layers, shoes, bags, jewelry, or other support pieces only.`
+  if (group === 'top') return `${base} Because the anchor is a top, do not suggest another top, blouse, shirt, sweater, tee, tank, or dress as missingPieces. Suggest bottoms, layers, shoes, bags, or accessories only.`
+  if (group === 'dress') return `${base} Because the anchor is a dress, do not suggest another dress or separates that replace it. Suggest shoes, layers, bags, jewelry, belts, or other support pieces only.`
+  if (group === 'outerwear') return `${base} Because the anchor is outerwear, do not suggest another jacket, blazer, cardigan, coat, vest, or dress that replaces it. Suggest base layers, bottoms, shoes, bags, or accessories only.`
+  if (group === 'shoes') return `${base} Because the anchor is shoes, do not suggest replacement shoes as missingPieces. Suggest tops, bottoms, dresses, layers, bags, or accessories only.`
+  return base
+}
+
 function textIncludesAny(value, words) {
   const haystack = String(value || '').toLowerCase()
   return words.some(w => haystack.includes(w))
@@ -1457,6 +1469,8 @@ Visible facts must include:
   effect: what the shoe does to the outfit, such as walking support, soft casual grounding, sharp finish, weak grounding, too home/casual, or strong city-travel practicality.
   confidence: high | medium | low
 - If shoeAnalysis.visibility is visible/readable or partly visible, do not say "shoe visibility unclear" as the issue. Evaluate the shoe effect instead.
+- If the shoe reads as dark/black and is at least partly visible, do not recommend "darker shoes", "more visible shoes", or "more shoe presence" unless you name a concrete visible shape problem: hem hides the shoe, shoe is too delicate for the hem width, color disappears into the floor, or toe/shaft shape conflicts with the line.
+- If linked garment truth does not include shoes, treat shoe identity as low confidence, but do not turn that uncertainty into a styling flaw. Say "shoe read is low confidence" rather than inventing a shoe fix.
 - photoSettingRead: what the photo setting itself reads as: city, casual, outdoor, evening, home, smart-casual, or unclear.
 - confidenceLimits: what the photo does not let you judge.
 - cropConfidence: whether the photo is full-body, three-quarter, waist-up, or cropped at the feet/hem.
@@ -1473,6 +1487,7 @@ Evaluation within intent must include:
 - If fitPlacement shows a garment riding too high, pulling, or sitting in a forced way, that can outrank color/print/styling issues. Treat it as garment fit behavior, not wearer-body critique.
 - If linked garment trust says a piece needs fit review or has low fit confidence, check whether the photo is consistent with that warning. Do not call fit placement natural unless you can explain why the linked warning does not apply.
 - If the photo crop excludes shoes or hem, missing footwear/floor line is a confidence limit, not a styling flaw. Do not make invisible shoes the firstVisibleIssue; evaluate the visible garment relationships instead.
+- Do not make shoes the firstVisibleIssue merely because they are partly visible. Shoes can be a firstVisibleIssue only when the visible shoe/hem relationship materially weakens the outfit and you can describe the exact mechanism.
 - occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
 - For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
 - For passed occasion "evening", distinguish useful grounding from "too casual." Do not recommend swapping boots for heels/sharper shoes unless the visible boot shape truly weakens the dress/hem/leg line or contradicts the outfit intent.
@@ -1481,6 +1496,7 @@ Evaluation within intent must include:
 Recommendation rules:
 - recommendation.smallestAdjustment must address evaluation.firstVisibleIssue.
 - Do not recommend a replacement garment unless verdict is avoid.
+- If the firstVisibleIssue is shoe-related, the adjustment must name the visible mechanism. Bad: "try shoes with more presence." Good: "test the same dark shoe with the cuff lowered so the pant break does not swallow the toe" or "link the shoes so I can judge whether the low dark shape is intentional."
 - Tuck advice is allowed only when garment truth supports tucking AND visibleFacts.waistArea is the firstVisibleIssue. If recommending it, phrase it as a low-maintenance test, such as "try a cleaner front tuck if it stays put naturally", not as a fussy requirement.
 
 For the critique:
@@ -5915,7 +5931,7 @@ app.post('/api/ai/generate-saved-outfit-image', async (req, res) => {
 })
 
 app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
-  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '' } = req.body || {}
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '', previousEvaluation = '', responseMode = 'full' } = req.body || {}
   try {
     const startedAt = Date.now()
     let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
@@ -5998,6 +6014,12 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       linkedFitCautionsText
         ? `Linked fit/trust cautions. Treat these as authoritative and reconcile visible fit placement against them before judging whether a garment fits naturally:\n${linkedFitCautionsText}`
         : '',
+      previousEvaluation
+        ? `Previous structured critique memory. Use this for continuity, but correct it if the current image/garment truth contradicts it:\n${String(previousEvaluation).slice(0, 1600)}`
+        : '',
+      responseMode === 'followup'
+        ? 'Response mode: followup. Answer the user directly in 2-5 concise sentences. Do not repeat the full critique, visible facts, scores, roles, or JSON sections in prose. If correcting an earlier read, say what changed and give one practical next step.'
+        : 'Response mode: full critique.',
       '',
       wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',
       globalSavedBoardText ? `Saved visual board memory:\n${globalSavedBoardText}` : '',
@@ -6073,9 +6095,17 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       recommendationBlock.avoidForNow ? `Avoid for now: ${recommendationBlock.avoidForNow}` : '',
       recommendationBlock.tryNext || parsed.tryNext ? `Try next: ${recommendationBlock.tryNext || parsed.tryNext}` : ''
     ].filter(Boolean).join('\n\n')
+    const followupFeedback = [
+      nestedEvaluation.summary || parsed.summary || '',
+      nestedEvaluation.firstVisibleIssue ? `Updated read: ${nestedEvaluation.firstVisibleIssue}` : '',
+      (recommendationBlock.smallestAdjustment || typeof parsed.recommendation === 'string')
+        ? `Next: ${recommendationBlock.smallestAdjustment || parsed.recommendation}`
+        : '',
+      recommendationBlock.avoidForNow ? `Avoid: ${recommendationBlock.avoidForNow}` : ''
+    ].filter(Boolean).join('\n\n') || feedback
 
     res.json({
-      feedback,
+      feedback: responseMode === 'followup' ? followupFeedback : feedback,
       evaluation: {
         visibleFacts,
         inferredIntent,
@@ -6188,6 +6218,16 @@ function dedupeAndDifferentiateEditorialDirections(directions = [], selectedPiec
   const usedMissing = new Set()
   const seenTitles = new Set()
   const cleaned = []
+  const anchorGroup = wardrobeCategoryGroup(selectedPiece)
+  const violatesAnchorRole = (text = '') => {
+    const value = String(text || '').toLowerCase()
+    if (anchorGroup === 'bottom') return /\b(trouser|pant|jean|skirt|short|culotte|legging|dress|jumpsuit)\b/.test(value)
+    if (anchorGroup === 'top') return /\b(top|shirt|blouse|tee|t-shirt|tank|shell|sweater|knit|tunic|hoodie|sweatshirt|dress)\b/.test(value)
+    if (anchorGroup === 'dress') return /\b(dress|jumpsuit|trouser|pant|jean|skirt|top|shirt|blouse|tee|sweater)\b/.test(value)
+    if (anchorGroup === 'outerwear') return /\b(jacket|blazer|cardigan|coat|vest|outerwear|overshirt|kimono|dress)\b/.test(value)
+    if (anchorGroup === 'shoes') return /\b(shoe|boot|flat|loafer|sandal|sneaker|heel|mule|clog)\b/.test(value)
+    return false
+  }
 
   for (const direction of directions || []) {
     const copy = { ...direction }
@@ -6201,7 +6241,7 @@ function dedupeAndDifferentiateEditorialDirections(directions = [], selectedPiec
       let next = raw.replace(/\(missing piece\)/gi, '').trim()
       const key = normalizeArchetypeText(next)
       if (!next) next = 'specific editorial support piece'
-      if (usedMissing.has(key) || ownedLooksSimilarToArchetype(next, ownedPieces)) {
+      if (violatesAnchorRole(next) || usedMissing.has(key) || ownedLooksSimilarToArchetype(next, ownedPieces)) {
         next = makeDistinctNewPieceArchetype(next, selectedPiece, usedMissing)
       } else {
         usedMissing.add(key)
@@ -6578,6 +6618,7 @@ app.post('/api/ai/editorial-directions-preview', async (req, res) => {
     if (!piece) return res.status(404).json({ error: 'Piece not found' })
     const selectedPiece = parsePiece(piece)
     const ownedRows = db.prepare('SELECT * FROM pieces ORDER BY id DESC LIMIT 500').all().map(parsePiece)
+    const anchorConstraint = idealAdditionAnchorConstraint(selectedPiece)
  
     const content = []
     const photoFile = piece.worn_photo || piece.photo
@@ -6613,13 +6654,14 @@ app.post('/api/ai/editorial-directions-preview', async (req, res) => {
     ].filter(Boolean).join('\n') : ''
     content.push({ type: 'text', text: [
       `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
+      `Anchor constraint:\n${anchorConstraint}`,
       `Occasion: ${occasion}`,
       `Season: ${season}`,
       `User request: ${question || 'Suggest ideal new pieces for this item.'}`,
       seedLookSummary,
       calibrationSummary ? `Renderer calibration library:\n${calibrationSummary}` : '',
       '',
-      'Generate only conceptual missing-piece additions. Do not use saved wardrobe pairings except for the selected garment. If the wardrobe already has jeans, olive cargo/utility pants, or similar basics, do not present those as new pieces; suggest more specific/different archetypes.'
+      'Generate only conceptual missing-piece additions. Do not use saved wardrobe pairings except for the selected garment. MissingPieces must not include anything that replaces the selected anchor or duplicates its wardrobe role. If the wardrobe already has jeans, olive cargo/utility pants, or similar basics, do not present those as new pieces; suggest more specific/different archetypes.'
     ].filter(Boolean).join('\n') })
  
     const raw = await askStylist({

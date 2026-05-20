@@ -397,16 +397,39 @@ function OutfitDetail({ outfit, onClose, onDelete, onSendToStylist, onPiecesUpda
               )}
             </div>
 
-            <button onClick={() => onSendToStylist({
-              ...outfit,
-              stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
-            })} style={{
-              width: '100%', padding: '13px', marginBottom: 10,
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <button onClick={() => onSendToStylist({
+                ...outfit,
+                autoSend: true,
+                stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
+              })} style={{
+                padding: '12px', background: 'var(--accent)', color: '#fff',
+                border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
+                fontSize: 13, fontWeight: 500,
+              }}>
+                Critique outfit
+              </button>
+              <button onClick={() => onSendToStylist({
+                ...outfit,
+                autoSend: true,
+                imageGenerationMode: true,
+                stylistPrompt: 'Generate outfit variants from this saved outfit photo and linked garment references.'
+              })} style={{
+                padding: '12px', background: 'var(--surface)', color: 'var(--accent)',
+                border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
+                fontSize: 13, fontWeight: 500,
+              }}>
+                Generate 3 variants
+              </button>
+            </div>
+
+            <button onClick={() => onSendToStylist(outfit)} style={{
+              width: '100%', padding: '11px', marginBottom: 10,
               background: 'var(--accent-light)', color: 'var(--accent)',
-              border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-              fontSize: 14, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+              fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             }}>
-              ◇ Ask stylist about this outfit
+              ◇ Ask a custom question
             </button>
 
             <div className="detail-actions">
@@ -516,11 +539,12 @@ export default function OutfitLookbook({ onSendToStylist }) {
                     e.stopPropagation()
                     onSendToStylist({
                       ...o,
+                      autoSend: true,
                       stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
                     })
                   }}
                 >
-                  Evaluate
+                  Critique
                 </button>
                 <button
                   style={{ position: 'absolute', top: 42, left: 8, fontSize: 11, background: 'rgba(254,252,249,0.9)', color: 'var(--accent)', padding: '5px 9px', borderRadius: 14, border: '1px solid var(--accent)', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', backdropFilter: 'blur(8px)' }}
@@ -528,12 +552,13 @@ export default function OutfitLookbook({ onSendToStylist }) {
                     e.stopPropagation()
                     onSendToStylist({
                       ...o,
+                      autoSend: true,
                       imageGenerationMode: true,
                       stylistPrompt: 'Generate outfit variants from this saved outfit photo and linked garment references.'
                     })
                   }}
                 >
-                  Variants
+                  3 variants
                 </button>
                 <button
                   style={{ position: 'absolute', top: 8, right: 8, fontSize: 16, background: 'rgba(254,252,249,0.85)', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}
