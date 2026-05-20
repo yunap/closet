@@ -1100,6 +1100,79 @@ function buildWholeWardrobeFeedbackInfluence(limit = 120) {
   return influence
 }
 
+function saveWholeWardrobeSession({ occasion = '', outfits = [] } = {}) {
+  try {
+    const pieceIds = [...new Set(
+      outfits
+        .flatMap(outfit => {
+          const ids = Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+            ? outfit.pieceIds
+            : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
+          return ids
+        })
+        .map(Number)
+        .filter(Boolean)
+    )]
+    const formulaFamilies = [...new Set(outfits
+      .map(outfit => outfit?.formulaFamily || wholeWardrobeFormulaFamily(outfit, outfit?.pieces || [], occasion))
+      .filter(Boolean))]
+    if (!pieceIds.length && !formulaFamilies.length) return
+
+    db.prepare(`
+      INSERT INTO whole_wardrobe_sessions (occasion, piece_ids, formula_families)
+      VALUES (?, ?, ?)
+    `).run(occasion || '', JSON.stringify(pieceIds), JSON.stringify(formulaFamilies))
+
+    db.prepare(`
+      DELETE FROM whole_wardrobe_sessions
+      WHERE id NOT IN (
+        SELECT id FROM whole_wardrobe_sessions ORDER BY id DESC LIMIT 10
+      )
+    `).run()
+  } catch (err) {
+    console.warn('saveWholeWardrobeSession failed:', err.message)
+  }
+}
+
+function getRecentWholeWardrobeSessionInfluence({ occasion = '', daysCutoff = 6 } = {}) {
+  const empty = { pieceRecency: new Map(), formulaRecency: new Map(), sessionCount: 0 }
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - Number(daysCutoff || 6) * 86400
+    const rows = db.prepare(`
+      SELECT occasion, piece_ids, formula_families, created_at
+      FROM whole_wardrobe_sessions
+      WHERE created_at > ?
+      ORDER BY created_at DESC
+      LIMIT 6
+    `).all(cutoff)
+
+    const pieceRecency = new Map()
+    const formulaRecency = new Map()
+    const requestedOccasion = String(occasion || '').toLowerCase().trim()
+
+    rows.forEach((row, sessionIndex) => {
+      const sessionOccasion = String(row.occasion || '').toLowerCase().trim()
+      const sameOccasion = requestedOccasion && sessionOccasion && requestedOccasion === sessionOccasion
+      const occasionFactor = sameOccasion ? 1 : 0.55
+      const decayFactor = Math.max(0.2, 1 - (sessionIndex * 0.16)) * occasionFactor
+      const ids = safeJsonParse(row.piece_ids, [])
+      const families = safeJsonParse(row.formula_families, [])
+
+      for (const id of (Array.isArray(ids) ? ids : []).map(Number).filter(Boolean)) {
+        pieceRecency.set(id, (pieceRecency.get(id) || 0) + Math.round(18 * decayFactor))
+      }
+      for (const family of (Array.isArray(families) ? families : []).filter(Boolean)) {
+        formulaRecency.set(family, (formulaRecency.get(family) || 0) + Math.round(30 * decayFactor))
+      }
+    })
+
+    return { pieceRecency, formulaRecency, sessionCount: rows.length }
+  } catch (err) {
+    console.warn('getRecentWholeWardrobeSessionInfluence failed:', err.message)
+    return empty
+  }
+}
+
 function wholeWardrobeFeedbackInfluenceForCandidate(pieces = [], options = {}) {
   const influence = options.wholeWardrobeFeedbackInfluence
   if (!influence) return null
@@ -2165,6 +2238,17 @@ function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   if (feedbackInfluence) {
     add(feedbackInfluence.score, 'whole-wardrobe feedback memory')
     reasons.push(...feedbackInfluence.reasons)
+  }
+
+  const sessionInfluence = options.sessionInfluence
+  if (sessionInfluence) {
+    const pieceIds = pieces.map(p => Number(p.id)).filter(Boolean)
+    const formula = wholeWardrobeFormulaFamily({ pieces }, pieces, options.occasion)
+    const piecePenalty = pieceIds.reduce((sum, id) => sum + (sessionInfluence.pieceRecency?.get(id) || 0), 0)
+    if (piecePenalty > 0) add(-Math.min(piecePenalty, 40), 'recently shown pieces')
+
+    const formulaPenalty = sessionInfluence.formulaRecency?.get(formula) || 0
+    if (formulaPenalty > 0) add(-Math.min(formulaPenalty, 35), 'recently shown formula family')
   }
 
   const mood = String(options.mood || '').toLowerCase()
@@ -4272,6 +4356,14 @@ db.exec(`
     archived        INTEGER DEFAULT 0,
     created_at      TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS whole_wardrobe_sessions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    occasion         TEXT NOT NULL DEFAULT '',
+    piece_ids        TEXT NOT NULL DEFAULT '[]',
+    formula_families TEXT NOT NULL DEFAULT '[]'
+  );
 `)
 
 // ── Migrate: add new columns to existing DB ───────────────────────────────────
@@ -5634,7 +5726,8 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
     const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
-    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence })
+    const sessionInfluence = getRecentWholeWardrobeSessionInfluence({ occasion, daysCutoff: 6 })
+    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence, sessionInfluence })
     const candidateFormulaCounts = wholeWardrobeCandidateFormulaCounts(candidates)
     let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
     const candidatePieces = candidatePieceIds
@@ -5767,6 +5860,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       counts[id] = (counts[id] || 0) + 1
       return counts
     }, {})
+    saveWholeWardrobeSession({ occasion, outfits: structuredOutfits })
 
     const feedback = formatWholeWardrobeOutfitFeedback({
       occasion,
@@ -5788,6 +5882,11 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
         candidateCount: candidates.length,
         candidateFormulaCounts,
         feedbackInfluenceRowsUsed: wholeWardrobeFeedbackInfluence.rowsUsed,
+        sessionMemory: {
+          recentSessionCount: sessionInfluence.sessionCount || 0,
+          piecePenaltyCount: sessionInfluence.pieceRecency?.size || 0,
+          formulaPenaltyCount: sessionInfluence.formulaRecency?.size || 0
+        },
         suppressedPieceCount: suppressedPieces.length,
         suppressedPieces,
         visualCritic: visualCriticDebug,
