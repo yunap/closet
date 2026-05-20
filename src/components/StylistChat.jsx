@@ -544,8 +544,8 @@ export default function AskClaude({
           <div style={{ display: 'grid', gap: 8, padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface-2)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Preview the set</div>
-                <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>One comparison-sheet image for the visible outfit cards. Individual renders stay on each card.</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Rough visual preview</div>
+                <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>One quick comparison image for the visible cards. Use individual renders for garment-faithful final images.</div>
               </div>
               <button
                 type="button"
@@ -553,7 +553,7 @@ export default function AskClaude({
                 disabled={isGeneratingComparison}
                 style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isGeneratingComparison ? 'default' : 'pointer', opacity: isGeneratingComparison ? 0.65 : 1 }}
               >
-                {isGeneratingComparison ? 'Generating preview sheet...' : (comparisonBoards.length ? 'Regenerate comparison sheet' : 'Generate comparison sheet')}
+                {isGeneratingComparison ? 'Generating rough preview...' : (comparisonBoards.length ? 'Regenerate rough preview' : 'Generate rough preview')}
               </button>
             </div>
             {imageStatusByKey[comparisonKey] && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{imageStatusByKey[comparisonKey]}</div>}
@@ -1024,7 +1024,7 @@ export default function AskClaude({
     setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Loading garment reference photos...' }))
     statusTimers = [
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending visible outfit cards to GPT-4o...' })), 4000),
-      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Rendering one comparison sheet. This can take a minute.' })), 14000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Rendering one rough comparison image. This can take a minute.' })), 14000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Still rendering the preview sheet...' })), 45000),
     ]
     try {

@@ -4058,14 +4058,17 @@ function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = new Map
   }).join('\n\n')
 
   return [
-    'Generate ONE realistic comparison-sheet image containing separate full-body outfit previews for the listed saved wardrobe outfits.',
+    'Generate ONE realistic visual comparison sheet containing separate full-body outfit previews for the listed saved wardrobe outfits.',
     'This is a rough preview sheet, not final individual renders.',
+    'The image must look like a silent photo contact sheet, not an infographic, poster, presentation slide, or labeled fashion board.',
     '',
     'Layout rules:',
     `- Show exactly ${outfits.length} distinct panels, one outfit per panel.`,
     '- Keep panels visually separated. Do not merge garments across panels.',
     '- Each panel should show one full-body adult woman, head-to-shoes, ordinary realistic proportions, natural posture.',
-    '- Do not include readable text, captions, labels, watermarks, or UI in the image.',
+    '- No text of any kind may appear inside the image.',
+    '- Do not include numbers, headings, panel titles, captions, labels, garment names, typography, watermarks, tags, UI, or Pinterest-style save buttons.',
+    '- Separate the panels only with plain visual spacing or subtle borders.',
     '',
     'Garment rules:',
     '- Use only the garment references assigned to each panel.',
