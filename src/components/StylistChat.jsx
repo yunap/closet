@@ -1310,6 +1310,7 @@ export default function AskClaude({
             season: activeOutfit.season || effectiveGenerateSeason,
             mood: wardrobeOutfitMood,
             previousEvaluation: memoryText,
+            responseMode: 'followup',
             question: q || 'Continue evaluating this outfit.'
           })
         })

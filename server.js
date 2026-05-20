@@ -5919,7 +5919,7 @@ app.post('/api/ai/generate-saved-outfit-image', async (req, res) => {
 })
 
 app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
-  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '', previousEvaluation = '' } = req.body || {}
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '', previousEvaluation = '', responseMode = 'full' } = req.body || {}
   try {
     const startedAt = Date.now()
     let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
@@ -6005,6 +6005,9 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       previousEvaluation
         ? `Previous structured critique memory. Use this for continuity, but correct it if the current image/garment truth contradicts it:\n${String(previousEvaluation).slice(0, 1600)}`
         : '',
+      responseMode === 'followup'
+        ? 'Response mode: followup. Answer the user directly in 2-5 concise sentences. Do not repeat the full critique, visible facts, scores, roles, or JSON sections in prose. If correcting an earlier read, say what changed and give one practical next step.'
+        : 'Response mode: full critique.',
       '',
       wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',
       globalSavedBoardText ? `Saved visual board memory:\n${globalSavedBoardText}` : '',
@@ -6080,9 +6083,17 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       recommendationBlock.avoidForNow ? `Avoid for now: ${recommendationBlock.avoidForNow}` : '',
       recommendationBlock.tryNext || parsed.tryNext ? `Try next: ${recommendationBlock.tryNext || parsed.tryNext}` : ''
     ].filter(Boolean).join('\n\n')
+    const followupFeedback = [
+      nestedEvaluation.summary || parsed.summary || '',
+      nestedEvaluation.firstVisibleIssue ? `Updated read: ${nestedEvaluation.firstVisibleIssue}` : '',
+      (recommendationBlock.smallestAdjustment || typeof parsed.recommendation === 'string')
+        ? `Next: ${recommendationBlock.smallestAdjustment || parsed.recommendation}`
+        : '',
+      recommendationBlock.avoidForNow ? `Avoid: ${recommendationBlock.avoidForNow}` : ''
+    ].filter(Boolean).join('\n\n') || feedback
 
     res.json({
-      feedback,
+      feedback: responseMode === 'followup' ? followupFeedback : feedback,
       evaluation: {
         visibleFacts,
         inferredIntent,
