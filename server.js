@@ -5919,7 +5919,7 @@ app.post('/api/ai/generate-saved-outfit-image', async (req, res) => {
 })
 
 app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
-  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '' } = req.body || {}
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '', previousEvaluation = '' } = req.body || {}
   try {
     const startedAt = Date.now()
     let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
@@ -6001,6 +6001,9 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
         : 'Owned garment truth: no linked pieces. Use visual evidence only; do not overclaim exact garment identity, fabric, or shoe type.',
       linkedFitCautionsText
         ? `Linked fit/trust cautions. Treat these as authoritative and reconcile visible fit placement against them before judging whether a garment fits naturally:\n${linkedFitCautionsText}`
+        : '',
+      previousEvaluation
+        ? `Previous structured critique memory. Use this for continuity, but correct it if the current image/garment truth contradicts it:\n${String(previousEvaluation).slice(0, 1600)}`
         : '',
       '',
       wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',

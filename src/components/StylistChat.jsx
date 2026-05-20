@@ -61,6 +61,26 @@ const timingSummary = (timings = {}) => Object.entries(timings || {})
   .map(([key, value]) => `${key.replace(/Ms$/, '')}: ${formatMs(value)}`)
   .join(' · ')
 
+const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
+
+const compactEvaluationMemory = (evaluation = null) => {
+  if (!evaluation || typeof evaluation !== 'object') return ''
+  const facts = evaluation.visibleFacts || {}
+  const intent = evaluation.inferredIntent || {}
+  const shoe = facts.shoeAnalysis || {}
+  return [
+    intent.label ? `Intent: ${intent.label}` : '',
+    evaluation.verdict ? `Verdict: ${evaluation.verdict}` : '',
+    facts.floorLine ? `Floor line: ${facts.floorLine}` : '',
+    facts.fitPlacement ? `Fit placement: ${facts.fitPlacement}` : '',
+    shoe.visibility || shoe.read || shoe.effect
+      ? `Shoe read: ${[shoe.visibility, shoe.read, shoe.effect, shoe.confidence].filter(Boolean).join(' · ')}`
+      : '',
+    evaluation.firstVisibleIssue ? `First visible issue: ${evaluation.firstVisibleIssue}` : '',
+    evaluation.recommendation ? `Last recommendation: ${evaluation.recommendation}` : '',
+  ].filter(Boolean).join('\n')
+}
+
 const CALIBRATION_LABELS = [
   ['most_like_me', 'Most like me'],
   ['close_but_off', 'Close but off'],
@@ -95,6 +115,7 @@ export default function AskClaude({
     { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
   ])
   const [chatHistory, setChatHistory] = useState([])
+  const [threadMemory, setThreadMemory] = useState(null)
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
   const setActiveContext = useCallback((nextContext) => {
@@ -1163,6 +1184,8 @@ export default function AskClaude({
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
           ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
           : []
+        const priorEvaluationText = outfitToSend.threadMemory?.latestEvaluationText || ''
+        const shouldAttachOutfitPhoto = outfitToSend.attachVisualContext !== false
         const useWardrobeEvaluator = Boolean(outfitToSend.photo || outfitPieceIds.length >= 2)
         if (useWardrobeEvaluator) {
           const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
@@ -1172,7 +1195,7 @@ export default function AskClaude({
               outfit: {
                 label: outfitToSend.name,
                 title: outfitToSend.name,
-                photo: outfitToSend.photo || '',
+                photo: shouldAttachOutfitPhoto ? (outfitToSend.photo || '') : '',
                 bestFor: outfitToSend.occasion || '',
                 pieces: outfitToSend.pieces || [],
                 pieceIds: outfitPieceIds,
@@ -1182,6 +1205,7 @@ export default function AskClaude({
               occasion: outfitToSend.occasion || effectiveGenerateOccasion,
               season: outfitToSend.season || effectiveGenerateSeason,
               mood: wardrobeOutfitMood,
+              previousEvaluation: priorEvaluationText,
               question: q || 'Evaluate this outfit.'
             })
           })
@@ -1190,6 +1214,13 @@ export default function AskClaude({
           replyText = data.feedback || 'Outfit evaluation complete.'
           replyWardrobeEvaluation = true
           replyDebug = data.debug || null
+          setThreadMemory({
+            type: 'outfit',
+            id: outfitToSend.id,
+            name: outfitToSend.name,
+            latestEvaluation: data.evaluation || null,
+            latestEvaluationText: compactEvaluationMemory(data.evaluation),
+          })
         } else {
           const res = await fetch('/api/ai/evaluate-outfit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitId: outfitToSend.id, question: q || 'What do you think of this outfit?', history: historySnapshot }) })
           const data = await res.json()
@@ -1250,6 +1281,51 @@ export default function AskClaude({
         const data = await (await fetch('/api/ai/outfit-feedback', { method: 'POST', body: fd })).json()
         replyText = data.feedback || data.error || 'Something went wrong.'
 
+      } else if (activeContext?.type === 'outfit') {
+        const activeOutfit = outfits.find(o => String(o.id) === String(activeContext.id))
+        if (!activeOutfit) throw new Error('Active outfit context was not found. Reopen the outfit and try again.')
+        const outfitPieceIds = Array.isArray(activeOutfit.pieces)
+          ? activeOutfit.pieces.map(p => p?.id).filter(Boolean)
+          : []
+        const visualFollowUp = VISUAL_FOLLOWUP_PATTERN.test(q)
+        const mustAttachPhoto = visualFollowUp || outfitPieceIds.length < 2
+        const memoryText = threadMemory?.type === 'outfit' && String(threadMemory.id) === String(activeOutfit.id)
+          ? threadMemory.latestEvaluationText
+          : ''
+        const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outfit: {
+              label: activeOutfit.name,
+              title: activeOutfit.name,
+              photo: mustAttachPhoto ? (activeOutfit.photo || '') : '',
+              bestFor: activeOutfit.occasion || '',
+              pieces: activeOutfit.pieces || [],
+              pieceIds: outfitPieceIds,
+              reason: activeOutfit.notes || '',
+            },
+            pieceIds: outfitPieceIds,
+            occasion: activeOutfit.occasion || effectiveGenerateOccasion,
+            season: activeOutfit.season || effectiveGenerateSeason,
+            mood: wardrobeOutfitMood,
+            previousEvaluation: memoryText,
+            question: q || 'Continue evaluating this outfit.'
+          })
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Could not continue outfit evaluation')
+        replyText = data.feedback || 'Outfit follow-up complete.'
+        replyWardrobeEvaluation = true
+        replyDebug = data.debug || null
+        setThreadMemory({
+          type: 'outfit',
+          id: activeOutfit.id,
+          name: activeOutfit.name,
+          latestEvaluation: data.evaluation || null,
+          latestEvaluationText: compactEvaluationMemory(data.evaluation),
+        })
+
       } else {
         const res = await fetch('/api/ai/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q, pieces, history: historySnapshot }) })
         const data = await res.json()
@@ -1285,6 +1361,7 @@ export default function AskClaude({
   const resetChat = () => {
     setMessages([{ role: 'assistant', text: 'Starting fresh! What can I help you with?' }])
     setChatHistory([])
+    setThreadMemory(null)
     setActiveContext(null)
     setSavedIndices(new Set()); setFeedbackSaved(new Set()); setFeedbackIdsByKey({}); setSavedBoardKeys(new Set())
     setBoardResults({}); setEditorialVisualResults({})
