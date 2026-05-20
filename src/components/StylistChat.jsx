@@ -486,6 +486,18 @@ export default function AskClaude({
     return `Outfit ideas for ${itemName}. Saved wardrobe pieces are shown when available; image generation is optional.`
   }
 
+  const hydrateDisplayPiece = (piece = {}) => {
+    const saved = piece?.id ? pieces.find(p => Number(p.id) === Number(piece.id)) : null
+    return {
+      ...piece,
+      ...(saved || {}),
+      name: piece?.name || saved?.name || 'Garment',
+      category: piece?.category || saved?.category || '',
+      photo: piece?.photo || saved?.photo || null,
+      worn_photo: piece?.worn_photo || saved?.worn_photo || null,
+    }
+  }
+
   // ── Render one editorial direction image on demand ──────────────────────────
   const renderOneEditorialDirection = async (outfit, messageIndex, idx) => {
     const key = `${messageIndex}:${idx}`
@@ -625,7 +637,8 @@ export default function AskClaude({
               )}
               {Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
                 <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 8 }}>
-                  {outfit.pieces.map((piece, pieceIdx) => {
+                  {outfit.pieces.map((rawPiece, pieceIdx) => {
+                    const piece = hydrateDisplayPiece(rawPiece)
                     const photo = piece?.photo || piece?.worn_photo
                     return (
                       <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} style={{ width: 58, display: 'grid', gap: 4 }}>
