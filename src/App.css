@@ -468,6 +468,32 @@ img { display: block; max-width: 100%; }
 }
 @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 
+@media (min-width: 768px) {
+  .modal-overlay {
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    overflow-y: auto;
+  }
+
+  .modal-sheet {
+    max-width: 520px;
+    max-height: calc(100dvh - 48px);
+    border-radius: var(--radius-lg);
+  }
+}
+
+@media (min-width: 768px) {
+  .piece-detail-overlay {
+    align-items: flex-start;
+    padding-top: 24px;
+  }
+
+  .piece-detail-sheet {
+    margin-top: 0;
+  }
+}
+
 .modal-handle {
   width: 36px;
   height: 4px;
