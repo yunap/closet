@@ -448,6 +448,18 @@ function categoryConstraintForSelectedPiece(piece) {
   return `Every outfit idea must include the selected item "${piece.name}".`
 }
 
+function idealAdditionAnchorConstraint(piece) {
+  const group = wardrobeCategoryGroup(piece)
+  const name = piece?.name || 'selected item'
+  const base = `The selected item "${name}" is the non-replaceable anchor. Every direction must keep it in the outfit and suggest only complementary additions around it.`
+  if (group === 'bottom') return `${base} Because the anchor is a bottom, do not suggest trousers, jeans, pants, shorts, skirts, dresses, or jumpsuits as missingPieces. Suggest tops, layers, shoes, bags, jewelry, or other support pieces only.`
+  if (group === 'top') return `${base} Because the anchor is a top, do not suggest another top, blouse, shirt, sweater, tee, tank, or dress as missingPieces. Suggest bottoms, layers, shoes, bags, or accessories only.`
+  if (group === 'dress') return `${base} Because the anchor is a dress, do not suggest another dress or separates that replace it. Suggest shoes, layers, bags, jewelry, belts, or other support pieces only.`
+  if (group === 'outerwear') return `${base} Because the anchor is outerwear, do not suggest another jacket, blazer, cardigan, coat, vest, or dress that replaces it. Suggest base layers, bottoms, shoes, bags, or accessories only.`
+  if (group === 'shoes') return `${base} Because the anchor is shoes, do not suggest replacement shoes as missingPieces. Suggest tops, bottoms, dresses, layers, bags, or accessories only.`
+  return base
+}
+
 function textIncludesAny(value, words) {
   const haystack = String(value || '').toLowerCase()
   return words.some(w => haystack.includes(w))
@@ -6206,6 +6218,16 @@ function dedupeAndDifferentiateEditorialDirections(directions = [], selectedPiec
   const usedMissing = new Set()
   const seenTitles = new Set()
   const cleaned = []
+  const anchorGroup = wardrobeCategoryGroup(selectedPiece)
+  const violatesAnchorRole = (text = '') => {
+    const value = String(text || '').toLowerCase()
+    if (anchorGroup === 'bottom') return /\b(trouser|pant|jean|skirt|short|culotte|legging|dress|jumpsuit)\b/.test(value)
+    if (anchorGroup === 'top') return /\b(top|shirt|blouse|tee|t-shirt|tank|shell|sweater|knit|tunic|hoodie|sweatshirt|dress)\b/.test(value)
+    if (anchorGroup === 'dress') return /\b(dress|jumpsuit|trouser|pant|jean|skirt|top|shirt|blouse|tee|sweater)\b/.test(value)
+    if (anchorGroup === 'outerwear') return /\b(jacket|blazer|cardigan|coat|vest|outerwear|overshirt|kimono|dress)\b/.test(value)
+    if (anchorGroup === 'shoes') return /\b(shoe|boot|flat|loafer|sandal|sneaker|heel|mule|clog)\b/.test(value)
+    return false
+  }
 
   for (const direction of directions || []) {
     const copy = { ...direction }
@@ -6219,7 +6241,7 @@ function dedupeAndDifferentiateEditorialDirections(directions = [], selectedPiec
       let next = raw.replace(/\(missing piece\)/gi, '').trim()
       const key = normalizeArchetypeText(next)
       if (!next) next = 'specific editorial support piece'
-      if (usedMissing.has(key) || ownedLooksSimilarToArchetype(next, ownedPieces)) {
+      if (violatesAnchorRole(next) || usedMissing.has(key) || ownedLooksSimilarToArchetype(next, ownedPieces)) {
         next = makeDistinctNewPieceArchetype(next, selectedPiece, usedMissing)
       } else {
         usedMissing.add(key)
@@ -6596,6 +6618,7 @@ app.post('/api/ai/editorial-directions-preview', async (req, res) => {
     if (!piece) return res.status(404).json({ error: 'Piece not found' })
     const selectedPiece = parsePiece(piece)
     const ownedRows = db.prepare('SELECT * FROM pieces ORDER BY id DESC LIMIT 500').all().map(parsePiece)
+    const anchorConstraint = idealAdditionAnchorConstraint(selectedPiece)
  
     const content = []
     const photoFile = piece.worn_photo || piece.photo
@@ -6631,13 +6654,14 @@ app.post('/api/ai/editorial-directions-preview', async (req, res) => {
     ].filter(Boolean).join('\n') : ''
     content.push({ type: 'text', text: [
       `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
+      `Anchor constraint:\n${anchorConstraint}`,
       `Occasion: ${occasion}`,
       `Season: ${season}`,
       `User request: ${question || 'Suggest ideal new pieces for this item.'}`,
       seedLookSummary,
       calibrationSummary ? `Renderer calibration library:\n${calibrationSummary}` : '',
       '',
-      'Generate only conceptual missing-piece additions. Do not use saved wardrobe pairings except for the selected garment. If the wardrobe already has jeans, olive cargo/utility pants, or similar basics, do not present those as new pieces; suggest more specific/different archetypes.'
+      'Generate only conceptual missing-piece additions. Do not use saved wardrobe pairings except for the selected garment. MissingPieces must not include anything that replaces the selected anchor or duplicates its wardrobe role. If the wardrobe already has jeans, olive cargo/utility pants, or similar basics, do not present those as new pieces; suggest more specific/different archetypes.'
     ].filter(Boolean).join('\n') })
  
     const raw = await askStylist({
