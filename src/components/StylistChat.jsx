@@ -236,7 +236,7 @@ export default function AskClaude({
     setIdealOnlyMode(false)
     setEditorialVisualMode(false)
     setActiveContext({ type: 'piece', id: initialPiece.id, name: initialPiece.name })
-    setInput('Style this piece using my existing wardrobe.')
+    setInput('')
     setImageFile(null); setImagePrev(null)
     onClearPiece?.()
   }, [initialPiece])
@@ -1092,7 +1092,7 @@ export default function AskClaude({
     const outfitToSend = overrides.outfit ?? pendingOutfit
     const pieceToSend = overrides.piece ?? pendingPiece
     const fileToSend = overrides.imageFile ?? imageFile
-    if (!q && !fileToSend && !outfitToSend && !pieceToSend) return
+    if (!q && !fileToSend) return
 
     const assistantIndex = messages.length + 1
     const compareId = overrides.compareOutfitId ?? compareOutfitId
@@ -1582,39 +1582,41 @@ export default function AskClaude({
                 </div>
               </>
             )}
-            <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Whole wardrobe</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Text-only outfit generation. No image render.</div>
+            {!pending && (
+              <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Whole wardrobe</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Text-only outfit generation. No image render.</div>
+                  </div>
+                  <button
+                    onClick={generateWholeWardrobeOutfits}
+                    disabled={loading}
+                    style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
+                  >
+                    {loading ? 'Generating...' : 'Generate 5 outfits from my wardrobe'}
+                  </button>
                 </div>
-                <button
-                  onClick={generateWholeWardrobeOutfits}
-                  disabled={loading}
-                  style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
-                >
-                  {loading ? 'Generating...' : 'Generate 5 outfits from my wardrobe'}
-                </button>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
+                  <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+                    <option value="casual">Casual</option>
+                    <option value="city">City</option>
+                    <option value="smart casual">Smart casual</option>
+                    <option value="evening">Evening</option>
+                    <option value="gallery / art event">Gallery / art event</option>
+                    <option value="travel">Travel</option>
+                  </select>
+                  <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+                    <option value="current season">Current season</option>
+                    <option value="spring">Spring</option>
+                    <option value="summer">Summer</option>
+                    <option value="fall">Fall</option>
+                    <option value="winter">Winter</option>
+                  </select>
+                  <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
+                </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
-                <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                  <option value="casual">Casual</option>
-                  <option value="city">City</option>
-                  <option value="smart casual">Smart casual</option>
-                  <option value="evening">Evening</option>
-                  <option value="gallery / art event">Gallery / art event</option>
-                  <option value="travel">Travel</option>
-                </select>
-                <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                  <option value="current season">Current season</option>
-                  <option value="spring">Spring</option>
-                  <option value="summer">Summer</option>
-                  <option value="fall">Fall</option>
-                  <option value="winter">Winter</option>
-                </select>
-                <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
-              </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1768,29 +1770,30 @@ export default function AskClaude({
       </div>
 
       {pending && (
-        <div style={{ margin: '0 16px 8px', padding: '10px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ margin: '0 16px 8px', padding: '12px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           {pendingPhoto && <img src={`/uploads/${pendingPhoto}`} alt={pending.name} style={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 6, background: 'var(--surface-2)', flexShrink: 0 }} />}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Piece ready to style' : 'Outfit ready to evaluate'}</div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Choose how to use this piece' : 'Choose how to use this outfit'}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pending.name}</div>
             {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
             {pendingPiece && (
               <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <button
                     onClick={() => send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false })}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                    style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'left' }}
                   >
-                    Style with wardrobe
+                    <div style={{ fontWeight: 650 }}>Use my wardrobe</div>
+                    <div style={{ fontSize: 10, opacity: 0.78, marginTop: 2 }}>Build outfits from saved pieces.</div>
                   </button>
                   <button
                     onClick={() => send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true })}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                    style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'left' }}
                   >
-                    Suggest ideal additions
+                    <div style={{ fontWeight: 650 }}>Suggest ideal additions</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Imagine new pieces around this item.</div>
                   </button>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.35 }}>Choose a direct action, or use the message box below for a custom question.</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                   <select value={generateOccasion} onChange={e => setGenerateOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
                     <option value="casual">Casual</option>
@@ -1855,8 +1858,8 @@ export default function AskClaude({
             <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
             📷
           </label>
-          <textarea ref={textRef} className="ai-input" placeholder={pending ? `Ask about ${pending.name}...` : 'Ask about your wardrobe...'} value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
-          <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile && !pending)}>↑</button>
+          <textarea ref={textRef} className="ai-input" placeholder={pending ? `Ask a custom question about ${pending.name}...` : 'Ask about your wardrobe...'} value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
+          <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
         </div>
       </div>
       {previewImage && (
