@@ -1677,6 +1677,11 @@ function sortByStylisticStrength(outfits = [], selectedPiece = null) {
 
 function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidatePieces = []) {
   const candidateById = new Map(candidatePieces.map(p => [Number(p.id), p]))
+  const candidatesByName = new Map()
+  for (const piece of candidatePieces) {
+    const key = normalizeForMatch(piece?.name || '')
+    if (key && !candidatesByName.has(key)) candidatesByName.set(key, piece)
+  }
   const selectedId = Number(selectedPiece?.id)
   const ids = []
   const missingPieces = []
@@ -1684,6 +1689,13 @@ function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidatePieces =
   const addId = (value) => {
     const n = Number(value)
     if (Number.isFinite(n) && n > 0 && candidateById.has(n) && !ids.includes(n)) ids.push(n)
+  }
+  const addPieceReference = (piece) => {
+    addId(piece?.id)
+    if (!piece?.id && piece?.name) {
+      const matched = candidatesByName.get(normalizeForMatch(piece.name))
+      if (matched) addId(matched.id)
+    }
   }
 
   if (Array.isArray(outfit?.pieceIds)) outfit.pieceIds.forEach(addId)
@@ -1701,7 +1713,7 @@ function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidatePieces =
           worn_photo: null
         })
       } else {
-        addId(piece?.id)
+        addPieceReference(piece)
       }
     }
   }
@@ -1722,7 +1734,13 @@ function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidatePieces =
     pieceIds: ids.slice(0, 5),
     missingPieces: cleanMissing,
     pieces: [
-      ...ownedPieces.map(p => ({ id: p.id, name: p.name, category: p.category })),
+      ...ownedPieces.map(p => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        photo: p.photo || null,
+        worn_photo: p.worn_photo || null
+      })),
       ...cleanMissing.map(p => ({ id: p.id, name: p.name, category: p.category, missing: true }))
     ]
   }
@@ -1807,7 +1825,13 @@ function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidates = []
       silhouette,
       bestFor,
       pieceIds: owned.map(p => p.id),
-      pieces: owned.map(p => ({ id: p.id, name: p.name, category: p.category })),
+      pieces: owned.map(p => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        photo: p.photo || null,
+        worn_photo: p.worn_photo || null
+      })),
       reason,
       watchFor: watchFor || 'none'
     }, selected, [selected, ...rankedCandidates.map(r => r?.piece || r).filter(Boolean)])
@@ -5558,7 +5582,13 @@ ${globalFeedbackText}` : ''
         silhouette: selectedGroup === 'bottom' ? 'selected bottom with a controlled top' : selectedGroup === 'top' ? 'selected top with the cleanest available bottom' : 'selected garment with restrained support pieces',
         bestFor: 'testing from saved wardrobe pieces',
         pieceIds: [parsedPiece.id, ...supporting.map(p => p.id)].filter(Boolean).slice(0, 5),
-        pieces: [parsedPiece, ...supporting].map(p => ({ id: p.id, name: p.name, category: p.category })).slice(0, 5),
+        pieces: [parsedPiece, ...supporting].map(p => ({
+          id: p.id,
+          name: p.name,
+          category: p.category,
+          photo: p.photo || null,
+          worn_photo: p.worn_photo || null
+        })).slice(0, 5),
         reason: 'Fallback direction generated locally because the AI response did not return visible outfit cards.',
         watchFor: 'Use this as a starting point; refine after seeing the actual garments together.'
       }, parsedPiece, [parsedPiece, ...candidates])]

@@ -180,6 +180,8 @@ export default function AskClaude({
   const [previewImage, setPreviewImage] = useState(null)
   const [fileInputKey, setFileInputKey] = useState(0)
   const bottomRef = useRef(null)
+  const pendingActionRef = useRef(null)
+  const holdActionScrollRef = useRef(false)
   const textRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
@@ -242,8 +244,22 @@ export default function AskClaude({
   }, [initialPiece])
 
   useEffect(() => {
+    const openingWithAction = initialPiece || (initialOutfit && initialOutfit.autoSend !== true) || pendingPiece || pendingOutfit
+    if (openingWithAction && messages.length <= 1 && !loading) return
+    if (holdActionScrollRef.current) {
+      if (!loading) holdActionScrollRef.current = false
+      return
+    }
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, loading])
+  }, [messages, loading, pendingPiece, pendingOutfit, initialPiece, initialOutfit])
+
+  useEffect(() => {
+    if (!pendingPiece && !pendingOutfit) return
+    const t = setTimeout(() => {
+      pendingActionRef.current?.scrollIntoView({ behavior: 'auto', block: 'center' })
+    }, 0)
+    return () => clearTimeout(t)
+  }, [pendingPiece, pendingOutfit])
 
   const loadLearningRows = async (context = activeContext) => {
     if (!context) { setLearningRows([]); return }
@@ -462,12 +478,12 @@ export default function AskClaude({
   }
 
   const getCompactOutfitIntro = (message, hasBoards = false) => {
-    if (message?.wholeWardrobe) return 'Strongest whole-wardrobe outfits for right now. Text only for this phase.'
+    if (message?.wholeWardrobe) return 'Outfits built from saved wardrobe pieces. Garment photos are shown below; image generation is optional.'
     const text = String(message?.text || '')
     const titleMatch = text.match(/Generated outfit ideas for:\*\*\s*([^\n]+)/i)
     const itemName = titleMatch ? titleMatch[1].replace(/\*/g, '').trim() : activeContext?.name
     if (hasBoards) return `Outfit directions for ${itemName}. Visuals are shown below for selected ideas.`
-    return `Text outfit ideas generated for ${itemName}. Use "Generate visual for this outfit" only on the ideas you want to see.`
+    return `Outfit ideas for ${itemName}. Saved wardrobe pieces are shown when available; image generation is optional.`
   }
 
   // ── Render one editorial direction image on demand ──────────────────────────
@@ -555,19 +571,25 @@ export default function AskClaude({
                   <strong>Pieces:</strong> {pieces.join(' + ')}
                 </div>
               )}
-              {message?.wholeWardrobe && Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
+              {Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
                 <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 8 }}>
                   {outfit.pieces.map((piece, pieceIdx) => {
-                    const photo = piece?.worn_photo || piece?.photo
+                    const photo = piece?.photo || piece?.worn_photo
                     return (
                       <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} style={{ width: 58, display: 'grid', gap: 4 }}>
-                        <div style={{ width: 58, height: 58, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <button
+                          type="button"
+                          disabled={!photo}
+                          onClick={() => photo && setPreviewImage({ src: `/uploads/${photo}`, title: piece?.name || 'Garment', meta: piece?.category || '' })}
+                          style={{ width: 58, height: 58, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: photo ? 'zoom-in' : 'default' }}
+                          aria-label={photo ? `Open ${piece?.name || 'garment'} preview` : undefined}
+                        >
                           {photo ? (
                             <img src={`/uploads/${photo}`} alt={piece?.name || 'Garment'} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                           ) : (
                             <span style={{ fontSize: 9, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.1, padding: 4 }}>{piece?.category || 'piece'}</span>
                           )}
-                        </div>
+                        </button>
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
                         {message?.wholeWardrobe && (
                           <button
@@ -621,7 +643,7 @@ export default function AskClaude({
                     disabled={isRendering}
                     style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
                   >
-                    {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate image' : 'Generate image')}
+                    {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
                   </button>
                   <button
                     onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
@@ -682,12 +704,12 @@ export default function AskClaude({
                         opacity: isRendering ? 0.65 : 1,
                       }}
                     >
-                      {isRendering ? 'Rendering…' : hasRendered ? '✓ Rendered' : '▧ Generate image (~$0.07)'}
+                      {isRendering ? 'Rendering…' : hasRendered ? '✓ Rendered' : 'Generate outfit image (~$0.07)'}
                     </button>
                   ) : (
                     // Wardrobe-board generation button (original mode)
                     <button
-                      onClick={() => generateVisualBoards(boardKey, message.text, [outfit], activeContext.id, messageIndex)}
+                      onClick={() => generateWholeWardrobeImage(boardKey, outfit, { occasion: generateOccasion, season: generateSeason })}
                       disabled={isRendering}
                       style={{
                         fontSize: 12, color: 'var(--accent)', padding: '3px 9px', borderRadius: 12,
@@ -695,7 +717,7 @@ export default function AskClaude({
                         cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1,
                       }}
                     >
-                      {isRendering ? 'Rendering this outfit…' : (hasRendered ? 'Regenerate this visual' : 'Generate visual for this outfit')}
+                      {isRendering ? 'Rendering this outfit…' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
                     </button>
                   )}
                   {!isPreview && <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Image generation cost: one outfit only.</span>}
@@ -886,7 +908,7 @@ export default function AskClaude({
     } finally { setBoardLoadingIndex(null) }
   }
 
-  const generateWholeWardrobeImage = async (resultKey, outfit) => {
+  const generateWholeWardrobeImage = async (resultKey, outfit, options = {}) => {
     const ids = Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
       ? outfit.pieceIds
       : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(p => p?.id).filter(Boolean) : [])
@@ -907,7 +929,12 @@ export default function AskClaude({
       const res = await fetch('/api/ai/generate-wardrobe-outfit-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outfit, pieceIds: ids, occasion: wardrobeOutfitOccasion, season: wardrobeOutfitSeason })
+        body: JSON.stringify({
+          outfit,
+          pieceIds: ids,
+          occasion: options.occasion || wardrobeOutfitOccasion,
+          season: options.season || wardrobeOutfitSeason
+        })
       })
       const contentType = res.headers.get('content-type') || ''
       if (!contentType.includes('application/json')) {
@@ -1043,9 +1070,9 @@ export default function AskClaude({
     const occasion = wardrobeOutfitOccasion || 'casual'
     const season = wardrobeOutfitSeason || 'current season'
     const mood = wardrobeOutfitMood || 'artistic minimalist'
-    const userText = `Generate 5 outfits from my wardrobe for ${occasion}, ${season}${mood ? `, ${mood}` : ''}.`
+    const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, ${mood}` : ''}.`
 
-    setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Whole wardrobe' }])
+    setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Use my wardrobe' }])
     addToHistory('user', userText)
     setLoading(true)
     startStatusSequence([
@@ -1093,6 +1120,9 @@ export default function AskClaude({
     const pieceToSend = overrides.piece ?? pendingPiece
     const fileToSend = overrides.imageFile ?? imageFile
     if (!q && !fileToSend) return
+    if ((overrides.piece || overrides.outfit) && (pendingPiece || pendingOutfit)) {
+      holdActionScrollRef.current = true
+    }
 
     const assistantIndex = messages.length + 1
     const compareId = overrides.compareOutfitId ?? compareOutfitId
@@ -1117,7 +1147,7 @@ export default function AskClaude({
     const userContextName = compareOutfit && outfitToSend ? `${outfitToSend.name} vs ${compareOutfit.name}`
       : shouldGenerateEditorialVisuals ? `Ideal additions preview for ${pieceToSend?.name}`
       : shouldGenerateActiveEditorialVisuals ? `Ideal additions preview for ${activeContext?.name}`
-      : shouldGenerateOutfits ? `${effectiveIdealOnlyMode ? 'New ideal ideas for' : effectiveIncludeMissingPieces ? 'Ideal directions for' : 'Generate outfits for'} ${pieceToSend?.name}`
+      : shouldGenerateOutfits ? `${effectiveIdealOnlyMode ? 'New ideal ideas for' : effectiveIncludeMissingPieces ? 'Ideal directions for' : 'Use my wardrobe with'} ${pieceToSend?.name}`
       : (outfitToSend?.name || pieceToSend?.name)
 
     setMessages(m => [...m, {
@@ -1586,15 +1616,15 @@ export default function AskClaude({
               <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Whole wardrobe</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Text-only outfit generation. No image render.</div>
+                    <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Use my wardrobe</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
                   </div>
                   <button
                     onClick={generateWholeWardrobeOutfits}
                     disabled={loading}
                     style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
                   >
-                    {loading ? 'Generating...' : 'Generate 5 outfits from my wardrobe'}
+                    {loading ? 'Creating...' : 'Create outfits'}
                   </button>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
@@ -1770,7 +1800,7 @@ export default function AskClaude({
       </div>
 
       {pending && (
-        <div style={{ margin: '0 16px 8px', padding: '12px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div ref={pendingActionRef} style={{ margin: '0 16px 8px', padding: '12px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           {pendingPhoto && <img src={`/uploads/${pendingPhoto}`} alt={pending.name} style={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 6, background: 'var(--surface-2)', flexShrink: 0 }} />}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Choose how to use this piece' : 'Choose how to use this outfit'}</div>
@@ -1790,7 +1820,7 @@ export default function AskClaude({
                     onClick={() => send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true })}
                     style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'left' }}
                   >
-                    <div style={{ fontWeight: 650 }}>Suggest ideal additions</div>
+                    <div style={{ fontWeight: 650 }}>Explore ideal additions</div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Imagine new pieces around this item.</div>
                   </button>
                 </div>

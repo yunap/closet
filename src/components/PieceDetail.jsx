@@ -44,8 +44,8 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
   const hasPhoto  = piece.photo || piece.worn_photo
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-sheet" onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay piece-detail-overlay" onClick={onClose}>
+      <div className="modal-sheet piece-detail-sheet" onClick={e => e.stopPropagation()}>
         <div className="modal-handle" />
 
         {/* Photo */}
