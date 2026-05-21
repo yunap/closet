@@ -486,6 +486,18 @@ export default function AskClaude({
     return `Outfit ideas for ${itemName}. Saved wardrobe pieces are shown when available; image generation is optional.`
   }
 
+  const hydrateDisplayPiece = (piece = {}) => {
+    const saved = piece?.id ? pieces.find(p => Number(p.id) === Number(piece.id)) : null
+    return {
+      ...piece,
+      ...(saved || {}),
+      name: piece?.name || saved?.name || 'Garment',
+      category: piece?.category || saved?.category || '',
+      photo: piece?.photo || saved?.photo || null,
+      worn_photo: piece?.worn_photo || saved?.worn_photo || null,
+    }
+  }
+
   // ── Render one editorial direction image on demand ──────────────────────────
   const renderOneEditorialDirection = async (outfit, messageIndex, idx) => {
     const key = `${messageIndex}:${idx}`
@@ -524,11 +536,63 @@ export default function AskClaude({
       return 'direction'
     }
 
+    const comparisonKey = `whole-wardrobe-comparison:${messageIndex}`
+    const comparisonBoards = boardResults[comparisonKey] || []
+    const isGeneratingComparison = boardLoadingIndex === comparisonKey
+    const isPreviewSet = Boolean(outfits[0]?.previewOnly)
+    const canGenerateComparison = !isPreviewSet && outfits.length >= 2 && outfits.some(outfit => {
+      if (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length >= 2) return true
+      return Array.isArray(outfit?.pieces) && outfit.pieces.filter(piece => piece?.id).length >= 2
+    })
+
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
         {(message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings && (
           <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
             Timing: {timingSummary(message.debug.timings)}
+          </div>
+        )}
+        {canGenerateComparison && (
+          <div style={{ display: 'grid', gap: 8, padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface-2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Rough visual preview</div>
+                <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>One quick comparison image for the visible cards. Use individual renders for garment-faithful final images.</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => generateWholeWardrobeComparisonSheet(messageIndex, outfits)}
+                disabled={isGeneratingComparison}
+                style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isGeneratingComparison ? 'default' : 'pointer', opacity: isGeneratingComparison ? 0.65 : 1 }}
+              >
+                {isGeneratingComparison ? 'Generating rough preview...' : (comparisonBoards.length ? 'Regenerate rough preview' : 'Generate rough preview')}
+              </button>
+            </div>
+            {imageStatusByKey[comparisonKey] && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{imageStatusByKey[comparisonKey]}</div>}
+            {comparisonBoards.length > 0 && (
+              <div className="generated-visual-grid">
+                {comparisonBoards.map((board, boardIdx) => (
+                  <div key={boardIdx} className="generated-visual-card">
+                    {board.error ? (
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preview error: {board.error}</div>
+                    ) : (
+                      <>
+                        <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: board.imageUrl, title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
+                          <img src={board.imageUrl} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
+                        </button>
+                        <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
+                        {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
+                        {board.debug?.timings && (
+                          <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
+                            Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {outfits.slice(0, message?.wholeWardrobe ? 5 : 4).map((outfit, idx) => {
@@ -573,7 +637,8 @@ export default function AskClaude({
               )}
               {Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
                 <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 8 }}>
-                  {outfit.pieces.map((piece, pieceIdx) => {
+                  {outfit.pieces.map((rawPiece, pieceIdx) => {
+                    const piece = hydrateDisplayPiece(rawPiece)
                     const photo = piece?.photo || piece?.worn_photo
                     return (
                       <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} style={{ width: 58, display: 'grid', gap: 4 }}>
@@ -587,7 +652,10 @@ export default function AskClaude({
                           {photo ? (
                             <img src={`/uploads/${photo}`} alt={piece?.name || 'Garment'} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                           ) : (
-                            <span style={{ fontSize: 9, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.1, padding: 4 }}>{piece?.category || 'piece'}</span>
+                            <span style={{ fontSize: 9, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.1, padding: 4 }}>
+                              <span style={{ display: 'block', color: 'var(--accent)', fontWeight: 650 }}>needs photo</span>
+                              <span style={{ display: 'block', marginTop: 2 }}>{piece?.category || 'piece'}</span>
+                            </span>
                           )}
                         </button>
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
@@ -945,6 +1013,55 @@ export default function AskClaude({
       }
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate outfit image')
+      setBoardResults(prev => ({ ...prev, [resultKey]: [data.board || data] }))
+    } catch (err) {
+      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
+    } finally {
+      clearImageTimers()
+      setImageStatusByKey(prev => {
+        const next = { ...prev }
+        delete next[resultKey]
+        return next
+      })
+      setBoardLoadingIndex(null)
+    }
+  }
+
+  const generateWholeWardrobeComparisonSheet = async (messageIndex, outfits = []) => {
+    const visibleOutfits = outfits.slice(0, 5)
+    if (visibleOutfits.length < 2) return
+    const resultKey = `whole-wardrobe-comparison:${messageIndex}`
+    let statusTimers = []
+    const clearImageTimers = () => {
+      statusTimers.forEach(clearTimeout)
+      statusTimers = []
+    }
+    setBoardLoadingIndex(resultKey)
+    setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Loading garment reference photos...' }))
+    statusTimers = [
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending visible outfit cards to GPT-4o...' })), 4000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Rendering one rough comparison image. This can take a minute.' })), 14000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Still rendering the preview sheet...' })), 45000),
+    ]
+    try {
+      const res = await fetch('/api/ai/generate-wardrobe-outfit-comparison-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outfits: visibleOutfits,
+          occasion: activeContext?.type === 'piece' ? generateOccasion : wardrobeOutfitOccasion,
+          season: activeContext?.type === 'piece' ? generateSeason : wardrobeOutfitSeason
+        })
+      })
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(text.startsWith('<!DOCTYPE')
+          ? 'Image route returned HTML instead of JSON. Restart the backend/dev server so the new comparison sheet route is loaded.'
+          : `Image route returned ${contentType || 'non-JSON'} response.`)
+      }
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not generate comparison sheet')
       setBoardResults(prev => ({ ...prev, [resultKey]: [data.board || data] }))
     } catch (err) {
       setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))

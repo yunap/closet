@@ -1100,6 +1100,79 @@ function buildWholeWardrobeFeedbackInfluence(limit = 120) {
   return influence
 }
 
+function saveWholeWardrobeSession({ occasion = '', outfits = [] } = {}) {
+  try {
+    const pieceIds = [...new Set(
+      outfits
+        .flatMap(outfit => {
+          const ids = Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+            ? outfit.pieceIds
+            : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
+          return ids
+        })
+        .map(Number)
+        .filter(Boolean)
+    )]
+    const formulaFamilies = [...new Set(outfits
+      .map(outfit => outfit?.formulaFamily || wholeWardrobeFormulaFamily(outfit, outfit?.pieces || [], occasion))
+      .filter(Boolean))]
+    if (!pieceIds.length && !formulaFamilies.length) return
+
+    db.prepare(`
+      INSERT INTO whole_wardrobe_sessions (occasion, piece_ids, formula_families)
+      VALUES (?, ?, ?)
+    `).run(occasion || '', JSON.stringify(pieceIds), JSON.stringify(formulaFamilies))
+
+    db.prepare(`
+      DELETE FROM whole_wardrobe_sessions
+      WHERE id NOT IN (
+        SELECT id FROM whole_wardrobe_sessions ORDER BY id DESC LIMIT 10
+      )
+    `).run()
+  } catch (err) {
+    console.warn('saveWholeWardrobeSession failed:', err.message)
+  }
+}
+
+function getRecentWholeWardrobeSessionInfluence({ occasion = '', daysCutoff = 6 } = {}) {
+  const empty = { pieceRecency: new Map(), formulaRecency: new Map(), sessionCount: 0 }
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - Number(daysCutoff || 6) * 86400
+    const rows = db.prepare(`
+      SELECT occasion, piece_ids, formula_families, created_at
+      FROM whole_wardrobe_sessions
+      WHERE created_at > ?
+      ORDER BY created_at DESC
+      LIMIT 6
+    `).all(cutoff)
+
+    const pieceRecency = new Map()
+    const formulaRecency = new Map()
+    const requestedOccasion = String(occasion || '').toLowerCase().trim()
+
+    rows.forEach((row, sessionIndex) => {
+      const sessionOccasion = String(row.occasion || '').toLowerCase().trim()
+      const sameOccasion = requestedOccasion && sessionOccasion && requestedOccasion === sessionOccasion
+      const occasionFactor = sameOccasion ? 1 : 0.55
+      const decayFactor = Math.max(0.2, 1 - (sessionIndex * 0.16)) * occasionFactor
+      const ids = safeJsonParse(row.piece_ids, [])
+      const families = safeJsonParse(row.formula_families, [])
+
+      for (const id of (Array.isArray(ids) ? ids : []).map(Number).filter(Boolean)) {
+        pieceRecency.set(id, (pieceRecency.get(id) || 0) + Math.round(18 * decayFactor))
+      }
+      for (const family of (Array.isArray(families) ? families : []).filter(Boolean)) {
+        formulaRecency.set(family, (formulaRecency.get(family) || 0) + Math.round(30 * decayFactor))
+      }
+    })
+
+    return { pieceRecency, formulaRecency, sessionCount: rows.length }
+  } catch (err) {
+    console.warn('getRecentWholeWardrobeSessionInfluence failed:', err.message)
+    return empty
+  }
+}
+
 function wholeWardrobeFeedbackInfluenceForCandidate(pieces = [], options = {}) {
   const influence = options.wholeWardrobeFeedbackInfluence
   if (!influence) return null
@@ -2165,6 +2238,17 @@ function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   if (feedbackInfluence) {
     add(feedbackInfluence.score, 'whole-wardrobe feedback memory')
     reasons.push(...feedbackInfluence.reasons)
+  }
+
+  const sessionInfluence = options.sessionInfluence
+  if (sessionInfluence) {
+    const pieceIds = pieces.map(p => Number(p.id)).filter(Boolean)
+    const formula = wholeWardrobeFormulaFamily({ pieces }, pieces, options.occasion)
+    const piecePenalty = pieceIds.reduce((sum, id) => sum + (sessionInfluence.pieceRecency?.get(id) || 0), 0)
+    if (piecePenalty > 0) add(-Math.min(piecePenalty, 40), 'recently shown pieces')
+
+    const formulaPenalty = sessionInfluence.formulaRecency?.get(formula) || 0
+    if (formulaPenalty > 0) add(-Math.min(formulaPenalty, 35), 'recently shown formula family')
   }
 
   const mood = String(options.mood || '').toLowerCase()
@@ -3959,6 +4043,48 @@ function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual
   ].filter(Boolean).join('\n')
 }
 
+function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = new Map(), occasion = 'casual', season = 'current season' }) {
+  const outfitLines = outfits.map((outfit, index) => {
+    const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number).filter(Boolean) : []
+    const pieces = ids.map(id => piecesById.get(id)).filter(Boolean)
+    const pieceText = pieces.map(piece => `${piece.name} (${wardrobeCategoryGroup(piece)})`).join(' + ')
+    return [
+      `Panel ${index + 1}: ${outfit.label || `Outfit ${index + 1}`}`,
+      outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
+      outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
+      outfit.reason ? `Mechanics: ${outfit.reason}` : '',
+      `Pieces: ${pieceText}`
+    ].filter(Boolean).join('\n')
+  }).join('\n\n')
+
+  return [
+    'Generate ONE realistic visual comparison sheet containing separate full-body outfit previews for the listed saved wardrobe outfits.',
+    'This is a rough preview sheet, not final individual renders.',
+    'The image must look like a silent photo contact sheet, not an infographic, poster, presentation slide, or labeled fashion board.',
+    '',
+    'Layout rules:',
+    `- Show exactly ${outfits.length} distinct panels, one outfit per panel.`,
+    '- Keep panels visually separated. Do not merge garments across panels.',
+    '- Each panel should show one full-body adult woman, head-to-shoes, ordinary realistic proportions, natural posture.',
+    '- No text of any kind may appear inside the image.',
+    '- Do not include numbers, headings, panel titles, captions, labels, garment names, typography, watermarks, tags, UI, or Pinterest-style save buttons.',
+    '- Separate the panels only with plain visual spacing or subtle borders.',
+    '',
+    'Garment rules:',
+    '- Use only the garment references assigned to each panel.',
+    '- Do not swap the main garments between panels.',
+    '- Preserve the garment category, color family, print scale, neckline/sleeve/hem behavior, and shoe type as much as possible.',
+    '- The outfits should be visibly different as formulas, not minor recolors of the same outfit.',
+    '',
+    'Style direction:',
+    '- Relaxed artistic realism, grounded personal style, believable wearable outfits.',
+    '- Avoid fashion fantasy, influencer polish, generic catalog styling, and overly decorative accessories.',
+    `Occasion: ${occasion}. Season: ${season}.`,
+    '',
+    `Outfit panels:\n${outfitLines}`
+  ].filter(Boolean).join('\n')
+}
+
 function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
   const anchorPiece = (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'top')
     || (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'dress')
@@ -4160,6 +4286,100 @@ async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season
   }
 }
 
+async function createWholeWardrobeComparisonSheetImage({ outfits = [], piecesById = new Map(), occasion, season }) {
+  const startedAt = Date.now()
+  const timings = {}
+  const filename = `generated-boards/whole-wardrobe-comparison-${Date.now()}-${Math.round(Math.random() * 1e6)}.png`
+  const outPath = path.join(uploadsDir, filename)
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+  const shown = outfits.slice(0, 5)
+  const uniquePieces = [...new Map(
+    shown
+      .flatMap(outfit => (outfit.pieceIds || []).map(id => piecesById.get(Number(id))).filter(Boolean))
+      .map(piece => [Number(piece.id), piece])
+  ).values()]
+
+  if (photoPreservingVisualsEnabled() || !process.env.OPENAI_API_KEY) {
+    const width = 1300
+    const panelH = 310
+    const height = 132 + shown.length * panelH
+    const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#f7f3ed"/>
+      <text x="46" y="58" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#3f3832">Whole-wardrobe preview sheet</text>
+      <text x="46" y="88" font-family="Arial, sans-serif" font-size="15" fill="#756a62">Photo-preserving preview: saved garment photos only, no synthetic outfit render.</text>
+      ${shown.map((outfit, index) => {
+        const y = 120 + index * panelH
+        return `<rect x="38" y="${y}" width="${width - 76}" height="${panelH - 24}" rx="18" fill="#fffaf4" stroke="#ddd1c5"/>
+        <text x="62" y="${y + 34}" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#3f3832">${escapeSvgText(outfit.label || `Outfit ${index + 1}`)}</text>
+        <text x="62" y="${y + 60}" font-family="Arial, sans-serif" font-size="13" fill="#8a7c70">${escapeSvgText((outfit.reason || '').slice(0, 150))}</text>`
+      }).join('')}
+    </svg>`
+    const composites = []
+    for (let outfitIndex = 0; outfitIndex < shown.length; outfitIndex += 1) {
+      const pieces = (shown[outfitIndex].pieceIds || []).map(id => piecesById.get(Number(id))).filter(Boolean).slice(0, 5)
+      const tiles = await Promise.all(pieces.map(piece => makeGarmentTile(piece, 132, 172)))
+      const y = 198 + outfitIndex * panelH
+      tiles.forEach((tile, tileIndex) => composites.push({ input: tile, left: 62 + tileIndex * 150, top: y }))
+    }
+    const fallbackStartedAt = Date.now()
+    await sharp(Buffer.from(svg)).composite(composites).png().toFile(outPath)
+    timings.collageMs = Date.now() - fallbackStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'photo_preserving_comparison_sheet' }
+  }
+
+  try {
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const contentParts = [{
+      type: 'input_text',
+      text: 'WARDROBE GARMENT REFERENCES — these are the saved pieces available for the outfit panels. Use each piece only in the panel where it is listed in the final prompt.'
+    }]
+    const garmentStartedAt = Date.now()
+    const garmentRefs = (await Promise.all(uniquePieces.slice(0, 18).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
+    timings.garmentReferenceMs = Date.now() - garmentStartedAt
+    for (const ref of garmentRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
+      contentParts.push({ type: 'input_text', text: `Garment reference: ${ref.piece.id} — ${ref.label}` })
+    }
+
+    const calibrationStartedAt = Date.now()
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    for (const img of calibrationRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches a listed panel.' : 'Taste calibration reference only.' })
+    }
+
+    contentParts.push({ type: 'input_text', text: wholeWardrobeComparisonSheetPrompt({ outfits: shown, piecesById, occasion, season }) })
+    const gptStartedAt = Date.now()
+    const response = await client.responses.create({
+      model: 'gpt-4o',
+      input: [{ role: 'user', content: contentParts }],
+      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+    })
+    timings.gpt4oImageMs = Date.now() - gptStartedAt
+    const imageItem = response.output?.find(item => item.type === 'image_generation_call')
+    if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    const writeStartedAt = Date.now()
+    await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
+    timings.writeMs = Date.now() - writeStartedAt
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o_comparison_sheet' }
+  } catch (err) {
+    console.error('Whole-wardrobe comparison sheet generation failed, falling back to collage:', err.message)
+    timings.gpt4oError = err.message
+    const imageUrl = await createPhotoPreservingCollageImage({
+      title: 'Whole-wardrobe preview sheet',
+      subtitle: 'fallback · saved garment photos',
+      pieces: uniquePieces.slice(0, 6),
+      reason: `Image generation fallback: ${err.message}`,
+      prefix: 'whole-wardrobe-comparison-fallback'
+    })
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl, timings, renderer: 'fallback_collage' }
+  }
+}
+
 const uploadsDir = path.join(__dirname, 'uploads')
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir)
 
@@ -4271,6 +4491,14 @@ db.exec(`
     favorite        INTEGER DEFAULT 0,
     archived        INTEGER DEFAULT 0,
     created_at      TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS whole_wardrobe_sessions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    occasion         TEXT NOT NULL DEFAULT '',
+    piece_ids        TEXT NOT NULL DEFAULT '[]',
+    formula_families TEXT NOT NULL DEFAULT '[]'
   );
 `)
 
@@ -5634,7 +5862,8 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
     const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
-    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence })
+    const sessionInfluence = getRecentWholeWardrobeSessionInfluence({ occasion, daysCutoff: 6 })
+    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence, sessionInfluence })
     const candidateFormulaCounts = wholeWardrobeCandidateFormulaCounts(candidates)
     let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
     const candidatePieces = candidatePieceIds
@@ -5767,6 +5996,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       counts[id] = (counts[id] || 0) + 1
       return counts
     }, {})
+    saveWholeWardrobeSession({ occasion, outfits: structuredOutfits })
 
     const feedback = formatWholeWardrobeOutfitFeedback({
       occasion,
@@ -5788,6 +6018,11 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
         candidateCount: candidates.length,
         candidateFormulaCounts,
         feedbackInfluenceRowsUsed: wholeWardrobeFeedbackInfluence.rowsUsed,
+        sessionMemory: {
+          recentSessionCount: sessionInfluence.sessionCount || 0,
+          piecePenaltyCount: sessionInfluence.pieceRecency?.size || 0,
+          formulaPenaltyCount: sessionInfluence.formulaRecency?.size || 0
+        },
         suppressedPieceCount: suppressedPieces.length,
         suppressedPieces,
         visualCritic: visualCriticDebug,
@@ -5912,6 +6147,53 @@ app.post('/api/ai/generate-wardrobe-outfit-image', async (req, res) => {
     res.json({ ...board, board, provider: AI_PROVIDER, mode: 'generate_wardrobe_outfit_image', debug: board.debug })
   } catch (err) {
     console.error('Generate whole-wardrobe outfit image error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── AI: Generate one comparison sheet for visible whole-wardrobe outfit cards ─
+app.post('/api/ai/generate-wardrobe-outfit-comparison-sheet', async (req, res) => {
+  const { outfits = [], occasion = 'casual', season = 'current season' } = req.body || {}
+  try {
+    const shown = Array.isArray(outfits) ? outfits.slice(0, 5) : []
+    const ids = [...new Set(shown.flatMap(outfit => {
+      if (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length) return outfit.pieceIds
+      if (Array.isArray(outfit?.pieces)) return outfit.pieces.map(piece => piece?.id)
+      return []
+    }).map(Number).filter(Boolean))].slice(0, 30)
+    if (shown.length < 2) return res.status(400).json({ error: 'At least two outfits are required' })
+    if (!ids.length) return res.status(400).json({ error: 'pieceIds are required' })
+
+    const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
+    const piecesById = new Map(rows.map(piece => [Number(piece.id), piece]))
+    const normalizedOutfits = shown.map((outfit, index) => {
+      const outfitIds = (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+        ? outfit.pieceIds
+        : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : []))
+        .map(Number)
+        .filter(id => piecesById.has(id))
+      return {
+        ...outfit,
+        label: outfit?.label || outfit?.title || `Outfit ${index + 1}`,
+        pieceIds: [...new Set(outfitIds)].slice(0, 6)
+      }
+    }).filter(outfit => outfit.pieceIds.length >= 2)
+
+    if (normalizedOutfits.length < 2) return res.status(400).json({ error: 'At least two complete outfits with saved pieces are required' })
+
+    const rendered = await createWholeWardrobeComparisonSheetImage({ outfits: normalizedOutfits, piecesById, occasion, season })
+    const board = {
+      label: 'Whole-wardrobe comparison sheet',
+      reason: `Preview sheet for ${normalizedOutfits.length} outfit ideas. Use individual Generate outfit image buttons for final renders.`,
+      pieces: rows.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
+      imageUrl: rendered.imageUrl,
+      debug: { timings: rendered.timings, renderer: rendered.renderer },
+      wholeWardrobe: true,
+      previewOnly: true
+    }
+    res.json({ ...board, board, provider: AI_PROVIDER, mode: 'generate_wardrobe_outfit_comparison_sheet', debug: board.debug })
+  } catch (err) {
+    console.error('Generate whole-wardrobe comparison sheet error:', err)
     res.status(500).json({ error: err.message })
   }
 })
