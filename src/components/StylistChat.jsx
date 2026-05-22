@@ -589,6 +589,27 @@ export default function AskClaude({
                             Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
                           </div>
                         )}
+                        {(() => {
+                          const saveKey = `whole-wardrobe-preview-sheet:${messageIndex}:${boardIdx}`
+                          const isSaved = savedBoardKeys.has(saveKey)
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => saveGeneratedBoard({
+                                key: saveKey,
+                                board,
+                                boardType: 'whole_wardrobe_preview_sheet',
+                                messageIndex,
+                                boardIndex: boardIdx,
+                                contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                              })}
+                              disabled={isSaved}
+                              style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer', marginTop: 7 }}
+                            >
+                              {isSaved ? '✓ Saved preview board' : 'Save preview board'}
+                            </button>
+                          )
+                        })()}
                       </>
                     )}
                   </div>
