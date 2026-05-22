@@ -142,6 +142,8 @@ export default function AskClaude({
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
+  const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
+  const [recentMemoryResetting, setRecentMemoryResetting] = useState(false)
   const [savedIndices, setSavedIndices] = useState(new Set())
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
   const [feedbackIdsByKey, setFeedbackIdsByKey] = useState({})
@@ -1189,6 +1191,7 @@ export default function AskClaude({
     const mood = wardrobeOutfitMood || 'artistic minimalist'
     const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, ${mood}` : ''}.`
 
+    setRecentMemoryStatus('')
     setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Use my wardrobe' }])
     addToHistory('user', userText)
     setLoading(true)
@@ -1228,6 +1231,26 @@ export default function AskClaude({
       clearLoadingTimers()
       setLoadingStatus('')
       setLoading(false)
+    }
+  }
+
+  const resetWholeWardrobeSessionMemory = async () => {
+    if (recentMemoryResetting) return
+    setRecentMemoryResetting(true)
+    setRecentMemoryStatus('')
+
+    try {
+      const res = await fetch('/api/ai/whole-wardrobe-session-memory', { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Could not reset recent outfit memory')
+      const clearedCount = Number(data.clearedCount || 0)
+      setRecentMemoryStatus(clearedCount
+        ? `Cleared ${clearedCount} recent result ${clearedCount === 1 ? 'set' : 'sets'}.`
+        : 'Recent outfit memory is already clear.')
+    } catch (err) {
+      setRecentMemoryStatus(`Reset failed: ${err.message}`)
+    } finally {
+      setRecentMemoryResetting(false)
     }
   }
 
@@ -1736,13 +1759,23 @@ export default function AskClaude({
                     <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Use my wardrobe</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
                   </div>
-                  <button
-                    onClick={generateWholeWardrobeOutfits}
-                    disabled={loading}
-                    style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
-                  >
-                    {loading ? 'Creating...' : 'Create outfits'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={resetWholeWardrobeSessionMemory}
+                      disabled={recentMemoryResetting || loading}
+                      title="Clears only recently shown Generate 5 outfit memory. Saved feedback and learning stay intact."
+                      style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
+                    >
+                      {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
+                    </button>
+                    <button
+                      onClick={generateWholeWardrobeOutfits}
+                      disabled={loading}
+                      style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
+                    >
+                      {loading ? 'Creating...' : 'Create outfits'}
+                    </button>
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
                   <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
@@ -1762,6 +1795,11 @@ export default function AskClaude({
                   </select>
                   <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
                 </div>
+                {recentMemoryStatus && (
+                  <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
+                    {recentMemoryStatus}
+                  </div>
+                )}
               </div>
             )}
           </div>

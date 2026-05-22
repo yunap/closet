@@ -5847,6 +5847,21 @@ ${globalFeedbackText}` : ''
 })
 
 
+app.delete('/api/ai/whole-wardrobe-session-memory', (req, res) => {
+  try {
+    const result = db.prepare('DELETE FROM whole_wardrobe_sessions').run()
+    res.json({
+      success: true,
+      clearedCount: result.changes || 0,
+      mode: 'reset_whole_wardrobe_session_memory'
+    })
+  } catch (err) {
+    console.error('Reset whole-wardrobe session memory error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+
 app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
   const {
     occasion = 'casual',
