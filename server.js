@@ -5421,12 +5421,14 @@ Return ONLY a valid JSON object — no markdown, no explanation:
     {
       "name_suggestion": "short name 2-4 words, lowercase",
       "category": "top|bottom|dress|outerwear|shoes|accessory",
-      "colors": ["use only: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, plum, green, olive, turquoise, dark blue, dark grey, light grey, multi"],
+      "colors": ["use only: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, multi"],
       "occasions": ["use only: casual, city, evening, smart-casual, outdoor, home"],
       "season": "warm|cool|year-round"
     }
   ]
-}` }
+}
+
+Color note: use lavender/lilac/mauve for muted purple or purple-pink items; do not call those taupe unless the color is truly warm grey-brown.` }
         ]
       }]
     })
@@ -5519,7 +5521,7 @@ const TAG_PIECE_PROMPT = `Analyze this clothing item hanger/flat-lay photo. Retu
   "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'bold multicolor floral knit top' or 'black cream botanical midi skirt'",
   "category": "top|bottom|dress|outerwear|shoes|accessory",
   "background_color": "the literal base/background color of the garment, e.g. black, navy, cream, white",
-  "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, plum, green, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
+  "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
   "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
   "season": "warm|cool|year-round",
   "pattern_type": "solid|floral|stripe|botanical|geometric|abstract|animal|graphic|plaid|other",
@@ -5545,7 +5547,7 @@ const TAG_PIECE_PROMPT = `Analyze this clothing item hanger/flat-lay photo. Retu
 async function tagPieceWithProvider(filePath) {
   const { base64, mime } = await prepareImageForClaude(filePath)
   const payload = {
-    system: 'You tag wardrobe items from hanger or flat-lay photos. Return only valid JSON matching the requested schema.',
+    system: 'You tag wardrobe items from hanger or flat-lay photos. Return only valid JSON matching the requested schema. Use lavender/lilac/mauve for muted purple or purple-pink items; do not collapse them into taupe unless the item is truly warm grey-brown.',
     maxTokens: 700,
     messages: [{
       role: 'user',

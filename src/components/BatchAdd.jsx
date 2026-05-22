@@ -12,14 +12,16 @@ const COLOR_OPTIONS = [
   { name: 'tan', hex: '#C0A070' }, { name: 'oatmeal', hex: '#D8C8B0' },
   { name: 'amber', hex: '#B07820' }, { name: 'mustard', hex: '#B89020' },
   { name: 'orange', hex: '#C86030' }, { name: 'red', hex: '#A83A2A' },
-  { name: 'pink', hex: '#C07080' }, { name: 'plum', hex: '#5A3060' },
+  { name: 'pink', hex: '#C07080' }, { name: 'mauve', hex: '#A7798A' },
+  { name: 'lavender', hex: '#A99AC2' }, { name: 'lilac', hex: '#C4B2D8' },
+  { name: 'plum', hex: '#5A3060' },
   { name: 'green', hex: '#3A6A3A' }, { name: 'olive', hex: '#5A6030' },
   { name: 'turquoise', hex: '#2A8080' }, { name: 'light blue', hex: '#7AADCC' },
   { name: 'periwinkle', hex: '#8888CC' }, { name: 'dark blue', hex: '#1A2040' },
   { name: 'dark grey', hex: '#484848' }, { name: 'light grey', hex: '#B8B8B8' },
   { name: 'multi', hex: '#8A6848' },
 ]
-const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey']
+const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'lavender', 'lilac']
 
 function emptyForm() {
   return {

@@ -5,6 +5,7 @@ const COLOR_BG = {
   'grey': '#8A8A8A', 'brown': '#7A5A3A', 'tan': '#C0A070', 'oatmeal': '#D8C8B0',
   'plum': '#5A3060', 'olive': '#5A6030', 'green': '#3A6A3A', 'orange': '#C86030',
   'red': '#A83A2A', 'mustard': '#B89020', 'charcoal': '#404040', 'amber': '#B07820',
+  'mauve': '#A7798A', 'lavender': '#A99AC2', 'lilac': '#C4B2D8',
   'turquoise': '#2A8080', 'light blue': '#7AADCC', 'periwinkle': '#8888CC', 'multi': '#8A6848', 'dark blue': '#1A2040',
   'dark grey': '#484848', 'light grey': '#B0B0B0', 'pink': '#C07080',
 }
