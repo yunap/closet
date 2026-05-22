@@ -397,7 +397,7 @@ function OutfitDetail({ outfit, onClose, onDelete, onSendToStylist, onPiecesUpda
               )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 8 }}>
               <button onClick={() => onSendToStylist({
                 ...outfit,
                 autoSend: true,
@@ -413,13 +413,27 @@ function OutfitDetail({ outfit, onClose, onDelete, onSendToStylist, onPiecesUpda
                 ...outfit,
                 autoSend: true,
                 imageGenerationMode: true,
-                stylistPrompt: 'Generate outfit variants from this saved outfit photo and linked garment references.'
+                variantMode: 'similar',
+                stylistPrompt: 'Generate similar variants from this saved outfit photo and linked garment references.'
               })} style={{
                 padding: '12px', background: 'var(--surface)', color: 'var(--accent)',
                 border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
                 fontSize: 13, fontWeight: 500,
               }}>
-                Generate 3 variants
+                Similar variants
+              </button>
+              <button onClick={() => onSendToStylist({
+                ...outfit,
+                autoSend: true,
+                imageGenerationMode: true,
+                variantMode: 'creative',
+                stylistPrompt: 'Generate creative alternatives from this saved outfit photo and linked garment references.'
+              })} style={{
+                padding: '12px', background: 'var(--surface)', color: 'var(--accent)',
+                border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
+                fontSize: 13, fontWeight: 500,
+              }}>
+                Creative alternatives
               </button>
             </div>
 
@@ -554,11 +568,27 @@ export default function OutfitLookbook({ onSendToStylist }) {
                       ...o,
                       autoSend: true,
                       imageGenerationMode: true,
-                      stylistPrompt: 'Generate outfit variants from this saved outfit photo and linked garment references.'
+                      variantMode: 'similar',
+                      stylistPrompt: 'Generate similar variants from this saved outfit photo and linked garment references.'
                     })
                   }}
                 >
-                  3 variants
+                  Similar
+                </button>
+                <button
+                  style={{ position: 'absolute', top: 76, left: 8, fontSize: 11, background: 'rgba(254,252,249,0.9)', color: 'var(--accent)', padding: '5px 9px', borderRadius: 14, border: '1px solid var(--accent)', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', backdropFilter: 'blur(8px)' }}
+                  onClick={e => {
+                    e.stopPropagation()
+                    onSendToStylist({
+                      ...o,
+                      autoSend: true,
+                      imageGenerationMode: true,
+                      variantMode: 'creative',
+                      stylistPrompt: 'Generate creative alternatives from this saved outfit photo and linked garment references.'
+                    })
+                  }}
+                >
+                  Creative
                 </button>
                 <button
                   style={{ position: 'absolute', top: 8, right: 8, fontSize: 16, background: 'rgba(254,252,249,0.85)', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}

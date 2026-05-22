@@ -223,7 +223,7 @@ export default function AskClaude({
     setImageFile(null); setImagePrev(null)
     onClearOutfit?.()
     if (shouldAutoSend) {
-      const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? 'variants' : 'critique'}:${prompt}`
+      const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? `variants-${initialOutfit.variantMode || 'similar'}` : 'critique'}:${prompt}`
       if (lastAutoOutfitActionRef.current === actionKey) return
       lastAutoOutfitActionRef.current = actionKey
       setTimeout(() => send({ outfit: initialOutfit, input: prompt }), 0)
@@ -1337,6 +1337,7 @@ export default function AskClaude({
         replyText = data.feedback || data.error || 'Something went wrong.'
 
       } else if (outfitToSend?.imageGenerationMode) {
+        const savedOutfitVariantMode = outfitToSend.variantMode === 'creative' ? 'creative' : 'similar'
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
           ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
           : []
@@ -1357,6 +1358,7 @@ export default function AskClaude({
             pieceIds: outfitPieceIds,
             occasion: outfitToSend.occasion || effectiveGenerateOccasion,
             season: outfitToSend.season || effectiveGenerateSeason,
+            variantMode: savedOutfitVariantMode,
           })
         })
         const contentType = res.headers.get('content-type') || ''
@@ -1368,7 +1370,9 @@ export default function AskClaude({
         }
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate outfit variants')
-        replyText = data.feedback || 'Generated outfit variants from the saved outfit photo and linked garment references.'
+        replyText = data.feedback || (savedOutfitVariantMode === 'creative'
+          ? 'Generated creative outfit alternatives from the saved outfit photo and linked garment references.'
+          : 'Generated similar outfit variants from the saved outfit photo and linked garment references.')
         setBoardResults(prev => ({ ...prev, [assistantIndex]: data.boards || [data.board || data] }))
 
       } else if (outfitToSend) {
@@ -2022,7 +2026,7 @@ export default function AskClaude({
             )}
             {pendingOutfit && (
               <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 }}>
                   <button
                     onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', compareOutfitId: '' })}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
@@ -2030,10 +2034,16 @@ export default function AskClaude({
                     Critique outfit
                   </button>
                   <button
-                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true }, input: 'Generate outfit variants from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
+                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'similar' }, input: 'Generate similar variants from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
                   >
-                    Generate 3 variants
+                    Similar variants
+                  </button>
+                  <button
+                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'creative' }, input: 'Generate creative alternatives from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                  >
+                    Creative alternatives
                   </button>
                 </div>
                 <select value={compareOutfitId} onChange={e => { setCompareOutfitId(e.target.value); if (e.target.value && (!input.trim() || input === 'What do you think of this outfit?')) setInput('Which outfit works better for me?') }} style={{ width: '100%', padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
