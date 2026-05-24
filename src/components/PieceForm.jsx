@@ -206,17 +206,17 @@ function Section({ label }) {
 }
 
 // ── Photo slot ─────────────────────────────────────────────────────────────────
-function PhotoSlot({ label, hint, preview, onChange, onClear }) {
+function PhotoSlot({ label, hint, preview, onChange, onClear, previewSize }) {
   return (
     <div className="form-group">
       <label className="form-label" style={{ fontSize: 10 }}>{label}</label>
       {preview ? (
         <div className="photo-preview">
-          <img src={preview} alt={label} style={{ maxHeight: 160 }} />
+          <img src={preview} alt={label} style={{ height: previewSize, objectFit: 'contain', background: 'var(--surface-2)' }} />
           <button className="photo-preview-remove" onClick={onClear}>✕</button>
         </div>
       ) : (
-        <label className="photo-upload" style={{ padding: '16px 10px' }}>
+        <label className="photo-upload" style={{ padding: '16px 10px', minHeight: previewSize, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <input type="file" accept="image/*" onChange={onChange} />
           <div className="photo-upload-icon" style={{ fontSize: 22, marginBottom: 4 }}>📷</div>
           <div className="photo-upload-text" style={{ fontSize: 12 }}>{label}</div>
@@ -307,6 +307,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [tagging,     setTagging]     = useState(false)
   const [tagError,    setTagError]    = useState(null)
   const [fitNoting,   setFitNoting]   = useState(false)
+  const [photoPreviewSize, setPhotoPreviewSize] = useState(180)
 
   const set       = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const toggleArr = (k, val) => setForm(f => ({
@@ -449,13 +450,27 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         <div className="form-body">
 
           {/* ── Photos ──────────────────────────────────────────────── */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <span className="form-label" style={{ margin: 0 }}>Photo size</span>
+            <input
+              type="range"
+              min="150"
+              max="360"
+              step="30"
+              value={photoPreviewSize}
+              onChange={e => setPhotoPreviewSize(Number(e.target.value))}
+              aria-label="Photo size"
+              style={{ width: 160, accentColor: 'var(--accent)' }}
+            />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: photoPreviewSize >= 270 ? '1fr' : '1fr 1fr', gap: 10 }}>
             <PhotoSlot
               label="Hanger photo"
               hint="Auto-tags on upload"
               preview={hangerPrev}
               onChange={e => { const f = e.target.files[0]; if (f) { setHangerFile(f); setHangerPrev(URL.createObjectURL(f)); setClearHanger(false) } }}
               onClear={() => { setHangerFile(null); setHangerPrev(null); setClearHanger(true) }}
+              previewSize={photoPreviewSize}
             />
             <PhotoSlot
               label="Worn photo"
@@ -463,6 +478,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               preview={wornPrev}
               onChange={e => { const f = e.target.files[0]; if (f) handleWornPhoto(f) }}
               onClear={() => { setWornFile(null); setWornPrev(null); setClearWorn(true) }}
+              previewSize={photoPreviewSize}
             />
           </div>
 
