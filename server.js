@@ -6527,38 +6527,89 @@ function ownedLooksSimilarToArchetype(archetype = '', ownedPieces = []) {
   return false
 }
 
-function makeDistinctNewPieceArchetype(original = '', selectedPiece = {}, used = new Set()) {
+function idealAdditionSupportPool(selectedPiece = {}) {
   const selectedName = normalizeForMatch(selectedPiece?.name || '')
-  const poolForTop = []
+  const group = wardrobeCategoryGroup(selectedPiece)
+
+  if (group === 'bottom') {
+    return [
+      'ink navy compact wrap top with a clean waist finish',
+      'deep chocolate fitted knit shell with quiet texture',
+      'black structured sleeveless top with a narrow shoulder line',
+      'cognac slim-soled pointed loafer',
+      'black pointed kitten heel mule',
+      'cropped dark leather jacket with clean shoulder structure',
+      'warm cognac small leather bag'
+    ]
+  }
+
+  if (group === 'dress') {
+    return [
+      'black pointed kitten heel mule',
+      'cognac slim ankle boot with a narrow shaft',
+      'cropped dark leather jacket with clean shoulder structure',
+      'ink navy short structured jacket without bulk',
+      'warm cognac small leather bag',
+      'long dark pendant necklace'
+    ]
+  }
+
+  if (group === 'outerwear') {
+    return [
+      'compact black knit shell with clean neckline',
+      'ink navy fitted tank with matte finish',
+      'deep chocolate straight-leg trouser with clean hem',
+      'warm taupe architectural trouser with crisp front crease',
+      'black pointed flat',
+      'cognac slim-soled loafer'
+    ]
+  }
+
+  if (group === 'shoes') {
+    return [
+      'compact ink navy shell with quiet texture',
+      'black fitted knit top with clean neckline',
+      'deep chocolate straight-leg trouser with clean hem',
+      'tobacco brown architectural trouser with soft front pleat',
+      'dark olive weighted midi skirt with clean column line',
+      'warm cognac leather bag'
+    ]
+  }
 
   if (/lace|sheer|appliqu|cream|soft|floral/.test(selectedName)) {
-    poolForTop.push(
+    return [
       'deep chocolate straight midi skirt with clean column line',
       'ink navy structured pencil skirt with subtle texture',
       'tobacco brown architectural trouser with soft front pleat',
       'dark olive weighted crochet-column skirt',
       'cognac slim-soled loafer'
-    )
-  } else if (/stripe|striped|graphic|button|shirt|sleeveless|knit/.test(selectedName)) {
-    poolForTop.push(
+    ]
+  }
+
+  if (/stripe|striped|graphic|button|shirt|sleeveless|knit/.test(selectedName)) {
+    return [
       'dark chocolate long column trouser with clean hem',
       'tobacco brown structured barrel trouser with tapered ankle',
       'ink navy straight midi skirt with matte texture',
       'warm taupe architectural trouser with crisp front crease',
       'cognac slim-soled loafer'
-    )
-  } else {
-    poolForTop.push(
-      'dark chocolate straight-leg trouser with clean hem',
-      'tobacco structured utility trouser without cargo pockets',
-      'ink navy column skirt with matte texture',
-      'warm taupe architectural trouser',
-      'cognac grounded loafer'
-    )
+    ]
   }
 
+  return [
+    'dark chocolate straight-leg trouser with clean hem',
+    'tobacco structured utility trouser without cargo pockets',
+    'ink navy column skirt with matte texture',
+    'warm taupe architectural trouser',
+    'cognac grounded loafer'
+  ]
+}
+
+function makeDistinctNewPieceArchetype(original = '', selectedPiece = {}, used = new Set()) {
+  const pool = idealAdditionSupportPool(selectedPiece)
+
   const o = normalizeArchetypeText(original)
-  let candidate = poolForTop.find(x => !used.has(normalizeArchetypeText(x)) && normalizeArchetypeText(x) !== o)
+  let candidate = pool.find(x => !used.has(normalizeArchetypeText(x)) && normalizeArchetypeText(x) !== o)
   if (!candidate) candidate = `more specific ${String(original || 'editorial support piece').replace(/\(missing piece\)/gi, '').trim()}`
   used.add(normalizeArchetypeText(candidate))
   return candidate
@@ -6586,12 +6637,14 @@ function dedupeAndDifferentiateEditorialDirections(directions = [], selectedPiec
     if (titleKey) seenTitles.add(titleKey)
 
     const missing = Array.isArray(copy.missingPieces) ? copy.missingPieces : []
+    let replacedAnchorRole = false
     copy.missingPieces = missing.map(piece => {
       const raw = typeof piece === 'string' ? piece : piece?.name || String(piece || '')
       let next = raw.replace(/\(missing piece\)/gi, '').trim()
       const key = normalizeArchetypeText(next)
       if (!next) next = 'specific editorial support piece'
       if (violatesAnchorRole(next) || usedMissing.has(key) || ownedLooksSimilarToArchetype(next, ownedPieces)) {
+        if (violatesAnchorRole(next)) replacedAnchorRole = true
         next = makeDistinctNewPieceArchetype(next, selectedPiece, usedMissing)
       } else {
         usedMissing.add(key)
@@ -6602,6 +6655,14 @@ function dedupeAndDifferentiateEditorialDirections(directions = [], selectedPiec
     // In new-piece mode, every direction should contain at least two suggested additions.
     while (copy.missingPieces.length < 2) {
       copy.missingPieces.push(makeDistinctNewPieceArchetype('', selectedPiece, usedMissing))
+    }
+
+    if (replacedAnchorRole && anchorGroup === 'bottom') {
+      copy.reason = `Keeps ${selectedPiece.name} as the visual anchor and changes the support pieces around it instead of replacing the bottom.`
+      copy.visualPrompt = `Style ${selectedPiece.name} with ${copy.missingPieces.join(' + ')}. Preserve the selected bottom exactly: same hem length, print, rise, drape, and waist placement. Do not replace it with another skirt, pant, trouser, jean, dress, or jumpsuit.`
+    } else if (replacedAnchorRole && anchorGroup === 'top') {
+      copy.reason = `Keeps ${selectedPiece.name} as the visual anchor and changes the bottom, shoe, or support pieces around it.`
+      copy.visualPrompt = `Style ${selectedPiece.name} with ${copy.missingPieces.join(' + ')}. Preserve the selected top exactly: same neckline, sleeves, fit, hem, color, and print. Do not replace it with another top or dress.`
     }
 
     copy.reason = String(copy.reason || '').replace(/\bjeans?\b/gi, m => m)
@@ -6629,6 +6690,10 @@ Rules:
 - Every concept must use the selected garment as the anchor.
 - Supporting pieces must be conceptual suggested additions, not saved wardrobe items.
 - Do not include wardrobe-piece names unless they are the selected garment.
+- Never suggest a missing piece that replaces the selected garment's wardrobe role.
+- If the selected garment is a skirt, trousers, pants, jeans, shorts, or any bottom, the selected garment is already the bottom. MissingPieces may include tops, layers, shoes, bags, or jewelry only.
+- If the selected garment is a top, blouse, shirt, tee, tank, sweater, or shell, the selected garment is already the top. MissingPieces may include bottoms, layers, shoes, bags, or jewelry only.
+- If the selected garment is a dress, the selected garment is already the one-piece outfit base. MissingPieces may include shoes, layers, bags, belts, or jewelry only.
 - Use the owned inventory list only to AVOID recommending things she already owns.
 - If a common archetype is already represented in her wardrobe, suggest a meaningfully different version: different color family, cleaner cut, stronger visual weight, different texture, or more precise shape.
 - Be specific and editorial: e.g. "deep chocolate straight-leg trouser with clean hem", "ink navy matte column skirt with slight weight", "cognac slim-soled pointed loafer", "black kitten mule with almond toe".
@@ -6702,6 +6767,10 @@ function editorialImagePrompt({ selectedPiece, direction, occasion, season }) {
     selectedPiece.notes   ? `notes: ${String(selectedPiece.notes).slice(0, 700)}` : ''
   ].filter(Boolean).join('; ')
   const anchorRules = anchorFidelityInstructions(selectedPiece)
+  const selectedGroup = wardrobeCategoryGroup(selectedPiece)
+  const silhouetteRule = selectedGroup === 'bottom' || selectedGroup === 'dress'
+    ? 'Silhouette: respect the anchor garment actual hem length and lower-body shape. If the anchor is a knee skirt, midi skirt, cropped pant, or dress, keep that exact length; do not force a full-length lower half.'
+    : 'Silhouette: fitted or structured upper half + full-length bottom (wide-leg, straight-leg, flowing maxi/midi). The lower half is usually full-length unless a specific suggested piece says otherwise.'
  
   return [
     'Full-figure personal styling concept image. Full outfit visible from head to shoes. Simple neutral or natural background, soft daylight or studio light. No text, labels, watermarks, or additional people.',
@@ -6710,7 +6779,7 @@ function editorialImagePrompt({ selectedPiece, direction, occasion, season }) {
  
     'Aesthetic: Urban Artisan. One expressive element per outfit — either an interesting top (pattern, texture, color-block) OR a skirt with movement — never both at once. The rest of the outfit is quieter and grounds the expression.',
  
-    'Silhouette: fitted or structured upper half + full-length bottom (wide-leg, straight-leg, flowing maxi/midi). The lower half is always full-length.',
+    silhouetteRule,
  
     'Shoes: pointed-toe dark flat, black or cognac kitten heel, slim-soled leather loafer, or ankle boot with edge. NEVER round-toe flat, chunky sole, white sneaker, Oxford shoe, or beige/neutral casual slip-on.',
  
