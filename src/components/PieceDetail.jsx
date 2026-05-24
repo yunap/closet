@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 
 const COLOR_BG = {
   'black': '#2A2420', 'white': '#F0EDE8', 'navy': '#1E2D4A', 'cream': '#E8DFC8',
@@ -30,10 +31,15 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
   const bg = piece.colors[0] ? (COLOR_BG[piece.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
   const [photoTab, setPhotoTab] = useState(piece.photo ? 'hanger' : piece.worn_photo ? 'worn' : null)
   const [outfits,  setOutfits]  = useState([])
+  const sheetRef = useRef(null)
 
   useEffect(() => {
     fetch(`/api/pieces/${piece.id}/outfits`)
       .then(r => r.json()).then(setOutfits).catch(() => {})
+  }, [piece.id])
+
+  useEffect(() => {
+    requestAnimationFrame(() => sheetRef.current?.scrollTo({ top: 0 }))
   }, [piece.id])
 
   const handleDelete = () => {
@@ -44,9 +50,9 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
   const hasEither = piece.photo || piece.worn_photo
   const hasPhoto  = piece.photo || piece.worn_photo
 
-  return (
+  return createPortal(
     <div className="modal-overlay piece-detail-overlay" onClick={onClose}>
-      <div className="modal-sheet piece-detail-sheet" onClick={e => e.stopPropagation()}>
+      <div ref={sheetRef} className="modal-sheet piece-detail-sheet" onClick={e => e.stopPropagation()}>
         <div className="modal-handle" />
 
         {/* Photo */}
@@ -162,6 +168,7 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
