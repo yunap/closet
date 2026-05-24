@@ -485,12 +485,16 @@ img { display: block; max-width: 100%; }
 
 @media (min-width: 768px) {
   .piece-detail-overlay {
-    align-items: flex-start;
-    padding-top: 24px;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    overflow-y: hidden;
   }
 
   .piece-detail-sheet {
     margin-top: 0;
+    max-height: calc(100dvh - 48px);
+    overflow-y: auto;
   }
 }
 

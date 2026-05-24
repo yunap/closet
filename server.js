@@ -4085,7 +4085,8 @@ function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = new Map
   ].filter(Boolean).join('\n')
 }
 
-function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
+function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', variantMode = 'similar' }) {
+  const mode = variantMode === 'creative' ? 'creative' : 'similar'
   const anchorPiece = (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'top')
     || (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'dress')
     || (pieces || [])[0]
@@ -4094,16 +4095,28 @@ function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual',
     return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
   }).join('\n')
   return [
-    'Create one image showing three outfit alternatives inspired by the saved outfit photo.',
+    mode === 'creative'
+      ? 'Create one image showing three creative outfit alternatives inspired by the saved outfit photo.'
+      : 'Create one image showing three similar outfit variants inspired by the saved outfit photo.',
     'Show the three alternatives side by side as a clean triptych/contact sheet. Each alternative should be a full-body outfit on the same person.',
-    'Do not copy the input outfit. Make each alternative meaningfully different.',
-    anchorPiece ? `Keep this linked garment as the visible anchor in all three alternatives: ${anchorPiece.name} (${wardrobeCategoryGroup(anchorPiece)}). Do not replace or redesign that anchor garment.` : '',
-    'Surface at least three distinct outfit formula families across the alternatives. Vary support pieces, shoe/grounding strategy, layer logic, color story, and visual rhythm. Do not generate near-duplicates.',
-    'Use taste guardrails as boundaries, not a fixed recipe: avoid generic casual/resort/preppy styling, bland retail styling, and overly soft beige looks.',
-    'Do not make all three alternatives earthy, vintage, bohemian, or autumnal. Do not repeat the same skirt shape, same shoe family, same color family, or same layer idea across all three.',
-    'At least one option should feel sharper, urban, graphic, or minimal rather than warm/bohemian. One option may be softer or more romantic, but the set must not collapse into one mood.',
     'Use the source photo only for identity, proportions, and fit context.',
     'Use the linked garment references when useful. You may change supporting styling pieces freely, but keep the anchor garment.',
+    anchorPiece ? `Keep this linked garment as a visible anchor in all three alternatives unless the saved outfit itself has no clear anchor: ${anchorPiece.name} (${wardrobeCategoryGroup(anchorPiece)}). Do not replace or redesign that anchor garment.` : '',
+    '',
+    'Shared quality rules:',
+    '- Avoid mere micro-variations such as only changing tuck, sleeve length, belt, jewelry, or bag.',
+    '- Each alternative must change a meaningful styling axis: silhouette relationship, grounding/shoe strategy, layer logic, palette relationship, focal hierarchy, or outfit category.',
+    '- Prefer high-quality styling ideas over maximum difference.',
+    '- Keep proportions coherent, visual hierarchy clear, and wearability believable.',
+    '- Avoid random novelty, generic catalog styling, influencer polish, bland retail styling, and overly soft beige looks.',
+    '- Do not repeat the same skirt shape, same shoe family, same color family, or same layer idea across all three.',
+    '',
+    mode === 'creative'
+      ? 'Creative alternatives mode: allow bigger changes in silhouette, palette, mood, polish level, and outfit category. The ideas may feel exploratory or surprising, but they must still read like plausible personal outfits.'
+      : 'Similar variants mode: preserve the original outfit style DNA. Keep the same general mood, maintenance level, silhouette logic, and emotional tone. Change pieces enough to create useful alternatives, but the result should feel like same person, different day.',
+    mode === 'creative'
+      ? 'Surface at least three distinct outfit formula families across the alternatives.'
+      : 'Keep the alternatives adjacent to the source outfit while avoiding near-duplicates.',
     'Full body, realistic clothing, no text, no labels, no watermark, no mirror selfie.',
     '',
     `Saved outfit: ${outfit.label || outfit.title || outfit.name || 'saved outfit'}`,
@@ -4112,7 +4125,7 @@ function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual',
   ].filter(Boolean).join('\n')
 }
 
-async function createSavedOutfitImage({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', index = 1 }) {
+async function createSavedOutfitImage({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', index = 1, variantMode = 'similar' }) {
   const startedAt = Date.now()
   const timings = {}
   const filename = `generated-boards/saved-outfit-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
@@ -4124,7 +4137,7 @@ async function createSavedOutfitImage({ outfit = {}, pieces = [], occasion = 'ca
     const collageStartedAt = Date.now()
       const imageUrl = await createPhotoPreservingCollageImage({
       title: 'Outfit alternatives',
-      subtitle: 'saved outfit variant · photo-preserving collage',
+      subtitle: variantMode === 'creative' ? 'creative outfit alternatives · photo-preserving collage' : 'similar outfit variants · photo-preserving collage',
       sourcePath,
       pieces,
       reason: 'Uses the saved outfit photo and linked garment photos as references.',
@@ -4167,7 +4180,7 @@ async function createSavedOutfitImage({ outfit = {}, pieces = [], occasion = 'ca
       contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion calibration reference.' : 'Taste calibration reference.' })
     }
 
-    contentParts.push({ type: 'input_text', text: savedOutfitImagePrompt({ outfit, pieces, occasion, season }) })
+    contentParts.push({ type: 'input_text', text: savedOutfitImagePrompt({ outfit, pieces, occasion, season, variantMode }) })
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
       model: 'gpt-4o',
@@ -4187,7 +4200,7 @@ async function createSavedOutfitImage({ outfit = {}, pieces = [], occasion = 'ca
     timings.gpt4oError = err.message
     const imageUrl = await createPhotoPreservingCollageImage({
       title: 'Outfit alternatives',
-      subtitle: 'saved outfit variant fallback · source and garment photos',
+      subtitle: variantMode === 'creative' ? 'creative alternatives fallback · source and garment photos' : 'similar variants fallback · source and garment photos',
       sourcePath,
       pieces,
       reason: `Image generation fallback: ${err.message}`,
@@ -5408,12 +5421,14 @@ Return ONLY a valid JSON object — no markdown, no explanation:
     {
       "name_suggestion": "short name 2-4 words, lowercase",
       "category": "top|bottom|dress|outerwear|shoes|accessory",
-      "colors": ["use only: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, plum, green, olive, turquoise, dark blue, dark grey, light grey, multi"],
+      "colors": ["use only: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, multi"],
       "occasions": ["use only: casual, city, evening, smart-casual, outdoor, home"],
       "season": "warm|cool|year-round"
     }
   ]
-}` }
+}
+
+Color note: use lavender/lilac/mauve for muted purple or purple-pink items; do not call those taupe unless the color is truly warm grey-brown.` }
         ]
       }]
     })
@@ -5506,7 +5521,7 @@ const TAG_PIECE_PROMPT = `Analyze this clothing item hanger/flat-lay photo. Retu
   "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'bold multicolor floral knit top' or 'black cream botanical midi skirt'",
   "category": "top|bottom|dress|outerwear|shoes|accessory",
   "background_color": "the literal base/background color of the garment, e.g. black, navy, cream, white",
-  "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, plum, green, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
+  "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
   "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
   "season": "warm|cool|year-round",
   "pattern_type": "solid|floral|stripe|botanical|geometric|abstract|animal|graphic|plaid|other",
@@ -5532,7 +5547,7 @@ const TAG_PIECE_PROMPT = `Analyze this clothing item hanger/flat-lay photo. Retu
 async function tagPieceWithProvider(filePath) {
   const { base64, mime } = await prepareImageForClaude(filePath)
   const payload = {
-    system: 'You tag wardrobe items from hanger or flat-lay photos. Return only valid JSON matching the requested schema.',
+    system: 'You tag wardrobe items from hanger or flat-lay photos. Return only valid JSON matching the requested schema. Use lavender/lilac/mauve for muted purple or purple-pink items; do not collapse them into taupe unless the item is truly warm grey-brown.',
     maxTokens: 700,
     messages: [{
       role: 'user',
@@ -5842,6 +5857,21 @@ ${globalFeedbackText}` : ''
     })
   } catch (err) {
     console.error('Generate outfit ideas error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+
+app.delete('/api/ai/whole-wardrobe-session-memory', (req, res) => {
+  try {
+    const result = db.prepare('DELETE FROM whole_wardrobe_sessions').run()
+    res.json({
+      success: true,
+      clearedCount: result.changes || 0,
+      mode: 'reset_whole_wardrobe_session_memory'
+    })
+  } catch (err) {
+    console.error('Reset whole-wardrobe session memory error:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -6199,8 +6229,9 @@ app.post('/api/ai/generate-wardrobe-outfit-comparison-sheet', async (req, res) =
 })
 
 app.post('/api/ai/generate-saved-outfit-image', async (req, res) => {
-  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season' } = req.body || {}
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', variantMode = 'similar' } = req.body || {}
   try {
+    const mode = variantMode === 'creative' ? 'creative' : 'similar'
     let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
       .map(Number)
       .filter(Boolean))]
@@ -6218,23 +6249,30 @@ app.post('/api/ai/generate-saved-outfit-image', async (req, res) => {
 
     if (pieces.length < 2) return res.status(400).json({ error: 'At least two linked wardrobe pieces are required' })
 
-    const rendered = await createSavedOutfitImage({ outfit, pieces, occasion, season, index: 1 })
+    const rendered = await createSavedOutfitImage({ outfit, pieces, occasion, season, index: 1, variantMode: mode })
     const boards = [{
-      label: 'Outfit alternatives',
-      reason: 'One GPT-4o call generated three distinct outfit alternatives from the saved outfit photo and linked garment references.',
-      watchFor: 'The three alternatives should use different outfit formulas rather than repeat the same styling idea.',
+      label: mode === 'creative' ? 'Creative outfit alternatives' : 'Similar outfit variants',
+      reason: mode === 'creative'
+        ? 'One GPT-4o call generated three exploratory outfit alternatives from the saved outfit photo and linked garment references.'
+        : 'One GPT-4o call generated three adjacent outfit variants from the saved outfit photo and linked garment references.',
+      watchFor: mode === 'creative'
+        ? 'The alternatives should explore different formulas without turning into random novelty.'
+        : 'The variants should feel like the same person on a different day, not tiny styling tweaks.',
       pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
       imageUrl: rendered.imageUrl,
       debug: { timings: rendered.timings, renderer: rendered.renderer },
       savedOutfit: true,
-      variant: true
+      variant: true,
+      variantMode: mode
     }]
     res.json({
       boards,
-      feedback: 'Generated three outfit alternatives in one image from the saved outfit photo and linked garment references.',
+      feedback: mode === 'creative'
+        ? 'Generated three creative outfit alternatives in one image from the saved outfit photo and linked garment references.'
+        : 'Generated three similar outfit variants in one image from the saved outfit photo and linked garment references.',
       provider: 'openai',
-      mode: 'generate_saved_outfit_variants',
-      debug: { variantCount: 3, requestCount: 1 }
+      mode: mode === 'creative' ? 'generate_saved_outfit_creative_alternatives' : 'generate_saved_outfit_similar_variants',
+      debug: { variantCount: 3, requestCount: 1, variantMode: mode }
     })
   } catch (err) {
     console.error('Generate saved outfit image error:', err)

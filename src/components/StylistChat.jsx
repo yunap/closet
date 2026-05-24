@@ -142,6 +142,8 @@ export default function AskClaude({
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
+  const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
+  const [recentMemoryResetting, setRecentMemoryResetting] = useState(false)
   const [savedIndices, setSavedIndices] = useState(new Set())
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
   const [feedbackIdsByKey, setFeedbackIdsByKey] = useState({})
@@ -221,7 +223,7 @@ export default function AskClaude({
     setImageFile(null); setImagePrev(null)
     onClearOutfit?.()
     if (shouldAutoSend) {
-      const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? 'variants' : 'critique'}:${prompt}`
+      const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? `variants-${initialOutfit.variantMode || 'similar'}` : 'critique'}:${prompt}`
       if (lastAutoOutfitActionRef.current === actionKey) return
       lastAutoOutfitActionRef.current = actionKey
       setTimeout(() => send({ outfit: initialOutfit, input: prompt }), 0)
@@ -587,6 +589,27 @@ export default function AskClaude({
                             Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
                           </div>
                         )}
+                        {(() => {
+                          const saveKey = `whole-wardrobe-preview-sheet:${messageIndex}:${boardIdx}`
+                          const isSaved = savedBoardKeys.has(saveKey)
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => saveGeneratedBoard({
+                                key: saveKey,
+                                board,
+                                boardType: 'whole_wardrobe_preview_sheet',
+                                messageIndex,
+                                boardIndex: boardIdx,
+                                contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                              })}
+                              disabled={isSaved}
+                              style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer', marginTop: 7 }}
+                            >
+                              {isSaved ? '✓ Saved preview board' : 'Save preview board'}
+                            </button>
+                          )
+                        })()}
                       </>
                     )}
                   </div>
@@ -1189,6 +1212,7 @@ export default function AskClaude({
     const mood = wardrobeOutfitMood || 'artistic minimalist'
     const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, ${mood}` : ''}.`
 
+    setRecentMemoryStatus('')
     setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Use my wardrobe' }])
     addToHistory('user', userText)
     setLoading(true)
@@ -1228,6 +1252,26 @@ export default function AskClaude({
       clearLoadingTimers()
       setLoadingStatus('')
       setLoading(false)
+    }
+  }
+
+  const resetWholeWardrobeSessionMemory = async () => {
+    if (recentMemoryResetting) return
+    setRecentMemoryResetting(true)
+    setRecentMemoryStatus('')
+
+    try {
+      const res = await fetch('/api/ai/whole-wardrobe-session-memory', { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Could not reset recent outfit memory')
+      const clearedCount = Number(data.clearedCount || 0)
+      setRecentMemoryStatus(clearedCount
+        ? `Cleared ${clearedCount} recent result ${clearedCount === 1 ? 'set' : 'sets'}.`
+        : 'Recent outfit memory is already clear.')
+    } catch (err) {
+      setRecentMemoryStatus(`Reset failed: ${err.message}`)
+    } finally {
+      setRecentMemoryResetting(false)
     }
   }
 
@@ -1293,6 +1337,7 @@ export default function AskClaude({
         replyText = data.feedback || data.error || 'Something went wrong.'
 
       } else if (outfitToSend?.imageGenerationMode) {
+        const savedOutfitVariantMode = outfitToSend.variantMode === 'creative' ? 'creative' : 'similar'
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
           ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
           : []
@@ -1313,6 +1358,7 @@ export default function AskClaude({
             pieceIds: outfitPieceIds,
             occasion: outfitToSend.occasion || effectiveGenerateOccasion,
             season: outfitToSend.season || effectiveGenerateSeason,
+            variantMode: savedOutfitVariantMode,
           })
         })
         const contentType = res.headers.get('content-type') || ''
@@ -1324,7 +1370,9 @@ export default function AskClaude({
         }
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate outfit variants')
-        replyText = data.feedback || 'Generated outfit variants from the saved outfit photo and linked garment references.'
+        replyText = data.feedback || (savedOutfitVariantMode === 'creative'
+          ? 'Generated creative outfit alternatives from the saved outfit photo and linked garment references.'
+          : 'Generated similar outfit variants from the saved outfit photo and linked garment references.')
         setBoardResults(prev => ({ ...prev, [assistantIndex]: data.boards || [data.board || data] }))
 
       } else if (outfitToSend) {
@@ -1736,13 +1784,23 @@ export default function AskClaude({
                     <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Use my wardrobe</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
                   </div>
-                  <button
-                    onClick={generateWholeWardrobeOutfits}
-                    disabled={loading}
-                    style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
-                  >
-                    {loading ? 'Creating...' : 'Create outfits'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={resetWholeWardrobeSessionMemory}
+                      disabled={recentMemoryResetting || loading}
+                      title="Clears only recently shown Generate 5 outfit memory. Saved feedback and learning stay intact."
+                      style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
+                    >
+                      {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
+                    </button>
+                    <button
+                      onClick={generateWholeWardrobeOutfits}
+                      disabled={loading}
+                      style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
+                    >
+                      {loading ? 'Creating...' : 'Create outfits'}
+                    </button>
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
                   <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
@@ -1762,6 +1820,11 @@ export default function AskClaude({
                   </select>
                   <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
                 </div>
+                {recentMemoryStatus && (
+                  <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
+                    {recentMemoryStatus}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1963,7 +2026,7 @@ export default function AskClaude({
             )}
             {pendingOutfit && (
               <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 }}>
                   <button
                     onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', compareOutfitId: '' })}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
@@ -1971,10 +2034,16 @@ export default function AskClaude({
                     Critique outfit
                   </button>
                   <button
-                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true }, input: 'Generate outfit variants from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
+                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'similar' }, input: 'Generate similar variants from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
                   >
-                    Generate 3 variants
+                    Similar variants
+                  </button>
+                  <button
+                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'creative' }, input: 'Generate creative alternatives from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
+                  >
+                    Creative alternatives
                   </button>
                 </div>
                 <select value={compareOutfitId} onChange={e => { setCompareOutfitId(e.target.value); if (e.target.value && (!input.trim() || input === 'What do you think of this outfit?')) setInput('Which outfit works better for me?') }} style={{ width: '100%', padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
