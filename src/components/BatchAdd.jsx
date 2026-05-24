@@ -33,6 +33,24 @@ function emptyForm() {
   }
 }
 
+function ThumbnailSizeControl({ value, onChange }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+      Image size
+      <input
+        type="range"
+        min="180"
+        max="520"
+        step="20"
+        value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        aria-label="Image size"
+        style={{ width: 120, accentColor: 'var(--accent)' }}
+      />
+    </label>
+  )
+}
+
 // ── Phase: Select ──────────────────────────────────────────────────────────────
 function SelectPhase({ onFiles }) {
   const inputRef = useRef()
@@ -84,11 +102,13 @@ function SelectPhase({ onFiles }) {
 }
 
 // ── Phase: Processing ──────────────────────────────────────────────────────────
-function ProcessingPhase({ items }) {
+function ProcessingPhase({ items, thumbnailSize }) {
   const done    = items.filter(i => i.status === 'ready' || i.status === 'error').length
   const total   = items.length
   const pct     = Math.round((done / total) * 100)
   const current = items.find(i => i.status === 'tagging')
+  const currentThumbSize = Math.max(52, Math.round(thumbnailSize / 4))
+  const gridThumbSize = Math.max(72, Math.round(thumbnailSize / 3))
 
   return (
     <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -105,7 +125,7 @@ function ProcessingPhase({ items }) {
       {/* Current item */}
       {current && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: 'var(--surface)', borderRadius: 'var(--radius)', border: '1px solid var(--border-light)' }}>
-          <img src={current.preview} alt="" style={{ width: 52, height: 52, objectFit: 'contain', borderRadius: 8, background: 'var(--surface-2)' }} />
+          <img src={current.preview} alt="" style={{ width: currentThumbSize, height: currentThumbSize, objectFit: 'contain', borderRadius: 8, background: 'var(--surface-2)' }} />
           <div>
             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 2 }}>Analyzing photo {items.indexOf(current) + 1}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -116,7 +136,7 @@ function ProcessingPhase({ items }) {
       )}
 
       {/* Thumbnail grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${gridThumbSize}px, 1fr))`, gap: 8 }}>
         {items.map((item, i) => (
           <div key={i} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-light)' }}>
             <img src={item.preview} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'contain', background: 'var(--surface-2)', display: 'block' }} />
@@ -142,7 +162,7 @@ function ProcessingPhase({ items }) {
 }
 
 // ── Phase: Review (one item at a time) ────────────────────────────────────────
-function ReviewPhase({ items, currentIndex, onSave, onSkip }) {
+function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
   const item = items[currentIndex]
   const total = items.length
   const [form, setForm] = useState({ ...emptyForm(), ...item.form })
@@ -172,7 +192,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Progress header */}
-      <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
         <div>
           <div style={{ fontFamily: 'var(--font-serif)', fontSize: 20, fontWeight: 500 }}>Review</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{currentIndex + 1} of {total}</div>
@@ -195,7 +215,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip }) {
       <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
 
         {/* Photo */}
-        <img src={item.preview} alt="" style={{ width: '100%', maxHeight: 260, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)' }} />
+        <img src={item.preview} alt="" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)' }} />
 
         {item.status === 'error' && (
           <div style={{ padding: '10px 14px', background: 'var(--repair-bg)', color: 'var(--repair)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
@@ -265,9 +285,10 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip }) {
 }
 
 // ── Phase: Summary ─────────────────────────────────────────────────────────────
-function SummaryPhase({ items, onDone }) {
+function SummaryPhase({ items, onDone, thumbnailSize }) {
   const saved   = items.filter(i => i.status === 'saved').length
   const skipped = items.filter(i => i.status === 'skipped').length
+  const savedThumbSize = Math.max(72, Math.round(thumbnailSize / 3))
 
   return (
     <div style={{ padding: 40, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, textAlign: 'center' }}>
@@ -282,7 +303,7 @@ function SummaryPhase({ items, onDone }) {
 
       {/* Saved thumbnails */}
       {saved > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 8, width: '100%', maxWidth: 360 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${savedThumbSize}px, 1fr))`, gap: 8, width: '100%', maxWidth: 420 }}>
           {items.filter(i => i.status === 'saved').map((item, i) => (
             <div key={i} style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-light)', position: 'relative' }}>
               <img src={item.preview} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'contain', background: 'var(--surface-2)', display: 'block' }} />
@@ -304,6 +325,7 @@ export default function BatchAdd({ onDone }) {
   const [phase,   setPhase]   = useState('select')   // select | processing | reviewing | summary
   const [items,   setItems]   = useState([])
   const [current, setCurrent] = useState(0)
+  const [thumbnailSize, setThumbnailSize] = useState(260)
 
   const updateItem = (index, patch) => {
     setItems(prev => prev.map((it, i) => i === index ? { ...it, ...patch } : it))
@@ -396,15 +418,20 @@ export default function BatchAdd({ onDone }) {
       {/* Top bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 10 }}>
         <span style={{ fontFamily: 'var(--font-serif)', fontSize: 18 }}>Batch Add</span>
-        {phase !== 'processing' && (
-          <button className="modal-close" onClick={onDone}>✕</button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          {phase !== 'select' && (
+            <ThumbnailSizeControl value={thumbnailSize} onChange={setThumbnailSize} />
+          )}
+          {phase !== 'processing' && (
+            <button className="modal-close" onClick={onDone}>✕</button>
+          )}
+        </div>
       </div>
 
       {/* Phase content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: 560, margin: '0 auto', width: '100%' }}>
         {phase === 'select'     && <SelectPhase onFiles={startProcessing} />}
-        {phase === 'processing' && <ProcessingPhase items={items} />}
+        {phase === 'processing' && <ProcessingPhase items={items} thumbnailSize={thumbnailSize} />}
         {phase === 'reviewing'  && (
           <ReviewPhase
             key={current}
@@ -412,9 +439,10 @@ export default function BatchAdd({ onDone }) {
             currentIndex={current}
             onSave={handleSave}
             onSkip={handleSkip}
+            thumbnailSize={thumbnailSize}
           />
         )}
-        {phase === 'summary'    && <SummaryPhase items={items} onDone={onDone} />}
+        {phase === 'summary'    && <SummaryPhase items={items} onDone={onDone} thumbnailSize={thumbnailSize} />}
       </div>
 
       <style>{`
