@@ -1358,6 +1358,7 @@ NON-NEGOTIABLE TARGET:
 Compose like a visually literate artist/stylist, not a retail recommendation engine.
 The winning boards are controlled, edited, specific, and memorable. They have one clear visual thesis.
 Do NOT optimize for conventional flattering, generic balance, tasteful mature casual, or "elevated everyday" safety.
+Do not optimize for bland correctness. A stronger outfit has a readable visual thesis: one garment carries the visual intelligence and the surrounding garments support it through silhouette, grounding, waist clarity, shape continuity, or tension quality.
 
 Core hierarchy:
 1. Strong complete outfit composition first.
@@ -1389,6 +1390,8 @@ Reject/avoid while composing:
 Board architecture:
 - Each direction must be a complete outfit, not an accessory idea or vague styling suggestion.
 - Each direction must have a distinct purpose/lane.
+- Do not return alternatives that differ only by print, color, or minor garment swap while keeping the same silhouette logic. If the formula is the same, the visual thesis must be meaningfully different.
+- Prefer one visually intelligent garment with clear support pieces over three garments that are merely safe together.
 - Prefer 4-5 directions in closet-only mode if enough wardrobe pieces exist. Never pad with weak ideas.
 - First direction must be the most visually specific/signature direction, not the safest conventional one.
 
@@ -1458,6 +1461,8 @@ Return ONLY valid JSON. No markdown.
 
 You receive a curated set of complete candidate outfits already built from saved wardrobe pieces. Your job is to pick the strongest outfits right now, not to browse the raw closet.
 
+Do not optimize for safety. Optimize the returned set for readable outfit ideas: one garment carries visual intelligence, and the support garments clarify silhouette relationship, visual grounding, waist clarity, shape continuity, and tension quality.
+
 Yuna's style filter:
 - artistic minimalist, relaxed structure, modern bohemian restraint
 - one dominant silhouette idea
@@ -1474,6 +1479,7 @@ Rules:
 - Use only candidate outfit ids and owned garment ids/names provided.
 - Keep fewer than 5 if only 3-4 are genuinely strong.
 - Surface at least 3 distinct formula families across your selections when viable. Do not pick more than 2 outfits from the same formula family.
+- Avoid alternatives that differ only by print, color, or garment name while preserving identical silhouette logic. A different outfit must have a different visual thesis, grounding strategy, proportion behavior, or focal/support relationship.
 - Preserve exact owned piece ids and names.
 - Do not invent missing pieces.
 - Do not use words like flattering, elongating, slimming, confidence, balance the body, or draws attention upward.
@@ -2289,12 +2295,15 @@ function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   if (/\b(artistic|graphic|architectural|structured|utility|textured|corduroy|linen|denim)\b/.test(text)) add(8, 'artistic texture/structure')
   if (/\b(pointed|loafer|boot|mule|oxford|cognac|black)\b/.test(text) && groups.includes('shoes')) add(6, 'strong shoe grounding')
   if (/\b(contrast|column|dark|structured|utility|graphic)\b/.test(text)) add(5, 'clear visual thesis')
+  if (/\b(focal|hero|anchor|support|grounded|sharp|tension|thesis|waist clarity|shape continuity|visual intelligence)\b/.test(text)) add(5, 'outfit-level visual thesis')
 
   const wideCount = (text.match(/\b(wide|wide-leg|oversized|loose|flowing|voluminous|relaxed)\b/g) || []).length
   const softCount = (text.match(/\b(soft|gauzy|drape|drapey|chiffon|loose knit|oversized|cream|ivory|beige|taupe|sand)\b/g) || []).length
   const lightNeutralCount = (text.match(/\b(cream|ivory|beige|taupe|sand|oatmeal|white)\b/g) || []).length
+  const minorVariationCount = (text.match(/\b(similar|same|matching|coordinated|echoes|pairs well|goes with)\b/g) || []).length
   if (wideCount >= 2) add(-20, 'wide + wide risk')
   if (softCount >= 3) add(-24, 'soft stack risk')
+  if (minorVariationCount >= 3 && !/\b(tension|contrast|column|grounded|sharp|anchor|structure|thesis)\b/.test(text)) add(-10, 'minor-variation without thesis risk')
   if (lightNeutralCount >= 3 && !/\b(black|charcoal|espresso|plum|cognac|boot|loafer|pointed|graphic|structured)\b/.test(text)) add(-24, 'generic light-neutral softness')
   if (/\b(librarian|catalog|mature|ladylike|polished neutral|luxe neutral)\b/.test(text)) add(-28, 'catalog/librarian drift risk')
   if (groups.includes('shoes') && !/\b(pointed|loafer|boot|mule|oxford|black|cognac|structured|grounded)\b/.test(text)) add(-8, 'weak shoe grounding')
