@@ -827,6 +827,13 @@ function compatibilityScoreForSelectedItem(selected, candidate) {
   } else if (selected.category === 'dress') {
     if (['shoes','accessory','outerwear'].includes(candidate.category)) { score += 8; reasons.push('supports selected dress') }
     if (['top','bottom','dress'].includes(candidate.category)) { score -= 40; reasons.push('replaces dress') }
+  } else if (selected.category === 'shoes') {
+    if (candidate.category === 'top') { score += 9; reasons.push('needed top for selected shoes') }
+    if (candidate.category === 'bottom') { score += 9; reasons.push('needed bottom for selected shoes') }
+    if (candidate.category === 'dress') { score += 8; reasons.push('dress formula for selected shoes') }
+    if (candidate.category === 'outerwear') { score += 4; reasons.push('layer support for selected shoes') }
+    if (candidate.category === 'accessory') { score += 2; reasons.push('accessory support') }
+    if (candidate.category === 'shoes') { score -= 60; reasons.push('replacement shoe') }
   }
 
   // Color/taste compatibility for Yuna.
@@ -911,6 +918,8 @@ function selectCandidatesForOutfitGeneration(piece, allPieces, limit = 30) {
     addSome('top', 12); addSome('shoes', 8); addSome('outerwear', 5); addSome('accessory', 5)
   } else if (wardrobeCategoryGroup(piece) === 'dress') {
     addSome('shoes', 10); addSome('outerwear', 8); addSome('accessory', 6)
+  } else if (wardrobeCategoryGroup(piece) === 'shoes') {
+    addSome('top', 12); addSome('bottom', 12); addSome('dress', 8); addSome('outerwear', 6); addSome('accessory', 4)
   } else {
     mixed.push(...ranked.slice(0, limit))
   }
@@ -2031,6 +2040,50 @@ function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidates = []
       pieces: [shoes1, acc1, outer1].filter(Boolean),
       reason: 'Keeps the dress central and adds only support pieces from the wardrobe.',
       watchFor: 'avoid over-accessorizing the dress'
+    }))
+  } else if (wardrobeCategoryGroup(selected) === 'shoes') {
+    const top1 = pick('top', usedFirst); if (top1) usedFirst.add(Number(top1.id))
+    const bottom1 = pick('bottom', usedFirst); if (bottom1) usedFirst.add(Number(bottom1.id))
+    const outer1 = pick('outerwear', usedFirst); if (outer1) usedFirst.add(Number(outer1.id))
+    if (top1 && bottom1) outfits.push(make({
+      label: 'Best outfit for the shoes',
+      strength: 'signature',
+      dominantDirection: 'saved separates that let the selected shoes finish the outfit',
+      silhouette: 'top and bottom with the selected shoes as the grounding/artistic finish',
+      bestFor: 'city days, casual plans, travel',
+      pieces: [top1, bottom1, outer1].filter(Boolean),
+      reason: 'Builds a complete outfit around the selected shoes instead of treating them as an afterthought.',
+      watchFor: 'make sure the pant hem or skirt length leaves enough shoe visible'
+    }))
+
+    const usedSecond = new Set(outfits.flatMap(o => o.pieceIds.map(Number)))
+    const dress2 = pick('dress', usedSecond); if (dress2) usedSecond.add(Number(dress2.id))
+    const outer2 = pick('outerwear', usedSecond); if (outer2) usedSecond.add(Number(outer2.id))
+    const acc2 = pick('accessory', usedSecond); if (acc2) usedSecond.add(Number(acc2.id))
+    if (dress2) outfits.push(make({
+      label: 'Dress formula with shoe focus',
+      strength: 'strong',
+      dominantDirection: 'one-piece outfit grounded by the selected shoes',
+      silhouette: 'dress column or movement with the shoe pattern kept visible',
+      bestFor: 'lunch, gallery / art event, casual evening',
+      pieces: [dress2, outer2, acc2].filter(Boolean),
+      reason: 'Uses a one-piece base so the selected shoes can carry the playful/artistic note without too many competing garments.',
+      watchFor: 'avoid a dress hem that hides the shoe or competes with its pattern'
+    }))
+
+    const usedThird = new Set(outfits.flatMap(o => o.pieceIds.map(Number)))
+    const top3 = pick('top', usedThird); if (top3) usedThird.add(Number(top3.id))
+    const bottom3 = pick('bottom', usedThird); if (bottom3) usedThird.add(Number(bottom3.id))
+    const acc3 = pick('accessory', usedThird); if (acc3) usedThird.add(Number(acc3.id))
+    if (top3 && bottom3) outfits.push(make({
+      label: 'Alternate separates formula',
+      strength: 'usable',
+      dominantDirection: 'different saved separates with the selected shoes as the intentional accent',
+      silhouette: 'alternate top/bottom proportion finished by the same shoe',
+      bestFor: 'alternate everyday styling test',
+      pieces: [top3, bottom3, acc3].filter(Boolean),
+      reason: 'Gives a second testable separates option while keeping the selected shoes central.',
+      watchFor: 'keep the rest of the outfit quiet enough for patterned shoes to read intentional'
     }))
   } else {
     const top = pick('top', usedFirst); if (top) usedFirst.add(Number(top.id))
