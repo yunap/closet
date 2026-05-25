@@ -1580,6 +1580,15 @@ export default function AskClaude({
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button
+              className="chip"
+              style={{ marginTop: 4, opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
+              onClick={resetWholeWardrobeSessionMemory}
+              disabled={recentMemoryResetting || loading}
+              title="Clears only recently shown whole-wardrobe outfit memory. Saved feedback and learning stay intact."
+            >
+              {recentMemoryResetting ? 'Resetting…' : 'Reset recent'}
+            </button>
             <button className="chip" style={{ marginTop: 4 }} onClick={() => setCalibrationLibraryOpen(v => !v)}>
               {calibrationLibraryOpen ? 'Close calibration' : 'Calibration'}{calibrationImages.length ? ` · ${calibrationImages.length}` : ''}
             </button>
@@ -1593,6 +1602,11 @@ export default function AskClaude({
             )}
           </div>
         </div>
+        {recentMemoryStatus && (
+          <div style={{ marginTop: 6, fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
+            {recentMemoryStatus}
+          </div>
+        )}
       </div>
 
       {/* Calibration Library */}
