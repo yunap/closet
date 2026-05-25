@@ -1501,6 +1501,8 @@ Evaluation philosophy:
 - Successful personal outfits can rely on mixed textures, softness against structure, asymmetry, historical references, and imperfect harmony.
 - Do not automatically penalize visual tension. Classify it as productive tension or problematic tension.
 - Distinguish visual correctness from stylistic identity. An outfit can be slightly unresolved but still emotionally coherent and worth preserving.
+- Distinguish "balanced/correct" from "artistically alive." A balanced outfit may still be only safe intelligent casual if it lacks intentional tension, personal signature, or a clear style idea.
+- Do not overpraise equilibrium. Even when the verdict is keep, name the opportunity: what could increase style presence without making the outfit fussier.
 - Evaluate operational reality: whether the outfit survives movement, sitting, walking, sleeve/hem behavior, and whether it requires constant adjustment.
 - Evaluate garment fit and placement without commenting on the wearer's body. No body-shape/flattery language does not mean ignoring fit mechanics.
 - Linked garment trust overrides visual optimism. If a linked piece has recommendation trust "needs_fit_review", fit confidence "low", role restrictions, or engine notes about fit, the critique must treat that as authoritative context and explain how it affects the outfit.
@@ -1517,6 +1519,8 @@ Avoid:
 - recommending replacement of a linked/core garment as the first move. This is an evaluation of the saved outfit, not a request to rebuild it from scratch.
 - saying "replace the blouse/top/bottom/shoe" unless the verdict is avoid. For revise, first suggest an adjustment using the current pieces.
 - treating "cleaner", "sleeker", "simpler", or "more minimal" as automatically better
+- recommending "add a subtle pattern" as a generic next step. Pattern is only useful when it solves a named absence of texture/rhythm; do not add pattern to an outfit already using color, jewelry, strap, shine, asymmetry, or garment shape as the style idea.
+- "perfectly balanced", "no risks", or "none notable" unless the outfit has genuinely high style presence and no visible opportunity. Most keep verdicts should still name a small style-presence experiment.
 
 Replacement language rules:
 - Instead of "cohesive", name the actual relationship: "the vest frames the blouse", "the trouser line gives the outfit a soft base", or "the quiet palette lets the texture mix read intentionally."
@@ -1536,6 +1540,7 @@ Visible facts must include:
 - waistArea: what is visible at the waist/tuck/layer overlap. Do not invent shifting, tugging, or tuck failure from a still photo.
 - fitPlacement: whether garment placement looks natural for the garment design. Note if a skirt/pant/dress appears to sit above its intended waist, ride up, pull, bunch, strain, twist, collapse, or force a proportion. Describe garment mechanics only.
 - texturePattern: which texture, ruffle, shine, print, or drape is actually visible.
+- accessoryDialogue: visible jewelry, bag strap, belt, scarf, watch, or hardware relationships. Especially note repeated warm accents, color echoes, vertical lines, shine, or whether an accessory turns a correct outfit into an intentional one. If no accessories are visible, say "none visible".
 - shoeAnalysis:
   visibility: not visible | partly visible | visible/readable
   read: shoe category/shape only if clear; if not, say "light ankle shoe", "dark low shoe", etc. Do not overclaim sneaker/boot/flat/heel from partial visibility.
@@ -1555,6 +1560,9 @@ Intent inference must include:
 Evaluation within intent must include:
 - roles: heroPiece, supportPieces, groundingPiece, possibleCompetingPiece.
 - tensionType: productive, mixed, or problematic.
+- styleIdea: what the outfit is saying beyond "the pieces match"; identify the strongest visual idea, such as warm accent dialogue, stark monochrome with soft casual grounding, texture against clean denim, or print controlled by a quiet column.
+- intentionalTension: the garment/accessory relationship that creates personality or risk. If there is no meaningful tension, say the outfit reads correct but safe.
+- styleOpportunity: one way to increase style presence while preserving low maintenance.
 - mainSuccess: the best thing the outfit achieves within its intent.
 - firstVisibleIssue: the most visible unresolved area in the actual photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
 - If fitPlacement shows a garment riding too high, pulling, or sitting in a forced way, that can outrank color/print/styling issues. Treat it as garment fit behavior, not wearer-body critique.
@@ -1569,6 +1577,9 @@ Evaluation within intent must include:
 Recommendation rules:
 - recommendation.smallestAdjustment must address evaluation.firstVisibleIssue.
 - Do not recommend a replacement garment unless verdict is avoid.
+- If the outfit already works but reads safe/correct, recommendation.tryNext should test intentional tension rather than add random information. Good: "test the red/cognac shoe to echo the warm strap and pendant"; "try a sharper dark shoe for city polish"; "keep the top plain and let the warm vertical accents do the work." Bad: "try a subtle pattern."
+- Do not protect balance for its own sake. If a visible alternate shoe, bag, necklace, or small styling test could make the outfit more intentional, name it as an experiment even when the current version works.
+- If visible accessories create the strongest style idea, do not demote them to secondary decoration. Explain their role in mainSuccess, styleIdea, or intentionalTension.
 - If the firstVisibleIssue is shoe-related, the adjustment must name the visible mechanism. Bad: "try shoes with more presence." Good: "test the same dark shoe with the cuff lowered so the pant break does not swallow the toe" or "link the shoes so I can judge whether the low dark shape is intentional."
 - Tuck advice is allowed only when garment truth supports tucking AND visibleFacts.waistArea is the firstVisibleIssue. If recommending it, phrase it as a low-maintenance test, such as "try a cleaner front tuck if it stays put naturally", not as a fussy requirement.
 
@@ -1589,6 +1600,7 @@ JSON shape:
     "waistArea": "visible waist/tuck/layer overlap, or low-confidence note",
     "fitPlacement": "garment placement mechanics: natural, forced, riding high, pulling, bunching, low-confidence, etc.",
     "texturePattern": "visible texture/pattern/drape relationship",
+    "accessoryDialogue": "visible accessory color/shape/shine/strap/jewelry relationship, or none visible",
     "shoeAnalysis": {
       "visibility": "not visible | partly visible | visible/readable",
       "read": "shoe type/shape if clear, or low-confidence description",
@@ -1614,6 +1626,9 @@ JSON shape:
     },
     "tensionType": "productive | mixed | problematic",
     "maintenanceBurden": "low | medium | high",
+    "styleIdea": "the strongest visual idea beyond balance/correctness",
+    "intentionalTension": "relationship that creates personality/risk, or correct-but-safe if none",
+    "styleOpportunity": "one low-maintenance experiment that could increase style presence",
     "mainSuccess": "best thing this outfit achieves within its intent",
     "firstVisibleIssue": "most visible unresolved area from the photo",
     "scores": {
@@ -6411,6 +6426,7 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       visibleFacts.waistArea ? `Waist area: ${visibleFacts.waistArea}` : '',
       visibleFacts.fitPlacement ? `Fit placement: ${visibleFacts.fitPlacement}` : '',
       visibleFacts.texturePattern ? `Texture/pattern: ${visibleFacts.texturePattern}` : '',
+      visibleFacts.accessoryDialogue ? `Accessory dialogue: ${visibleFacts.accessoryDialogue}` : '',
       shoeText ? `Shoe analysis: ${shoeText}` : '',
       visibleFacts.photoSettingRead ? `Photo setting read: ${visibleFacts.photoSettingRead}` : '',
       visibleFacts.cropConfidence ? `Crop confidence: ${visibleFacts.cropConfidence}` : '',
@@ -6437,6 +6453,9 @@ app.post('/api/ai/evaluate-wardrobe-outfit', async (req, res) => {
       nestedEvaluation.maintenanceBurden || parsed.maintenanceBurden ? `Maintenance burden: ${nestedEvaluation.maintenanceBurden || parsed.maintenanceBurden}` : '',
       scoreText ? `Scores: ${scoreText}` : '',
       roleText ? `Roles:\n${roleText}` : '',
+      nestedEvaluation.styleIdea ? `Style idea: ${nestedEvaluation.styleIdea}` : '',
+      nestedEvaluation.intentionalTension ? `Intentional tension: ${nestedEvaluation.intentionalTension}` : '',
+      nestedEvaluation.styleOpportunity ? `Style opportunity: ${nestedEvaluation.styleOpportunity}` : '',
       nestedEvaluation.mainSuccess ? `Main success: ${nestedEvaluation.mainSuccess}` : '',
       nestedEvaluation.firstVisibleIssue ? `First visible issue: ${nestedEvaluation.firstVisibleIssue}` : '',
       Array.isArray(parsed.works) && parsed.works.length ? `Works: ${parsed.works.join(' ')}` : '',
