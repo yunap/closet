@@ -465,8 +465,11 @@ function textIncludesAny(value, words) {
   return words.some(w => haystack.includes(w))
 }
 
+const pieceTextBlobCache = new WeakMap()
+
 function pieceTextBlob(p) {
-  return [
+  if (p && typeof p === 'object' && pieceTextBlobCache.has(p)) return pieceTextBlobCache.get(p)
+  const value = [
     p.name, p.category, p.background_color, p.reads_as, p.pattern_type,
     p.pattern_scale, p.pattern_complexity, p.hem_finish, p.length_hits_at,
     p.silhouette, p.fabric_category, p.fabric_weight, p.fit_on_body,
@@ -474,6 +477,8 @@ function pieceTextBlob(p) {
     ...(p.colors || []), ...(p.occasions || []),
     ...(p.styling_rules_learned || []), ...(p.pairs_well_with || []), ...(p.tried_and_rejected || [])
   ].filter(Boolean).join(' ').toLowerCase()
+  if (p && typeof p === 'object') pieceTextBlobCache.set(p, value)
+  return value
 }
 
 
@@ -2311,7 +2316,10 @@ function bohoTraitForPiece(piece = {}) {
   return ''
 }
 
+const bohoSignalCache = new WeakMap()
+
 function bohoSignalForPiece(piece = {}) {
+  if (piece && typeof piece === 'object' && bohoSignalCache.has(piece)) return bohoSignalCache.get(piece)
   const text = pieceTextBlob(piece)
   let score = 0
   if (/\b(crochet|woven|raffia|rattan|cork|espadrille|basket|braided|embroidered|embroidery|artisan|handmade|paisley|botanical)\b/.test(text)) score += 3
@@ -2320,6 +2328,7 @@ function bohoSignalForPiece(piece = {}) {
   if (/\b(cognac|rust|terracotta|ochre|mustard|olive|brown|tan|amber|earthy)\b/.test(text)) score += 1
   if (/\b(sandal|clog|mule|boot|leather)\b/.test(text) && wardrobeCategoryGroup(piece) === 'shoes') score += 1
   if (/\b(denim|jean)\b/.test(text)) score += 0.5
+  if (piece && typeof piece === 'object') bohoSignalCache.set(piece, score)
   return score
 }
 
@@ -2586,6 +2595,7 @@ function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
   const candidates = []
   const seenCandidateKeys = new Set()
   const maxInitialCandidates = moodProfile?.id === 'modern_bohemian_restraint' ? 2400 : 5200
+  const maxSeparateCandidates = Math.round(maxInitialCandidates * 0.82)
   const shoes = bucket.shoes.length ? bucket.shoes.slice(0, moodProfile?.id === 'modern_bohemian_restraint' ? 12 : 14) : [null]
   const tops = bucket.top.slice(0, moodProfile?.id === 'modern_bohemian_restraint' ? 24 : 34)
   const bottoms = bucket.bottom.slice(0, moodProfile?.id === 'modern_bohemian_restraint' ? 20 : 28)
@@ -2605,13 +2615,21 @@ function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
     candidates.push({ key, pieces: clean, score: scored.score })
   }
 
+  separateCandidates:
   for (const top of tops) {
     for (const bottom of bottoms) {
-      for (const shoe of shoes) addCandidate([top, bottom, shoe])
+      for (const shoe of shoes) {
+        addCandidate([top, bottom, shoe])
+        if (candidates.length >= maxSeparateCandidates) break separateCandidates
+      }
     }
   }
+  dressCandidates:
   for (const dress of dresses) {
-    for (const shoe of shoes) addCandidate([dress, shoe])
+    for (const shoe of shoes) {
+      addCandidate([dress, shoe])
+      if (candidates.length >= maxInitialCandidates) break dressCandidates
+    }
   }
 
   const base = candidates
