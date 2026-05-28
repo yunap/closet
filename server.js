@@ -2279,6 +2279,23 @@ function filterWholeWardrobePiecesForGeneration(allPieces = [], options = {}) {
   return { allowedPieces, suppressedPieces }
 }
 
+function wholeWardrobeMoodProfile(mood = '') {
+  const text = String(mood || '').toLowerCase()
+  if (/\b(boho|bohemian)\b/.test(text)) {
+    return {
+      id: 'modern_bohemian_restraint',
+      label: 'modern bohemian restraint',
+      guidance: [
+        'Translate "boho" as modern bohemian restraint for Yuna: earthy/artisan texture, relaxed movement, woven/crochet/linen/botanical/paisley/denim/cognac/olive/rust notes, with city-appropriate grounding.',
+        'Do not interpret boho as festival costume, excessive layers, delicate romantic softness, or generic hippie styling.',
+        'Do not answer boho with plain all-black tailored minimalism unless another garment carries clear bohemian texture, print, movement, or warm artisan detail.',
+        'Each returned boho outfit still needs a readable visual thesis: the bohemian element should be the hero or a clear support texture, and the other garments should stabilize it.'
+      ].join(' ')
+    }
+  }
+  return null
+}
+
 function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   const text = pieces.map(pieceTextBlob).join(' ')
   const names = pieces.map(p => p.name).join(' + ')
@@ -2329,7 +2346,17 @@ function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   }
 
   const mood = String(options.mood || '').toLowerCase()
+  const moodProfile = wholeWardrobeMoodProfile(mood)
   if (mood && text.includes(mood)) add(2, 'mood match')
+  if (moodProfile?.id === 'modern_bohemian_restraint') {
+    const bohoHits = (text.match(/\b(linen|crochet|woven|raffia|rattan|embroid|artisan|textured|slub|gauzy|botanical|floral|paisley|earthy|olive|cognac|rust|mustard|terracotta|denim|midi|maxi|relaxed|drape|soft movement)\b/g) || []).length
+    const polishedGrounding = /\b(boot|mule|loafer|sandal|clog|wedge|leather|cognac|black|brown|pointed)\b/.test(text) && groups.includes('shoes')
+    if (bohoHits >= 2) add(18, 'boho mood match')
+    else if (bohoHits === 1) add(8, 'partial boho mood match')
+    else add(-16, 'misses boho mood')
+    if (polishedGrounding) add(5, 'city boho grounding')
+    if (/\b(black turtleneck|tailored trouser|pointed heel|minimal column|all black|monochrome)\b/.test(text) && bohoHits === 0) add(-16, 'too structured-minimal for boho mood')
+  }
 
   return { score, reasons: reasons.slice(0, 6), names }
 }
@@ -3501,6 +3528,7 @@ async function rankWholeWardrobeCandidatesWithVision({ candidates = [], candidat
 
   const sheet = await makeWholeWardrobeCandidateContactSheet(reviewCandidates, candidatePieces, 18)
   const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
+  const moodProfile = wholeWardrobeMoodProfile(mood)
   const raw = await askStylist({
     system: `You are Yuna's visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize Yuna's known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`,
     maxTokens: 900,
@@ -3512,6 +3540,7 @@ async function rankWholeWardrobeCandidatesWithVision({ candidates = [], candidat
           `Occasion: ${occasion || 'casual'}`,
           `Season: ${season || 'current season'}`,
           `Mood: ${mood || 'artistic minimalist'}`,
+          moodProfile ? `Mood interpretation:\n${moodProfile.guidance}` : '',
           memoryText ? `Taste memory:\n${memoryText}` : '',
           `Candidate truth:\n${candidateTruth}`,
           '',
@@ -5966,6 +5995,7 @@ app.post('/api/ai/generate-wardrobe-outfits', async (req, res) => {
   try {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
+    const moodProfile = wholeWardrobeMoodProfile(mood)
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
     const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
@@ -6035,6 +6065,7 @@ ${globalFeedbackText}` : ''
       `Occasion: ${occasion || 'casual'}`,
       `Season: ${season || 'current season'}`,
       `Mood: ${mood || 'artistic minimalist'}`,
+      moodProfile ? `Mood interpretation:\n${moodProfile.guidance}` : '',
       `Target count: ${requestedLimit}. Return fewer if only 3-4 are genuinely strong.`,
       '',
       memoryText,
