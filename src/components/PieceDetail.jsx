@@ -30,6 +30,7 @@ function OutfitThumb({ outfit }) {
 export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendToStylist }) {
   const bg = piece.colors[0] ? (COLOR_BG[piece.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
   const [photoTab, setPhotoTab] = useState(piece.photo ? 'hanger' : piece.worn_photo ? 'worn' : null)
+  const [previewImage, setPreviewImage] = useState(null)
   const [outfits,  setOutfits]  = useState([])
   const sheetRef = useRef(null)
 
@@ -48,7 +49,8 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
 
   const hasBoth   = piece.photo && piece.worn_photo
   const hasEither = piece.photo || piece.worn_photo
-  const hasPhoto  = piece.photo || piece.worn_photo
+  const activePhoto = photoTab === 'worn' ? piece.worn_photo : piece.photo
+  const activePhotoLabel = photoTab === 'worn' ? 'Worn photo' : 'Hanger photo'
 
   return createPortal(
     <div className="modal-overlay piece-detail-overlay" onClick={onClose}>
@@ -70,7 +72,14 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
                 ))}
               </div>
             )}
-            <img className="detail-photo" src={`/uploads/${photoTab === 'worn' ? piece.worn_photo : piece.photo}`} alt={piece.name} />
+            <button
+              type="button"
+              className="detail-photo-button"
+              onClick={() => activePhoto && setPreviewImage({ src: `/uploads/${activePhoto}`, title: piece.name, meta: activePhotoLabel })}
+              aria-label={`Open larger ${activePhotoLabel.toLowerCase()} for ${piece.name}`}
+            >
+              <img className="detail-photo" src={`/uploads/${activePhoto}`} alt={piece.name} />
+            </button>
           </div>
         ) : (
           <div className="detail-placeholder" style={{ background: bg }}>
@@ -168,6 +177,28 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
           </div>
         </div>
       </div>
+      {previewImage && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="image-preview-overlay"
+          onClick={e => {
+            e.stopPropagation()
+            setPreviewImage(null)
+          }}
+        >
+          <div className="image-preview-dialog" onClick={e => e.stopPropagation()}>
+            <div className="image-preview-header">
+              <div style={{ minWidth: 0 }}>
+                <div className="image-preview-title">{previewImage.title}</div>
+                {previewImage.meta && <div className="image-preview-meta">{previewImage.meta}</div>}
+              </div>
+              <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+            </div>
+            <img className="image-preview-img" src={previewImage.src} alt={previewImage.title} />
+          </div>
+        </div>
+      )}
     </div>,
     document.body
   )
