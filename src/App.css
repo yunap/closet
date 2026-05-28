@@ -581,8 +581,17 @@ img { display: block; max-width: 100%; }
   position: relative;
   border-radius: var(--radius);
   overflow: hidden;
+  background: var(--surface-2);
 }
-.photo-preview img { width: 100%; max-height: 240px; object-fit: cover; border-radius: var(--radius); }
+.photo-preview-open {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.photo-preview img { display: block; width: 100%; object-fit: contain; border-radius: var(--radius); }
 .photo-preview-remove {
   position: absolute;
   top: 8px;

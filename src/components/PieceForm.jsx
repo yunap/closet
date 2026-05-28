@@ -206,13 +206,20 @@ function Section({ label }) {
 }
 
 // ── Photo slot ─────────────────────────────────────────────────────────────────
-function PhotoSlot({ label, hint, preview, onChange, onClear, previewSize }) {
+function PhotoSlot({ label, hint, preview, onChange, onClear, previewSize, onPreview }) {
   return (
     <div className="form-group">
       <label className="form-label" style={{ fontSize: 10 }}>{label}</label>
       {preview ? (
         <div className="photo-preview">
-          <img src={preview} alt={label} style={{ height: previewSize, objectFit: 'contain', background: 'var(--surface-2)' }} />
+          <button
+            type="button"
+            className="photo-preview-open"
+            onClick={onPreview}
+            aria-label={`Open larger ${label.toLowerCase()}`}
+          >
+            <img src={preview} alt={label} style={{ height: previewSize, objectFit: 'contain', background: 'var(--surface-2)' }} />
+          </button>
           <button className="photo-preview-remove" onClick={onClear}>✕</button>
         </div>
       ) : (
@@ -308,6 +315,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [tagError,    setTagError]    = useState(null)
   const [fitNoting,   setFitNoting]   = useState(false)
   const [photoPreviewSize, setPhotoPreviewSize] = useState(180)
+  const [previewImage, setPreviewImage] = useState(null)
 
   const set       = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const toggleArr = (k, val) => setForm(f => ({
@@ -463,7 +471,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               style={{ width: 160, accentColor: 'var(--accent)' }}
             />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: photoPreviewSize >= 270 ? '1fr' : '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
             <PhotoSlot
               label="Hanger photo"
               hint="Auto-tags on upload"
@@ -471,6 +479,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               onChange={e => { const f = e.target.files[0]; if (f) { setHangerFile(f); setHangerPrev(URL.createObjectURL(f)); setClearHanger(false) } }}
               onClear={() => { setHangerFile(null); setHangerPrev(null); setClearHanger(true) }}
               previewSize={photoPreviewSize}
+              onPreview={() => hangerPrev && setPreviewImage({ src: hangerPrev, title: form.name || 'Piece', meta: 'Hanger photo' })}
             />
             <PhotoSlot
               label="Worn photo"
@@ -479,6 +488,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               onChange={e => { const f = e.target.files[0]; if (f) handleWornPhoto(f) }}
               onClear={() => { setWornFile(null); setWornPrev(null); setClearWorn(true) }}
               previewSize={photoPreviewSize}
+              onPreview={() => wornPrev && setPreviewImage({ src: wornPrev, title: form.name || 'Piece', meta: 'Worn photo' })}
             />
           </div>
 
@@ -785,6 +795,28 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           </button>
         </div>
       </div>
+      {previewImage && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="image-preview-overlay"
+          onClick={e => {
+            e.stopPropagation()
+            setPreviewImage(null)
+          }}
+        >
+          <div className="image-preview-dialog" onClick={e => e.stopPropagation()}>
+            <div className="image-preview-header">
+              <div style={{ minWidth: 0 }}>
+                <div className="image-preview-title">{previewImage.title}</div>
+                {previewImage.meta && <div className="image-preview-meta">{previewImage.meta}</div>}
+              </div>
+              <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+            </div>
+            <img className="image-preview-img" src={previewImage.src} alt={previewImage.title} />
+          </div>
+        </div>
+      )}
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   )
