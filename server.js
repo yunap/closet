@@ -1478,6 +1478,7 @@ Reject:
 Rules:
 - Use only candidate outfit ids and owned garment ids/names provided.
 - Keep fewer than 5 if only 3-4 are genuinely strong.
+- If a mood is provided, the selected outfits must visibly satisfy that mood. Do not let the default Yuna style filter override the requested mood.
 - Surface at least 3 distinct formula families across your selections when viable. Do not pick more than 2 outfits from the same formula family.
 - Avoid alternatives that differ only by print, color, or garment name while preserving identical silhouette logic. A different outfit must have a different visual thesis, grounding strategy, proportion behavior, or focal/support relationship.
 - Preserve exact owned piece ids and names.
@@ -2296,6 +2297,87 @@ function wholeWardrobeMoodProfile(mood = '') {
   return null
 }
 
+function bohoTraitForPiece(piece = {}) {
+  const text = pieceTextBlob(piece)
+  if (/\b(crochet|woven|raffia|rattan|cork|espadrille|basket|braided)\b/.test(text)) return 'woven texture'
+  if (/\b(embroidered|embroidery|artisan|handmade)\b/.test(text)) return 'artisan detail'
+  if (/\b(paisley|botanical|floral|abstract print|print)\b/.test(text)) return 'expressive print'
+  if (/\b(linen|gauzy|slub|cotton voile)\b/.test(text)) return 'dry natural texture'
+  if (/\b(tiered|maxi|midi|flowing|drape|soft movement)\b/.test(text)) return 'relaxed movement'
+  if (/\b(cognac|rust|terracotta|ochre|mustard|olive|brown|tan|amber)\b/.test(text)) return 'earthy color'
+  if (/\b(denim|jean)\b/.test(text)) return 'casual denim support'
+  return ''
+}
+
+function bohoSignalForPiece(piece = {}) {
+  const text = pieceTextBlob(piece)
+  let score = 0
+  if (/\b(crochet|woven|raffia|rattan|cork|espadrille|basket|braided|embroidered|embroidery|artisan|handmade|paisley|botanical)\b/.test(text)) score += 3
+  if (/\b(floral|abstract print|print|linen|gauzy|slub|cotton voile)\b/.test(text)) score += 2
+  if (/\b(tiered|maxi skirt|maxi dress|midi skirt|midi dress|flowing|drape|soft movement)\b/.test(text)) score += 1.5
+  if (/\b(cognac|rust|terracotta|ochre|mustard|olive|brown|tan|amber|earthy)\b/.test(text)) score += 1
+  if (/\b(sandal|clog|mule|boot|leather)\b/.test(text) && wardrobeCategoryGroup(piece) === 'shoes') score += 1
+  if (/\b(denim|jean)\b/.test(text)) score += 0.5
+  return score
+}
+
+function wholeWardrobeBohoSignalScore(pieces = []) {
+  return pieces.reduce((sum, piece) => sum + bohoSignalForPiece(piece), 0)
+}
+
+function wholeWardrobeMissesMood(outfitOrPieces, mood = '') {
+  const moodProfile = wholeWardrobeMoodProfile(mood)
+  if (moodProfile?.id !== 'modern_bohemian_restraint') return false
+  const pieces = Array.isArray(outfitOrPieces)
+    ? outfitOrPieces
+    : (Array.isArray(outfitOrPieces?.pieces) ? outfitOrPieces.pieces : [])
+  return wholeWardrobeBohoSignalScore(pieces) < 2
+}
+
+function strongestBohoPiece(pieces = []) {
+  return [...pieces]
+    .map(piece => ({ piece, score: bohoSignalForPiece(piece) }))
+    .sort((a, b) => b.score - a.score)[0]?.piece || pieces[0] || null
+}
+
+function bohoMoodLabelFromPieces(outfit = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const text = pieces.map(pieceTextBlob).join(' ')
+  if (pieces.some(p => wardrobeCategoryGroup(p) === 'dress')) return 'Grounded Bohemian Dress'
+  if (/\b(crochet|woven|raffia|rattan|cork|espadrille|basket|braided|artisan|embroidered|embroidery)\b/.test(text)) return 'Artisan City Bohemian'
+  if (/\b(paisley|botanical|floral|abstract print|print)\b/.test(text)) return 'Botanical Bohemian City'
+  if (/\b(cognac|rust|terracotta|ochre|mustard|olive|brown|tan|amber|earthy)\b/.test(text)) return 'Earthy Bohemian City'
+  return 'Modern Bohemian City'
+}
+
+function buildBohoOutfitReason(outfit = {}, pieces = [], occasion = 'city') {
+  const hero = strongestBohoPiece(pieces)
+  const shoe = pieces.find(p => wardrobeCategoryGroup(p) === 'shoes')
+  const support = pieces.find(p => hero && Number(p.id) !== Number(hero.id) && wardrobeCategoryGroup(p) !== 'shoes')
+  const heroTrait = bohoTraitForPiece(hero) || 'bohemian detail'
+  const supportText = support
+    ? `${support.name} keeps the shape ${/\b(city|gallery|art|museum)\b/i.test(occasion) ? 'city-readable' : 'wearable'} instead of letting the outfit drift costume-like.`
+    : ''
+  const shoeText = shoe
+    ? `${shoe.name} gives the outfit a practical grounded finish.`
+    : 'Add a grounded shoe before treating this as complete.'
+  return [
+    hero ? `${hero.name} carries the bohemian read through ${heroTrait}.` : '',
+    supportText,
+    shoeText
+  ].filter(Boolean).join(' ')
+}
+
+function buildBohoWatch(outfit = {}, pieces = []) {
+  const text = pieces.map(pieceTextBlob).join(' ')
+  const printCount = (text.match(/\b(floral|paisley|botanical|abstract|graphic|print|pattern)\b/g) || []).length
+  const softCount = (text.match(/\b(crochet|gauzy|drape|flowing|soft|tiered|ruffle)\b/g) || []).length
+  if (printCount >= 2) return 'Keep any added layer quiet so the print mix stays intentional.'
+  if (softCount >= 2) return 'Use a grounded shoe or structured support piece so the softness does not turn shapeless.'
+  if (!pieces.some(p => wardrobeCategoryGroup(p) === 'shoes')) return 'Choose the shoe before judging the outfit; boho needs grounded finish, not just texture.'
+  return 'Keep the bohemian detail as the clear thesis; avoid adding a second competing accent.'
+}
+
 function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   const text = pieces.map(pieceTextBlob).join(' ')
   const names = pieces.map(p => p.name).join(' + ')
@@ -2349,13 +2431,13 @@ function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   const moodProfile = wholeWardrobeMoodProfile(mood)
   if (mood && text.includes(mood)) add(2, 'mood match')
   if (moodProfile?.id === 'modern_bohemian_restraint') {
-    const bohoHits = (text.match(/\b(linen|crochet|woven|raffia|rattan|embroid|artisan|textured|slub|gauzy|botanical|floral|paisley|earthy|olive|cognac|rust|mustard|terracotta|denim|midi|maxi|relaxed|drape|soft movement)\b/g) || []).length
+    const bohoSignal = wholeWardrobeBohoSignalScore(pieces)
     const polishedGrounding = /\b(boot|mule|loafer|sandal|clog|wedge|leather|cognac|black|brown|pointed)\b/.test(text) && groups.includes('shoes')
-    if (bohoHits >= 2) add(18, 'boho mood match')
-    else if (bohoHits === 1) add(8, 'partial boho mood match')
-    else add(-16, 'misses boho mood')
+    if (bohoSignal >= 4) add(28, 'strong boho mood match')
+    else if (bohoSignal >= 2) add(16, 'boho mood match')
+    else add(-36, 'misses boho mood')
     if (polishedGrounding) add(5, 'city boho grounding')
-    if (/\b(black turtleneck|tailored trouser|pointed heel|minimal column|all black|monochrome)\b/.test(text) && bohoHits === 0) add(-16, 'too structured-minimal for boho mood')
+    if (/\b(black turtleneck|tailored trouser|pointed heel|minimal column|all black|monochrome)\b/.test(text) && bohoSignal < 2) add(-24, 'too structured-minimal for boho mood')
   }
 
   return { score, reasons: reasons.slice(0, 6), names }
@@ -2434,6 +2516,13 @@ function selectDiverseWholeWardrobeCandidates(candidates = [], limit = 60, optio
       if (axes.hasNonGraphicTop && !selectedHas(a => a.hasNonGraphicTop)) score += 16
       if (axes.hasSoftTexture && !selectedHas(a => a.hasSoftTexture)) score += 12
       if (axes.hasTonalDark && !selectedHas(a => a.hasTonalDark)) score += 12
+      const moodProfile = wholeWardrobeMoodProfile(options.mood)
+      if (moodProfile?.id === 'modern_bohemian_restraint') {
+        const bohoSignal = wholeWardrobeBohoSignalScore(candidate.pieces)
+        if (bohoSignal >= 4) score += 30
+        else if (bohoSignal >= 2) score += 16
+        else score -= 60
+      }
 
       score -= count(useCount.top, axes.topId) * 46
       score -= count(useCount.bottom, axes.bottomId) * 34
@@ -2520,8 +2609,12 @@ function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
 
   const ranked = candidates.sort((a, b) => b.score - a.score)
   const chosen = selectDiverseWholeWardrobeCandidates(ranked, 60, options)
+  const moodProfile = wholeWardrobeMoodProfile(options.mood)
   const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
-  const exploratory = ranked.find(candidate => exploratoryFamilies.has(inferOutfitArchetype({ pieces: candidate.pieces }, candidate.pieces, options.occasion).formulaFamily))
+  const exploratory = ranked.find(candidate => {
+    if (moodProfile?.id === 'modern_bohemian_restraint' && wholeWardrobeMissesMood(candidate.pieces, options.mood)) return false
+    return exploratoryFamilies.has(inferOutfitArchetype({ pieces: candidate.pieces }, candidate.pieces, options.occasion).formulaFamily)
+  })
   if (exploratory && chosen.length && !chosen.some(candidate => candidate.key === exploratory.key)) chosen[chosen.length - 1] = exploratory
   return chosen
     .map((candidate, index) => candidateObjectFromPieces(candidate.pieces, index, options))
@@ -2967,7 +3060,7 @@ function hasGenericWholeWardrobeText(outfit = {}) {
   return /\b(balances artfulness with modernity|playful touch|overall look|creates an artistic visual|refined silhouette|visual balance|contrasts well|modern artistic element|clean silhouette|may overwhelm the look|potential boxiness|ensure the playful elements do not overwhelm)\b/.test(text)
 }
 
-function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion = 'casual') {
+function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion = 'casual', mood = '') {
   const repaired = rewriteWholeWardrobeOutfitWithArchetype({ ...outfit }, candidatePieces, occasion)
   if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.label || '').trim()) repaired.label = wholeWardrobeLabelFromPieces(repaired)
   if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.dominantDirection || '').trim() || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.dominantDirection = wholeWardrobeArchetypeFor(repaired, candidatePieces, occasion).direction
@@ -2975,6 +3068,18 @@ function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion =
   if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.bestFor || '').trim()) repaired.bestFor = 'right-now wardrobe dressing'
   if (hasWholeWardrobePlaceholder(repaired) || hasGenericWholeWardrobeText(repaired) || !String(repaired.reason || '').trim()) repaired.reason = buildOutfitMechanicsReason(repaired, wholeWardrobeFullPieces(repaired, candidatePieces), wholeWardrobeArchetypeFor(repaired, candidatePieces, occasion))
   if (hasWholeWardrobePlaceholder(repaired) || hasGenericWholeWardrobeText(repaired) || !String(repaired.watchFor || '').trim() || /^none$/i.test(String(repaired.watchFor || '').trim())) repaired.watchFor = wholeWardrobeWatchFromPieces(repaired)
+  const moodProfile = wholeWardrobeMoodProfile(mood)
+  if (moodProfile?.id === 'modern_bohemian_restraint') {
+    const pieces = wholeWardrobeFullPieces(repaired, candidatePieces)
+    if (wholeWardrobeBohoSignalScore(pieces) >= 2) {
+      repaired.pieces = pieces
+      repaired.label = bohoMoodLabelFromPieces(repaired)
+      repaired.dominantDirection = 'modern bohemian restraint with city grounding'
+      repaired.silhouette = wholeWardrobeSilhouetteFromPieces(repaired)
+      repaired.reason = buildBohoOutfitReason(repaired, pieces, occasion)
+      repaired.watchFor = buildBohoWatch(repaired, pieces)
+    }
+  }
   return repaired
 }
 
@@ -3014,6 +3119,13 @@ function wholeWardrobeSelectionScore(outfit, selected, options = {}) {
   if (printFormulaCount >= 1) score -= 20 * printFormulaCount
   if (sameFormulaCount >= 1) score -= 45 * sameFormulaCount
   if (formula === 'compact_top_dark_column' && sameFormulaCount >= 1) score -= 25
+  const moodProfile = wholeWardrobeMoodProfile(options.mood)
+  if (moodProfile?.id === 'modern_bohemian_restraint') {
+    const bohoSignal = wholeWardrobeBohoSignalScore(pieces)
+    if (bohoSignal >= 4) score += 24
+    else if (bohoSignal >= 2) score += 12
+    else score -= 45
+  }
   return score
 }
 
@@ -3212,15 +3324,15 @@ function wholeWardrobeOutfitsFromCandidates(candidates = [], candidatePieces = [
     reason: wholeWardrobeReasonFromPieces({ pieces: candidate.pieces }),
     watchFor: wholeWardrobeWatchFromPieces({ pieces: candidate.pieces }),
     localScore: candidate.localScore,
-  }, candidatePieces), candidatePieces, options.occasion))
+  }, candidatePieces), candidatePieces, options.occasion, options.mood))
 }
 
-function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes = true, requireDress = false, requireNonGraphicTop = false, candidatePieces = [], occasion = 'casual' } = {}) {
+function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes = true, requireDress = false, requireNonGraphicTop = false, candidatePieces = [], occasion = 'casual', mood = '' } = {}) {
   const seen = new Set()
   const accepted = []
   const rejected = []
   for (const outfit of outfits) {
-    const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion)
+    const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood)
     const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
     const groups = pieces.map(p => wardrobeCategoryGroup(p))
     const hasSeparates = groups.includes('top') && groups.includes('bottom')
@@ -3241,6 +3353,10 @@ function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes
       rejected.push({ label: repaired?.label || 'unnamed', reason: 'uses body-shape/flattery framing' })
       continue
     }
+    if (wholeWardrobeMissesMood(repaired, mood)) {
+      rejected.push({ label: repaired?.label || 'unnamed', reason: 'misses requested boho mood' })
+      continue
+    }
     if ((text.match(/\b(wide|wide-leg|oversized|loose|flowing|voluminous|relaxed)\b/g) || []).length >= 3) {
       rejected.push({ label: repaired?.label || 'unnamed', reason: 'too much width/volume' })
       continue
@@ -3253,7 +3369,7 @@ function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes
     seen.add(key)
     accepted.push(repaired)
   }
-  const diverse = applyWholeWardrobeDiversity(sortByStylisticStrength(accepted, null), limit, { requireDress, requireNonGraphicTop, candidatePieces, occasion })
+  const diverse = applyWholeWardrobeDiversity(sortByStylisticStrength(accepted, null), limit, { requireDress, requireNonGraphicTop, candidatePieces, occasion, mood })
   return {
     outfits: normalizeWholeWardrobeStrengths(diverse.outfits),
     rejected: [...rejected, ...diverse.rejected]
@@ -6106,8 +6222,8 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       pieces: Array.isArray(outfit.pieces) && outfit.pieces.length ? outfit.pieces : candidate.pieces
     }
     })
-    let structuredOutfits = withCandidatePieces.map(o => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, candidatePieces), candidatePieces, occasion))
-    const localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, candidatePieces, { occasion })
+    let structuredOutfits = withCandidatePieces.map(o => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, candidatePieces), candidatePieces, occasion, mood))
+    const localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, candidatePieces, { occasion, mood })
 
     if (!structuredOutfits.length) {
       structuredOutfits = localBackfillOutfits.slice(0, Math.max(requestedLimit, 8))
@@ -6117,7 +6233,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
     let gated = locallyGateWholeWardrobeOutfits(
       [...structuredOutfits, ...localBackfillOutfits],
       requestedLimit,
-      { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion }
+      { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion, mood }
     )
     diversityRejectedCount += gated.rejected?.length || 0
     structuredOutfits = gated.outfits
@@ -6125,7 +6241,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       structuredOutfits = locallyGateWholeWardrobeOutfits(
         localBackfillOutfits.slice(0, Math.max(requestedLimit, 12)),
         requestedLimit,
-        { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion }
+        { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion, mood }
       ).outfits
     }
     const formulaFamiliesReturned = [...new Set(structuredOutfits.map(outfit => outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, candidatePieces, occasion)).filter(Boolean))]
