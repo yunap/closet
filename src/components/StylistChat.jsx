@@ -712,9 +712,9 @@ export default function AskClaude({
                               })
                             }}
                             style={{ fontSize: 9, lineHeight: 1, color: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--donate)' : 'var(--text-light)', padding: '3px 4px', borderRadius: 8, border: '1px solid var(--border)', background: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
-                            title="Mark this specific garment as the bad piece choice"
+                            title="Tell the engine this garment was the wrong choice for this outfit"
                           >
-                            {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ bad' : 'bad piece'}
+                            {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ issue' : 'piece issue'}
                           </button>
                         )}
                       </div>

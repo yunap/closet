@@ -2221,8 +2221,9 @@ async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidate
   }
 }
 
-function wholeWardrobePieceBucket(allPieces = []) {
+function wholeWardrobePieceBucket(allPieces = [], options = {}) {
   const bucket = { top: [], bottom: [], dress: [], outerwear: [], shoes: [], accessory: [], other: [] }
+  const moodProfile = wholeWardrobeMoodProfile(options.mood)
   for (const piece of allPieces) {
     const group = wardrobeCategoryGroup(piece)
     if (bucket[group]) bucket[group].push(piece)
@@ -2235,6 +2236,7 @@ function wholeWardrobePieceBucket(allPieces = []) {
     if (/\b(artistic|graphic|architectural|structured|utility|linen|corduroy|textured|denim|cashmere|knit)\b/.test(blob)) score += 4
     if (/\b(pointed|loafer|boot|mule|oxford|structured)\b/.test(blob)) score += 3
     if (/\b(soft|gauzy|drape|oversized|beige|cream|ivory|taupe)\b/.test(blob)) score -= 1
+    if (moodProfile?.id === 'modern_bohemian_restraint') score += bohoSignalForPiece(piece) * 5
     return score
   }
   for (const key of Object.keys(bucket)) {
@@ -2343,11 +2345,13 @@ function strongestBohoPiece(pieces = []) {
 function bohoMoodLabelFromPieces(outfit = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const text = pieces.map(pieceTextBlob).join(' ')
-  if (pieces.some(p => wardrobeCategoryGroup(p) === 'dress')) return 'Grounded Bohemian Dress'
-  if (/\b(crochet|woven|raffia|rattan|cork|espadrille|basket|braided|artisan|embroidered|embroidery)\b/.test(text)) return 'Artisan City Bohemian'
-  if (/\b(paisley|botanical|floral|abstract print|print)\b/.test(text)) return 'Botanical Bohemian City'
-  if (/\b(cognac|rust|terracotta|ochre|mustard|olive|brown|tan|amber|earthy)\b/.test(text)) return 'Earthy Bohemian City'
-  return 'Modern Bohemian City'
+  const modifier = wholeWardrobeGarmentModifier(pieces)
+  let base = 'Modern Bohemian City'
+  if (pieces.some(p => wardrobeCategoryGroup(p) === 'dress')) base = 'Grounded Bohemian Dress'
+  else if (/\b(crochet|woven|raffia|rattan|cork|espadrille|basket|braided|artisan|embroidered|embroidery)\b/.test(text)) base = 'Artisan City Bohemian'
+  else if (/\b(paisley|botanical|floral|abstract print|print)\b/.test(text)) base = 'Botanical Bohemian City'
+  else if (/\b(cognac|rust|terracotta|ochre|mustard|olive|brown|tan|amber|earthy)\b/.test(text)) base = 'Earthy Bohemian City'
+  return modifier ? `${base}: ${modifier}` : base
 }
 
 function buildBohoOutfitReason(outfit = {}, pieces = [], occasion = 'city') {
@@ -2355,8 +2359,13 @@ function buildBohoOutfitReason(outfit = {}, pieces = [], occasion = 'city') {
   const shoe = pieces.find(p => wardrobeCategoryGroup(p) === 'shoes')
   const support = pieces.find(p => hero && Number(p.id) !== Number(hero.id) && wardrobeCategoryGroup(p) !== 'shoes')
   const heroTrait = bohoTraitForPiece(hero) || 'bohemian detail'
+  const supportGroup = support ? wardrobeCategoryGroup(support) : ''
   const supportText = support
-    ? `${support.name} keeps the shape ${/\b(city|gallery|art|museum)\b/i.test(occasion) ? 'city-readable' : 'wearable'} instead of letting the outfit drift costume-like.`
+    ? supportGroup === 'bottom'
+      ? `${support.name} sets the lower proportion so the bohemian detail has structure rather than sprawl.`
+      : supportGroup === 'outerwear'
+        ? `${support.name} adds the city frame around the softer bohemian element.`
+        : `${support.name} keeps the outfit ${/\b(city|gallery|art|museum)\b/i.test(occasion) ? 'city-readable' : 'wearable'} without flattening the texture.`
     : ''
   const shoeText = shoe
     ? `${shoe.name} gives the outfit a practical grounded finish.`
@@ -2572,21 +2581,27 @@ function wholeWardrobeCandidateText(candidates = []) {
 }
 
 function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
-  const bucket = wholeWardrobePieceBucket(allPieces)
+  const bucket = wholeWardrobePieceBucket(allPieces, options)
+  const moodProfile = wholeWardrobeMoodProfile(options.mood)
   const candidates = []
-  const shoes = bucket.shoes.length ? bucket.shoes.slice(0, 14) : [null]
-  const tops = bucket.top.slice(0, 34)
-  const bottoms = bucket.bottom.slice(0, 28)
-  const dresses = bucket.dress.slice(0, 18)
-  const outerwear = bucket.outerwear.slice(0, 10)
+  const seenCandidateKeys = new Set()
+  const maxInitialCandidates = moodProfile?.id === 'modern_bohemian_restraint' ? 2400 : 5200
+  const shoes = bucket.shoes.length ? bucket.shoes.slice(0, moodProfile?.id === 'modern_bohemian_restraint' ? 12 : 14) : [null]
+  const tops = bucket.top.slice(0, moodProfile?.id === 'modern_bohemian_restraint' ? 24 : 34)
+  const bottoms = bucket.bottom.slice(0, moodProfile?.id === 'modern_bohemian_restraint' ? 20 : 28)
+  const dresses = bucket.dress.slice(0, moodProfile?.id === 'modern_bohemian_restraint' ? 14 : 18)
+  const outerwear = bucket.outerwear.slice(0, moodProfile?.id === 'modern_bohemian_restraint' ? 8 : 10)
   const accessories = bucket.accessory.slice(0, 8)
 
   const addCandidate = (pieces) => {
+    if (candidates.length >= maxInitialCandidates) return
     const clean = pieces.filter(Boolean)
+    if (moodProfile?.id === 'modern_bohemian_restraint' && wholeWardrobeBohoSignalScore(clean) < 2) return
     const key = clean.map(p => p.id).sort((a,b) => a-b).join('|')
-    if (!key || candidates.some(c => c.key === key)) return
+    if (!key || seenCandidateKeys.has(key)) return
     const scored = scoreWholeWardrobeCandidate(clean, options)
     if (scored.score < -18) return
+    seenCandidateKeys.add(key)
     candidates.push({ key, pieces: clean, score: scored.score })
   }
 
@@ -2609,7 +2624,6 @@ function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
 
   const ranked = candidates.sort((a, b) => b.score - a.score)
   const chosen = selectDiverseWholeWardrobeCandidates(ranked, 60, options)
-  const moodProfile = wholeWardrobeMoodProfile(options.mood)
   const exploratoryFamilies = new Set(['dress_grounding_shoe', 'soft_piece_structured_anchor', 'earthy_structured_separates'])
   const exploratory = ranked.find(candidate => {
     if (moodProfile?.id === 'modern_bohemian_restraint' && wholeWardrobeMissesMood(candidate.pieces, options.mood)) return false
