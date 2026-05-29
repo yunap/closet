@@ -4249,7 +4249,7 @@ async function createOutfitBoardImage({ board, pieces, index }) {
 }
 
 async function garmentReferenceImage(piece) {
-  const photo = piece?.worn_photo || piece?.photo
+  const photo = piece?.photo || piece?.worn_photo
   if (!photo) return null
   const filePath = path.join(uploadsDir, photo)
   if (!fs.existsSync(filePath)) return null
@@ -4271,6 +4271,27 @@ function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual
     const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
     return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
   }).join('\n')
+  const fidelityChecklist = pieces.map((piece, index) => {
+    const group = wardrobeCategoryGroup(piece)
+    const blob = pieceTextBlob(piece)
+    const constraints = []
+    if (group === 'top') {
+      if (/\b(long sleeve|long-sleeve)\b/.test(blob)) constraints.push('must remain a long-sleeve top')
+      if (/\b(short sleeve|short-sleeve)\b/.test(blob)) constraints.push('must remain a short-sleeve top')
+      if (/\b(sleeveless|tank)\b/.test(blob)) constraints.push('must remain sleeveless/tank shaped')
+      if (/\b(v-neck|scoop|boat|mock neck|turtleneck|crew)\b/.test(blob)) constraints.push('preserve the neckline read')
+      if (/\b(floral|botanical|paisley|abstract|stripe|striped|graphic|print|pattern)\b/.test(blob)) constraints.push('preserve the visible top print/pattern, not a generic similar print')
+    }
+    if (group === 'bottom') {
+      if (/\b(skirt|midi|knee|maxi)\b/.test(blob)) constraints.push('must remain the listed skirt shape/length')
+      if (/\b(jean|trouser|pant|wide|straight|bootcut|crop)\b/.test(blob)) constraints.push('must remain the listed pant/jean silhouette')
+      if (/\b(floral|botanical|paisley|abstract|stripe|striped|graphic|print|pattern)\b/.test(blob)) constraints.push('preserve the bottom print/pattern scale and colors')
+    }
+    if (group === 'dress') constraints.push('must remain one dress, not separates')
+    if (group === 'shoes') constraints.push('preserve shoe type, color, heel/sole shape, and openness/coverage')
+    if (!constraints.length) constraints.push('preserve category, color, shape, and visible texture')
+    return `${index + 1}. ${piece.name}: ${constraints.join('; ')}.`
+  }).join('\n')
   return [
     'Generate one realistic full-outfit styling image using the provided saved wardrobe garment references.',
     'This is NOT a shopping/editorial concept and NOT a generated fantasy outfit. Use the listed saved garments as the outfit components.',
@@ -4278,8 +4299,12 @@ function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual
     'Garment fidelity rules:',
     '- Preserve each referenced garment category, color family, print/stripe/pattern scale, neckline/sleeve/hem behavior, fabric weight, and visible texture as much as possible.',
     '- Do not replace a listed wardrobe piece with a different garment.',
+    '- Do not simplify a printed top into a plain/fitted tee or generic floral top. If the listed top has long sleeves, visible print, a wrap/tie, asymmetric detail, or a specific neckline, those details must still read in the generated outfit.',
+    '- If two listed garments are both printed, keep both actual prints recognizable; do not merge them into one invented print.',
     '- Do not add extra hero garments, patterned layers, belts, scarves, or accessories unless the listed outfit explicitly includes them.',
     '- Shoes must match the listed shoe reference if shoes are included.',
+    '',
+    `Piece-specific fidelity checklist:\n${fidelityChecklist}`,
     '',
     'Person / scene:',
     '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
@@ -4506,8 +4531,9 @@ async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season
         text: `WARDROBE GARMENT REFERENCES — use these saved pieces together in one outfit. Preserve each garment as much as possible; do not invent substitutes.`
       })
       for (const ref of garmentRefs) {
+        const pieceTruth = buildPieceText(ref.piece).replace(/\s+/g, ' ').slice(0, 700)
+        contentParts.push({ type: 'input_text', text: `Next image is REQUIRED wardrobe reference: ${ref.label}. Preserve this exact garment in the final outfit. ${pieceTruth}` })
         contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
-        contentParts.push({ type: 'input_text', text: ref.label })
       }
     }
 
