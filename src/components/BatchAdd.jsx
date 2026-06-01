@@ -30,6 +30,7 @@ function emptyForm() {
     hem_finish: null, neckline: null, sleeve_type: null, length_hits_at: null,
     silhouette: null, fabric_category: null, fabric_weight: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
+    style_profile_json: {},
   }
 }
 
@@ -180,7 +181,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
     try {
       const fd = new FormData()
       Object.entries(form).forEach(([k, v]) => {
-        if (v !== null && v !== undefined) fd.append(k, Array.isArray(v) ? JSON.stringify(v) : v)
+        if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
       })
       fd.append('photo', item.file)
       const res = await fetch('/api/pieces', { method: 'POST', body: fd })
@@ -378,6 +379,7 @@ export default function BatchAdd({ onDone }) {
             silhouette:         tags.silhouette         || null,
             fabric_category:    tags.fabric_category    || null,
             fabric_weight:      tags.fabric_weight      || null,
+            style_profile_json: tags.style_profile_json || {},
           },
           status: 'ready',
         }

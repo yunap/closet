@@ -13,7 +13,7 @@ const SAVED_BOARD_FEEDBACK_LABELS = [
   ['almost', 'Almost'],
   ['not_me', 'Not me'],
   ['too_safe', 'Too safe'],
-  ['too_boho', 'Too boho'],
+  ['too_boho', 'Costume drift'],
   ['too_polished', 'Too polished'],
   ['too_soft', 'Too soft'],
   ['too_generic', 'Too generic'],
@@ -62,6 +62,7 @@ const timingSummary = (timings = {}) => Object.entries(timings || {})
   .join(' · ')
 
 const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
+const OUTFIT_FOLLOWUP_PATTERN = /\b(this|it|outfit|idea|look|piece|pieces|make|change|swap|instead|sharper|stronger|softer|better|work|works|risk|risky|why|how|what)\b/i
 
 const compactEvaluationMemory = (evaluation = null) => {
   if (!evaluation || typeof evaluation !== 'object') return ''
@@ -500,6 +501,37 @@ export default function AskClaude({
     }
   }
 
+  const compactGeneratedOutfitContext = (outfits = [], meta = {}) => {
+    if (!Array.isArray(outfits) || !outfits.length) return ''
+    const pipelineNote = meta.source === 'whole_wardrobe'
+      ? 'Generation pipeline: whole-wardrobe outfit generation. Candidate ranking includes a visual critic pass over garment-photo contact sheets before the final text composer chooses returned cards.'
+      : meta.source === 'selected_piece'
+        ? 'Generation pipeline: selected-piece outfit generation. The selector first ranks saved garment records, style notes, tags, feedback, and outfit memory, then runs a compact visual critic pass over the selected garment and shortlisted support-piece photos before the final cards are composed. The card thumbnails reflect the pieces reviewed; unless a rendered outfit image exists, discuss garment photos and card context rather than a full worn outfit image.'
+        : ''
+    const cardContext = outfits.slice(0, 5).map((outfit, index) => {
+      const displayPieces = Array.isArray(outfit?.pieces) ? outfit.pieces : []
+      const pieceLines = displayPieces.map(piece => {
+        const hydrated = hydrateDisplayPiece(piece)
+        const photoStatus = hydrated.photo || hydrated.worn_photo
+          ? `, thumbnail available${hydrated.photo ? ' on hanger' : ''}${hydrated.worn_photo ? `${hydrated.photo ? ' and' : ''} worn` : ''}`
+          : ''
+        return `- ${hydrated.name || 'Garment'}${hydrated.category ? ` (${hydrated.category})` : ''}${hydrated.id ? `, id ${hydrated.id}` : ''}${photoStatus}`
+      }).join('\n')
+
+      return [
+        `Outfit ${index + 1}: ${outfit.label || outfit.title || `Generated outfit ${index + 1}`}`,
+        outfit.strength ? `Strength: ${outfit.strength}` : '',
+        outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
+        outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
+        outfit.bestFor ? `Best for: ${outfit.bestFor}` : '',
+        pieceLines ? `Pieces:\n${pieceLines}` : '',
+        outfit.reason ? `Reason: ${outfit.reason}` : '',
+        outfit.watchFor ? `Watch: ${outfit.watchFor}` : '',
+      ].filter(Boolean).join('\n')
+    }).join('\n\n')
+    return [pipelineNote, cardContext].filter(Boolean).join('\n\n')
+  }
+
   // ── Render one editorial direction image on demand ──────────────────────────
   const renderOneEditorialDirection = async (outfit, messageIndex, idx) => {
     const key = `${messageIndex}:${idx}`
@@ -712,9 +744,9 @@ export default function AskClaude({
                               })
                             }}
                             style={{ fontSize: 9, lineHeight: 1, color: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--donate)' : 'var(--text-light)', padding: '3px 4px', borderRadius: 8, border: '1px solid var(--border)', background: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
-                            title="Mark this specific garment as the bad piece choice"
+                            title="Tell the engine this garment was the wrong choice for this outfit"
                           >
-                            {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ bad' : 'bad piece'}
+                            {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ issue' : 'piece issue'}
                           </button>
                         )}
                       </div>
@@ -912,6 +944,7 @@ export default function AskClaude({
       bad_occasion: 'Learning saved: reducing this formula for this occasion.',
       fit_issue: 'Learning saved: treating this as a fit-risk combination.',
       too_safe: 'Learning saved: reducing safe/over-balanced styling.',
+      too_boho: 'Learning saved: reducing costume/festival stereotype drift, not bohemian or folk-artisan style itself.',
       too_generic: 'Learning saved: reducing generic outfit logic.',
       too_soft: 'Learning saved: reducing excessive softness.',
       wrong_proportions: 'Learning saved: avoiding this proportion behavior.',
@@ -1243,6 +1276,13 @@ export default function AskClaude({
         textOnly: true,
         debug: data.debug || null,
       }])
+      setThreadMemory({
+        type: 'generated_outfits',
+        source: 'whole_wardrobe',
+        name: 'Whole wardrobe generated outfits',
+        latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'whole_wardrobe' }),
+        latestOutfits: replyStructuredOutfits,
+      })
       addToHistory('assistant', replyText)
     } catch (err) {
       const errText = `Error: ${err.message}`
@@ -1445,6 +1485,16 @@ export default function AskClaude({
         const data = await res.json()
         replyText = data.feedback || data.error || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null
+        if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
+          setThreadMemory({
+            type: 'generated_outfits',
+            source: 'selected_piece',
+            id: pieceToSend.id,
+            name: pieceToSend.name,
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'selected_piece' }),
+            latestOutfits: replyStructuredOutfits,
+          })
+        }
 
       } else if (pieceToSend) {
         const res = await fetch('/api/ai/evaluate-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, question: q || 'How should I style this piece?', history: historySnapshot }) })
@@ -1476,14 +1526,13 @@ export default function AskClaude({
         const data = await (await fetch('/api/ai/outfit-feedback', { method: 'POST', body: fd })).json()
         replyText = data.feedback || data.error || 'Something went wrong.'
 
-      } else if (activeContext?.type === 'outfit') {
-        const activeOutfit = outfits.find(o => String(o.id) === String(activeContext.id))
+      } else if (activeContext?.type === 'outfit' || (threadMemory?.type === 'outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q))) {
+        const activeOutfitId = activeContext?.type === 'outfit' ? activeContext.id : threadMemory.id
+        const activeOutfit = outfits.find(o => String(o.id) === String(activeOutfitId))
         if (!activeOutfit) throw new Error('Active outfit context was not found. Reopen the outfit and try again.')
         const outfitPieceIds = Array.isArray(activeOutfit.pieces)
           ? activeOutfit.pieces.map(p => p?.id).filter(Boolean)
           : []
-        const visualFollowUp = VISUAL_FOLLOWUP_PATTERN.test(q)
-        const mustAttachPhoto = visualFollowUp || outfitPieceIds.length < 2
         const memoryText = threadMemory?.type === 'outfit' && String(threadMemory.id) === String(activeOutfit.id)
           ? threadMemory.latestEvaluationText
           : ''
@@ -1494,7 +1543,7 @@ export default function AskClaude({
             outfit: {
               label: activeOutfit.name,
               title: activeOutfit.name,
-              photo: mustAttachPhoto ? (activeOutfit.photo || '') : '',
+              photo: activeOutfit.photo || '',
               bestFor: activeOutfit.occasion || '',
               pieces: activeOutfit.pieces || [],
               pieceIds: outfitPieceIds,
@@ -1523,7 +1572,13 @@ export default function AskClaude({
         })
 
       } else {
-        const res = await fetch('/api/ai/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q, pieces, history: historySnapshot }) })
+        const generatedContext = threadMemory?.type === 'generated_outfits'
+          ? threadMemory.latestContextText
+          : ''
+        const generatedOutfits = threadMemory?.type === 'generated_outfits'
+          ? threadMemory.latestOutfits || []
+          : []
+        const res = await fetch('/api/ai/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q, pieces, history: historySnapshot, generatedContext, generatedOutfits }) })
         const data = await res.json()
         replyText = data.answer || data.error || 'Something went wrong.'
       }
@@ -1580,6 +1635,15 @@ export default function AskClaude({
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <button
+              className="chip"
+              style={{ marginTop: 4, opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
+              onClick={resetWholeWardrobeSessionMemory}
+              disabled={recentMemoryResetting || loading}
+              title="Clears only recently shown whole-wardrobe outfit memory. Saved feedback and learning stay intact."
+            >
+              {recentMemoryResetting ? 'Resetting…' : 'Reset recent'}
+            </button>
             <button className="chip" style={{ marginTop: 4 }} onClick={() => setCalibrationLibraryOpen(v => !v)}>
               {calibrationLibraryOpen ? 'Close calibration' : 'Calibration'}{calibrationImages.length ? ` · ${calibrationImages.length}` : ''}
             </button>
@@ -1593,6 +1657,11 @@ export default function AskClaude({
             )}
           </div>
         </div>
+        {recentMemoryStatus && (
+          <div style={{ marginTop: 6, fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
+            {recentMemoryStatus}
+          </div>
+        )}
       </div>
 
       {/* Calibration Library */}

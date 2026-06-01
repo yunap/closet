@@ -581,8 +581,17 @@ img { display: block; max-width: 100%; }
   position: relative;
   border-radius: var(--radius);
   overflow: hidden;
+  background: var(--surface-2);
 }
-.photo-preview img { width: 100%; max-height: 240px; object-fit: cover; border-radius: var(--radius); }
+.photo-preview-open {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.photo-preview img { display: block; width: 100%; object-fit: contain; border-radius: var(--radius); }
 .photo-preview-remove {
   position: absolute;
   top: 8px;
@@ -705,7 +714,16 @@ img { display: block; max-width: 100%; }
 }
 
 /* ── Piece Detail Sheet ─────────────────────────────────────────── */
+.detail-photo-button {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
 .detail-photo {
+  display: block;
   width: 100%;
   max-height: 380px;
   object-fit: contain;
@@ -726,6 +744,44 @@ img { display: block; max-width: 100%; }
   color: rgba(255,255,255,0.9);
 }
 .detail-body { padding: 20px; }
+.image-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(20, 18, 16, 0.82);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.image-preview-dialog {
+  width: min(960px, 96vw);
+  max-height: 92vh;
+  display: grid;
+  gap: 10px;
+}
+.image-preview-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  color: #fff;
+}
+.image-preview-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.image-preview-meta {
+  font-size: 12px;
+  opacity: 0.78;
+}
+.image-preview-img {
+  max-width: 100%;
+  max-height: 84vh;
+  object-fit: contain;
+  justify-self: center;
+  border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(0,0,0,0.35);
+}
 .detail-title {
   font-family: var(--font-serif);
   font-size: 26px;

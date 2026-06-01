@@ -26,7 +26,7 @@ const SAVED_BOARD_FEEDBACK_LABELS = [
   ['almost', 'Almost'],
   ['not_me', 'Not me'],
   ['too_safe', 'Too safe'],
-  ['too_boho', 'Too boho'],
+  ['too_boho', 'Costume drift'],
   ['too_polished', 'Too polished'],
   ['too_soft', 'Too soft'],
   ['too_generic', 'Too generic'],
