@@ -11,9 +11,27 @@ const COLOR_BG = {
   'dark grey': '#484848', 'light grey': '#B0B0B0', 'pink': '#C07080',
 }
 
-function OutfitThumb({ outfit }) {
+function OutfitThumb({ outfit, onPreview }) {
   return (
-    <div style={{ flexShrink: 0, width: 80 }}>
+    <button
+      type="button"
+      onClick={() => outfit.photo && onPreview({
+        src: `/uploads/${outfit.photo}`,
+        title: outfit.name || 'Outfit',
+        meta: outfit.occasion || '',
+      })}
+      disabled={!outfit.photo}
+      style={{
+        flexShrink: 0,
+        width: 80,
+        border: 0,
+        padding: 0,
+        background: 'transparent',
+        textAlign: 'left',
+        cursor: outfit.photo ? 'zoom-in' : 'default',
+      }}
+      aria-label={outfit.photo ? `Open outfit ${outfit.name || ''}` : undefined}
+    >
       <div style={{ width: 80, height: 106, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-light)', background: 'var(--surface-2)' }}>
         {outfit.photo
           ? <img src={`/uploads/${outfit.photo}`} alt={outfit.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -23,7 +41,39 @@ function OutfitThumb({ outfit }) {
       <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, textAlign: 'center', lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
         {outfit.name}
       </div>
-    </div>
+    </button>
+  )
+}
+
+function SavedBoardThumb({ board, onPreview }) {
+  if (!board?.image_url) return null
+  const pieces = Array.isArray(board.pieces) ? board.pieces.map(p => p?.name).filter(Boolean) : []
+  return (
+    <button
+      type="button"
+      onClick={() => onPreview({
+        src: board.image_url,
+        title: board.title || 'Saved board',
+        meta: pieces.length ? pieces.slice(0, 4).join(' + ') : (board.context_name || 'Saved board'),
+      })}
+      style={{
+        flexShrink: 0,
+        width: 118,
+        border: 0,
+        padding: 0,
+        background: 'transparent',
+        textAlign: 'left',
+        cursor: 'zoom-in',
+      }}
+      aria-label={`Open saved board ${board.title || ''}`}
+    >
+      <div style={{ width: 118, height: 148, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-light)', background: 'var(--surface-2)' }}>
+        <img src={board.image_url} alt={board.title || 'Saved board'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+        {board.title || 'Saved board'}
+      </div>
+    </button>
   )
 }
 
@@ -32,11 +82,19 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
   const [photoTab, setPhotoTab] = useState(piece.photo ? 'hanger' : piece.worn_photo ? 'worn' : null)
   const [previewImage, setPreviewImage] = useState(null)
   const [outfits,  setOutfits]  = useState([])
+  const [savedBoards, setSavedBoards] = useState([])
   const sheetRef = useRef(null)
 
   useEffect(() => {
     fetch(`/api/pieces/${piece.id}/outfits`)
       .then(r => r.json()).then(setOutfits).catch(() => {})
+  }, [piece.id])
+
+  useEffect(() => {
+    fetch(`/api/saved-boards?pieceId=${piece.id}&limit=80`)
+      .then(r => r.json())
+      .then(rows => setSavedBoards(Array.isArray(rows) ? rows.filter(row => row.image_url) : []))
+      .catch(() => setSavedBoards([]))
   }, [piece.id])
 
   useEffect(() => {
@@ -141,6 +199,20 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
             </div>
           )}
 
+          {/* Saved boards */}
+          {savedBoards.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div className="form-label" style={{ marginBottom: 10 }}>
+                Saved boards with this piece
+              </div>
+              <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
+                {savedBoards.map(board => (
+                  <SavedBoardThumb key={board.id} board={board} onPreview={setPreviewImage} />
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Ask Stylist */}
           <button
             onClick={() => onSendToStylist(piece)}
@@ -162,7 +234,7 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
                 Appears in {outfits.length} {outfits.length === 1 ? 'outfit' : 'outfits'}
               </div>
               <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-                {outfits.map(o => <OutfitThumb key={o.id} outfit={o} />)}
+                {outfits.map(o => <OutfitThumb key={o.id} outfit={o} onPreview={setPreviewImage} />)}
               </div>
             </div>
           ) : (

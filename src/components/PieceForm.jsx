@@ -299,6 +299,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     styling_rules_learned: piece?.styling_rules_learned || [],
     pairs_well_with:       piece?.pairs_well_with       || [],
     tried_and_rejected:    piece?.tried_and_rejected    || [],
+    style_profile_json:    piece?.style_profile_json    || {},
     // Color
     background_color: piece?.background_color || '',
   })
@@ -322,10 +323,36 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     ...f,
     [k]: f[k].includes(val) ? f[k].filter(x => x !== val) : [...f[k], val]
   }))
+  const normalizeProfileList = (value) => {
+    if (!value) return []
+    if (Array.isArray(value)) return [...new Set(value.map(v => String(v || '').trim()).filter(Boolean))]
+    return String(value).split(/[\n;]+/).map(v => v.trim()).filter(Boolean)
+  }
+  const mergeStyleProfilePatch = (existing, patch) => {
+    if (!patch || typeof patch !== 'object') return existing || {}
+    const base = typeof existing === 'string'
+      ? (() => { try { return JSON.parse(existing) || {} } catch { return {} } })()
+      : (existing || {})
+    const merged = { ...base, ...patch }
+    if (base.style_lanes || patch.style_lanes) merged.style_lanes = { ...(base.style_lanes || {}), ...(patch.style_lanes || {}) }
+    if (base.style_notes || patch.style_notes) merged.style_notes = { ...(base.style_notes || {}), ...(patch.style_notes || {}) }
+    if (base.garment_intelligence || patch.garment_intelligence) {
+      const b = base.garment_intelligence || {}
+      const p = patch.garment_intelligence || {}
+      merged.garment_intelligence = { ...b, ...p }
+      ;['pairing_requirements', 'failure_risks', 'formula_compatibility', 'do_not_pair_rules'].forEach(key => {
+        if (b[key] || p[key]) merged.garment_intelligence[key] = [...new Set([...normalizeProfileList(b[key]), ...normalizeProfileList(p[key])])]
+      })
+      if (b.real_wear_notes || p.real_wear_notes) merged.garment_intelligence.real_wear_notes = { ...(b.real_wear_notes || {}), ...(p.real_wear_notes || {}) }
+      if (b.occasion_confidence || p.occasion_confidence) merged.garment_intelligence.occasion_confidence = { ...(b.occasion_confidence || {}), ...(p.occasion_confidence || {}) }
+    }
+    return merged
+  }
 
-  // Auto-tag from hanger photo. In edit mode, this can retag the existing saved hanger photo.
+  // Auto-tag from a new hanger photo. In edit mode, retag from saved hanger + worn photos when available.
   const handleTagThis = async () => {
-    if (!hangerFile && !(isEdit && piece?.photo && hangerPrev && !clearHanger)) return
+    const hasExistingPhoto = isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn))
+    if (!hangerFile && !hasExistingPhoto) return
     setTagging(true); setTagError(null)
     try {
       let res
@@ -356,6 +383,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         silhouette:         tags.silhouette         || f.silhouette,
         fabric_category:    tags.fabric_category    || f.fabric_category,
         fabric_weight:      tags.fabric_weight      || f.fabric_weight,
+        style_profile_json: tags.style_profile_json || f.style_profile_json,
       }))
       // Set confidence flags for medium/low fields
       if (tags._confidence) {
@@ -404,6 +432,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         if (data.silhouette)     updated.silhouette     = data.silhouette
         if (data.fit_confidence && (f.fit_confidence === 'unknown' || data.fit_confidence === 'low')) updated.fit_confidence = data.fit_confidence
         if (data.recommendation_status === 'needs_fit_review' && f.recommendation_status === 'trusted') updated.recommendation_status = data.recommendation_status
+        if (data.style_profile_patch) updated.style_profile_json = mergeStyleProfilePatch(f.style_profile_json, data.style_profile_patch)
         return updated
       })
     } catch {}
@@ -415,7 +444,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     setSaving(true)
     const fd = new FormData()
     Object.entries(form).forEach(([k, v]) => {
-      if (v !== null && v !== undefined) fd.append(k, Array.isArray(v) ? JSON.stringify(v) : v)
+      if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
     })
     if (hangerFile)   fd.append('photo', hangerFile)
     else if (clearHanger) fd.append('clear_photo', 'true')
@@ -445,6 +474,31 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const constructionConfig = CONSTRUCTION_BY_CATEGORY[cat]
   const fabricConfig = FABRIC_BY_CATEGORY[cat] || FABRIC_BY_CATEGORY.default
   const showFitFields = CLOTHING_CATEGORIES.includes(cat)
+  const styleProfile = typeof form.style_profile_json === 'string'
+    ? (() => { try { return JSON.parse(form.style_profile_json) || {} } catch { return {} } })()
+    : (form.style_profile_json || {})
+  const styleLanes = styleProfile?.style_lanes && typeof styleProfile.style_lanes === 'object'
+    ? Object.entries(styleProfile.style_lanes)
+      .map(([lane, score]) => [lane, Number(score)])
+      .filter(([, score]) => Number.isFinite(score) && score > 0)
+      .sort((a, b) => b[1] - a[1])
+    : []
+  const styleRoles = Array.isArray(styleProfile?.visual_roles) ? styleProfile.visual_roles : []
+  const prettyProfileLabel = (value) => String(value || '').replace(/_/g, ' ')
+  const garmentIntel = styleProfile?.garment_intelligence && typeof styleProfile.garment_intelligence === 'object'
+    ? styleProfile.garment_intelligence
+    : {}
+  const profileList = (value) => normalizeProfileList(value)
+  const intelRows = [
+    garmentIntel.auto_use_trust && ['Auto-use', prettyProfileLabel(garmentIntel.auto_use_trust)],
+    garmentIntel.best_outfit_role && ['Best role', prettyProfileLabel(garmentIntel.best_outfit_role)],
+    profileList(garmentIntel.pairing_requirements).length && ['Needs', profileList(garmentIntel.pairing_requirements).slice(0, 3).join('; ')],
+    profileList(garmentIntel.failure_risks).length && ['Risks', profileList(garmentIntel.failure_risks).slice(0, 3).join('; ')],
+    profileList(garmentIntel.formula_compatibility).length && ['Formulas', profileList(garmentIntel.formula_compatibility).slice(0, 3).join('; ')],
+    profileList(garmentIntel.do_not_pair_rules).length && ['Avoid', profileList(garmentIntel.do_not_pair_rules).slice(0, 3).join('; ')],
+  ].filter(Boolean)
+  const realWearRows = Object.entries(garmentIntel.real_wear_notes || {}).filter(([, value]) => value)
+  const occasionRows = Object.entries(garmentIntel.occasion_confidence || {}).filter(([, value]) => value)
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
@@ -493,7 +547,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           </div>
 
           {/* Tag This button */}
-          {(hangerFile || (isEdit && piece?.photo && hangerPrev && !clearHanger)) && (
+          {(hangerFile || (isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn)))) && (
             <div>
               <button onClick={handleTagThis} disabled={tagging} style={{
                 width: '100%', padding: '11px',
@@ -590,6 +644,72 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <label className="form-label">Engine notes <span style={{ fontSize: 10, color: 'var(--text-light)', fontStyle: 'italic', fontWeight: 400 }}>private instructions for auto styling</span></label>
             <textarea className="form-textarea" placeholder="e.g. too small; do not use as a focal evening garment" value={form.engine_notes} onChange={e => set('engine_notes', e.target.value)} style={{ minHeight: 72 }} />
           </div>
+
+          {(styleLanes.length > 0 || styleRoles.length > 0 || styleProfile?.style_notes?.best_use || styleProfile?.style_notes?.risk || intelRows.length > 0 || realWearRows.length > 0 || occasionRows.length > 0) && (
+            <div className="form-group" style={{
+              padding: 12,
+              border: '1px solid var(--border-light)',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--surface-2)',
+            }}>
+              <label className="form-label" style={{ marginBottom: 8 }}>AI style read</label>
+              {styleLanes.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                  {styleLanes.map(([lane, score]) => (
+                    <span key={lane} style={{
+                      padding: '4px 8px',
+                      borderRadius: 999,
+                      border: '1px solid var(--border)',
+                      background: score >= 4 ? 'var(--accent-light)' : 'var(--surface)',
+                      color: score >= 4 ? 'var(--accent)' : 'var(--text-muted)',
+                      fontSize: 11,
+                    }}>
+                      {prettyProfileLabel(lane)} {score}/5
+                    </span>
+                  ))}
+                </div>
+              )}
+              {styleRoles.length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+                  <strong style={{ color: 'var(--text)' }}>Roles:</strong> {styleRoles.map(prettyProfileLabel).join(', ')}
+                </div>
+              )}
+              {styleProfile?.style_notes?.best_use && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+                  <strong style={{ color: 'var(--text)' }}>Best use:</strong> {styleProfile.style_notes.best_use}
+                </div>
+              )}
+              {styleProfile?.style_notes?.risk && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+                  <strong style={{ color: 'var(--text)' }}>Risk:</strong> {styleProfile.style_notes.risk}
+                </div>
+              )}
+              {intelRows.map(([label, value]) => (
+                <div key={label} style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+                  <strong style={{ color: 'var(--text)' }}>{label}:</strong> {value}
+                </div>
+              ))}
+              {realWearRows.length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+                  <strong style={{ color: 'var(--text)' }}>Real wear:</strong> {realWearRows.map(([key, value]) => `${prettyProfileLabel(key)}: ${value}`).join('; ')}
+                </div>
+              )}
+              {occasionRows.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+                  {occasionRows.map(([occasion, value]) => (
+                    <span key={occasion} style={{
+                      padding: '3px 7px',
+                      borderRadius: 999,
+                      border: '1px solid var(--border-light)',
+                      background: value === 'high' ? 'var(--surface)' : 'var(--surface-2)',
+                      color: 'var(--text-muted)',
+                      fontSize: 10,
+                    }}>{prettyProfileLabel(occasion)} {value}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Pattern & Visual ─────────────────────────────────────── */}
           <Section label="Pattern & Visual" />
