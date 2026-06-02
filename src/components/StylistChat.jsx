@@ -1585,32 +1585,30 @@ export default function AskClaude({
         if (!outfitPieceIds.length) {
           throw new Error('Generated outfit context is missing linked pieces. Re-evaluate the outfit card and try again.')
         }
-        const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+        const conversationMode = classifyChatTurn(q, { hasThreadMemory: true })
+        const res = await fetch('/api/ai/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            question: q || 'Continue discussing this generated outfit.',
+            pieces,
+            history: historySnapshot,
+            conversationMode,
+            threadContext: threadMemory.latestEvaluationText || '',
             outfit: rememberedOutfit,
             pieceIds: outfitPieceIds,
-            occasion: rememberedOutfit.bestFor || rememberedOutfit.occasion || effectiveGenerateOccasion,
-            season: rememberedOutfit.season || effectiveGenerateSeason,
-            mood: wardrobeOutfitMood,
-            previousEvaluation: threadMemory.latestEvaluationText || '',
-            responseMode: 'followup',
-            question: q || 'Continue discussing this generated outfit.',
-            history: historySnapshot,
+            ...currentChatDateContext(),
           })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not continue generated outfit evaluation')
-        replyText = data.feedback || 'Outfit follow-up complete.'
-        replyWardrobeEvaluation = true
+        replyText = data.answer || 'Outfit follow-up complete.'
+        replyWardrobeEvaluation = false
         replyDebug = data.debug || null
         setThreadMemory({
           ...threadMemory,
           type: 'generated_outfit',
           latestOutfit: rememberedOutfit,
-          latestEvaluation: data.evaluation || threadMemory.latestEvaluation || null,
-          latestEvaluationText: compactEvaluationMemory(data.evaluation) || threadMemory.latestEvaluationText || '',
         })
 
       } else if (activeContext?.type === 'outfit' || (threadMemory?.type === 'outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q))) {
@@ -1623,10 +1621,16 @@ export default function AskClaude({
         const memoryText = threadMemory?.type === 'outfit' && String(threadMemory.id) === String(activeOutfit.id)
           ? threadMemory.latestEvaluationText
           : ''
-        const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+        const conversationMode = classifyChatTurn(q, { hasThreadMemory: true })
+        const res = await fetch('/api/ai/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            question: q || 'Continue evaluating this outfit.',
+            pieces,
+            history: historySnapshot,
+            conversationMode,
+            threadContext: memoryText,
             outfit: {
               label: activeOutfit.name,
               title: activeOutfit.name,
@@ -1637,26 +1641,20 @@ export default function AskClaude({
               reason: activeOutfit.notes || '',
             },
             pieceIds: outfitPieceIds,
-            occasion: activeOutfit.occasion || effectiveGenerateOccasion,
-            season: activeOutfit.season || effectiveGenerateSeason,
-            mood: wardrobeOutfitMood,
-            previousEvaluation: memoryText,
-            responseMode: 'followup',
-            question: q || 'Continue evaluating this outfit.',
-            history: historySnapshot,
+            ...currentChatDateContext(),
           })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not continue outfit evaluation')
-        replyText = data.feedback || 'Outfit follow-up complete.'
-        replyWardrobeEvaluation = true
+        replyText = data.answer || 'Outfit follow-up complete.'
+        replyWardrobeEvaluation = false
         replyDebug = data.debug || null
         setThreadMemory({
           type: 'outfit',
           id: activeOutfit.id,
           name: activeOutfit.name,
-          latestEvaluation: data.evaluation || null,
-          latestEvaluationText: compactEvaluationMemory(data.evaluation),
+          latestEvaluation: threadMemory?.latestEvaluation || null,
+          latestEvaluationText: memoryText,
         })
 
       } else {

@@ -16,7 +16,7 @@ process.env.PHOTO_PRESERVING_VISUALS = 'true'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_CANDIDATES = '18'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
-const { app, db, uploadsDir } = await import('../server.js')
+const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 
 let server
 let baseUrl
@@ -674,3 +674,252 @@ test('freeform ask grounds date and correction mode for conversational follow-up
   assert.match(latestUserMessage.content, /do not restart the prior task/)
   assert.match(latestUserMessage.content, /today is June 1st/)
 })
+
+test('freeform ask infers correction mode from latest user message', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'Wait, today is June 1st',
+    pieces: [],
+    history: [
+      { role: 'user', content: 'What should I pack for Portland in a few weeks?' },
+      { role: 'assistant', content: 'Assuming fall, bring layers.' },
+    ],
+    conversationMode: 'new_request',
+    currentDateLabel: 'Monday, June 1, 2026',
+    timezone: 'America/Los_Angeles',
+    threadContext: 'Previous assistant assumed fall for a Portland trip.',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  const latestUserMessage = lastCall.messages.at(-1)
+  assert.match(lastCall.system, /Current turn mode: correction/)
+  assert.match(lastCall.system, /Turn directive: This turn is a correction or challenge/)
+  assert.match(lastCall.system, /Do not regenerate the prior list/)
+  assert.equal(typeof latestUserMessage.content, 'string')
+  assert.match(latestUserMessage.content, /Current turn mode: correction/)
+  assert.match(latestUserMessage.content, /Turn directive: This turn is a correction or challenge/)
+})
+
+test('freeform ask image follow-ups use current attachment wording', async () => {
+  const pieces = db.prepare('SELECT * FROM pieces WHERE status = ?').all('active').map(row => ({
+    ...row,
+    colors: JSON.parse(row.colors || '[]'),
+    occasions: JSON.parse(row.occasions || '[]'),
+    occasion_permissions: JSON.parse(row.occasion_permissions || '[]'),
+    styling_rules_learned: [],
+    pairs_well_with: [],
+    tried_and_rejected: [],
+    style_profile_json: JSON.parse(row.style_profile_json || '{}'),
+  }))
+  const json = await postJson('/api/ai/ask', {
+    question: 'Which images do you still see?',
+    pieces,
+    history: [],
+    generatedContext: 'Generated outfit cards are visible in the current stylist thread.',
+    generatedOutfits: [generatedCard()],
+    conversationMode: 'new_request',
+    currentDateLabel: 'Monday, June 1, 2026',
+    timezone: 'America/Los_Angeles',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  const latestUserMessage = lastCall.messages.at(-1)
+  assert.match(lastCall.system, /Current turn mode: explanation/)
+  assert.match(lastCall.system, /photos attached to the CURRENT API call/)
+  assert.match(lastCall.system, /any images attached to this call/)
+  assert.doesNotMatch(lastCall.system, /Photos from earlier in the conversation are no longer visible/)
+  assert.ok(Array.isArray(latestUserMessage.content))
+  assert.match(latestUserMessage.content[1].text, /Current turn mode: explanation/)
+  assert.match(latestUserMessage.content[1].text, /Turn directive: This turn asks for explanation or context inspection/)
+})
+
+test('freeform ask shoe follow-up maps to explanation mode and targets shoes', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'why those shoes?',
+    pieces: [],
+    history: [
+      { role: 'user', content: 'Suggest a city structured outfit' },
+      { role: 'assistant', content: 'Use the linen pants and the brown ankle boots.' },
+    ],
+    conversationMode: 'followup',
+    threadContext: 'Critique of city column outfit suggesting brown ankle boots.',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /Current turn mode: explanation/)
+  assert.match(lastCall.system, /Turn directive: This turn asks for explanation/)
+  assert.match(lastCall.system, /Explain how the prior answer was made/)
+})
+
+test('freeform ask outfit follow-up does not repeat full critique template', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'can we make it sharper?',
+    pieces: [],
+    history: [],
+    conversationMode: 'followup',
+    outfit: { id: seeded.outfitId, label: 'Vest top + white blouse' },
+    pieceIds: [seeded.top, seeded.bottom],
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /Current turn mode: followup/)
+  assert.match(lastCall.system, /Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit/)
+})
+
+test('freeform ask outfit follow-up handles image presence and attaches images', async () => {
+  const pieces = db.prepare('SELECT * FROM pieces WHERE status = ?').all('active').map(row => ({
+    ...row,
+    colors: JSON.parse(row.colors || '[]'),
+    occasions: JSON.parse(row.occasions || '[]'),
+    occasion_permissions: JSON.parse(row.occasion_permissions || '[]'),
+    styling_rules_learned: [],
+    pairs_well_with: [],
+    tried_and_rejected: [],
+    style_profile_json: JSON.parse(row.style_profile_json || '{}'),
+  }))
+
+  const json = await postJson('/api/ai/ask', {
+    question: 'do you see the garment photo?',
+    pieces,
+    history: [],
+    conversationMode: 'followup',
+    outfit: { label: 'Active outfit', photo: seeded.photos.outfit },
+    pieceIds: [seeded.top, seeded.bottom],
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /CURRENT ATTACHED IMAGE INVENTORY:/)
+  assert.match(lastCall.system, /actual worn outfit photo: Active outfit/)
+  assert.match(lastCall.system, /linked garment reference photo: black button detail top/)
+  
+  const latestUserMessage = lastCall.messages.at(-1)
+  assert.ok(Array.isArray(latestUserMessage.content))
+  // The first few elements should be images
+  assert.equal(latestUserMessage.content[0].type, 'image')
+  assert.equal(latestUserMessage.content.at(-1).type, 'text')
+  assert.match(latestUserMessage.content.at(-1).text, /Attached: images for the outfit under discussion/)
+})
+
+test('freeform ask broad request triggers clarifying question instruction', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'suggest packing outfits for Portland',
+    pieces: [],
+    history: [],
+    conversationMode: 'new_request',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /ask exactly one clear clarifying question/)
+  assert.match(lastCall.system, /do not generate a placeholder list/)
+})
+
+test('freeform ask non-visual follow-up prunes base64 images to save tokens', async () => {
+  const pieces = db.prepare('SELECT * FROM pieces WHERE status = ?').all('active').map(row => ({
+    ...row,
+    colors: JSON.parse(row.colors || '[]'),
+    occasions: JSON.parse(row.occasions || '[]'),
+    occasion_permissions: JSON.parse(row.occasion_permissions || '[]'),
+    styling_rules_learned: [],
+    pairs_well_with: [],
+    tried_and_rejected: [],
+    style_profile_json: JSON.parse(row.style_profile_json || '{}'),
+  }))
+
+  const json = await postJson('/api/ai/ask', {
+    question: 'where should I wear this?', // non-visual question
+    pieces,
+    history: [
+      { role: 'user', content: 'Evaluate this outfit.' },
+      { role: 'assistant', content: 'Looks great!' },
+    ],
+    conversationMode: 'followup',
+    outfit: { label: 'Active outfit', photo: seeded.photos.outfit },
+    pieceIds: [seeded.top, seeded.bottom],
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /CURRENT ATTACHED IMAGE INVENTORY:/)
+  assert.match(lastCall.system, /images omitted on this turn to conserve vision tokens/)
+  
+  const latestUserMessage = lastCall.messages.at(-1)
+  // Content should be a plain string since images are pruned
+  assert.equal(typeof latestUserMessage.content, 'string')
+  assert.doesNotMatch(latestUserMessage.content, /Attached: images/)
+})
+
+test('freeform ask correction saves preference reaction to database', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'I do not wear flats',
+    pieces: [],
+    history: [],
+    conversationMode: 'correction',
+    outfit: { id: seeded.outfitId, label: 'Active outfit' },
+    pieceIds: [seeded.top, seeded.bottom],
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  
+  const row = db.prepare(`
+    SELECT * FROM stylist_feedback 
+    WHERE feedback_type = 'preference_reaction' 
+    ORDER BY id DESC LIMIT 1
+  `).get()
+  
+  assert.ok(row)
+  assert.equal(row.note, 'I do not wear flats')
+  assert.equal(row.context_type, 'outfit')
+  assert.equal(Number(row.context_id), seeded.outfitId)
+})
+
+test('executeTool get_garment_details loads text and base64 photo blocks', async () => {
+  // Write a dummy temp image to uploads directory to mock the photo file
+  const topPhotoFilename = 'mock-top-photo.jpg'
+  const mockFilePath = path.join(uploadsDir, topPhotoFilename)
+  
+  // Ensure uploads directory exists and write a valid dummy 1x1 JPEG to satisfy sharp resizing
+  fs.mkdirSync(uploadsDir, { recursive: true })
+  const dummy1x1Jpeg = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64')
+  fs.writeFileSync(mockFilePath, dummy1x1Jpeg)
+
+  // Seed db piece to reference this photo
+  db.prepare('UPDATE pieces SET photo = ? WHERE id = ?').run(topPhotoFilename, seeded.top)
+
+  try {
+    const details = await executeTool('get_garment_details', { ids: [seeded.top] })
+    assert.ok(Array.isArray(details))
+    assert.equal(details.length, 1)
+    assert.equal(details[0].id, seeded.top)
+    assert.match(details[0].text, /black button detail top/)
+    
+    // Verify that visual image data was resolved and loaded as base64
+    assert.ok(details[0].image)
+    assert.equal(details[0].image.mime, 'image/jpeg')
+    assert.ok(typeof details[0].image.base64 === 'string')
+    assert.ok(details[0].image.base64.length > 10)
+  } finally {
+    if (fs.existsSync(mockFilePath)) {
+      fs.unlinkSync(mockFilePath)
+    }
+  }
+})
+
+test('contentToOpenAI preserves image_url blocks without stringifying them', () => {
+  const content = [
+    { type: 'text', text: 'Hello!' },
+    { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,abcdefg' } }
+  ]
+  const result = contentToOpenAI(content)
+  assert.equal(result.length, 2)
+  assert.equal(result[0].type, 'text')
+  assert.equal(result[0].text, 'Hello!')
+  assert.equal(result[1].type, 'image_url')
+  assert.deepEqual(result[1].image_url, { url: 'data:image/jpeg;base64,abcdefg' })
+})
+
+

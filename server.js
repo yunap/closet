@@ -55,9 +55,10 @@ HARD CONSTRAINTS — always check piece notes before suggesting:
 - Only suggest pieces that exist in the provided wardrobe.
 
 PHOTO VISIBILITY — be honest about this:
-- You can only see photos attached to the CURRENT message. Photos from earlier in the conversation are no longer visible — you only have your text description of what you said about them.
-- If a user references a previous photo ("the photo I uploaded above", "as you can see"), do NOT pretend to see it and do NOT guess. Say: "I can't see that photo anymore — could you re-upload it?" Then wait before giving advice.
-- Never give advice based on reconstructing what a previous photo might have shown.
+- You can only inspect photos attached to the CURRENT API call.
+- If the current API call includes reference/contact-sheet images from earlier thread context, you may inspect those attached images and answer questions about them.
+- If a user references a photo that is only mentioned in text and is not attached to the current API call, do NOT pretend to see it and do NOT guess. Say what visual context you currently have, then ask for the missing photo only if needed.
+- Never give advice based on reconstructing what an unattached previous photo might have shown.
 
 TUCK COMPATIBILITY (two-piece check before every tuck suggestion):
 - Top tuck_behavior "wear_over_only" → NEVER suggest tucking.
@@ -1277,6 +1278,12 @@ function contentToOpenAI(content) {
         image_url: { url: `data:${part.source.media_type};base64,${part.source.data}` }
       }
     }
+    if (part.type === 'image_url') {
+      return {
+        type: 'image_url',
+        image_url: part.image_url
+      }
+    }
     return { type: 'text', text: JSON.stringify(part) }
   })
 }
@@ -1310,6 +1317,329 @@ function takeTestAiResponse({ system = '', messages = [], maxTokens = 1200 } = {
   const handler = globalThis.__WARDROBE_AI_TEST_HANDLER__
   if (typeof handler === 'function') return handler({ system, messages, maxTokens })
   return null
+}
+
+const STYLIST_TOOLS = [
+  {
+    name: "search_wardrobe",
+    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, and simple notes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query matching against name or notes" },
+        category: { type: "string", description: "Filter by category (e.g. top, bottom, shoes, outerwear, dress, accessory)" },
+        color: { type: "string", description: "Filter by color description or reads_as tag" },
+        occasion: { type: "string", description: "Filter by occasion (e.g. city, casual, evening)" }
+      }
+    }
+  },
+  {
+    name: "get_garment_details",
+    description: "Retrieve full detailed styling rules, fit cautions, and AI garment intelligence for specific garment IDs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ids: {
+          type: "array",
+          items: { type: "integer" },
+          description: "List of garment IDs to retrieve details for."
+        }
+      },
+      required: ["ids"]
+    }
+  },
+  {
+    name: "get_last_outfit_evaluation",
+    description: "Retrieve the most recent outfit critique/evaluation notes from database for an outfit ID.",
+    input_schema: {
+      type: "object",
+      properties: {
+        outfit_id: { type: "integer", description: "The ID of the outfit." }
+      },
+      required: ["outfit_id"]
+    }
+  },
+  {
+    name: "get_current_image_inventory",
+    description: "Retrieve description of currently visible/attached images in the current chat state.",
+    input_schema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "store_user_correction",
+    description: "Store a taste preference or correction (e.g., 'I do not wear flats') into the database.",
+    input_schema: {
+      type: "object",
+      properties: {
+        note: { type: "string", description: "The user preference or correction text." },
+        context_type: { type: "string", description: "Context type: 'outfit' or 'general'" },
+        context_id: { type: "integer", description: "Optional outfit ID if context is outfit" }
+      },
+      required: ["note"]
+    }
+  }
+]
+
+async function executeTool(name, args) {
+  try {
+    switch (name) {
+      case 'search_wardrobe': {
+        const { query, category, color, occasion } = args
+        let sql = "SELECT * FROM pieces WHERE status = 'active'"
+        const params = []
+        if (category) {
+          sql += " AND category = ?"
+          params.push(category)
+        }
+        const rows = db.prepare(sql).all(...params).map(parsePiece)
+        
+        let filtered = rows
+        if (color) {
+          const cLower = color.toLowerCase()
+          filtered = filtered.filter(p => 
+            (p.reads_as && p.reads_as.toLowerCase().includes(cLower)) || 
+            p.colors.some(c => c.toLowerCase().includes(cLower))
+          )
+        }
+        if (occasion) {
+          const oLower = occasion.toLowerCase()
+          filtered = filtered.filter(p => p.occasions.some(o => o.toLowerCase().includes(oLower)))
+        }
+        if (query) {
+          const qLower = query.toLowerCase()
+          filtered = filtered.filter(p => 
+            p.name.toLowerCase().includes(qLower) || 
+            (p.notes && p.notes.toLowerCase().includes(qLower))
+          )
+        }
+        
+        return filtered.map(p => ({
+          id: p.id,
+          name: p.name,
+          category: p.category,
+          reads_as: p.reads_as,
+          colors: p.colors,
+          occasions: p.occasions,
+          notes: p.notes ? p.notes.slice(0, 120) : ''
+        }))
+      }
+      case 'get_garment_details': {
+        const { ids } = args
+        if (!Array.isArray(ids) || !ids.length) return []
+        const placeholders = ids.map(() => '?').join(',')
+        const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${placeholders})`).all(...ids.map(Number)).map(parsePiece)
+        
+        const details = []
+        for (const p of rows) {
+          let imageData = null
+          const photoFile = p.worn_photo || p.photo || ''
+          if (photoFile) {
+            const filePath = path.join(uploadsDir, photoFile)
+            if (fs.existsSync(filePath)) {
+              try {
+                imageData = await prepareImageForClaude(filePath)
+              } catch (err) {
+                console.error(`Error loading photo for piece ${p.id}:`, err)
+              }
+            }
+          }
+          details.push({
+            id: p.id,
+            name: p.name,
+            text: buildPieceText(p),
+            image: imageData
+          })
+        }
+        return details
+      }
+      case 'get_last_outfit_evaluation': {
+        const { outfit_id } = args
+        return getLastOutfitEvaluation(outfit_id) || { note: "No evaluation found." }
+      }
+      case 'get_current_image_inventory': {
+        const state = getStylistConversationState('default')
+        return getCurrentImageInventory(state)
+      }
+      case 'store_user_correction': {
+        const { note, context_type, context_id } = args
+        storeUserCorrection(note, context_type || 'general', context_id)
+        return { status: "success", message: "Correction stored successfully." }
+      }
+      default:
+        throw new Error(`Unknown tool: ${name}`)
+    }
+  } catch (err) {
+    console.error(`Error executing tool ${name}:`, err)
+    return { error: err.message }
+  }
+}
+
+async function askStylistWithTools({ system, messages, maxTokens = 1500 }) {
+  const testResponse = takeTestAiResponse({ system, messages, maxTokens })
+  if (testResponse != null) {
+    return typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
+  }
+
+  assertProviderKey()
+
+  let currentMessages = [...messages]
+
+  for (let iter = 0; iter < 5; iter++) {
+    if (AI_PROVIDER === 'openai') {
+      const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+      const response = await client.chat.completions.create({
+        model: OPENAI_MODEL,
+        max_tokens: maxTokens,
+        messages: [
+          { role: 'system', content: system },
+          ...currentMessages.map(m => {
+            const mapped = { role: m.role }
+            if (m.content) {
+              mapped.content = contentToOpenAI(m.content)
+            }
+            if (m.tool_calls) {
+              mapped.tool_calls = m.tool_calls
+            }
+            if (m.tool_call_id) {
+              mapped.tool_call_id = m.tool_call_id
+            }
+            if (m.name) {
+              mapped.name = m.name
+            }
+            return mapped
+          })
+        ],
+        tools: STYLIST_TOOLS.map(t => ({
+          type: "function",
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.input_schema
+          }
+        }))
+      })
+
+      const message = response.choices?.[0]?.message
+      if (!message) return ''
+
+      if (message.tool_calls && message.tool_calls.length) {
+        currentMessages.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls })
+        
+        const toolOutputs = []
+        const collectedImages = []
+        for (const tc of message.tool_calls) {
+          const name = tc.function.name
+          const args = JSON.parse(tc.function.arguments || '{}')
+          const result = await executeTool(name, args)
+          
+          let toolContent = ''
+          if (name === 'get_garment_details') {
+            toolContent = JSON.stringify(result.map(item => ({ id: item.id, name: item.name, text: item.text })))
+            for (const item of result) {
+              if (item.image) collectedImages.push(item.image)
+            }
+          } else {
+            toolContent = JSON.stringify(result)
+          }
+
+          toolOutputs.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            name: name,
+            content: toolContent
+          })
+        }
+        currentMessages.push(...toolOutputs)
+
+        if (collectedImages.length > 0) {
+          currentMessages.push({
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Visual reference photos for the garments you requested details for:' },
+              ...collectedImages.map(img => ({
+                type: 'image_url',
+                image_url: { url: `data:${img.mime};base64,${img.base64}` }
+              }))
+            ]
+          })
+        }
+        continue
+      } else {
+        return message.content || ''
+      }
+    } else {
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+      
+      const formattedMessages = currentMessages.map(m => {
+        return { role: m.role, content: m.content }
+      })
+
+      const response = await client.messages.create({
+        model: ANTHROPIC_MODEL,
+        max_tokens: maxTokens,
+        system,
+        messages: formattedMessages,
+        tools: STYLIST_TOOLS
+      })
+
+      if (response.stop_reason === 'tool_use') {
+        const toolUses = response.content.filter(block => block.type === 'tool_use')
+        currentMessages.push({ role: 'assistant', content: response.content })
+
+        const toolResponses = []
+        for (const tu of toolUses) {
+          const name = tu.name
+          const args = tu.input
+          const result = await executeTool(name, args)
+          
+          let contentBlocks = []
+          if (name === 'get_garment_details') {
+            const textResult = JSON.stringify(result.map(item => ({ id: item.id, name: item.name, text: item.text })))
+            contentBlocks.push({
+              type: 'text',
+              text: textResult
+            })
+            for (const item of result) {
+              if (item.image) {
+                contentBlocks.push({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: item.image.mime,
+                    data: item.image.base64
+                  }
+                })
+              }
+            }
+          } else {
+            contentBlocks.push({
+              type: 'text',
+              text: JSON.stringify(result)
+            })
+          }
+
+          toolResponses.push({
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: tu.id,
+                content: contentBlocks
+              }
+            ]
+          })
+        }
+        currentMessages.push(...toolResponses)
+        continue
+      } else {
+        return response.content?.[0]?.text || ''
+      }
+    }
+  }
+
+  return 'Tool calling loop reached max iterations.'
 }
 
 async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
@@ -5093,6 +5423,12 @@ db.exec(`
     piece_ids        TEXT NOT NULL DEFAULT '[]',
     formula_families TEXT NOT NULL DEFAULT '[]'
   );
+
+  CREATE TABLE IF NOT EXISTS stylist_conversation_state (
+    session_id   TEXT PRIMARY KEY,
+    state_json   TEXT NOT NULL,
+    updated_at   TEXT DEFAULT (datetime('now'))
+  );
 `)
 
 // ── Migrate: add new columns to existing DB ───────────────────────────────────
@@ -5268,6 +5604,38 @@ function computeWaistbandNote(p) {
 
 function buildPieceText(p) {
   return buildWardrobePieceTruthText(p)
+}
+
+function buildCompactPieceText(p) {
+  const parts = []
+  const colors = Array.isArray(p.colors) ? p.colors : []
+
+  if (p.reads_as) parts.push(`reads as: ${p.reads_as}`)
+  else if (colors.length) parts.push(colors.join('/'))
+
+  if (p.bottom_shape) parts.push(`shape: ${p.bottom_shape}`)
+  if (p.silhouette) parts.push(`silhouette: ${p.silhouette}`)
+  if (p.fabric_category) parts.push(`fabric: ${p.fabric_category}`)
+  
+  const tuck = computeTuckNote(p) || computeWaistbandNote(p)
+  if (tuck) parts.push(tuck)
+
+  if (Array.isArray(p.occasions) && p.occasions.length) parts.push(p.occasions.join(', '))
+  if (p.recommendation_status && p.recommendation_status !== 'trusted') parts.push(`recommendation trust: ${p.recommendation_status}`)
+  if (p.fit_confidence && p.fit_confidence !== 'unknown') parts.push(`fit: ${p.fit_confidence}`)
+  if (p.engine_notes) parts.push(`engine note: ${p.engine_notes}`)
+
+  let text = `• ${p.name} (${p.category} | ${parts.join(' | ')})`
+  if (Array.isArray(p.styling_rules_learned) && p.styling_rules_learned.length) {
+    text += `\n  RULES (authoritative): ${p.styling_rules_learned.join(' | ')}`
+  }
+  if (Array.isArray(p.tried_and_rejected) && p.tried_and_rejected.length) {
+    text += `\n  REJECTED: ${p.tried_and_rejected.join(' | ')}`
+  }
+  if (Array.isArray(p.pairs_well_with) && p.pairs_well_with.length) {
+    text += `\n  PAIRS WITH: ${p.pairs_well_with.join(', ')}`
+  }
+  return text
 }
 
 function buildLinkedPieceFitCautions(pieces = []) {
@@ -8570,103 +8938,381 @@ app.post('/api/ai/outfit-feedback', upload.single('photo'), async (req, res) => 
   }
 })
 
+const STYLIST_CONVERSATION_MODES = new Set([
+  'new_request',
+  'followup',
+  'correction',
+  'explanation',
+  'preference_reaction',
+])
+
+function resolveStylistConversationMode(question, {
+  requestedMode = 'new_request',
+  hasThreadContext = false,
+  hasGeneratedContext = false,
+} = {}) {
+  const requested = STYLIST_CONVERSATION_MODES.has(String(requestedMode))
+    ? String(requestedMode)
+    : 'new_request'
+  const q = String(question || '').trim().toLowerCase()
+  if (!q) return requested
+
+  if (hasThreadContext && /\b(no|nope|wait|hold on|i meant|i did not|i didn't|you said|but you|you missed|you ignored|that's wrong|that is wrong|not true|actually|today is|it is|it isn't|it is not|these are|this is)\b/.test(q)) {
+    return 'correction'
+  }
+  if (/\b(i disagree|you are wrong|that's wrong|that is wrong|not true|you missed|you ignored|today is)\b/.test(q)) {
+    return 'correction'
+  }
+  if (/\b(i like|i don't like|i do not like|not me|too safe|too soft|too generic|more like|less like|good formula|good pieces|bad piece|bad occasion|fit issue)\b/.test(q)) {
+    return 'preference_reaction'
+  }
+  if (/^(why|how did|how do you know|what made|which|do you see|can you see|did you see|where|what date|which season|what season|what images|which images)\b/.test(q)) {
+    return 'explanation'
+  }
+  if (hasGeneratedContext && /\b(first|second|third|last|previous|above|earlier|that one|those outfits|these outfits|this outfit|that outfit|the outfit|the shoes|the top|the skirt|the pants|the photo|the image)\b/.test(q)) {
+    return 'followup'
+  }
+  if (hasThreadContext && /\b(last|previous|above|earlier|that one|first one|second one|third one|those outfits|these outfits|this outfit|that outfit|the outfit|the shoes|the top|the skirt|the pants|the photo|the image)\b/.test(q)) {
+    return 'followup'
+  }
+  return requested
+}
+
+function buildStylistConversationDirective(mode) {
+  switch (mode) {
+    case 'correction':
+      return 'This turn is a correction or challenge. Acknowledge the correction, update the specific mistaken point, and answer the user directly. Do not regenerate the prior list, outfit evaluation, or plan unless the user asks for a revised version.'
+    case 'explanation':
+      return 'This turn asks for explanation or context inspection. Explain how the prior answer was made using current text, wardrobe metadata, and any images attached to this call. If asked which images are visible, name the current attachments or say which detail is uncertain.'
+    case 'preference_reaction':
+      return 'This turn is feedback about taste or quality. Treat it as style learning for the next answer, avoid defending the old suggestion, and give a concise adjustment or next move.'
+    case 'followup':
+      return 'This turn is a follow-up on an existing outfit, card, list, or recommendation. Continue the conversation from the current thread context and answer the exact question. Do not restart the full evaluator, outfit generator, packing list, or recommendation flow.'
+    default:
+      return 'This turn is a new request. Answer the user directly using wardrobe context. Ask one clarifying question if required. Lists are appropriate when the user asks for outfits, packing, options, or comparisons.'
+  }
+}
+function getStylistConversationState(sessionId = 'default') {
+  try {
+    const row = db.prepare('SELECT state_json FROM stylist_conversation_state WHERE session_id = ?').get(sessionId)
+    if (!row) return {}
+    return JSON.parse(row.state_json || '{}')
+  } catch (err) {
+    console.error('getStylistConversationState error:', err)
+    return {}
+  }
+}
+
+function saveStylistConversationState(state, sessionId = 'default') {
+  try {
+    const stateJson = JSON.stringify(state || {})
+    db.prepare(`
+      INSERT INTO stylist_conversation_state (session_id, state_json, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(session_id) DO UPDATE SET
+        state_json = excluded.state_json,
+        updated_at = datetime('now')
+    `).run(sessionId, stateJson)
+  } catch (err) {
+    console.error('saveStylistConversationState error:', err)
+  }
+}
+
+function getLastOutfitEvaluation(outfitId) {
+  if (!outfitId) return null
+  try {
+    const row = db.prepare(`
+      SELECT note, payload FROM stylist_feedback 
+      WHERE COALESCE(archived, 0) = 0 AND context_type = 'outfit' AND context_id = ?
+      ORDER BY id DESC LIMIT 1
+    `).get(Number(outfitId))
+    if (!row) return null
+    return {
+      note: row.note,
+      evaluation: safeJsonParse(row.payload, null)
+    }
+  } catch (err) {
+    console.error('getLastOutfitEvaluation error:', err)
+    return null
+  }
+}
+
+function getCurrentImageInventory(state) {
+  if (!state || !state.visible_image_inventory) return []
+  return state.visible_image_inventory
+}
+
+function storeUserCorrection(note, contextType = 'general', contextId = null) {
+  try {
+    db.prepare(`
+      INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note)
+      VALUES ('preference_reaction', 'message', ?, ?, ?)
+    `).run(contextType, contextId, note)
+  } catch (err) {
+    console.error('storeUserCorrection error:', err)
+  }
+}
+
+
+async function buildStylistConversationPayload(body) {
+  const {
+    question,
+    pieces,
+    history,
+    generatedContext,
+    generatedOutfits,
+    conversationMode: requestedConversationMode = 'new_request',
+    currentDate,
+    currentDateLabel,
+    timezone = 'America/Los_Angeles',
+    threadContext,
+    outfit,
+    pieceIds,
+  } = body
+
+  // 1. Retrieve session state and restore active outfit/garments if missing from request
+  let activeOutfit = outfit
+  let activePieceIds = pieceIds
+  const state = getStylistConversationState('default')
+  
+  if (!activeOutfit && state.active_outfit) {
+    activeOutfit = state.active_outfit
+    activePieceIds = state.active_piece_ids
+  }
+
+  // Wardrobe list is loaded via tools
+  const confirmedOutfitsText = getConfirmedOutfitMemory()
+  const generatedOutfitContextText = String(generatedContext || '').trim()
+  const threadContextText = String(threadContext || '').trim()
+
+  const now = currentDate ? new Date(currentDate) : new Date()
+  const resolvedCurrentDateLabel = currentDateLabel || new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: timezone || 'America/Los_Angeles',
+  }).format(now)
+
+  // 2. Resolve generated outfit reference sheet (if any)
+  const generatedOutfitReferenceSheet = Array.isArray(generatedOutfits) && generatedOutfits.length
+    ? await makeGeneratedOutfitReferenceSheet(generatedOutfits, pieces || [])
+    : null
+
+  // 3. Resolve saved/uploaded outfit details and photos (if any)
+  let outfitImageContent = null
+  let attachedImageInventory = []
+  let extraContextText = ''
+
+  if (activeOutfit) {
+    const { pieces: outfitPieces } = resolveOutfitEvaluationPieces({ outfit: activeOutfit, pieceIds: activePieceIds })
+    
+    // Resolve outfit photo path
+    const outfitPhoto = activeOutfit.photo || activeOutfit.imageUrl || ''
+    const savedPhotoPath = uploadedOrSavedOutfitPhotoPath(outfitPhoto)
+    const contentImages = []
+
+    // Vision Optimization: Prune base64 image data for non-visual turns
+    const isVisualQuery = /\b(see|saw|photo|photos|image|images|picture|pictures|color|colors|shoes|boots|pants|jeans|skirt|top|shirt|jacket|look|fitted|tucked|hem|waist|silhouette|view|inspect)\b/i.test(question)
+    const isFirstTurn = !history || history.length === 0
+    const shouldAttachImages = isVisualQuery || isFirstTurn || requestedConversationMode === 'new_request'
+
+    if (shouldAttachImages) {
+      const outfitImageIncluded = await addEvaluationImage(contentImages, savedPhotoPath)
+      if (outfitImageIncluded) {
+        attachedImageInventory.push(`actual worn outfit photo: ${activeOutfit.label || activeOutfit.title || activeOutfit.name || 'current outfit'}`)
+      }
+
+      // Resolve linked garment reference photos
+      const imageRefs = await Promise.all(outfitPieces.slice(0, 5).map(async (piece) => {
+        const photo = piece.worn_photo || piece.photo
+        if (!photo) return null
+        const filePath = path.join(uploadsDir, photo)
+        if (!fs.existsSync(filePath)) return null
+        const { base64, mime } = await prepareImageForClaude(filePath)
+        return { piece, base64, mime }
+      }))
+      for (const ref of imageRefs.filter(Boolean)) {
+        contentImages.push({ type: 'image', source: { type: 'base64', media_type: ref.mime, data: ref.base64 } })
+        attachedImageInventory.push(`linked garment reference photo: ${ref.piece.name} (${ref.piece.category})`)
+      }
+
+      if (contentImages.length > 0) {
+        outfitImageContent = contentImages
+      }
+    } else {
+      attachedImageInventory = ['images omitted on this turn to conserve vision tokens']
+    }
+
+    // Include outfit summary context
+    const outfitSummary = [
+      `Label: ${activeOutfit.label || activeOutfit.title || activeOutfit.name || 'Current outfit'}`,
+      activeOutfit.dominantDirection ? `Direction: ${activeOutfit.dominantDirection}` : '',
+      activeOutfit.silhouette ? `Silhouette: ${activeOutfit.silhouette}` : '',
+      activeOutfit.reason ? `Current reason: ${activeOutfit.reason}` : '',
+      activeOutfit.watchFor ? `Current watch note: ${activeOutfit.watchFor}` : '',
+      activeOutfit.notes ? `Saved outfit notes: ${activeOutfit.notes}` : ''
+    ].filter(Boolean).join('\n')
+
+    const pieceLines = outfitPieces.map((piece, index) => `${index + 1}. ${buildPieceText(piece)}`).join('\n')
+    const linkedFitCautionsText = buildLinkedPieceFitCautions(outfitPieces)
+
+    extraContextText = [
+      `Proposed outfit:\n${outfitSummary}`,
+      pieceLines ? `Linked garments:\n${pieceLines}` : '',
+      linkedFitCautionsText ? `Linked fit/trust cautions:\n${linkedFitCautionsText}` : '',
+    ].filter(Boolean).join('\n\n')
+  }
+
+  // 4. Resolve conversation mode
+  const hasThreadContext = Boolean(
+    threadContextText ||
+    generatedOutfitContextText ||
+    activeOutfit ||
+    (Array.isArray(history) && history.length)
+  )
+
+  const conversationMode = resolveStylistConversationMode(question, {
+    requestedMode: requestedConversationMode,
+    hasThreadContext,
+    hasGeneratedContext: Boolean(generatedOutfitContextText || generatedOutfitReferenceSheet || activeOutfit),
+  })
+
+  // Save/Update Conversation state for future context recovery
+  if (activeOutfit) {
+    saveStylistConversationState({
+      active_outfit: activeOutfit,
+      active_piece_ids: activePieceIds,
+      visible_image_inventory: attachedImageInventory
+    }, 'default')
+  }
+
+  // Automatically save corrections / taste preferences to Database stylist_feedback table
+  if (conversationMode === 'correction' || conversationMode === 'preference_reaction') {
+    storeUserCorrection(question, activeOutfit ? 'outfit' : 'general', activeOutfit ? activeOutfit.id : null)
+  }
+
+  const conversationDirective = buildStylistConversationDirective(conversationMode)
+
+  // 5. Cost Optimization: Expose wardrobe list via tools only
+  const activeWardrobeText = [
+    'The full wardrobe list is omitted from the prompt to save context tokens.',
+    'You MUST use the database search tools to look up or search for pieces in the closet:',
+    '- Use `search_wardrobe` to search or filter active garments by query, category, color, or occasion.',
+    '- Use `get_garment_details` to inspect detailed notes, fit warnings, styling rules, and intelligence for specific garment IDs.',
+    '- Use `get_last_outfit_evaluation` to check past critiques.',
+    '- Use `get_current_image_inventory` to inspect attached images.',
+    '- Use `store_user_correction` to save user corrections/preferences.',
+    'Never guess or assume a piece exists without querying the database via tools first.'
+  ].join('\n')
+
+  // Mode-Specific system prompt rules
+  let modeDirectiveText = ''
+  switch (conversationMode) {
+    case 'correction':
+      modeDirectiveText = 'Turn mode: correction. Acknowledge the user\'s correction or challenge directly, update the mistaken point, and give a concise adjustment. Do not defend a contradiction.'
+      break
+    case 'explanation':
+      modeDirectiveText = 'Turn mode: explanation. Explain your styling rationale or choices using listed garment details. If the user asks which images are visible, list the current turn attached images inventory.'
+      break
+    case 'preference_reaction':
+      modeDirectiveText = 'Turn mode: taste feedback. Acknowledge the preference, adjust your style rules, and keep it concise. Avoid generic styling.'
+      break
+    case 'followup':
+      modeDirectiveText = 'Turn mode: followup. The user is asking about the prior critique, cards, or list. Do not restart the evaluation. Answer the specific question, revise/defend the previous reasoning, and be honest about uncertainty.'
+      break
+    default:
+      modeDirectiveText = 'Turn mode: new request. Respond to the query directly. If the user request is broad (e.g. packing lists or travel outfits) and is missing context like destination season, trip duration, or dress level, ask exactly one clear clarifying question; do not generate a placeholder list.'
+  }
+
+  // 6. Assemble system prompt
+  const system = STYLIST_SYSTEM + [
+    '',
+    'CURRENT DATE / SEASON:',
+    `Today is ${resolvedCurrentDateLabel}. Time zone: ${timezone || 'America/Los_Angeles'}.`,
+    'Use this date for relative phrases like today, next week, in a few weeks, current season, or upcoming travel. Do not say you cannot determine today’s date.',
+    '',
+    'CONVERSATION CONTROLLER:',
+    `Current turn mode: ${conversationMode}.`,
+    `Mode instructions: ${modeDirectiveText}`,
+    `Turn directive: ${conversationDirective}`,
+    'If mode is new_request, answer the user’s request directly using wardrobe context. Lists are fine when the user asks for outfits, packing, options, or a comparison.',
+    'If mode is followup, answer the specific follow-up without restarting the whole evaluation, outfit generation, packing list, or plan.',
+    'If mode is correction, acknowledge the correction, revise only the relevant mistaken point, and do not defend a contradiction.',
+    'If mode is explanation, explain how the previous recommendation was made using the available context.',
+    'If mode is preference_reaction, adapt the next advice to the stated preference and keep it concise.',
+    'For followup, correction, explanation, and preference_reaction modes, answer the latest user message first. Do not regenerate the full prior list, plan, or evaluation unless the user explicitly asks for a revised version.',
+    'In correction mode, keep the reply to 1–3 short sentences or one compact paragraph unless the user asks for a new complete answer.',
+    'Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit. For ordinary chat follow-ups, answer conversationally.',
+    '',
+    threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',
+    '',
+    extraContextText ? `OUTFIT CONTEXT UNDER DISCUSSION:\n${extraContextText}` : '',
+    '',
+    attachedImageInventory.length
+      ? `CURRENT ATTACHED IMAGE INVENTORY:\n${attachedImageInventory.map(item => `- ${item}`).join('\n')}`
+      : '',
+    '',
+    'CURRENT WARDROBE TRUTH:',
+    activeWardrobeText,
+    '',
+    confirmedOutfitsText ? `CONFIRMED / FAVORITE OUTFIT MEMORY:\n${confirmedOutfitsText}` : '',
+    generatedOutfitContextText ? [
+      'CURRENT GENERATED OUTFIT CARD CONTEXT:',
+      generatedOutfitContextText,
+      '',
+      'If the user asks about "the first one", "these outfits", or a generated card, use this current card context.',
+      generatedOutfitReferenceSheet
+        ? 'The current user turn includes a generated outfit garment-reference sheet grouped by card. Use those pixels for garment thumbnail, hanger-photo, worn-photo, ruler, texture, fit, shoe, and detail questions.'
+        : 'You can discuss the generated outfit card text and saved garment thumbnails described here.',
+      'If the context includes a generation pipeline note, use it to answer whether photos were used during selection.',
+      generatedOutfitReferenceSheet
+        ? 'Do not say you cannot see the current generated garment photos. Inspect the attached reference sheet and state confidence if a detail is small or partially visible.'
+        : 'Be honest if you are judging from card context rather than a full rendered outfit image, but do not say you cannot see or discuss the generated outfits.'
+    ].join('\n') : ''
+  ].filter(Boolean).join('\n')
+
+  // 7. Assemble userContent (messages content)
+  const promptText = [
+    generatedOutfitReferenceSheet ? 'Attached: current generated outfit garment-reference sheet.' : '',
+    outfitImageContent ? 'Attached: images for the outfit under discussion.' : '',
+    `Current turn mode: ${conversationMode}.`,
+    `Turn directive: ${conversationDirective}`,
+    'Answer the latest user message directly; do not restart the prior task unless requested.',
+    `Today is ${resolvedCurrentDateLabel} (${timezone || 'America/Los_Angeles'}).`,
+    '',
+    question
+  ].filter(Boolean).join('\n')
+
+  let userContent
+  if (generatedOutfitReferenceSheet || outfitImageContent) {
+    userContent = []
+    if (generatedOutfitReferenceSheet) {
+      userContent.push({ type: 'image', source: { type: 'base64', media_type: generatedOutfitReferenceSheet.mime, data: generatedOutfitReferenceSheet.base64 } })
+    }
+    if (outfitImageContent) {
+      userContent.push(...outfitImageContent)
+    }
+    userContent.push({ type: 'text', text: promptText })
+  } else {
+    userContent = promptText
+  }
+
+  return {
+    system,
+    messages: [
+      ...(history || []).map(h => ({ role: h.role, content: h.content })),
+      { role: 'user', content: userContent }
+    ],
+    maxTokens: 1500
+  }
+}
+
 // ── AI: General wardrobe query (with conversation history) ────────────────────
 app.post('/api/ai/ask', async (req, res) => {
   try {
-    const {
-      question,
-      pieces,
-      history,
-      generatedContext,
-      generatedOutfits,
-      conversationMode = 'new_request',
-      currentDate,
-      currentDateLabel,
-      timezone = 'America/Los_Angeles',
-      threadContext,
-    } = req.body
-    const wardrobeText = (pieces || []).map(buildPieceText).join('\n')
-    const confirmedOutfitsText = getConfirmedOutfitMemory()
-    const generatedOutfitContextText = String(generatedContext || '').trim()
-    const threadContextText = String(threadContext || '').trim()
-    const now = currentDate ? new Date(currentDate) : new Date()
-    const resolvedCurrentDateLabel = currentDateLabel || new Intl.DateTimeFormat('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      timeZone: timezone || 'America/Los_Angeles',
-    }).format(now)
-    const generatedOutfitReferenceSheet = Array.isArray(generatedOutfits) && generatedOutfits.length
-      ? await makeGeneratedOutfitReferenceSheet(generatedOutfits, pieces || [])
-      : null
-
-    const system = STYLIST_SYSTEM + [
-      '',
-      'CURRENT DATE / SEASON:',
-      `Today is ${resolvedCurrentDateLabel}. Time zone: ${timezone || 'America/Los_Angeles'}.`,
-      'Use this date for relative phrases like today, next week, in a few weeks, current season, or upcoming travel. Do not say you cannot determine today’s date.',
-      '',
-      'CONVERSATION CONTROLLER:',
-      `Current turn mode: ${conversationMode}.`,
-      'If mode is new_request, answer the user’s request directly using wardrobe context. Lists are fine when the user asks for outfits, packing, options, or a comparison.',
-      'If mode is followup, answer the specific follow-up without restarting the whole evaluation, outfit generation, packing list, or plan.',
-      'If mode is correction, acknowledge the correction, revise only the relevant mistaken point, and do not defend a contradiction.',
-      'If mode is explanation, explain how the previous recommendation was made using the available context.',
-      'If mode is preference_reaction, adapt the next advice to the stated preference and keep it concise.',
-      'For followup, correction, explanation, and preference_reaction modes, answer the latest user message first. Do not regenerate the full prior list, plan, or evaluation unless the user explicitly asks for a revised version.',
-      'In correction mode, keep the reply to 1–3 short sentences or one compact paragraph unless the user asks for a new complete answer.',
-      'Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit. For ordinary chat follow-ups, answer conversationally.',
-      '',
-      threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',
-      '',
-      'CURRENT WARDROBE TRUTH:',
-      wardrobeText,
-      '',
-      confirmedOutfitsText ? `CONFIRMED / FAVORITE OUTFIT MEMORY:\n${confirmedOutfitsText}` : '',
-      generatedOutfitContextText ? [
-        'CURRENT GENERATED OUTFIT CARD CONTEXT:',
-        generatedOutfitContextText,
-        '',
-        'If the user asks about "the first one", "these outfits", or a generated card, use this current card context.',
-        generatedOutfitReferenceSheet
-          ? 'The current user turn includes a generated outfit garment-reference sheet grouped by card. Use those pixels for garment thumbnail, hanger-photo, worn-photo, ruler, texture, fit, shoe, and detail questions.'
-          : 'You can discuss the generated outfit card text and saved garment thumbnails described here.',
-        'If the context includes a generation pipeline note, use it to answer whether photos were used during selection.',
-        generatedOutfitReferenceSheet
-          ? 'Do not say you cannot see the current generated garment photos. Inspect the attached reference sheet and state confidence if a detail is small or partially visible.'
-          : 'Be honest if you are judging from card context rather than a full rendered outfit image, but do not say you cannot see or discuss the generated outfits.'
-      ].join('\n') : ''
-    ].filter(Boolean).join('\n')
-    const userContent = generatedOutfitReferenceSheet
-      ? [
-        { type: 'image', source: { type: 'base64', media_type: generatedOutfitReferenceSheet.mime, data: generatedOutfitReferenceSheet.base64 } },
-        { type: 'text', text: [
-          'Attached: current generated outfit garment-reference sheet. It is grouped by generated card and uses hanger photos when available, with worn photos only as fallback.',
-          'Use the sheet as the visual context for this follow-up.',
-          `Current turn mode: ${conversationMode}.`,
-          'Answer the latest user message directly; do not restart the prior task unless requested.',
-          `Today is ${resolvedCurrentDateLabel} (${timezone || 'America/Los_Angeles'}).`,
-          '',
-          question
-        ].join('\n') }
-      ]
-      : [
-        `Current turn mode: ${conversationMode}.`,
-        'Answer the latest user message directly; do not restart the prior task unless requested.',
-        `Today is ${resolvedCurrentDateLabel} (${timezone || 'America/Los_Angeles'}).`,
-        '',
-        question
-      ].join('\n')
-
-    const answer = await askStylist({
-      system,
-      maxTokens: 1500,
-      messages: [
-        ...(history || []).map(h => ({ role: h.role, content: h.content })),
-        { role: 'user', content: userContent }
-      ]
-    })
+    const payload = await buildStylistConversationPayload(req.body)
+    const answer = await askStylistWithTools(payload)
     res.json({ answer, provider: AI_PROVIDER })
   } catch (err) {
     console.error('AI error:', err)
@@ -8687,4 +9333,4 @@ if (process.env.NODE_ENV !== 'test') {
   })
 }
 
-export { app, db, uploadsDir }
+export { app, db, uploadsDir, executeTool, contentToOpenAI }
