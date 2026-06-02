@@ -1844,6 +1844,14 @@ HOW TO DESIGN THE OUTFITS:
 4. Bias your selections to favor under-utilized pieces and honor taste/calibration memory.
 5. Return your final recommendations as a JSON object containing the outfits.
 
+LATENCY & TURN BUDGET OPTIMIZATION:
+- Minimize sequential round trips to prevent timeouts. Aim to complete your work in exactly 3 turns:
+  - Turn 1: Call 'search_wardrobe' multiple times in parallel for different categories (e.g. search tops, bottoms, shoes, outerwear) to discover candidates.
+  - Turn 2: Select the most promising 4–8 garment IDs and call 'get_garment_details' for all of them in parallel in a single turn to visually inspect them.
+  - Turn 3: Construct the outfits and output the final JSON.
+- Never make more than 3 turns unless absolutely necessary.
+- Do not call 'get_garment_details' for more than 8 garments total.
+
 OUTPUT FORMAT:
 On your final turn (after completing all tool calls), you MUST output ONLY a valid JSON object in this format (do not include any additional conversational text or markdown wrap outside the JSON block):
 {
@@ -6993,7 +7001,7 @@ ${globalFeedbackText}` : ''
         system: WHOLE_WARDROBE_AGENT_SYSTEM,
         messages: [{ role: 'user', content: initialUserMessageText }],
         maxTokens: 3000
-      }), 45000, 'Whole-wardrobe agent stylist')
+      }), 65000, 'Whole-wardrobe agent stylist')
 
       timings.agentStylistMs = Date.now() - agentStartedAt
       parsed = safeJsonFromModel(raw)
