@@ -1843,15 +1843,20 @@ IMPORTANT STYLING PRINCIPLES (from AGENTS.md):
 HOW TO DESIGN THE OUTFITS:
 1. Use the 'search_wardrobe' tool to discover active garments in her closet (e.g. search for tops, bottoms, shoes, dresses, outerwear).
 2. For any garments you are actively considering or pairing, call 'get_garment_details' to retrieve their full styling text and inspect their photos on-demand.
-3. Construct complete outfits. Each outfit should typically have a top, a bottom, shoes, and optionally outerwear or accessories. A dress can replace the top + bottom.
-4. Bias your selections to favor under-utilized pieces and honor taste/calibration memory.
-5. Return your final recommendations as a JSON object containing the outfits.
+3. Run a strict visual self-critic audit on each combination before proposing it:
+   - Pattern & Color Clash: If a piece has a prominent pattern (like a botanical or floral dress/top), do not pair it with shoes or other items that also have prominent patterns or textures (like herringbone, stripes, or contrasting geometric patterns) unless they create a rare "productive tension" (which is extremely difficult to pull off). When in doubt, ground a patterned hero piece with solid, textured-but-unpatterned supporting pieces.
+   - Shoe Grounding Check: Check that the shoe grounds the dress/pants correctly in terms of visual weight, structure, and color. A delicate or flimsy shoe will clash with a heavy, structured midi dress. Match the weight of the bottom to the shoe.
+   - Visual Competition: Ensure there is a clear visual hierarchy (one Hero garment, others supporting or grounding). Do not pack too many loud or competing details into a single outfit. Reject over-styling and "costume" vibes.
+   - Discard & Replace: If any combination fails this self-critic pass, discard it and swap the conflicting piece (e.g. choose different shoes or top) before outputting your final recommendation.
+4. Construct complete outfits. Each outfit should typically have a top, a bottom, shoes, and optionally outerwear or accessories. A dress can replace the top + bottom.
+5. Bias your selections to favor under-utilized pieces and honor taste/calibration memory.
+6. Return your final recommendations as a JSON object containing the outfits.
 
 LATENCY & TURN BUDGET OPTIMIZATION:
 - Minimize sequential round trips to prevent timeouts. Aim to complete your work in exactly 3 turns:
   - Turn 1: Call 'search_wardrobe' multiple times in parallel for different categories (e.g. search tops, bottoms, shoes, outerwear) to discover candidates.
   - Turn 2: Select the most promising 4–8 garment IDs and call 'get_garment_details' for all of them in parallel in a single turn to visually inspect them.
-  - Turn 3: Construct the outfits and output the final JSON.
+  - Turn 3: Construct the outfits, apply your self-critic audit, and output the final JSON.
 - Never make more than 3 turns unless absolutely necessary.
 - Do not call 'get_garment_details' for more than 8 garments total.
 
