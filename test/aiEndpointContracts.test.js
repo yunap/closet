@@ -226,6 +226,10 @@ async function postJson(pathname, body) {
 function mockAiHandler({ system, messages }) {
   aiCalls.push({ system, messages })
   const text = String(system || '')
+  const latestMessage = Array.isArray(messages) ? messages.at(-1) : null
+  const latestText = Array.isArray(latestMessage?.content)
+    ? latestMessage.content.map(part => part?.text || '').join('\n')
+    : String(latestMessage?.content || '')
 
   if (text.includes('visual support-piece critic')) {
     return {
@@ -277,6 +281,11 @@ function mockAiHandler({ system, messages }) {
   }
 
   if (text.includes('evaluating one proposed whole-wardrobe outfit')) {
+    if (/Response mode:\s*followup/i.test(latestText)) {
+      return {
+        answer: 'Direct follow-up answer about the attached outfit photos.',
+      }
+    }
     return {
       summary: 'Mock evaluation',
       inferredIntent: {
@@ -285,6 +294,8 @@ function mockAiHandler({ system, messages }) {
       },
       visibleFacts: {
         floorLine: 'shoes are visible',
+        fitPlacement: 'garments sit naturally',
+        proportionRead: 'top length and pant rise create a readable proportion',
         shoeAnalysis: {
           visibility: 'visible/readable',
           read: 'cream slip-on shoes',
@@ -302,6 +313,8 @@ function mockAiHandler({ system, messages }) {
           supportPieces: ['light beige linen wide-leg pants'],
           groundingPiece: 'cream slip-on shoes',
         },
+        ideaViability: 'keep',
+        executionGap: 'minor floor-line watch only',
         mainSuccess: 'The proportions are readable.',
         firstVisibleIssue: 'No major issue.',
       },
@@ -467,6 +480,134 @@ test('wardrobe outfit evaluator sends outfit and linked garment images', async (
   assert.equal(json.debug.linkedPieceCount, 3)
   assert.ok(json.debug.imageCount >= 4)
   assert.match(json.feedback, /Mock evaluation/)
+  assert.match(json.feedback, /Fit placement: garments sit naturally/)
+  assert.match(json.feedback, /Proportion read: top length and pant rise create a readable proportion/)
+  assert.match(json.feedback, /Idea viability: keep/)
+  assert.match(json.feedback, /Execution gap: minor floor-line watch only/)
+})
+
+test('wardrobe outfit evaluator enriches saved outfit cards with linked garment authority', async () => {
+  const json = await postJson('/api/ai/evaluate-wardrobe-outfit', {
+    outfit: { id: seeded.outfitId, label: 'Vest top + white blouse', photo: `/uploads/${seeded.photos.outfit}` },
+    occasion: 'city',
+    season: 'year-round',
+    question: 'Evaluate this outfit.',
+  })
+
+  assert.equal(json.mode, 'evaluate_wardrobe_outfit')
+  assert.equal(json.debug.outfitImageIncluded, true)
+  assert.equal(json.debug.linkedPieceCount, 3)
+  assert.ok(json.debug.imageCount >= 4)
+
+  const lastCall = aiCalls.at(-1)
+  const latestUserMessage = lastCall.messages.at(-1)
+  const latestText = latestUserMessage.content.at(-1).text
+  assert.match(latestText, /AUTHORITY NOTE: This outfit has linked garment records/)
+  assert.match(latestText, /Outfit: "Vest top \+ white blouse"/)
+  assert.match(latestText, /Linked garment truth:/)
+  assert.match(latestText, /black button detail top/)
+  assert.match(latestText, /light beige linen wide-leg pants/)
+  assert.match(latestText, /cream slip-on shoes/)
+})
+
+test('wardrobe outfit followup exposes current image inventory', async () => {
+  const json = await postJson('/api/ai/evaluate-wardrobe-outfit', {
+    outfit: { label: 'Mock outfit', photo: `/uploads/${seeded.photos.outfit}` },
+    pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+    occasion: 'city',
+    season: 'current season',
+    responseMode: 'followup',
+    question: 'Which images do you still see?',
+    previousEvaluation: 'Previous critique text.',
+  })
+
+  assert.equal(json.mode, 'evaluate_wardrobe_outfit')
+  assert.match(json.feedback, /I have these images attached in this turn/)
+  assert.match(json.feedback, /actual worn outfit photo: Mock outfit/)
+  assert.match(json.feedback, /linked garment reference photo: black button detail top/)
+  assert.match(json.feedback, /linked garment reference photo: light beige linen wide-leg pants/)
+  assert.match(json.feedback, /linked garment reference photo: cream slip-on shoes/)
+  assert.match(json.feedback, /Direct follow-up answer about the attached outfit photos/)
+  assert.doesNotMatch(json.feedback, /Visible facts:/)
+  assert.doesNotMatch(json.feedback, /Updated read:/)
+
+  const lastCall = aiCalls.at(-1)
+  const latestUserMessage = lastCall.messages.at(-1)
+  assert.ok(Array.isArray(latestUserMessage.content))
+  assert.match(latestUserMessage.content.at(-1).text, /Current attached image inventory for this turn/)
+  assert.match(latestUserMessage.content.at(-1).text, /If the user asks what photos\/images you can see/)
+})
+
+test('legacy saved outfit evaluator endpoint is removed', async () => {
+  const response = await fetch(`${baseUrl}/api/ai/evaluate-outfit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      outfitId: seeded.outfitId,
+      question: 'What do you think of this outfit?',
+    }),
+  })
+
+  assert.equal(response.status, 404)
+})
+
+test('saved outfit cards use the shared wardrobe evaluator with linked garment images', async () => {
+  const json = await postJson('/api/ai/evaluate-wardrobe-outfit', {
+    outfit: {
+      id: seeded.outfitId,
+      label: 'Saved outfit card',
+    },
+    outfitId: seeded.outfitId,
+    question: 'What do you think of this outfit?',
+  })
+
+  assert.equal(json.mode, 'evaluate_wardrobe_outfit')
+  assert.equal(json.pipeline, 'whole_wardrobe_outfit_evaluator')
+  assert.equal(json.debug.outfitImageIncluded, true)
+  assert.equal(json.debug.linkedPieceCount, 3)
+  assert.ok(json.debug.imageCount >= 4)
+  assert.match(json.feedback, /Mock evaluation/)
+  assert.match(json.feedback, /Fit placement: garments sit naturally/)
+  assert.match(json.feedback, /Proportion read: top length and pant rise create a readable proportion/)
+  assert.match(json.feedback, /Idea viability: keep/)
+  assert.match(json.feedback, /Execution gap: minor floor-line watch only/)
+
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /evaluating one proposed whole-wardrobe outfit/)
+})
+
+test('uploaded outfit feedback uses the shared wardrobe evaluator with uploaded image evidence', async () => {
+  const form = new FormData()
+  const fileBuffer = fs.readFileSync(path.join(uploadsDir, seeded.photos.outfit))
+  form.set('photo', new Blob([fileBuffer], { type: 'image/png' }), 'outfit.png')
+  form.set('question', 'What do you think of this outfit?')
+  form.set('outfitName', 'Uploaded hotel breakfast outfit')
+  form.set('outfitNotes', 'The shoes are black and visible.')
+
+  const response = await fetch(`${baseUrl}/api/ai/outfit-feedback`, {
+    method: 'POST',
+    body: form,
+  })
+  const json = await response.json()
+
+  assert.equal(response.status, 200, `/api/ai/outfit-feedback failed: ${JSON.stringify(json)}`)
+  assert.equal(json.mode, 'evaluate_uploaded_outfit_photo')
+  assert.equal(json.pipeline, 'whole_wardrobe_outfit_evaluator')
+  assert.equal(json.debug.outfitImageIncluded, true)
+  assert.equal(json.debug.linkedPieceCount, 0)
+  assert.equal(json.debug.imageCount, 1)
+  assert.match(json.feedback, /Mock evaluation/)
+  assert.match(json.feedback, /Fit placement: garments sit naturally/)
+  assert.match(json.feedback, /Proportion read: top length and pant rise create a readable proportion/)
+  assert.match(json.feedback, /Idea viability: keep/)
+  assert.match(json.feedback, /Execution gap: minor floor-line watch only/)
+
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /evaluating one proposed whole-wardrobe outfit/)
+  const latestUserMessage = lastCall.messages.at(-1)
+  assert.ok(Array.isArray(latestUserMessage.content))
+  assert.equal(latestUserMessage.content[0].type, 'image')
+  assert.match(latestUserMessage.content.at(-1).text, /Mode: evaluate_uploaded_outfit_photo/)
 })
 
 test('freeform ask attaches generated outfit image context when cards are supplied', async () => {
@@ -486,12 +627,50 @@ test('freeform ask attaches generated outfit image context when cards are suppli
     history: [],
     generatedContext: 'Generated outfit cards are visible in the current stylist thread.',
     generatedOutfits: [generatedCard()],
+    conversationMode: 'explanation',
+    currentDateLabel: 'Monday, June 1, 2026',
+    timezone: 'America/Los_Angeles',
   })
 
   assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
   const lastCall = aiCalls.at(-1)
   const latestUserMessage = lastCall.messages.at(-1)
+  assert.match(lastCall.system, /CURRENT DATE \/ SEASON/)
+  assert.match(lastCall.system, /Monday, June 1, 2026/)
+  assert.match(lastCall.system, /CONVERSATION CONTROLLER/)
+  assert.match(lastCall.system, /Current turn mode: explanation/)
   assert.ok(Array.isArray(latestUserMessage.content))
   assert.equal(latestUserMessage.content[0].type, 'image')
   assert.match(latestUserMessage.content[1].text, /generated outfit garment-reference sheet/)
+  assert.match(latestUserMessage.content[1].text, /Current turn mode: explanation/)
+})
+
+test('freeform ask grounds date and correction mode for conversational follow-ups', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'today is June 1st',
+    pieces: [],
+    history: [
+      { role: 'user', content: 'What should I pack for Portland in a few weeks?' },
+      { role: 'assistant', content: 'Assuming fall, bring layers.' },
+    ],
+    conversationMode: 'correction',
+    currentDateLabel: 'Monday, June 1, 2026',
+    timezone: 'America/Los_Angeles',
+    threadContext: 'User is correcting a previous seasonal assumption.',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  const latestUserMessage = lastCall.messages.at(-1)
+  assert.match(lastCall.system, /Today is Monday, June 1, 2026/)
+  assert.match(lastCall.system, /Current turn mode: correction/)
+  assert.match(lastCall.system, /acknowledge the correction/)
+  assert.match(lastCall.system, /revise only the relevant mistaken point/)
+  assert.match(lastCall.system, /Do not regenerate the full prior list/)
+  assert.match(lastCall.system, /1–3 short sentences/)
+  assert.match(lastCall.system, /User is correcting a previous seasonal assumption/)
+  assert.equal(typeof latestUserMessage.content, 'string')
+  assert.match(latestUserMessage.content, /Current turn mode: correction/)
+  assert.match(latestUserMessage.content, /do not restart the prior task/)
+  assert.match(latestUserMessage.content, /today is June 1st/)
 })
