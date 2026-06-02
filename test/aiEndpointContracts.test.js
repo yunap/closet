@@ -16,7 +16,7 @@ process.env.PHOTO_PRESERVING_VISUALS = 'true'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_CANDIDATES = '18'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
-const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
+const { app, db, uploadsDir, executeTool, contentToOpenAI, locallyGateWholeWardrobeOutfits } = await import('../server.js')
 
 let server
 let baseUrl
@@ -915,5 +915,60 @@ test('contentToOpenAI preserves image_url blocks without stringifying them', () 
   assert.equal(result[1].type, 'image_url')
   assert.deepEqual(result[1].image_url, { url: 'data:image/jpeg;base64,abcdefg' })
 })
+
+test('locallyGateWholeWardrobeOutfits rejects pattern clashes', () => {
+  const dress = {
+    id: 901,
+    name: 'colorful botanical print maxi dress',
+    category: 'dress',
+    colors: '["multi"]',
+    notes: ''
+  }
+  const badShoes = {
+    id: 902,
+    name: 'black herringbone pointed heels',
+    category: 'shoes',
+    colors: '["black"]',
+    notes: ''
+  }
+  const goodShoes = {
+    id: 903,
+    name: 'solid black leather boots',
+    category: 'shoes',
+    colors: '["black"]',
+    notes: ''
+  }
+
+  const clashingOutfit = {
+    label: 'Clashing look',
+    pieceIds: [901, 902],
+    strength: 'signature',
+  }
+  const validOutfit = {
+    label: 'Valid look',
+    pieceIds: [901, 903],
+    strength: 'signature',
+  }
+
+  const result = locallyGateWholeWardrobeOutfits(
+    [clashingOutfit, validOutfit],
+    5,
+    {
+      requireShoes: true,
+      requireDress: true,
+      candidatePieces: [dress, badShoes, goodShoes],
+      occasion: 'casual',
+      mood: 'artistic minimalist'
+    }
+  )
+
+  const rejectedReasons = result.rejected.map(r => r.reason)
+  assert.ok(rejectedReasons.some(r => r.includes('pattern clash')))
+
+  const acceptedOutfits = result.outfits
+  assert.equal(acceptedOutfits.length, 1)
+  assert.deepEqual(acceptedOutfits[0].pieceIds, [901, 903])
+})
+
 
 
