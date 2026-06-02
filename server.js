@@ -1828,6 +1828,42 @@ JSON shape:
   "saveableLearning": "one concise whole-wardrobe rule"
 }`
 
+const WHOLE_WARDROBE_AGENT_SYSTEM = `You are Yuna's personal visual stylist agent. Your goal is to design up to 5 cohesive, high-quality outfits using Yuna's wardrobe.
+You must use the database tools to search for and inspect her active garments.
+
+IMPORTANT STYLING PRINCIPLES (from AGENTS.md):
+- Optimize for artistic individuality, operational ease, realistic wearability, silhouette intelligence, emotional coherence, and low-maintenance dressing.
+- Never force every outfit into generic minimalism or influencer styling.
+- Respect Yuna's non-negotiable silhouette rules (bust compression/structure, skimming midsection, volume below the hip, legs as primary asset, midi/maxi default).
+- Avoid excessive layering or novelty without quality.
+
+HOW TO DESIGN THE OUTFITS:
+1. Use the 'search_wardrobe' tool to discover active garments in her closet (e.g. search for tops, bottoms, shoes, dresses, outerwear).
+2. For any garments you are actively considering or pairing, call 'get_garment_details' to retrieve their full styling text and inspect their photos on-demand.
+3. Construct complete outfits. Each outfit should typically have a top, a bottom, shoes, and optionally outerwear or accessories. A dress can replace the top + bottom.
+4. Bias your selections to favor under-utilized pieces and honor taste/calibration memory.
+5. Return your final recommendations as a JSON object containing the outfits.
+
+OUTPUT FORMAT:
+On your final turn (after completing all tool calls), you MUST output ONLY a valid JSON object in this format (do not include any additional conversational text or markdown wrap outside the JSON block):
+{
+  "feedback": "Concise visual explanation of the designed capsule and how it hits the occasion/season/mood.",
+  "outfits": [
+    {
+      "label": "Creative outfit title",
+      "strength": "signature | strong | usable | experimental",
+      "dominantDirection": "Short direction label (e.g., column of color, high contrast, soft texture contrast)",
+      "silhouette": "Description of the silhouette (e.g. fitted top + wide-leg pant, flowing column, etc.)",
+      "bestFor": "Target occasion",
+      "reason": "Why this specific combination works visually (mention colors, textures, visual weight)",
+      "watchFor": "Any styling cautions (e.g., shoe tuck rules, visual competition)",
+      "pieceIds": [12, 45, 9]
+    }
+  ],
+  "saveableLearning": "Concise lesson to save to Yuna's feedback memory if any new pattern arose."
+}
+`
+
 const WHOLE_WARDROBE_EVALUATOR_SYSTEM = `You are evaluating one proposed whole-wardrobe outfit for Yuna's closet app.
 Return ONLY valid JSON. No markdown.
 
@@ -6923,84 +6959,64 @@ ${wholeWardrobeFeedbackText}` : '',
       globalFeedbackText ? `General saved stylist feedback memory:
 ${globalFeedbackText}` : ''
     ].filter(Boolean).join('\n\n')
-    let visualCriticDebug = null
-    try {
-      const visualStartedAt = Date.now()
-      const visualRanked = await withTimeout(rankWholeWardrobeCandidatesWithVision({
-        candidates,
-        candidatePieces,
-        occasion,
-        season,
-        mood,
-        memoryText,
-        limit: requestedLimit
-      }), 25000, 'Whole-wardrobe visual critic')
-      timings.visualCriticMs = Date.now() - visualStartedAt
-      if (visualRanked?.candidates?.length) {
-        candidates = visualRanked.candidates.map((candidate, index) => ({ ...candidate, candidateId: `cand-${index + 1}` }))
-        candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
-        visualCriticDebug = {
-          reviewedCandidateIds: visualRanked.reviewedCandidateIds,
-          rankedCandidateIds: visualRanked.rankedCandidateIds,
-          reviewedFormulaCounts: wholeWardrobeCandidateFormulaCounts(visualRanked.candidates.filter(candidate => visualRanked.reviewedCandidateIds.includes(candidate.candidateId))),
-          visualLearning: visualRanked.visualLearning || '',
-          rejectedCandidateIds: visualRanked.visualRejected || []
-        }
-      }
-    } catch (err) {
-      console.warn('Whole-wardrobe visual critic fallback:', err.message)
-      visualCriticDebug = { error: err.message }
-      timings.visualCriticMs = timings.visualCriticMs || null
-    }
-    const candidateById = new Map(candidates.map(c => [c.candidateId, c]))
+    const rotationWarningsText = sessionInfluence.pieceRecency?.size
+      ? `Recently worn garments (try to avoid using these to rotate wardrobe unless necessary):\n${[...sessionInfluence.pieceRecency.keys()]
+          .map(id => allPieces.find(p => Number(p.id) === Number(id))?.name)
+          .filter(Boolean)
+          .join(', ')}`
+      : ''
 
-    const userPayload = [
+    const suppressedListText = suppressedPieces.length
+      ? `Suppressed garments (DO NOT pair or use these for the occasion "${occasion}"):\n${suppressedPieces.map(p => `- ${p.name} (id: ${p.id})`).join('\n')}`
+      : ''
+
+    const initialUserMessageText = [
       `Occasion: ${occasion || 'casual'}`,
       `Season: ${season || 'current season'}`,
       `Mood: ${mood || 'artistic minimalist'}`,
-      moodProfile ? `Mood interpretation:\n${moodProfile.guidance}` : '',
-      `Target count: ${requestedLimit}. Return fewer if only 3-4 are genuinely strong.`,
+      moodProfile ? `Mood guidance:\n${moodProfile.guidance}` : '',
+      `Target count: ${requestedLimit} outfits.`,
+      rotationWarningsText,
+      suppressedListText,
+      `Memory & preferences:\n${memoryText}`,
       '',
-      memoryText,
-      '',
-      `Curated complete outfit candidates. Pick only from these candidates and preserve exact garment ids/names:
-${wholeWardrobeCandidateText(candidates)}`,
-      '',
-      `Piece truth for candidate pieces only:
-${candidatePieces.map(buildPieceText).join('\n')}`,
-      '',
-      'Return the strongest whole-wardrobe outfits right now. Text only; no image generation.'
-    ].filter(Boolean).join('\n')
+      `Please search the wardrobe and inspect matching pieces to design up to ${requestedLimit} outfits. Output your final turn response as a JSON object matching the requested schema.`
+    ].filter(Boolean).join('\n\n')
 
     let parsed = {}
     let composerError = null
+    let visualCriticDebug = null
+    const agentStartedAt = Date.now()
+
     try {
-      const composerStartedAt = Date.now()
-      const raw = await withTimeout(askStylist({
-        system: WHOLE_WARDROBE_COMPOSER_SYSTEM,
-        maxTokens: 1600,
-        messages: [{ role: 'user', content: [{ type: 'text', text: userPayload }] }]
-      }), 35000, 'Whole-wardrobe composer')
-      timings.composerMs = Date.now() - composerStartedAt
+      const raw = await withTimeout(askStylistWithTools({
+        system: WHOLE_WARDROBE_AGENT_SYSTEM,
+        messages: [{ role: 'user', content: initialUserMessageText }],
+        maxTokens: 3000
+      }), 45000, 'Whole-wardrobe agent stylist')
+
+      timings.agentStylistMs = Date.now() - agentStartedAt
       parsed = safeJsonFromModel(raw)
+      visualCriticDebug = { notes: "Executed via dynamic tool-calling stylist agent." }
     } catch (err) {
-      console.warn('Whole-wardrobe composer fallback:', err.message)
+      console.warn('Whole-wardrobe agent fallback:', err.message)
       composerError = err.message
-      timings.composerMs = timings.composerMs || null
+      timings.agentStylistMs = timings.agentStylistMs || null
     }
+
     const aiReturnedCount = Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0
-    const withCandidatePieces = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
-    const candidate = outfit?.candidateId ? candidateById.get(outfit.candidateId) : null
-    if (!candidate) return outfit
-    return {
-      ...outfit,
-      localScore: candidate.localScore,
-      pieceIds: Array.isArray(outfit.pieceIds) && outfit.pieceIds.length ? outfit.pieceIds : candidate.pieceIds,
-      pieces: Array.isArray(outfit.pieces) && outfit.pieces.length ? outfit.pieces : candidate.pieces
-    }
+    const resolvedOutfits = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
+      const outfitPieceIds = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number) : []
+      const ownedPieces = outfitPieceIds.map(id => allPieces.find(p => Number(p.id) === id)).filter(Boolean)
+      return {
+        ...outfit,
+        pieceIds: outfitPieceIds,
+        pieces: ownedPieces
+      }
     })
-    let structuredOutfits = withCandidatePieces.map(o => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, candidatePieces), candidatePieces, occasion, mood))
-    const localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, candidatePieces, { occasion, mood })
+
+    let structuredOutfits = resolvedOutfits.map(o => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, allPieces), allPieces, occasion, mood))
+    const localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allPieces, { occasion, mood })
 
     if (!structuredOutfits.length) {
       structuredOutfits = localBackfillOutfits.slice(0, Math.max(requestedLimit, 8))
@@ -7010,7 +7026,7 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
     let gated = locallyGateWholeWardrobeOutfits(
       [...structuredOutfits, ...localBackfillOutfits],
       requestedLimit,
-      { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion, mood }
+      { requireShoes, requireDress, requireNonGraphicTop, candidatePieces: allPieces, occasion, mood }
     )
     diversityRejectedCount += gated.rejected?.length || 0
     structuredOutfits = gated.outfits
@@ -7018,12 +7034,12 @@ ${candidatePieces.map(buildPieceText).join('\n')}`,
       structuredOutfits = locallyGateWholeWardrobeOutfits(
         localBackfillOutfits.slice(0, Math.max(requestedLimit, 12)),
         requestedLimit,
-        { requireShoes, requireDress, requireNonGraphicTop, candidatePieces, occasion, mood }
+        { requireShoes, requireDress, requireNonGraphicTop, candidatePieces: allPieces, occasion, mood }
       ).outfits
     }
-    const formulaFamiliesReturned = [...new Set(structuredOutfits.map(outfit => outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, candidatePieces, occasion)).filter(Boolean))]
+    const formulaFamiliesReturned = [...new Set(structuredOutfits.map(outfit => outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, allPieces, occasion)).filter(Boolean))]
     const archetypeCounts = structuredOutfits.reduce((counts, outfit) => {
-      const id = outfit.archetypeId || wholeWardrobeArchetypeFor(outfit, candidatePieces, occasion).archetypeId
+      const id = outfit.archetypeId || wholeWardrobeArchetypeFor(outfit, allPieces, occasion).archetypeId
       counts[id] = (counts[id] || 0) + 1
       return counts
     }, {})

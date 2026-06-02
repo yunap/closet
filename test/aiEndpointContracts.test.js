@@ -256,21 +256,15 @@ function mockAiHandler({ system, messages }) {
     }
   }
 
-  if (text.includes('whole-wardrobe outfit composer')) {
+  if (text.includes('personal visual stylist agent') || text.includes('whole-wardrobe outfit composer')) {
     return {
       outfits: [{
-        candidateId: 'cand-1',
         label: 'Mock city column',
         strength: 'signature',
         dominantDirection: 'city structure with grounded shoe',
         silhouette: 'controlled top over grounded lower line',
         bestFor: 'city',
         pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
-        pieces: [
-          { id: seeded.top, name: 'black button detail top', category: 'top' },
-          { id: seeded.bottom, name: 'light beige linen wide-leg pants', category: 'bottom' },
-          { id: seeded.shoe, name: 'cream slip-on shoes', category: 'shoes' },
-        ],
         reason: 'The dark top clarifies the light pant and the shoe keeps the floor line readable.',
         watchFor: 'Keep the shoe visible.',
       }],
