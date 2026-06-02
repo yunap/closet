@@ -1383,6 +1383,7 @@ const STYLIST_TOOLS = [
 ]
 
 async function executeTool(name, args) {
+  console.log(`\n🤖 [Agent Tool Call] ${name} (${JSON.stringify(args)})`)
   try {
     switch (name) {
       case 'search_wardrobe': {
@@ -1415,6 +1416,7 @@ async function executeTool(name, args) {
           )
         }
         
+        console.log(`🔍 [Agent Tool Call] search_wardrobe returned ${filtered.length} items.`)
         return filtered.map(p => ({
           id: p.id,
           name: p.name,
@@ -1439,6 +1441,7 @@ async function executeTool(name, args) {
             const filePath = path.join(uploadsDir, photoFile)
             if (fs.existsSync(filePath)) {
               try {
+                console.log(`📸 [Agent Vision] Resizing reference photo for piece ${p.id} (${photoFile})`)
                 imageData = await prepareImageForClaude(filePath)
               } catch (err) {
                 console.error(`Error loading photo for piece ${p.id}:`, err)
