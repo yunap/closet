@@ -3844,7 +3844,7 @@ function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes
   const rejected = []
   for (const outfit of outfits) {
     const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood)
-    const pieces = wholeWardrobeFullPieces(repaired, candidatePieces)
+    const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
     const groups = pieces.map(p => wardrobeCategoryGroup(p))
     const hasSeparates = groups.includes('top') && groups.includes('bottom')
     const hasDress = groups.includes('dress')
@@ -3859,28 +3859,6 @@ function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes
     if (seen.has(key)) {
       rejected.push({ label: repaired?.label || 'unnamed', reason: 'duplicate formula' })
       continue
-    }
-
-    // Programmatically gate pattern clashes (e.g. printed garments + herringbone/printed shoes)
-    const patternedPieces = pieces.filter(p => {
-      const pName = String(p.name || '').toLowerCase()
-      const pNotes = String(p.notes || '').toLowerCase()
-      const patternKeywords = ['print', 'pattern', 'floral', 'botanical', 'herringbone', 'stripe', 'striped', 'plaid', 'check', 'checked', 'paisley', 'leopard', 'animal', 'abstract', 'tapestry', 'tweed']
-      return patternKeywords.some(kw => pName.includes(kw) || pNotes.includes(kw))
-    })
-
-    if (patternedPieces.length >= 2) {
-      const shoePattern = patternedPieces.some(p => wardrobeCategoryGroup(p) === 'shoes')
-      const garmentPattern = patternedPieces.some(p => ['top', 'bottom', 'dress', 'outerwear'].includes(wardrobeCategoryGroup(p)))
-      if (shoePattern && garmentPattern) {
-        rejected.push({ label: repaired?.label || 'unnamed', reason: 'pattern clash: printed/patterned garment paired with patterned shoe' })
-        continue
-      }
-      const patternGarments = patternedPieces.filter(p => ['top', 'bottom', 'dress', 'outerwear'].includes(wardrobeCategoryGroup(p)))
-      if (patternGarments.length >= 2) {
-        rejected.push({ label: repaired?.label || 'unnamed', reason: 'pattern clash: multiple printed/patterned garments in one outfit' })
-        continue
-      }
     }
 
     if (/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/.test(text)) {
@@ -9388,4 +9366,4 @@ if (process.env.NODE_ENV !== 'test') {
   })
 }
 
-export { app, db, uploadsDir, executeTool, contentToOpenAI, locallyGateWholeWardrobeOutfits }
+export { app, db, uploadsDir, executeTool, contentToOpenAI }
