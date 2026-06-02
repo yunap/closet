@@ -64,6 +64,53 @@ const timingSummary = (timings = {}) => Object.entries(timings || {})
 const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
 const OUTFIT_FOLLOWUP_PATTERN = /\b(this|it|outfit|idea|look|piece|pieces|make|change|swap|instead|sharper|stronger|softer|better|work|works|risk|risky|why|how|what)\b/i
 
+const currentChatDateContext = () => {
+  const now = new Date()
+  const timezone = 'America/Los_Angeles'
+  return {
+    currentDate: now.toISOString(),
+    currentDateLabel: new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      timeZone: timezone,
+    }).format(now),
+    timezone,
+  }
+}
+
+const classifyChatTurn = (text, { hasThreadMemory = false } = {}) => {
+  const q = String(text || '').trim().toLowerCase()
+  if (!q) return 'new_request'
+  if (/\b(i disagree|you are wrong|that's wrong|that is wrong|not true|actually|you missed|you ignored|you said|but you|today is|it is|it isn't|it is not|these are|this is)\b/.test(q)) {
+    return 'correction'
+  }
+  if (/^(why|how did|how do you know|what made|which|do you see|can you see|did you see|where|what date|which season|what season)\b/.test(q)) {
+    return 'explanation'
+  }
+  if (/\b(i like|i don't like|i do not like|not me|too safe|too soft|too generic|more like|less like)\b/.test(q)) {
+    return 'preference_reaction'
+  }
+  if (/\b(last|previous|above|earlier|that one|first one|second one|third one|those outfits|these outfits|this outfit|that outfit)\b/.test(q) || hasThreadMemory) {
+    return 'followup'
+  }
+  return 'new_request'
+}
+
+const compactThreadContext = (memory = null, activeContext = null) => {
+  const parts = []
+  if (activeContext?.type && activeContext?.name) {
+    parts.push(`Active context: ${activeContext.type} "${activeContext.name}".`)
+  }
+  if (memory?.type === 'generated_outfits' && memory.latestContextText) {
+    parts.push(`Generated outfit cards in this thread:\n${memory.latestContextText}`)
+  } else if ((memory?.type === 'outfit' || memory?.type === 'generated_outfit') && memory.latestEvaluationText) {
+    parts.push(`Most recent outfit evaluation memory:\n${memory.latestEvaluationText}`)
+  }
+  return parts.join('\n\n')
+}
+
 const compactEvaluationMemory = (evaluation = null) => {
   if (!evaluation || typeof evaluation !== 'object') return ''
   const facts = evaluation.visibleFacts || {}
@@ -1176,6 +1223,16 @@ export default function AskClaude({
         debug: data.debug || null,
       }])
       addToHistory('assistant', replyText)
+      const evaluatedOutfit = { ...outfit, label: outfitTitle, title: outfitTitle, pieceIds: ids }
+      setThreadMemory({
+        type: 'generated_outfit',
+        source: outfit?.wholeWardrobe ? 'whole_wardrobe' : 'selected_piece',
+        name: outfitTitle,
+        latestOutfit: evaluatedOutfit,
+        latestEvaluation: data.evaluation || null,
+        latestEvaluationText: compactEvaluationMemory(data.evaluation),
+        latestContextText: compactGeneratedOutfitContext([evaluatedOutfit], { source: outfit?.wholeWardrobe ? 'whole_wardrobe' : 'selected_piece' }),
+      })
     } catch (err) {
       const errText = `Error: ${err.message}`
       setMessages(m => [...m, { role: 'assistant', text: errText }])
@@ -1421,46 +1478,40 @@ export default function AskClaude({
           : []
         const priorEvaluationText = outfitToSend.threadMemory?.latestEvaluationText || ''
         const shouldAttachOutfitPhoto = outfitToSend.attachVisualContext !== false
-        const useWardrobeEvaluator = Boolean(outfitToSend.photo || outfitPieceIds.length >= 2)
-        if (useWardrobeEvaluator) {
-          const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              outfit: {
-                label: outfitToSend.name,
-                title: outfitToSend.name,
-                photo: shouldAttachOutfitPhoto ? (outfitToSend.photo || '') : '',
-                bestFor: outfitToSend.occasion || '',
-                pieces: outfitToSend.pieces || [],
-                pieceIds: outfitPieceIds,
-                reason: outfitToSend.notes || '',
-              },
+        const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outfit: {
+              id: outfitToSend.id,
+              label: outfitToSend.name,
+              title: outfitToSend.name,
+              photo: shouldAttachOutfitPhoto ? (outfitToSend.photo || '') : '',
+              bestFor: outfitToSend.occasion || '',
+              pieces: outfitToSend.pieces || [],
               pieceIds: outfitPieceIds,
-              occasion: outfitToSend.occasion || effectiveGenerateOccasion,
-              season: outfitToSend.season || effectiveGenerateSeason,
-              mood: wardrobeOutfitMood,
-              previousEvaluation: priorEvaluationText,
-              question: q || 'Evaluate this outfit.'
-            })
+              reason: outfitToSend.notes || '',
+            },
+            pieceIds: outfitPieceIds,
+            occasion: outfitToSend.occasion || effectiveGenerateOccasion,
+            season: outfitToSend.season || effectiveGenerateSeason,
+            mood: wardrobeOutfitMood,
+            previousEvaluation: priorEvaluationText,
+            question: q || 'Evaluate this outfit.'
           })
-          const data = await res.json()
-          if (!res.ok) throw new Error(data.error || 'Could not evaluate outfit')
-          replyText = data.feedback || 'Outfit evaluation complete.'
-          replyWardrobeEvaluation = true
-          replyDebug = data.debug || null
-          setThreadMemory({
-            type: 'outfit',
-            id: outfitToSend.id,
-            name: outfitToSend.name,
-            latestEvaluation: data.evaluation || null,
-            latestEvaluationText: compactEvaluationMemory(data.evaluation),
-          })
-        } else {
-          const res = await fetch('/api/ai/evaluate-outfit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitId: outfitToSend.id, question: q || 'What do you think of this outfit?', history: historySnapshot }) })
-          const data = await res.json()
-          replyText = data.feedback || data.error || 'Something went wrong.'
-        }
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Could not evaluate outfit')
+        replyText = data.feedback || 'Outfit evaluation complete.'
+        replyWardrobeEvaluation = true
+        replyDebug = data.debug || null
+        setThreadMemory({
+          type: 'outfit',
+          id: outfitToSend.id,
+          name: outfitToSend.name,
+          latestEvaluation: data.evaluation || null,
+          latestEvaluationText: compactEvaluationMemory(data.evaluation),
+        })
 
       } else if (pieceToSend && shouldGenerateEditorialVisuals) {
         // ── PREVIEW MODE: text directions only, no images yet ────────────────
@@ -1526,6 +1577,42 @@ export default function AskClaude({
         const data = await (await fetch('/api/ai/outfit-feedback', { method: 'POST', body: fd })).json()
         replyText = data.feedback || data.error || 'Something went wrong.'
 
+      } else if (threadMemory?.type === 'generated_outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q)) {
+        const rememberedOutfit = threadMemory.latestOutfit || {}
+        const outfitPieceIds = Array.isArray(rememberedOutfit.pieceIds) && rememberedOutfit.pieceIds.length
+          ? rememberedOutfit.pieceIds
+          : (Array.isArray(rememberedOutfit.pieces) ? rememberedOutfit.pieces.map(p => p?.id).filter(Boolean) : [])
+        if (!outfitPieceIds.length) {
+          throw new Error('Generated outfit context is missing linked pieces. Re-evaluate the outfit card and try again.')
+        }
+        const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outfit: rememberedOutfit,
+            pieceIds: outfitPieceIds,
+            occasion: rememberedOutfit.bestFor || rememberedOutfit.occasion || effectiveGenerateOccasion,
+            season: rememberedOutfit.season || effectiveGenerateSeason,
+            mood: wardrobeOutfitMood,
+            previousEvaluation: threadMemory.latestEvaluationText || '',
+            responseMode: 'followup',
+            question: q || 'Continue discussing this generated outfit.',
+            history: historySnapshot,
+          })
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Could not continue generated outfit evaluation')
+        replyText = data.feedback || 'Outfit follow-up complete.'
+        replyWardrobeEvaluation = true
+        replyDebug = data.debug || null
+        setThreadMemory({
+          ...threadMemory,
+          type: 'generated_outfit',
+          latestOutfit: rememberedOutfit,
+          latestEvaluation: data.evaluation || threadMemory.latestEvaluation || null,
+          latestEvaluationText: compactEvaluationMemory(data.evaluation) || threadMemory.latestEvaluationText || '',
+        })
+
       } else if (activeContext?.type === 'outfit' || (threadMemory?.type === 'outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q))) {
         const activeOutfitId = activeContext?.type === 'outfit' ? activeContext.id : threadMemory.id
         const activeOutfit = outfits.find(o => String(o.id) === String(activeOutfitId))
@@ -1555,7 +1642,8 @@ export default function AskClaude({
             mood: wardrobeOutfitMood,
             previousEvaluation: memoryText,
             responseMode: 'followup',
-            question: q || 'Continue evaluating this outfit.'
+            question: q || 'Continue evaluating this outfit.',
+            history: historySnapshot,
           })
         })
         const data = await res.json()
@@ -1578,7 +1666,22 @@ export default function AskClaude({
         const generatedOutfits = threadMemory?.type === 'generated_outfits'
           ? threadMemory.latestOutfits || []
           : []
-        const res = await fetch('/api/ai/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q, pieces, history: historySnapshot, generatedContext, generatedOutfits }) })
+        const conversationMode = classifyChatTurn(q, { hasThreadMemory: Boolean(threadMemory || activeContext) })
+        const threadContext = compactThreadContext(threadMemory, activeContext)
+        const res = await fetch('/api/ai/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: q,
+            pieces,
+            history: historySnapshot,
+            generatedContext,
+            generatedOutfits,
+            conversationMode,
+            threadContext,
+            ...currentChatDateContext(),
+          })
+        })
         const data = await res.json()
         replyText = data.answer || data.error || 'Something went wrong.'
       }
