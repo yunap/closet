@@ -3355,11 +3355,17 @@ export async function buildStylistConversationPayload(body) {
 
   let activeOutfit = outfit
   let activePieceIds = pieceIds
-  const state = getStylistConversationState(sessionId)
   
-  if (!activeOutfit && state.active_outfit) {
-    activeOutfit = state.active_outfit
-    activePieceIds = state.active_piece_ids
+  if (requestedConversationMode === 'new_request') {
+    if (!activeOutfit) {
+      saveStylistConversationState({}, sessionId)
+    }
+  } else {
+    const state = getStylistConversationState(sessionId)
+    if (!activeOutfit && state.active_outfit) {
+      activeOutfit = state.active_outfit
+      activePieceIds = state.active_piece_ids
+    }
   }
 
   const confirmedOutfitsText = getConfirmedOutfitMemory()

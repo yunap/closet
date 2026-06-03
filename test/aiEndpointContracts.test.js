@@ -56,6 +56,7 @@ function resetTables() {
     'stylist_feedback',
     'whole_wardrobe_sessions',
     'calibration_images',
+    'stylist_conversation_state',
   ]) {
     db.prepare(`DELETE FROM ${table}`).run()
   }
@@ -860,6 +861,79 @@ test('freeform ask correction saves preference reaction to database', async () =
   assert.equal(row.note, 'I do not wear flats')
   assert.equal(row.context_type, 'outfit')
   assert.equal(Number(row.context_id), seeded.outfitId)
+})
+
+test('freeform ask new_request clears and does not restore database session state', async () => {
+  const pieces = db.prepare('SELECT * FROM pieces WHERE status = ?').all('active').map(row => ({
+    ...row,
+    colors: JSON.parse(row.colors || '[]'),
+    occasions: JSON.parse(row.occasions || '[]'),
+    occasion_permissions: JSON.parse(row.occasion_permissions || '[]'),
+    styling_rules_learned: [],
+    pairs_well_with: [],
+    tried_and_rejected: [],
+    style_profile_json: JSON.parse(row.style_profile_json || '{}'),
+  }))
+
+  // Turn 1: request with outfit context. This saves state.
+  await postJson('/api/ai/ask', {
+    question: 'evaluate this outfit',
+    pieces,
+    history: [],
+    conversationMode: 'new_request',
+    outfit: { label: 'Active outfit', photo: seeded.photos.outfit },
+    pieceIds: [seeded.top, seeded.bottom],
+    sessionId: 'test-session-123'
+  })
+
+  // Turn 2: send new_request without outfit using same sessionId.
+  // This should clear/not restore state.
+  await postJson('/api/ai/ask', {
+    question: 'suggest a casual outfit',
+    pieces,
+    history: [],
+    conversationMode: 'new_request',
+    sessionId: 'test-session-123'
+  })
+
+  const lastCall = aiCalls.at(-1)
+  // Check that the system prompt does NOT contain active outfit details or inventory
+  assert.ok(!lastCall.system.includes('OUTFIT CONTEXT UNDER DISCUSSION'))
+  assert.ok(!lastCall.system.includes('CURRENT ATTACHED IMAGE INVENTORY:'))
+
+  // Turn 3: send followup without outfit using same sessionId.
+  // Since the state was cleared, it should still be empty.
+  await postJson('/api/ai/ask', {
+    question: 'tell me more',
+    pieces,
+    history: [
+      { role: 'user', content: 'suggest a casual outfit' },
+      { role: 'assistant', content: 'Mock response' }
+    ],
+    conversationMode: 'followup',
+    sessionId: 'test-session-123'
+  })
+
+  const lastCallFollowup = aiCalls.at(-1)
+  assert.ok(!lastCallFollowup.system.includes('OUTFIT CONTEXT UNDER DISCUSSION'))
+  assert.ok(!lastCallFollowup.system.includes('CURRENT ATTACHED IMAGE INVENTORY:'))
+})
+
+test('freeform ask system prompt includes context persistence and no hallucination rules', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'what should I wear today?',
+    pieces: [],
+    history: [],
+    conversationMode: 'new_request',
+  })
+
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /Context Persistence:/)
+  assert.match(lastCall.system, /Strictly No Garment Hallucination:/)
+  assert.match(lastCall.system, /Occasion Realism & Styling Sense:/)
+  assert.match(lastCall.system, /Layering Logic & No Double-Vests:/)
+  assert.match(lastCall.system, /Precise Garment Naming:/)
+  assert.match(lastCall.system, /Avoid formatting suggestions as a rigid, checklist-style bulleted list/)
 })
 
 test('executeTool get_garment_details loads text and base64 photo blocks', async () => {
