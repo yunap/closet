@@ -70,7 +70,7 @@ For OpenAI:
 ```env
 AI_PROVIDER=openai
 OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_STYLIST_MODEL=gpt-4o-mini
+OPENAI_STYLIST_MODEL=gpt-4o
 ```
 
 Optional image settings are read by the server when present, including:
@@ -115,6 +115,28 @@ npm start
 ```
 
 Runs the Express server only. In production mode, the server serves the built `dist/` files.
+
+```bash
+npm test
+```
+
+Runs the automated contract and endpoint tests.
+
+## Codebase Architecture
+
+The backend has been modularized to separate database concerns, Express routes, and styling engine logic:
+
+* **`server.js`**: Application entrypoint. Bootstraps the Express application and mounts API routers.
+* **`db.js`**: Database layer. Initializes SQLite (WAL mode), runs table schema migrations, and provides database row parser helpers.
+* **`routes/`**: Express API controllers:
+  * [crud.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/routes/crud.js): Handles wardrobe piece CRUD, outfits CRUD, todo items, calibration, and feedback logs.
+  * [ai.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/routes/ai.js): Handles AI endpoints (`/ask`, `/evaluate-wardrobe-outfit`, `/generate-wardrobe-outfits`, variant generation).
+* **`styling-engine/`**: Core styling engine components:
+  * [prompts.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/styling-engine/prompts.js): Holds the shared system instructions, tone parameters, and few-shot examples.
+  * [provider.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/styling-engine/provider.js): API wrapper for Anthropic and OpenAI clients (handles image preprocessing and tool-calling execution loops).
+  * [rules.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/styling-engine/rules.js): Contains math, formulas, and structural validation logic for outfits and pieces.
+  * [tools.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/styling-engine/tools.js): Defines schemas for agent tools (`search_wardrobe`, `get_garment_details`, etc.).
+  * [core.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/styling-engine/core.js): Integrates tools, builds prompts, and manages dialogue states for the conversation controller.
 
 ## Main Workflows
 
