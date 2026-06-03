@@ -140,7 +140,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500 }
           function: {
             name: t.name,
             description: t.description,
-            properties: t.input_schema
+            parameters: t.input_schema
           }
         }))
       })
