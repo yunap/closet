@@ -573,6 +573,9 @@ function buildGoldStandardFeedbackMemory(pieceId, limit = 10) {
 
 function collectPieceIdsFromSavedBoardRow(row) {
   const ids = new Set()
+  if (row?.context_type === 'piece' && row.context_id && !Number.isNaN(Number(row.context_id))) {
+    ids.add(Number(row.context_id))
+  }
   const visit = (value) => {
     if (!value) return
     if (Array.isArray(value)) return value.forEach(visit)
@@ -1322,14 +1325,19 @@ function takeTestAiResponse({ system = '', messages = [], maxTokens = 1200 } = {
 const STYLIST_TOOLS = [
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, and simple notes.",
+    description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes.",
     input_schema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Search query matching against name or notes" },
         category: { type: "string", description: "Filter by category (e.g. top, bottom, shoes, outerwear, dress, accessory)" },
         color: { type: "string", description: "Filter by color description or reads_as tag" },
-        occasion: { type: "string", description: "Filter by occasion (e.g. city, casual, evening)" }
+        occasion: { type: "string", description: "Filter by occasion (e.g. city, casual, evening)" },
+        pattern_type: { type: "string", description: "Filter by pattern type, e.g. solid, floral, stripe, botanical, geometric, abstract, animal, graphic, plaid, other" },
+        silhouette: { type: "string", description: "Filter by silhouette type, e.g. fitted, slim, relaxed, boxy, A-line, drop-shoulder, oversized" },
+        fabric_weight: { type: "string", description: "Filter by fabric weight, e.g. ultralight, light, medium, heavy" },
+        fabric_category: { type: "string", description: "Filter by fabric category, e.g. jersey, knit, linen, silk, satin, cotton, wool, denim, ponte, synthetic, fleece, other" },
+        neckline: { type: "string", description: "Filter by neckline style, e.g. V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, other, none" }
       }
     }
   },
@@ -1387,12 +1395,32 @@ async function executeTool(name, args) {
   try {
     switch (name) {
       case 'search_wardrobe': {
-        const { query, category, color, occasion } = args
+        const { query, category, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline } = args
         let sql = "SELECT * FROM pieces WHERE status = 'active'"
         const params = []
         if (category) {
           sql += " AND category = ?"
           params.push(category)
+        }
+        if (pattern_type) {
+          sql += " AND pattern_type = ?"
+          params.push(pattern_type)
+        }
+        if (silhouette) {
+          sql += " AND silhouette = ?"
+          params.push(silhouette)
+        }
+        if (fabric_weight) {
+          sql += " AND fabric_weight = ?"
+          params.push(fabric_weight)
+        }
+        if (fabric_category) {
+          sql += " AND fabric_category = ?"
+          params.push(fabric_category)
+        }
+        if (neckline) {
+          sql += " AND neckline = ?"
+          params.push(neckline)
         }
         const rows = db.prepare(sql).all(...params).map(parsePiece)
         
@@ -1424,6 +1452,16 @@ async function executeTool(name, args) {
           reads_as: p.reads_as,
           colors: p.colors,
           occasions: p.occasions,
+          pattern_type: p.pattern_type,
+          pattern_scale: p.pattern_scale,
+          pattern_complexity: p.pattern_complexity,
+          silhouette: p.silhouette,
+          fabric_category: p.fabric_category,
+          fabric_weight: p.fabric_weight,
+          neckline: p.neckline,
+          sleeve_type: p.sleeve_type,
+          length_hits_at: p.length_hits_at,
+          hem_finish: p.hem_finish,
           notes: p.notes ? p.notes.slice(0, 120) : ''
         }))
       }
@@ -1842,6 +1880,8 @@ IMPORTANT STYLING PRINCIPLES (from AGENTS.md):
 
 HOW TO DESIGN THE OUTFITS:
 1. Use the 'search_wardrobe' tool to discover active garments in her closet (e.g. search for tops, bottoms, shoes, dresses, outerwear).
+   - Leverage visual filters (like 'neckline', 'silhouette', 'fabric_weight', 'fabric_category', 'pattern_type') to find garments with specific structural or textile traits (e.g. search for cowl/mock necks, boxy silhouettes, heavy fabrics, or solid vs botanical patterns).
+   - Review these visual properties directly in the search results list to quickly filter out structural conflicts (like double-volume silhouette clashes or fabric-weight mismatches) early in Turn 1.
 2. For any garments you are actively considering or pairing, call 'get_garment_details' to retrieve their full styling text and inspect their photos on-demand.
 3. Run a strict visual self-critic audit on each combination before proposing it:
    - Pattern & Color Clash: If a piece has a prominent pattern (like a botanical or floral dress/top), do not pair it with shoes or other items that also have prominent patterns or textures (like herringbone, stripes, or contrasting geometric patterns) unless they create a rare "productive tension" (which is extremely difficult to pull off). When in doubt, ground a patterned hero piece with solid, textured-but-unpatterned supporting pieces.
@@ -1854,7 +1894,7 @@ HOW TO DESIGN THE OUTFITS:
 
 LATENCY & TURN BUDGET OPTIMIZATION:
 - Minimize sequential round trips to prevent timeouts. Aim to complete your work in exactly 3 turns:
-  - Turn 1: Call 'search_wardrobe' multiple times in parallel for different categories (e.g. search tops, bottoms, shoes, outerwear) to discover candidates.
+  - Turn 1: Call 'search_wardrobe' multiple times in parallel for different categories (e.g. search tops, bottoms, shoes, outerwear) to discover candidates, utilizing visual filters where appropriate.
   - Turn 2: Select the most promising 4–8 garment IDs and call 'get_garment_details' for all of them in parallel in a single turn to visually inspect them.
   - Turn 3: Construct the outfits, apply your self-critic audit, and output the final JSON.
 - Never make more than 3 turns unless absolutely necessary.
@@ -2312,7 +2352,17 @@ function sanitizeSelectedPieceOutfitDirections(outfits = [], selectedPiece, cand
       const piece = candidateById.get(id)
       if (!piece) return true
       const corePieces = fullPieces.filter(core => Number(core.id) !== Number(piece.id))
-      return !optionalLayerCoherenceIssue(selectedPiece, piece, corePieces, { occasion })
+      const isSelectedOuterwear = wardrobeCategoryGroup(selectedPiece) === 'outerwear'
+      const isCurrentOuterwear = wardrobeCategoryGroup(piece) === 'outerwear'
+      if (isSelectedOuterwear) {
+        const otherCore = corePieces.filter(core => Number(core.id) !== selectedId)
+        if (optionalLayerCoherenceIssue(piece, selectedPiece, otherCore, { occasion })) return false
+      } else if (isCurrentOuterwear) {
+        if (optionalLayerCoherenceIssue(selectedPiece, piece, corePieces, { occasion })) return false
+      } else {
+        if (optionalLayerCoherenceIssue(selectedPiece, piece, corePieces, { occasion })) return false
+      }
+      return true
     })
     if (keptIds.length === ids.length) return outfit
     const kept = new Set(keptIds)
@@ -2528,19 +2578,64 @@ function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidates = []
       watchFor: 'keep the rest of the outfit quiet enough for patterned shoes to read intentional'
     }))
   } else {
-    const top = pick('top', usedFirst); if (top) usedFirst.add(Number(top.id))
-    const bottom = pick('bottom', usedFirst); if (bottom) usedFirst.add(Number(bottom.id))
-    const shoes = pick('shoes', usedFirst); if (shoes) usedFirst.add(Number(shoes.id))
-    if (top || bottom || shoes) outfits.push(make({
+    const top1 = pick('top', usedFirst); if (top1) usedFirst.add(Number(top1.id))
+    const bottom1 = pick('bottom', usedFirst); if (bottom1) usedFirst.add(Number(bottom1.id))
+    const shoes1 = pick('shoes', usedFirst); if (shoes1) usedFirst.add(Number(shoes1.id))
+    if (top1 || bottom1 || shoes1) outfits.push(make({
       label: 'Best wardrobe direction',
       strength: 'signature',
       dominantDirection: 'complete saved-wardrobe outfit',
       silhouette: 'simple stable outfit architecture',
       bestFor: 'everyday',
-      pieces: [top, bottom, shoes].filter(Boolean),
+      pieces: [top1, bottom1, shoes1].filter(Boolean),
       reason: 'Builds a complete outfit from the highest-ranked saved wardrobe pieces.',
       watchFor: 'none'
     }))
+
+    const usedSecond = new Set(outfits.flatMap(o => o.pieceIds.map(Number)))
+    const top2 = pick('top', usedSecond); if (top2) usedSecond.add(Number(top2.id))
+    const bottom2 = pick('bottom', usedSecond); if (bottom2) usedSecond.add(Number(bottom2.id))
+    const shoes2 = pick('shoes', usedSecond); if (shoes2) usedSecond.add(Number(shoes2.id))
+    if (top2 || bottom2 || shoes2) outfits.push(make({
+      label: 'Alternate separates contrast',
+      strength: 'strong',
+      dominantDirection: 'alternate saved separates with the selected layer',
+      silhouette: 'layer over simple top and bottoms',
+      bestFor: 'everyday, casual meetings',
+      pieces: [top2, bottom2, shoes2].filter(Boolean),
+      reason: 'Generates a second distinct wardrobe option using alternative tops and bottoms.',
+      watchFor: 'none'
+    }))
+
+    const usedThird = new Set(outfits.flatMap(o => o.pieceIds.map(Number)))
+    const dress3 = pick('dress', usedThird); if (dress3) usedThird.add(Number(dress3.id))
+    const shoes3 = pick('shoes', usedThird); if (shoes3) usedThird.add(Number(shoes3.id))
+    if (dress3) {
+      outfits.push(make({
+        label: 'Layered dress formula',
+        strength: 'usable',
+        dominantDirection: 'selected layer over a one-piece dress column',
+        silhouette: 'outer layer framing a dress silhouette',
+        bestFor: 'smart-casual, social plans',
+        pieces: [dress3, shoes3].filter(Boolean),
+        reason: 'Pairs the outerwear piece over a saved dress to frame a clean one-piece column.',
+        watchFor: 'none'
+      }))
+    } else {
+      const top3 = pick('top', usedThird); if (top3) usedThird.add(Number(top3.id))
+      const bottom3 = pick('bottom', usedThird); if (bottom3) usedThird.add(Number(bottom3.id))
+      const shoes3_alt = pick('shoes', usedThird); if (shoes3_alt) usedThird.add(Number(shoes3_alt.id))
+      if (top3 || bottom3 || shoes3_alt) outfits.push(make({
+        label: 'Relaxed basics direction',
+        strength: 'usable',
+        dominantDirection: 'relaxed styling with basic separates',
+        silhouette: 'relaxed layered coordinates',
+        bestFor: 'lounge, easy errands',
+        pieces: [top3, bottom3, shoes3_alt].filter(Boolean),
+        reason: 'Offers a casual, everyday alternative formula using remaining wardrobe items.',
+        watchFor: 'none'
+      }))
+    }
   }
 
   return locallyGateOutfitDirections(outfits, selected).slice(0, 3)
@@ -6392,26 +6487,57 @@ app.post('/api/ai/extract-pieces', upload.single('photo'), async (req, res) => {
     fs.unlinkSync(filePath)
 
     const raw = await askStylist({
-      maxTokens: 800,
+      system: 'You analyze outfit photos to identify and extract individual wardrobe items with full styling details. Return only valid JSON matching the requested schema. Capture structural, architectural, and geometric drape details (asymmetric collars, button cowls, design hems, waffle or textured knits) and use elevated styling vocabulary instead of lazy, generic classifications.',
+      maxTokens: 1200,
       messages: [{
         role: 'user',
         content: [
           { type: 'image', source: { type: 'base64', media_type: mime, data: base64 } },
           { type: 'text', text: `Look at this outfit photo and identify every clothing item and accessory visible.
-Return ONLY a valid JSON object — no markdown, no explanation:
+Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
 {
   "pieces": [
     {
-      "name_suggestion": "short name 2-4 words, lowercase",
+      "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'sculptural asymmetrical cowl knit top' or 'black cream botanical midi skirt'",
+      "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
       "category": "top|bottom|dress|outerwear|shoes|accessory",
-      "colors": ["use only: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, multi"],
-      "occasions": ["use only: casual, city, evening, smart-casual, outdoor, home"],
-      "season": "warm|cool|year-round"
+      "background_color": "base color of the garment, e.g. black, navy, cream, white",
+      "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
+      "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
+      "season": "warm|cool|year-round",
+      "pattern_type": "solid|floral|stripe|botanical|geometric|abstract|animal|graphic|plaid|other",
+      "pattern_scale": "none|subtle|medium|bold",
+      "pattern_complexity": "solid|quiet|medium|loud",
+      "reads_as": "short phrase: the dominant visual impression",
+      "hem_finish": "straight_loose (only standard flat, horizontal straight hem)|banded_elastic|ribbed|design_hem (high-low, curved, side-slits, vented, or decorative hem meant to be worn over/untucked)",
+      "neckline": "V|scoop|crew|boat|mock|cowl|off-shoulder|square|wrap|other|none",
+      "sleeve_type": "sleeveless|cap|short|3/4|long|bell|bishop|none",
+      "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
+      "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
+      "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|denim|ponte|synthetic|fleece|other",
+      "fabric_weight": "ultralight|light|medium|heavy",
+      "style_profile_json": {
+        "style_lanes": {
+          "artistic_minimal": 0, "modern_bohemian": 0, "folk_artisan": 0, "boho_romantic": 0, "boho_festival": 0,
+          "graphic_casual": 0, "earthy_structured": 0, "polished_classic": 0, "romantic_soft": 0, "workwear_utilitarian": 0
+        },
+        "visual_roles": ["choose 1-4: hero_piece, support_piece, grounding_piece, sharpener_piece, texture_piece, movement_piece, column_piece, quiet_anchor, color_accent"],
+        "style_notes": {
+          "best_use": "stylist role description based on design weight (e.g. 'standalone structural top to highlight collar geometry', 'soft supporting layer', 'texture-contrast focus piece'). Avoid generic 'casual wear' or 'daily casual' phrases.",
+          "risk": "styling or aesthetic risk (e.g. 'can look shapeless if not paired with fitted bottom', 'double texture competition with corduroy'). Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."
+        },
+        "garment_intelligence": {
+          "auto_use_trust": "trusted|support_only|experimental|needs_fit_review|do_not_auto_use",
+          "best_outfit_role": "hero|support|grounding|movement|sharpener|color_accent|texture_accent|column",
+          "pairing_requirements": ["0-4 engine-facing requirements"],
+          "failure_risks": ["0-4 specific risks"],
+          "formula_compatibility": ["0-4 outfit formulas supported"],
+          "do_not_pair_rules": ["0-4 concrete pairing rules"]
+        }
+      }
     }
   ]
-}
-
-Color note: use lavender/lilac/mauve for muted purple or purple-pink items; do not call those taupe unless the color is truly warm grey-brown.` }
+}` }
         ]
       }]
     })
@@ -6459,7 +6585,7 @@ app.post('/api/ai/fit-note', upload.single('photo'), async (req, res) => {
     const schemaText = `Return ONLY a valid JSON object — no markdown, no explanation:
 {
   "note": "1-3 sentence factual fit-mechanics note in lowercase. Mention placement, rise/waist/hem/drape/pulling/bunching/strain if visible or if existing notes flag it. Do not praise style, attractiveness, body, or print. Do not say print/color absorbs fit issues. Net verdict must be one of: works as-is, needs minor adjustment, needs fit review, or do not auto-style.",
-  "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured",
+  "fit_on_body": "clings_stretchy (tight/body-con elastic cling e.g. ribbed knits)|clings_drapey (soft liquid-like cling e.g. jersey, modal)|skims (gently traces body with ease/space e.g. regular tees)|hangs_straight (drops vertically without shape-conforming, stiffer fabrics e.g. stiff cotton, structured linen, heavy canvas)|drapes (relaxed, fluid, flowing, folds/gathering e.g. soft knits, waffle knits, fluid viscose)|structured (holds architectural shape away from body e.g. heavy denim, leather, boxy wool)",
   "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
   ${isTop  ? '"tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only",' : ''}
   ${isBottom ? '"waistband_type": "structured_high_waist|structured_mid_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed",' : ''}
@@ -6467,12 +6593,28 @@ app.post('/api/ai/fit-note', upload.single('photo'), async (req, res) => {
   "fit_confidence": "unknown|low|medium|high",
   "recommendation_status": "trusted|needs_fit_review",
   "style_profile_patch": {
+    "style_notes": {
+      "best_use": "updated stylist role description based on how it behaves/looks on-body (e.g. 'soft architectural focus top paired with wide-leg trousers to highlight neckline'). Avoid generic 'casual wear' or 'daily casual' phrases.",
+      "risk": "styling or aesthetic risk observed on-body (e.g. 'can look shapeless if not paired with fitted bottom', 'double texture competition with corduroy'). Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."
+    },
+    "style_lanes": {
+      "artistic_minimal": "0-5 score updated from on-body scale/proportion",
+      "earthy_structured": "0-5 score updated from on-body scale/proportion",
+      "folk_artisan": "0-5 score",
+      "modern_bohemian": "0-5 score",
+      "boho_romantic": "0-5 score",
+      "boho_festival": "0-5 score",
+      "graphic_casual": "0-5 score",
+      "polished_classic": "0-5 score",
+      "romantic_soft": "0-5 score",
+      "workwear_utilitarian": "0-5 score"
+    },
     "garment_intelligence": {
       "auto_use_trust": "trusted|support_only|experimental|needs_fit_review|do_not_auto_use",
       "best_outfit_role": "hero|support|grounding|movement|sharpener|color_accent|texture_accent|column",
-      "pairing_requirements": ["0-3 real-wear requirements visible in this worn photo"],
+      "pairing_requirements": ["0-3 real-wear requirements visible in this worn photo, e.g. needs clean wide trouser, needs high contrast neutral"],
       "failure_risks": ["0-3 real-wear risks visible or already flagged by trust context"],
-      "formula_compatibility": ["0-3 formulas supported by the way this garment behaves when worn"],
+      "formula_compatibility": ["0-3 formulas supported by the way this garment behaves when worn, e.g. compact top + wide bottom"],
       "real_wear_notes": {
         "fit": "visible placement, pull, bunching, ease, or comfort uncertainty. Do not claim comfort from a still photo; say no visible strain or placement looks stable when appropriate.",
         "drape": "how it hangs or moves when worn",
@@ -6486,9 +6628,11 @@ app.post('/api/ai/fit-note', upload.single('photo'), async (req, res) => {
 }`
 
     const raw = await askStylist({
-      system: `Evaluate this try-on photo for fit of a specific garment. Focus ONLY on the clothing — do NOT assess facial expression, body language, apparent comfort, or confidence. Do not comment on the wearer's body or features.
+      system: `Evaluate Yuna's try-on/worn photo to analyze fit and aesthetic behavior. Focus ONLY on the clothing — do NOT assess facial expression, body language, apparent comfort, or confidence. Do not comment on the wearer's body or features.
 
 ${focusLine}
+
+Worn try-on photos reveal the true visual scale, silhouette behavior, and aesthetic lane of the garment on Yuna's body (which can differ significantly from the hanger photo). For example, a relaxed boxy knit on the hanger might become a controlled, compact torso focal point on-body, shifting its styling from casual-slouchy to "Soft Architectural" (leaning into 'earthy_structured' and 'artistic_minimal'). Use the try-on fit photo to re-calibrate 'style_lanes' scores and provide updated 'style_notes' ('best_use' and 'risk') reflecting this on-body behavior, suggesting specific pairing structures (e.g. wide-leg trousers, barrel pants, fluid skirts) to complete the silhouette.
 
 Existing garment trust context is authoritative. If existing notes or trust fields say the garment needs fit review, is too small/tight, rides up, pulls, sits too high, or has low fit confidence, do not overwrite that with a positive "works as-is" read unless the photo clearly disproves it. A still photo cannot prove comfort. Prefer "needs fit review" when comfort/placement is uncertain.
 
@@ -6519,11 +6663,17 @@ Avoid style praise and optimism. Do not write phrases like "drapes nicely", "vis
 const TAG_PIECE_PROMPT = `Analyze this clothing item. Return ONLY a valid JSON object — no markdown, no explanation, just JSON.
 If both photos are provided:
 - Use HANGER PHOTO for literal garment truth: color, category, construction, pattern, texture, fabric read, and shape.
-- Use WORN PHOTO only for real-wear behavior: fit placement, garment scale within the outfit, drape, ride/pull/bunch, maintenance burden, outfit role, and failure risks. Do not discuss body types/body shapes, attractiveness, confidence, or apparent comfort.
-If only one photo is provided, keep low-confidence real-wear fields empty rather than inventing them.
+- Use WORN PHOTO for real-wear behavior (fit placement, scale, drape, maintenance, outfit role, and risks) AND to re-calibrate style_lanes based on how the silhouette transforms on-body. For example, a relaxed boxy knit on the hanger can become a controlled, compact torso focal point when worn, shifting its aesthetic to "Soft Architectural" (which elevates 'artistic_minimal' and 'earthy_structured' scores). Do not discuss body types/body shapes, attractiveness, confidence, or apparent comfort.
+If only one photo is provided, keep low-confidence real-wear fields empty or set to default/none rather than inventing them.
 For style_lanes, score each lane 0-5, where 0 = not relevant and 5 = strongly native to the garment:
 
 Calibration rules:
+- "artistic_minimal" is for clean, sculptural, or architectural lines, geometric necklines (e.g. asymmetrical button collar, cowl neck), and a controlled, torso-defining silhouette when worn. Elevate this lane to 3-5 (usually 4 or 5) when the worn photo shows the garment fits as a surprisingly compact, controlled, or architectural focal point instead of slouchy/oversized.
+- "earthy_structured" is for garments that balance earthy/natural materials/textures (textured knits, waffle knits, linen) with defined structure or geometry (asymmetrical button necklines, structural hems). Elevate this lane to 3-5 when the worn photo reveals a structured or textured geometry that sits cleanly without slouchy boxiness.
+- "fit_on_body" (only when WORN PHOTO is provided, otherwise leave as "none"):
+  * Select "drapes" (relaxed, fluid, flowing, folds/gathering) for ribbed or waffle knits that drape or flow on the body. Do not default these to "hangs_straight".
+  * Select "skims" or "drapes" if the garment on-body is surprisingly compact, torso-defining, and controlled.
+  * Select "hangs_straight" ONLY if the garment drops vertically without conforming to the body shape (stiffer, heavy woven fabrics like stiff cotton, structured linen, heavy canvas).
 - "casual" is not one bucket. Distinguish errand/lounge casual from intentional daytime casual. Soft linen, lace-trim, wide-leg, sheer, crochet, or dressy-texture pieces may be casual-capable, but usually should be "casual": "medium" unless they clearly read like easy everyday basics. Use "city" or "smart-casual" when the piece needs a more intentional top, shoe, or layer to work.
 - "home" occasion is strict. Use it only for lounge, pajamas, house dresses, slippers, sweats, robe-like pieces, or garments that visibly read indoor/comfort-only. Do not use home just because a garment is soft, relaxed, jersey, knit, elastic, or easy.
 - "city" can include relaxed but intentional clothes, long skirts, dark skirts, structured casual pieces, expressive prints, and garments that could work outside the house with grounded styling.
@@ -6535,8 +6685,10 @@ Calibration rules:
 - "grounding_piece" is strict. Use it for shoes, dark/straight/column bottoms, strong outerwear, or quiet anchors that visually stabilize an outfit. Do not call a soft, draped, gathered, or movement-heavy skirt a grounding piece unless it is clearly a dark straight column.
 - Long, draped, gathered, button-front, yoke-waist, patch-pocket, Free People-like, or soft full skirts usually read as movement_piece, texture_piece, support_piece, or hero_piece. If they have artisan/prarie construction, prefer folk_artisan and modern_bohemian over workwear_utilitarian.
 - Floral/botanical/print describes surface pattern; it does not automatically mean bohemian. Bohemian requires construction, movement, craft texture, earthy styling logic, or relaxed artistic intent.
+- Capture structural, architectural, and geometric drape details with specificity. Do NOT collapse structured, draped, asymmetrical, or textured items into lazy, generic terms like "cosy casual pullover". Identify defining design cues like asymmetrical button collars, cowl necks, high-low curved design hems, and waffle or textured knits. Reflect these clearly in 'name_suggestion', 'reads_as', and 'notes_suggestion'.
 {
-  "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'bold multicolor floral knit top' or 'black cream botanical midi skirt'",
+  "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'sculptural asymmetrical cowl knit top' or 'black cream botanical midi skirt'",
+  "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
   "category": "top|bottom|dress|outerwear|shoes|accessory",
   "background_color": "the literal base/background color of the garment, e.g. black, navy, cream, white",
   "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
@@ -6546,11 +6698,12 @@ Calibration rules:
   "pattern_scale": "none|subtle|medium|bold",
   "pattern_complexity": "solid|quiet|medium|loud",
   "reads_as": "short phrase: the dominant visual impression",
-  "hem_finish": "straight_loose|banded_elastic|ribbed|design_hem",
+  "hem_finish": "straight_loose (only standard flat, horizontal straight hem)|banded_elastic|ribbed|design_hem (high-low, curved, side-slits, vented, or decorative hem meant to be worn over/untucked)",
   "neckline": "V|scoop|crew|boat|mock|cowl|off-shoulder|square|wrap|other|none",
   "sleeve_type": "sleeveless|cap|short|3/4|long|bell|bishop|none",
   "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
   "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
+  "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
   "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|denim|ponte|synthetic|fleece|other",
   "fabric_weight": "ultralight|light|medium|heavy",
   "style_profile_json": {
@@ -6568,14 +6721,14 @@ Calibration rules:
     },
     "visual_roles": ["choose 1-4: hero_piece, support_piece, grounding_piece, sharpener_piece, texture_piece, movement_piece, column_piece, quiet_anchor, color_accent"],
     "style_notes": {
-      "best_use": "short phrase about how this garment should function in outfits",
-      "risk": "short phrase about styling risk, or empty string"
+      "best_use": "stylist role description based on design weight (e.g. 'standalone structural top to highlight collar geometry', 'soft supporting layer', 'texture-contrast focus piece'). Avoid generic 'casual wear' or 'daily casual' phrases.",
+      "risk": "styling or aesthetic risk (e.g. 'can look shapeless if not paired with fitted bottom', 'double texture competition with corduroy'). Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."
     },
     "garment_intelligence": {
       "auto_use_trust": "trusted|support_only|experimental|needs_fit_review|do_not_auto_use",
       "best_outfit_role": "hero|support|grounding|movement|sharpener|color_accent|texture_accent|column",
       "pairing_requirements": ["0-4 concise engine-facing requirements, e.g. needs grounded shoe, needs compact support, needs quiet adjacent pattern"],
-      "failure_risks": ["0-4 specific risks, e.g. rides up when tucked, can turn costume-like with another folk piece, needs fit review"],
+      "failure_risks": ["0-4 specific functional/wear risks. Do not duplicate style_notes.risk here; focus on physical wear issues like rides up, pulls, or fabric snags. Do not write needs fit review here."],
       "occasion_confidence": {
         "casual": "low|medium|high",
         "city": "low|medium|high",
@@ -6610,10 +6763,9 @@ async function tagPieceWithProvider(photoInputs) {
     ...input,
     ...(await prepareImageForClaude(input.path))
   })))
-  const content = [
-    { type: 'text', text: prepared.map(input => `${input.label}: ${input.guidance || ''}`).join('\n') }
-  ]
+  const content = []
   for (const input of prepared) {
+    content.push({ type: 'text', text: `IMAGE INPUT - [${input.label}]:\nGuidance: ${input.guidance || ''}` })
     content.push({ type: 'image', source: { type: 'base64', media_type: input.mime, data: input.base64 } })
   }
   content.push({ type: 'text', text: TAG_PIECE_PROMPT })
@@ -9366,4 +9518,4 @@ if (process.env.NODE_ENV !== 'test') {
   })
 }
 
-export { app, db, uploadsDir, executeTool, contentToOpenAI }
+export { app, db, uploadsDir, executeTool, contentToOpenAI, tagPieceWithProvider }

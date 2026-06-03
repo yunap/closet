@@ -371,6 +371,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         occasions:          tags.occasions          || f.occasions,
         season:             tags.season             || f.season,
         name:               f.name || tags.name_suggestion || '',
+        notes:              f.notes || tags.notes_suggestion || '',
         background_color:   tags.background_color   || f.background_color,
         pattern_type:       tags.pattern_type       || f.pattern_type,
         pattern_scale:      tags.pattern_scale      || f.pattern_scale,
@@ -384,6 +385,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         fabric_category:    tags.fabric_category    || f.fabric_category,
         fabric_weight:      tags.fabric_weight      || f.fabric_weight,
         style_profile_json: tags.style_profile_json || f.style_profile_json,
+        fit_on_body:        (tags.fit_on_body && tags.fit_on_body !== 'none') ? tags.fit_on_body : f.fit_on_body,
       }))
       // Set confidence flags for medium/low fields
       if (tags._confidence) {
@@ -489,11 +491,19 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     ? styleProfile.garment_intelligence
     : {}
   const profileList = (value) => normalizeProfileList(value)
+  const styleRisk = styleProfile?.style_notes?.risk
+  const rawFailureRisks = profileList(garmentIntel.failure_risks)
+  const filteredFailureRisks = rawFailureRisks.filter(r => {
+    if (!styleRisk) return true
+    const rLower = r.toLowerCase().trim()
+    const sLower = styleRisk.toLowerCase().trim()
+    return !sLower.includes(rLower) && !rLower.includes(sLower)
+  })
   const intelRows = [
     garmentIntel.auto_use_trust && ['Auto-use', prettyProfileLabel(garmentIntel.auto_use_trust)],
     garmentIntel.best_outfit_role && ['Best role', prettyProfileLabel(garmentIntel.best_outfit_role)],
     profileList(garmentIntel.pairing_requirements).length && ['Needs', profileList(garmentIntel.pairing_requirements).slice(0, 3).join('; ')],
-    profileList(garmentIntel.failure_risks).length && ['Risks', profileList(garmentIntel.failure_risks).slice(0, 3).join('; ')],
+    filteredFailureRisks.length > 0 && ['Risks', filteredFailureRisks.slice(0, 3).join('; ')],
     profileList(garmentIntel.formula_compatibility).length && ['Formulas', profileList(garmentIntel.formula_compatibility).slice(0, 3).join('; ')],
     profileList(garmentIntel.do_not_pair_rules).length && ['Avoid', profileList(garmentIntel.do_not_pair_rules).slice(0, 3).join('; ')],
   ].filter(Boolean)

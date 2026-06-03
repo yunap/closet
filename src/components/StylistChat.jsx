@@ -878,17 +878,30 @@ export default function AskClaude({
                     </button>
                   ) : (
                     // Wardrobe-board generation button (original mode)
-                    <button
-                      onClick={() => generateWholeWardrobeImage(boardKey, outfit, { occasion: generateOccasion, season: generateSeason })}
-                      disabled={isRendering}
-                      style={{
-                        fontSize: 12, color: 'var(--accent)', padding: '3px 9px', borderRadius: 12,
-                        border: '1px solid var(--accent)', background: 'var(--surface)',
-                        cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1,
-                      }}
-                    >
-                      {isRendering ? 'Rendering this outfit…' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
-                    </button>
+                    <>
+                      <button
+                        onClick={() => generateWholeWardrobeImage(boardKey, outfit, { occasion: generateOccasion, season: generateSeason })}
+                        disabled={isRendering}
+                        style={{
+                          fontSize: 12, color: 'var(--accent)', padding: '3px 9px', borderRadius: 12,
+                          border: '1px solid var(--accent)', background: 'var(--surface)',
+                          cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1,
+                        }}
+                      >
+                        {isRendering ? 'Rendering this outfit…' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
+                      </button>
+                      <button
+                        onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
+                        disabled={isEvaluating}
+                        style={{
+                          fontSize: 12, color: 'var(--text-muted)', padding: '3px 9px', borderRadius: 12,
+                          border: '1px solid var(--border)', background: 'var(--surface)',
+                          cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1,
+                        }}
+                      >
+                        {isEvaluating ? 'Evaluating...' : 'Evaluate outfit'}
+                      </button>
+                    </>
                   )}
                   {!isPreview && <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Image generation cost: one outfit only.</span>}
                 </div>

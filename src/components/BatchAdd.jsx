@@ -368,6 +368,7 @@ export default function BatchAdd({ onDone }) {
             colors:             tags.colors             || [],
             occasions:          tags.occasions          || [],
             season:             tags.season             || 'year-round',
+            notes:              tags.notes_suggestion   || '',
             pattern_type:       tags.pattern_type       || null,
             pattern_scale:      tags.pattern_scale      || null,
             pattern_complexity: tags.pattern_complexity || null,

@@ -903,6 +903,37 @@ test('executeTool get_garment_details loads text and base64 photo blocks', async
   }
 })
 
+test('executeTool search_wardrobe supports filtering and returns visual metadata fields', async () => {
+  // Update seeded top with visual attributes
+  db.prepare(`
+    UPDATE pieces 
+    SET neckline = 'cowl', silhouette = 'boxy', fabric_weight = 'heavy', fabric_category = 'knit', pattern_type = 'solid'
+    WHERE id = ?
+  `).run(seeded.top)
+
+  // 1. Verify filtering by neckline works and returns correct keys
+  const res1 = await executeTool('search_wardrobe', { neckline: 'cowl' })
+  assert.ok(Array.isArray(res1))
+  assert.equal(res1.length, 1)
+  assert.equal(res1[0].id, seeded.top)
+  assert.equal(res1[0].neckline, 'cowl')
+  assert.equal(res1[0].silhouette, 'boxy')
+  assert.equal(res1[0].fabric_weight, 'heavy')
+  assert.equal(res1[0].fabric_category, 'knit')
+  assert.equal(res1[0].pattern_type, 'solid')
+
+  // 2. Verify filtering by silhouette works
+  const res2 = await executeTool('search_wardrobe', { silhouette: 'boxy' })
+  assert.ok(Array.isArray(res2))
+  assert.equal(res2.length, 1)
+  assert.equal(res2[0].id, seeded.top)
+
+  // 3. Verify mismatch neckline returns empty
+  const res3 = await executeTool('search_wardrobe', { neckline: 'V' })
+  assert.ok(Array.isArray(res3))
+  assert.equal(res3.length, 0)
+})
+
 test('contentToOpenAI preserves image_url blocks without stringifying them', () => {
   const content = [
     { type: 'text', text: 'Hello!' },
@@ -914,6 +945,25 @@ test('contentToOpenAI preserves image_url blocks without stringifying them', () 
   assert.equal(result[0].text, 'Hello!')
   assert.equal(result[1].type, 'image_url')
   assert.deepEqual(result[1].image_url, { url: 'data:image/jpeg;base64,abcdefg' })
+})
+
+test('saved boards endpoint returns boards linked to piece context_id', async () => {
+  const testBoard = await postJson('/api/saved-boards', {
+    boardType: 'editorial_direction',
+    contextType: 'piece',
+    contextId: seeded.top,
+    title: 'Editorial Blue Board',
+    imageUrl: '/uploads/board-xyz.png',
+    pieces: []
+  })
+
+  const res = await fetch(`${baseUrl}/api/saved-boards?pieceId=${seeded.top}`)
+  const boards = await res.json()
+  assert.equal(res.status, 200)
+  assert.ok(Array.isArray(boards))
+  const found = boards.find(b => b.id === testBoard.id)
+  assert.ok(found, 'Should find the saved board linked to the piece by context_id')
+  assert.equal(found.title, 'Editorial Blue Board')
 })
 
 

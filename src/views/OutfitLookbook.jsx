@@ -208,7 +208,23 @@ function OutfitForm({ onSave, onCancel }) {
         fd.append('colors', JSON.stringify(piece.colors || []))
         fd.append('occasions', JSON.stringify(piece.occasions || []))
         fd.append('season', piece.season || 'year-round')
-        fd.append('notes', ''); fd.append('status', 'active')
+        fd.append('notes', piece.notes_suggestion || '')
+        fd.append('status', 'active')
+
+        // Include extracted visual attributes
+        ;[
+          'background_color', 'pattern_type', 'pattern_scale', 'pattern_complexity',
+          'reads_as', 'hem_finish', 'neckline', 'sleeve_type', 'length_hits_at',
+          'silhouette', 'fabric_category', 'fabric_weight'
+        ].forEach(key => {
+          if (piece[key] !== undefined && piece[key] !== null) {
+            fd.append(key, piece[key])
+          }
+        })
+        if (piece.style_profile_json) {
+          fd.append('style_profile_json', JSON.stringify(piece.style_profile_json))
+        }
+
         const res = await fetch('/api/pieces', { method: 'POST', body: fd })
         pieceIds.push((await res.json()).id)
       }
