@@ -1,0 +1,596 @@
+import express from 'express'
+import multer from 'multer'
+import path from 'path'
+import fs from 'fs'
+import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
+import { collectPieceIdsFromSavedBoardRow } from '../styling-engine/rules.js'
+
+const router = express.Router()
+
+// Multer storage setup matching server.js
+const storage = multer.diskStorage({
+  destination: uploadsDir,
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9)
+    cb(null, unique + path.extname(file.originalname))
+  }
+})
+const upload = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 } })
+
+function normalizeCalibrationRow(row) {
+  return {
+    ...row,
+    favorite: Boolean(row.favorite),
+    archived: Boolean(row.archived),
+    labels: safeJsonParse(row.labels, []) || []
+  }
+}
+
+// ── Pieces API ─────────────────────────────────────────────────────────────────
+router.get('/pieces', (req, res) => {
+  const { category, occasion, season, status, search, favorites } = req.query
+  let q = 'SELECT * FROM pieces WHERE 1=1'
+  const params = []
+  if (category)  { q += ' AND category = ?';              params.push(category) }
+  if (season && season !== 'all') { q += ' AND (season = ? OR season = "year-round")'; params.push(season) }
+  if (status)    { q += ' AND status = ?';                params.push(status) }
+  if (search)    { q += ' AND name LIKE ?';               params.push(`%${search}%`) }
+  if (occasion)  { q += ' AND occasions LIKE ?';          params.push(`%"${occasion}"%`) }
+  if (favorites === 'true') { q += ' AND favorite = 1' }
+  q += ' ORDER BY favorite DESC, date_added DESC'
+  res.json(db.prepare(q).all(...params).map(parsePiece))
+})
+
+router.get('/pieces/:id', (req, res) => {
+  const p = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
+  if (!p) return res.status(404).json({ error: 'Not found' })
+  res.json(parsePiece(p))
+})
+
+router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), (req, res) => {
+  const { name, category, colors, occasions, season, notes, status,
+    recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
+    pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
+    neckline, sleeve_type, length_hits_at, silhouette,
+    fabric_category, fabric_weight, stretch,
+    fit_on_body, tuck_behavior, waistband_type,
+    styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json } = req.body
+  const photo      = req.files?.photo?.[0]?.filename || null
+  const worn_photo = req.files?.worn_photo?.[0]?.filename || null
+  const r = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, photo, worn_photo,
+      recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
+      pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
+      neckline, sleeve_type, length_hits_at, silhouette,
+      fabric_category, fabric_weight, stretch, fit_on_body, tuck_behavior, waistband_type,
+      styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active', photo, worn_photo,
+    recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
+    pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
+    neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
+    fabric_category||null, fabric_weight||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
+    styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', style_profile_json||'{}')
+  res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(r.lastInsertRowid)))
+})
+
+router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), (req, res) => {
+  const existing = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
+  if (!existing) return res.status(404).json({ error: 'Not found' })
+  const { name, category, colors, occasions, season, notes, status, favorite, clear_photo, clear_worn_photo,
+    recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
+    pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
+    neckline, sleeve_type, length_hits_at, silhouette,
+    fabric_category, fabric_weight, stretch,
+    fit_on_body, tuck_behavior, waistband_type,
+    styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json } = req.body
+  const photo      = req.files?.photo?.[0]?.filename      || (clear_photo      === 'true' ? null : existing.photo)
+  const worn_photo = req.files?.worn_photo?.[0]?.filename  || (clear_worn_photo === 'true' ? null : existing.worn_photo)
+  db.prepare(`
+    UPDATE pieces SET name=?,category=?,colors=?,occasions=?,season=?,notes=?,status=?,favorite=?,photo=?,worn_photo=?,
+      recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,
+      pattern_type=?,pattern_scale=?,pattern_complexity=?,reads_as=?,background_color=?,hem_finish=?,
+      neckline=?,sleeve_type=?,length_hits_at=?,silhouette=?,
+      fabric_category=?,fabric_weight=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,
+      styling_rules_learned=?,pairs_well_with=?,tried_and_rejected=?,style_profile_json=?
+    WHERE id=?
+  `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active',
+    favorite==='true'?1:0, photo, worn_photo,
+    recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
+    pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
+    neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
+    fabric_category||null, fabric_weight||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
+    styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', style_profile_json||JSON.stringify(existing.style_profile_json ? safeJsonParse(existing.style_profile_json, {}) || {} : {}),
+    req.params.id)
+  res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)))
+})
+
+router.delete('/pieces/:id', (req, res) => {
+  const p = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
+  if (!p) return res.status(404).json({ error: 'Not found' })
+  if (p.photo) { const fp = path.join(uploadsDir, p.photo); if (fs.existsSync(fp)) fs.unlinkSync(fp) }
+  db.prepare('DELETE FROM pieces WHERE id = ?').run(req.params.id)
+  res.json({ success: true })
+})
+
+router.patch('/pieces/:id/favorite', (req, res) => {
+  const p = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
+  if (!p) return res.status(404).json({ error: 'Not found' })
+  const newVal = p.favorite ? 0 : 1
+  db.prepare('UPDATE pieces SET favorite = ? WHERE id = ?').run(newVal, req.params.id)
+  res.json({ favorite: Boolean(newVal) })
+})
+
+// ── Outfits API ────────────────────────────────────────────────────────────────
+router.get('/outfits', (req, res) => {
+  const { occasion, season, favorites } = req.query
+  let q = 'SELECT * FROM outfits WHERE 1=1'
+  const params = []
+  if (occasion) { q += ' AND occasion = ?'; params.push(occasion) }
+  if (season && season !== 'all') { q += ' AND (season = ? OR season = "year-round")'; params.push(season) }
+  if (favorites === 'true') { q += ' AND favorite = 1' }
+  q += ' ORDER BY favorite DESC, date_added DESC'
+
+  const outfits = db.prepare(q).all(...params)
+  const result = outfits.map(o => {
+    const pieces = db.prepare(`
+      SELECT p.* FROM pieces p JOIN outfit_pieces op ON p.id = op.piece_id WHERE op.outfit_id = ?
+    `).all(o.id).map(parsePiece)
+    return { ...o, favorite: Boolean(o.favorite), pieces }
+  })
+  res.json(result)
+})
+
+router.post('/outfits', upload.single('photo'), (req, res) => {
+  const { name, occasion, season, notes, status, pieceIds } = req.body
+  const photo = req.file?.filename || null
+  const r = db.prepare(`
+    INSERT INTO outfits (name, occasion, season, notes, status, photo) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(name, occasion||'casual', season||'year-round', notes||'', status||'confirmed', photo)
+  const outfitId = r.lastInsertRowid
+  if (pieceIds) {
+    const insLink = db.prepare('INSERT OR IGNORE INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)')
+    JSON.parse(pieceIds).forEach(pid => insLink.run(outfitId, pid))
+  }
+  const o = db.prepare('SELECT * FROM outfits WHERE id = ?').get(outfitId)
+  res.json({ ...o, favorite: Boolean(o.favorite), pieces: [] })
+})
+
+router.put('/outfits/:id', upload.single('photo'), (req, res) => {
+  const existing = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
+  if (!existing) return res.status(404).json({ error: 'Not found' })
+  const { name, occasion, season, notes, status, favorite, pieceIds } = req.body
+  const photo = req.file?.filename || existing.photo
+  db.prepare(`
+    UPDATE outfits SET name=?,occasion=?,season=?,notes=?,status=?,favorite=?,photo=? WHERE id=?
+  `).run(name, occasion||'casual', season||'year-round', notes||'', status||'confirmed', favorite==='true'?1:0, photo, req.params.id)
+  if (pieceIds) {
+    db.prepare('DELETE FROM outfit_pieces WHERE outfit_id = ?').run(req.params.id)
+    const insLink = db.prepare('INSERT OR IGNORE INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)')
+    JSON.parse(pieceIds).forEach(pid => insLink.run(req.params.id, pid))
+  }
+  const o = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
+  const pieces = db.prepare(`SELECT p.* FROM pieces p JOIN outfit_pieces op ON p.id = op.piece_id WHERE op.outfit_id = ?`).all(req.params.id).map(parsePiece)
+  res.json({ ...o, favorite: Boolean(o.favorite), pieces })
+})
+
+router.delete('/outfits/:id', (req, res) => {
+  const o = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
+  if (!o) return res.status(404).json({ error: 'Not found' })
+  if (o.photo) { const fp = path.join(uploadsDir, o.photo); if (fs.existsSync(fp)) fs.unlinkSync(fp) }
+  db.prepare('DELETE FROM outfits WHERE id = ?').run(req.params.id)
+  res.json({ success: true })
+})
+
+router.patch('/outfits/:id/favorite', (req, res) => {
+  const o = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
+  if (!o) return res.status(404).json({ error: 'Not found' })
+  const newVal = o.favorite ? 0 : 1
+  db.prepare('UPDATE outfits SET favorite = ? WHERE id = ?').run(newVal, req.params.id)
+  res.json({ favorite: Boolean(newVal) })
+})
+
+router.get('/pieces/:id/outfits', (req, res) => {
+  const outfits = db.prepare(`
+    SELECT o.* FROM outfits o
+    JOIN outfit_pieces op ON o.id = op.outfit_id
+    WHERE op.piece_id = ?
+    ORDER BY o.date_added DESC
+  `).all(req.params.id)
+  res.json(outfits.map(o => ({ ...o, favorite: Boolean(o.favorite) })))
+})
+
+router.put('/outfits/:id/pieces', (req, res) => {
+  const { pieceIds } = req.body
+  db.prepare('DELETE FROM outfit_pieces WHERE outfit_id = ?').run(req.params.id)
+  const ins = db.prepare('INSERT OR IGNORE INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)')
+  ;(pieceIds || []).forEach(pid => ins.run(req.params.id, pid))
+  res.json({ success: true })
+})
+
+router.patch('/pieces/:id/append-note', (req, res) => {
+  const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
+  if (!piece) return res.status(404).json({ error: 'Not found' })
+  const { text } = req.body
+  const existing = JSON.parse(piece.styling_rules_learned || '[]')
+  const updated  = [...existing, text.trim()]
+  db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?').run(JSON.stringify(updated), req.params.id)
+  res.json({ styling_rules_learned: updated })
+})
+
+router.patch('/outfits/:id/append-note', (req, res) => {
+  const outfit = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
+  if (!outfit) return res.status(404).json({ error: 'Not found' })
+  const { text } = req.body
+  const existing = outfit.notes || ''
+  const separator = existing.trim() ? '\n\n' : ''
+  const updated = existing + separator + '— Stylist: ' + text.trim()
+  db.prepare('UPDATE outfits SET notes = ? WHERE id = ?').run(updated, req.params.id)
+  res.json({ notes: updated })
+})
+
+// ── Stylist feedback / learning API ───────────────────────────────────────────
+router.post('/stylist-feedback', (req, res) => {
+  try {
+    const {
+      feedbackType,
+      targetType = 'message',
+      contextType = null,
+      contextId = null,
+      contextName = '',
+      label = '',
+      note = '',
+      payload = {},
+      appendToPiece = false,
+    } = req.body || {}
+
+    if (!feedbackType) return res.status(400).json({ error: 'feedbackType is required' })
+
+    const result = db.prepare(`
+      INSERT INTO stylist_feedback
+      (feedback_type, target_type, context_type, context_id, context_name, label, note, payload, is_gold)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      feedbackType,
+      targetType,
+      contextType,
+      contextId ? Number(contextId) : null,
+      contextName || '',
+      label || '',
+      note || '',
+      JSON.stringify(payload || {}),
+      feedbackType === 'signature' ? 1 : 0
+    )
+
+    if (appendToPiece && contextType === 'piece' && contextId) {
+      const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(contextId)
+      if (piece) {
+        const existing = JSON.parse(piece.styling_rules_learned || '[]')
+        const feedbackLabel = label ? ` (${label})` : ''
+        const memory = `[feedback:${feedbackType}]${feedbackLabel} ${note || ''}`.trim()
+        if (memory && !existing.includes(memory)) {
+          db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?')
+            .run(JSON.stringify([...existing, memory]), contextId)
+        }
+      }
+    }
+
+    const learningMessages = {
+      signature: 'Learning saved: boosting this as a signature direction. The board itself is not saved unless you click Save board.',
+      works: 'Learning saved: boosting similar outfit logic. The board itself is not saved unless you click Save board.',
+      good_formula: 'Learning saved: boosting this formula without overcommitting to every exact piece.',
+      good_pieces: 'Learning saved: these pieces look promising together.',
+      almost: 'Learning saved: treating this as close but not fully solved.',
+      not_me: 'Learning saved: reducing this direction for future suggestions.',
+      bad_occasion: 'Learning saved: reducing this formula for this occasion.',
+      fit_issue: 'Learning saved: treating this as a fit-risk combination.',
+      too_safe: 'Learning saved: reducing safe/over-balanced styling.',
+      too_boho: 'Learning saved: reducing costume/festival stereotype drift, not bohemian or folk-artisan style itself.',
+      too_generic: 'Learning saved: reducing generic outfit logic.',
+      too_soft: 'Learning saved: reducing excessive softness.',
+      wrong_proportions: 'Learning saved: avoiding this proportion behavior.',
+      wrong_silhouette: 'Learning saved: this silhouette is wrong for this selected piece/board, not a global silhouette ban.',
+      catalog_drift: 'Learning saved: reducing catalog/mature-casual drift.',
+      weak_structure: 'Learning saved: requiring stronger structure next time.',
+      weak_contrast: 'Learning saved: requiring clearer contrast/tension next time.',
+      bad_grounding: 'Learning saved: improving shoe/grounding logic next time.',
+      bad_reference: 'Learning saved: using this as a negative reference.'
+    }
+
+    res.json({ success: true, id: result.lastInsertRowid, learningMessage: learningMessages[feedbackType] || 'Learning saved.' })
+  } catch (err) {
+    console.error('Stylist feedback error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/stylist-feedback', (req, res) => {
+  const { contextType, contextId, limit = 100, includeArchived = 'false' } = req.query
+  const clauses = []
+  const params = []
+  if (contextType) { clauses.push('context_type = ?'); params.push(contextType) }
+  if (contextId) { clauses.push('context_id = ?'); params.push(Number(contextId)) }
+  if (includeArchived !== 'true') clauses.push('COALESCE(archived,0) = 0')
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+  const rows = db.prepare(`
+    SELECT * FROM stylist_feedback
+    ${where}
+    ORDER BY COALESCE(is_gold,0) DESC, id DESC
+    LIMIT ?
+  `).all(...params, Number(limit))
+  res.json(rows.map(r => ({ ...r, is_gold: Boolean(r.is_gold), archived: Boolean(r.archived), payload: safeJsonParse(r.payload, {}) })))
+})
+
+router.patch('/stylist-feedback/:id', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Feedback not found' })
+    const { isGold, archived, note, label } = req.body || {}
+    const next = {
+      is_gold: typeof isGold === 'boolean' ? (isGold ? 1 : 0) : row.is_gold || 0,
+      archived: typeof archived === 'boolean' ? (archived ? 1 : 0) : row.archived || 0,
+      note: typeof note === 'string' ? note : row.note,
+      label: typeof label === 'string' ? label : row.label,
+    }
+    db.prepare('UPDATE stylist_feedback SET is_gold = ?, archived = ?, note = ?, label = ? WHERE id = ?')
+      .run(next.is_gold, next.archived, next.note, next.label, req.params.id)
+    const updated = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
+    res.json({ ...updated, is_gold: Boolean(updated.is_gold), archived: Boolean(updated.archived), payload: safeJsonParse(updated.payload, {}) })
+  } catch (err) {
+    console.error('Update stylist feedback error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/stylist-feedback/:id', (req, res) => {
+  try {
+    db.prepare('UPDATE stylist_feedback SET archived = 1 WHERE id = ?').run(req.params.id)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Archive stylist feedback error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Renderer calibration image library API ───────────────────────────────────
+router.post('/calibration-images', upload.single('photo'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'photo is required' })
+    const kind = String(req.body.kind || 'good_reference')
+    const labels = safeJsonParse(req.body.labels, []) || []
+    const notes = String(req.body.notes || '')
+    const source = String(req.body.source || 'uploaded')
+    const imageUrl = `/uploads/${req.file.filename}`
+
+    const result = db.prepare(`
+      INSERT INTO calibration_images (image_url, kind, labels, notes, source)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(imageUrl, kind, JSON.stringify(labels), notes, source)
+
+    const row = db.prepare('SELECT * FROM calibration_images WHERE id = ?').get(result.lastInsertRowid)
+    res.json(normalizeCalibrationRow(row))
+  } catch (err) {
+    console.error('Save calibration image error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/calibration-images', (req, res) => {
+  try {
+    const { kind, includeArchived = 'false', limit = 120 } = req.query
+    const clauses = []
+    const params = []
+    if (kind) { clauses.push('kind = ?'); params.push(kind) }
+    if (includeArchived !== 'true') clauses.push('COALESCE(archived,0) = 0')
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    const rows = db.prepare(`
+      SELECT * FROM calibration_images
+      ${where}
+      ORDER BY COALESCE(favorite,0) DESC, id DESC
+      LIMIT ?
+    `).all(...params, Number(limit))
+    res.json(rows.map(normalizeCalibrationRow))
+  } catch (err) {
+    console.error('List calibration images error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.patch('/calibration-images/:id', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM calibration_images WHERE id = ?').get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Calibration image not found' })
+    const labels = Array.isArray(req.body.labels) ? JSON.stringify(req.body.labels) : row.labels
+    const notes = typeof req.body.notes === 'string' ? req.body.notes : row.notes
+    const kind = typeof req.body.kind === 'string' ? req.body.kind : row.kind
+    const favorite = typeof req.body.favorite === 'boolean' ? (req.body.favorite ? 1 : 0) : row.favorite
+    const archived = typeof req.body.archived === 'boolean' ? (req.body.archived ? 1 : 0) : row.archived
+    db.prepare('UPDATE calibration_images SET kind = ?, labels = ?, notes = ?, favorite = ?, archived = ? WHERE id = ?')
+      .run(kind, labels, notes, favorite, archived, req.params.id)
+    res.json(normalizeCalibrationRow(db.prepare('SELECT * FROM calibration_images WHERE id = ?').get(req.params.id)))
+  } catch (err) {
+    console.error('Update calibration image error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/calibration-images/:id', (req, res) => {
+  try {
+    db.prepare('UPDATE calibration_images SET archived = 1 WHERE id = ?').run(req.params.id)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Archive calibration image error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Saved outfit/editorial boards API ─────────────────────────────────────────
+router.post('/saved-boards', (req, res) => {
+  try {
+    const {
+      boardType = 'wardrobe',
+      contextType = null,
+      contextId = null,
+      contextName = '',
+      title = '',
+      imageUrl = '',
+      pieces = [],
+      missingPieces = [],
+      reason = '',
+      watchFor = '',
+      payload = {},
+      favorite = false,
+    } = req.body || {}
+
+    if (!imageUrl) return res.status(400).json({ error: 'imageUrl is required' })
+
+    const result = db.prepare(`
+      INSERT INTO saved_boards
+      (board_type, context_type, context_id, context_name, title, image_url, pieces, missing_pieces, reason, watch_for, payload, favorite)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      boardType || 'wardrobe',
+      contextType || null,
+      contextId ? Number(contextId) : null,
+      contextName || '',
+      title || '',
+      imageUrl,
+      JSON.stringify(pieces || []),
+      JSON.stringify(missingPieces || []),
+      reason || '',
+      watchFor || '',
+      JSON.stringify(payload || {}),
+      favorite ? 1 : 0
+    )
+
+    const saved = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(result.lastInsertRowid)
+    res.json({
+      ...saved,
+      favorite: Boolean(saved.favorite),
+      archived: Boolean(saved.archived),
+      pieces: safeJsonParse(saved.pieces, []),
+      missing_pieces: safeJsonParse(saved.missing_pieces, []),
+      payload: safeJsonParse(saved.payload, {})
+    })
+  } catch (err) {
+    console.error('Save board error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/saved-boards', (req, res) => {
+  try {
+    const { contextType, contextId, pieceId, limit = 100, includeArchived = 'false' } = req.query
+    const clauses = []
+    const params = []
+    if (contextType) { clauses.push('context_type = ?'); params.push(contextType) }
+    if (contextId) { clauses.push('context_id = ?'); params.push(Number(contextId)) }
+    if (includeArchived !== 'true') clauses.push('COALESCE(archived,0) = 0')
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    const rowLimit = pieceId ? Math.max(Number(limit), 500) : Number(limit)
+    const rows = db.prepare(`
+      SELECT * FROM saved_boards
+      ${where}
+      ORDER BY COALESCE(favorite,0) DESC, id DESC
+      LIMIT ?
+    `).all(...params, rowLimit)
+    const normalized = rows.map(row => {
+      const linked_piece_ids = collectPieceIdsFromSavedBoardRow(row)
+      return {
+        ...row,
+        favorite: Boolean(row.favorite),
+        archived: Boolean(row.archived),
+        pieces: safeJsonParse(row.pieces, []),
+        missing_pieces: safeJsonParse(row.missing_pieces, []),
+        payload: safeJsonParse(row.payload, {}),
+        linked_piece_ids,
+      }
+    })
+    const filtered = pieceId
+      ? normalized.filter(row => row.linked_piece_ids.includes(Number(pieceId)))
+      : normalized
+    res.json(filtered)
+  } catch (err) {
+    console.error('List saved boards error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.patch('/saved-boards/:id', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Saved board not found' })
+    const { favorite, archived, title, reason, watchFor, feedbackLabel, feedbackLabels } = req.body || {}
+    const payload = safeJsonParse(row.payload, {}) || {}
+    let nextFeedbackLabels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+    if (Array.isArray(feedbackLabels)) {
+      nextFeedbackLabels = [...new Set(feedbackLabels.map(x => String(x || '').trim()).filter(Boolean))]
+    } else if (typeof feedbackLabel === 'string' && feedbackLabel.trim()) {
+      const label = feedbackLabel.trim()
+      nextFeedbackLabels = nextFeedbackLabels.includes(label)
+        ? nextFeedbackLabels.filter(x => x !== label)
+        : [...nextFeedbackLabels, label]
+    }
+    const nextPayload = { ...payload, feedback_labels: nextFeedbackLabels }
+    const next = {
+      favorite: typeof favorite === 'boolean' ? (favorite ? 1 : 0) : row.favorite || 0,
+      archived: typeof archived === 'boolean' ? (archived ? 1 : 0) : row.archived || 0,
+      title: typeof title === 'string' ? title : row.title,
+      reason: typeof reason === 'string' ? title : row.reason,
+      watch_for: typeof watchFor === 'string' ? watchFor : row.watch_for,
+      payload: JSON.stringify(nextPayload),
+    }
+    next.reason = typeof reason === 'string' ? reason : row.reason
+    db.prepare('UPDATE saved_boards SET favorite = ?, archived = ?, title = ?, reason = ?, watch_for = ?, payload = ? WHERE id = ?')
+      .run(next.favorite, next.archived, next.title, next.reason, next.watch_for, next.payload, req.params.id)
+    const updated = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(req.params.id)
+    res.json({
+      ...updated,
+      favorite: Boolean(updated.favorite),
+      archived: Boolean(updated.archived),
+      pieces: safeJsonParse(updated.pieces, []),
+      missing_pieces: safeJsonParse(updated.missing_pieces, []),
+      payload: safeJsonParse(updated.payload, {})
+    })
+  } catch (err) {
+    console.error('Update saved board error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/saved-boards/:id', (req, res) => {
+  try {
+    db.prepare('UPDATE saved_boards SET archived = 1 WHERE id = ?').run(req.params.id)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Archive saved board error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Todos API ──────────────────────────────────────────────────────────────────
+router.get('/todos', (req, res) => {
+  const todos = db.prepare('SELECT * FROM todos ORDER BY completed ASC, id ASC').all()
+  res.json(todos.map(t => ({ ...t, completed: Boolean(t.completed) })))
+})
+
+router.post('/todos', (req, res) => {
+  const { type, description, linked_piece_id } = req.body
+  const r = db.prepare('INSERT INTO todos (type, description, linked_piece_id) VALUES (?, ?, ?)').run(type, description, linked_piece_id||null)
+  const t = db.prepare('SELECT * FROM todos WHERE id = ?').get(r.lastInsertRowid)
+  res.json({ ...t, completed: Boolean(t.completed) })
+})
+
+router.patch('/todos/:id/toggle', (req, res) => {
+  const t = db.prepare('SELECT * FROM todos WHERE id = ?').get(req.params.id)
+  if (!t) return res.status(404).json({ error: 'Not found' })
+  db.prepare('UPDATE todos SET completed = ? WHERE id = ?').run(t.completed ? 0 : 1, req.params.id)
+  res.json({ completed: !t.completed })
+})
+
+router.delete('/todos/:id', (req, res) => {
+  db.prepare('DELETE FROM todos WHERE id = ?').run(req.params.id)
+  res.json({ success: true })
+})
+
+export default router

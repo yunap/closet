@@ -485,16 +485,18 @@ img { display: block; max-width: 100%; }
 
 @media (min-width: 768px) {
   .piece-detail-overlay {
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    overflow-y: hidden;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 24px !important;
+    overflow-y: hidden !important;
   }
 
   .piece-detail-sheet {
-    margin-top: 0;
-    max-height: calc(100dvh - 48px);
-    overflow-y: auto;
+    margin: 0 auto !important;
+    max-height: calc(100dvh - 48px) !important;
+    border-radius: var(--radius-lg) !important;
+    overflow-y: auto !important;
   }
 }
 
@@ -1090,7 +1092,7 @@ img { display: block; max-width: 100%; }
 @media (min-width: 768px) {
   .piece-grid,
   .outfit-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
     gap: 14px;
     padding: 16px 20px 24px;
   }

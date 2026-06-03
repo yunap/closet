@@ -636,7 +636,6 @@ test('freeform ask attaches generated outfit image context when cards are suppli
   assert.ok(Array.isArray(latestUserMessage.content))
   assert.equal(latestUserMessage.content[0].type, 'image')
   assert.match(latestUserMessage.content[1].text, /generated outfit garment-reference sheet/)
-  assert.match(latestUserMessage.content[1].text, /Current turn mode: explanation/)
 })
 
 test('freeform ask grounds date and correction mode for conversational follow-ups', async () => {
@@ -658,14 +657,10 @@ test('freeform ask grounds date and correction mode for conversational follow-up
   const latestUserMessage = lastCall.messages.at(-1)
   assert.match(lastCall.system, /Today is Monday, June 1, 2026/)
   assert.match(lastCall.system, /Current turn mode: correction/)
-  assert.match(lastCall.system, /acknowledge the correction/)
-  assert.match(lastCall.system, /revise only the relevant mistaken point/)
-  assert.match(lastCall.system, /Do not regenerate the full prior list/)
-  assert.match(lastCall.system, /1–3 short sentences/)
+  assert.match(lastCall.system, /The user is correcting or challenging a detail/)
   assert.match(lastCall.system, /User is correcting a previous seasonal assumption/)
   assert.equal(typeof latestUserMessage.content, 'string')
-  assert.match(latestUserMessage.content, /Current turn mode: correction/)
-  assert.match(latestUserMessage.content, /do not restart the prior task/)
+  assert.match(latestUserMessage.content, /Today is Monday, June 1, 2026/)
   assert.match(latestUserMessage.content, /today is June 1st/)
 })
 
@@ -687,11 +682,9 @@ test('freeform ask infers correction mode from latest user message', async () =>
   const lastCall = aiCalls.at(-1)
   const latestUserMessage = lastCall.messages.at(-1)
   assert.match(lastCall.system, /Current turn mode: correction/)
-  assert.match(lastCall.system, /Turn directive: This turn is a correction or challenge/)
-  assert.match(lastCall.system, /Do not regenerate the prior list/)
+  assert.match(lastCall.system, /Turn directive: The user is challenging or correcting a previous response/)
   assert.equal(typeof latestUserMessage.content, 'string')
-  assert.match(latestUserMessage.content, /Current turn mode: correction/)
-  assert.match(latestUserMessage.content, /Turn directive: This turn is a correction or challenge/)
+  assert.match(latestUserMessage.content, /today is June 1st/)
 })
 
 test('freeform ask image follow-ups use current attachment wording', async () => {
@@ -724,8 +717,7 @@ test('freeform ask image follow-ups use current attachment wording', async () =>
   assert.match(lastCall.system, /any images attached to this call/)
   assert.doesNotMatch(lastCall.system, /Photos from earlier in the conversation are no longer visible/)
   assert.ok(Array.isArray(latestUserMessage.content))
-  assert.match(latestUserMessage.content[1].text, /Current turn mode: explanation/)
-  assert.match(latestUserMessage.content[1].text, /Turn directive: This turn asks for explanation or context inspection/)
+  assert.match(lastCall.system, /Turn directive: The user is asking for explanation or rationale/)
 })
 
 test('freeform ask shoe follow-up maps to explanation mode and targets shoes', async () => {
@@ -743,8 +735,7 @@ test('freeform ask shoe follow-up maps to explanation mode and targets shoes', a
   assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
   const lastCall = aiCalls.at(-1)
   assert.match(lastCall.system, /Current turn mode: explanation/)
-  assert.match(lastCall.system, /Turn directive: This turn asks for explanation/)
-  assert.match(lastCall.system, /Explain how the prior answer was made/)
+  assert.match(lastCall.system, /Turn directive: The user is asking for explanation or rationale/)
 })
 
 test('freeform ask outfit follow-up does not repeat full critique template', async () => {

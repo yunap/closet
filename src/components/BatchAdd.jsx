@@ -63,7 +63,7 @@ function SelectPhase({ onFiles }) {
   }
 
   return (
-    <div style={{ padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
+    <div style={{ padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, overflowY: 'auto', flex: 1 }}>
       <div>
         <div style={{ fontFamily: 'var(--font-serif)', fontSize: 28, fontWeight: 500, textAlign: 'center', marginBottom: 6 }}>Batch add pieces</div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.6 }}>
@@ -112,7 +112,7 @@ function ProcessingPhase({ items, thumbnailSize }) {
   const gridThumbSize = Math.max(72, Math.round(thumbnailSize / 3))
 
   return (
-    <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 24, overflowY: 'auto', flex: 1 }}>
       <div>
         <div style={{ fontFamily: 'var(--font-serif)', fontSize: 24, fontWeight: 500, marginBottom: 4 }}>Tagging your pieces…</div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{done} of {total} done</div>
@@ -191,7 +191,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       {/* Progress header */}
       <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
         <div>
@@ -292,7 +292,7 @@ function SummaryPhase({ items, onDone, thumbnailSize }) {
   const savedThumbSize = Math.max(72, Math.round(thumbnailSize / 3))
 
   return (
-    <div style={{ padding: 40, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, textAlign: 'center' }}>
+    <div style={{ padding: 40, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, textAlign: 'center', overflowY: 'auto', flex: 1 }}>
       <div style={{ fontSize: 48 }}>✦</div>
       <div>
         <div style={{ fontFamily: 'var(--font-serif)', fontSize: 28, fontWeight: 500, marginBottom: 8 }}>All done</div>
@@ -416,7 +416,7 @@ export default function BatchAdd({ onDone }) {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'var(--surface)', zIndex: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--surface)', zIndex: 300, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
       {/* Top bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border-light)', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 10 }}>
@@ -432,7 +432,7 @@ export default function BatchAdd({ onDone }) {
       </div>
 
       {/* Phase content */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: 560, margin: '0 auto', width: '100%' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: 560, margin: '0 auto', width: '100%', overflow: 'hidden' }}>
         {phase === 'select'     && <SelectPhase onFiles={startProcessing} />}
         {phase === 'processing' && <ProcessingPhase items={items} thumbnailSize={thumbnailSize} />}
         {phase === 'reviewing'  && (
