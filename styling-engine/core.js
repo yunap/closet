@@ -2261,7 +2261,69 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
     const writeStartedAt = Date.now()
-    await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
+
+    const rawBuffer = Buffer.from(imageItem.result, 'base64')
+    const metadata = await sharp(rawBuffer).metadata()
+    const imgW = metadata.width || 1024
+    const imgH = metadata.height || 1024
+
+    const headerHeight = 240
+    const colW = imgW / shown.length
+
+    const wrapText = (text, maxChars) => {
+      const words = String(text || '').split(' ')
+      const lines = []
+      let current = ''
+      for (const word of words) {
+        if ((current + ' ' + word).length > maxChars) {
+          lines.push(current.trim())
+          current = word
+        } else {
+          current += ' ' + word
+        }
+      }
+      if (current) lines.push(current.trim())
+      return lines
+    }
+
+    const headerSvg = `<svg width="${imgW}" height="${headerHeight}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#f7f3ed"/>
+      ${shown.map((outfit, index) => {
+        const centerX = (index + 0.5) * colW
+        const title = `${index + 1}. ${outfit.label || `Direction ${index + 1}`}`
+        const lines = wrapText(outfit.reason || '', 32)
+        return `
+          <text x="${centerX}" y="48" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#221c16">${escapeSvgText(title)}</text>
+          ${lines.map((line, lIdx) => `<text x="${centerX}" y="${76 + lIdx * 18}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#5a5045">${escapeSvgText(line)}</text>`).join('')}
+        `
+      }).join('')}
+      <line x1="0" y1="${headerHeight - 1}" x2="${imgW}" y2="${headerHeight - 1}" stroke="#d3c7b7" stroke-width="1.5"/>
+    </svg>`
+
+    const overlaySvg = `<svg width="${imgW}" height="${headerHeight + imgH}" xmlns="http://www.w3.org/2000/svg">
+      ${Array.from({ length: shown.length - 1 }).map((_, i) => {
+        const lineX = (i + 1) * colW
+        return `<line x1="${lineX}" y1="0" x2="${lineX}" y2="${headerHeight + imgH}" stroke="#d3c7b7" stroke-width="1.5"/>`
+      }).join('')}
+    </svg>`
+
+    const combinedBuffer = await sharp({
+      create: {
+        width: imgW,
+        height: headerHeight + imgH,
+        channels: 4,
+        background: { r: 247, g: 243, b: 237, alpha: 1 }
+      }
+    })
+    .composite([
+      { input: Buffer.from(headerSvg), left: 0, top: 0 },
+      { input: rawBuffer, left: 0, top: headerHeight },
+      { input: Buffer.from(overlaySvg), left: 0, top: 0 }
+    ])
+    .png()
+    .toBuffer()
+
+    await fs.promises.writeFile(outPath, combinedBuffer)
     timings.writeMs = Date.now() - writeStartedAt
     timings.totalMs = Date.now() - startedAt
     return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o_comparison_sheet' }
