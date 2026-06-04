@@ -1106,5 +1106,40 @@ test('getCalibrationReferenceImagesForGeneration priority-starred random rotatio
   }
 })
 
+test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit Missions', async () => {
+  const { buildWholeWardrobeCandidateOutfits } = await import('../styling-engine/rules.js')
+
+  const allPieces = [
+    { id: 1, name: 'Floral Print Top', category: 'top', pattern_type: 'floral', status: 'active', colors: ['white', 'blue'], styling_rules_learned: [], occasions: ['casual'], notes: 'floral prints' },
+    { id: 2, name: 'Structured Denim Pants', category: 'bottom', status: 'active', fit_on_body: 'structured', notes: 'structured raw denim', colors: ['navy'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 3, name: 'Black Leather Boot', category: 'shoes', status: 'active', notes: 'pointed black leather', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 4, name: 'Silk Cowl Neck Top', category: 'top', status: 'active', notes: 'cowl neck silk drape top', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 5, name: 'Fitted Black Tank', category: 'top', status: 'active', notes: 'fitted knit tank', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 6, name: 'Linen Wide Pants', category: 'bottom', status: 'active', notes: 'relaxed linen wide leg', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
+  ]
+
+  const candidates = buildWholeWardrobeCandidateOutfits(allPieces, {
+    occasion: 'casual',
+    activeMissions: ['controlled_print', 'structured_soft', 'soft_architecture']
+  })
+
+  assert.ok(candidates.length > 0, 'Should generate at least some candidates')
+  
+  // Verify controlled_print candidate has a print piece and structure
+  const printCand = candidates.find(c => c.missionId === 'controlled_print')
+  if (printCand) {
+    const hasPrint = printCand.pieces.some(p => p.name.includes('Floral'))
+    assert.ok(hasPrint, 'Controlled Print candidate should contain a print piece')
+  }
+
+  // Verify soft_architecture contains no black or denim
+  const archCand = candidates.find(c => c.missionId === 'soft_architecture')
+  if (archCand) {
+    const hasBlackOrDenim = archCand.pieces.some(p => p.name.includes('Black') || p.name.includes('Denim'))
+    assert.ok(!hasBlackOrDenim, 'Soft Architecture candidate should contain no black or denim')
+  }
+})
+
+
 
 

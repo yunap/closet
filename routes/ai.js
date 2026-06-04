@@ -25,7 +25,8 @@ import {
   EDITORIAL_NEW_PIECES_SYSTEM,
   RENDERER_CALIBRATION_SYSTEM,
   COMPARE_OUTFITS_SYSTEM,
-  TAG_PIECE_PROMPT
+  TAG_PIECE_PROMPT,
+  OUTFIT_MISSIONS
 } from '../styling-engine/prompts.js'
 
 import {
@@ -475,6 +476,7 @@ function wholeWardrobeOutfitsFromCandidates(candidates = [], candidatePieces = [
     reason: wholeWardrobeReasonFromPieces({ pieces: candidate.pieces }),
     watchFor: wholeWardrobeWatchFromPieces({ pieces: candidate.pieces }),
     localScore: candidate.localScore,
+    missionId: candidate.missionId,
   }, candidatePieces), candidatePieces, options.occasion, options.mood))
 }
 
@@ -537,6 +539,7 @@ function formatWholeWardrobeOutfitFeedback({ occasion, season, mood, outfits = [
   ].filter(Boolean)
   outfits.forEach((outfit, index) => {
     lines.push(`**${index === 0 || outfit.strength === 'signature' ? 'Signature / strongest outfit' : outfit.label || `Outfit ${index + 1}`}**`)
+    if (outfit.missionLabel) lines.push(`Mission: ${outfit.missionLabel}`)
     if (outfit.label) lines.push(`Label: ${outfit.label}`)
     if (outfit.strength) lines.push(`Strength: ${outfit.strength}`)
     if (outfit.dominantDirection) lines.push(`Direction: ${outfit.dominantDirection}`)
@@ -1107,7 +1110,15 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode })
     const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
     const sessionInfluence = getRecentWholeWardrobeSessionInfluence({ occasion, daysCutoff: 6 })
-    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence, sessionInfluence })
+    
+    // Choose 5 active missions for this generation run
+    const activeMissions = ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
+    const activeMissionsText = OUTFIT_MISSIONS
+      .filter(m => activeMissions.includes(m.id))
+      .map(m => `- ${m.label} (missionId: "${m.id}"): ${m.description}`)
+      .join('\n')
+
+    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence, sessionInfluence, activeMissions })
     const candidateFormulaCounts = wholeWardrobeCandidateFormulaCounts(candidates)
     let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
     const candidatePieces = candidatePieceIds
@@ -1148,12 +1159,13 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
       `Season: ${season || 'current season'}`,
       `Mood: ${mood || 'artistic minimalist'}`,
       moodProfile ? `Mood guidance:\n${moodProfile.guidance}` : '',
+      `Active Outfit Missions (every outfit you design MUST be mapped to one of these missions, specifying the "missionId" field in the JSON response):\n${activeMissionsText}`,
       `Target count: ${requestedLimit} outfits.`,
       rotationWarningsText,
       suppressedListText,
       `Memory & preferences:\n${memoryText}`,
       '',
-      `Please search the wardrobe and inspect matching pieces to design up to ${requestedLimit} outfits. Output your final turn response as a JSON object matching the requested schema.`
+      `Please search the wardrobe and inspect matching pieces to design up to ${requestedLimit} outfits, mapping each to a unique mission. Output your final turn response as a JSON object matching the requested schema.`
     ].filter(Boolean).join('\n\n')
 
     let parsed = {}
