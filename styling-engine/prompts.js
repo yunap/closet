@@ -485,20 +485,18 @@ IMPORTANT STYLING PRINCIPLES (from AGENTS.md):
 - Avoid excessive layering or novelty without quality.
 
 HOW TO DESIGN THE OUTFITS:
-1. Review the list of **Active Outfit Missions** provided in the user request.
-2. Use the 'search_wardrobe' tool to discover active garments in her closet (e.g. search for tops, bottoms, shoes, dresses, outerwear).
-   - Leverage visual filters (like 'neckline', 'silhouette', 'fabric_weight', 'fabric_category', 'pattern_type') to find garments matching the mission criteria (e.g., search for printed items for Controlled Print, or grays/textures for Monochrome Texture).
-   - Review these visual properties directly in the search results list to quickly filter out structural conflicts (like double-volume silhouette clashes or fabric-weight mismatches) early in Turn 1.
-3. For any garments you are actively considering or pairing, call 'get_garment_details' to retrieve their full styling text and inspect their photos on-demand.
+1. Review the list of **Active Outfit Missions** and the pre-sorted **Candidate Combinations** provided in the user request.
+2. Select the best candidates from the provided list to satisfy the target outfit count.
+   - Every outfit you output MUST map to a unique mission.
+   - Use the pre-selected candidate's exact 'pieceIds' and preserve its original 'missionId' (e.g. 'controlled_print' or 'monochrome_texture').
+3. For the garments in your selected outfits, call 'get_garment_details' in Turn 1 or Turn 2 to retrieve their full styling text and inspect their photos to ensure they form a high-quality combination.
 4. Run a strict visual self-critic audit on each combination before proposing it:
    - Pattern & Color Clash: If a piece has a prominent pattern (like a botanical or floral dress/top), do not pair it with shoes or other items that also have prominent patterns or textures (like herringbone, stripes, or contrasting geometric patterns) unless they create a rare "productive tension" (which is extremely difficult to pull off). When in doubt, ground a patterned hero piece with solid, textured-but-unpatterned supporting pieces.
    - Shoe Grounding & Formality Check: Check that the shoe grounds the dress/pants correctly in terms of visual weight, structure, color, and formality level. Match the weight of the bottom to the shoe. Never pair formal evening heels or delicate dress shoes with casual utility/cargo pants, activewear, or simple daywear for casual city settings. For city walks or travel-heavy days, ensure shoes are practical and comfortable (flats, loafers, low block heels, sandals, or sneakers).
    - Visual Competition: Ensure there is a clear visual hierarchy (one Hero garment, others supporting or grounding). Do not pack too many loud or competing details into a single outfit. Reject over-styling and "costume" vibes.
    - Profile Cliché Ban: Do not write sentences like "aligns with Yuna's aesthetic" or "matches Yuna's style" in your feedback block.
-   - Discard & Replace: If any combination fails this self-critic pass, discard it and swap the conflicting piece (e.g., choose different shoes or top) before outputting your final recommendation.
-5. Map each designed outfit to one of the active missions, ensuring a diverse representation of visual stories.
-6. Bias your selections to favor under-utilized pieces and honor taste/calibration memory.
-7. Return your final recommendations as a JSON object containing the outfits.
+   - Discard & Replace: If any combination fails this self-critic pass, discard it or replace the conflicting piece from the same category using another candidate option or a wardrobe search.
+5. Return your final recommendations as a JSON object containing the outfits, ensuring you map each back to its correct 'missionId'.
 
 LATENCY & TURN BUDGET OPTIMIZATION:
 - Minimize sequential round trips to prevent timeouts. Aim to complete your work in exactly 3 turns:

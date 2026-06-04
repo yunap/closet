@@ -1154,6 +1154,11 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
       ? `Suppressed garments (DO NOT pair or use these for the occasion "${occasion}"):\n${suppressedPieces.map(p => `- ${p.name} (id: ${p.id})`).join('\n')}`
       : ''
 
+    const candidateText = candidates.slice(0, 25).map((c, idx) => {
+      const pStr = c.pieces.map(p => `${p.id}: ${p.name} (${p.category})`).join(' + ')
+      return `${idx + 1}. [Candidate ID: ${c.candidateId}] [Mission: ${c.missionLabel} (missionId: "${c.missionId}")] Pieces: ${pStr}\n   Visual logic: ${c.localReasons?.join('; ') || ''}`
+    }).join('\n\n')
+
     const initialUserMessageText = [
       `Occasion: ${occasion || 'casual'}`,
       `Season: ${season || 'current season'}`,
@@ -1163,9 +1168,10 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
       `Target count: ${requestedLimit} outfits.`,
       rotationWarningsText,
       suppressedListText,
+      `Candidate Combinations (prioritize choosing and refining outfits from these pre-sorted candidates, preserving their exact garment IDs and "missionId" fields):\n\n${candidateText}`,
       `Memory & preferences:\n${memoryText}`,
       '',
-      `Please search the wardrobe and inspect matching pieces to design up to ${requestedLimit} outfits, mapping each to a unique mission. Output your final turn response as a JSON object matching the requested schema.`
+      `Please review the candidate combinations list, retrieve garment details to inspect their images, and design up to ${requestedLimit} outfits by choosing from the candidate list or building them. Map each outfit to its correct "missionId" in the JSON response.`
     ].filter(Boolean).join('\n\n')
 
     let parsed = {}
