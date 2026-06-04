@@ -772,8 +772,9 @@ export default function AskClaude({
                 <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
                 <div style={{ fontSize: 10, color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{strength}</div>
               </div>
-              {(outfit.dominantDirection || outfit.silhouette || outfit.bestFor) && (
+              {(outfit.missionLabel || outfit.dominantDirection || outfit.silhouette || outfit.bestFor) && (
                 <div style={{ display: 'grid', gap: 2, marginTop: 6, fontSize: 13, color: 'var(--text-light)', lineHeight: 1.45 }}>
+                  {outfit.missionLabel && <div><strong>Mission:</strong> {outfit.missionLabel}</div>}
                   {outfit.dominantDirection && <div><strong>Direction:</strong> {outfit.dominantDirection}</div>}
                   {outfit.silhouette && <div><strong>Silhouette:</strong> {outfit.silhouette}</div>}
                   {outfit.bestFor && <div><strong>Best for:</strong> {outfit.bestFor}</div>}
