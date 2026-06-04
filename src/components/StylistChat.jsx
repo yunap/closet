@@ -159,11 +159,64 @@ export default function AskClaude({
   onBoardSaved,
   onResetVisuals,
 }) {
-  const [messages, setMessages] = useState([
-    { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
-  ])
-  const [chatHistory, setChatHistory] = useState([])
-  const [threadMemory, setThreadMemory] = useState(null)
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem('stylist_chat_messages')
+      if (saved) return JSON.parse(saved)
+    } catch (e) {
+      console.error('Failed to load stylist_chat_messages from localStorage:', e)
+    }
+    return [
+      { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
+    ]
+  })
+  const [chatHistory, setChatHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('stylist_chat_history')
+      if (saved) return JSON.parse(saved)
+    } catch (e) {
+      console.error('Failed to load stylist_chat_history from localStorage:', e)
+    }
+    return []
+  })
+  const [threadMemory, setThreadMemory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('stylist_thread_memory')
+      if (saved) return JSON.parse(saved)
+    } catch (e) {
+      console.error('Failed to load stylist_thread_memory from localStorage:', e)
+    }
+    return null
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('stylist_chat_messages', JSON.stringify(messages))
+    } catch (e) {
+      console.error('Failed to save stylist_chat_messages to localStorage:', e)
+    }
+  }, [messages])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('stylist_chat_history', JSON.stringify(chatHistory))
+    } catch (e) {
+      console.error('Failed to save stylist_chat_history to localStorage:', e)
+    }
+  }, [chatHistory])
+
+  useEffect(() => {
+    try {
+      if (threadMemory === null) {
+        localStorage.removeItem('stylist_thread_memory')
+      } else {
+        localStorage.setItem('stylist_thread_memory', JSON.stringify(threadMemory))
+      }
+    } catch (e) {
+      console.error('Failed to save stylist_thread_memory to localStorage:', e)
+    }
+  }, [threadMemory])
+
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
   const setActiveContext = useCallback((nextContext) => {
@@ -1724,6 +1777,13 @@ export default function AskClaude({
   const compareConfidenceText = pendingOutfit && compareOutfit ? getCompareConfidenceText(pendingOutfit, compareOutfit) : ''
 
   const resetChat = () => {
+    try {
+      localStorage.removeItem('stylist_chat_messages')
+      localStorage.removeItem('stylist_chat_history')
+      localStorage.removeItem('stylist_thread_memory')
+    } catch (e) {
+      console.error('Failed to clear localStorage on resetChat:', e)
+    }
     setMessages([{ role: 'assistant', text: 'Starting fresh! What can I help you with?' }])
     setChatHistory([])
     setThreadMemory(null)
