@@ -2864,7 +2864,7 @@ export function editorialImagePrompt({ selectedPiece, direction, occasion, seaso
     `ANCHOR GARMENT — preserve exactly: ${pieceDesc}.`,
     anchorRules ? `Anchor fidelity: ${anchorRules}` : '',
     'The anchor garment must remain visually recognizable — same category, neckline, sleeve length, print scale, color, fit, and hem length. Do not redesign it or substitute a different garment.',
- 
+    '',
     direction.visualPrompt
       ? `PRIMARY RENDERING DIRECTIVE — follow this exactly: ${direction.visualPrompt}`
       : missing
@@ -2885,6 +2885,7 @@ export function editorialImagePrompt({ selectedPiece, direction, occasion, seaso
 
 export async function getCalibrationReferenceImagesForGeneration(limit = 3) {
   try {
+    const poolLimit = Math.max(Number(limit) * 4, 15)
     const rows = db.prepare(`
       SELECT * FROM calibration_images
       WHERE COALESCE(archived, 0) = 0
@@ -2894,10 +2895,26 @@ export async function getCalibrationReferenceImagesForGeneration(limit = 3) {
         COALESCE(favorite, 0) DESC,
         id DESC
       LIMIT ?
-    `).all(Number(limit))
- 
+    `).all(poolLimit)
+
+    const starredRows = rows.filter(row => Boolean(row.favorite))
+    const normalRows = rows.filter(row => !Boolean(row.favorite))
+
+    const shuffle = (array) => {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array
+    }
+
+    shuffle(starredRows)
+    shuffle(normalRows)
+
+    const selectedRows = [...starredRows, ...normalRows].slice(0, Number(limit))
+
     const images = []
-    for (const row of rows) {
+    for (const row of selectedRows) {
       const filePath = imageUrlToUploadPath(row.image_url)
       if (!filePath) continue
       try {
@@ -2912,6 +2929,7 @@ export async function getCalibrationReferenceImagesForGeneration(limit = 3) {
           favorite: Boolean(row.favorite),
           labels:   safeJsonParse(row.labels, []),
           notes:    row.notes || '',
+          id:       row.id
         })
       } catch (imgErr) {
         console.warn('Could not read calibration image for generation:', row.id, imgErr.message)

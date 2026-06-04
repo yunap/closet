@@ -1031,5 +1031,80 @@ test('saved boards endpoint returns boards linked to piece context_id', async ()
   assert.equal(found.title, 'Editorial Blue Board')
 })
 
+test('getCalibrationReferenceImagesForGeneration priority-starred random rotation logic', async () => {
+  const { getCalibrationReferenceImagesForGeneration } = await import('../styling-engine/core.js')
+
+  // Create mock calibration image files
+  const files = [
+    await makeImage('cal1.jpg', '#ff0000'),
+    await makeImage('cal2.jpg', '#00ff00'),
+    await makeImage('cal3.jpg', '#0000ff'),
+    await makeImage('cal4.jpg', '#ffff00'),
+    await makeImage('cal5.jpg', '#ff00ff'),
+    await makeImage('cal6.jpg', '#00ffff'),
+  ]
+
+  try {
+    // Insert 4 active normal, 2 active starred references
+    // Starred 1 (favorite = 1)
+    db.prepare(`
+      INSERT INTO calibration_images (kind, favorite, archived, image_url, labels)
+      VALUES ('real_photo', 1, 0, '/uploads/cal1.jpg', '[]')
+    `).run()
+    const starred1Id = db.prepare('SELECT last_insert_rowid() as id').get().id
+
+    // Starred 2 (favorite = 1)
+    db.prepare(`
+      INSERT INTO calibration_images (kind, favorite, archived, image_url, labels)
+      VALUES ('real_photo', 1, 0, '/uploads/cal2.jpg', '[]')
+    `).run()
+    const starred2Id = db.prepare('SELECT last_insert_rowid() as id').get().id
+
+    // Normal 1 (favorite = 0)
+    db.prepare(`
+      INSERT INTO calibration_images (kind, favorite, archived, image_url, labels)
+      VALUES ('real_photo', 0, 0, '/uploads/cal3.jpg', '[]')
+    `).run()
+    // Normal 2 (favorite = 0)
+    db.prepare(`
+      INSERT INTO calibration_images (kind, favorite, archived, image_url, labels)
+      VALUES ('real_photo', 0, 0, '/uploads/cal4.jpg', '[]')
+    `).run()
+    // Normal 3 (favorite = 0)
+    db.prepare(`
+      INSERT INTO calibration_images (kind, favorite, archived, image_url, labels)
+      VALUES ('real_photo', 0, 0, '/uploads/cal5.jpg', '[]')
+    `).run()
+    // Normal 4 (favorite = 0)
+    db.prepare(`
+      INSERT INTO calibration_images (kind, favorite, archived, image_url, labels)
+      VALUES ('real_photo', 0, 0, '/uploads/cal6.jpg', '[]')
+    `).run()
+
+    // 1. Fetch with limit 2. It should return exactly the 2 starred images.
+    const refsLimit2 = await getCalibrationReferenceImagesForGeneration(2)
+    assert.equal(refsLimit2.length, 2)
+    const idsLimit2 = refsLimit2.map(r => r.id)
+    assert.ok(idsLimit2.includes(starred1Id))
+    assert.ok(idsLimit2.includes(starred2Id))
+
+    // 2. Unstar one of them (make cal2.jpg favorite = 0)
+    db.prepare('UPDATE calibration_images SET favorite = 0 WHERE id = ?').run(starred2Id)
+
+    // 3. Fetch with limit 2 again. It should return exactly 2 images: the remaining starred one first, and 1 of the normal ones.
+    const refsLimit2Post = await getCalibrationReferenceImagesForGeneration(2)
+    assert.equal(refsLimit2Post.length, 2)
+    assert.equal(refsLimit2Post[0].id, starred1Id) // The only starred one left must be first
+    assert.notEqual(refsLimit2Post[1].id, starred1Id) // Second one is a normal one
+    assert.ok(refsLimit2Post[1].id !== starred1Id)
+  } finally {
+    // Cleanup generated files
+    for (const file of files) {
+      const p = path.join(uploadsDir, file)
+      if (fs.existsSync(p)) fs.unlinkSync(p)
+    }
+  }
+})
+
 
 
