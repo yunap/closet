@@ -28,17 +28,53 @@ function normalizeCalibrationRow(row) {
 
 // ── Pieces API ─────────────────────────────────────────────────────────────────
 router.get('/pieces', (req, res) => {
-  const { category, occasion, season, status, search, favorites } = req.query
+  const { category, occasion, season, status, search, favorites, color, fabric } = req.query
   let q = 'SELECT * FROM pieces WHERE 1=1'
   const params = []
   if (category)  { q += ' AND category = ?';              params.push(category) }
-  if (season && season !== 'all') { q += ' AND (season = ? OR season = "year-round")'; params.push(season) }
+  if (season && season !== 'all') { q += " AND (season = ? OR season = 'year-round')"; params.push(season) }
   if (status)    { q += ' AND status = ?';                params.push(status) }
-  if (search)    { q += ' AND name LIKE ?';               params.push(`%${search}%`) }
+  if (search)    {
+    q += ` AND (
+      name LIKE ? OR
+      colors LIKE ? OR
+      reads_as LIKE ? OR
+      silhouette LIKE ? OR
+      fabric_category LIKE ? OR
+      pattern_type LIKE ? OR
+      neckline LIKE ? OR
+      sleeve_type LIKE ?
+    )`
+    const term = `%${search}%`
+    params.push(term, term, term, term, term, term, term, term)
+  }
   if (occasion)  { q += ' AND occasions LIKE ?';          params.push(`%"${occasion}"%`) }
+  if (color)     { q += ' AND colors LIKE ?';             params.push(`%"${color}"%`) }
+  if (fabric)    { q += ' AND fabric_category = ?';       params.push(fabric) }
   if (favorites === 'true') { q += ' AND favorite = 1' }
   q += ' ORDER BY favorite DESC, date_added DESC'
   res.json(db.prepare(q).all(...params).map(parsePiece))
+})
+
+router.get('/pieces/meta', (req, res) => {
+  const rows = db.prepare("SELECT colors, fabric_category FROM pieces WHERE status = 'active'").all()
+  const colorsSet = new Set()
+  const fabricsSet = new Set()
+  for (const row of rows) {
+    if (row.fabric_category) {
+      fabricsSet.add(row.fabric_category.toLowerCase())
+    }
+    try {
+      const colors = JSON.parse(row.colors || '[]')
+      for (const c of colors) {
+        colorsSet.add(c.toLowerCase())
+      }
+    } catch {}
+  }
+  res.json({
+    colors: Array.from(colorsSet).sort(),
+    fabrics: Array.from(fabricsSet).sort()
+  })
 })
 
 router.get('/pieces/:id', (req, res) => {

@@ -131,7 +131,7 @@ const FABRIC_BY_CATEGORY = {
   default: {
     sectionLabel: 'Fabric',
     fabricLabel: 'Fabric',
-    fabricOptions: ['jersey','knit','linen','silk','satin','cotton','wool','denim','ponte','synthetic','fleece','other'],
+    fabricOptions: ['jersey','knit','linen','silk','satin','cotton','wool','cashmere','viscose','denim','twill','canvas','corduroy','tweed','velvet','leather','suede','ponte','synthetic','fleece','other'],
     weightLabel: 'Weight',
     weightOptions: ['ultralight','light','medium','heavy'],
     showStretch: true,

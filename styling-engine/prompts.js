@@ -797,7 +797,7 @@ Calibration rules:
   "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
   "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
-  "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|denim|ponte|synthetic|fleece|other",
+  "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|cashmere|viscose|denim|twill|canvas|corduroy|tweed|velvet|leather|suede|ponte|synthetic|fleece|other",
   "fabric_weight": "ultralight|light|medium|heavy",
   "style_profile_json": {
     "style_lanes": {

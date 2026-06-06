@@ -24,28 +24,65 @@ const OCCASIONS = [
   { value: 'home',         label: 'Home' },
 ]
 
+const SEASONS = [
+  { value: '',           label: 'All seasons' },
+  { value: 'warm',       label: 'Warm / Summer' },
+  { value: 'cool',       label: 'Cool / Winter' },
+  { value: 'year-round', label: 'Year-Round' },
+]
+
+const COLOR_HEX_MAP = {
+  black: '#2A2420', white: '#F5F2EC', cream: '#E8DFC8', beige: '#D6C3A3',
+  taupe: '#9C8B78', grey: '#9A9A9A', charcoal: '#484848', navy: '#1E2D4A',
+  denim: '#4F6F8F', brown: '#7A5A3A', tan: '#C0A070', oatmeal: '#D8C8B0',
+  amber: '#B07820', mustard: '#B89020', orange: '#C86030', red: '#A83A2A',
+  pink: '#C07080', mauve: '#A7798A', lavender: '#A99AC2', lilac: '#C4B2D8',
+  plum: '#5A3060', green: '#3A6A3A', olive: '#5A6030', turquoise: '#2A8080',
+  'light blue': '#7AADCC', periwinkle: '#8888CC', 'dark blue': '#1A2040',
+  'dark grey': '#484848', 'light grey': '#B8B8B8', multi: '#8A6848'
+}
+
 export default function PieceInventory({ onSendToStylist }) {
   const [pieces, setPieces]           = useState([])
   const [loading, setLoading]         = useState(true)
   const [search, setSearch]           = useState('')
   const [filterCat, setFilterCat]     = useState('')
   const [filterOcc, setFilterOcc]     = useState('')
+  const [filterSeason, setFilterSeason] = useState('')
+  const [filterColor, setFilterColor]   = useState('')
+  const [filterFabric, setFilterFabric] = useState('')
+  const [availableColors, setAvailableColors]   = useState([])
+  const [availableFabrics, setAvailableFabrics] = useState([])
   const [favOnly, setFavOnly]         = useState(false)
   const [showForm, setShowForm]       = useState(false)
   const [showBatch, setShowBatch]     = useState(false)
   const [editPiece, setEditPiece]     = useState(null)
   const [detailPiece, setDetailPiece] = useState(null)
 
+  const fetchMeta = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pieces/meta')
+      const data = await res.json()
+      setAvailableColors(data.colors || [])
+      setAvailableFabrics(data.fabrics || [])
+    } catch {}
+  }, [])
+
+  useEffect(() => { fetchMeta() }, [fetchMeta])
+
   const fetchPieces = useCallback(async () => {
     const params = new URLSearchParams()
-    if (filterCat) params.set('category', filterCat)
-    if (filterOcc) params.set('occasion', filterOcc)
-    if (search)    params.set('search', search)
-    if (favOnly)   params.set('favorites', 'true')
+    if (filterCat)    params.set('category', filterCat)
+    if (filterOcc)    params.set('occasion', filterOcc)
+    if (filterSeason) params.set('season', filterSeason)
+    if (filterColor)  params.set('color', filterColor)
+    if (filterFabric) params.set('fabric', filterFabric)
+    if (search)       params.set('search', search)
+    if (favOnly)      params.set('favorites', 'true')
     const res  = await fetch(`/api/pieces?${params}`)
     setPieces(await res.json())
     setLoading(false)
-  }, [filterCat, filterOcc, search, favOnly])
+  }, [filterCat, filterOcc, filterSeason, filterColor, filterFabric, search, favOnly])
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => { const t = setTimeout(fetchPieces, 300); return () => clearTimeout(t) }, [search])
@@ -54,8 +91,8 @@ export default function PieceInventory({ onSendToStylist }) {
     await fetch(`/api/pieces/${piece.id}/favorite`, { method: 'PATCH' })
     fetchPieces()
   }
-  const handleSave = () => { setShowForm(false); setEditPiece(null); setDetailPiece(null); fetchPieces() }
-  const handleDelete = async (piece) => { await fetch(`/api/pieces/${piece.id}`, { method: 'DELETE' }); setDetailPiece(null); fetchPieces() }
+  const handleSave = () => { setShowForm(false); setEditPiece(null); setDetailPiece(null); fetchPieces(); fetchMeta() }
+  const handleDelete = async (piece) => { await fetch(`/api/pieces/${piece.id}`, { method: 'DELETE' }); setDetailPiece(null); fetchPieces(); fetchMeta() }
   const handleEdit = (piece) => { setDetailPiece(null); setEditPiece(piece); setShowForm(true) }
 
   return (
@@ -92,11 +129,89 @@ export default function PieceInventory({ onSendToStylist }) {
           ))}
         </div>
 
-        <div className="filter-row">
+        <div className="filter-row" style={{ marginBottom: 8 }}>
           {OCCASIONS.map(o => (
             <button key={o.value} className={`chip ${filterOcc === o.value ? 'active' : ''}`} onClick={() => setFilterOcc(o.value)}>{o.label}</button>
           ))}
         </div>
+
+        <div className="filter-row" style={{ marginBottom: 8 }}>
+          {SEASONS.map(s => (
+            <button key={s.value} className={`chip ${filterSeason === s.value ? 'active' : ''}`} onClick={() => setFilterSeason(s.value)}>{s.label}</button>
+          ))}
+        </div>
+
+        {availableColors.length > 0 && (
+          <div className="filter-row" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', minWidth: 52, flexShrink: 0 }}>Colors:</span>
+            <button
+              className={`chip ${!filterColor ? 'active' : ''}`}
+              onClick={() => setFilterColor('')}
+              style={{ fontSize: 11, padding: '3px 8px' }}
+            >
+              All
+            </button>
+            {availableColors.map(color => {
+              const hex = COLOR_HEX_MAP[color] || '#ccc'
+              const active = filterColor === color
+              const isLight = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac'].includes(color)
+              return (
+                <button
+                  key={color}
+                  onClick={() => setFilterColor(active ? '' : color)}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: '50%',
+                    background: hex,
+                    border: active ? '2px solid var(--accent)' : '1px solid rgba(0,0,0,0.15)',
+                    boxShadow: active ? '0 0 0 1px var(--accent-light)' : 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 0,
+                    position: 'relative',
+                    transition: 'all 0.15s ease'
+                  }}
+                  title={color}
+                >
+                  {active && (
+                    <span style={{
+                      color: isLight ? '#333' : '#fff',
+                      fontSize: 10,
+                      fontWeight: 'bold',
+                      lineHeight: 1
+                    }}>✓</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {availableFabrics.length > 0 && (
+          <div className="filter-row" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', minWidth: 52, flexShrink: 0 }}>Fabrics:</span>
+            <button
+              className={`chip ${!filterFabric ? 'active' : ''}`}
+              onClick={() => setFilterFabric('')}
+              style={{ fontSize: 11, padding: '3px 8px' }}
+            >
+              All
+            </button>
+            {availableFabrics.map(fabric => (
+              <button
+                key={fabric}
+                className={`chip ${filterFabric === fabric ? 'active' : ''}`}
+                onClick={() => setFilterFabric(filterFabric === fabric ? '' : fabric)}
+                style={{ fontSize: 11, padding: '3px 8px', textTransform: 'capitalize' }}
+              >
+                {fabric}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Grid */}
@@ -107,7 +222,7 @@ export default function PieceInventory({ onSendToStylist }) {
           <div className="empty-state-icon">◈</div>
           <div className="empty-state-title">Nothing here yet</div>
           <div className="empty-state-text">
-            {search || filterCat || filterOcc ? 'Try adjusting your filters' : 'Tap + to add a piece, or use Batch to add many at once'}
+            {search || filterCat || filterOcc || filterSeason || filterColor || filterFabric ? 'Try adjusting your filters' : 'Tap + to add a piece, or use Batch to add many at once'}
           </div>
         </div>
       ) : (

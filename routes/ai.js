@@ -700,7 +700,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "sleeve_type": "sleeveless|cap|short|3/4|long|bell|bishop|none",
       "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
       "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
-      "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|denim|ponte|synthetic|fleece|other",
+      "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|cashmere|viscose|denim|twill|canvas|corduroy|tweed|velvet|leather|suede|ponte|synthetic|fleece|other",
       "fabric_weight": "ultralight|light|medium|heavy",
       "style_profile_json": {
         "style_lanes": {
