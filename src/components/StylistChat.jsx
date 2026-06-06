@@ -159,63 +159,79 @@ export default function AskClaude({
   onBoardSaved,
   onResetVisuals,
 }) {
-  const [messages, setMessages] = useState(() => {
+  const [threads, setThreads] = useState(() => {
     try {
-      const saved = localStorage.getItem('stylist_chat_messages')
-      if (saved) return JSON.parse(saved)
-    } catch (e) {
-      console.error('Failed to load stylist_chat_messages from localStorage:', e)
-    }
-    return [
-      { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
-    ]
-  })
-  const [chatHistory, setChatHistory] = useState(() => {
-    try {
-      const saved = localStorage.getItem('stylist_chat_history')
-      if (saved) return JSON.parse(saved)
-    } catch (e) {
-      console.error('Failed to load stylist_chat_history from localStorage:', e)
-    }
-    return []
-  })
-  const [threadMemory, setThreadMemory] = useState(() => {
-    try {
-      const saved = localStorage.getItem('stylist_thread_memory')
-      if (saved) return JSON.parse(saved)
-    } catch (e) {
-      console.error('Failed to load stylist_thread_memory from localStorage:', e)
-    }
-    return null
-  })
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('stylist_chat_messages', JSON.stringify(messages))
-    } catch (e) {
-      console.error('Failed to save stylist_chat_messages to localStorage:', e)
-    }
-  }, [messages])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('stylist_chat_history', JSON.stringify(chatHistory))
-    } catch (e) {
-      console.error('Failed to save stylist_chat_history to localStorage:', e)
-    }
-  }, [chatHistory])
-
-  useEffect(() => {
-    try {
-      if (threadMemory === null) {
-        localStorage.removeItem('stylist_thread_memory')
-      } else {
-        localStorage.setItem('stylist_thread_memory', JSON.stringify(threadMemory))
+      const saved = localStorage.getItem('stylist_chat_threads')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
       }
     } catch (e) {
-      console.error('Failed to save stylist_thread_memory to localStorage:', e)
+      console.error('Failed to load stylist_chat_threads from localStorage:', e)
     }
-  }, [threadMemory])
+    
+    // Migration: Wrap legacy single-thread conversation into a thread
+    try {
+      const savedMessages = localStorage.getItem('stylist_chat_messages')
+      if (savedMessages) {
+        const messages = JSON.parse(savedMessages)
+        if (Array.isArray(messages) && messages.length > 0) {
+          const savedHistory = localStorage.getItem('stylist_chat_history')
+          const chatHistory = savedHistory ? JSON.parse(savedHistory) : []
+          const savedMemory = localStorage.getItem('stylist_thread_memory')
+          const threadMemory = savedMemory ? JSON.parse(savedMemory) : null
+          
+          let title = 'Active Conversation'
+          const firstUser = messages.find(m => m.role === 'user')
+          if (firstUser && firstUser.text) {
+            title = firstUser.text.slice(0, 30) + (firstUser.text.length > 30 ? '...' : '')
+          }
+          
+          const legacyThread = {
+            id: 'legacy_active',
+            title,
+            messages,
+            chatHistory,
+            threadMemory,
+            updatedAt: Date.now()
+          }
+          
+          localStorage.removeItem('stylist_chat_messages')
+          localStorage.removeItem('stylist_chat_history')
+          localStorage.removeItem('stylist_thread_memory')
+          
+          return [legacyThread]
+        }
+      }
+    } catch (e) {
+      console.error('Migration to multi-thread failed:', e)
+    }
+
+    return [{
+      id: 'default',
+      title: 'New Chat',
+      messages: [{ role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }],
+      chatHistory: [],
+      threadMemory: null,
+      updatedAt: Date.now()
+    }]
+  })
+
+  const [currentThreadId, setCurrentThreadId] = useState(() => {
+    try {
+      const saved = localStorage.getItem('stylist_current_thread_id')
+      if (saved && threads.some(t => t.id === saved)) return saved
+    } catch (e) {}
+    return threads[0]?.id || 'default'
+  })
+
+  const activeThread = threads.find(t => t.id === currentThreadId) || threads[0]
+
+  const [messages, setMessages] = useState(() => activeThread?.messages || [
+    { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
+  ])
+  const [chatHistory, setChatHistory] = useState(() => activeThread?.chatHistory || [])
+  const [threadMemory, setThreadMemory] = useState(() => activeThread?.threadMemory || null)
 
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
@@ -223,6 +239,127 @@ export default function AskClaude({
     setInternalActiveContext(nextContext)
     onContextChange?.(nextContext)
   }, [onContextChange])
+
+  const lastThreadIdRef = useRef(currentThreadId)
+
+  useEffect(() => {
+    if (lastThreadIdRef.current !== currentThreadId) {
+      lastThreadIdRef.current = currentThreadId
+      return
+    }
+
+    setThreads(prev => {
+      const nextThreads = prev.map(t => {
+        if (t.id === currentThreadId) {
+          let title = t.title
+          if (title === 'New Chat' || title === 'Active Conversation' || title.startsWith('Wardrobe:')) {
+            const firstUser = messages.find(m => m.role === 'user')
+            if (firstUser && firstUser.text) {
+              title = firstUser.text.slice(0, 30) + (firstUser.text.length > 30 ? '...' : '')
+            }
+          }
+          return {
+            ...t,
+            title,
+            messages,
+            chatHistory,
+            threadMemory,
+            activeContext,
+            evaluatedKeys: Array.from(evaluatedKeys),
+            updatedAt: Date.now()
+          }
+        }
+        return t
+      })
+      try {
+        localStorage.setItem('stylist_chat_threads', JSON.stringify(nextThreads))
+      } catch (e) {
+        console.error('Failed to save stylist_chat_threads to localStorage:', e)
+      }
+      return nextThreads
+    })
+  }, [messages, chatHistory, threadMemory, activeContext, currentThreadId, evaluatedKeys])
+
+  const createNewChat = (title = 'New Chat') => {
+    const newId = 'thread_' + Date.now()
+    const newThread = {
+      id: newId,
+      title,
+      messages: [{ role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }],
+      chatHistory: [],
+      threadMemory: null,
+      activeContext: null,
+      evaluatedKeys: [],
+      updatedAt: Date.now()
+    }
+    
+    setThreads(prev => [newThread, ...prev])
+    setCurrentThreadId(newId)
+    setMessages(newThread.messages)
+    setChatHistory(newThread.chatHistory)
+    setThreadMemory(newThread.threadMemory)
+    setActiveContext(newThread.activeContext)
+    setEvaluatedKeys(new Set())
+    
+    try {
+      localStorage.setItem('stylist_current_thread_id', newId)
+    } catch (e) {}
+  }
+
+  const switchThread = (threadId) => {
+    setThreads(prev => {
+      const nextThreads = prev.map(t => {
+        if (t.id === currentThreadId) {
+          return {
+            ...t,
+            messages,
+            chatHistory,
+            threadMemory,
+            activeContext,
+            evaluatedKeys: Array.from(evaluatedKeys),
+            updatedAt: Date.now()
+          }
+        }
+        return t
+      })
+      try {
+        localStorage.setItem('stylist_chat_threads', JSON.stringify(nextThreads))
+      } catch (e) {}
+      return nextThreads
+    })
+
+    const target = threads.find(t => t.id === threadId)
+    if (target) {
+      setCurrentThreadId(threadId)
+      setMessages(target.messages || [])
+      setChatHistory(target.chatHistory || [])
+      setThreadMemory(target.threadMemory || null)
+      setActiveContext(target.activeContext || null)
+      setEvaluatedKeys(new Set(target.evaluatedKeys || []))
+      try {
+        localStorage.setItem('stylist_current_thread_id', threadId)
+      } catch (e) {}
+    }
+  }
+
+  const deleteThread = (threadId) => {
+    if (threads.length <= 1) return
+    const remaining = threads.filter(t => t.id !== threadId)
+    const nextThread = remaining[0]
+    
+    setThreads(remaining)
+    setCurrentThreadId(nextThread.id)
+    setMessages(nextThread.messages || [])
+    setChatHistory(nextThread.chatHistory || [])
+    setThreadMemory(nextThread.threadMemory || null)
+    setActiveContext(nextThread.activeContext || null)
+    setEvaluatedKeys(new Set(nextThread.evaluatedKeys || []))
+    
+    try {
+      localStorage.setItem('stylist_chat_threads', JSON.stringify(remaining))
+      localStorage.setItem('stylist_current_thread_id', nextThread.id)
+    } catch (e) {}
+  }
   const [input, setInput] = useState('')
   const [imageFile, setImageFile] = useState(null)
   const [imagePrev, setImagePrev] = useState(null)
@@ -235,6 +372,7 @@ export default function AskClaude({
   const [outfits, setOutfits] = useState([])
   const [compareOutfitId, setCompareOutfitId] = useState('')
   const [generateOutfitMode, setGenerateOutfitMode] = useState(false)
+  const [wardrobeBuilderOpen, setWardrobeBuilderOpen] = useState(false)
   const [includeMissingPieces, setIncludeMissingPieces] = useState(false)
   const [idealOnlyMode, setIdealOnlyMode] = useState(false)
   const [editorialVisualMode, setEditorialVisualMode] = useState(false)
@@ -243,6 +381,7 @@ export default function AskClaude({
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
+  const [wardrobeOutfitMission, setWardrobeOutfitMission] = useState('mix')
   const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
   const [recentMemoryResetting, setRecentMemoryResetting] = useState(false)
   const [savedIndices, setSavedIndices] = useState(new Set())
@@ -251,6 +390,7 @@ export default function AskClaude({
   const [boardFeedbackLabels, setBoardFeedbackLabels] = useState({})
   const [boardLearningStatus, setBoardLearningStatus] = useState({})
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
+  const [evaluatedKeys, setEvaluatedKeys] = useState(() => new Set(activeThread?.evaluatedKeys || []))
   const [learningOpen, setLearningOpen] = useState(false)
   const [learningRows, setLearningRows] = useState([])
   const [internalCalibrationLibraryOpen, setInternalCalibrationLibraryOpen] = useState(false)
@@ -872,9 +1012,9 @@ export default function AskClaude({
                   <button
                     onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
                     disabled={isEvaluating}
-                    style={{ fontSize: 10, color: 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1 }}
+                    style={{ fontSize: 10, color: evaluatedKeys.has(boardKey) ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: evaluatedKeys.has(boardKey) ? 'var(--surface-2)' : 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1 }}
                   >
-                    {isEvaluating ? 'Evaluating...' : 'Evaluate outfit'}
+                    {isEvaluating ? 'Evaluating...' : (evaluatedKeys.has(boardKey) ? '✓ Evaluated' : 'Evaluate outfit')}
                   </button>
                   {imageStatusByKey[boardKey] && <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{imageStatusByKey[boardKey]}</span>}
                   {WHOLE_WARDROBE_FEEDBACK_LABELS.map(([type, label]) => {
@@ -948,12 +1088,12 @@ export default function AskClaude({
                         onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
                         disabled={isEvaluating}
                         style={{
-                          fontSize: 12, color: 'var(--text-muted)', padding: '3px 9px', borderRadius: 12,
-                          border: '1px solid var(--border)', background: 'var(--surface)',
+                          fontSize: 12, color: evaluatedKeys.has(boardKey) ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 9px', borderRadius: 12,
+                          border: '1px solid var(--border)', background: evaluatedKeys.has(boardKey) ? 'var(--surface-2)' : 'var(--surface)',
                           cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1,
                         }}
                       >
-                        {isEvaluating ? 'Evaluating...' : 'Evaluate outfit'}
+                        {isEvaluating ? 'Evaluating...' : (evaluatedKeys.has(boardKey) ? '✓ Evaluated' : 'Evaluate outfit')}
                       </button>
                     </>
                   )}
@@ -1300,6 +1440,11 @@ export default function AskClaude({
         latestEvaluationText: compactEvaluationMemory(data.evaluation),
         latestContextText: compactGeneratedOutfitContext([evaluatedOutfit], { source: outfit?.wholeWardrobe ? 'whole_wardrobe' : 'selected_piece' }),
       })
+      setEvaluatedKeys(prev => {
+        const next = new Set(prev)
+        next.add(resultKey)
+        return next
+      })
     } catch (err) {
       const errText = `Error: ${err.message}`
       setMessages(m => [...m, { role: 'assistant', text: errText }])
@@ -1367,11 +1512,38 @@ export default function AskClaude({
     const occasion = wardrobeOutfitOccasion || 'casual'
     const season = wardrobeOutfitSeason || 'current season'
     const mood = wardrobeOutfitMood || 'artistic minimalist'
-    const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, ${mood}` : ''}.`
+    const mission = wardrobeOutfitMission || 'mix'
+    const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, ${mood}` : ''}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
+
+    // Automatically spin up a dedicated thread for this wardrobe generation
+    const newId = 'thread_' + Date.now()
+    const title = `Wardrobe: ${occasion}, ${season}`
+    const newThread = {
+      id: newId,
+      title,
+      messages: [
+        { role: 'user', text: userText, contextName: 'Use my wardrobe' }
+      ],
+      chatHistory: [
+        { role: 'user', content: userText }
+      ],
+      threadMemory: null,
+      activeContext: null,
+      updatedAt: Date.now()
+    }
+
+    setThreads(prev => [newThread, ...prev])
+    setCurrentThreadId(newId)
+    setMessages(newThread.messages)
+    setChatHistory(newThread.chatHistory)
+    setThreadMemory(null)
+    setActiveContext(null)
+
+    try {
+      localStorage.setItem('stylist_current_thread_id', newId)
+    } catch (e) {}
 
     setRecentMemoryStatus('')
-    setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Use my wardrobe' }])
-    addToHistory('user', userText)
     setLoading(true)
     startStatusSequence([
       { ms: 0, text: 'Building outfit candidates from your wardrobe...' },
@@ -1384,7 +1556,7 @@ export default function AskClaude({
       const res = await fetch('/api/ai/generate-wardrobe-outfits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ occasion, season, mood, limit: 5 })
+        body: JSON.stringify({ occasion, season, mood, mission, limit: 5 })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate wardrobe outfits')
@@ -1778,21 +1950,31 @@ export default function AskClaude({
   const compareConfidenceText = pendingOutfit && compareOutfit ? getCompareConfidenceText(pendingOutfit, compareOutfit) : ''
 
   const resetChat = () => {
-    try {
-      localStorage.removeItem('stylist_chat_messages')
-      localStorage.removeItem('stylist_chat_history')
-      localStorage.removeItem('stylist_thread_memory')
-    } catch (e) {
-      console.error('Failed to clear localStorage on resetChat:', e)
-    }
     setMessages([{ role: 'assistant', text: 'Starting fresh! What can I help you with?' }])
     setChatHistory([])
     setThreadMemory(null)
     setActiveContext(null)
-    setSavedIndices(new Set()); setFeedbackSaved(new Set()); setFeedbackIdsByKey({}); setSavedBoardKeys(new Set())
+    setSavedIndices(new Set()); setFeedbackSaved(new Set()); setFeedbackIdsByKey({}); setSavedBoardKeys(new Set()); setEvaluatedKeys(new Set())
     setBoardResults({}); setEditorialVisualResults({})
     setBoardLoadingIndex(null); setLearningOpen(false); setLearningRows([])
     setCalibrationLibraryOpen(false)
+    
+    setThreads(prev => prev.map(t => {
+      if (t.id === currentThreadId) {
+        return {
+          ...t,
+          title: 'New Chat',
+          messages: [{ role: 'assistant', text: 'Starting fresh! What can I help you with?' }],
+          chatHistory: [],
+          threadMemory: null,
+          activeContext: null,
+          evaluatedKeys: [],
+          updatedAt: Date.now()
+        }
+      }
+      return t
+    }))
+    
     onResetVisuals?.()
   }
 
@@ -1819,6 +2001,9 @@ export default function AskClaude({
             >
               {recentMemoryResetting ? 'Resetting…' : 'Reset recent'}
             </button>
+            <button className="chip" style={{ marginTop: 4 }} onClick={() => setWardrobeBuilderOpen(v => !v)}>
+              {wardrobeBuilderOpen ? 'Close builder' : 'Use wardrobe'}
+            </button>
             <button className="chip" style={{ marginTop: 4 }} onClick={() => setCalibrationLibraryOpen(v => !v)}>
               {calibrationLibraryOpen ? 'Close calibration' : 'Calibration'}{calibrationImages.length ? ` · ${calibrationImages.length}` : ''}
             </button>
@@ -1827,8 +2012,52 @@ export default function AskClaude({
                 Learning{learningRows.length ? ` · ${learningRows.length}` : ''}
               </button>
             )}
+            <select
+              value={currentThreadId}
+              onChange={e => switchThread(e.target.value)}
+              style={{
+                padding: '5px 10px',
+                borderRadius: 12,
+                border: '1px solid var(--border)',
+                background: 'var(--surface)',
+                color: 'var(--text-muted)',
+                fontSize: 11,
+                cursor: 'pointer',
+                maxWidth: 140,
+                marginTop: 4
+              }}
+            >
+              {threads.map(t => (
+                <option key={t.id} value={t.id}>{t.title}</option>
+              ))}
+            </select>
+            <button
+              className="chip"
+              style={{ marginTop: 4 }}
+              onClick={() => createNewChat('New Chat')}
+              title="Start a new chat thread"
+            >
+              New chat
+            </button>
             {chatHistory.length > 0 && (
-              <button className="chip" style={{ marginTop: 4 }} onClick={resetChat}>New chat</button>
+              <button
+                className="chip"
+                style={{ marginTop: 4 }}
+                onClick={resetChat}
+                title="Clear current chat conversation"
+              >
+                Clear chat
+              </button>
+            )}
+            {threads.length > 1 && (
+              <button
+                className="chip"
+                style={{ marginTop: 4, color: '#a64b4b', borderColor: 'rgba(166, 75, 75, 0.3)' }}
+                onClick={() => deleteThread(currentThreadId)}
+                title="Delete this chat thread completely"
+              >
+                Delete chat
+              </button>
             )}
           </div>
         </div>
@@ -1838,6 +2067,67 @@ export default function AskClaude({
           </div>
         )}
       </div>
+
+      {/* Wardrobe Builder Panel */}
+      {wardrobeBuilderOpen && (
+        <div style={{ margin: '0 16px 10px', padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', display: 'grid', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Use my wardrobe</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button
+                onClick={resetWholeWardrobeSessionMemory}
+                disabled={recentMemoryResetting || loading}
+                title="Clears only recently shown Generate 5 outfit memory. Saved feedback and learning stay intact."
+                style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
+              >
+                {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
+              </button>
+              <button
+                onClick={generateWholeWardrobeOutfits}
+                disabled={loading}
+                style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
+              >
+                {loading ? 'Creating...' : 'Create outfits'}
+              </button>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
+            <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+              <option value="casual">Casual</option>
+              <option value="city">City</option>
+              <option value="smart casual">Smart casual</option>
+              <option value="evening">Evening</option>
+              <option value="gallery / art event">Gallery / art event</option>
+              <option value="travel">Travel</option>
+            </select>
+            <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+              <option value="current season">Current season</option>
+              <option value="spring">Spring</option>
+              <option value="summer">Summer</option>
+              <option value="fall">Fall</option>
+              <option value="winter">Winter</option>
+            </select>
+            <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+              <option value="mix">Mix of missions</option>
+              <option value="controlled_print">Controlled Print</option>
+              <option value="monochrome_texture">Monochrome Texture</option>
+              <option value="structured_soft">Structured + Soft</option>
+              <option value="color_anchor">Color Anchor</option>
+              <option value="unexpected_pairing">Unexpected Pairing</option>
+              <option value="soft_architecture">Soft Architecture</option>
+            </select>
+            <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
+          </div>
+          {recentMemoryStatus && (
+            <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
+              {recentMemoryStatus}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Calibration Library */}
       {calibrationLibraryOpen && !hasExternalCalibrationLibraryOpen && (
@@ -2061,6 +2351,15 @@ export default function AskClaude({
                     <option value="summer">Summer</option>
                     <option value="fall">Fall</option>
                     <option value="winter">Winter</option>
+                  </select>
+                  <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+                    <option value="mix">Mix of missions</option>
+                    <option value="controlled_print">Controlled Print</option>
+                    <option value="monochrome_texture">Monochrome Texture</option>
+                    <option value="structured_soft">Structured + Soft</option>
+                    <option value="color_anchor">Color Anchor</option>
+                    <option value="unexpected_pairing">Unexpected Pairing</option>
+                    <option value="soft_architecture">Soft Architecture</option>
                   </select>
                   <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
                 </div>

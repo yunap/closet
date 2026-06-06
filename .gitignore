@@ -7,3 +7,5 @@ wardrobe.db
 wardrobe.db-shm
 wardrobe.db-wal
 uploads/
+.DS_Store
+scratch/

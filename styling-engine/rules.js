@@ -78,6 +78,21 @@ export function pieceNameBlob(p) {
   return [p.name, p.category, p.reads_as].filter(Boolean).join(' ').toLowerCase()
 }
 
+export function pieceHasFocalColor(piece, focalColors) {
+  const colors = (piece.colors || []).map(c => c.toLowerCase())
+  if (colors.some(c => focalColors.includes(c))) return true
+  
+  const readsAs = String(piece.reads_as || '').toLowerCase()
+  const name = String(piece.name || '').toLowerCase()
+  const combined = [readsAs, name].join(' ')
+  return focalColors.some(fc => {
+    const escaped = fc.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+    const regex = new RegExp('\\b' + escaped + '\\b', 'i')
+    return regex.test(combined)
+  })
+}
+
+
 export function visualWeightProfile(p) {
   const blob = pieceTextBlob(p)
   const colors = (p.colors || []).map(c => String(c).toLowerCase())
@@ -1065,9 +1080,12 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
     if (colorFamily) {
       const colors = (piece.colors || []).map(c => c.toLowerCase())
       const readsAs = String(piece.reads_as || '').toLowerCase()
-      const colorsText = [...colors, readsAs].join(' ')
       const matchingColors = colorFamily.split('/')
-      const hasMatch = matchingColors.some(mc => colorsText.includes(mc))
+      const hasMatch = matchingColors.some(mc => {
+        if (colors.includes(mc)) return true
+        const regex = new RegExp('\\b' + mc.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\b', 'i')
+        return regex.test(readsAs)
+      })
       if (hasMatch) score += 20
     }
     if (/\b(crochet|knit|cashmere|corduroy|linen|silk|satin|leather|suede|tweed|velvet|gauzy|drape|textured)\b/.test(blob)) score += 15
@@ -1077,14 +1095,18 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
     if (isSoft) score += 15
     if (isStructured) score += 15
   } else if (missionId === 'color_anchor') {
-    if (focalColor) {
+    const focalColors = ['coral', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
+    const hasFocalColor = pieceHasFocalColor(piece, focalColors)
+    if (hasFocalColor) {
+      score += 40
+    } else {
       const colors = (piece.colors || []).map(c => c.toLowerCase())
       const readsAs = String(piece.reads_as || '').toLowerCase()
-      const colorsText = [...colors, readsAs].join(' ')
-      if (colorsText.includes(focalColor)) score += 30
+      const name = String(piece.name || '').toLowerCase()
+      const colorsText = [...colors, readsAs, name].join(' ')
+      const isNeutral = /\b(black|charcoal|grey|gray|navy|white|cream|ivory|beige|taupe|sand|oatmeal|espresso|brown)\b/.test(colorsText)
+      if (isNeutral) score += 10
     }
-    const isNeutral = /\b(black|charcoal|grey|gray|navy|white|cream|ivory|beige|taupe|sand|oatmeal|espresso|brown)\b/.test(blob)
-    if (isNeutral) score += 10
   } else if (missionId === 'unexpected_pairing') {
     const selectionWeight = (Number(piece.id) * 7) % 31
     score += selectionWeight
@@ -1262,8 +1284,9 @@ export function wholeWardrobeHeroPieceId(outfit = {}) {
 
 export function wholeWardrobeFullPieces(outfit = {}, candidatePieces = []) {
   const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number) : []
-  if (ids.length) {
-    return ids.map(id => candidatePieces.find(cp => Number(cp.id) === id)).filter(Boolean)
+  if (ids.length && Array.isArray(candidatePieces) && candidatePieces.length > 0) {
+    const matched = ids.map(id => candidatePieces.find(cp => Number(cp.id) === id)).filter(Boolean)
+    if (matched.length > 0) return matched
   }
   return Array.isArray(outfit.pieces) ? outfit.pieces : []
 }
@@ -1327,9 +1350,28 @@ export function wholeWardrobeReasonFromPieces(outfit = {}) {
 
 export function wholeWardrobeWatchFromPieces(outfit = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
-  const text = pieces.map(pieceTextBlob).join(' ')
-  if (/\b(gauzy|soft|relaxed|linen|cotton voile)\b/.test(text) && /\b(wide|wide-leg|loose)\b/.test(text)) return 'double soft volume risk'
-  if (/\b(floral|stripe|print|pattern)\b/.test(text) && (text.match(/\b(floral|stripe|print|pattern)\b/g) || []).length >= 2) return 'visual competition from multiple patterns'
+  
+  // Double soft volume risk: check if we have a top/dress that is soft/relaxed, AND a bottom that is wide/loose.
+  const topOrDress = pieces.find(p => p && (p.category === 'top' || p.category === 'dress'))
+  const bottom = pieces.find(p => p && p.category === 'bottom')
+  if (topOrDress && bottom) {
+    const topText = pieceTextBlob(topOrDress)
+    const bottomText = pieceTextBlob(bottom)
+    if (/\b(gauzy|soft|relaxed|linen|cotton voile)\b/.test(topText) && /\b(wide|wide-leg|loose)\b/.test(bottomText)) {
+      return 'double soft volume risk'
+    }
+  }
+  
+  // Visual competition from multiple patterns: count how many DIFFERENT pieces have a pattern or print keyword.
+  const patternPiecesCount = pieces.filter(p => {
+    if (!p) return false
+    const pText = pieceTextBlob(p)
+    return /\b(floral|stripe|print|pattern)\b/.test(pText)
+  }).length
+  if (patternPiecesCount >= 2) {
+    return 'visual competition from multiple patterns'
+  }
+  
   return 'none'
 }
 
@@ -1443,6 +1485,52 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   if (/\b(avoid another pattern|quiet support|no extra pattern)\b/.test(profileRulesText) && (text.match(/\b(floral|paisley|botanical|abstract|graphic|print|pattern|stripe)\b/g) || []).length >= 2) {
     add(-16, 'profile warns against pattern stacking')
   }
+
+  // Occasion alignment checks
+  const occasion = String(options.occasion || '').toLowerCase().trim()
+  if (occasion) {
+    const normOccasion = occasion.replace('-', ' ').trim()
+    for (const piece of pieces) {
+      const pOccasions = (piece.occasions || []).map(o => String(o).toLowerCase().replace('-', ' ').trim())
+      if (pOccasions.length > 0) {
+        let isCompatible = pOccasions.includes(normOccasion)
+        if (!isCompatible) {
+          if (normOccasion === 'evening' && pOccasions.includes('smart casual')) {
+            isCompatible = true
+          } else if (normOccasion === 'smart casual' && (pOccasions.includes('evening') || pOccasions.includes('city'))) {
+            isCompatible = true
+          } else if (normOccasion === 'gallery / art event' && (pOccasions.includes('city') || pOccasions.includes('smart casual') || pOccasions.includes('evening'))) {
+            isCompatible = true
+          } else if (normOccasion === 'city' && pOccasions.includes('smart casual')) {
+            isCompatible = true
+          } else if (normOccasion === 'casual' && (pOccasions.includes('city') || pOccasions.includes('home') || pOccasions.includes('outdoor'))) {
+            isCompatible = true
+          }
+        }
+        if (!isCompatible) {
+          if (normOccasion === 'evening') {
+            add(-60, `${piece.name} is unsuitable for evening occasion`)
+          } else {
+            add(-25, `${piece.name} is unsuitable for ${occasion} occasion`)
+          }
+        }
+      }
+    }
+  }
+
+  // Clashing shoe/dress formality check
+  const dress = pieces.find(p => wardrobeCategoryGroup(p) === 'dress')
+  const shoe = pieces.find(p => wardrobeCategoryGroup(p) === 'shoes')
+  if (dress && shoe) {
+    const shoeBlob = pieceTextBlob(shoe)
+    const isSneaker = /\b(sneaker|running|athletic|sporty|knit sneakers)\b/.test(shoeBlob)
+    const dressBlob = pieceTextBlob(dress)
+    const isFormalDress = /\b(evening|cocktail|formal|elegant|silk|satin|maxi)\b/.test(dressBlob) || (dress.occasions || []).map(o => o.toLowerCase()).includes('evening')
+    if (isSneaker && isFormalDress) {
+      add(-40, `clashing shoe formality: pairing casual sneakers with formal/maxi dress`)
+    }
+  }
+
   const feedbackInfluence = wholeWardrobeFeedbackInfluenceForCandidate(pieces, options)
   if (feedbackInfluence) {
     add(feedbackInfluence.score, 'whole-wardrobe feedback memory')
@@ -1484,10 +1572,8 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
       })
       if (patternPieces.length === 1) {
         add(20, 'exactly one print hero')
-      } else if (patternPieces.length > 1) {
-        add(-40, 'multiple pattern conflict')
       } else {
-        add(-20, 'no printed garment for print mission')
+        add(-80, 'does not have exactly one print hero')
       }
       const hasStructuredStabilizer = pieces.some(p => {
         const pBlob = pieceTextBlob(p)
@@ -1517,7 +1603,7 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
       } else if (maxMatch >= pieces.length - 1) {
         add(15, 'tonal monochrome support')
       } else {
-        add(-30, 'competing colors in monochrome mission')
+        add(-80, 'competing colors in monochrome mission')
       }
       
       const textBlob = pieces.map(pieceTextBlob).join(' ')
@@ -1533,35 +1619,31 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
       if (hasSoft && hasStructured) {
         add(25, 'productive soft + structured tension')
       } else {
-        add(-20, 'lacks structured/soft tension')
+        add(-80, 'lacks structured/soft tension')
       }
     } else if (activeMissionId === 'color_anchor') {
-      const focalColors = ['rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red']
-      const focalCount = pieces.filter(p => {
-        const cText = [...(p.colors || []), p.reads_as].join(' ').toLowerCase()
-        return focalColors.some(fc => cText.includes(fc))
-      }).length
+      const focalColors = ['coral', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
+      const focalCount = pieces.filter(p => pieceHasFocalColor(p, focalColors)).length
       
       if (focalCount === 1) {
         add(30, 'exactly one focal color anchor')
-      } else if (focalCount > 1) {
-        add(-20, 'multiple focal color anchors compete')
       } else {
-        add(-15, 'lacks focal color anchor')
+        add(-80, 'does not have exactly one focal color anchor')
       }
       
-      const nonFocalPieces = pieces.filter(p => {
-        const cText = [...(p.colors || []), p.reads_as].join(' ').toLowerCase()
-        return !focalColors.some(fc => cText.includes(fc))
-      })
+      const nonFocalPieces = pieces.filter(p => !pieceHasFocalColor(p, focalColors))
       const allNonFocalNeutral = nonFocalPieces.every(p => {
-        const cText = [...(p.colors || []), p.reads_as].join(' ').toLowerCase()
+        const colors = (p.colors || []).map(c => c.toLowerCase())
+        const readsAs = String(p.reads_as || '').toLowerCase()
+        const name = String(p.name || '').toLowerCase()
+        const cText = [...colors, readsAs, name].join(' ')
         return /\b(black|charcoal|grey|gray|navy|white|cream|ivory|beige|taupe|sand|oatmeal|espresso|brown)\b/.test(cText)
       })
+      
       if (allNonFocalNeutral) {
         add(15, 'quiet neutral support for anchor')
       } else {
-        add(-15, 'noisy support distracts from color anchor')
+        add(-30, 'noisy support distracts from color anchor')
       }
     } else if (activeMissionId === 'unexpected_pairing') {
       add(20, 'exploratory unexpected candidate pairing')
@@ -1574,7 +1656,7 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
     } else if (activeMissionId === 'soft_architecture') {
       const hasDenimOrBlack = pieces.some(p => /\b(denim|jean|black)\b/.test(pieceTextBlob(p)) || /\b(denim|jean|black)\b/.test(pieceNameBlob(p)))
       if (hasDenimOrBlack) {
-        add(-60, 'contains forbidden denim or black')
+        add(-80, 'contains forbidden denim or black')
       } else {
         add(20, 'clean non-denim/non-black architecture')
       }

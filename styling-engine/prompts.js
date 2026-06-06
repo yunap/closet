@@ -485,18 +485,16 @@ IMPORTANT STYLING PRINCIPLES (from AGENTS.md):
 - Avoid excessive layering or novelty without quality.
 
 HOW TO DESIGN THE OUTFITS:
-1. Review the list of **Active Outfit Missions** and the pre-sorted **Candidate Combinations** provided in the user request.
-2. Select the best candidates from the provided list to satisfy the target outfit count.
-   - Every outfit you output MUST map to a unique mission.
-   - Use the pre-selected candidate's exact 'pieceIds' and preserve its original 'missionId' (e.g. 'controlled_print' or 'monochrome_texture').
-3. For the garments in your selected outfits, call 'get_garment_details' in Turn 1 or Turn 2 to retrieve their full styling text and inspect their photos to ensure they form a high-quality combination.
+1. Review the pre-sorted **Candidate Combinations** provided in the user request. These are starting suggestions to inspire your choices, but you have complete creative freedom to mix-and-match pieces, modify the candidates, or search the wardrobe for better styling options.
+2. Select or design up to 5 cohesive, high-quality outfits to satisfy the target outfit count. Focus entirely on styling quality, visual tension, and silhouette integrity.
+3. For the garments in your outfits, call 'get_garment_details' in Turn 1 or Turn 2 to retrieve their full styling text and inspect their photos to ensure they form a high-quality combination.
 4. Run a strict visual self-critic audit on each combination before proposing it:
    - Pattern & Color Clash: If a piece has a prominent pattern (like a botanical or floral dress/top), do not pair it with shoes or other items that also have prominent patterns or textures (like herringbone, stripes, or contrasting geometric patterns) unless they create a rare "productive tension" (which is extremely difficult to pull off). When in doubt, ground a patterned hero piece with solid, textured-but-unpatterned supporting pieces.
    - Shoe Grounding & Formality Check: Check that the shoe grounds the dress/pants correctly in terms of visual weight, structure, color, and formality level. Match the weight of the bottom to the shoe. Never pair formal evening heels or delicate dress shoes with casual utility/cargo pants, activewear, or simple daywear for casual city settings. For city walks or travel-heavy days, ensure shoes are practical and comfortable (flats, loafers, low block heels, sandals, or sneakers).
    - Visual Competition: Ensure there is a clear visual hierarchy (one Hero garment, others supporting or grounding). Do not pack too many loud or competing details into a single outfit. Reject over-styling and "costume" vibes.
    - Profile Cliché Ban: Do not write sentences like "aligns with Yuna's aesthetic" or "matches Yuna's style" in your feedback block.
    - Discard & Replace: If any combination fails this self-critic pass, discard it or replace the conflicting piece from the same category using another candidate option or a wardrobe search.
-5. Return your final recommendations as a JSON object containing the outfits, ensuring you map each back to its correct 'missionId'.
+5. Return your final recommendations as a JSON object containing the outfits. Do not worry about assigning mission IDs; the backend will automatically score and label your combinations with the correct mission categories post-generation.
 
 LATENCY & TURN BUDGET OPTIMIZATION:
 - Minimize sequential round trips to prevent timeouts. Aim to complete your work in exactly 3 turns:
@@ -513,7 +511,6 @@ On your final turn (after completing all tool calls), you MUST output ONLY a val
   "outfits": [
     {
       "label": "Creative outfit title",
-      "missionId": "controlled_print | monochrome_texture | structured_soft | color_anchor | unexpected_pairing | soft_architecture",
       "strength": "signature | strong | usable | experimental",
       "dominantDirection": "Short direction label (e.g., column of color, high contrast, soft texture contrast)",
       "silhouette": "Description of the silhouette (e.g. fitted top + wide-leg pant, flowing column, etc.)",

@@ -76,7 +76,8 @@ import {
   normalizeWholeWardrobeOutfitObject,
   dedupeMissingAgainstOwned,
   photoPreservingVisualsEnabled,
-  wholeWardrobeMoodProfile
+  wholeWardrobeMoodProfile,
+  scoreWholeWardrobeCandidate
 } from '../styling-engine/rules.js'
 
 import {
@@ -1098,6 +1099,7 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
     occasion = 'casual',
     season = 'current season',
     mood = '',
+    mission = 'mix',
     limit = 5,
     explorationMode = 'moderate'
   } = req.body || {}
@@ -1111,8 +1113,10 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
     const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
     const sessionInfluence = getRecentWholeWardrobeSessionInfluence({ occasion, daysCutoff: 6 })
     
-    // Choose 5 active missions for this generation run
-    const activeMissions = ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
+    // Choose active missions for this generation run
+    const activeMissions = (mission && mission !== 'mix')
+      ? [mission]
+      : ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
     const activeMissionsText = OUTFIT_MISSIONS
       .filter(m => activeMissions.includes(m.id))
       .map(m => `- ${m.label} (missionId: "${m.id}"): ${m.description}`)
@@ -1206,7 +1210,32 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
       }
     })
 
-    let structuredOutfits = resolvedOutfits.map(o => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, allPieces), allPieces, occasion, mood))
+    let structuredOutfits = resolvedOutfits.map(o => {
+      const normalized = normalizeWholeWardrobeOutfitObject(o, allPieces)
+      
+      if (mission && mission !== 'mix') {
+        normalized.missionId = mission
+        const activeMission = OUTFIT_MISSIONS.find(m => m.id === mission)
+        normalized.missionLabel = activeMission ? activeMission.label : null
+      } else {
+        // Dynamic labeling: score the combination across all missions to assign the highest-scoring one
+        let bestMissionId = 'unexpected_pairing'
+        let bestScore = -Infinity
+        const allMissionsList = ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
+        for (const mId of allMissionsList) {
+          const scored = scoreWholeWardrobeCandidate(normalized.pieces, { activeMissionId: mId, occasion })
+          if (scored.score > bestScore) {
+            bestScore = scored.score
+            bestMissionId = mId
+          }
+        }
+        normalized.missionId = bestMissionId
+        const activeMission = OUTFIT_MISSIONS.find(m => m.id === bestMissionId)
+        normalized.missionLabel = activeMission ? activeMission.label : null
+      }
+      
+      return repairWholeWardrobeOutfit(normalized, allPieces, occasion, mood)
+    })
     const localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allPieces, { occasion, mood })
 
     if (!structuredOutfits.length) {
@@ -1485,6 +1514,7 @@ router.post('/generate-saved-outfit-image', async (req, res) => {
 // ── AI Outfit Evaluation ──────────────────────────────────────────────────────
 router.post('/evaluate-wardrobe-outfit', async (req, res) => {
   const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', mood = '', question = '', previousEvaluation = '', responseMode = 'full', history = [] } = req.body || {}
+
   try {
     let resolvedOutfit = outfit
     let resolvedPieceIds = pieceIds
