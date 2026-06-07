@@ -1,13 +1,27 @@
 import { useState, useEffect } from 'react'
 
 const OCCASIONS = [
-  { value: '',             label: 'All' },
+  { value: '',             label: 'All Occasions' },
   { value: 'casual',       label: 'Casual' },
   { value: 'city',         label: 'City' },
   { value: 'evening',      label: 'Evening' },
   { value: 'smart-casual', label: 'Smart Casual' },
   { value: 'outdoor',      label: 'Outdoor' },
   { value: 'home',         label: 'Home' },
+]
+const SEASONS = [
+  { value: '',           label: 'All Seasons' },
+  { value: 'warm',       label: '☀️ Warm Climate' },
+  { value: 'cool',       label: '❄️ Cool Climate' },
+  { value: 'year-round', label: '🔄 Year-Round' },
+]
+const SORT_OPTIONS = [
+  { value: 'newest',       label: 'Newest First' },
+  { value: 'oldest',       label: 'Oldest First' },
+  { value: 'a-z',          label: 'Alphabetical (A-Z)' },
+  { value: 'z-a',          label: 'Alphabetical (Z-A)' },
+  { value: 'most-pieces',  label: 'Wardrobe Density (High)' },
+  { value: 'least-pieces', label: 'Wardrobe Density (Low)' },
 ]
 const OCCASION_ICONS = {
   casual: '☀', city: '◈', evening: '◇', 'smart-casual': '✦', outdoor: '◎', home: '○'
@@ -498,24 +512,29 @@ function Toast({ message, onDone }) {
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 export default function OutfitLookbook({ onSendToStylist }) {
-  const [outfits, setOutfits]     = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [filterOcc, setFilterOcc] = useState('')
-  const [favOnly, setFavOnly]     = useState(false)
-  const [showForm, setShowForm]   = useState(false)
-  const [detail, setDetail]       = useState(null)
-  const [toast, setToast]         = useState(null)
+  const [outfits, setOutfits]           = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [search, setSearch]             = useState('')
+  const [filterOcc, setFilterOcc]       = useState('')
+  const [filterSeason, setFilterSeason] = useState('')
+  const [sortBy, setSortBy]             = useState('newest')
+  const [pinFavs, setPinFavs]           = useState(true)
+  const [isSortOpen, setIsSortOpen]     = useState(false)
+  
+  const [showForm, setShowForm]         = useState(false)
+  const [detail, setDetail]             = useState(null)
+  const [toast, setToast]               = useState(null)
 
   const fetchOutfits = async () => {
-    const params = new URLSearchParams()
-    if (filterOcc) params.set('occasion', filterOcc)
-    if (favOnly)   params.set('favorites', 'true')
-    const res = await fetch(`/api/outfits?${params}`)
+    setLoading(true)
+    const res = await fetch('/api/outfits')
     setOutfits(await res.json())
     setLoading(false)
   }
 
-  useEffect(() => { fetchOutfits() }, [filterOcc, favOnly])
+  useEffect(() => {
+    fetchOutfits()
+  }, [])
 
   const handleFav = async (outfit) => {
     await fetch(`/api/outfits/${outfit.id}/favorite`, { method: 'PATCH' })
@@ -524,41 +543,178 @@ export default function OutfitLookbook({ onSendToStylist }) {
 
   const handleDelete = async (outfit) => {
     await fetch(`/api/outfits/${outfit.id}`, { method: 'DELETE' })
-    setDetail(null); fetchOutfits()
+    setDetail(null)
+    fetchOutfits()
   }
 
   const handleSave = (outfit, piecesAdded) => {
-    setShowForm(false); fetchOutfits()
-    if (piecesAdded > 0) setToast(`Outfit saved · ${piecesAdded} ${piecesAdded === 1 ? 'piece' : 'pieces'} added to wardrobe`)
+    setShowForm(false)
+    fetchOutfits()
+    if (piecesAdded > 0) {
+      setToast(`Outfit saved · ${piecesAdded} ${piecesAdded === 1 ? 'piece' : 'pieces'} added to wardrobe`)
+    }
   }
+
+  // Client-side filtering & sorting logic (Zero Latency)
+  const filteredAndSorted = outfits.filter(o => {
+    // 1. Occasion Filter
+    if (filterOcc && o.occasion !== filterOcc) return false
+
+    // 2. Climate / Season Filter
+    if (filterSeason) {
+      if (filterSeason === 'year-round') {
+        if (o.season !== 'year-round') return false
+      } else {
+        // 'warm' or 'cool' matches exact season OR 'year-round'
+        if (o.season !== filterSeason && o.season !== 'year-round') return false
+      }
+    }
+
+    // 3. Garment-Aware Search
+    if (search.trim()) {
+      const q = search.toLowerCase().trim()
+      const matchName = o.name?.toLowerCase().includes(q)
+      const matchNotes = o.notes?.toLowerCase().includes(q)
+      
+      const matchPieces = o.pieces?.some(p => {
+        const matchPieceName = p.name?.toLowerCase().includes(q)
+        const matchPieceCat = p.category?.toLowerCase().includes(q)
+        const matchPieceColors = p.colors?.some(c => c.toLowerCase().includes(q))
+        const matchPieceFab = p.fabric_category?.toLowerCase().includes(q)
+        return matchPieceName || matchPieceCat || matchPieceColors || matchPieceFab
+      })
+
+      if (!matchName && !matchNotes && !matchPieces) return false
+    }
+
+    return true
+  }).sort((a, b) => {
+    // 1. Favorites Pinned (highest priority if enabled)
+    if (pinFavs) {
+      if (a.favorite && !b.favorite) return -1
+      if (!a.favorite && b.favorite) return 1
+    }
+
+    // 2. Chosen sort key
+    if (sortBy === 'newest') {
+      return new Date(b.date_added || 0) - new Date(a.date_added || 0)
+    }
+    if (sortBy === 'oldest') {
+      return new Date(a.date_added || 0) - new Date(b.date_added || 0)
+    }
+    if (sortBy === 'a-z') {
+      return (a.name || '').localeCompare(b.name || '')
+    }
+    if (sortBy === 'z-a') {
+      return (b.name || '').localeCompare(a.name || '')
+    }
+    if (sortBy === 'most-pieces') {
+      return (b.pieces?.length || 0) - (a.pieces?.length || 0)
+    }
+    if (sortBy === 'least-pieces') {
+      return (a.pieces?.length || 0) - (b.pieces?.length || 0)
+    }
+    return 0
+  })
 
   return (
     <div>
-      <div className="view-header">
+      <div className="view-header sticky-header">
         <div className="view-header-top">
           <div>
             <div className="view-title">Lookbook</div>
-            <div className="view-subtitle">{outfits.length} outfits</div>
+            <div className="view-subtitle">
+              {filteredAndSorted.length === outfits.length
+                ? `${outfits.length} outfits`
+                : `${filteredAndSorted.length} of ${outfits.length} outfits`}
+            </div>
           </div>
-          <button className={`chip ${favOnly ? 'active' : ''}`} onClick={() => setFavOnly(f => !f)} style={{ marginTop: 4 }}>
-            {favOnly ? '♥' : '♡'}
+          <button 
+            className={`chip fav-pin-btn ${pinFavs ? 'active' : ''}`} 
+            onClick={() => setPinFavs(f => !f)}
+          >
+            {pinFavs ? '♥ Pinned' : '♡ Pin Favs'}
           </button>
         </div>
-        <div className="filter-row">
-          {OCCASIONS.map(o => <button key={o.value} className={`chip ${filterOcc === o.value ? 'active' : ''}`} onClick={() => setFilterOcc(o.value)}>{o.label}</button>)}
+
+        {/* Search and Sort row */}
+        <div className="search-sort-row">
+          <div className="search-bar search-bar-lookbook">
+            <span className="search-icon">◎</span>
+            <input 
+              type="search" 
+              placeholder="Search outfits, garments, colors…" 
+              value={search} 
+              onChange={e => setSearch(e.target.value)} 
+            />
+          </div>
+
+          <div className="custom-select-container">
+            <button 
+              className={`custom-select-btn ${isSortOpen ? 'active' : ''}`} 
+              onClick={(e) => { e.stopPropagation(); setIsSortOpen(!isSortOpen); }}
+            >
+              <span>⇅ {SORT_OPTIONS.find(o => o.value === sortBy)?.label}</span>
+              <span className="custom-select-arrow">▾</span>
+            </button>
+            {isSortOpen && (
+              <>
+                <div className="custom-select-backdrop" onClick={() => setIsSortOpen(false)} />
+                <div className="custom-select-dropdown">
+                  {SORT_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      className={`custom-select-option ${sortBy === opt.value ? 'active' : ''}`}
+                      onClick={() => {
+                        setSortBy(opt.value)
+                        setIsSortOpen(false)
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Double-row filters */}
+        <div className="filter-row occ-filter-row" style={{ marginBottom: 8 }}>
+          {OCCASIONS.map(o => (
+            <button 
+              key={o.value} 
+              className={`chip ${filterOcc === o.value ? 'active' : ''}`} 
+              onClick={() => setFilterOcc(o.value)}
+            >
+              {o.value && (OCCASION_ICONS[o.value] || '✦')} {o.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="filter-row season-filter-row">
+          {SEASONS.map(s => (
+            <button 
+              key={s.value} 
+              className={`chip ${filterSeason === s.value ? 'active' : ''}`} 
+              onClick={() => setFilterSeason(s.value)}
+            >
+              {s.label}
+            </button>
+          ))}
         </div>
       </div>
 
       {loading ? <div className="loading">Loading outfits…</div>
-        : outfits.length === 0 ? (
+        : filteredAndSorted.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">✦</div>
-            <div className="empty-state-title">No outfits yet</div>
-            <div className="empty-state-text">Tap + to add your first look</div>
+            <div className="empty-state-title">No outfits found</div>
+            <div className="empty-state-text">Try adjusting your filters or search terms</div>
           </div>
         ) : (
-          <div className="outfit-grid">
-            {outfits.map(o => (
+          <div className="outfit-grid animate-grid">
+            {filteredAndSorted.map(o => (
               <div key={o.id} className="outfit-card" style={{ position: 'relative' }} onClick={() => setDetail(o)}>
                 {o.photo
                   ? <img className="outfit-photo" src={`/uploads/${o.photo}`} alt={o.name} loading="lazy" />

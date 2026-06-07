@@ -1117,3 +1117,212 @@ img { display: block; max-width: 100%; }
 .mt-0 { margin-top: 0; }
 .text-muted { color: var(--text-muted); }
 .text-small { font-size: 12px; }
+
+/* ── Premium Lookbook Controls ────────────────────────────────── */
+
+/* Glassmorphic sticky header */
+.view-header.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(254, 252, 249, 0.82);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border-bottom: 1px solid rgba(224, 216, 206, 0.4);
+}
+
+/* Row containing Search & Custom Sort select */
+.search-sort-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.search-bar-lookbook {
+  flex: 1;
+  margin-bottom: 0 !important; /* Override standard search-bar margin */
+}
+
+.search-bar-lookbook input {
+  border-radius: 12px; /* Sleeker, modern border-radius */
+  padding: 10px 14px 10px 38px;
+  background: rgba(240, 235, 227, 0.7);
+  border: 1px solid var(--border);
+}
+
+.search-bar-lookbook input:focus {
+  background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(124, 95, 60, 0.15);
+}
+
+/* Custom Select Dropdown Styling */
+.custom-select-container {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.custom-select-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 38px;
+  padding: 0 14px;
+  background: rgba(240, 235, 227, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  transition: all 0.2s ease;
+  min-width: 140px;
+}
+
+.custom-select-btn:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.custom-select-btn.active {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 95, 60, 0.15);
+}
+
+.custom-select-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.custom-select-btn.active .custom-select-arrow {
+  transform: rotate(180deg);
+}
+
+/* Select Backdrop to close on click outside */
+.custom-select-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  background: transparent;
+  cursor: default;
+}
+
+/* Dropdown Menu styling with rich glassmorphism */
+.custom-select-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 100;
+  min-width: 180px;
+  background: rgba(254, 252, 249, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  padding: 4px;
+  animation: dropdownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top right;
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.custom-select-option {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.custom-select-option:hover {
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.custom-select-option.active {
+  background: var(--accent-light);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Favorite Pin chip button */
+.fav-pin-btn {
+  font-size: 11px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.fav-pin-btn.active {
+  background: var(--danger-bg) !important;
+  color: var(--danger) !important;
+  border-color: rgba(168, 64, 64, 0.3) !important;
+  box-shadow: 0 2px 8px rgba(168, 64, 64, 0.1);
+  transform: scale(1.05);
+}
+
+/* Filter chip animations and states */
+.filter-row .chip {
+  transition: all 0.2s ease;
+}
+
+.filter-row .chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(124, 95, 60, 0.05);
+}
+
+.filter-row .chip.active {
+  transform: scale(1.02);
+  box-shadow: 0 2px 6px rgba(124, 95, 60, 0.15);
+}
+
+/* Micro-animations for the grid cards */
+.animate-grid {
+  animation: gridFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes gridFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.outfit-card {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.outfit-card:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: var(--shadow-lg);
+}
+
+.outfit-card:active {
+  transform: scale(0.98);
+}
