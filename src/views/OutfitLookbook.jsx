@@ -721,7 +721,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
                   : <div className="outfit-placeholder">{OCCASION_ICONS[o.occasion] || '✦'}</div>
                 }
                 <button
-                  style={{ position: 'absolute', top: 8, left: 8, fontSize: 11, background: 'var(--accent)', color: '#fff', padding: '5px 9px', borderRadius: 14, border: '1px solid rgba(255,255,255,0.35)', boxShadow: '0 2px 8px rgba(0,0,0,0.12)', backdropFilter: 'blur(8px)' }}
+                  className="outfit-card-action btn-critique"
                   onClick={e => {
                     e.stopPropagation()
                     onSendToStylist({
@@ -734,7 +734,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
                   Critique
                 </button>
                 <button
-                  style={{ position: 'absolute', top: 42, left: 8, fontSize: 11, background: 'rgba(254,252,249,0.9)', color: 'var(--accent)', padding: '5px 9px', borderRadius: 14, border: '1px solid var(--accent)', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', backdropFilter: 'blur(8px)' }}
+                  className="outfit-card-action btn-variant btn-similar"
                   onClick={e => {
                     e.stopPropagation()
                     onSendToStylist({
@@ -749,7 +749,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
                   Similar
                 </button>
                 <button
-                  style={{ position: 'absolute', top: 76, left: 8, fontSize: 11, background: 'rgba(254,252,249,0.9)', color: 'var(--accent)', padding: '5px 9px', borderRadius: 14, border: '1px solid var(--accent)', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', backdropFilter: 'blur(8px)' }}
+                  className="outfit-card-action btn-variant btn-creative"
                   onClick={e => {
                     e.stopPropagation()
                     onSendToStylist({
@@ -764,11 +764,13 @@ export default function OutfitLookbook({ onSendToStylist }) {
                   Creative
                 </button>
                 <button
-                  style={{ position: 'absolute', top: 8, right: 8, fontSize: 16, background: 'rgba(254,252,249,0.85)', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}
+                  className="outfit-card-fav"
                   onClick={e => { e.stopPropagation(); handleFav(o) }}
-                >{o.favorite ? '♥' : '♡'}</button>
+                >
+                  {o.favorite ? '♥' : '♡'}
+                </button>
                 {o.pieces?.length > 0 && (
-                  <div style={{ position: 'absolute', bottom: 44, left: 8, background: 'rgba(124,95,60,0.85)', color: '#fff', fontSize: 10, padding: '2px 7px', borderRadius: 10, backdropFilter: 'blur(8px)' }}>
+                  <div className="outfit-card-pieces">
                     {o.pieces.length} pieces
                   </div>
                 )}

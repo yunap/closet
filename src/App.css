@@ -1326,3 +1326,89 @@ img { display: block; max-width: 100%; }
 .outfit-card:active {
   transform: scale(0.98);
 }
+
+/* Outfit card quick actions & details styling */
+.outfit-card-action {
+  position: absolute;
+  left: 8px;
+  font-size: 11px;
+  padding: 5px 9px;
+  border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+  z-index: 5;
+}
+
+.outfit-card-action.btn-critique {
+  top: 48px; /* Shifted down to clear Pinterest Save button overlay */
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.35);
+}
+
+.outfit-card-action.btn-critique:hover {
+  background: var(--accent-hover);
+}
+
+.outfit-card-action.btn-variant {
+  background: rgba(254, 252, 249, 0.9);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.outfit-card-action.btn-variant:hover {
+  background: var(--accent-light);
+}
+
+.outfit-card-action.btn-similar {
+  top: 82px; /* Shifted down to clear Pinterest Save button overlay */
+}
+
+.outfit-card-action.btn-creative {
+  top: 116px; /* Shifted down to clear Pinterest Save button overlay */
+}
+
+.outfit-card-fav {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 16px;
+  background: rgba(254, 252, 249, 0.85);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  z-index: 5;
+}
+
+.outfit-card-fav:hover {
+  transform: scale(1.1);
+  background: rgba(254, 252, 249, 0.95);
+}
+
+.outfit-card-fav:active {
+  transform: scale(0.9);
+}
+
+.outfit-card-pieces {
+  position: absolute;
+  bottom: 44px;
+  left: 8px;
+  background: rgba(124, 95, 60, 0.85);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: none;
+  z-index: 5;
+}
