@@ -767,16 +767,14 @@ export default function OutfitLookbook({ onSendToStylist }) {
                   className="outfit-card-fav"
                   onClick={e => { e.stopPropagation(); handleFav(o) }}
                 >
-                  {o.favorite ? '♥' : '♡'}
+                                  {o.favorite ? '♥' : '♡'}
                 </button>
-                {o.pieces?.length > 0 && (
-                  <div className="outfit-card-pieces">
-                    {o.pieces.length} pieces
-                  </div>
-                )}
                 <div className="outfit-card-body">
                   <div className="outfit-card-name">{o.name}</div>
-                  <div className="outfit-card-occasion">{o.occasion}</div>
+                  <div className="outfit-card-occasion">
+                    {o.occasion}
+                    {o.pieces?.length > 0 && ` · ${o.pieces.length} ${o.pieces.length === 1 ? 'piece' : 'pieces'}`}
+                  </div>
                 </div>
               </div>
             ))}

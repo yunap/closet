@@ -1397,18 +1397,3 @@ img { display: block; max-width: 100%; }
 .outfit-card-fav:active {
   transform: scale(0.9);
 }
-
-.outfit-card-pieces {
-  position: absolute;
-  bottom: 44px;
-  left: 8px;
-  background: rgba(124, 95, 60, 0.85);
-  color: #fff;
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 10px;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  pointer-events: none;
-  z-index: 5;
-}
