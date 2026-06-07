@@ -22,6 +22,8 @@ import {
   ACTIVE_STYLIST_MODEL
 } from './provider.js'
 
+import { OCCASION_PROFILES } from './occasions.js'
+
 import {
   parsePiece,
   buildPieceText,
@@ -3585,6 +3587,10 @@ export async function buildStylistConversationPayload(body) {
     'CURRENT DATE / SEASON:',
     `Today is ${resolvedCurrentDateLabel}. Time zone: ${timezone || 'America/Los_Angeles'}.`,
     'Use this date for relative phrases like today, next week, in a few weeks, current season, or upcoming travel. Do not say you cannot determine today’s date.',
+    '',
+    'OCCASION & CLIMATE PROFILES (RULES-AS-DATA):',
+    'Classify the user\'s event/activity and weather description into one of the profiles below. You MUST strictly apply that profile\'s prohibited_materials, prohibited_footwear, and preferred style vibe rules to recommended outfits or pieces. NEVER suggest heavy zip ankle boots in summer months (June, July, August) even on cooler/windy days, unless explicitly requested or for rain/mud.',
+    JSON.stringify(OCCASION_PROFILES, null, 2),
     '',
     'CONVERSATION CONTROLLER:',
     `Current turn mode: ${conversationMode}.`,

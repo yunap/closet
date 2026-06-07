@@ -413,6 +413,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       if (form.recommendation_status) fd.append('recommendation_status', form.recommendation_status)
       if (form.fit_confidence) fd.append('fit_confidence', form.fit_confidence)
       if (form.role_permission) fd.append('role_permission', form.role_permission)
+      
+      // Append hanger photo if available for visual visual-alignment/context
+      if (hangerFile) {
+        fd.append('hanger_photo', hangerFile)
+      } else if (piece?.photo && !clearHanger) {
+        fd.append('hanger_photo_path', piece.photo)
+      }
+
       const res  = await fetch('/api/ai/fit-note', { method: 'POST', body: fd })
       const data = await res.json()
       if (data.error) return

@@ -736,11 +736,16 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
   }
 })
 
-router.post('/fit-note', upload.single('photo'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No photo provided' })
-  const filePath = path.join(uploadsDir, req.file.filename)
+router.post('/fit-note', upload.fields([{ name: 'photo' }, { name: 'hanger_photo' }]), async (req, res) => {
+  const photoFile = req.files?.photo?.[0]
+  const hangerFile = req.files?.hanger_photo?.[0]
+  if (!photoFile) return res.status(400).json({ error: 'No photo provided' })
+
+  const filePath = path.join(uploadsDir, photoFile.filename)
+  let hangerPath = hangerFile ? path.join(uploadsDir, hangerFile.filename) : null
+
   try {
-    const { base64, mime } = await prepareImageForClaude(filePath)
+    const { base64: wornBase64, mime: wornMime } = await prepareImageForClaude(filePath)
     fs.unlinkSync(filePath)
 
     const {
@@ -750,14 +755,65 @@ router.post('/fit-note', upload.single('photo'), async (req, res) => {
       engine_notes = '',
       recommendation_status = 'trusted',
       fit_confidence = 'unknown',
-      role_permission = 'auto'
+      role_permission = 'auto',
+      hanger_photo_path = ''
     } = req.body
+
     const isTop    = ['top','outerwear','dress'].includes(piece_category)
     const isBottom = piece_category === 'bottom'
 
-    const focusLine = piece_name && piece_category
-      ? `The piece being evaluated is: "${piece_name}" (${piece_category}). Focus your entire evaluation on this piece only — treat any other visible clothing as neutral context, not part of the assessment.`
-      : 'Focus on the primary garment visible in this photo.'
+    // Combine photos
+    const content = []
+    let hasHangerRef = false
+
+    if (hangerPath) {
+      const { base64: hBase64, mime: hMime } = await prepareImageForClaude(hangerPath)
+      fs.unlinkSync(hangerPath)
+      content.push({ type: 'image', source: { type: 'base64', media_type: hMime, data: hBase64 } })
+      hasHangerRef = true
+    } else if (hanger_photo_path) {
+      const savedHangerPath = path.join(uploadsDir, hanger_photo_path)
+      if (fs.existsSync(savedHangerPath)) {
+        const { base64: hBase64, mime: hMime } = await prepareImageForClaude(savedHangerPath)
+        content.push({ type: 'image', source: { type: 'base64', media_type: hMime, data: hBase64 } })
+        hasHangerRef = true
+      }
+    }
+
+    content.push({ type: 'image', source: { type: 'base64', media_type: wornMime, data: wornBase64 } })
+
+    let categorySpecificFocus = ''
+    if (piece_category === 'bottom') {
+      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is a BOTTOM (e.g., pants, skirt, trousers, jeans, shorts). You MUST focus your evaluation ONLY on the lower half of the body (waistband, hips, thighs, drape, hem, waistband type, and length of the pants/skirt). Completely ignore the upper half of the body (any shirt, blouse, cardigan, top, jacket, shoulders), even if they are very prominent or contain lace/details.'
+    } else if (piece_category === 'top') {
+      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is a TOP (e.g., shirt, blouse, t-shirt, sweater, knit). You MUST focus your evaluation ONLY on the upper body (shoulders, bust, sleeves, torso, tucking behavior, and hem of this top). Completely ignore the lower body (pants, jeans, skirt) and shoes.'
+    } else if (piece_category === 'outerwear') {
+      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is OUTERWEAR (e.g., jacket, coat, blazer, cardigan, vest). You MUST focus your evaluation ONLY on the fit, draping, sleeve behavior, and layering of this outer layer. Ignore inner tops/shirts, bottoms, and shoes.'
+    } else if (piece_category === 'dress') {
+      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is a DRESS. Focus your evaluation on the dress\'s full body fit (shoulders, bust, waist, drape, tuck/waist behavior if applicable, and length). Ignore any layering cardigans, jackets, or shoes.'
+    } else if (piece_category === 'shoes') {
+      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is SHOES. Focus your evaluation only on the footwear at the feet (e.g., shape, shaft height, how it meets the hem of the pants).'
+    } else if (piece_category === 'accessory') {
+      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is an ACCESSORY (e.g., belt, bag, scarf). Focus your evaluation only on how that accessory is positioned/worn.'
+    }
+
+    let focusLine = ''
+    if (hasHangerRef) {
+      focusLine = `You are inspecting a garment's fit. You are provided with two images:
+1. HANGER PHOTO (first image): Shows the exact garment being evaluated in isolation.
+2. WORN PHOTO (second image): Shows the person wearing this specific garment in a styling/outfit context.
+
+The garment category is "${piece_category}"${piece_name ? ` and the garment name suggestion is "${piece_name}"` : ''}.
+Match the garment from the HANGER PHOTO with the person's outfit in the WORN PHOTO. Focus your entire fit evaluation ONLY on how this specific "${piece_category}" fits on the body in the Worn Photo. Treat all other garments, accessories, or layers (like cardigans, shirts, or shoes if evaluating a bottom) as neutral context, and do NOT write notes or change fields for them.
+
+${categorySpecificFocus}`
+    } else {
+      focusLine = piece_category
+        ? `The piece being evaluated is a garment in the category: "${piece_category}"${piece_name ? ` named "${piece_name}"` : ''}. Focus your entire evaluation on this ${piece_category} only — treat any other visible clothing as neutral context, not part of the assessment.
+
+${categorySpecificFocus}`
+        : 'Focus on the primary garment visible in this photo.'
+    }
 
     const trustContext = [
       piece_notes ? `existing styling notes: ${piece_notes}` : '',
@@ -790,21 +846,21 @@ router.post('/fit-note', upload.single('photo'), async (req, res) => {
   }
 }`
 
+    content.push({ type: 'text', text: [focusLine, trustContext, schemaText].filter(Boolean).join('\n\n') })
+
     const raw = await askStylist({
       system: 'You inspect clothing fit on-body. Return only valid JSON matching the requested schema. Provide raw, descriptive physical observations without styling fluff, body flattery, or comfort speculation.',
       maxTokens: 1000,
       messages: [{
         role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mime, data: base64 } },
-          { type: 'text', text: [focusLine, trustContext, schemaText].filter(Boolean).join('\n\n') }
-        ]
+        content
       }]
     })
 
     res.json(parseModelJson(raw))
   } catch (err) {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+    if (hangerPath && fs.existsSync(hangerPath)) fs.unlinkSync(hangerPath)
     console.error('Fit note error:', err)
     res.status(500).json({ error: err.message })
   }

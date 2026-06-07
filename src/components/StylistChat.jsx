@@ -232,6 +232,7 @@ export default function AskClaude({
   ])
   const [chatHistory, setChatHistory] = useState(() => activeThread?.chatHistory || [])
   const [threadMemory, setThreadMemory] = useState(() => activeThread?.threadMemory || null)
+  const [evaluatedKeys, setEvaluatedKeys] = useState(() => new Set(activeThread?.evaluatedKeys || []))
 
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
@@ -390,7 +391,6 @@ export default function AskClaude({
   const [boardFeedbackLabels, setBoardFeedbackLabels] = useState({})
   const [boardLearningStatus, setBoardLearningStatus] = useState({})
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
-  const [evaluatedKeys, setEvaluatedKeys] = useState(() => new Set(activeThread?.evaluatedKeys || []))
   const [learningOpen, setLearningOpen] = useState(false)
   const [learningRows, setLearningRows] = useState([])
   const [internalCalibrationLibraryOpen, setInternalCalibrationLibraryOpen] = useState(false)
