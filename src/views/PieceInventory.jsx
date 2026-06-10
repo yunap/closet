@@ -3,6 +3,7 @@ import PieceCard from '../components/PieceCard'
 import PieceForm from '../components/PieceForm'
 import PieceDetail from '../components/PieceDetail'
 import BatchAdd from '../components/BatchAdd'
+import TodoList from './TodoList'
 
 const CATEGORIES = [
   { value: '',          label: 'All' },
@@ -54,6 +55,7 @@ export default function PieceInventory({ onSendToStylist }) {
   const [availableColors, setAvailableColors]   = useState([])
   const [availableFabrics, setAvailableFabrics] = useState([])
   const [favOnly, setFavOnly]         = useState(false)
+  const [showTodo, setShowTodo]       = useState(false)
   const [showForm, setShowForm]       = useState(false)
   const [showBatch, setShowBatch]     = useState(false)
   const [editPiece, setEditPiece]     = useState(null)
@@ -107,6 +109,13 @@ export default function PieceInventory({ onSendToStylist }) {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
             <button className={`chip ${favOnly ? 'active' : ''}`} onClick={() => setFavOnly(f => !f)}>
               {favOnly ? '♥' : '♡'}
+            </button>
+            <button
+              className="chip"
+              onClick={() => setShowTodo(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+            >
+              📋 Tasks
             </button>
             <button
               className="chip"
@@ -240,6 +249,16 @@ export default function PieceInventory({ onSendToStylist }) {
       {showForm && <PieceForm piece={editPiece} onSave={handleSave} onCancel={() => { setShowForm(false); setEditPiece(null) }} />}
       {detailPiece && !showForm && <PieceDetail piece={detailPiece} onEdit={handleEdit} onDelete={handleDelete} onClose={() => setDetailPiece(null)} onSendToStylist={(piece) => { setDetailPiece(null); onSendToStylist(piece) }} />}
       {showBatch && <BatchAdd onDone={() => { setShowBatch(false); fetchPieces() }} />}
+      {showTodo && (
+        <div className="modal-overlay" onClick={() => setShowTodo(false)}>
+          <div className="modal-sheet" onClick={e => e.stopPropagation()} style={{ maxHeight: '88dvh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-handle" />
+            <div style={{ overflowY: 'auto', flex: 1, paddingBottom: 24 }}>
+              <TodoList isModal={true} onClose={() => setShowTodo(false)} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

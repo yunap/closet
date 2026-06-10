@@ -333,7 +333,7 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
     `).all(...params, Number(limit))
     if (!rows.length) return ''
     const positiveLabels = /signature|works|strong|most_like_me|grounded|artistic|modern/i
-    const negativeLabels = /almost|not_me|too_safe|too_boho|too_polished|too_soft|too_generic|wrong_proportions|wrong_silhouette|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_drift|ignore|bad|drift/i
+    const negativeLabels = /almost|not_me|too_safe|too_boho|too_polished|too_soft|too_generic|wrong_proportions|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_drift|ignore|bad|drift/i
     const positives = []
     const negatives = []
     for (const row of rows) {

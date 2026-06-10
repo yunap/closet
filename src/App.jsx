@@ -2,13 +2,13 @@ import { useState } from 'react'
 import PieceInventory from './views/PieceInventory'
 import OutfitLookbook from './views/OutfitLookbook'
 import AskClaude from './views/AskClaude'
-import TodoList from './views/TodoList'
+import VisualLab from './components/VisualLab'
 
 const TABS = [
   { id: 'pieces',  label: 'Wardrobe', icon: '◈' },
   { id: 'outfits', label: 'Outfits',  icon: '✦' },
   { id: 'ask',     label: 'Stylist',  icon: '◇' },
-  { id: 'todos',   label: 'To-Do',    icon: '○' },
+  { id: 'vislab',  label: 'Visual Lab', icon: '⌾' },
 ]
 
 export default function App() {
@@ -41,7 +41,7 @@ export default function App() {
             onClearPiece={() => setStylistPiece(null)}
           />
         )}
-        {tab === 'todos'   && <TodoList />}
+        {tab === 'vislab'  && <VisualLab />}
       </main>
 
       <nav className="bottom-nav">

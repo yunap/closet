@@ -1019,7 +1019,7 @@ router.post('/evaluate-piece', async (req, res) => {
 
 // ── AI Outfit Generation ──────────────────────────────────────────────────────
 router.post('/generate-outfits-for-piece', async (req, res) => {
-  const { pieceId, occasion = 'casual', season = 'current season', question, history, includeMissingPieces = false, idealOnly = false } = req.body
+  const { pieceId, occasion = 'casual', season = 'current season', mission = 'mix', mood = '', question, history, includeMissingPieces = false, idealOnly = false } = req.body
   try {
     const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
     if (!piece) return res.status(404).json({ error: 'Piece not found' })
@@ -1028,7 +1028,7 @@ router.post('/generate-outfits-for-piece', async (req, res) => {
     const idealMode = Boolean(includeMissingPieces || idealOnly || /ideal|missing|new ideas|do not have|don't have|dont have|not in my wardrobe|wish list|wardrobe gap/i.test(String(question || '')))
     const idealOnlyMode = Boolean(idealOnly || /new ideas|do not limit|not limited|not just my wardrobe|ignore wardrobe|conceptual/i.test(String(question || '')))
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion })
+    let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood })
     const confirmedOutfitsText = getConfirmedOutfitMemory()
     const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
     const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16)
@@ -1057,6 +1057,8 @@ router.post('/generate-outfits-for-piece', async (req, res) => {
           rankedCandidates,
           occasion,
           season,
+          mission,
+          mood,
           question,
           memoryText
         }), 20000, 'Selected-piece visual critic')
@@ -1075,6 +1077,8 @@ router.post('/generate-outfits-for-piece', async (req, res) => {
       rankedCandidates,
       occasion,
       season,
+      mission,
+      mood,
       question,
       idealMode,
       idealOnlyMode,
@@ -1238,9 +1242,8 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
     let composerError = null
     let visualCriticDebug = null
     const agentStartedAt = Date.now()
-
     try {
-      const raw = await withTimeout(askStylistWithTools({
+      const { answer: raw } = await withTimeout(askStylistWithTools({
         system: WHOLE_WARDROBE_AGENT_SYSTEM,
         messages: [{ role: 'user', content: initialUserMessageText }],
         maxTokens: 3000
@@ -1649,7 +1652,7 @@ router.post('/outfit-feedback', upload.single('photo'), async (req, res) => {
 
 // ── AI Editorial / Identity Edits ─────────────────────────────────────────────
 router.post('/editorial-directions-preview', async (req, res) => {
-  const { pieceId, occasion = 'casual', season = 'current season', question, history, seedLook } = req.body
+  const { pieceId, occasion = 'casual', season = 'current season', mission = 'mix', mood = '', question, history, seedLook } = req.body
   try {
     const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
     if (!piece) return res.status(404).json({ error: 'Piece not found' })
@@ -1694,6 +1697,8 @@ router.post('/editorial-directions-preview', async (req, res) => {
       `Anchor constraint:\n${anchorConstraint}`,
       `Occasion: ${occasion}`,
       `Season: ${season}`,
+      mission && mission !== 'mix' ? `Mission: ${mission}` : '',
+      mood ? `Mood: ${mood}` : '',
       `User request: ${question || 'Suggest ideal new pieces for this item.'}`,
       seedLookSummary,
       calibrationSummary ? `Renderer calibration library:\n${calibrationSummary}` : '',
@@ -2080,18 +2085,20 @@ router.post('/compare-outfits', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
-
 router.post('/ask', async (req, res) => {
   try {
     const payload = await buildStylistConversationPayload(req.body)
-    const answer = await askStylistWithTools(payload)
-    res.json({ answer, provider: AI_PROVIDER })
+    const { answer, savedCorrections } = await askStylistWithTools(payload)
+    const allSaved = [...(savedCorrections || [])]
+    if (payload.automaticallySavedCorrection) {
+      allSaved.push(payload.automaticallySavedCorrection)
+    }
+    res.json({ answer, savedCorrections: allSaved, provider: AI_PROVIDER })
   } catch (err) {
     console.error('AI error:', err)
     res.status(500).json({ error: err.message })
   }
 })
-
 // Helper to build piece text blob formatted identically to rules.js/buildPieceText
 function buildPieceText(p) {
   if (!p) return ''

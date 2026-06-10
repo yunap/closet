@@ -248,6 +248,18 @@ function mockAiHandler({ system, messages }) {
     }
   }
 
+  if (text.includes('visual editorial stylist')) {
+    return {
+      directions: [{
+        title: 'Mock editorial direction',
+        missingPieces: ['ideal silk shirt', 'leather boots'],
+        reason: 'Styling mock reason',
+        watchFor: 'Grounding watch',
+        visualPrompt: 'Mood reference'
+      }]
+    }
+  }
+
   if (text.includes('Outfit Composer') || text.includes('Outfit Gate')) {
     return {
       outfits: [selectedPieceOutfit()],
@@ -371,6 +383,52 @@ test('selected-piece generator returns structured outfit cards', async () => {
   assert.ok(json.structuredOutfits.length >= 1)
   assert.ok(json.structuredOutfits[0].pieceIds.includes(seeded.bottom))
   assert.ok('visualCritic' in json.debug)
+})
+
+test('selected-piece generator accepts and forwards mission and mood parameters', async () => {
+  const json = await postJson('/api/ai/generate-outfits-for-piece', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+    mission: 'monochrome_texture',
+    mood: 'moody winter',
+  })
+
+  assert.equal(json.mode, 'generate_outfit_ideas')
+  assert.ok(Array.isArray(json.structuredOutfits))
+
+  const lastCall = aiCalls.find(c => c.system.includes('Outfit Composer') || c.system.includes('Outfit Gate'))
+  assert.ok(lastCall, 'An outfit composer call was recorded')
+  const latestMessage = lastCall.messages.at(-1)
+  const latestText = Array.isArray(latestMessage?.content)
+    ? latestMessage.content.map(part => part?.text || '').join('\n')
+    : String(latestMessage?.content || '')
+
+  assert.match(latestText, /Mission: monochrome_texture/)
+  assert.match(latestText, /Mood: moody winter/)
+})
+
+test('editorial-directions-preview generator accepts and forwards mission and mood parameters', async () => {
+  const json = await postJson('/api/ai/editorial-directions-preview', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+    mission: 'structured_soft',
+    mood: 'dreamy retro',
+  })
+
+  assert.ok(Array.isArray(json.directions))
+  assert.ok(json.directions.length >= 1)
+
+  const lastCall = aiCalls.find(c => c.system.includes('visual editorial stylist'))
+  assert.ok(lastCall, 'An editorial preview call was recorded')
+  const latestMessage = lastCall.messages.at(-1)
+  const latestText = Array.isArray(latestMessage?.content)
+    ? latestMessage.content.map(part => part?.text || '').join('\n')
+    : String(latestMessage?.content || '')
+
+  assert.match(latestText, /Mission: structured_soft/)
+  assert.match(latestText, /Mood: dreamy retro/)
 })
 
 test('whole-wardrobe generator returns cards and records resettable session memory', async () => {

@@ -7,22 +7,7 @@ const SUGGESTIONS = [
   'I\'m going hiking this weekend — what should I wear?',
 ]
 
-const SAVED_BOARD_FEEDBACK_LABELS = [
-  ['signature', 'Signature'],
-  ['works', 'Works'],
-  ['almost', 'Almost'],
-  ['not_me', 'Not me'],
-  ['too_safe', 'Too safe'],
-  ['too_boho', 'Costume drift'],
-  ['too_polished', 'Too polished'],
-  ['too_soft', 'Too soft'],
-  ['too_generic', 'Too generic'],
-  ['wrong_proportions', 'Wrong proportions'],
-  ['wrong_silhouette', 'Wrong silhouette'],
-  ['wrong_energy', 'Wrong energy'],
-  ['catalog_drift', 'Catalog drift'],
-  ['bad_reference', 'Bad reference'],
-]
+
 
 const GENERATED_BOARD_FEEDBACK_LABELS = [
   ['signature', 'Signature'],
@@ -129,23 +114,7 @@ const compactEvaluationMemory = (evaluation = null) => {
   ].filter(Boolean).join('\n')
 }
 
-const CALIBRATION_LABELS = [
-  ['most_like_me', 'Most like me'],
-  ['close_but_off', 'Close but off'],
-  ['wrong_energy', 'Wrong energy'],
-  ['looks_older_than_me', 'Looks older than me'],
-  ['face_drift', 'Face drift'],
-  ['expression_drift', 'Expression drift'],
-  ['lost_resemblance', 'Lost resemblance'],
-  ['too_polished', 'Too polished'],
-  ['too_corporate', 'Too corporate'],
-  ['too_conservative', 'Too conservative'],
-  ['catalog_drift', 'Catalog drift'],
-  ['generic_ai_woman', 'Generic AI woman drift'],
-  ['mature_luxury_drift', 'Mature luxury drift'],
-  ['wrong_proportions', 'Wrong proportions'],
-  ['wrong_silhouette', 'Wrong silhouette'],
-]
+
 
 export default function AskClaude({
   initialOutfit,
@@ -154,10 +123,6 @@ export default function AskClaude({
   onClearPiece,
   activeContext: externalActiveContext,
   onContextChange,
-  calibrationLibraryOpen: externalCalibrationLibraryOpen,
-  onToggleCalibration,
-  onBoardSaved,
-  onResetVisuals,
 }) {
   const [threads, setThreads] = useState(() => {
     try {
@@ -233,7 +198,6 @@ export default function AskClaude({
   const [chatHistory, setChatHistory] = useState(() => activeThread?.chatHistory || [])
   const [threadMemory, setThreadMemory] = useState(() => activeThread?.threadMemory || null)
   const [evaluatedKeys, setEvaluatedKeys] = useState(() => new Set(activeThread?.evaluatedKeys || []))
-
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
   const setActiveContext = useCallback((nextContext) => {
@@ -241,6 +205,20 @@ export default function AskClaude({
     onContextChange?.(nextContext)
   }, [onContextChange])
 
+  const [toastMessage, setToastMessage] = useState('')
+  const [showToast, setShowToast] = useState(false)
+  const triggerToast = useCallback((msg) => {
+    setToastMessage(msg)
+    setShowToast(true)
+  }, [])
+
+  useEffect(() => {
+    if (!showToast) return
+    const timer = setTimeout(() => {
+      setShowToast(false)
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [showToast])
   const lastThreadIdRef = useRef(currentThreadId)
 
   useEffect(() => {
@@ -253,7 +231,7 @@ export default function AskClaude({
       const nextThreads = prev.map(t => {
         if (t.id === currentThreadId) {
           let title = t.title
-          if (title === 'New Chat' || title === 'Active Conversation' || title.startsWith('Wardrobe:')) {
+          if (!t.userRenamed && (title === 'New Chat' || title === 'Active Conversation' || title.startsWith('Wardrobe:'))) {
             const firstUser = messages.find(m => m.role === 'user')
             if (firstUser && firstUser.text) {
               title = firstUser.text.slice(0, 30) + (firstUser.text.length > 30 ? '...' : '')
@@ -361,7 +339,29 @@ export default function AskClaude({
       localStorage.setItem('stylist_current_thread_id', nextThread.id)
     } catch (e) {}
   }
+
+  const renameThread = (threadId, newTitle) => {
+    if (!newTitle.trim()) return
+    setThreads(prev => prev.map(t => {
+      if (t.id === threadId) {
+        return {
+          ...t,
+          title: newTitle.trim(),
+          userRenamed: true,
+          updatedAt: Date.now()
+        }
+      }
+      return t
+    }))
+  }
+
   const [input, setInput] = useState('')
+  const [threadMenuOpen, setThreadMenuOpen] = useState(false)
+  const [renamingThreadId, setRenamingThreadId] = useState(null)
+  const [renamingTitle, setRenamingTitle] = useState('')
+  const [pendingPieceMode, setPendingPieceMode] = useState('wardrobe')
+  const [occasionMenuOpen, setOccasionMenuOpen] = useState(false)
+  const [seasonMenuOpen, setSeasonMenuOpen] = useState(false)
   const [imageFile, setImageFile] = useState(null)
   const [imagePrev, setImagePrev] = useState(null)
   const [pendingOutfit, setPendingOutfit] = useState(null)
@@ -379,6 +379,9 @@ export default function AskClaude({
   const [editorialVisualMode, setEditorialVisualMode] = useState(false)
   const [generateOccasion, setGenerateOccasion] = useState('casual')
   const [generateSeason, setGenerateSeason] = useState('current season')
+  const [generateMission, setGenerateMission] = useState('mix')
+  const [generateMood, setGenerateMood] = useState('')
+  const [missionMenuOpen, setMissionMenuOpen] = useState(false)
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
@@ -393,30 +396,7 @@ export default function AskClaude({
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
   const [learningOpen, setLearningOpen] = useState(false)
   const [learningRows, setLearningRows] = useState([])
-  const [internalCalibrationLibraryOpen, setInternalCalibrationLibraryOpen] = useState(false)
-  const hasExternalCalibrationLibraryOpen = externalCalibrationLibraryOpen !== undefined
-  const calibrationLibraryOpen = externalCalibrationLibraryOpen ?? internalCalibrationLibraryOpen
-  const setCalibrationLibraryOpen = useCallback((nextOpen) => {
-    const resolvedOpen = typeof nextOpen === 'function'
-      ? nextOpen(calibrationLibraryOpen)
-      : nextOpen
-    setInternalCalibrationLibraryOpen(resolvedOpen)
-    if (resolvedOpen !== calibrationLibraryOpen) onToggleCalibration?.(resolvedOpen)
-  }, [calibrationLibraryOpen, onToggleCalibration])
-  const [calibrationImages, setCalibrationImages] = useState([])
-  const [savedBoards, setSavedBoards] = useState([])
-  const [savedBoardsLoading, setSavedBoardsLoading] = useState(false)
-  const [calibrationUploadFile, setCalibrationUploadFile] = useState(null)
-  const [calibrationUploadPrev, setCalibrationUploadPrev] = useState(null)
-  const [calibrationKind, setCalibrationKind] = useState('good_reference')
-  const [calibrationLabels, setCalibrationLabels] = useState([])
-  const [calibrationNotes, setCalibrationNotes] = useState('')
-  const [calibrationUploading, setCalibrationUploading] = useState(false)
-  const [calibrationFilter, setCalibrationFilter] = useState('active')
-  const [calibrationEditingId, setCalibrationEditingId] = useState(null)
-  const [calibrationEditKind, setCalibrationEditKind] = useState('good_reference')
-  const [calibrationEditLabels, setCalibrationEditLabels] = useState([])
-  const [calibrationEditNotes, setCalibrationEditNotes] = useState('')
+
   const [boardResults, setBoardResults] = useState({})
   const [editorialVisualResults, setEditorialVisualResults] = useState({})
   const [boardLoadingIndex, setBoardLoadingIndex] = useState(null)
@@ -525,114 +505,7 @@ export default function AskClaude({
     await loadLearningRows()
   }
 
-  const loadCalibrationImages = async () => {
-    try {
-      const params = new URLSearchParams({ limit: '200' })
-      if (calibrationFilter === 'ignored') params.set('includeArchived', 'true')
-      if (['good_reference', 'bad_reference', 'real_photo'].includes(calibrationFilter)) params.set('kind', calibrationFilter)
-      const res = await fetch(`/api/calibration-images?${params.toString()}`)
-      const rows = await res.json()
-      let list = Array.isArray(rows) ? rows : []
-      if (calibrationFilter === 'strong') list = list.filter(r => r.favorite)
-      if (calibrationFilter === 'ignored') list = list.filter(r => r.archived)
-      setCalibrationImages(list)
-    } catch { setCalibrationImages([]) }
-  }
 
-  const loadSavedBoardsForCalibration = async () => {
-    setSavedBoardsLoading(true)
-    try {
-      const res = await fetch('/api/saved-boards?limit=80')
-      const rows = await res.json()
-      setSavedBoards(Array.isArray(rows) ? rows : [])
-    } catch { setSavedBoards([]) }
-    finally { setSavedBoardsLoading(false) }
-  }
-
-  const refreshCalibrationPanel = async () => {
-    await Promise.all([loadCalibrationImages(), loadSavedBoardsForCalibration()])
-  }
-
-  const patchSavedBoard = async (row, patch) => {
-    const res = await fetch(`/api/saved-boards/${row.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
-    if (!res.ok) return null
-    const updated = await res.json().catch(() => null)
-    if (updated?.id) {
-      setSavedBoards(prev => prev.map(b => String(b.id) === String(updated.id) ? updated : b))
-    } else {
-      await loadSavedBoardsForCalibration()
-    }
-    return updated
-  }
-
-  const toggleSavedBoardFeedback = async (row, label) => {
-    const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {}
-    const current = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
-    const isAdding = !current.includes(label)
-    const nextLabels = isAdding ? [...current, label] : current.filter(x => x !== label)
-    const patch = { feedbackLabels: nextLabels }
-    if (label === 'signature' && isAdding) patch.favorite = true
-    if (['not_me', 'bad_reference', 'catalog_drift', 'wrong_proportions', 'wrong_silhouette', 'wrong_energy'].includes(label) && isAdding) patch.favorite = false
-    await patchSavedBoard(row, patch)
-  }
-
-  useEffect(() => { if (calibrationLibraryOpen) refreshCalibrationPanel() }, [calibrationLibraryOpen, calibrationFilter])
-
-  const handleCalibrationUploadFile = (e) => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setCalibrationUploadFile(f)
-    const reader = new FileReader()
-    reader.onload = ev => setCalibrationUploadPrev(ev.target.result)
-    reader.readAsDataURL(f)
-  }
-
-  const toggleCalibrationLabel = (label) => setCalibrationLabels(prev => prev.includes(label) ? prev.filter(x => x !== label) : [...prev, label])
-  const toggleCalibrationEditLabel = (label) => setCalibrationEditLabels(prev => prev.includes(label) ? prev.filter(x => x !== label) : [...prev, label])
-
-  const saveCalibrationImage = async () => {
-    if (!calibrationUploadFile) return
-    setCalibrationUploading(true)
-    try {
-      const fd = new FormData()
-      fd.append('photo', calibrationUploadFile)
-      fd.append('kind', calibrationKind)
-      fd.append('labels', JSON.stringify(calibrationLabels))
-      fd.append('notes', calibrationNotes)
-      fd.append('source', 'uploaded')
-      const res = await fetch('/api/calibration-images', { method: 'POST', body: fd })
-      if (!res.ok) throw new Error(await res.text())
-      setCalibrationUploadFile(null); setCalibrationUploadPrev(null)
-      setCalibrationLabels([]); setCalibrationNotes('')
-      await loadCalibrationImages()
-    } catch (err) { alert(`Could not save calibration image: ${err.message}`) }
-    finally { setCalibrationUploading(false) }
-  }
-
-  const archiveCalibrationImage = async (id, archived = true) => {
-    await fetch(`/api/calibration-images/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived }) })
-    await loadCalibrationImages()
-  }
-
-  const toggleCalibrationFavorite = async (row) => {
-    await fetch(`/api/calibration-images/${row.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ favorite: !row.favorite }) })
-    await loadCalibrationImages()
-  }
-
-  const startEditCalibrationImage = (row) => {
-    setCalibrationEditingId(row.id)
-    setCalibrationEditKind(row.kind || 'good_reference')
-    setCalibrationEditLabels(Array.isArray(row.labels) ? row.labels : [])
-    setCalibrationEditNotes(row.notes || '')
-  }
-
-  const cancelEditCalibrationImage = () => { setCalibrationEditingId(null); setCalibrationEditLabels([]); setCalibrationEditNotes('') }
-
-  const saveCalibrationEdit = async (id) => {
-    await fetch(`/api/calibration-images/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: calibrationEditKind, labels: calibrationEditLabels, notes: calibrationEditNotes }) })
-    cancelEditCalibrationImage()
-    await loadCalibrationImages()
-  }
 
   const addToHistory = (role, content) => setChatHistory(h => [...h, { role, content }])
 
@@ -801,6 +674,268 @@ export default function AskClaude({
     const outfits = Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : []
     if (!outfits.length) return null
 
+    const KNOWN_COLORS = {
+      black: '#222222',
+      charcoal: '#3c3f41',
+      grey: '#7a7a7a',
+      gray: '#7a7a7a',
+      white: '#f9f9fb',
+      cream: '#f9f6e5',
+      oatmeal: '#e6dfd3',
+      tan: '#c5a075',
+      brown: '#5a4538',
+      cognac: '#8e4c32',
+      rust: '#b15a3a',
+      navy: '#2b3b4c',
+      blue: '#6b8ca6',
+      green: '#547257',
+      olive: '#5e684a',
+      emerald: '#296b4f',
+      red: '#a53d38',
+      orange: '#d97d43',
+      yellow: '#e0b845',
+      plum: '#52344a',
+      burgundy: '#6b2d35',
+      pink: '#e8afb3',
+      gold: '#cfab4a',
+      silver: '#b3b6b7',
+      amber: '#d9a03b',
+      mustard: '#c8a23b',
+      multi: 'repeating-linear-gradient(45deg, #d8d8d8, #d8d8d8 3px, #f0f0f0 3px, #f0f0f0 6px)',
+      stripe: 'repeating-linear-gradient(45deg, #c0c0c0, #c0c0c0 3px, #f8f8f8 3px, #f8f8f8 6px)',
+      print: 'repeating-linear-gradient(45deg, #d0d0d0, #d0d0d0 3px, #ebebeb 3px, #ebebeb 6px)',
+      floral: 'repeating-linear-gradient(45deg, #e0d0d0, #e0d0d0 3px, #f5f0f0 3px, #f5f0f0 6px)',
+    }
+
+    const detectColor = (text, fallback = '#d0d2d4') => {
+      if (!text) return fallback
+      const lower = text.toLowerCase()
+      if (lower.includes('stripe') || lower.includes('stripes') || lower.includes('striped')) return KNOWN_COLORS.stripe
+      if (lower.includes('print') || lower.includes('printed')) return KNOWN_COLORS.print
+      if (lower.includes('floral') || lower.includes('flower')) return KNOWN_COLORS.floral
+      if (lower.includes('multi') || lower.includes('pattern') || lower.includes('patterned')) return KNOWN_COLORS.multi
+      
+      for (const [colorName, hex] of Object.entries(KNOWN_COLORS)) {
+        if (lower.includes(colorName)) return hex
+      }
+      return fallback
+    }
+
+    const detectCategory = (text) => {
+      const lower = text.toLowerCase()
+      if (lower.includes('pants') || lower.includes('trousers') || lower.includes('jeans') || lower.includes('skirt') || lower.includes('leggings') || lower.includes('shorts') || lower.includes('denim') || lower.includes('pant')) {
+        return 'bottom'
+      }
+      if (lower.includes('boot') || lower.includes('sandal') || lower.includes('mule') || lower.includes('flat') || lower.includes('sneaker') || lower.includes('shoe') || lower.includes('heels') || lower.includes('espadrille') || lower.includes('shoes') || lower.includes('flats') || lower.includes('boots') || lower.includes('sandals')) {
+        return 'shoes'
+      }
+      if (lower.includes('jacket') || lower.includes('coat') || lower.includes('cardigan') || lower.includes('hoodie') || lower.includes('vest') || lower.includes('blazer') || lower.includes('trench') || lower.includes('sweater') || lower.includes('knitwear')) {
+        return 'outerwear'
+      }
+      if (lower.includes('bag') || lower.includes('necklace') || lower.includes('scarf') || lower.includes('belt') || lower.includes('hat') || lower.includes('pendant') || lower.includes('purse') || lower.includes('tote') || lower.includes('wristlet')) {
+        return 'accessory'
+      }
+      if (lower.includes('dress') || lower.includes('jumpsuit') || lower.includes('gown')) {
+        return 'dress'
+      }
+      return 'top'
+    }
+
+    const getPreviewPieces = (outfit) => {
+      const list = []
+      if (activeContext) {
+        list.push({
+          id: 'active',
+          name: activeContext.name,
+          category: activeContext.category || 'top',
+          color: detectColor(activeContext.colors?.[0] || activeContext.name, '#888888'),
+          isAnchor: true
+        })
+      }
+      const additions = Array.isArray(outfit.missingPieces) ? outfit.missingPieces : []
+      additions.forEach((addition, addIdx) => {
+        const cat = detectCategory(addition)
+        list.push({
+          id: `addition-${addIdx}`,
+          name: addition,
+          category: cat,
+          color: detectColor(addition, '#c8c8c8'),
+          isAnchor: false
+        })
+      })
+      return list
+    }
+
+    const renderCSSPreview = (outfit) => {
+      const pieces = getPreviewPieces(outfit)
+      const accessoryPiece = pieces.find(p => p.category === 'accessory')
+      const outerwearPiece = pieces.find(p => p.category === 'outerwear')
+      const topPiece = pieces.find(p => p.category === 'top')
+      const bottomPiece = pieces.find(p => p.category === 'bottom')
+      const dressPiece = pieces.find(p => p.category === 'dress')
+      const shoesPiece = pieces.find(p => p.category === 'shoes')
+
+      const isSkirt = bottomPiece && (
+        bottomPiece.name.toLowerCase().includes('skirt') || 
+        bottomPiece.name.toLowerCase().includes('midi') ||
+        bottomPiece.name.toLowerCase().includes('mini')
+      )
+
+      const isWidePants = bottomPiece && (
+        bottomPiece.name.toLowerCase().includes('wide') ||
+        bottomPiece.name.toLowerCase().includes('flare') ||
+        bottomPiece.name.toLowerCase().includes('linen')
+      )
+
+      return (
+        <div className="silhouette-preview" style={{
+          width: 90,
+          height: 145,
+          background: 'var(--surface-3, #fdfdfb)',
+          border: '1px solid var(--border-light)',
+          borderRadius: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '6px 4px',
+          flexShrink: 0,
+          position: 'relative',
+          overflow: 'hidden',
+          boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.03)'
+        }}>
+          {/* Accessory */}
+          {accessoryPiece && (
+            <div style={{
+              width: 20,
+              height: 6,
+              borderRadius: 3,
+              background: accessoryPiece.color,
+              marginBottom: 3,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+            }} title={accessoryPiece.name} />
+          )}
+
+          {/* Top / Outerwear / Dress Bodice */}
+          {dressPiece ? (
+            <div style={{
+              width: 44,
+              height: 80,
+              borderRadius: '6px 6px 16px 16px',
+              background: dressPiece.color,
+              position: 'relative',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+            }} title={dressPiece.name} />
+          ) : (
+            <>
+              {outerwearPiece ? (
+                <div style={{
+                  width: 44,
+                  height: 34,
+                  borderRadius: 6,
+                  background: outerwearPiece.color,
+                  position: 'relative',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                }} title={outerwearPiece.name}>
+                  <div style={{
+                    width: 18,
+                    height: 34,
+                    background: topPiece ? topPiece.color : '#eaeaea',
+                    borderLeft: '1px solid rgba(0,0,0,0.15)',
+                    borderRight: '1px solid rgba(0,0,0,0.15)',
+                  }} title={topPiece?.name || 'Inner top'} />
+                </div>
+              ) : (
+                <div style={{
+                  width: 44,
+                  height: 34,
+                  borderRadius: 6,
+                  background: topPiece ? topPiece.color : 'transparent',
+                  border: topPiece ? 'none' : '1px dashed var(--border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: topPiece ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                }} title={topPiece?.name || 'No top'} />
+              )}
+
+              {/* Bottom (Skirt or Pants legs) */}
+              {bottomPiece ? (
+                isSkirt ? (
+                  <div style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: '2px 2px 14px 14px',
+                    background: bottomPiece.color,
+                    marginTop: 3,
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                  }} title={bottomPiece.name} />
+                ) : (
+                  <div style={{
+                    width: 44,
+                    height: 44,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    marginTop: 3
+                  }} title={bottomPiece.name}>
+                    <div style={{
+                      width: isWidePants ? 20 : 18,
+                      height: 44,
+                      borderRadius: '2px 2px 4px 4px',
+                      background: bottomPiece.color,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                    }} />
+                    <div style={{
+                      width: isWidePants ? 20 : 18,
+                      height: 44,
+                      borderRadius: '2px 2px 4px 4px',
+                      background: bottomPiece.color,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                    }} />
+                  </div>
+                )
+              ) : (
+                <div style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 4,
+                  border: '1px dashed var(--border)',
+                  marginTop: 3
+                }} />
+              )}
+            </>
+          )}
+
+          {/* Shoes */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            gap: 4,
+            marginTop: 4
+          }}>
+            <div style={{
+              width: 18,
+              height: 8,
+              borderRadius: '3px 1px 1px 3px',
+              background: shoesPiece ? shoesPiece.color : 'transparent',
+              border: shoesPiece ? 'none' : '1px dashed var(--border)',
+              boxShadow: shoesPiece ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'
+            }} title={shoesPiece?.name || 'No shoes'} />
+            <div style={{
+              width: 18,
+              height: 8,
+              borderRadius: '1px 3px 3px 1px',
+              background: shoesPiece ? shoesPiece.color : 'transparent',
+              border: shoesPiece ? 'none' : '1px dashed var(--border)',
+              boxShadow: shoesPiece ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'
+            }} title={shoesPiece?.name || 'No shoes'} />
+          </div>
+        </div>
+      )
+    }
+
     const strengthLabel = (value, index) => {
       const v = String(value || '').toLowerCase()
       if (v === 'signature' || index === 0) return 'signature'
@@ -899,6 +1034,7 @@ export default function AskClaude({
           const hasRendered = Boolean(boardResults[boardKey]?.length)
           const isRendering = boardLoadingIndex === boardKey
           const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
+          const showSilhouette = activeContext?.type === 'piece' && isPreview
 
           return (
             <div key={idx} style={{
@@ -906,9 +1042,15 @@ export default function AskClaude({
               background: idx === 0 ? 'var(--surface)' : 'var(--surface-2)',
               borderRadius: 12,
               border: idx === 0 ? '1px solid var(--accent)' : '1px solid var(--border)',
-              boxShadow: idx === 0 ? '0 2px 8px rgba(0,0,0,0.04)' : 'none'
+              boxShadow: idx === 0 ? '0 2px 8px rgba(0,0,0,0.04)' : 'none',
+              display: 'flex',
+              gap: 12,
+              alignItems: 'flex-start'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+              {showSilhouette && renderCSSPreview(outfit)}
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
                 <div style={{ fontSize: 10, color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{strength}</div>
               </div>
@@ -1174,6 +1316,7 @@ export default function AskClaude({
                   ))}
                 </div>
               )}
+              </div>
             </div>
           )
         })}
@@ -1264,8 +1407,6 @@ export default function AskClaude({
     })
     if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Could not save board') }
     setSavedBoardKeys(prev => new Set([...prev, key]))
-    onBoardSaved?.()
-    if (calibrationLibraryOpen) loadSavedBoardsForCalibration()
   }
 
   const generateVisualBoards = async (resultKey, conceptText, structuredOverride = null, pieceIdOverride = null, sourceMessageIndex = null) => {
@@ -1473,6 +1614,8 @@ export default function AskClaude({
           pieceId: activeContext.id,
           occasion: outfit?.occasion || generateOccasion,
           season: outfit?.season || generateSeason,
+          mission: generateMission,
+          mood: generateMood,
           question: `Suggest ideal new additions inspired by this rendered wardrobe look. Use the board as the taste seed, but do not limit the additions to my existing wardrobe.`,
           history: historySnapshot,
           seedLook: { board, outfit }
@@ -1571,6 +1714,7 @@ export default function AskClaude({
         wholeWardrobe: true,
         textOnly: true,
         debug: data.debug || null,
+        queryOptions: { occasion, season, mood, mission },
       }])
       setThreadMemory({
         type: 'generated_outfits',
@@ -1629,6 +1773,8 @@ export default function AskClaude({
     const effectiveIdealOnlyMode = overrides.idealOnlyMode ?? idealOnlyMode
     const effectiveGenerateOccasion = overrides.generateOccasion ?? generateOccasion
     const effectiveGenerateSeason = overrides.generateSeason ?? generateSeason
+    const effectiveGenerateMission = overrides.generateMission ?? generateMission
+    const effectiveGenerateMood = overrides.generateMood ?? generateMood
     const editorialRequestPattern = /suggest ideal|ideal addition|ideal new|new pieces|completion|completions|missing-piece|missing piece|not.*wardrobe|beyond my wardrobe|ignore my wardrobe|do not use my wardrobe|don't use my wardrobe|dont use my wardrobe|selected garment only|new item/i
     const typedEditorialRequest = editorialRequestPattern.test(q)
     const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (effectiveEditorialVisualMode || typedEditorialRequest))
@@ -1756,7 +1902,7 @@ export default function AskClaude({
         // ── PREVIEW MODE: text directions only, no images yet ────────────────
         const res = await fetch('/api/ai/editorial-directions-preview', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
+          body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
@@ -1771,7 +1917,7 @@ export default function AskClaude({
         }))
 
       } else if (pieceToSend && shouldGenerateOutfits) {
-        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot }) })
+        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot }) })
         const data = await res.json()
         replyText = data.feedback || data.error || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null
@@ -1795,7 +1941,7 @@ export default function AskClaude({
         // ── PREVIEW MODE for active context ──────────────────────────────────
         const res = await fetch('/api/ai/editorial-directions-preview', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pieceId: activeContext.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
+          body: JSON.stringify({ pieceId: activeContext.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || 'Suggest ideal new pieces for this selected item.', history: historySnapshot })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate directions')
@@ -1815,7 +1961,6 @@ export default function AskClaude({
         fd.append('question', q || 'What do you think of this outfit?')
         const data = await (await fetch('/api/ai/outfit-feedback', { method: 'POST', body: fd })).json()
         replyText = data.feedback || data.error || 'Something went wrong.'
-
       } else if (threadMemory?.type === 'generated_outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q)) {
         const rememberedOutfit = threadMemory.latestOutfit || {}
         const outfitPieceIds = Array.isArray(rememberedOutfit.pieceIds) && rememberedOutfit.pieceIds.length
@@ -1836,6 +1981,7 @@ export default function AskClaude({
             threadContext: threadMemory.latestEvaluationText || '',
             outfit: rememberedOutfit,
             pieceIds: outfitPieceIds,
+            activeContext,
             ...currentChatDateContext(),
           })
         })
@@ -1844,6 +1990,10 @@ export default function AskClaude({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        if (data.savedCorrections && data.savedCorrections.length > 0) {
+          const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
+          triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
+        }
         setThreadMemory({
           ...threadMemory,
           type: 'generated_outfit',
@@ -1880,6 +2030,7 @@ export default function AskClaude({
               reason: activeOutfit.notes || '',
             },
             pieceIds: outfitPieceIds,
+            activeContext,
             ...currentChatDateContext(),
           })
         })
@@ -1888,6 +2039,10 @@ export default function AskClaude({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        if (data.savedCorrections && data.savedCorrections.length > 0) {
+          const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
+          triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
+        }
         setThreadMemory({
           type: 'outfit',
           id: activeOutfit.id,
@@ -1916,14 +2071,34 @@ export default function AskClaude({
             generatedOutfits,
             conversationMode,
             threadContext,
+            activeContext,
             ...currentChatDateContext(),
           })
         })
         const data = await res.json()
         replyText = data.answer || data.error || 'Something went wrong.'
+        replyDebug = data.debug || null
+        if (data.savedCorrections && data.savedCorrections.length > 0) {
+          const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
+          triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
+        }
       }
-
-      setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits, wardrobeEvaluation: replyWardrobeEvaluation, textOnly: replyWardrobeEvaluation, debug: replyDebug }])
+      setMessages(m => [...m, {
+        role: 'assistant',
+        text: replyText,
+        structuredOutfits: replyStructuredOutfits,
+        wardrobeEvaluation: replyWardrobeEvaluation,
+        textOnly: replyWardrobeEvaluation,
+        debug: replyDebug,
+        queryOptions: shouldGenerateOutfits || shouldGenerateEditorialVisuals || shouldGenerateActiveEditorialVisuals ? {
+          occasion: effectiveGenerateOccasion,
+          season: effectiveGenerateSeason,
+          idealOnly: effectiveIdealOnlyMode,
+          includeMissingPieces: effectiveIncludeMissingPieces,
+          mission: effectiveGenerateMission,
+          mood: effectiveGenerateMood,
+        } : null
+      }])
       addToHistory('assistant', replyText)
 
     } catch (err) {
@@ -1957,7 +2132,6 @@ export default function AskClaude({
     setSavedIndices(new Set()); setFeedbackSaved(new Set()); setFeedbackIdsByKey({}); setSavedBoardKeys(new Set()); setEvaluatedKeys(new Set())
     setBoardResults({}); setEditorialVisualResults({})
     setBoardLoadingIndex(null); setLearningOpen(false); setLearningRows([])
-    setCalibrationLibraryOpen(false)
     
     setThreads(prev => prev.map(t => {
       if (t.id === currentThreadId) {
@@ -1974,13 +2148,45 @@ export default function AskClaude({
       }
       return t
     }))
-    
-    onResetVisuals?.()
   }
 
+  const latestAssistantIndex = (() => {
+    for (let idx = messages.length - 1; idx >= 0; idx--) {
+      if (messages[idx].role === 'assistant') return idx
+    }
+    return -1
+  })()
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Header */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
+      {/* Toast Notification */}
+      {showToast && (
+        <div style={{
+          position: 'absolute',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          backgroundColor: 'rgba(18, 18, 18, 0.9)',
+          backdropFilter: 'blur(8px)',
+          color: '#ffffff',
+          padding: '12px 24px',
+          borderRadius: '24px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          zIndex: 9999,
+          fontSize: '14px',
+          fontWeight: '500',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap',
+          maxWidth: '90%',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis'
+        }}>
+          {toastMessage}
+        </div>
+      )}      {/* Header */}
       <div className="view-header">
         <div className="view-header-top">
           <div>
@@ -1992,73 +2198,200 @@ export default function AskClaude({
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button
-              className="chip"
-              style={{ marginTop: 4, opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
-              onClick={resetWholeWardrobeSessionMemory}
-              disabled={recentMemoryResetting || loading}
-              title="Clears only recently shown whole-wardrobe outfit memory. Saved feedback and learning stay intact."
-            >
-              {recentMemoryResetting ? 'Resetting…' : 'Reset recent'}
-            </button>
             <button className="chip" style={{ marginTop: 4 }} onClick={() => setWardrobeBuilderOpen(v => !v)}>
               {wardrobeBuilderOpen ? 'Close builder' : 'Use wardrobe'}
-            </button>
-            <button className="chip" style={{ marginTop: 4 }} onClick={() => setCalibrationLibraryOpen(v => !v)}>
-              {calibrationLibraryOpen ? 'Close calibration' : 'Calibration'}{calibrationImages.length ? ` · ${calibrationImages.length}` : ''}
             </button>
             {activeContext && (
               <button className="chip" style={{ marginTop: 4 }} onClick={() => setLearningOpen(v => !v)}>
                 Learning{learningRows.length ? ` · ${learningRows.length}` : ''}
               </button>
             )}
-            <select
-              value={currentThreadId}
-              onChange={e => switchThread(e.target.value)}
-              style={{
-                padding: '5px 10px',
-                borderRadius: 12,
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-                color: 'var(--text-muted)',
-                fontSize: 11,
-                cursor: 'pointer',
-                maxWidth: 140,
-                marginTop: 4
-              }}
-            >
-              {threads.map(t => (
-                <option key={t.id} value={t.id}>{t.title}</option>
-              ))}
-            </select>
-            <button
-              className="chip"
-              style={{ marginTop: 4 }}
-              onClick={() => createNewChat('New Chat')}
-              title="Start a new chat thread"
-            >
-              New chat
-            </button>
-            {chatHistory.length > 0 && (
-              <button
-                className="chip"
-                style={{ marginTop: 4 }}
-                onClick={resetChat}
-                title="Clear current chat conversation"
+            <div className="custom-select-container" style={{ marginTop: 4 }}>
+              <button 
+                className={`custom-select-btn ${threadMenuOpen ? 'active' : ''}`}
+                style={{ 
+                  height: 30, 
+                  minWidth: 140, 
+                  borderRadius: 15, 
+                  padding: '0 12px', 
+                  fontSize: 12, 
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface-2)',
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}
+                onClick={(e) => { e.stopPropagation(); setThreadMenuOpen(!threadMenuOpen); }}
               >
-                Clear chat
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
+                  💬 {threads.find(t => t.id === currentThreadId)?.title || 'Chat'}
+                </span>
+                <span className="custom-select-arrow">▾</span>
               </button>
-            )}
-            {threads.length > 1 && (
-              <button
-                className="chip"
-                style={{ marginTop: 4, color: '#a64b4b', borderColor: 'rgba(166, 75, 75, 0.3)' }}
-                onClick={() => deleteThread(currentThreadId)}
-                title="Delete this chat thread completely"
-              >
-                Delete chat
-              </button>
-            )}
+              {threadMenuOpen && (
+                <>
+                  <div className="custom-select-backdrop" onClick={() => setThreadMenuOpen(false)} />
+                  <div className="custom-select-dropdown" style={{ minWidth: 200, fontSize: 13, left: 'auto', right: 0 }}>
+                    <div style={{ padding: '6px 12px 4px', fontSize: 10, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Recent Conversations
+                    </div>
+                    {threads.map(t => {
+                      const isActive = t.id === currentThreadId;
+                      const isRenaming = renamingThreadId === t.id;
+                      return (
+                        <div
+                          key={t.id}
+                          className={`custom-select-option ${isActive ? 'active' : ''}`}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
+                          onClick={() => {
+                            if (!isRenaming) {
+                              switchThread(t.id);
+                              setThreadMenuOpen(false);
+                            }
+                          }}
+                        >
+                          {isRenaming ? (
+                            <>
+                              <input
+                                type="text"
+                                value={renamingTitle}
+                                onChange={(e) => setRenamingTitle(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.stopPropagation();
+                                    renameThread(t.id, renamingTitle);
+                                    setRenamingThreadId(null);
+                                  } else if (e.key === 'Escape') {
+                                    e.stopPropagation();
+                                    setRenamingThreadId(null);
+                                  }
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  flex: 1,
+                                  fontSize: 12,
+                                  padding: '2px 4px',
+                                  borderRadius: 4,
+                                  border: '1px solid var(--border)',
+                                  background: 'var(--surface)',
+                                  color: 'var(--text)',
+                                  outline: 'none',
+                                }}
+                                autoFocus
+                              />
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  renameThread(t.id, renamingTitle);
+                                  setRenamingThreadId(null);
+                                }}
+                                style={{
+                                  color: 'var(--donate)',
+                                  fontSize: 12,
+                                  padding: '2px 4px',
+                                  background: 'transparent',
+                                  border: 'none',
+                                  cursor: 'pointer',
+                                }}
+                                title="Save"
+                              >
+                                ✓
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                {t.title}
+                              </span>
+                              <div style={{ display: 'flex', gap: 2, flexShrink: 0, alignItems: 'center' }}>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRenamingThreadId(t.id);
+                                    setRenamingTitle(t.title);
+                                  }}
+                                  style={{
+                                    color: 'var(--text-light)',
+                                    fontSize: 12,
+                                    padding: '2px 4px',
+                                    border: 'none',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                  }}
+                                  title="Rename thread"
+                                >
+                                  ✎
+                                </button>
+                                {!isActive && threads.length > 1 && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (confirm(`Delete thread "${t.title}"?`)) {
+                                        deleteThread(t.id);
+                                      }
+                                    }}
+                                    style={{
+                                      color: 'var(--text-light)',
+                                      fontSize: 14,
+                                      padding: '2px 4px',
+                                      border: 'none',
+                                      background: 'transparent',
+                                      cursor: 'pointer',
+                                    }}
+                                    title="Delete thread"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <div className="divider" style={{ margin: '4px 0' }} />
+                    <button
+                      className="custom-select-option"
+                      onClick={() => {
+                        createNewChat('New Chat');
+                        setThreadMenuOpen(false);
+                      }}
+                      style={{ color: 'var(--accent)', fontWeight: 500 }}
+                    >
+                      + New chat thread
+                    </button>
+                    {chatHistory.length > 0 && (
+                      <button
+                        className="custom-select-option"
+                        onClick={() => {
+                          if (confirm('Clear current chat conversation?')) {
+                            resetChat();
+                          }
+                          setThreadMenuOpen(false);
+                        }}
+                      >
+                        ↺ Clear conversation
+                      </button>
+                    )}
+                    {threads.length > 1 && (
+                      <button
+                        className="custom-select-option"
+                        style={{ color: '#a64b4b' }}
+                        onClick={() => {
+                          if (confirm('Delete this chat thread completely?')) {
+                            deleteThread(currentThreadId);
+                          }
+                          setThreadMenuOpen(false);
+                        }}
+                      >
+                        ✕ Delete current thread
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
         {recentMemoryStatus && (
@@ -2129,142 +2462,7 @@ export default function AskClaude({
         </div>
       )}
 
-      {/* Calibration Library */}
-      {calibrationLibraryOpen && !hasExternalCalibrationLibraryOpen && (
-        <div style={{ margin: '0 16px 10px', padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 10 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Calibration Library</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Curate visual references. Star means "use strongly"; Archive means "ignore unless you restore it."</div>
-            </div>
-            <button className="chip" onClick={refreshCalibrationPanel}>Refresh</button>
-          </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-            {[['active','Active'],['strong','Use strongly'],['good_reference','Good'],['bad_reference','Bad / drift'],['real_photo','Real photos'],['ignored','Ignored']].map(([value, label]) => (
-              <button key={value} className="chip" onClick={() => setCalibrationFilter(value)} style={{ fontSize: 11, background: calibrationFilter === value ? 'var(--accent-light)' : undefined, color: calibrationFilter === value ? 'var(--accent)' : undefined, borderColor: calibrationFilter === value ? 'var(--accent)' : undefined }}>{label}</button>
-            ))}
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '92px 1fr', gap: 10, alignItems: 'start', marginBottom: 12 }}>
-            <label style={{ width: 92, height: 116, border: '1px dashed var(--border)', borderRadius: 10, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
-              {calibrationUploadPrev ? <img src={calibrationUploadPrev} alt="Calibration preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>Upload reference</span>}
-              <input type="file" accept="image/*" onChange={handleCalibrationUploadFile} style={{ display: 'none' }} />
-            </label>
-            <div style={{ display: 'grid', gap: 8 }}>
-              <select value={calibrationKind} onChange={e => setCalibrationKind(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                <option value="good_reference">Good reference</option>
-                <option value="bad_reference">Bad / drift reference</option>
-                <option value="real_photo">Real outfit photo</option>
-              </select>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {CALIBRATION_LABELS.map(([value, label]) => (
-                  <button key={value} type="button" onClick={() => toggleCalibrationLabel(value)} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 12, border: calibrationLabels.includes(value) ? '1px solid var(--accent)' : '1px solid var(--border)', background: calibrationLabels.includes(value) ? 'var(--accent-light)' : 'var(--surface)', color: calibrationLabels.includes(value) ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>{label}</button>
-                ))}
-              </div>
-              <textarea value={calibrationNotes} onChange={e => setCalibrationNotes(e.target.value)} placeholder="Short note: why this feels right/wrong…" rows={2} style={{ width: '100%', resize: 'vertical', padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
-              <button className="chip" onClick={saveCalibrationImage} disabled={!calibrationUploadFile || calibrationUploading} style={{ justifySelf: 'start' }}>{calibrationUploading ? 'Saving…' : 'Save calibration image'}</button>
-            </div>
-          </div>
-
-          {!calibrationImages.length ? (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No calibration images in this filter.</div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10, maxHeight: 480, overflowY: 'auto' }}>
-              {calibrationImages.map(row => {
-                const isEditing = calibrationEditingId === row.id
-                return (
-                  <div key={row.id} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: row.archived ? 'rgba(120,120,120,0.08)' : 'var(--surface-2)', opacity: row.archived ? 0.68 : 1 }}>
-                    <img src={row.image_url} alt="Calibration" style={{ width: '100%', height: 170, objectFit: 'cover', display: 'block' }} />
-                    <div style={{ padding: 8, display: 'grid', gap: 6 }}>
-                      {isEditing ? (
-                        <>
-                          <select value={calibrationEditKind} onChange={e => setCalibrationEditKind(e.target.value)} style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 11 }}>
-                            <option value="good_reference">Good reference</option>
-                            <option value="bad_reference">Bad / drift reference</option>
-                            <option value="real_photo">Real outfit photo</option>
-                          </select>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                            {CALIBRATION_LABELS.map(([value, label]) => (
-                              <button key={value} type="button" onClick={() => toggleCalibrationEditLabel(value)} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 12, border: calibrationEditLabels.includes(value) ? '1px solid var(--accent)' : '1px solid var(--border)', background: calibrationEditLabels.includes(value) ? 'var(--accent-light)' : 'var(--surface)', color: calibrationEditLabels.includes(value) ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>{label}</button>
-                            ))}
-                          </div>
-                          <textarea value={calibrationEditNotes} onChange={e => setCalibrationEditNotes(e.target.value)} rows={3} style={{ width: '100%', resize: 'vertical', padding: '7px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 11 }} />
-                          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                            <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => saveCalibrationEdit(row.id)}>Save</button>
-                            <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={cancelEditCalibrationImage}>Cancel</button>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'center' }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: row.kind === 'bad_reference' ? '#9b4a3f' : 'var(--accent)' }}>{row.favorite ? '★ ' : ''}{row.kind?.replaceAll('_', ' ')}</div>
-                            {row.archived && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>ignored</span>}
-                          </div>
-                          {!!row.labels?.length && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{row.labels.slice(0, 6).map(label => <span key={label} style={{ fontSize: 9, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 10, padding: '1px 6px' }}>{label.replaceAll('_', ' ')}</span>)}</div>}
-                          {row.notes && <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.35 }}>{row.notes}</div>}
-                          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                            <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => toggleCalibrationFavorite(row)}>{row.favorite ? 'Use normal' : 'Use strongly'}</button>
-                            <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => startEditCalibrationImage(row)}>Edit</button>
-                            {row.archived ? <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => archiveCalibrationImage(row.id, false)}>Restore</button> : <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => archiveCalibrationImage(row.id, true)}>Ignore</button>}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 8 }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Saved visual boards</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Saved boards are calibration references too. Star the ones that should strongly guide future styling/rendering.</div>
-              </div>
-              <button className="chip" onClick={loadSavedBoardsForCalibration} disabled={savedBoardsLoading}>{savedBoardsLoading ? 'Loading…' : 'Refresh boards'}</button>
-            </div>
-            {!savedBoards.length ? (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No saved boards yet.</div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, maxHeight: 430, overflowY: 'auto' }}>
-                {savedBoards.map(board => (
-                  <div key={board.id} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: board.archived ? 'rgba(120,120,120,0.08)' : 'var(--surface-2)', opacity: board.archived ? 0.65 : 1 }}>
-                    {board.image_url && <img src={board.image_url} alt={board.title || 'Saved board'} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} />}
-                    <div style={{ padding: 8, display: 'grid', gap: 6 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'start' }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: board.favorite ? 'var(--accent)' : 'var(--text)' }}>{board.favorite ? '★ ' : ''}{board.title || 'Saved board'}</div>
-                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{board.board_type || 'board'}{board.context_name ? ` · ${board.context_name}` : ''}</div>
-                        </div>
-                        {board.archived && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>ignored</span>}
-                      </div>
-                      {Array.isArray(board.pieces) && board.pieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.35 }}>{board.pieces.slice(0, 4).map(p => p?.name).filter(Boolean).join(' + ')}</div>}
-                      {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.35 }}>{board.reason}</div>}
-                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => patchSavedBoard(board, { favorite: !board.favorite })}>{board.favorite ? 'Use normal' : 'Use strongly'}</button>
-                        {board.archived ? <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => patchSavedBoard(board, { archived: false })}>Restore</button> : <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => patchSavedBoard(board, { archived: true })}>Ignore</button>}
-                      </div>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
-                        {SAVED_BOARD_FEEDBACK_LABELS.map(([label, text]) => {
-                          const active = Array.isArray(board?.payload?.feedback_labels) && board.payload.feedback_labels.includes(label)
-                          return <button key={label} className="chip" style={{ fontSize: 9, padding: '2px 6px', borderColor: active ? 'var(--accent)' : 'var(--border)', background: active ? 'var(--accent)' : 'var(--surface)', color: active ? '#fff' : 'var(--text-muted)', fontWeight: active ? 800 : 500, boxShadow: active ? '0 0 0 1px rgba(122,86,43,0.25)' : undefined }} onClick={() => toggleSavedBoardFeedback(board, label)} title="Save this board feedback as calibration memory">{text}</button>
-                        })}
-                      </div>
-                      {Array.isArray(board?.payload?.feedback_labels) && board.payload.feedback_labels.length > 0 && (
-                        <div style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700, marginTop: 2 }}>
-                          Selected: {board.payload.feedback_labels.map(label => { const found = SAVED_BOARD_FEEDBACK_LABELS.find(([value]) => value === label); return found ? found[1] : label }).join(', ')}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Learning Panel */}
       {learningOpen && activeContext && (
@@ -2401,6 +2599,30 @@ export default function AskClaude({
                       ) : (
                         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.45 }}>{getCompactOutfitIntro(m, hasBoards)}</p>
                       )}
+                      {m.queryOptions && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0 12px' }}>
+                          {m.queryOptions.occasion && (
+                            <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', textTransform: 'capitalize', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                              🎯 {m.queryOptions.occasion}
+                            </span>
+                          )}
+                          {m.queryOptions.season && (
+                            <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', textTransform: 'capitalize', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                              🌤️ {m.queryOptions.season}
+                            </span>
+                          )}
+                          {m.queryOptions.mission && (
+                            <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                              ⚗️ {m.queryOptions.mission === 'mix' ? 'Mix of missions' : m.queryOptions.mission}
+                            </span>
+                          )}
+                          {m.queryOptions.mood && m.queryOptions.mood !== 'artistic minimalist' && (
+                            <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 3 }} title="Stylist mood/notes">
+                              💬 "{m.queryOptions.mood}"
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {hasStructuredIdeas ? renderStructuredAdvice(m, i) : (
                         <div style={{ marginTop: 10 }}>
                           {m.text.split('\n').filter(Boolean).map((line, j) => <p key={j} style={{ fontSize: 14, lineHeight: 1.55, margin: '0 0 7px', color: 'var(--text)' }}>{line}</p>)}
@@ -2416,7 +2638,7 @@ export default function AskClaude({
                 )
               })()}
 
-              {m.role === 'assistant' && i > 0 && activeContext && (
+              {m.role === 'assistant' && i > 0 && activeContext && i === latestAssistantIndex && (
                 <div style={{ marginTop: 4, marginBottom: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
                     {(!boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text)) && (savedIndices.has(i) ? (
@@ -2530,41 +2752,292 @@ export default function AskClaude({
             <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pending.name}</div>
             {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
             {pendingPiece && (
-              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{
+                  display: 'flex',
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 20,
+                  padding: 3,
+                  position: 'relative',
+                  width: '100%',
+                  userSelect: 'none'
+                }}>
+                  <div style={{
+                    position: 'absolute',
+                    top: 3,
+                    bottom: 3,
+                    left: pendingPieceMode === 'wardrobe' ? 3 : 'calc(50% + 1px)',
+                    width: 'calc(50% - 4px)',
+                    background: 'var(--accent)',
+                    borderRadius: 17,
+                    zIndex: 1,
+                    transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                  }} />
                   <button
-                    onClick={() => send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false })}
-                    style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'left' }}
+                    type="button"
+                    onClick={() => setPendingPieceMode('wardrobe')}
+                    style={{
+                      flex: 1,
+                      textAlign: 'center',
+                      padding: '7px 0',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      fontFamily: 'var(--font-sans)',
+                      color: pendingPieceMode === 'wardrobe' ? '#fff' : 'var(--text-muted)',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      zIndex: 2,
+                      transition: 'color 0.15s ease'
+                    }}
                   >
-                    <div style={{ fontWeight: 650 }}>Use my wardrobe</div>
-                    <div style={{ fontSize: 10, opacity: 0.78, marginTop: 2 }}>Build outfits from saved pieces.</div>
+                    Use my wardrobe
                   </button>
                   <button
-                    onClick={() => send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true })}
-                    style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'left' }}
+                    type="button"
+                    onClick={() => setPendingPieceMode('ideal')}
+                    style={{
+                      flex: 1,
+                      textAlign: 'center',
+                      padding: '7px 0',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      fontFamily: 'var(--font-sans)',
+                      color: pendingPieceMode === 'ideal' ? '#fff' : 'var(--text-muted)',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      zIndex: 2,
+                      transition: 'color 0.15s ease'
+                    }}
                   >
-                    <div style={{ fontWeight: 650 }}>Explore ideal additions</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Imagine new pieces around this item.</div>
+                    Explore additions
                   </button>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  <select value={generateOccasion} onChange={e => setGenerateOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                    <option value="casual">Casual</option>
-                    <option value="city">City</option>
-                    <option value="smart casual">Smart casual</option>
-                    <option value="evening">Evening</option>
-                    <option value="gallery / art event">Gallery / art event</option>
-                    <option value="travel">Travel</option>
-                  </select>
-                  <select value={generateSeason} onChange={e => setGenerateSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                    <option value="current season">Current season</option>
-                    <option value="early spring / cool mild weather">Early spring</option>
-                    <option value="spring / summer">Spring / summer</option>
-                    <option value="fall">Fall</option>
-                    <option value="winter">Winter</option>
-                    <option value="year-round">Year-round</option>
-                  </select>
+                  <div className="custom-select-container">
+                    <button
+                      type="button"
+                      className={`custom-select-btn ${occasionMenuOpen ? 'active' : ''}`}
+                      style={{
+                        height: 32,
+                        minWidth: '100%',
+                        borderRadius: 8,
+                        padding: '0 10px',
+                        fontSize: 12,
+                        border: '1px solid var(--border)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOccasionMenuOpen(!occasionMenuOpen);
+                        setSeasonMenuOpen(false);
+                        setMissionMenuOpen(false);
+                      }}
+                    >
+                      <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
+                        {generateOccasion}
+                      </span>
+                      <span className="custom-select-arrow">▾</span>
+                    </button>
+                    {occasionMenuOpen && (
+                      <>
+                        <div className="custom-select-backdrop" onClick={() => setOccasionMenuOpen(false)} />
+                        <div className="custom-select-dropdown" style={{ minWidth: 150, fontSize: 12, left: 0, right: 'auto' }}>
+                          {['casual', 'city', 'smart casual', 'evening', 'gallery / art event', 'travel'].map(occ => (
+                            <button
+                              key={occ}
+                              type="button"
+                              className={`custom-select-option ${generateOccasion === occ ? 'active' : ''}`}
+                              style={{ textTransform: 'capitalize' }}
+                              onClick={() => {
+                                setGenerateOccasion(occ);
+                                setOccasionMenuOpen(false);
+                              }}
+                            >
+                              {occ}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="custom-select-container">
+                    <button
+                      type="button"
+                      className={`custom-select-btn ${seasonMenuOpen ? 'active' : ''}`}
+                      style={{
+                        height: 32,
+                        minWidth: '100%',
+                        borderRadius: 8,
+                        padding: '0 10px',
+                        fontSize: 12,
+                        border: '1px solid var(--border)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSeasonMenuOpen(!seasonMenuOpen);
+                        setOccasionMenuOpen(false);
+                        setMissionMenuOpen(false);
+                      }}
+                    >
+                      <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
+                        {generateSeason.startsWith('early spring') ? 'Early spring' : generateSeason}
+                      </span>
+                      <span className="custom-select-arrow">▾</span>
+                    </button>
+                    {seasonMenuOpen && (
+                      <>
+                        <div className="custom-select-backdrop" onClick={() => setSeasonMenuOpen(false)} />
+                        <div className="custom-select-dropdown" style={{ minWidth: 165, fontSize: 12, left: 'auto', right: 0 }}>
+                          {[
+                            { value: 'current season', label: 'Current season' },
+                            { value: 'early spring / cool mild weather', label: 'Early spring' },
+                            { value: 'spring / summer', label: 'Spring / summer' },
+                            { value: 'fall', label: 'Fall' },
+                            { value: 'winter', label: 'Winter' },
+                            { value: 'year-round', label: 'Year-round' }
+                          ].map(s => (
+                            <button
+                              key={s.value}
+                              type="button"
+                              className={`custom-select-option ${generateSeason === s.value ? 'active' : ''}`}
+                              onClick={() => {
+                                setGenerateSeason(s.value);
+                                setSeasonMenuOpen(false);
+                              }}
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="custom-select-container">
+                    <button
+                      type="button"
+                      className={`custom-select-btn ${missionMenuOpen ? 'active' : ''}`}
+                      style={{
+                        height: 32,
+                        minWidth: '100%',
+                        borderRadius: 8,
+                        padding: '0 10px',
+                        fontSize: 12,
+                        border: '1px solid var(--border)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMissionMenuOpen(!missionMenuOpen);
+                        setOccasionMenuOpen(false);
+                        setSeasonMenuOpen(false);
+                      }}
+                    >
+                      <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
+                        {{
+                          mix: 'Mix of missions',
+                          controlled_print: 'Controlled Print',
+                          monochrome_texture: 'Monochrome Texture',
+                          structured_soft: 'Structured + Soft',
+                          color_anchor: 'Color Anchor',
+                          unexpected_pairing: 'Unexpected Pairing',
+                          soft_architecture: 'Soft Architecture'
+                        }[generateMission] || generateMission}
+                      </span>
+                      <span className="custom-select-arrow">▾</span>
+                    </button>
+                    {missionMenuOpen && (
+                      <>
+                        <div className="custom-select-backdrop" onClick={() => setMissionMenuOpen(false)} />
+                        <div className="custom-select-dropdown" style={{ minWidth: 165, fontSize: 12, left: 0, right: 'auto' }}>
+                          {[
+                            { value: 'mix', label: 'Mix of missions' },
+                            { value: 'controlled_print', label: 'Controlled Print' },
+                            { value: 'monochrome_texture', label: 'Monochrome Texture' },
+                            { value: 'structured_soft', label: 'Structured + Soft' },
+                            { value: 'color_anchor', label: 'Color Anchor' },
+                            { value: 'unexpected_pairing', label: 'Unexpected Pairing' },
+                            { value: 'soft_architecture', label: 'Soft Architecture' }
+                          ].map(m => (
+                            <button
+                              key={m.value}
+                              type="button"
+                              className={`custom-select-option ${generateMission === m.value ? 'active' : ''}`}
+                              onClick={() => {
+                                setGenerateMission(m.value);
+                                setMissionMenuOpen(false);
+                              }}
+                            >
+                              {m.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <input
+                    type="text"
+                    value={generateMood}
+                    onChange={e => setGenerateMood(e.target.value)}
+                    placeholder="Mood (e.g. moody, soft)"
+                    style={{
+                      height: 32,
+                      width: '100%',
+                      borderRadius: 8,
+                      padding: '0 10px',
+                      fontSize: 12,
+                      border: '1px solid var(--border)',
+                      background: 'var(--surface)',
+                      color: 'var(--text)',
+                      fontFamily: 'var(--font-sans)',
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
                 </div>
+                <button
+                  onClick={() => {
+                    if (pendingPieceMode === 'wardrobe') {
+                      send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false });
+                    } else {
+                      send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true });
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: 8,
+                    border: '1px solid var(--accent)',
+                    background: 'var(--accent)',
+                    color: '#fff',
+                    fontSize: 12,
+                    fontWeight: 650,
+                    fontFamily: 'var(--font-sans)',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  {pendingPieceMode === 'wardrobe' ? 'Style with my wardrobe' : 'Suggest ideal additions'}
+                </button>
               </div>
             )}
             {pendingOutfit && (

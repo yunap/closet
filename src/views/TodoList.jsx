@@ -6,7 +6,7 @@ const TYPE_META = {
   shopping: { label: 'Shopping', color: 'var(--shopping)', bg: 'var(--shopping-bg)', dot: '#5A6E8A', icon: '◎' },
 }
 
-export default function TodoList() {
+export default function TodoList({ isModal, onClose }) {
   const [todos, setTodos]       = useState([])
   const [loading, setLoading]   = useState(true)
   const [showAdd, setShowAdd]   = useState(false)
@@ -54,13 +54,18 @@ export default function TodoList() {
 
   return (
     <div>
-      <div className="view-header">
+      <div className="view-header" style={isModal ? { position: 'sticky', top: 0, zIndex: 10, background: 'var(--surface)' } : undefined}>
         <div className="view-header-top">
           <div>
             <div className="view-title">To-Do</div>
             <div className="view-subtitle">{pending} pending · {todos.length - pending} done</div>
           </div>
-          <button className="chip active" onClick={() => setShowAdd(s => !s)}>+ Add</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="chip active" onClick={() => setShowAdd(s => !s)}>+ Add</button>
+            {isModal && (
+              <button className="modal-close" onClick={onClose} style={{ width: 28, height: 28, margin: 0 }}>✕</button>
+            )}
+          </div>
         </div>
 
         {showAdd && (

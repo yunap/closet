@@ -30,8 +30,10 @@ const SAVED_BOARD_FEEDBACK_LABELS = [
   ['too_polished', 'Too polished'],
   ['too_soft', 'Too soft'],
   ['too_generic', 'Too generic'],
-  ['wrong_proportions', 'Wrong proportions'],
+  ['wrong_proportions', 'Wrong styling proportions'],
+  ['body_proportions_drift', 'Body proportions drift'],
   ['wrong_silhouette', 'Wrong silhouette'],
+  ['wrong_length', 'Wrong length (hem/sleeves)'],
   ['wrong_energy', 'Wrong energy'],
   ['catalog_drift', 'Catalog drift'],
   ['bad_reference', 'Bad reference'],
@@ -52,7 +54,7 @@ const SAVED_BOARD_FEEDBACK_LABELS = [
 //   onClose         — called when the user closes the panel
 // ──────────────────────────────────────────────────────────────────────────────
 
-export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
+export default function VisualLab({ activeContext } = {}) {
   const [calibrationImages, setCalibrationImages]           = useState([])
   const [calibrationFilter, setCalibrationFilter]           = useState('active')
   const [calibrationUploadFile, setCalibrationUploadFile]   = useState(null)
@@ -111,10 +113,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
   // Refresh when panel opens or filter changes
   useEffect(() => { refresh() }, [calibrationFilter])
 
-  // Refresh saved boards whenever StylistChat saves a new one
-  useEffect(() => {
-    if (boardSaveCount > 0) loadSavedBoards()
-  }, [boardSaveCount])
+
 
   // ── Calibration image actions ─────────────────────────────────────────────────
 
@@ -233,7 +232,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
     const nextLabels = isAdding ? [...current, label] : current.filter(x => x !== label)
     const patch = { feedbackLabels: nextLabels }
     if (label === 'signature' && isAdding) patch.favorite = true
-    if (['not_me', 'bad_reference', 'catalog_drift', 'wrong_proportions', 'wrong_silhouette', 'wrong_energy'].includes(label) && isAdding) {
+    if (['not_me', 'bad_reference', 'catalog_drift', 'wrong_proportions', 'body_proportions_drift', 'wrong_silhouette', 'wrong_length', 'wrong_energy'].includes(label) && isAdding) {
       patch.favorite = false
     }
     await patchSavedBoard(row, patch)
@@ -242,43 +241,41 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ margin: '0 16px 10px', padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-
-      {/* Panel header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 10 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Calibration Library</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            {activeContext ? `Showing saved boards for ${activeContext.name}. ` : ''}
-            Curate visual references. Star means "use strongly"; Archive means "ignore unless you restore it."
+    <div>
+      <div className="view-header sticky-header">
+        <div className="view-header-top">
+          <div>
+            <div className="view-title">Visual Lab</div>
+            <div className="view-subtitle">
+              {activeSection === 'references' && `${calibrationImages.length} references`}
+              {activeSection === 'saved' && `${savedBoards.length} saved boards`}
+              {activeSection === 'upload' && 'Upload new reference photo'}
+              {!activeSection && 'Curate visual references and calibration boards'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="chip active" onClick={refresh}>Refresh</button>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button className="chip" onClick={refresh}>Refresh</button>
-          <button className="chip" onClick={onClose}>Close</button>
+
+        <div className="filter-row" style={{ marginBottom: 0 }}>
+          {[
+            ['references', 'References'],
+            ['saved', 'Saved boards'],
+            ['upload', 'Upload Reference'],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              className={`chip ${activeSection === value ? 'active' : ''}`}
+              onClick={() => setActiveSection(value)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Filter chips */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-        {[
-          ['references', 'References'],
-          ['saved', 'Saved boards'],
-          ['upload', 'Upload'],
-        ].map(([value, label]) => (
-          <button
-            key={value}
-            className="chip"
-            onClick={() => setActiveSection(value)}
-            style={{
-              fontSize: 12,
-              background: activeSection === value ? 'var(--accent)' : undefined,
-              color: activeSection === value ? '#fff' : undefined,
-              borderColor: activeSection === value ? 'var(--accent)' : undefined,
-            }}
-          >{label}</button>
-        ))}
-      </div>
+      <div style={{ padding: '16px 20px 24px' }}>
 
       {/* Upload row */}
       {activeSection === 'upload' && (
@@ -351,7 +348,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
         {!calibrationImages.length ? (
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No calibration images in this filter.</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10, maxHeight: 520, overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 12 }}>
           {calibrationImages.map(row => {
             const isEditing = calibrationEditingId === row.id
             return (
@@ -453,7 +450,7 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
             {activeContext ? `No saved boards for ${activeContext.name} yet.` : 'No saved boards yet.'}
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, maxHeight: 430, overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 12 }}>
             {savedBoards.map(board => (
               <div key={board.id} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: board.archived ? 'rgba(120,120,120,0.08)' : 'var(--surface-2)', opacity: board.archived ? 0.65 : 1 }}>
                 {board.image_url && (
@@ -531,6 +528,8 @@ export default function VisualLab({ activeContext, boardSaveCount, onClose }) {
         )}
       </div>
       )}
+      </div>
+
       {previewImage && (
         <div
           role="dialog"

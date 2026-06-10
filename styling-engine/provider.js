@@ -100,15 +100,18 @@ export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens 
   return askClaude({ system, messages, maxTokens })
 }
 
+
 export async function askStylistWithTools({ system, messages, maxTokens = 1500 }) {
   const testResponse = takeTestAiResponse({ system, messages, maxTokens })
   if (testResponse != null) {
-    return typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
+    const answerStr = typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
+    return { answer: answerStr, savedCorrections: [] }
   }
 
   assertProviderKey()
 
   let currentMessages = [...messages]
+  const savedCorrections = []
 
   for (let iter = 0; iter < 5; iter++) {
     if (AI_PROVIDER === 'openai') {
@@ -146,7 +149,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500 }
       })
 
       const message = response.choices?.[0]?.message
-      if (!message) return ''
+      if (!message) return { answer: '', savedCorrections }
 
       if (message.tool_calls && message.tool_calls.length) {
         currentMessages.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls })
@@ -157,6 +160,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500 }
           const name = tc.function.name
           const args = JSON.parse(tc.function.arguments || '{}')
           const result = await executeTool(name, args)
+          if (name === 'store_user_correction') {
+            savedCorrections.push(args)
+          }
           
           let toolContent = ''
           if (name === 'get_garment_details') {
@@ -191,7 +197,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500 }
         }
         continue
       } else {
-        return message.content || ''
+        return { answer: message.content || '', savedCorrections }
       }
     } else {
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -217,6 +223,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500 }
           const name = tu.name
           const args = tu.input
           const result = await executeTool(name, args)
+          if (name === 'store_user_correction') {
+            savedCorrections.push(args)
+          }
           
           let contentBlocks = []
           if (name === 'get_garment_details') {
@@ -258,10 +267,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500 }
         currentMessages.push(...toolResponses)
         continue
       } else {
-        return response.content?.[0]?.text || ''
+        return { answer: response.content?.[0]?.text || '', savedCorrections }
       }
     }
   }
 
-  return 'Tool calling loop reached max iterations.'
+  return { answer: 'Tool calling loop reached max iterations.', savedCorrections }
 }

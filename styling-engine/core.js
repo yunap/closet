@@ -385,7 +385,7 @@ export function getCalibrationMemoryForStylist(limit = 32) {
 
   const normalized = rows.map(normalizeCalibrationRow)
   const positiveLabels = /most_like_me|signature|works|good|strong|real|use_strongly|relaxed_structure|grounded|modern|minimal|artistic/i
-  const negativeLabels = /too_safe|too_boho|wrong_proportions|wrong_silhouette|wrong_energy|catalog_drift|not_me|ignore|bad|drift|too_polished|too_generic|too_soft/i
+  const negativeLabels = /too_safe|too_boho|wrong_proportions|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|catalog_drift|not_me|ignore|bad|drift|too_polished|too_generic|too_soft/i
 
   const positives = []
   const negatives = []
@@ -966,7 +966,7 @@ export function formatStructuredOutfitFeedback({ selectedPiece, occasion, season
   return lines.join('\n').trim()
 }
 
-export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidates, occasion, season, question, idealMode, idealOnlyMode, memoryText, history = [] }) {
+export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCandidates, occasion, season, mission, mood, question, idealMode, idealOnlyMode, memoryText, history = [] }) {
   const candidatePieces = [selectedPiece, ...rankedCandidates.map(r => r.piece)]
   const candidateText = buildOutfitGenerationCandidateText(rankedCandidates)
   const userPayload = [
@@ -976,6 +976,8 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
     '',
     `Occasion: ${occasion}`,
     `Season: ${season}`,
+    mission && mission !== 'mix' ? `Mission: ${mission}` : '',
+    mood ? `Mood: ${mood}` : '',
     `Mode: ${idealOnlyMode ? 'ideal missing-piece only' : idealMode ? 'mixed owned wardrobe plus ideal missing-piece completion' : 'closet-only saved wardrobe'}`,
     '',
     memoryText || '',
@@ -1244,7 +1246,7 @@ export async function makeSelectedPieceCandidateContactSheet(selectedPiece, rank
   return { base64: buffer.toString('base64'), mime: 'image/jpeg', shownPieceIds: shown.map(r => Number(r.piece.id)).filter(Boolean) }
 }
 
-export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, rankedCandidates = [], occasion, season, question, memoryText = '' }) {
+export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, rankedCandidates = [], occasion, season, mission, mood, question, memoryText = '' }) {
   const candidatesWithPhotos = rankedCandidates.filter(r => r?.piece && (r.piece.photo || r.piece.worn_photo))
   const reviewCandidates = (candidatesWithPhotos.length >= 8 ? candidatesWithPhotos : rankedCandidates).slice(0, 18)
   if (!selectedPiece || !reviewCandidates.length || !(selectedPiece.photo || selectedPiece.worn_photo || reviewCandidates.some(r => r.piece?.photo || r.piece?.worn_photo))) return null
@@ -1264,6 +1266,8 @@ export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, ran
         { type: 'text', text: [
           `Occasion: ${occasion || 'casual'}`,
           `Season: ${season || 'current season'}`,
+          mission && mission !== 'mix' ? `Mission: ${mission}` : '',
+          mood ? `Mood: ${mood}` : '',
           question ? `User request: ${question}` : '',
           memoryText ? `Taste memory:\n${memoryText.slice(0, 5000)}` : '',
           `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
@@ -3374,13 +3378,13 @@ export function resolveStylistConversationMode(question, {
   const q = String(question || '').trim().toLowerCase()
   if (!q) return requested
 
-  if (hasThreadContext && /\b(no|nope|wait|hold on|i meant|i did not|i didn't|you said|but you|you missed|you ignored|that's wrong|that is wrong|not true|actually|today is|it is|it isn't|it is not|these are|this is)\b/.test(q)) {
+  if (hasThreadContext && /\b(no|nope|wait|hold on|i meant|i did not|i didn't|you said|but you|you missed|you ignored|that's wrong|that is wrong|not true|actually|today is|it is|it isn't|it is not|these are|this is|wrong|mistake|error|not correct|incorrect|incorrectly)\b/.test(q)) {
     return 'correction'
   }
-  if (/\b(i disagree|you are wrong|that's wrong|that is wrong|not true|you missed|you ignored|today is)\b/.test(q)) {
+  if (/\b(i disagree|you are wrong|that's wrong|that is wrong|not true|you missed|you ignored|today is|wrong|mistake|error|not correct|incorrect|incorrectly)\b/.test(q)) {
     return 'correction'
   }
-  if (/\b(i like|i don't like|i do not like|not me|too safe|too soft|too generic|more like|less like|good formula|good pieces|bad piece|bad occasion|fit issue)\b/.test(q)) {
+  if (/\b(i like|i don't like|i do not like|not me|too safe|too soft|too generic|more like|less like|good formula|good pieces|bad piece|bad occasion|fit issue|not sure about|prefer|instead of|don't want|do not want|too \w+)\b/.test(q)) {
     return 'preference_reaction'
   }
   if (/^(why|how did|how do you know|what made|which|do you see|can you see|did you see|where|what date|which season|what season|what images|which images)\b/.test(q)) {
@@ -3432,7 +3436,8 @@ export async function buildStylistConversationPayload(body) {
     threadContext,
     outfit,
     pieceIds,
-    sessionId = 'default'
+    sessionId = 'default',
+    activeContext
   } = body
 
   let activeOutfit = outfit
@@ -3547,8 +3552,14 @@ export async function buildStylistConversationPayload(body) {
     }, sessionId)
   }
 
+  let automaticallySavedCorrection = null
   if (conversationMode === 'correction' || conversationMode === 'preference_reaction') {
     storeUserCorrection(question, activeOutfit ? 'outfit' : 'general', activeOutfit ? activeOutfit.id : null)
+    automaticallySavedCorrection = {
+      note: question,
+      context_type: activeOutfit ? 'outfit' : 'general',
+      context_id: activeOutfit ? activeOutfit.id : null
+    }
   }
 
   const conversationDirective = buildStylistConversationDirective(conversationMode)
@@ -3561,7 +3572,8 @@ export async function buildStylistConversationPayload(body) {
     '- Use `get_last_outfit_evaluation` to check past critiques.',
     '- Use `get_current_image_inventory` to inspect attached images.',
     '- Use `store_user_correction` to save user corrections/preferences.',
-    'Never guess or assume a piece exists without querying the database via tools first.'
+    'Never guess or assume a piece exists without querying the database via tools first.',
+    'CRITICAL: If the user states a new style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "I dislike cargo pants", "prefer dark jeans"), you MUST proactively call the `store_user_correction` tool to save this rule/preference immediately. Do not wait for the user to ask you to save it; save it automatically using the tool.'
   ].join('\n')
 
   let modeDirectiveText = ''
@@ -3581,6 +3593,34 @@ export async function buildStylistConversationPayload(body) {
     default:
       modeDirectiveText = 'The user has a new request. Respond directly. If details like destination or season are missing, ask exactly one clear clarifying question; do not generate a placeholder list.'
   }
+
+  const feedbackMemoryParts = []
+  if (activeOutfit && activeOutfit.id) {
+    const outfitFeedbackText = getStylistFeedbackMemory('outfit', activeOutfit.id, 16)
+    if (outfitFeedbackText) {
+      feedbackMemoryParts.push(`Saved feedback/preferences for this outfit under discussion:\n${outfitFeedbackText}`)
+    }
+  }
+  const activePieceId = activeContext?.type === 'piece' ? activeContext.id : (body.pieceId || body.piece?.id || null)
+  if (activePieceId) {
+    const pieceFeedbackText = getStylistFeedbackMemory('piece', activePieceId, 16)
+    if (pieceFeedbackText) {
+      feedbackMemoryParts.push(`Saved feedback/preferences for this active garment:\n${pieceFeedbackText}`)
+    }
+  }
+  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
+  if (globalFeedbackText) {
+    feedbackMemoryParts.push(`Global saved stylist feedback/preferences:\n${globalFeedbackText}`)
+  }
+
+  const savedFeedbackSection = feedbackMemoryParts.length
+    ? [
+        '',
+        'SAVED STYLIST FEEDBACK & PREFERENCES (HIGH-AUTHORITY MEMORIES):',
+        'You MUST strictly respect and conform to the saved user preferences and corrections below. Stated preferences/dislikes take absolute precedence over generic style advice.',
+        ...feedbackMemoryParts
+      ].join('\n')
+    : ''
 
   const system = STYLIST_SYSTEM + [
     '',
@@ -3612,6 +3652,7 @@ export async function buildStylistConversationPayload(body) {
     attachedImageInventory.length
       ? `CURRENT ATTACHED IMAGE INVENTORY:\n${attachedImageInventory.map(item => `- ${item}`).join('\n')}`
       : '',
+    savedFeedbackSection,
     '',
     'CURRENT WARDROBE TRUTH:',
     activeWardrobeText,
@@ -3660,7 +3701,8 @@ export async function buildStylistConversationPayload(body) {
       ...(history || []).map(h => ({ role: h.role, content: h.content })),
       { role: 'user', content: userContent }
     ],
-    maxTokens: 1500
+    maxTokens: 1500,
+    automaticallySavedCorrection
   }
 }
 
