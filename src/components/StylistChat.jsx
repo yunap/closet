@@ -740,32 +740,55 @@ export default function AskClaude({
       }
       return 'top'
     }
-
     const getPreviewPieces = (outfit) => {
       const list = []
+      const seenCategories = new Set()
+
       if (activeContext) {
+        const cat = activeContext.category || 'top'
         list.push({
           id: 'active',
           name: activeContext.name,
-          category: activeContext.category || 'top',
+          category: cat,
           color: detectColor(activeContext.colors?.[0] || activeContext.name, '#888888'),
           isAnchor: true
         })
+        seenCategories.add(cat)
       }
+
+      const rawPieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+      rawPieces.forEach((raw) => {
+        const piece = hydrateDisplayPiece(raw)
+        if (activeContext && Number(piece.id) === Number(activeContext.id)) return
+        const cat = piece.category
+        if (cat && !seenCategories.has(cat)) {
+          list.push({
+            id: piece.id,
+            name: piece.name,
+            category: cat,
+            color: detectColor(piece.colors?.[0] || piece.name, '#888888'),
+            isAnchor: false
+          })
+          seenCategories.add(cat)
+        }
+      })
+
       const additions = Array.isArray(outfit.missingPieces) ? outfit.missingPieces : []
       additions.forEach((addition, addIdx) => {
         const cat = detectCategory(addition)
-        list.push({
-          id: `addition-${addIdx}`,
-          name: addition,
-          category: cat,
-          color: detectColor(addition, '#c8c8c8'),
-          isAnchor: false
-        })
+        if (cat && !seenCategories.has(cat)) {
+          list.push({
+            id: `addition-${addIdx}`,
+            name: addition,
+            category: cat,
+            color: detectColor(addition, '#c8c8c8'),
+            isAnchor: false
+          })
+          seenCategories.add(cat)
+        }
       })
       return list
     }
-
     const renderCSSPreview = (outfit) => {
       const pieces = getPreviewPieces(outfit)
       const accessoryPiece = pieces.find(p => p.category === 'accessory')
@@ -1034,8 +1057,7 @@ export default function AskClaude({
           const hasRendered = Boolean(boardResults[boardKey]?.length)
           const isRendering = boardLoadingIndex === boardKey
           const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
-          const showSilhouette = activeContext?.type === 'piece' && isPreview
-
+          const showSilhouette = isPreview && !isTextOnly
           return (
             <div key={idx} style={{
               padding: '10px 12px',
