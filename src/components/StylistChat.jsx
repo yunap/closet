@@ -744,7 +744,22 @@ export default function AskClaude({
       const list = []
       const seenCategories = new Set()
 
-      if (activeContext) {
+      // Look up target piece from outfit.pieceId first, then fallback to activeContext
+      const targetPieceId = outfit.pieceId || (activeContext?.type === 'piece' ? activeContext.id : null)
+      const targetPiece = targetPieceId ? pieces.find(p => Number(p.id) === Number(targetPieceId)) : null
+
+      if (targetPiece) {
+        const cat = targetPiece.category || 'top'
+        list.push({
+          id: 'active',
+          name: targetPiece.name,
+          category: cat,
+          color: detectColor(targetPiece.colors?.[0] || targetPiece.name, '#888888'),
+          colors: targetPiece.colors || [],
+          isAnchor: true
+        })
+        seenCategories.add(cat)
+      } else if (activeContext) {
         const cat = activeContext.category || 'top'
         const fullPiece = pieces.find(p => Number(p.id) === Number(activeContext.id))
         const colors = fullPiece?.colors || activeContext.colors || []
@@ -762,6 +777,7 @@ export default function AskClaude({
       const rawPieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
       rawPieces.forEach((raw) => {
         const piece = hydrateDisplayPiece(raw)
+        if (targetPieceId && Number(piece.id) === Number(targetPieceId)) return
         if (activeContext && Number(piece.id) === Number(activeContext.id)) return
         const cat = piece.category
         if (cat && !seenCategories.has(cat)) {
