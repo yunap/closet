@@ -746,11 +746,14 @@ export default function AskClaude({
 
       if (activeContext) {
         const cat = activeContext.category || 'top'
+        const fullPiece = pieces.find(p => Number(p.id) === Number(activeContext.id))
+        const colors = fullPiece?.colors || activeContext.colors || []
         list.push({
           id: 'active',
           name: activeContext.name,
           category: cat,
-          color: detectColor(activeContext.colors?.[0] || activeContext.name, '#888888'),
+          color: detectColor(colors[0] || activeContext.name, '#888888'),
+          colors: colors,
           isAnchor: true
         })
         seenCategories.add(cat)
@@ -767,6 +770,7 @@ export default function AskClaude({
             name: piece.name,
             category: cat,
             color: detectColor(piece.colors?.[0] || piece.name, '#888888'),
+            colors: piece.colors || [],
             isAnchor: false
           })
           seenCategories.add(cat)
@@ -782,6 +786,7 @@ export default function AskClaude({
             name: addition,
             category: cat,
             color: detectColor(addition, '#c8c8c8'),
+            colors: [],
             isAnchor: false
           })
           seenCategories.add(cat)
@@ -789,171 +794,183 @@ export default function AskClaude({
       })
       return list
     }
-    const renderCSSPreview = (outfit) => {
+
+    const getSwatchStyle = (piece) => {
+      const textToSearch = `${piece.name} ${Array.isArray(piece.colors) ? piece.colors.join(' ') : (piece.colors || '')}`.toLowerCase()
+      
+      const foundColors = []
+      for (const colorName of Object.keys(KNOWN_COLORS)) {
+        if (['stripe', 'print', 'floral', 'multi'].includes(colorName)) continue
+        const regex = new RegExp(`\\b${colorName}\\b`)
+        if (regex.test(textToSearch)) {
+          foundColors.push(colorName)
+        }
+      }
+
+      const isStripe = textToSearch.includes('stripe') || textToSearch.includes('striped')
+      const isPrint = textToSearch.includes('print') || textToSearch.includes('printed') || textToSearch.includes('pattern') || textToSearch.includes('patterned') || textToSearch.includes('floral') || textToSearch.includes('flower')
+      const isKnit = textToSearch.includes('knit') || textToSearch.includes('patchwork') || textToSearch.includes('marled') || textToSearch.includes('mixed') || textToSearch.includes('multi')
+
+      let background = '#d0d2d4'
+      let label = ''
+
+      if (isStripe) {
+        const c1 = foundColors[0] ? KNOWN_COLORS[foundColors[0]] : '#888888'
+        const c2 = foundColors[1] ? KNOWN_COLORS[foundColors[1]] : '#f9f9fb'
+        background = `repeating-linear-gradient(45deg, ${c1}, ${c1} 4px, ${c2} 4px, ${c2} 8px)`
+        label = foundColors.length ? `${foundColors.join('/')} stripe` : 'stripe'
+      } else if (isKnit) {
+        const c1 = foundColors[0] ? KNOWN_COLORS[foundColors[0]] : '#888888'
+        const c2 = foundColors[1] ? KNOWN_COLORS[foundColors[1]] : '#b3b6b7'
+        background = `repeating-linear-gradient(-45deg, ${c1}, ${c1} 3px, ${c2} 3px, ${c2} 6px)`
+        label = foundColors.length ? `${foundColors.join('/')} knit` : 'mixed knit'
+      } else if (isPrint) {
+        const c1 = foundColors[0] ? KNOWN_COLORS[foundColors[0]] : '#888888'
+        const c2 = foundColors[1] ? KNOWN_COLORS[foundColors[1]] : '#e6dfd3'
+        background = `repeating-linear-gradient(90deg, ${c1}, ${c1} 5px, ${c2} 5px, ${c2} 10px)`
+        label = foundColors.length ? `${foundColors.join('/')} print` : 'print'
+      } else {
+        const colorName = foundColors[0]
+        background = colorName ? KNOWN_COLORS[colorName] : (piece.color || '#d0d2d4')
+        label = colorName || piece.name.toLowerCase().split(' ')[0] || 'neutral'
+      }
+
+      return { background, label }
+    }
+
+    const getProportions = (pieces) => {
+      const hasOuterwear = pieces.some(p => p.category === 'outerwear')
+      const hasDress = pieces.some(p => p.category === 'dress')
+      const hasTop = pieces.some(p => p.category === 'top')
+      const hasBottom = pieces.some(p => p.category === 'bottom')
+      const hasShoes = pieces.some(p => p.category === 'shoes')
+      const hasAccessory = pieces.some(p => p.category === 'accessory')
+
+      let weights = {}
+      if (hasDress) {
+        weights.dress = hasOuterwear ? 55 : 85
+        if (hasOuterwear) weights.outerwear = 30
+        if (hasTop) weights.top = 5
+        weights.bottom = 0
+      } else {
+        if (hasOuterwear) {
+          weights.outerwear = 35
+          weights.top = hasTop ? 15 : 0
+          weights.bottom = hasBottom ? 35 : 0
+        } else {
+          weights.top = hasTop ? 40 : 0
+          weights.bottom = hasBottom ? 45 : 0
+        }
+      }
+      weights.shoes = hasShoes ? 10 : 0
+      weights.accessory = hasAccessory ? 5 : 0
+
+      let totalWeight = Object.values(weights).reduce((sum, w) => sum + w, 0)
+      if (totalWeight === 0) {
+        const count = pieces.length
+        return pieces.map(p => ({ ...p, percentage: Math.round(100 / count) }))
+      }
+
+      const result = pieces.map(p => {
+        const catWeight = weights[p.category] || 0
+        const shareCount = pieces.filter(x => x.category === p.category).length || 1
+        const weight = catWeight / shareCount
+        const percentage = Math.round((weight / totalWeight) * 100)
+        return {
+          ...p,
+          percentage
+        }
+      })
+
+      const sumPercentage = result.reduce((sum, p) => sum + p.percentage, 0)
+      if (sumPercentage !== 100 && result.length > 0) {
+        const diff = 100 - sumPercentage
+        let maxIdx = 0
+        let maxVal = -1
+        for (let i = 0; i < result.length; i++) {
+          if (result[i].percentage > maxVal) {
+            maxVal = result[i].percentage
+            maxIdx = i
+          }
+        }
+        result[maxIdx].percentage += diff
+      }
+
+      return result.filter(p => p.percentage > 0)
+    }
+
+    const renderColorBalanceBar = (outfit) => {
       const pieces = getPreviewPieces(outfit)
-      const accessoryPiece = pieces.find(p => p.category === 'accessory')
-      const outerwearPiece = pieces.find(p => p.category === 'outerwear')
-      const topPiece = pieces.find(p => p.category === 'top')
-      const bottomPiece = pieces.find(p => p.category === 'bottom')
-      const dressPiece = pieces.find(p => p.category === 'dress')
-      const shoesPiece = pieces.find(p => p.category === 'shoes')
-
-      const isSkirt = bottomPiece && (
-        bottomPiece.name.toLowerCase().includes('skirt') || 
-        bottomPiece.name.toLowerCase().includes('midi') ||
-        bottomPiece.name.toLowerCase().includes('mini')
-      )
-
-      const isWidePants = bottomPiece && (
-        bottomPiece.name.toLowerCase().includes('wide') ||
-        bottomPiece.name.toLowerCase().includes('flare') ||
-        bottomPiece.name.toLowerCase().includes('linen')
-      )
+      const proportioned = getProportions(pieces)
 
       return (
-        <div className="silhouette-preview" style={{
-          width: 90,
-          height: 145,
-          background: 'var(--surface-3, #fdfdfb)',
-          border: '1px solid var(--border-light)',
-          borderRadius: 10,
+        <div style={{
           display: 'flex',
           flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '6px 4px',
-          flexShrink: 0,
-          position: 'relative',
-          overflow: 'hidden',
-          boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.03)'
+          gap: 6,
+          marginTop: 6,
+          marginBottom: 6
         }}>
-          {/* Accessory */}
-          {accessoryPiece && (
-            <div style={{
-              width: 20,
-              height: 6,
-              borderRadius: 3,
-              background: accessoryPiece.color,
-              marginBottom: 3,
-              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
-            }} title={accessoryPiece.name} />
-          )}
-
-          {/* Top / Outerwear / Dress Bodice */}
-          {dressPiece ? (
-            <div style={{
-              width: 44,
-              height: 80,
-              borderRadius: '6px 6px 16px 16px',
-              background: dressPiece.color,
-              position: 'relative',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-            }} title={dressPiece.name} />
-          ) : (
-            <>
-              {outerwearPiece ? (
-                <div style={{
-                  width: 44,
-                  height: 34,
-                  borderRadius: 6,
-                  background: outerwearPiece.color,
-                  position: 'relative',
-                  display: 'flex',
-                  justifyContent: 'center',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                }} title={outerwearPiece.name}>
-                  <div style={{
-                    width: 18,
-                    height: 34,
-                    background: topPiece ? topPiece.color : '#eaeaea',
-                    borderLeft: '1px solid rgba(0,0,0,0.15)',
-                    borderRight: '1px solid rgba(0,0,0,0.15)',
-                  }} title={topPiece?.name || 'Inner top'} />
-                </div>
-              ) : (
-                <div style={{
-                  width: 44,
-                  height: 34,
-                  borderRadius: 6,
-                  background: topPiece ? topPiece.color : 'transparent',
-                  border: topPiece ? 'none' : '1px dashed var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: topPiece ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                }} title={topPiece?.name || 'No top'} />
-              )}
-
-              {/* Bottom (Skirt or Pants legs) */}
-              {bottomPiece ? (
-                isSkirt ? (
-                  <div style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: '2px 2px 14px 14px',
-                    background: bottomPiece.color,
-                    marginTop: 3,
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                  }} title={bottomPiece.name} />
-                ) : (
-                  <div style={{
-                    width: 44,
-                    height: 44,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    marginTop: 3
-                  }} title={bottomPiece.name}>
-                    <div style={{
-                      width: isWidePants ? 20 : 18,
-                      height: 44,
-                      borderRadius: '2px 2px 4px 4px',
-                      background: bottomPiece.color,
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                    }} />
-                    <div style={{
-                      width: isWidePants ? 20 : 18,
-                      height: 44,
-                      borderRadius: '2px 2px 4px 4px',
-                      background: bottomPiece.color,
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                    }} />
-                  </div>
-                )
-              ) : (
-                <div style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 4,
-                  border: '1px dashed var(--border)',
-                  marginTop: 3
-                }} />
-              )}
-            </>
-          )}
-
-          {/* Shoes */}
           <div style={{
+            fontSize: 11,
+            color: 'var(--text-light)',
+            fontWeight: 500,
             display: 'flex',
-            justifyContent: 'center',
-            gap: 4,
-            marginTop: 4
+            flexDirection: 'column',
+            gap: 4
           }}>
+            <span style={{ fontSize: 11, fontWeight: 600 }}>Color balance</span>
             <div style={{
-              width: 18,
-              height: 8,
-              borderRadius: '3px 1px 1px 3px',
-              background: shoesPiece ? shoesPiece.color : 'transparent',
-              border: shoesPiece ? 'none' : '1px dashed var(--border)',
-              boxShadow: shoesPiece ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'
-            }} title={shoesPiece?.name || 'No shoes'} />
-            <div style={{
-              width: 18,
-              height: 8,
-              borderRadius: '1px 3px 3px 1px',
-              background: shoesPiece ? shoesPiece.color : 'transparent',
-              border: shoesPiece ? 'none' : '1px dashed var(--border)',
-              boxShadow: shoesPiece ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'
-            }} title={shoesPiece?.name || 'No shoes'} />
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '4px 8px',
+              fontSize: 10,
+              color: 'var(--text-muted)'
+            }}>
+              {proportioned.map((p, pIdx) => {
+                const swatch = getSwatchStyle(p)
+                return (
+                  <span key={pIdx} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{
+                      width: 9,
+                      height: 9,
+                      borderRadius: 2,
+                      background: swatch.background,
+                      border: '1px solid rgba(0,0,0,0.1)',
+                      display: 'inline-block'
+                    }} />
+                    <span>{swatch.label} {p.percentage}%</span>
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+          <div style={{
+            width: '100%',
+            maxWidth: 240,
+            height: 10,
+            borderRadius: 5,
+            overflow: 'hidden',
+            display: 'flex',
+            border: '1px solid var(--border-light)',
+            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)',
+            background: 'var(--surface-3)'
+          }}>
+            {proportioned.map((p, pIdx) => {
+              const swatch = getSwatchStyle(p)
+              return (
+                <div
+                  key={pIdx}
+                  title={`${swatch.label} (${p.percentage}%)`}
+                  style={{
+                    width: `${p.percentage}%`,
+                    height: '100%',
+                    background: swatch.background,
+                    transition: 'width 0.3s ease'
+                  }}
+                />
+              )
+            })}
           </div>
         </div>
       )
@@ -1069,13 +1086,12 @@ export default function AskClaude({
               gap: 12,
               alignItems: 'flex-start'
             }}>
-              {showSilhouette && renderCSSPreview(outfit)}
-
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
-                <div style={{ fontSize: 10, color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{strength}</div>
-              </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
+                  <div style={{ fontSize: 10, color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{strength}</div>
+                </div>
+                {showSilhouette && renderColorBalanceBar(outfit)}
               {(outfit.missionLabel || outfit.dominantDirection || outfit.silhouette || outfit.bestFor) && (
                 <div style={{ display: 'grid', gap: 2, marginTop: 6, fontSize: 13, color: 'var(--text-light)', lineHeight: 1.45 }}>
                   {outfit.missionLabel && <div><strong>Mission:</strong> {outfit.missionLabel}</div>}
