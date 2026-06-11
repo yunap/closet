@@ -388,6 +388,7 @@ Rules:
 - For owned pieces, use exact candidate ids and names.
 - In closet-only mode, use owned candidate ids only.
 - In ideal mode, include one best owned direction and one ideal missing-piece completion.
+- If a specific weather mood (e.g. "it is really hot", sweltering, heat, summer, freezing, cold, winter) is provided, the outfits must visibly and realistically adapt to that weather. Do not let default grounding rules (like requiring dark columns/pants) force heavy long pants/jeans or closed boots in sweltering heat, or light open sandals in the freezing cold. Recommending jeans or long pants as the top choices when the user says it is really hot is a styling failure.
 - Do not recommend replacing the selected garment.
 - Do not use generic wording like harmony, balance, confidence, flattering, draws attention upward.
 - Do not recommend tucking unless garment truth supports it.`
