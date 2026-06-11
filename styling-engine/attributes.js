@@ -131,6 +131,11 @@ export function patternLoudness(p) {
 export function isExpressiveForAnchor(p) {
   const loudness = patternLoudness(p)
   if (loudness === 'loud' || loudness === 'medium') {
+    // Exclude knit casual basics (tees, sweatshirts, hoodies) from anchor-gate expressiveness
+    const kind = garmentKind(p)
+    if (kind === 'tee' || kind === 'sweatshirt' || kind === 'hoodie') {
+      return false
+    }
     return pieceSoftness(p) >= 1
   }
   return false
