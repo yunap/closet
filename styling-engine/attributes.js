@@ -128,17 +128,68 @@ export function patternLoudness(p) {
   return 'solid'
 }
 
-export function groundingLevel(p) {
-  // Returns integer 0..3 representing how much visual grounding the garment provides.
-  // 3: strong anchor, 2: moderate anchor, 1: light anchor, 0: floating/soft.
+export function isExpressiveForAnchor(p) {
+  const loudness = patternLoudness(p)
+  if (loudness === 'loud' || loudness === 'medium') {
+    return pieceSoftness(p) >= 1
+  }
+  return false
+}
+
+export function pieceSoftness(p) {
+  const readsAs = String(p.reads_as || '').toLowerCase()
+  const name = String(p.name || '').toLowerCase()
+  const profile = p.style_profile_json || {}
+  const bestUse = String(profile.style_notes?.best_use || '').toLowerCase()
+  const lanes = profile.style_lanes || {}
+  const drapeNotes = String(profile.real_wear_notes?.drape || '').toLowerCase()
+  const fitNotes = String(profile.real_wear_notes?.fit || '').toLowerCase()
+
+  const delicacyKeywords = ['sheer', 'lace', 'silk', 'chiffon', 'gauze', 'drapey', 'drape', 'satin', 'delicate', 'romantic']
+  const hasDelicacySignal = 
+    textIncludesAny(readsAs, delicacyKeywords) ||
+    textIncludesAny(name, delicacyKeywords) ||
+    textIncludesAny(bestUse, delicacyKeywords) ||
+    (lanes.romantic_soft > 0) ||
+    (lanes.boho_romantic > 0) ||
+    textIncludesAny(drapeNotes, ['drape', 'fluid', 'soft', 'flow', 'flowing']) ||
+    textIncludesAny(fitNotes, ['drape', 'fluid', 'soft', 'flow', 'flowing'])
+
+  let softnessScore = 0
+  if (hasDelicacySignal) {
+    softnessScore += 2
+  }
+
+  // Fabric weight as a secondary contributor
+  if (fabricWeight(p) === 'light') {
+    softnessScore += 1
+  }
+
+  // If there are general softness keywords in reads_as or name but no primary delicacy signal
+  if (!hasDelicacySignal) {
+    if (textIncludesAny(readsAs, ['relaxed', 'loose', 'soft']) || textIncludesAny(name, ['relaxed', 'loose', 'soft'])) {
+      softnessScore += 1
+    }
+  }
+
+  return softnessScore
+}
+
+export function pieceGroundingValue(p) {
   const blob = pieceTextBlob(p)
   const colors = (p.colors || []).map(c => String(c).toLowerCase())
   const dark = colors.some(c => ['black','navy','denim','brown','charcoal','dark grey','dark gray','deep navy','chocolate'].includes(c)) || textIncludesAny(blob, ['black','navy','dark denim','dark blue','charcoal','brown','chocolate'])
   const light = colors.some(c => ['white','cream','beige','taupe','oatmeal','ivory','nude'].includes(c)) || textIncludesAny(blob, ['white','cream','beige','oatmeal','ivory','nude','light'])
-  const denseTexture = textIncludesAny(blob, ['denim','corduroy','wool','twill','utility','canvas','leather','structured','pencil','maxi','crochet','heavy','substantial','ribbed'])
-  const airyTexture = textIncludesAny(blob, ['lace','gauzy','chiffon','sheer','silk','satin','delicate','soft floral','airy','lightweight'])
-  const longLine = textIncludesAny(blob, ['maxi','midi','full length','full-length','long','straight','flare','bootcut','wide-leg','wide leg','column','pencil'])
-  const abrupt = textIncludesAny(blob, ['mini','short','cropped','crop','knee-length','knee length'])
+  const denseTexture = fabricWeight(p) === 'heavy' || textIncludesAny(blob, ['denim','corduroy','wool','twill','utility','canvas','leather','structured','pencil','maxi','crochet','heavy','substantial','ribbed'])
+  const airyTexture = fabricWeight(p) === 'light' || textIncludesAny(blob, ['lace','gauzy','chiffon','sheer','silk','satin','delicate','soft floral','airy','lightweight'])
+
+  const bKind = bottomKind(p)
+  const isMini = bKind === 'skirt-mini' || bKind === 'shorts'
+  const isMaxi = bKind === 'skirt-maxi'
+  const isMidi = bKind === 'skirt-midi'
+
+  const longLine = isMaxi || isMidi || textIncludesAny(blob, ['maxi','midi','full length','full-length','long','straight','flare','bootcut','wide-leg','wide leg','column','pencil'])
+  const abrupt = isMini || textIncludesAny(blob, ['mini','short','cropped','crop','knee-length','knee length'])
 
   let grounding = 0
   if (dark) grounding += 3
@@ -148,6 +199,23 @@ export function groundingLevel(p) {
   if (airyTexture) grounding -= 2
   if (abrupt) grounding -= 2
 
+  // Fix B: Grounding accounts for garment length/coverage
+  // Shorts and mini-length bottoms cap at 2 regardless of fabric density
+  if (p.category === 'bottom' && isMini) {
+    return Math.min(grounding, 2)
+  }
+
+  return grounding
+}
+
+export function pieceStructureValue(p) {
+  const blob = pieceTextBlob(p)
+  const denseTexture = fabricWeight(p) === 'heavy' || textIncludesAny(blob, ['denim','corduroy','wool','twill','utility','canvas','leather','structured','pencil','maxi','crochet','heavy','substantial','ribbed'])
+  return (denseTexture ? 2 : 0) + (textIncludesAny(blob, ['tailored','structured','utility','straight','pencil','crisp','button-up','button down','button-down']) ? 1 : 0)
+}
+
+export function groundingLevel(p) {
+  const grounding = pieceGroundingValue(p)
   if (grounding >= 4) return 3
   if (grounding >= 2) return 2
   if (grounding >= 0) return 1

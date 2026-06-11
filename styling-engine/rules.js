@@ -8,7 +8,11 @@ import {
   patternLoudness,
   groundingLevel,
   styleLanes,
-  garmentKind
+  garmentKind,
+  pieceSoftness,
+  pieceGroundingValue,
+  pieceStructureValue,
+  isExpressiveForAnchor
 } from './attributes.js'
 
 export function isStyleSelectedQuestion(question = '') {
@@ -168,32 +172,10 @@ export function pieceHasFocalColor(piece, focalColors) {
 
 
 export function visualWeightProfile(p) {
-  const blob = pieceTextBlob(p)
-  const dark = colorFamily(p) === 'dark-anchor'
-  const light = colorFamily(p) === 'soft-neutral'
-  const denseTexture = fabricWeight(p) === 'heavy' || textIncludesAny(blob, ['denim','corduroy','wool','twill','utility','canvas','leather','structured','pencil','maxi','crochet','heavy','substantial','ribbed'])
-  const airyTexture = fabricWeight(p) === 'light' || textIncludesAny(blob, ['lace','gauzy','chiffon','sheer','silk','satin','delicate','soft floral','airy','lightweight'])
-
-  const bKind = bottomKind(p)
-  const isMini = bKind === 'skirt-mini' || bKind === 'shorts'
-  const isMaxi = bKind === 'skirt-maxi'
-  const isMidi = bKind === 'skirt-midi'
-
-  const longLine = isMaxi || isMidi || textIncludesAny(blob, ['maxi','midi','full length','full-length','long','straight','flare','bootcut','wide-leg','wide leg','column','pencil'])
-  const abrupt = isMini || textIncludesAny(blob, ['mini','short','cropped','crop','knee-length','knee length'])
-  
-  let grounding = 0
-  if (dark) grounding += 3
-  if (denseTexture) grounding += 2
-  if (longLine) grounding += 2
-  if (light) grounding -= 1
-  if (airyTexture) grounding -= 2
-  if (abrupt) grounding -= 2
-
-  const expressive = patternLoudness(p) === 'loud' || patternLoudness(p) === 'medium'
-  const softness = (airyTexture ? 2 : 0) + (textIncludesAny(blob, ['relaxed','drape','loose','gauzy','soft']) ? 1 : 0)
-  const structure = (denseTexture ? 2 : 0) + (textIncludesAny(blob, ['tailored','structured','utility','straight','pencil','crisp','button-up','button down','button-down']) ? 1 : 0)
-
+  const softness = pieceSoftness(p)
+  const expressive = isExpressiveForAnchor(p)
+  const grounding = pieceGroundingValue(p)
+  const structure = pieceStructureValue(p)
   const lanes = styleLanes(p)
 
   return {
@@ -202,7 +184,7 @@ export function visualWeightProfile(p) {
     softness,
     structure,
     expressive,
-    lanes: [...new Set(lanes)].slice(0,3)
+    lanes: [...new Set(lanes)].slice(0, 3)
   }
 }
 

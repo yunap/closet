@@ -12,4 +12,5 @@ scratch/*
 !scratch/check_text_matching_ratchet.js
 !scratch/ratchet_baseline.json
 !scratch/rankings_ab_diff_report.md
+!scratch/diagnose_anchor_selectivity.js
 
