@@ -8,6 +8,7 @@ import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
 
 import {
   prepareImageForClaude,
+  prepareWardrobeThumb,
   contentToOpenAI,
   askStylist,
   askStylistWithTools,
@@ -22,6 +23,7 @@ import {
   STYLE_SELECTED_ITEM_FEW_SHOTS,
   OUTFIT_BOARD_PLANNER_SYSTEM,
   WHOLE_WARDROBE_AGENT_SYSTEM,
+  WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
   EDITORIAL_NEW_PIECES_SYSTEM,
   RENDERER_CALIBRATION_SYSTEM,
   COMPARE_OUTFITS_SYSTEM,
@@ -31,6 +33,7 @@ import {
 
 import {
   isStyleSelectedQuestion,
+  weatherProfileFromContext,
   complementaryWardrobeFor,
   categoryConstraintForSelectedPiece,
   idealAdditionAnchorConstraint,
@@ -92,6 +95,7 @@ import {
   createOutfitBoardImage,
   createWholeWardrobeOutfitImage,
   createWholeWardrobeComparisonSheetImage,
+  createIdealAdditionsComparisonSheetImage,
   createSavedOutfitImage,
   evaluateOutfitThroughSharedPipeline,
   createEditorialConceptImage,
@@ -1020,15 +1024,24 @@ router.post('/evaluate-piece', async (req, res) => {
 // ── AI Outfit Generation ──────────────────────────────────────────────────────
 router.post('/generate-outfits-for-piece', async (req, res) => {
   const { pieceId, occasion = 'casual', season = 'current season', mission = 'mix', mood = '', question, history, includeMissingPieces = false, idealOnly = false } = req.body
+  console.log(`\n[0] 🧥 POST /api/ai/generate-outfits-for-piece called:`)
+  console.log(`    - pieceId: ${pieceId}`)
+  console.log(`    - occasion: "${occasion}" | season: "${season}" | mission: "${mission}" | mood: "${mood}"`)
+  console.log(`    - includeMissingPieces: ${includeMissingPieces} | idealOnly: ${idealOnly}`)
   try {
     const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
-    if (!piece) return res.status(404).json({ error: 'Piece not found' })
+    if (!piece) {
+      console.warn(`[0] ⚠️ Piece ID ${pieceId} not found in database.`)
+      return res.status(404).json({ error: 'Piece not found' })
+    }
 
     const parsedPiece = parsePiece(piece)
     const idealMode = Boolean(includeMissingPieces || idealOnly || /ideal|missing|new ideas|do not have|don't have|dont have|not in my wardrobe|wish list|wardrobe gap/i.test(String(question || '')))
     const idealOnlyMode = Boolean(idealOnly || /new ideas|do not limit|not limited|not just my wardrobe|ignore wardrobe|conceptual/i.test(String(question || '')))
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood })
+    const weatherProfile = weatherProfileFromContext({ mood, season })
+    let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile })
+    console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
     const confirmedOutfitsText = getConfirmedOutfitMemory()
     const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
     const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16)
@@ -1087,10 +1100,14 @@ router.post('/generate-outfits-for-piece', async (req, res) => {
     })
 
     let structuredOutfits = Array.isArray(composed.outfits) ? composed.outfits : []
-    if (!structuredOutfits.length && !idealOnlyMode) {
+    if (structuredOutfits.length > 0) {
+      console.log(`    - Successfully generated ${structuredOutfits.length} outfits from AI stylist composer.`)
+    } else if (!idealOnlyMode) {
+      console.log(`    - AI stylist composer returned 0 outfits. Falling back to local wardrobe directions.`)
       structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, rankedCandidates, { occasion })
     }
     if (!structuredOutfits.length) {
+      console.log(`    - Local fallback generated 0 outfits. Using absolute basic backfill.`)
       const candidates = (rankedCandidates || []).map(r => r.piece).filter(Boolean)
       const selectedGroup = wardrobeCategoryGroup(parsedPiece)
       const supporting = candidates.filter(p => Number(p.id) !== Number(parsedPiece.id)).slice(0, 4)
@@ -1131,7 +1148,8 @@ router.post('/generate-outfits-for-piece', async (req, res) => {
       idealMode,
       idealOnlyMode,
       debug: {
-        visualCritic: visualCriticDebug
+        visualCritic: visualCriticDebug,
+        weatherProfile
       }
     })
   } catch (err) {
@@ -1368,6 +1386,153 @@ router.post('/generate-wardrobe-outfits', async (req, res) => {
   }
 })
 
+router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
+  const {
+    occasion = 'casual',
+    season = 'current season',
+    mood = '',
+    limit = 5
+  } = req.body || {}
+
+  try {
+    const routeStartedAt = Date.now()
+    const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
+    const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+
+    // Reuse existing suppression filter (hard filter here — suppressed pieces are simply not shown)
+    const { allowedPieces, suppressedPieces } =
+      filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode: 'moderate' })
+
+    // Session memory (reuse existing)
+    const sessionInfluence = getRecentWholeWardrobeSessionInfluence({ occasion, daysCutoff: 6 })
+    const rotationWarningsText = sessionInfluence.pieceRecency?.size
+      ? `Recently shown garments — avoid unless clearly the best choice: ${
+          [...sessionInfluence.pieceRecency.keys()]
+            .map(id => allowedPieces.find(p => Number(p.id) === Number(id))?.name)
+            .filter(Boolean).join(', ')}`
+      : ''
+
+    // Memory context (reuse existing builders, keep it lean)
+    const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(20)
+    const confirmedOutfitsText = getConfirmedOutfitMemory(8)
+
+    // Build the multimodal content array, grouped by category
+    const groupsOrder = ['top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory']
+    const grouped = new Map(groupsOrder.map(g => [g, []]))
+    for (const p of allowedPieces) {
+      const group = wardrobeCategoryGroup(p) || 'accessory'
+      if (!grouped.has(group)) grouped.set(group, [])
+      grouped.get(group).push(p)
+    }
+
+    const content = []
+    content.push({ type: 'text', text: [
+      `Occasion: ${occasion}`,
+      `Season: ${season}`,
+      mood ? `Mood: ${mood}` : '',
+      `Compose ${requestedLimit} outfits.`,
+      rotationWarningsText,
+      wholeWardrobeFeedbackText ? `Feedback memory (rejected pairings are settled — do not repeat them):\n${wholeWardrobeFeedbackText}` : '',
+      confirmedOutfitsText ? `Confirmed favorite outfits:\n${confirmedOutfitsText}` : '',
+      '',
+      'Below are photos of every available piece, grouped by category. Reference pieces by exact ID.'
+    ].filter(Boolean).join('\n') })
+
+    let shownPieceCount = 0
+    for (const group of grouped.keys()) {
+      const pieces = grouped.get(group)
+      if (!pieces?.length) continue
+      content.push({ type: 'text', text: `=== ${group.toUpperCase()}S ===` })
+      for (const p of pieces) {
+        const photoFile = p.worn_photo || p.photo || ''
+        if (!photoFile) continue
+        const filePath = path.join(uploadsDir, photoFile)
+        if (!fs.existsSync(filePath)) continue
+        const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${photoFile}`)
+        content.push({ type: 'text', text: `ID ${p.id}: ${p.name}` })
+        content.push({ type: 'image', detail: 'low', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+        shownPieceCount++
+      }
+    }
+    const timings = { thumbPrepMs: Date.now() - routeStartedAt }
+
+    // Single model call — no tools
+    let parsed = {}
+    let composerError = null
+    const composerStartedAt = Date.now()
+    try {
+      const raw = await withTimeout(askStylist({
+        system: WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
+        maxTokens: 2200,
+        messages: [{ role: 'user', content }]
+      }), 90000, 'Visual wardrobe composer')
+      timings.composerMs = Date.now() - composerStartedAt
+      parsed = safeJsonFromModel(raw)
+    } catch (err) {
+      composerError = err.message
+      timings.composerMs = timings.composerMs || null
+    }
+
+    // Resolve and validate — IDs must exist; reuse existing normalize/repair/gate
+    const resolved = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
+      const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number) : []
+      const owned = ids.map(id => allowedPieces.find(p => Number(p.id) === id)).filter(Boolean)
+      return { ...outfit, pieceIds: owned.map(p => Number(p.id)), pieces: owned }
+    }).filter(o => o.pieces.length >= 2)
+
+    let structuredOutfits = resolved.map(o =>
+      repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject(o, allowedPieces), allowedPieces, occasion, mood))
+
+    // Light gating only: completeness + dedupe. Do NOT apply formula diversity caps here —
+    // the prompt owns diversity in this workflow. Mission labeling stays post-generation:
+    structuredOutfits = structuredOutfits.slice(0, requestedLimit).map(outfit => {
+      // Dynamic labeling: score the combination across all missions to assign the highest-scoring one
+      let bestMissionId = 'unexpected_pairing'
+      let bestScore = -Infinity
+      const allMissionsList = ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
+      for (const mId of allMissionsList) {
+        const scored = scoreWholeWardrobeCandidate(outfit.pieces, { activeMissionId: mId, occasion })
+        if (scored.score > bestScore) {
+          bestScore = scored.score
+          bestMissionId = mId
+        }
+      }
+      const activeMission = OUTFIT_MISSIONS.find(m => m.id === bestMissionId)
+      return {
+        ...outfit,
+        formulaFamily: outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, allowedPieces, occasion),
+        missionId: bestMissionId,
+        missionLabel: activeMission ? activeMission.label : null
+      }
+    })
+
+    saveWholeWardrobeSession({ occasion, outfits: structuredOutfits })
+
+    res.json({
+      feedback: formatWholeWardrobeOutfitFeedback({
+        occasion, season, mood,
+        outfits: structuredOutfits,
+        skip: parsed.skip || '',
+        saveableLearning: parsed.saveableLearning || ''
+      }),
+      structuredOutfits,
+      provider: AI_PROVIDER,
+      mode: 'generate_wardrobe_outfits_visual',
+      pipeline: 'full_wardrobe_visual_composer',
+      debug: {
+        shownPieceCount,
+        suppressedCount: suppressedPieces.length,
+        aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
+        composerError,
+        timings
+      }
+    })
+  } catch (err) {
+    console.error('Visual wardrobe composer error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── AI Visual Rendering & Boards ──────────────────────────────────────────────
 router.post('/generate-outfit-boards', async (req, res) => {
   const { pieceId, conceptsText = '', structuredOutfits = null, occasion = 'casual', season = 'current season' } = req.body
@@ -1377,7 +1542,7 @@ router.post('/generate-outfit-boards', async (req, res) => {
 
     const selectedPiece = parsePiece(piece)
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const rankedCandidates = selectCandidatesForOutfitGeneration(selectedPiece, allPieces, 48, { occasion })
+    const rankedCandidates = selectCandidatesForOutfitGeneration(selectedPiece, allPieces, 48, { occasion, season })
     const candidatePieces = [selectedPiece, ...rankedCandidates.map(r => r.piece)]
     const allowedIds = new Set(candidatePieces.map(p => Number(p.id)))
     const pieceById = new Map(candidatePieces.map(p => [Number(p.id), p]))
@@ -1514,6 +1679,55 @@ router.post('/generate-wardrobe-outfit-comparison-sheet', async (req, res) => {
     res.json({ ...board, board, provider: AI_PROVIDER, mode: 'generate_wardrobe_outfit_comparison_sheet', debug: board.debug })
   } catch (err) {
     console.error('Generate whole-wardrobe comparison sheet error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/generate-ideal-additions-preview-sheet', async (req, res) => {
+  const { pieceId, directions = [], occasion = 'casual', season = 'current season' } = req.body || {}
+  try {
+    if (!pieceId) return res.status(400).json({ error: 'pieceId is required' })
+    if (!Array.isArray(directions) || directions.length === 0) {
+      return res.status(400).json({ error: 'directions array is required and must not be empty' })
+    }
+
+    const row = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
+    if (!row) return res.status(404).json({ error: 'Selected piece not found' })
+    const selectedPiece = parsePiece(row)
+
+    const rendered = await createIdealAdditionsComparisonSheetImage({
+      selectedPiece,
+      directions,
+      occasion,
+      season
+    })
+
+    const board = {
+      label: 'Ideal additions comparison sheet',
+      reason: `Preview sheet for ${directions.length} directions. Use individual Generate outfit image buttons for final renders.`,
+      pieces: [
+        {
+          id: selectedPiece.id,
+          name: selectedPiece.name,
+          category: wardrobeCategoryGroup(selectedPiece),
+          photo: selectedPiece.photo || null,
+          worn_photo: selectedPiece.worn_photo || null
+        }
+      ],
+      imageUrl: rendered.imageUrl,
+      debug: { timings: rendered.timings, renderer: rendered.renderer },
+      previewOnly: true
+    }
+
+    res.json({
+      ...board,
+      board,
+      provider: AI_PROVIDER,
+      mode: 'generate_ideal_additions_preview_sheet',
+      debug: board.debug
+    })
+  } catch (err) {
+    console.error('Generate ideal additions comparison sheet error:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -1755,7 +1969,7 @@ router.post('/editorial-render-one', async (req, res) => {
     if (!piece) return res.status(404).json({ error: 'Piece not found' })
     const selectedPiece = parsePiece(piece)
 
-    const imageUrl = await createEditorialConceptImage({
+    const rendered = await createEditorialConceptImage({
       selectedPiece,
       direction,
       index: 1,
@@ -1764,12 +1978,16 @@ router.post('/editorial-render-one', async (req, res) => {
     })
 
     res.json({
-      imageUrl,
+      imageUrl: rendered.imageUrl,
       label: direction.title || 'Rendered direction',
       missingPieces: direction.missingPieces || [],
       reason: direction.reason || '',
       watchFor: direction.watchFor || '',
-      mode: 'editorial_render_one'
+      mode: 'editorial_render_one',
+      debug: {
+        timings: rendered.timings,
+        renderer: rendered.renderer
+      }
     })
   } catch (err) {
     console.error('Editorial render-one error:', err)
@@ -1829,13 +2047,17 @@ router.post('/editorial-new-piece-visuals', async (req, res) => {
 
     const visuals = []
     for (const [idx, direction] of directions.slice(0, 3).entries()) {
-      const imageUrl = await createEditorialConceptImage({ selectedPiece, direction, index: idx + 1, occasion, season })
+      const rendered = await createEditorialConceptImage({ selectedPiece, direction, index: idx + 1, occasion, season })
       visuals.push({
         label: direction.title || `Ideal direction ${idx + 1}`,
         reason: direction.reason || '',
         watchFor: direction.watchFor || '',
         missingPieces: Array.isArray(direction.missingPieces) ? direction.missingPieces : [],
-        imageUrl,
+        imageUrl: rendered.imageUrl,
+        debug: {
+          timings: rendered.timings,
+          renderer: rendered.renderer
+        },
         mode: 'editorial_new_piece_visual'
       })
     }
@@ -1999,7 +2221,7 @@ router.post('/generate-calibration-boards', async (req, res) => {
 
     const visuals = []
     for (const [idx, variation] of variations.entries()) {
-      const imageUrl = await createCalibrationConceptImage({ selectedPiece, variation, index: idx + 1, occasion, season })
+      const rendered = await createCalibrationConceptImage({ selectedPiece, variation, index: idx + 1, occasion, season })
       visuals.push({
         label: `${variation.variation || String.fromCharCode(65 + idx)} · ${variation.title || 'Calibration variation'}`,
         variation: variation.variation || String.fromCharCode(65 + idx),
@@ -2007,7 +2229,11 @@ router.post('/generate-calibration-boards', async (req, res) => {
         reason: variation.reason || '',
         watchFor: variation.watchFor || '',
         missingPieces: variation.missingPieces || [],
-        imageUrl,
+        imageUrl: rendered.imageUrl,
+        debug: {
+          timings: rendered.timings,
+          renderer: rendered.renderer
+        },
         mode: 'renderer_calibration',
         calibration: {
           variationType: variation.title || '',

@@ -7,6 +7,100 @@ export function isStyleSelectedQuestion(question = '') {
   return !q.trim() || /style|wear|pair|outfit|how should|how do i|what goes|what would work|proposal|suggest/.test(q)
 }
 
+export function weatherProfileFromContext({ mood = '', season = '' } = {}) {
+  const text = `${mood} ${season}`.toLowerCase()
+  const isHot = /\b(hot|heat|heatwave|sweltering|scorching|humid|90s|100 degrees)\b/.test(text)
+    || /\bsummer\b/.test(text)
+  const isCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
+  return { isHot: isHot && !isCold, isCold: isCold && !isHot }
+}
+
+export function pieceFabricWeight(p) {
+  if (p.fabric_weight) {
+    const fw = String(p.fabric_weight).toLowerCase().trim()
+    if (fw === 'heavy') return 'heavy'
+    if (fw === 'light' || fw === 'lightweight') return 'light'
+    if (fw === 'medium') return 'medium'
+  }
+  const text = `${p.name || ''} ${p.reads_as || ''}`.toLowerCase()
+  if (/\b(wool|denim|corduroy|leather|fleece)\b/i.test(text)) {
+    // TODO: backfill fabric_weight in metadata; remove fallback
+    return 'heavy'
+  }
+  if (/\b(linen|gauze|crinkle|seersucker)\b/i.test(text)) {
+    // TODO: backfill fabric_weight in metadata; remove fallback
+    return 'light'
+  }
+  return 'medium'
+}
+
+export function pieceBareness(p) {
+  if (p.style_profile_json?.bareness) {
+    return String(p.style_profile_json.bareness).toLowerCase().trim()
+  }
+  if (p.sleeve_type && /\b(sleeveless|tank|strapless|halter|camisole)\b/i.test(p.sleeve_type)) {
+    return 'high'
+  }
+  if (p.length_hits_at && /\b(mini|short|mid-thigh|upper-thigh)\b/i.test(p.length_hits_at)) {
+    return 'high'
+  }
+  const text = `${p.name || ''} ${p.reads_as || ''}`.toLowerCase()
+  if (/\b(shorts?|mini|tank|sleeveless|camisole|cami|halter|strapless|sandals?|mules?|crop|cropped|shortie|cut-offs?)\b/i.test(text)) {
+    // TODO: backfill bareness in metadata; remove fallback
+    return 'high'
+  }
+  return 'normal'
+}
+
+export function pieceCoverage(p) {
+  if (p.style_profile_json?.coverage) {
+    return String(p.style_profile_json.coverage).toLowerCase().trim()
+  }
+  if (p.sleeve_type && /\b(long)\b/i.test(p.sleeve_type)) {
+    return 'full-insulating'
+  }
+  if (p.length_hits_at && /\b(full|ankle|floor|maxi)\b/i.test(p.length_hits_at)) {
+    return 'full-insulating'
+  }
+  const text = `${p.name || ''} ${p.reads_as || ''}`.toLowerCase()
+  if (/\b(pants|trousers|jeans|denim|sweaters?|coats?|jackets?|blazers?|boots?|maxi|tunic|cardigans?|trench|parka|turtleneck)\b/i.test(text)) {
+    // TODO: backfill coverage in metadata; remove fallback
+    return 'full-insulating'
+  }
+  return 'normal'
+}
+
+export function bottomKind(p) {
+  const category = String(p.category || '').toLowerCase().trim()
+  if (category !== 'bottom') return 'other'
+  
+  const readsAs = String(p.reads_as || '').toLowerCase()
+  if (/\bskirt\b/i.test(readsAs)) return 'skirt'
+  if (/\b(shorts?|skort)\b/i.test(readsAs)) return 'shorts'
+  if (/\b(pants?|jeans?|trousers?|leggings?|tights?|culottes?)\b/i.test(readsAs)) return 'pants'
+  
+  if (p.style_profile_json?.bottom_kind) {
+    const bk = String(p.style_profile_json.bottom_kind).toLowerCase().trim()
+    if (['skirt', 'shorts', 'pants'].includes(bk)) return bk
+  }
+  
+  const name = String(p.name || '').toLowerCase()
+  if (/\b(skirt|skort)\b/i.test(name)) {
+    // TODO: backfill bottom_kind in metadata; remove fallback
+    return 'skirt'
+  }
+  if (/\b(shorts?|skort|cut-offs?)\b/i.test(name)) {
+    // TODO: backfill bottom_kind in metadata; remove fallback
+    return 'shorts'
+  }
+  if (/\b(pants?|jeans?|trousers?|leggings?|tights?|culottes?)\b/i.test(name)) {
+    // TODO: backfill bottom_kind in metadata; remove fallback
+    return 'pants'
+  }
+  
+  return 'other'
+}
+
 export function wardrobeCategoryGroup(pieceOrCategory = '') {
   const raw = typeof pieceOrCategory === 'string'
     ? pieceOrCategory
@@ -426,6 +520,21 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
   const candidateBlob = pieceTextBlob(candidate)
   const occasion = String(options.occasion || '').toLowerCase().trim()
 
+  // Weather appropriateness — independent term, applies to every candidate
+  const weather = options.weatherProfile || weatherProfileFromContext(options)
+  if (weather.isHot) {
+    if (pieceFabricWeight(candidate) === 'heavy') { score -= 12; reasons.push('hot weather: heavy fabric') }
+    if (pieceFabricWeight(candidate) === 'light') { score += 10; reasons.push('hot weather: lightweight fabric') }
+    if (pieceBareness(candidate) === 'high')      { score += 8;  reasons.push('hot weather: skin-friendly cut') }
+    if (pieceCoverage(candidate) === 'full-insulating') { score -= 8; reasons.push('hot weather: insulating coverage') }
+  }
+  if (weather.isCold) {
+    if (pieceFabricWeight(candidate) === 'heavy') { score += 10; reasons.push('cold weather: heavy fabric') }
+    if (pieceFabricWeight(candidate) === 'light') { score -= 12; reasons.push('cold weather: lightweight fabric') }
+    if (pieceBareness(candidate) === 'high')      { score -= 8;  reasons.push('cold weather: skin-friendly cut') }
+    if (pieceCoverage(candidate) === 'full-insulating') { score += 8;  reasons.push('cold weather: insulating coverage') }
+  }
+
   if (candidate.favorite) { score += 4; reasons.push('favorite') }
   if (hasPairingReference(selected, candidate) || hasPairingReference(candidate, selected)) {
     score += 16; reasons.push('confirmed pairing note')
@@ -469,11 +578,20 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
     if (candidate.category === 'top') { score -= 60; reasons.push('competing top') }
 
     if (candidate.category === 'bottom') {
-      const selectedIsButtonOrTunic = textIncludesAny(selectedBlob, ['button-up', 'button up', 'button-down', 'button down', 'shirt', 'tunic', 'popover', 'longline'])
+      const cleanSelectedBlob = selectedBlob.replace(/\b(t-shirt|sweatshirt|tee-shirt|tee shirt|t shirt)\b/gi, '')
+      const selectedIsButtonOrTunic = (
+        textIncludesAny(cleanSelectedBlob, ['button-up', 'button up', 'button-down', 'button down', 'tunic', 'popover', 'longline']) ||
+        /\bshirt\b/i.test(cleanSelectedBlob)
+      )
       const selectedIsCompactTop = textIncludesAny(selectedBlob, ['shell', 'sleeveless', 'tank', 'compact', 'cropped', 'short sleeve', 'short-sleeve', 'fitted knit', 'fitted top']) && !selectedIsButtonOrTunic
-      const bottomIsPantsColumn = textIncludesAny(candidateBlob, ['jeans', 'denim', 'pants', 'trousers', 'straight', 'slim', 'bootcut', 'flare', 'wide-leg', 'wide leg', 'column', 'dark', 'navy', 'black', 'brown'])
-      const bottomIsAbruptSkirt = textIncludesAny(candidateBlob, ['mini', 'knee-length', 'knee length', 'short skirt', 'colorblock knit mini', 'skort'])
-      const bottomIsUsefulSkirt = textIncludesAny(candidateBlob, ['pencil', 'midi', 'maxi', 'straight skirt'])
+      
+      const bKind = bottomKind(candidate)
+      const bottomIsSkirt = bKind === 'skirt'
+      const bottomIsShorts = bKind === 'shorts'
+      const bottomIsPantsColumn = bKind === 'pants' && textIncludesAny(candidateBlob, ['jeans', 'denim', 'pants', 'trousers', 'straight', 'slim', 'bootcut', 'flare', 'wide-leg', 'wide leg', 'column', 'dark', 'navy', 'black', 'brown'])
+      
+      const bottomIsAbruptSkirt = bottomIsSkirt && textIncludesAny(candidateBlob, ['mini', 'knee-length', 'knee length', 'short skirt', 'colorblock knit mini', 'skort'])
+      const bottomIsUsefulSkirt = bottomIsSkirt && textIncludesAny(candidateBlob, ['pencil', 'midi', 'maxi', 'straight skirt'])
       const selectedWeight = visualWeightProfile(selected)
       const candidateWeight = visualWeightProfile(candidate)
       const selectedNeedsAnchor = selectedWeight.softness >= 2 || (selectedWeight.expressive && textIncludesAny(selectedBlob, ['lace','floral','appliqué','applique','sheer','cream','white','pale','soft']))
@@ -639,7 +757,7 @@ export function buildOutfitGenerationCandidateText(rankedCandidates) {
   return rankedCandidates.map((r, idx) => {
     const p = r.piece
     const reasons = r.reasons?.length ? `\n  WHY RETRIEVED: ${r.reasons.slice(0, 5).join('; ')} | score ${r.score}` : ''
-    return `${idx + 1}. ${buildPieceText(p)}${reasons}`
+    return `${idx + 1}. [garment id: ${p.id}] ${buildPieceText(p)}${reasons}`
   }).join('\n')
 }
 

@@ -269,7 +269,7 @@ function mockAiHandler({ system, messages }) {
     }
   }
 
-  if (text.includes('personal visual stylist agent') || text.includes('whole-wardrobe outfit composer')) {
+  if (text.includes('personal visual stylist agent') || text.includes('whole-wardrobe outfit composer') || text.includes("You are Yuna's personal stylist. You are looking at photos")) {
     return {
       outfits: [{
         label: 'Mock city column',
@@ -454,6 +454,63 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 0)
 })
 
+test('visual wardrobe composer endpoint returns outfits and populates debug shownPieceCount', async () => {
+  // Clear any pre-existing calls
+  aiCalls = []
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'current season',
+    mood: 'modern bohemian',
+    limit: 3,
+  })
+
+  assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
+  assert.equal(json.pipeline, 'full_wardrobe_visual_composer')
+  assert.ok(Array.isArray(json.structuredOutfits))
+  assert.ok(json.structuredOutfits.length >= 1)
+  assert.ok(json.debug.shownPieceCount > 0)
+  assert.ok(json.debug.aiReturnedCount >= 1)
+
+  // Verify that rotation sessions are saved
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 1)
+
+  // 1. Generate an image from a visual-composer card via the existing /api/ai/generate-wardrobe-outfit-image endpoint
+  const outfit = json.structuredOutfits[0]
+  const imageJson = await postJson('/api/ai/generate-wardrobe-outfit-image', {
+    outfit,
+    occasion: 'city',
+    season: 'current season',
+  })
+
+  assert.equal(imageJson.mode, 'generate_wardrobe_outfit_image')
+  assert.ok(imageJson.imageUrl)
+  assert.equal(imageJson.wholeWardrobe, true)
+
+  // 2. Run the workflow twice in a row and confirm the second call's outfits differ meaningfully (rotation warning loop test)
+  const json2 = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'current season',
+    mood: 'modern bohemian',
+    limit: 3,
+  })
+
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 2)
+  
+  // Verify that the second call received rotation warning texts (meaning it saw recently shown garments)
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.equal(visualComposerCalls.length, 2)
+
+  const firstCallText = visualComposerCalls[0].messages[0].content[0].text
+  const secondCallText = visualComposerCalls[1].messages[0].content[0].text
+
+  // The first call shouldn't have rotation warning text for 'city' occasion (as it was empty)
+  assert.ok(!firstCallText.includes('Recently shown garments'))
+  // The second call must contain rotation warning text listing the garments from the first session
+  assert.ok(secondCallText.includes('Recently shown garments'))
+})
+
+
 test('selected-piece board generation returns saved-garment visual boards', async () => {
   const json = await postJson('/api/ai/generate-outfit-boards', {
     pieceId: seeded.bottom,
@@ -503,6 +560,24 @@ test('whole-wardrobe comparison sheet endpoint returns a preview board artifact'
   assert.equal(json.mode, 'generate_wardrobe_outfit_comparison_sheet')
   assert.equal(json.previewOnly, true)
   assert.ok(json.imageUrl.startsWith('/uploads/generated-boards/'))
+})
+
+test('ideal-additions preview sheet endpoint returns a preview board artifact', async () => {
+  const json = await postJson('/api/ai/generate-ideal-additions-preview-sheet', {
+    pieceId: seeded.bottom,
+    directions: [
+      { label: 'Direction A', additions: ['leather belt', 'white tee'], reason: 'contrast' },
+      { label: 'Direction B', additions: ['silk blouse', 'mules'], reason: 'drape' }
+    ],
+    occasion: 'city',
+    season: 'current season',
+  })
+
+  assert.equal(json.mode, 'generate_ideal_additions_preview_sheet')
+  assert.equal(json.previewOnly, true)
+  assert.ok(json.imageUrl.startsWith('/uploads/generated-boards/'))
+  assert.equal(json.pieces.length, 1)
+  assert.equal(json.pieces[0].id, seeded.bottom)
 })
 
 test('saved outfit variants endpoint supports creative boards from linked pieces', async () => {

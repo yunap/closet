@@ -479,15 +479,76 @@ export function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidateP
   const ids = []
   const missingPieces = []
 
-  const addId = (value) => {
-    const n = Number(value)
-    if (Number.isFinite(n) && n > 0 && candidateById.has(n) && !ids.includes(n)) ids.push(n)
+  const nonSelectedIds = (outfit?.pieceIds || [])
+    .map(Number)
+    .filter(n => Number.isFinite(n) && n > 0 && n !== selectedId)
+
+  const piecesArrayIds = (outfit?.pieces || [])
+    .filter(p => p && !p.missing && !String(p.id || '').startsWith('missing-'))
+    .map(p => Number(p.id))
+    .filter(n => Number.isFinite(n) && n > 0 && n !== selectedId)
+
+  const allNonSelectedIds = [...nonSelectedIds, ...piecesArrayIds]
+
+  let isSequentialIndices = false
+  if (allNonSelectedIds.length > 0) {
+    const allWithinRange = allNonSelectedIds.every(n => n >= 1 && n < candidatePieces.length)
+    const hasInvalidDbId = allNonSelectedIds.some(n => !candidateById.has(n))
+    if (allWithinRange && hasInvalidDbId) {
+      isSequentialIndices = true
+    }
   }
+
+  const resolveId = (value) => {
+    const n = Number(value)
+    if (!Number.isFinite(n) || n <= 0) return null
+    if (n === selectedId) return selectedId
+
+    if (isSequentialIndices) {
+      if (n >= 1 && n < candidatePieces.length) {
+        return Number(candidatePieces[n]?.id) || null
+      }
+    } else {
+      if (candidateById.has(n)) {
+        return n
+      }
+    }
+    return null
+  }
+
+  const addId = (value) => {
+    const resolved = resolveId(value)
+    if (resolved && !ids.includes(resolved)) ids.push(resolved)
+  }
+
   const addPieceReference = (piece) => {
-    addId(piece?.id)
-    if (!piece?.id && piece?.name) {
-      const matched = candidatesByName.get(normalizeForMatch(piece.name))
-      if (matched) addId(matched.id)
+    if (piece?.name) {
+      const key = normalizeForMatch(piece.name)
+      const matched = candidatesByName.get(key)
+      if (matched) {
+        addId(matched.id)
+        return
+      }
+    }
+
+    if (piece?.name) {
+      const normalizedAiName = normalizeForMatch(piece.name)
+      const aiCategory = wardrobeCategoryGroup(piece.category || piece.type || '')
+      for (const candidate of candidatePieces) {
+        const normalizedCandName = normalizeForMatch(candidate?.name || '')
+        const candCategory = wardrobeCategoryGroup(candidate?.category || '')
+        if (normalizedCandName && normalizedAiName && (aiCategory === 'other' || aiCategory === candCategory)) {
+          if (normalizedCandName.includes(normalizedAiName) || normalizedAiName.includes(normalizedCandName)) {
+            addId(candidate.id)
+            return
+          }
+        }
+      }
+    }
+
+    const resolved = resolveId(piece?.id)
+    if (resolved) {
+      addId(resolved)
     }
   }
 
@@ -620,7 +681,7 @@ export function mergeOutfitDirections(primary = [], fallback = [], selectedPiece
   const selectedId = Number(selectedPiece?.id)
   const merged = []
   const seen = new Set()
-  const add = (outfit) => {
+  const add = (outfit, isPrimary) => {
     if (!outfit) return
     const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number).filter(Boolean) : []
     const hasMissing = (Array.isArray(outfit.missingPieces) && outfit.missingPieces.length) ||
@@ -631,11 +692,31 @@ export function mergeOutfitDirections(primary = [], fallback = [], selectedPiece
     const key = ids.slice().sort((a,b) => a-b).join('|')
     if (seen.has(key)) return
     seen.add(key)
-    merged.push(outfit)
+    merged.push({ ...outfit, isFallback: !isPrimary })
   }
-  primary.forEach(add)
-  fallback.forEach(add)
-  return locallyGateOutfitDirections(merged, selectedPiece).slice(0, Math.max(minCount, 4))
+  primary.forEach(o => add(o, true))
+  fallback.forEach(o => add(o, false))
+
+  const sorted = [...merged].sort((a, b) => {
+    if (a.isFallback !== b.isFallback) {
+      return a.isFallback ? 1 : -1
+    }
+    const strengthOrder = { signature: 8, strong: 5, usable: 2, experimental: 1 }
+    const as = outfitStylisticStrengthScore(a, selectedPiece) + (strengthOrder[a?.strength] || 3)
+    const bs = outfitStylisticStrengthScore(b, selectedPiece) + (strengthOrder[b?.strength] || 3)
+    return bs - as
+  })
+
+  const resolved = sorted.map((o, index) => {
+    const score = outfitStylisticStrengthScore(o, selectedPiece)
+    const copy = { ...o }
+    if (index === 0 && score >= 8) copy.strength = 'signature'
+    else if (score < -15 && copy.strength === 'signature') copy.strength = 'usable'
+    else if (score < -5 && copy.strength === 'strong') copy.strength = 'usable'
+    return copy
+  })
+
+  return resolved.slice(0, Math.max(minCount, 4))
 }
 
 export function sanitizeSelectedPieceOutfitDirections(outfits = [], selectedPiece, candidatePieces = [], options = {}) {
@@ -997,6 +1078,8 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
   })
 
   let composerParsed = safeJsonFromModel(rawComposer)
+  console.log(`[0]    - Raw AI Composer response:\n${rawComposer}\n`)
+  console.log(`[0]    - Parsed AI Composer JSON:`, JSON.stringify(composerParsed, null, 2))
   let normalized = (composerParsed.outfits || []).map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePieces))
 
   let gated = { outfits: normalized, rejected: [], skip: composerParsed.skip || '', saveableLearning: composerParsed.saveableLearning || '' }
@@ -1007,10 +1090,16 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
       messages: [{ role: 'user', content: [{ type: 'text', text: [
         `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
         categoryConstraintForSelectedPiece(selectedPiece),
+        `Occasion: ${occasion}`,
+        `Season: ${season}`,
+        mission && mission !== 'mix' ? `Mission: ${mission}` : '',
+        mood ? `Mood: ${mood}` : '',
         `Composer JSON to audit:\n${JSON.stringify({ outfits: normalized, skip: composerParsed.skip || '', saveableLearning: composerParsed.saveableLearning || '' }, null, 2)}`
-      ].join('\n\n') }] }]
+      ].filter(Boolean).join('\n\n') }] }]
     })
     const gateParsed = safeJsonFromModel(rawGate)
+    console.log(`[0]    - Raw Evaluator Gate response:\n${rawGate}\n`)
+    console.log(`[0]    - Parsed Evaluator Gate JSON:`, JSON.stringify(gateParsed, null, 2))
     const gateOutfits = (gateParsed.outfits || []).map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePieces))
     gated = {
       outfits: gateOutfits.length ? gateOutfits : normalized,
@@ -1022,8 +1111,12 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
     console.warn('Outfit gate fallback:', err.message)
   }
 
+  console.log(`[0] 🧠 composeStructuredOutfitsForPiece:`)
+  console.log(`    - AI composer returned ${normalized.length} raw outfits:`, normalized.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
+
   let outfits = locallyGateOutfitDirections(gated.outfits, selectedPiece)
   if (!outfits.length && normalized.length) outfits = locallyGateOutfitDirections(normalized, selectedPiece)
+  console.log(`    - After locallyGateOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
 
   const localFallback = buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidates, { occasion })
 
@@ -1033,8 +1126,13 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
     outfits = ensureIdealMissingCompletion(outfits.length ? outfits : localFallback, selectedPiece, true).map(o => normalizeGeneratedOutfitObject(o, selectedPiece, candidatePieces))
   } else {
     outfits = mergeOutfitDirections(outfits, localFallback, selectedPiece, { closetOnly: true, minCount: 4 })
+    console.log(`    - After mergeOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
     outfits = sanitizeSelectedPieceOutfitDirections(outfits, selectedPiece, candidatePieces, { occasion })
-    if (!outfits.length) outfits = sanitizeSelectedPieceOutfitDirections(localFallback, selectedPiece, candidatePieces, { occasion })
+    console.log(`    - After sanitizeSelectedPieceOutfitDirections: ${outfits.length} outfits:`, outfits.map(o => `${o.label} (pieces: ${o.pieceIds?.join(', ')})`))
+    if (!outfits.length) {
+      console.log(`    - Final outfits list empty, fallback to sanitized localFallback.`)
+      outfits = sanitizeSelectedPieceOutfitDirections(localFallback, selectedPiece, candidatePieces, { occasion })
+    }
   }
 
   return {
@@ -2080,6 +2178,8 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
       tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
+    timings.usage = response.usage
+    timings.imageSize = getOpenAIImageSize('generate')
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
     const writeStartedAt = Date.now()
@@ -2167,6 +2267,8 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
       tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
+    timings.usage = response.usage
+    timings.imageSize = getOpenAIImageSize('generate')
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
     const writeStartedAt = Date.now()
@@ -2264,6 +2366,8 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
       tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
     })
     timings.gpt4oImageMs = Date.now() - gptStartedAt
+    timings.usage = response.usage
+    timings.imageSize = getOpenAIImageSize('generate')
     const imageItem = response.output?.find(item => item.type === 'image_generation_call')
     if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
     const writeStartedAt = Date.now()
@@ -2347,6 +2451,92 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     return { imageUrl, timings, renderer: 'fallback_collage' }
   }
 }
+
+export async function createIdealAdditionsComparisonSheetImage({
+  selectedPiece, directions = [], occasion = 'casual', season = 'current season'
+}) {
+  const startedAt = Date.now()
+  const timings = {}
+  const filename = `generated-boards/ideal-additions-sheet-${Date.now()}-${Math.round(Math.random() * 1e6)}.png`
+  const outPath = path.join(uploadsDir, filename)
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+
+  // Single reference photo: the selected garment
+  const garmentRef = await garmentReferenceImage(selectedPiece)
+
+  const directionLines = directions.map((d, i) => [
+    `FIGURE ${i + 1} — "${d.label}"`,
+    `Wears the selected garment (see reference photo) plus these NEW pieces: ${
+      (d.additions || []).join(', ')}`,
+    d.reason ? `Styling intent: ${d.reason}` : ''
+  ].filter(Boolean).join('\n')).join('\n\n')
+
+  const promptText = [
+    `Generate ONE comparison image containing ${directions.length} full-body figures of the same woman standing side by side, each labeled ${directions.map((_, i) => `"${directions[i].label}"`).join(', ')}.`,
+    '',
+    'Selected garment fidelity rules:',
+    '- Every figure wears the EXACT garment shown in the attached reference photo. Preserve its color, length, neckline, fabric weight, and silhouette precisely. Do not restyle, recolor, or shorten it.',
+    '',
+    'Addition pieces:',
+    '- The other pieces per figure are described in text below. Render them as plausible, realistic garments matching the descriptions.',
+    '',
+    'Scene:',
+    '- Single adult woman, identical across all figures, natural relaxed posture, full figure head to shoes.',
+    '- Neutral background, soft daylight. Small clean text label above or below each figure with its direction name. No other text, no watermark.',
+    '- This is a rough comparison sheet — clarity of the outfit differences matters more than polish.',
+    '',
+    `Occasion: ${occasion}. Season: ${season}.`,
+    '',
+    directionLines
+  ].join('\n')
+
+  try {
+    if (process.env.NODE_ENV === 'test') {
+      const mockBuffer = await sharp({
+        create: {
+          width: 1024,
+          height: 768,
+          channels: 3,
+          background: { r: 232, g: 223, b: 216 }
+        }
+      }).png().toBuffer()
+      await fs.promises.writeFile(outPath, mockBuffer)
+      timings.totalMs = Date.now() - startedAt
+      return { imageUrl: `/uploads/${filename}`, timings, renderer: 'mock_gpt-4o' }
+    }
+
+    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing')
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const contentParts = []
+    if (garmentRef) {
+      contentParts.push({
+        type: 'input_image',
+        image_url: `data:${garmentRef.mime};base64,${garmentRef.base64}`
+      })
+      contentParts.push({ type: 'input_text', text: `Reference photo: ${garmentRef.label}. This exact garment appears on every figure.` })
+    }
+    contentParts.push({ type: 'input_text', text: promptText })
+
+    const gptStartedAt = Date.now()
+    const response = await client.responses.create({
+      model: 'gpt-4o',
+      input: [{ role: 'user', content: contentParts }],
+      tools: [{ type: 'image_generation', size: getOpenAIImageSize('generate'), quality: 'medium' }]
+    })
+    timings.gpt4oImageMs = Date.now() - gptStartedAt
+    timings.usage = response.usage
+    timings.imageSize = getOpenAIImageSize('generate')
+    const imageItem = response.output?.find(item => item.type === 'image_generation_call')
+    if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
+    await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
+  } catch (err) {
+    timings.totalMs = Date.now() - startedAt
+    throw Object.assign(new Error(`Ideal-additions sheet failed: ${err.message}`), { timings })
+  }
+}
+
 
 // ── Shared Outfit Evaluation Pipeline ─────────────────────────────────────────
 export function resolveOutfitEvaluationPieces({ outfit = {}, pieceIds = [], maxPieces = 6 } = {}) {
@@ -2994,17 +3184,19 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
   if (!imageItem?.result) {
     throw new Error('GPT-4o Responses API did not return an image_generation_call result')
   }
-  return imageItem.result
+  return { result: imageItem.result, usage: response.usage }
 }
 
 export async function createEditorialConceptImage({ selectedPiece, direction, index, occasion, season }) {
+  const startedAt = Date.now()
+  const timings = {}
   const prompt = editorialImagePrompt({ selectedPiece, direction, occasion, season })
   const filename = `generated-boards/editorial-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
   const outPath = path.join(uploadsDir, filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
  
   if (photoPreservingVisualsEnabled()) {
-    return createPhotoPreservingCollageImage({
+    const imageUrl = await createPhotoPreservingCollageImage({
       title: direction.title || `Ideal direction ${index}`,
       subtitle: 'ideal addition concept · photo-preserving collage',
       selectedPiece,
@@ -3013,6 +3205,8 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
       index,
       prefix: 'editorial-collage'
     })
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl, timings, renderer: 'photo_preserving_collage' }
   }
  
   if (!process.env.OPENAI_API_KEY) {
@@ -3028,7 +3222,8 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
       <text x="112" y="1480" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Image generation unavailable.</text>
     </svg>`
     await sharp(Buffer.from(svg)).png().toFile(outPath)
-    return `/uploads/${filename}`
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'fallback_svg' }
   }
  
   let anchorGarmentImage = null
@@ -3075,7 +3270,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   try {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
-    const base64Result = await runGPT4oImageGeneration({
+    const { result: base64Result, usage } = await runGPT4oImageGeneration({
       client,
       prompt,
       size: getOpenAIImageSize('generate'),
@@ -3083,7 +3278,10 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
       anchorGarmentImage,
     })
     await fs.promises.writeFile(outPath, Buffer.from(base64Result, 'base64'))
-    return `/uploads/${filename}`
+    timings.usage = usage
+    timings.imageSize = getOpenAIImageSize('generate')
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
   } catch (err) {
     console.error('GPT-4o editorial image generation failed, falling back to gpt-image-1:', err.message)
   }
@@ -3096,14 +3294,16 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     const first = result.data?.[0]
     if (first?.b64_json) {
       await fs.promises.writeFile(outPath, Buffer.from(first.b64_json, 'base64'))
-      return `/uploads/${filename}`
+      timings.totalMs = Date.now() - startedAt
+      return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-image-1' }
     }
     if (first?.url) {
       const response = await fetch(first.url)
       if (!response.ok) throw new Error(`image download failed: ${response.status}`)
       const arrayBuffer = await response.arrayBuffer()
       await fs.promises.writeFile(outPath, Buffer.from(arrayBuffer))
-      return `/uploads/${filename}`
+      timings.totalMs = Date.now() - startedAt
+      return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-image-1' }
     }
     throw new Error('No image data in fallback response')
   } catch (fallbackErr) {
@@ -3115,7 +3315,8 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
       <text x="112" y="1480" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Could not generate: ${escapeXml(fallbackErr.message).slice(0, 120)}</text>
     </svg>`
     await sharp(Buffer.from(svg)).png().toFile(outPath)
-    return `/uploads/${filename}`
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'fallback_error' }
   }
 }
 
@@ -3299,6 +3500,8 @@ export function calibrationImagePrompt({ selectedPiece, variation, occasion, sea
 }
 
 export async function createCalibrationConceptImage({ selectedPiece, variation, index, occasion, season }) {
+  const startedAt = Date.now()
+  const timings = {}
   const prompt = calibrationImagePrompt({ selectedPiece, variation, occasion, season })
   const filename = `generated-boards/calibration-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
   const outPath = path.join(uploadsDir, filename)
@@ -3316,20 +3519,24 @@ export async function createCalibrationConceptImage({ selectedPiece, variation, 
       <text x="112" y="1385" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Image generation unavailable.</text>
     </svg>`
     await sharp(Buffer.from(svg)).png().toFile(outPath)
-    return `/uploads/${filename}`
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'fallback_svg' }
   }
  
   try {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
-    const base64Result = await runGPT4oImageGeneration({
+    const { result: base64Result, usage } = await runGPT4oImageGeneration({
       client,
       prompt,
       size: getOpenAIImageSize('generate'),
       referenceImages,
     })
     await fs.promises.writeFile(outPath, Buffer.from(base64Result, 'base64'))
-    return `/uploads/${filename}`
+    timings.usage = usage
+    timings.imageSize = getOpenAIImageSize('generate')
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
   } catch (err) {
     console.error('GPT-4o calibration image generation failed, falling back to gpt-image-1:', err.message)
   }
@@ -3342,14 +3549,16 @@ export async function createCalibrationConceptImage({ selectedPiece, variation, 
     const first = result.data?.[0]
     if (first?.b64_json) {
       await fs.promises.writeFile(outPath, Buffer.from(first.b64_json, 'base64'))
-      return `/uploads/${filename}`
+      timings.totalMs = Date.now() - startedAt
+      return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-image-1' }
     }
     if (first?.url) {
       const response = await fetch(first.url)
       if (!response.ok) throw new Error(`image download failed: ${response.status}`)
       const arrayBuffer = await response.arrayBuffer()
       await fs.promises.writeFile(outPath, Buffer.from(arrayBuffer))
-      return `/uploads/${filename}`
+      timings.totalMs = Date.now() - startedAt
+      return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-image-1' }
     }
     throw new Error('No image data in fallback response')
   } catch (fallbackErr) {
@@ -3362,7 +3571,8 @@ export async function createCalibrationConceptImage({ selectedPiece, variation, 
       <text x="112" y="1385" font-family="Arial, sans-serif" font-size="24" fill="#9a8774">Could not generate image: ${escapeXml(fallbackErr.message).slice(0, 120)}</text>
     </svg>`
     await sharp(Buffer.from(svg)).png().toFile(outPath)
-    return `/uploads/${filename}`
+    timings.totalMs = Date.now() - startedAt
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'fallback_error' }
   }
 }
 

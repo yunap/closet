@@ -314,7 +314,7 @@ function SummaryPhase({ items, onDone, thumbnailSize }) {
         </div>
       )}
 
-      <button className="btn-primary" onClick={onDone} style={{ width: '100%', maxWidth: 280 }}>
+      <button className="btn-primary" onClick={onDone} style={{ width: '100%', maxWidth: 280, flex: 'none' }}>
         Back to wardrobe
       </button>
     </div>

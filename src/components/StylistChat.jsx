@@ -46,6 +46,21 @@ const timingSummary = (timings = {}) => Object.entries(timings || {})
   .map(([key, value]) => `${key.replace(/Ms$/, '')}: ${formatMs(value)}`)
   .join(' · ')
 
+const calculateOpenAICost = (timings) => {
+  if (!timings || !timings.usage) return null
+  const input = (timings.usage.input_tokens || 0) * 0.0000025
+  const output = (timings.usage.output_tokens || 0) * 0.00001
+  const imgSize = timings.imageSize || '1024x1536'
+  const imgCost = imgSize === '1024x1024' ? 0.04 : 0.08
+  return input + output + imgCost
+}
+
+const renderCost = (timings) => {
+  const cost = calculateOpenAICost(timings)
+  if (cost === null) return ''
+  return ` · Measured cost: $${cost.toFixed(3)}`
+}
+
 const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
 const OUTFIT_FOLLOWUP_PATTERN = /\b(this|it|outfit|idea|look|piece|pieces|make|change|swap|instead|sharper|stronger|softer|better|work|works|risk|risky|why|how|what)\b/i
 
@@ -198,6 +213,8 @@ export default function AskClaude({
   const [chatHistory, setChatHistory] = useState(() => activeThread?.chatHistory || [])
   const [threadMemory, setThreadMemory] = useState(() => activeThread?.threadMemory || null)
   const [evaluatedKeys, setEvaluatedKeys] = useState(() => new Set(activeThread?.evaluatedKeys || []))
+  const [boardResults, setBoardResults] = useState(() => activeThread?.boardResults || {})
+  const [editorialVisualResults, setEditorialVisualResults] = useState(() => activeThread?.editorialVisualResults || {})
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
   const setActiveContext = useCallback((nextContext) => {
@@ -245,6 +262,8 @@ export default function AskClaude({
             threadMemory,
             activeContext,
             evaluatedKeys: Array.from(evaluatedKeys),
+            boardResults,
+            editorialVisualResults,
             updatedAt: Date.now()
           }
         }
@@ -257,7 +276,7 @@ export default function AskClaude({
       }
       return nextThreads
     })
-  }, [messages, chatHistory, threadMemory, activeContext, currentThreadId, evaluatedKeys])
+  }, [messages, chatHistory, threadMemory, activeContext, currentThreadId, evaluatedKeys, boardResults, editorialVisualResults])
 
   const createNewChat = (title = 'New Chat') => {
     const newId = 'thread_' + Date.now()
@@ -269,6 +288,8 @@ export default function AskClaude({
       threadMemory: null,
       activeContext: null,
       evaluatedKeys: [],
+      boardResults: {},
+      editorialVisualResults: {},
       updatedAt: Date.now()
     }
     
@@ -279,6 +300,8 @@ export default function AskClaude({
     setThreadMemory(newThread.threadMemory)
     setActiveContext(newThread.activeContext)
     setEvaluatedKeys(new Set())
+    setBoardResults({})
+    setEditorialVisualResults({})
     
     try {
       localStorage.setItem('stylist_current_thread_id', newId)
@@ -296,6 +319,8 @@ export default function AskClaude({
             threadMemory,
             activeContext,
             evaluatedKeys: Array.from(evaluatedKeys),
+            boardResults,
+            editorialVisualResults,
             updatedAt: Date.now()
           }
         }
@@ -315,6 +340,8 @@ export default function AskClaude({
       setThreadMemory(target.threadMemory || null)
       setActiveContext(target.activeContext || null)
       setEvaluatedKeys(new Set(target.evaluatedKeys || []))
+      setBoardResults(target.boardResults || {})
+      setEditorialVisualResults(target.editorialVisualResults || {})
       try {
         localStorage.setItem('stylist_current_thread_id', threadId)
       } catch (e) {}
@@ -333,6 +360,8 @@ export default function AskClaude({
     setThreadMemory(nextThread.threadMemory || null)
     setActiveContext(nextThread.activeContext || null)
     setEvaluatedKeys(new Set(nextThread.evaluatedKeys || []))
+    setBoardResults(nextThread.boardResults || {})
+    setEditorialVisualResults(nextThread.editorialVisualResults || {})
     
     try {
       localStorage.setItem('stylist_chat_threads', JSON.stringify(remaining))
@@ -397,8 +426,6 @@ export default function AskClaude({
   const [learningOpen, setLearningOpen] = useState(false)
   const [learningRows, setLearningRows] = useState([])
 
-  const [boardResults, setBoardResults] = useState({})
-  const [editorialVisualResults, setEditorialVisualResults] = useState({})
   const [boardLoadingIndex, setBoardLoadingIndex] = useState(null)
   const [previewImage, setPreviewImage] = useState(null)
   const [fileInputKey, setFileInputKey] = useState(0)
@@ -1010,11 +1037,18 @@ export default function AskClaude({
       return Array.isArray(outfit?.pieces) && outfit.pieces.filter(piece => piece?.id).length >= 2
     })
 
+    // Note: previewOnly is overloaded.
+    // 1. On rendered board objects (e.g. whole-wardrobe preview sheets), it means "this IS a preview sheet".
+    // 2. On direction cards (e.g. ideal-additions editorial directions), it means "text-only direction, not yet rendered".
+    // We explicitly check previewOnly && pieceId to target only the text-only editorial direction cards.
+    const isIdealAdditions = outfits.length >= 2 &&
+      outfits.some(outfit => outfit.previewOnly && outfit.pieceId)
+
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
         {(message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings && (
           <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
-            Timing: {timingSummary(message.debug.timings)}
+            Timing: {timingSummary(message.debug.timings)}{renderCost(message.debug.timings)}
           </div>
         )}
         {canGenerateComparison && (
@@ -1049,7 +1083,7 @@ export default function AskClaude({
                         {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
                         {board.debug?.timings && (
                           <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
-                            Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
+                            Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}{renderCost(board.debug.timings)}
                           </div>
                         )}
                         {(() => {
@@ -1081,6 +1115,82 @@ export default function AskClaude({
             )}
           </div>
         )}
+        {isIdealAdditions && (() => {
+          const idealComparisonKey = `ideal-additions-comparison:${messageIndex}`
+          const idealComparisonBoards = boardResults[idealComparisonKey] || []
+          const isGeneratingIdealComparison = boardLoadingIndex === idealComparisonKey
+          return (
+            <div style={{ display: 'grid', gap: 8, padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface-2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Rough visual preview</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>One quick comparison image for all directions. Use individual renders for garment-faithful final images.</div>
+                </div>
+                 <button
+                  type="button"
+                  onClick={() => generateIdealAdditionsComparisonSheet(messageIndex, outfits)}
+                  disabled={isGeneratingIdealComparison}
+                  style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isGeneratingIdealComparison ? 'default' : 'pointer', opacity: isGeneratingIdealComparison ? 0.65 : 1 }}
+                >
+                  {isGeneratingIdealComparison ? 'Generating rough preview...' : (idealComparisonBoards.length ? 'Regenerate rough preview' : 'Rough preview · all directions (~$0.07)')}
+                </button>
+              </div>
+              {imageStatusByKey[idealComparisonKey] && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{imageStatusByKey[idealComparisonKey]}</div>}
+              {idealComparisonBoards.length > 0 && (
+                <div className="generated-visual-grid">
+                  {idealComparisonBoards.map((board, boardIdx) => (
+                    <div key={boardIdx} className="generated-visual-card">
+                      {board.error ? (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preview error: {board.error}</div>
+                      ) : (
+                        <>
+                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: board.imageUrl, title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
+                            <img src={board.imageUrl} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
+                          </button>
+                          <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
+                          {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
+                          {board.debug?.timings && (
+                            <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
+                              Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}{renderCost(board.debug.timings)}
+                            </div>
+                          )}
+                          {(() => {
+                            const saveKey = `ideal-additions-preview-sheet:${messageIndex}:${boardIdx}`
+                            const isSaved = savedBoardKeys.has(saveKey)
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => saveGeneratedBoard({
+                                  key: saveKey,
+                                  board,
+                                  boardType: 'ideal_additions_preview_sheet',
+                                  messageIndex,
+                                  boardIndex: boardIdx,
+                                  contextOverride: (() => {
+                                    if (activeContext) return activeContext
+                                    const targetPiece = pieces.find(p => Number(p.id) === Number(firstOutfit?.pieceId))
+                                    if (targetPiece) {
+                                      return { type: 'piece', id: targetPiece.id, name: targetPiece.name }
+                                    }
+                                    return null
+                                  })()
+                                })}
+                                disabled={isSaved}
+                                style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer', marginTop: 7 }}
+                              >
+                                {isSaved ? '✓ Saved preview board' : 'Save preview board'}
+                              </button>
+                            )
+                          })()}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })()}
         {outfits.slice(0, message?.wholeWardrobe ? 5 : 4).map((outfit, idx) => {
           const strength = strengthLabel(outfit.strength, idx)
           const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean) : []
@@ -1236,6 +1346,7 @@ export default function AskClaude({
                             occasion: wardrobeOutfitOccasion,
                             season: wardrobeOutfitSeason,
                             mood: wardrobeOutfitMood,
+                            ...(message?.source === 'visual_composer' ? { source: 'visual_composer' } : {})
                           },
                           contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
                         })}
@@ -1248,7 +1359,7 @@ export default function AskClaude({
                 </div>
               )}
 
-              {activeContext?.type === 'piece' && !isTextOnly && (
+              {(activeContext?.type === 'piece' || outfit.pieceId) && !isTextOnly && (
                 <div style={{ marginTop: 9, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                   {isPreview ? (
                     // Preview mode: render this single direction on demand
@@ -1313,7 +1424,7 @@ export default function AskClaude({
                           {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
                           {board.debug?.timings && (
                             <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
-                              Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
+                              Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}{renderCost(board.debug.timings)}
                             </div>
                           )}
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 7 }}>
@@ -1341,7 +1452,16 @@ export default function AskClaude({
                                     boardType: message?.wholeWardrobe ? 'whole_wardrobe_board' : 'editorial_direction',
                                     messageIndex,
                                     boardIndex: idx,
-                                    contextOverride: message?.wholeWardrobe ? { type: 'wardrobe', id: null, name: 'Whole wardrobe' } : null
+                                    contextOverride: message?.wholeWardrobe 
+                                      ? { type: 'wardrobe', id: null, name: 'Whole wardrobe' } 
+                                      : (() => {
+                                          if (activeContext) return activeContext
+                                          const targetPiece = pieces.find(p => Number(p.id) === Number(outfit.pieceId))
+                                          if (targetPiece) {
+                                            return { type: 'piece', id: targetPiece.id, name: targetPiece.name }
+                                          }
+                                          return null
+                                        })()
                                   })}
                                   disabled={isBoardSaved}
                                   style={{ fontSize: 10, color: isBoardSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isBoardSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isBoardSaved ? 'default' : 'pointer' }}
@@ -1355,7 +1475,23 @@ export default function AskClaude({
                               const isSaved = feedbackSaved.has(key)
                               return (
                                 <button key={key}
-                                  onClick={() => saveStylistFeedback({ key, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || outfit.title || label}`, note: board.reason || outfit.reason || '', payload: { board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx }, appendToPiece: activeContext?.type === 'piece' && ['signature','works','not_me','too_safe','too_soft','too_generic','wrong_proportions','wrong_silhouette','catalog_drift','weak_structure','weak_contrast','bad_grounding'].includes(type) })}
+                                  onClick={() => saveStylistFeedback({
+                                    key,
+                                    feedbackType: type,
+                                    targetType: 'generated_visual_board',
+                                    label: `${board.label || outfit.title || label}`,
+                                    note: board.reason || outfit.reason || '',
+                                    payload: { board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx },
+                                    appendToPiece: (activeContext?.type === 'piece' || outfit.pieceId) && ['signature','works','not_me','too_safe','too_soft','too_generic','wrong_proportions','wrong_silhouette','catalog_drift','weak_structure','weak_contrast','bad_grounding'].includes(type),
+                                    contextOverride: (() => {
+                                      if (activeContext) return activeContext
+                                      const targetPiece = pieces.find(p => Number(p.id) === Number(outfit.pieceId))
+                                      if (targetPiece) {
+                                        return { type: 'piece', id: targetPiece.id, name: targetPiece.name }
+                                      }
+                                      return null
+                                    })()
+                                  })}
                                   disabled={isSaved}
                                   style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}
                                 >
@@ -1581,6 +1717,62 @@ export default function AskClaude({
     }
   }
 
+  const generateIdealAdditionsComparisonSheet = async (messageIndex, outfits = []) => {
+    if (outfits.length < 2) return
+    const firstOutfit = outfits[0]
+    const pieceId = firstOutfit?.pieceId || activeContext?.id
+    if (!pieceId) return
+    const resultKey = `ideal-additions-comparison:${messageIndex}`
+    let statusTimers = []
+    const clearImageTimers = () => {
+      statusTimers.forEach(clearTimeout)
+      statusTimers = []
+    }
+    setBoardLoadingIndex(resultKey)
+    setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Loading garment reference photo...' }))
+    statusTimers = [
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending directions to GPT-4o...' })), 4000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Rendering rough preview sheet. This can take a minute.' })), 14000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Still rendering preview sheet...' })), 45000),
+    ]
+    try {
+      const res = await fetch('/api/ai/generate-ideal-additions-preview-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pieceId,
+          directions: outfits.map(d => ({
+            label: d.label || d.title || 'Ideal direction',
+            additions: d.missingPieces || [],
+            reason: d.reason || ''
+          })),
+          occasion: firstOutfit?.occasion || generateOccasion,
+          season: firstOutfit?.season || generateSeason
+        })
+      })
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(text.startsWith('<!DOCTYPE')
+          ? 'Image route returned HTML instead of JSON. Restart the backend/dev server so the new route is loaded.'
+          : `Image route returned ${contentType || 'non-JSON'} response.`)
+      }
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not generate comparison sheet')
+      setBoardResults(prev => ({ ...prev, [resultKey]: [data.board || data] }))
+    } catch (err) {
+      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
+    } finally {
+      clearImageTimers()
+      setImageStatusByKey(prev => {
+        const next = { ...prev }
+        delete next[resultKey]
+        return next
+      })
+      setBoardLoadingIndex(null)
+    }
+  }
+
   const evaluateWholeWardrobeOutfit = async (resultKey, outfit) => {
     const ids = Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
       ? outfit.pieceIds
@@ -1693,7 +1885,7 @@ export default function AskClaude({
         },
       }))
 
-      setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits }])
+      setMessages(m => [...m, { role: 'assistant', text: replyText, structuredOutfits: replyStructuredOutfits, mode: 'ideal_styling_directions' }])
       addToHistory('assistant', replyText)
     } catch (err) {
       const errText = `Error: ${err.message}`
@@ -1769,6 +1961,91 @@ export default function AskClaude({
         textOnly: true,
         debug: data.debug || null,
         queryOptions: { occasion, season, mood, mission },
+      }])
+      setThreadMemory({
+        type: 'generated_outfits',
+        source: 'whole_wardrobe',
+        name: 'Whole wardrobe generated outfits',
+        latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'whole_wardrobe' }),
+        latestOutfits: replyStructuredOutfits,
+      })
+      addToHistory('assistant', replyText)
+    } catch (err) {
+      const errText = `Error: ${err.message}`
+      setMessages(m => [...m, { role: 'assistant', text: errText }])
+      addToHistory('assistant', errText)
+    } finally {
+      clearLoadingTimers()
+      setLoadingStatus('')
+      setLoading(false)
+    }
+  }
+
+  const generateWholeWardrobeOutfitsVisual = async () => {
+    if (loading) return
+    const occasion = wardrobeOutfitOccasion || 'casual'
+    const season = wardrobeOutfitSeason || 'current season'
+    const mood = wardrobeOutfitMood || ''
+    const userText = `Use my wardrobe to compose outfits (visual composer) for ${occasion}, ${season}${mood ? `, ${mood}` : ''}.`
+
+    // Automatically spin up a dedicated thread for this wardrobe generation
+    const newId = 'thread_' + Date.now()
+    const title = `Visual: ${occasion}, ${season}`
+    const newThread = {
+      id: newId,
+      title,
+      messages: [
+        { role: 'user', text: userText, contextName: 'Visual composer' }
+      ],
+      chatHistory: [
+        { role: 'user', content: userText }
+      ],
+      threadMemory: null,
+      activeContext: null,
+      updatedAt: Date.now()
+    }
+
+    setThreads(prev => [newThread, ...prev])
+    setCurrentThreadId(newId)
+    setMessages(newThread.messages)
+    setChatHistory(newThread.chatHistory)
+    setThreadMemory(null)
+    setActiveContext(null)
+
+    try {
+      localStorage.setItem('stylist_current_thread_id', newId)
+    } catch (e) {}
+
+    setRecentMemoryStatus('')
+    setLoading(true)
+    startStatusSequence([
+      { ms: 0, text: 'Preparing wardrobe photos…' },
+      { ms: 6000, text: 'The stylist is looking at your full wardrobe…' },
+      { ms: 22000, text: 'Composing outfits…' },
+      { ms: 40000, text: 'Still working. Sending many images takes a moment.' },
+    ])
+
+    try {
+      const res = await fetch('/api/ai/generate-wardrobe-outfits-visual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ occasion, season, mood, limit: 5 })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not generate wardrobe outfits')
+      const replyText = data.feedback || 'Here are the outfits composed from your wardrobe.'
+      const replyStructuredOutfits = Array.isArray(data.structuredOutfits)
+        ? data.structuredOutfits.map(outfit => ({ ...outfit, textOnly: true, wholeWardrobe: true }))
+        : null
+      setMessages(m => [...m, {
+        role: 'assistant',
+        text: replyText,
+        structuredOutfits: replyStructuredOutfits,
+        wholeWardrobe: true,
+        source: 'visual_composer',
+        textOnly: true,
+        debug: data.debug || null,
+        queryOptions: { occasion, season, mood },
       }])
       setThreadMemory({
         type: 'generated_outfits',
@@ -1866,6 +2143,7 @@ export default function AskClaude({
       let replyStructuredOutfits = null
       let replyWardrobeEvaluation = false
       let replyDebug = null
+      let replyMode = null
 
       if (outfitToSend && compareId) {
         const res = await fetch('/api/ai/compare-outfits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitAId: outfitToSend.id, outfitBId: compareId, question: q || 'Which outfit works better for me?', history: historySnapshot }) })
@@ -1969,6 +2247,7 @@ export default function AskClaude({
           occasion: effectiveGenerateOccasion,
           season: effectiveGenerateSeason,
         }))
+        replyMode = 'ideal_styling_directions'
 
       } else if (pieceToSend && shouldGenerateOutfits) {
         const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot }) })
@@ -2008,6 +2287,7 @@ export default function AskClaude({
           occasion: effectiveGenerateOccasion,
           season: effectiveGenerateSeason,
         }))
+        replyMode = 'ideal_styling_directions'
 
       } else if (fileToSend) {
         const fd = new FormData()
@@ -2144,6 +2424,7 @@ export default function AskClaude({
         wardrobeEvaluation: replyWardrobeEvaluation,
         textOnly: replyWardrobeEvaluation,
         debug: replyDebug,
+        mode: replyMode,
         queryOptions: shouldGenerateOutfits || shouldGenerateEditorialVisuals || shouldGenerateActiveEditorialVisuals ? {
           occasion: effectiveGenerateOccasion,
           season: effectiveGenerateSeason,
@@ -2473,6 +2754,13 @@ export default function AskClaude({
                 {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
               </button>
               <button
+                onClick={generateWholeWardrobeOutfitsVisual}
+                disabled={loading}
+                style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
+              >
+                {loading ? 'Creating...' : 'Create (visual composer)'}
+              </button>
+              <button
                 onClick={generateWholeWardrobeOutfits}
                 disabled={loading}
                 style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
@@ -2578,6 +2866,13 @@ export default function AskClaude({
                       style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
                     >
                       {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
+                    </button>
+                    <button
+                      onClick={generateWholeWardrobeOutfitsVisual}
+                      disabled={loading}
+                      style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
+                    >
+                      {loading ? 'Creating...' : 'Create (visual composer)'}
                     </button>
                     <button
                       onClick={generateWholeWardrobeOutfits}

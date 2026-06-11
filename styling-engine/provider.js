@@ -26,6 +26,26 @@ export async function prepareImageForClaude(filePath) {
   return { base64: buffer.toString('base64'), mime: 'image/jpeg' }
 }
 
+const wardrobeThumbCache = new Map() // key: `${pieceId}:${filename}` -> { media_type, data }
+
+export async function prepareWardrobeThumb(filePath, cacheKey) {
+  if (cacheKey && wardrobeThumbCache.has(cacheKey)) return wardrobeThumbCache.get(cacheKey)
+  const sharp = (await import('sharp')).default
+  const buffer = await sharp(filePath)
+    .resize(448, 448, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 70 })
+    .toBuffer()
+  const result = { media_type: 'image/jpeg', data: buffer.toString('base64') }
+  if (cacheKey) {
+    wardrobeThumbCache.set(cacheKey, result)
+    if (wardrobeThumbCache.size > 300) {
+      // simple eviction: drop oldest entry
+      wardrobeThumbCache.delete(wardrobeThumbCache.keys().next().value)
+    }
+  }
+  return result
+}
+
 export function contentToOpenAI(content) {
   if (typeof content === 'string') return content
   return (content || []).map(part => {
@@ -33,7 +53,10 @@ export function contentToOpenAI(content) {
     if (part.type === 'image') {
       return {
         type: 'image_url',
-        image_url: { url: `data:${part.source.media_type};base64,${part.source.data}` }
+        image_url: {
+          url: `data:${part.source.media_type};base64,${part.source.data}`,
+          ...(part.detail ? { detail: part.detail } : {})
+        }
       }
     }
     if (part.type === 'image_url') {
