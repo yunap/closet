@@ -1397,3 +1397,14 @@ img { display: block; max-width: 100%; }
 .outfit-card-fav:active {
   transform: scale(0.9);
 }
+
+/* Skeleton pulse loading animation */
+@keyframes skeletonPulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+.skeleton-pulse {
+  animation: skeletonPulse 1.8s infinite ease-in-out;
+}
+

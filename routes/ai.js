@@ -34,6 +34,7 @@ import {
 import {
   isStyleSelectedQuestion,
   weatherProfileFromContext,
+  buildVisualComposerRoster,
   complementaryWardrobeFor,
   categoryConstraintForSelectedPiece,
   idealAdditionAnchorConstraint,
@@ -939,20 +940,37 @@ router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
     const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(20)
     const confirmedOutfitsText = getConfirmedOutfitMemory(8)
 
-    // Build the multimodal content array, grouped by category
+    // Compute weather profile and filter the visual composer roster
+    const weatherProfile = weatherProfileFromContext({ mood, season })
+    const { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(allowedPieces, {
+      occasion,
+      weatherProfile,
+      sessionInfluence,
+      maxImages: 90
+    })
+
+    console.log(`\n[Visual Composer Roster] Filtering active pieces for mood: "${mood}", season: "${season}"`)
+    console.log(`  - Total active pieces: ${allowedPieces.length}`)
+    console.log(`  - Survived in roster: ${roster.length}`)
+    console.log(`  - Excluded: ${excluded.length}`)
+    console.log(`  - Excluded reasons count:`, rosterDebug.excludedCounts)
+
+    // Build the multimodal content array, grouped by category (only showing rostered pieces)
     const groupsOrder = ['top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory']
     const grouped = new Map(groupsOrder.map(g => [g, []]))
-    for (const p of allowedPieces) {
+    for (const p of roster) {
       const group = wardrobeCategoryGroup(p) || 'accessory'
       if (!grouped.has(group)) grouped.set(group, [])
       grouped.get(group).push(p)
     }
 
+    const isWeatherFiltered = weatherProfile.isHot || weatherProfile.isCold
     const content = []
     content.push({ type: 'text', text: [
       `Occasion: ${occasion}`,
       `Season: ${season}`,
       mood ? `Mood: ${mood}` : '',
+      isWeatherFiltered ? "Off-season pieces have already been removed; everything shown is weather-valid." : '',
       `Compose ${requestedLimit} outfits.`,
       rotationWarningsText,
       wholeWardrobeFeedbackText ? `Feedback memory (rejected pairings are settled — do not repeat them):\n${wholeWardrobeFeedbackText}` : '',
@@ -1047,7 +1065,10 @@ router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
         suppressedCount: suppressedPieces.length,
         aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
         composerError,
-        timings
+        timings,
+        rosterCount: roster.length,
+        excludedCounts: rosterDebug.excludedCounts,
+        excluded
       }
     })
   } catch (err) {

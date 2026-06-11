@@ -269,3 +269,74 @@ export function garmentKind(p) {
 
   return 'other'
 }
+
+export function wardrobeCategoryGroup(pieceOrCategory = '') {
+  const raw = typeof pieceOrCategory === 'string'
+    ? pieceOrCategory
+    : (pieceOrCategory?.category || pieceOrCategory?.type || pieceOrCategory?.name || '')
+  const value = String(raw || '').toLowerCase().trim()
+  if (/\b(top|shirt|blouse|tee|t-shirt|tank|shell|sweater|knit|cardigan as top|tunic|hoodie|sweatshirt)\b/.test(value) || /tops?/.test(value)) return 'top'
+  if (/\b(bottom|pant|trouser|jean|skirt|short|culotte|legging)\b/.test(value) || /bottoms?/.test(value)) return 'bottom'
+  if (/\b(dress|jumpsuit)\b/.test(value) || /dresses/.test(value)) return 'dress'
+  if (/\b(outerwear|jacket|cardigan|coat|blazer|vest|overshirt|kimono)\b/.test(value)) return 'outerwear'
+  if (/\b(shoe|boot|flat|loafer|sandal|sneaker|heel|mule|clog)\b/.test(value) || /shoes/.test(value)) return 'shoes'
+  if (/\b(accessor|necklace|pendant|earring|bracelet|bag|tote|belt|scarf|watch|ring)\b/.test(value)) return 'accessory'
+  return value || 'other'
+}
+
+export function isAccessory(p) {
+  return wardrobeCategoryGroup(p) === 'accessory'
+}
+
+export function isOuterwear(p) {
+  return wardrobeCategoryGroup(p) === 'outerwear'
+}
+
+export function isTop(p) {
+  return wardrobeCategoryGroup(p) === 'top'
+}
+
+function getOccasionConfidence(piece, occasion) {
+  try {
+    const profile = typeof piece?.style_profile_json === 'string'
+      ? JSON.parse(piece.style_profile_json)
+      : piece?.style_profile_json
+    const info = profile?.garment_intelligence || {}
+    const confMap = info.occasion_confidence || {}
+    return String(confMap[occasion] || '').toLowerCase().trim()
+  } catch (err) {
+    return ''
+  }
+}
+
+export function pieceOccasionScore(piece = {}, occasion = '') {
+  const requested = String(occasion || '').toLowerCase().trim()
+  if (!requested) return 0
+  
+  const occasions = Array.isArray(piece.occasions) 
+    ? piece.occasions.map(o => String(o).toLowerCase()) 
+    : []
+  const confidence = getOccasionConfidence(piece, requested)
+  
+  if (confidence === 'high') return 15
+  if (occasions.includes(requested) && confidence !== 'low') return 12
+  if (confidence === 'medium') return 10
+  if (confidence === 'low') return -15
+  return 0
+}
+
+export function isDarkPiece(p) {
+  if (!p) return false
+  const colors = (p.colors || []).map(c => String(c).toLowerCase())
+  const lightColors = ['white', 'cream', 'beige', 'taupe', 'oatmeal', 'ivory', 'nude', 'light grey', 'light gray', 'soft white', 'sand', 'light blue']
+  if (colors.some(c => lightColors.includes(c))) return false
+
+  const blob = pieceTextBlob(p)
+  if (/\b(white|cream|beige|taupe|oatmeal|ivory|nude|light|pale|sand)\b/i.test(blob)) return false
+
+  const darkColors = ['black', 'navy', 'denim', 'charcoal', 'dark grey', 'dark gray', 'deep navy', 'chocolate', 'dark blue', 'espresso', 'brown']
+  if (colors.some(c => darkColors.includes(c))) return true
+
+  return /\b(black|navy|dark|charcoal|brown|chocolate|espresso)\b/i.test(blob)
+}
+

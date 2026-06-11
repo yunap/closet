@@ -215,6 +215,7 @@ export default function AskClaude({
   const [evaluatedKeys, setEvaluatedKeys] = useState(() => new Set(activeThread?.evaluatedKeys || []))
   const [boardResults, setBoardResults] = useState(() => activeThread?.boardResults || {})
   const [editorialVisualResults, setEditorialVisualResults] = useState(() => activeThread?.editorialVisualResults || {})
+  const [evaluationResultsByKey, setEvaluationResultsByKey] = useState(() => activeThread?.evaluationResultsByKey || {})
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
   const setActiveContext = useCallback((nextContext) => {
@@ -264,6 +265,7 @@ export default function AskClaude({
             evaluatedKeys: Array.from(evaluatedKeys),
             boardResults,
             editorialVisualResults,
+            evaluationResultsByKey,
             updatedAt: Date.now()
           }
         }
@@ -276,7 +278,7 @@ export default function AskClaude({
       }
       return nextThreads
     })
-  }, [messages, chatHistory, threadMemory, activeContext, currentThreadId, evaluatedKeys, boardResults, editorialVisualResults])
+  }, [messages, chatHistory, threadMemory, activeContext, currentThreadId, evaluatedKeys, boardResults, editorialVisualResults, evaluationResultsByKey])
 
   const createNewChat = (title = 'New Chat') => {
     const newId = 'thread_' + Date.now()
@@ -290,6 +292,7 @@ export default function AskClaude({
       evaluatedKeys: [],
       boardResults: {},
       editorialVisualResults: {},
+      evaluationResultsByKey: {},
       updatedAt: Date.now()
     }
     
@@ -302,6 +305,7 @@ export default function AskClaude({
     setEvaluatedKeys(new Set())
     setBoardResults({})
     setEditorialVisualResults({})
+    setEvaluationResultsByKey({})
     
     try {
       localStorage.setItem('stylist_current_thread_id', newId)
@@ -321,6 +325,7 @@ export default function AskClaude({
             evaluatedKeys: Array.from(evaluatedKeys),
             boardResults,
             editorialVisualResults,
+            evaluationResultsByKey,
             updatedAt: Date.now()
           }
         }
@@ -342,6 +347,7 @@ export default function AskClaude({
       setEvaluatedKeys(new Set(target.evaluatedKeys || []))
       setBoardResults(target.boardResults || {})
       setEditorialVisualResults(target.editorialVisualResults || {})
+      setEvaluationResultsByKey(target.evaluationResultsByKey || {})
       try {
         localStorage.setItem('stylist_current_thread_id', threadId)
       } catch (e) {}
@@ -362,6 +368,7 @@ export default function AskClaude({
     setEvaluatedKeys(new Set(nextThread.evaluatedKeys || []))
     setBoardResults(nextThread.boardResults || {})
     setEditorialVisualResults(nextThread.editorialVisualResults || {})
+    setEvaluationResultsByKey(nextThread.evaluationResultsByKey || {})
     
     try {
       localStorage.setItem('stylist_chat_threads', JSON.stringify(remaining))
@@ -675,7 +682,18 @@ export default function AskClaude({
   // ── Render one editorial direction image on demand ──────────────────────────
   const renderOneEditorialDirection = async (outfit, messageIndex, idx) => {
     const key = `${messageIndex}:${idx}`
+    let statusTimers = []
+    const clearImageTimers = () => {
+      statusTimers.forEach(clearTimeout)
+      statusTimers = []
+    }
     setBoardLoadingIndex(key)
+    setImageStatusByKey(prev => ({ ...prev, [key]: 'Loading garment reference photos...' }))
+    statusTimers = [
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [key]: 'Sending direction details to GPT-4o...' })), 4000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [key]: 'Rendering outfit image. This can take a minute.' })), 14000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [key]: 'Still rendering...' })), 45000),
+    ]
     try {
       const res = await fetch('/api/ai/editorial-render-one', {
         method: 'POST',
@@ -693,6 +711,12 @@ export default function AskClaude({
     } catch (err) {
       setBoardResults(prev => ({ ...prev, [key]: [{ error: err.message }] }))
     } finally {
+      clearImageTimers()
+      setImageStatusByKey(prev => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
       setBoardLoadingIndex(null)
     }
   }
@@ -1067,9 +1091,16 @@ export default function AskClaude({
                 {isGeneratingComparison ? 'Generating rough preview...' : (comparisonBoards.length ? 'Regenerate rough preview' : 'Generate rough preview')}
               </button>
             </div>
-            {imageStatusByKey[comparisonKey] && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{imageStatusByKey[comparisonKey]}</div>}
-            {comparisonBoards.length > 0 && (
-              <div className="generated-visual-grid">
+            {(isGeneratingComparison || comparisonBoards.length > 0) && (
+              <div className="generated-visual-grid" style={{ marginTop: 8 }}>
+                {isGeneratingComparison && (
+                  <div className="generated-visual-card skeleton-pulse" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
+                    <div className="typing-dots" style={{ marginBottom: 12 }}><span /><span /><span /></div>
+                    <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500, textAlign: 'center', lineHeight: 1.45 }}>
+                      {imageStatusByKey[comparisonKey] || 'Generating rough preview...'}
+                    </div>
+                  </div>
+                )}
                 {comparisonBoards.map((board, boardIdx) => (
                   <div key={boardIdx} className="generated-visual-card">
                     {board.error ? (
@@ -1135,9 +1166,16 @@ export default function AskClaude({
                   {isGeneratingIdealComparison ? 'Generating rough preview...' : (idealComparisonBoards.length ? 'Regenerate rough preview' : 'Rough preview · all directions (~$0.07)')}
                 </button>
               </div>
-              {imageStatusByKey[idealComparisonKey] && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{imageStatusByKey[idealComparisonKey]}</div>}
-              {idealComparisonBoards.length > 0 && (
-                <div className="generated-visual-grid">
+              {(isGeneratingIdealComparison || idealComparisonBoards.length > 0) && (
+                <div className="generated-visual-grid" style={{ marginTop: 8 }}>
+                  {isGeneratingIdealComparison && (
+                    <div className="generated-visual-card skeleton-pulse" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
+                      <div className="typing-dots" style={{ marginBottom: 12 }}><span /><span /><span /></div>
+                      <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500, textAlign: 'center', lineHeight: 1.45 }}>
+                        {imageStatusByKey[idealComparisonKey] || 'Generating rough preview...'}
+                      </div>
+                    </div>
+                  )}
                   {idealComparisonBoards.map((board, boardIdx) => (
                     <div key={boardIdx} className="generated-visual-card">
                       {board.error ? (
@@ -1201,6 +1239,12 @@ export default function AskClaude({
           const isRendering = boardLoadingIndex === boardKey
           const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
           const showSilhouette = isPreview && !isTextOnly
+
+          const outfitTitle = outfit.label || outfit.title || `Direction ${idx + 1}`
+          const historicalCritique = messages.find(msg => msg.role === 'assistant' && msg.wardrobeEvaluation && (msg.outfitName === outfitTitle || msg.outfitName === outfit.label || msg.outfitName === outfit.title))?.text
+          const critiqueText = evaluationResultsByKey[boardKey] || historicalCritique
+          const hasCritique = Boolean(critiqueText)
+
           return (
             <div key={idx} style={{
               padding: '10px 12px',
@@ -1301,117 +1345,179 @@ export default function AskClaude({
                   })}
                 </div>
               )}
-              {outfit.reason && <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 7 }}>{outfit.reason}</div>}
-              {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 5 }}><strong>Watch:</strong> {outfit.watchFor}</div>
+              {outfit.reason && (
+                <details style={{ marginTop: 8, border: '1px solid var(--border-light)', borderRadius: 8, background: 'var(--surface-2)', padding: '6px 10px' }}>
+                  <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--accent)', userSelect: 'none' }}>
+                    🔍 Styling Justification & Watchout
+                  </summary>
+                  <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                      {outfit.reason}
+                    </div>
+                    {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 6 }}>
+                        <strong>Watch:</strong> {outfit.watchFor}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
+
+              {isEvaluating && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--accent)', marginTop: 8 }}>
+                  <span className="typing-dots"><span /><span /></span>
+                  <span>Evaluating this outfit...</span>
+                </div>
+              )}
+              {hasCritique && (
+                <details defaultOpen={true} style={{ width: '100%', marginTop: 8, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface-2)' }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: 650, color: 'var(--accent)', fontSize: 12, userSelect: 'none' }}>
+                    🔍 View Outfit Critique
+                  </summary>
+                  <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
+                    {critiqueText.split('\n').filter(Boolean).map((line, j) => (
+                      <p key={j} style={{ fontSize: 13, lineHeight: 1.45, margin: '0 0 6px', color: 'var(--text)' }}>{line}</p>
+                    ))}
+                  </div>
+                </details>
               )}
 
               {message?.wholeWardrobe && (
-                <div style={{ marginTop: 9, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button
-                    onClick={() => generateWholeWardrobeImage(boardKey, outfit)}
-                    disabled={isRendering}
-                    style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
-                  >
-                    {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
-                  </button>
-                  <button
-                    onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
-                    disabled={isEvaluating}
-                    style={{ fontSize: 10, color: evaluatedKeys.has(boardKey) ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: evaluatedKeys.has(boardKey) ? 'var(--surface-2)' : 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1 }}
-                  >
-                    {isEvaluating ? 'Evaluating...' : (evaluatedKeys.has(boardKey) ? '✓ Evaluated' : 'Evaluate outfit')}
-                  </button>
-                  {imageStatusByKey[boardKey] && <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{imageStatusByKey[boardKey]}</span>}
-                  {WHOLE_WARDROBE_FEEDBACK_LABELS.map(([type, label]) => {
-                    const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
-                    const isSaved = feedbackSaved.has(key)
-                    return (
-                      <button
-                        key={key}
-                        onClick={() => toggleStylistFeedback({
-                          key,
-                          feedbackType: type,
-                          targetType: 'whole_wardrobe_outfit',
-                          label: outfit.label || `Outfit ${idx + 1}`,
-                          note: [outfit.reason, outfit.watchFor].filter(Boolean).join(' Watch: '),
-                          payload: {
-                            outfit,
-                            messageIndex,
-                            outfitIndex: idx,
-                            pieceIds: outfit.pieceIds || [],
-                            pieces: outfit.pieces || [],
-                            formulaFamily: outfit.formulaFamily || '',
-                            archetypeId: outfit.archetypeId || '',
-                            occasion: wardrobeOutfitOccasion,
-                            season: wardrobeOutfitSeason,
-                            mood: wardrobeOutfitMood,
-                            ...(message?.source === 'visual_composer' ? { source: 'visual_composer' } : {})
-                          },
-                          contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
-                        })}
-                        style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
-                      >
-                        {isSaved ? '✓ ' : ''}{label}
-                      </button>
-                    )
-                  })}
-                </div>
+                <>
+                  <div style={{ marginTop: 9, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button
+                      onClick={() => generateWholeWardrobeImage(boardKey, outfit)}
+                      disabled={isRendering}
+                      style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
+                    >
+                      {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
+                    </button>
+                    <button
+                      onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
+                      disabled={isEvaluating}
+                      style={{ fontSize: 10, color: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--surface-2)' : 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer' }}
+                    >
+                      {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
+                    </button>
+                    {WHOLE_WARDROBE_FEEDBACK_LABELS.map(([type, label]) => {
+                      const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
+                      const isSaved = feedbackSaved.has(key)
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => toggleStylistFeedback({
+                            key,
+                            feedbackType: type,
+                            targetType: 'whole_wardrobe_outfit',
+                            label: outfit.label || `Outfit ${idx + 1}`,
+                            note: [outfit.reason, outfit.watchFor].filter(Boolean).join(' Watch: '),
+                            payload: {
+                              outfit,
+                              messageIndex,
+                              outfitIndex: idx,
+                              pieceIds: outfit.pieceIds || [],
+                              pieces: outfit.pieces || [],
+                              formulaFamily: outfit.formulaFamily || '',
+                              archetypeId: outfit.archetypeId || '',
+                              occasion: wardrobeOutfitOccasion,
+                              season: wardrobeOutfitSeason,
+                              mood: wardrobeOutfitMood,
+                              ...(message?.source === 'visual_composer' ? { source: 'visual_composer' } : {})
+                            },
+                            appendToPiece: activeContext?.type === 'piece'
+                          })}
+                          disabled={isSaved}
+                          style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
+                        >
+                          {isSaved ? '✓ ' : ''}{label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
               )}
 
               {(activeContext?.type === 'piece' || outfit.pieceId) && !isTextOnly && (
-                <div style={{ marginTop: 9, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {isPreview ? (
-                    // Preview mode: render this single direction on demand
-                    <button
-                      onClick={() => renderOneEditorialDirection(outfit, messageIndex, idx)}
-                      disabled={isRendering || hasRendered}
-                      style={{
-                        fontSize: 12, color: hasRendered ? 'var(--donate)' : 'var(--accent)',
-                        padding: '3px 9px', borderRadius: 12,
-                        border: `1px solid ${hasRendered ? 'var(--donate)' : 'var(--accent)'}`,
-                        background: 'var(--surface)',
-                        cursor: (isRendering || hasRendered) ? 'default' : 'pointer',
-                        opacity: isRendering ? 0.65 : 1,
-                      }}
-                    >
-                      {isRendering ? 'Rendering…' : hasRendered ? '✓ Rendered' : 'Generate outfit image (~$0.07)'}
-                    </button>
-                  ) : (
-                    // Wardrobe-board generation button (original mode)
-                    <>
+                <>
+                  <div style={{ marginTop: 9, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {isPreview ? (
+                      // Preview mode: render this single direction on demand
                       <button
-                        onClick={() => generateWholeWardrobeImage(boardKey, outfit, { occasion: generateOccasion, season: generateSeason })}
-                        disabled={isRendering}
+                        onClick={() => renderOneEditorialDirection(outfit, messageIndex, idx)}
+                        disabled={isRendering || hasRendered}
                         style={{
-                          fontSize: 12, color: 'var(--accent)', padding: '3px 9px', borderRadius: 12,
-                          border: '1px solid var(--accent)', background: 'var(--surface)',
-                          cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1,
+                          fontSize: 12, color: hasRendered ? 'var(--donate)' : 'var(--accent)',
+                          padding: '3px 9px', borderRadius: 12,
+                          border: `1px solid ${hasRendered ? 'var(--donate)' : 'var(--accent)'}`,
+                          background: 'var(--surface)',
+                          cursor: (isRendering || hasRendered) ? 'default' : 'pointer',
+                          opacity: isRendering ? 0.65 : 1,
                         }}
                       >
-                        {isRendering ? 'Rendering this outfit…' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
+                        {isRendering ? 'Rendering…' : hasRendered ? '✓ Rendered' : 'Generate outfit image (~$0.07)'}
                       </button>
-                      <button
-                        onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
-                        disabled={isEvaluating}
-                        style={{
-                          fontSize: 12, color: evaluatedKeys.has(boardKey) ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 9px', borderRadius: 12,
-                          border: '1px solid var(--border)', background: evaluatedKeys.has(boardKey) ? 'var(--surface-2)' : 'var(--surface)',
-                          cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1,
-                        }}
-                      >
-                        {isEvaluating ? 'Evaluating...' : (evaluatedKeys.has(boardKey) ? '✓ Evaluated' : 'Evaluate outfit')}
-                      </button>
-                    </>
+                    ) : (
+                      // Wardrobe-board generation button (original mode)
+                      <>
+                        <button
+                          onClick={() => generateWholeWardrobeImage(boardKey, outfit, { occasion: generateOccasion, season: generateSeason })}
+                          disabled={isRendering}
+                          style={{
+                            fontSize: 12, color: 'var(--accent)', padding: '3px 9px', borderRadius: 12,
+                            border: '1px solid var(--accent)', background: 'var(--surface)',
+                            cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1,
+                          }}
+                        >
+                          {isRendering ? 'Rendering this outfit…' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
+                        </button>
+                        <button
+                          onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
+                          disabled={isEvaluating}
+                          style={{
+                            fontSize: 12, color: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 9px', borderRadius: 12,
+                            border: '1px solid var(--border)', background: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--surface-2)' : 'var(--surface)',
+                            cursor: isEvaluating ? 'default' : 'pointer', opacity: isEvaluating ? 0.65 : 1,
+                          }}
+                        >
+                          {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
+                        </button>
+                      </>
+                    )}
+                    {!isPreview && <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Image generation cost: one outfit only.</span>}
+                  </div>
+                  {isEvaluating && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--accent)', marginTop: 8 }}>
+                      <span className="typing-dots"><span /><span /></span>
+                      <span>Evaluating this outfit...</span>
+                    </div>
                   )}
-                  {!isPreview && <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Image generation cost: one outfit only.</span>}
-                </div>
+                  {hasCritique && (
+                    <details defaultOpen={true} style={{ width: '100%', marginTop: 8, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface-2)' }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 650, color: 'var(--accent)', fontSize: 12, userSelect: 'none' }}>
+                        🔍 View Outfit Critique
+                      </summary>
+                      <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
+                        {critiqueText.split('\n').filter(Boolean).map((line, j) => (
+                          <p key={j} style={{ fontSize: 13, lineHeight: 1.45, margin: '0 0 6px', color: 'var(--text)' }}>{line}</p>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </>
               )}
 
               {/* Rendered image for this direction */}
-              {hasRendered && (
+              {(isRendering || hasRendered) && (
                 <div className="generated-visual-grid" style={{ marginTop: 10 }}>
-                  {boardResults[boardKey].map((board, boardIdx) => (
+                  {isRendering && (
+                    <div className="generated-visual-card skeleton-pulse" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
+                      <div className="typing-dots" style={{ marginBottom: 12 }}><span /><span /><span /></div>
+                      <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500, textAlign: 'center', lineHeight: 1.4 }}>
+                        {imageStatusByKey[boardKey] || 'Rendering outfit image...'}
+                      </div>
+                    </div>
+                  )}
+                  {hasRendered && boardResults[boardKey].map((board, boardIdx) => (
                     <div key={boardIdx} className="generated-visual-card">
                       {board.error ? (
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Render error: {board.error}</div>
@@ -1780,10 +1886,7 @@ export default function AskClaude({
     if (!ids.length) return
     const loadingKey = `evaluate:${resultKey}`
     const outfitTitle = outfit?.label || outfit?.title || 'this outfit'
-    const userText = `Evaluate ${outfitTitle}.`
 
-    setMessages(m => [...m, { role: 'user', text: userText, contextName: 'Whole wardrobe evaluation' }])
-    addToHistory('user', userText)
     setBoardLoadingIndex(loadingKey)
 
     try {
@@ -1809,14 +1912,7 @@ export default function AskClaude({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not evaluate outfit')
       const replyText = data.feedback || 'Outfit evaluation complete.'
-      setMessages(m => [...m, {
-        role: 'assistant',
-        text: replyText,
-        wardrobeEvaluation: true,
-        textOnly: true,
-        debug: data.debug || null,
-      }])
-      addToHistory('assistant', replyText)
+      setEvaluationResultsByKey(prev => ({ ...prev, [resultKey]: replyText }))
       const evaluatedOutfit = { ...outfit, label: outfitTitle, title: outfitTitle, pieceIds: ids }
       setThreadMemory({
         type: 'generated_outfit',
@@ -1834,8 +1930,7 @@ export default function AskClaude({
       })
     } catch (err) {
       const errText = `Error: ${err.message}`
-      setMessages(m => [...m, { role: 'assistant', text: errText }])
-      addToHistory('assistant', errText)
+      setEvaluationResultsByKey(prev => ({ ...prev, [resultKey]: errText }))
     } finally {
       setBoardLoadingIndex(null)
     }
@@ -2142,6 +2237,7 @@ export default function AskClaude({
       let replyText
       let replyStructuredOutfits = null
       let replyWardrobeEvaluation = false
+      let replyOutfitName = null
       let replyDebug = null
       let replyMode = null
 
@@ -2221,6 +2317,7 @@ export default function AskClaude({
         if (!res.ok) throw new Error(data.error || 'Could not evaluate outfit')
         replyText = data.feedback || 'Outfit evaluation complete.'
         replyWardrobeEvaluation = true
+        replyOutfitName = outfitToSend.name
         replyDebug = data.debug || null
         setThreadMemory({
           type: 'outfit',
@@ -2423,6 +2520,7 @@ export default function AskClaude({
         structuredOutfits: replyStructuredOutfits,
         wardrobeEvaluation: replyWardrobeEvaluation,
         textOnly: replyWardrobeEvaluation,
+        outfitName: replyOutfitName,
         debug: replyDebug,
         mode: replyMode,
         queryOptions: shouldGenerateOutfits || shouldGenerateEditorialVisuals || shouldGenerateActiveEditorialVisuals ? {
@@ -2465,7 +2563,7 @@ export default function AskClaude({
     setThreadMemory(null)
     setActiveContext(null)
     setSavedIndices(new Set()); setFeedbackSaved(new Set()); setFeedbackIdsByKey({}); setSavedBoardKeys(new Set()); setEvaluatedKeys(new Set())
-    setBoardResults({}); setEditorialVisualResults({})
+    setBoardResults({}); setEditorialVisualResults({}); setEvaluationResultsByKey({})
     setBoardLoadingIndex(null); setLearningOpen(false); setLearningRows([])
     
     setThreads(prev => prev.map(t => {
@@ -2478,6 +2576,9 @@ export default function AskClaude({
           threadMemory: null,
           activeContext: null,
           evaluatedKeys: [],
+          boardResults: {},
+          editorialVisualResults: {},
+          evaluationResultsByKey: {},
           updatedAt: Date.now()
         }
       }
@@ -2921,8 +3022,12 @@ export default function AskClaude({
         )}
 
         <div className="chat-thread">
-          {messages.map((m, i) => (
-            <div key={i}>
+          {messages.map((m, i) => {
+            if (m.wardrobeEvaluation || m.contextName === 'Whole wardrobe evaluation') {
+              return null
+            }
+            return (
+              <div key={i}>
               {(m.imagePrev || m.contextName) && (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4, gap: 8, alignItems: 'flex-end' }}>
                   {(m.contextName || m.contextMode) && (
@@ -2938,6 +3043,22 @@ export default function AskClaude({
               {(() => {
                 const multi = isMultiOutfitResponse(m)
                 const hasBoards = Boolean(boardResults[i]?.length)
+                if (m.role === 'assistant' && m.wardrobeEvaluation) {
+                  return (
+                    <div className={`ai-message ${m.role}`} style={{ padding: '12px 14px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
+                      <details style={{ width: '100%' }}>
+                        <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--accent)', fontSize: 13, userSelect: 'none' }}>
+                          🔍 View Outfit Critique: {m.outfitName || 'Generated Outfit'}
+                        </summary>
+                        <div style={{ marginTop: 10, borderTop: '1px solid var(--border-light)', paddingTop: 10 }}>
+                          {m.text.split('\n').filter(Boolean).map((line, j) => (
+                            <p key={j} style={{ fontSize: 13, lineHeight: 1.5, margin: '0 0 8px', color: 'var(--text)' }}>{line}</p>
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  )
+                }
                 if (m.role === 'assistant' && multi) {
                   const hasStructuredIdeas = Array.isArray(m.structuredOutfits) && m.structuredOutfits.length > 0
                   const isPreviewResponse = hasStructuredIdeas && m.structuredOutfits[0]?.previewOnly
@@ -3081,7 +3202,7 @@ export default function AskClaude({
                 </div>
               )}
             </div>
-          ))}
+          )})}
 
           {loading && (
             <div className="ai-message assistant">

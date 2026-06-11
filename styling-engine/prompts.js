@@ -978,7 +978,7 @@ export const WHOLE_WARDROBE_OUTFIT_ARCHETYPES = [
     silhouette: 'compact upper over long grounded lower line',
     visualGoal: 'artistic but controlled',
     formulaFamily: 'compact_top_dark_column',
-    preferredRoles: ['upper_anchor', 'graphic_element', 'lower_column', 'grounding_piece'],
+    preferredRoles: ['upper_anchor', 'graphic_element', 'dark_lower_column', 'grounding_piece'],
     avoidRoles: ['soft_texture', 'extra_pattern'],
     occasionBias: { evening: 12, 'gallery / art event': 14, casual: 4 }
   },
@@ -1022,7 +1022,7 @@ export const WHOLE_WARDROBE_OUTFIT_ARCHETYPES = [
     silhouette: 'relaxed upper over stable dark lower column',
     visualGoal: 'wearable artistic ease without shapelessness',
     formulaFamily: 'relaxed_top_dark_base',
-    preferredRoles: ['relaxed_upper', 'lower_column', 'grounding_piece'],
+    preferredRoles: ['relaxed_upper', 'dark_lower_column', 'grounding_piece'],
     avoidRoles: ['wide_soft_bottom', 'soft_texture_stack'],
     occasionBias: { casual: 10, city: 8 }
   }
@@ -1081,7 +1081,7 @@ Style filter:
 - bohemian, folk/artisan, romantic, utilitarian, polished, minimalist are all valid lanes — reject only drift: costume/festival stereotype, mature catalog, generic retail, passive softness
 
 Composition rules:
-- Each outfit: top + bottom + shoes (a dress replaces top + bottom). Outerwear/accessories optional.
+- Each outfit: top + bottom + shoes (a dress replaces top + bottom). Outerwear optional. Accessories are styled separately and are not shown — do not invent or reference accessory pieces.
 - Reference pieces ONLY by the exact IDs shown in the labels. Never invent pieces.
 - Each outfit must have a different visual thesis — different grounding strategy, proportion logic, or focal/support relationship. Do not return five variations of one formula.
 - A little tension is good. If an outfit has no deliberate contrast or graphic decision, it is probably boring.

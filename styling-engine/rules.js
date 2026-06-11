@@ -12,7 +12,13 @@ import {
   pieceSoftness,
   pieceGroundingValue,
   pieceStructureValue,
-  isExpressiveForAnchor
+  isExpressiveForAnchor,
+  pieceOccasionScore,
+  isAccessory,
+  isOuterwear,
+  isTop,
+  wardrobeCategoryGroup,
+  isDarkPiece
 } from './attributes.js'
 
 export function isStyleSelectedQuestion(question = '') {
@@ -85,19 +91,7 @@ export function pieceCoverage(p) {
 
 
 
-export function wardrobeCategoryGroup(pieceOrCategory = '') {
-  const raw = typeof pieceOrCategory === 'string'
-    ? pieceOrCategory
-    : (pieceOrCategory?.category || pieceOrCategory?.type || pieceOrCategory?.name || '')
-  const value = String(raw || '').toLowerCase().trim()
-  if (/\b(top|shirt|blouse|tee|t-shirt|tank|shell|sweater|knit|cardigan as top|tunic|hoodie|sweatshirt)\b/.test(value) || /tops?/.test(value)) return 'top'
-  if (/\b(bottom|pant|trouser|jean|skirt|short|culotte|legging)\b/.test(value) || /bottoms?/.test(value)) return 'bottom'
-  if (/\b(dress|jumpsuit)\b/.test(value) || /dresses/.test(value)) return 'dress'
-  if (/\b(outerwear|jacket|cardigan|coat|blazer|vest|overshirt|kimono)\b/.test(value)) return 'outerwear'
-  if (/\b(shoe|boot|flat|loafer|sandal|sneaker|heel|mule|clog)\b/.test(value) || /shoes/.test(value)) return 'shoes'
-  if (/\b(accessor|necklace|pendant|earring|bracelet|bag|tote|belt|scarf|watch|ring)\b/.test(value)) return 'accessory'
-  return value || 'other'
-}
+export { wardrobeCategoryGroup } from './attributes.js'
 
 export function categoryConstraintForSelectedPiece(piece) {
   if (wardrobeCategoryGroup(piece) === 'bottom') {
@@ -1058,7 +1052,12 @@ export function inferWholeWardrobePieceRoles(piece = {}) {
   if (group === 'dress') roles.add('one_piece_column')
   if (group === 'top' && /\b(fitted|sleeveless|tank|shell|compact|structured)\b/.test(text)) roles.add('upper_anchor')
   if (group === 'top' && /\b(relaxed|oversized|loose|tunic|boxy|linen|knit)\b/.test(text)) roles.add('relaxed_upper')
-  if (group === 'bottom' && /\b(black|charcoal|dark|navy|denim|jean|straight|bootcut|trouser|column)\b/.test(text)) roles.add('lower_column')
+  if (group === 'bottom' && /\b(black|charcoal|dark|navy|denim|jean|straight|bootcut|trouser|column)\b/.test(text)) {
+    roles.add('lower_column')
+    if (isDarkPiece(piece)) {
+      roles.add('dark_lower_column')
+    }
+  }
   if (group === 'shoes') roles.add('grounding_piece')
   if (group === 'shoes' && /\b(pointed|patent|loafer|boot|mule|oxford)\b/.test(text)) roles.add('sharp_finish')
   if (['outerwear', 'bottom', 'top'].includes(group) && /\b(structured|blazer|jacket|utility|trouser|denim|crisp|architectural)\b/.test(text)) roles.add('structure_support')
@@ -1113,9 +1112,9 @@ export function inferOutfitArchetype(outfit, candidatePieces = [], occasion = 'c
     let score = occasionBiasForArchetype(archetype, occasion) + occasionScoreForOutfit(pieces, occasion)
     for (const role of archetype.preferredRoles || []) if (hasRole(role)) score += 8
     for (const role of archetype.avoidRoles || []) if (hasRole(role)) score -= 12
-    if (archetype.id === 'grounded_graphic_column' && hasRole('graphic_element') && hasRole('lower_column') && hasRole('grounding_piece')) score += 12
+    if (archetype.id === 'grounded_graphic_column' && hasRole('graphic_element') && hasRole('dark_lower_column') && hasRole('grounding_piece')) score += 12
     if (archetype.id === 'dress_grounded_sharp' && hasRole('one_piece_column')) score += 18
-    if (archetype.id === 'relaxed_dark_base' && hasRole('relaxed_upper') && hasRole('lower_column')) score += 14
+    if (archetype.id === 'relaxed_dark_base' && hasRole('relaxed_upper') && hasRole('dark_lower_column')) score += 14
     if (archetype.id === 'soft_structure_contrast' && hasRole('soft_texture') && hasRole('structure_support')) score += 12
     if (archetype.id === 'earthy_structured_minimal' && hasRole('structure_support') && !hasRole('extra_pattern')) score += 8
     if (!best || score > best.archetypeScore) best = { ...archetype, archetypeScore: score }
@@ -1236,6 +1235,276 @@ export function filterWholeWardrobePiecesForGeneration(allPieces = [], options =
     else suppressedPieces.push({ id: piece.id, name: piece.name, category: wardrobeCategoryGroup(piece), reasons: decision.reasons })
   }
   return { allowedPieces, suppressedPieces }
+}
+
+export function buildVisualComposerRoster(allowedPieces = [], {
+  occasion = 'casual',
+  weatherProfile = {},          // from weatherProfileFromContext({ mood, season })
+  sessionInfluence = null,      // existing recency map, optional
+  maxImages = 90,                // hard ceiling, below Claude's 100-image limit
+  selectedPieceId = null,
+  includeAccessories = false
+} = {}) {
+  const roster = []
+  const excluded = []
+  const debug = {
+    excludedCounts: {},
+    categoryCounts: {}
+  }
+
+  const exclude = (piece, reason) => {
+    excluded.push({
+      pieceId: piece.id,
+      name: piece.name,
+      reason
+    })
+    debug.excludedCounts[reason] = (debug.excludedCounts[reason] || 0) + 1
+  }
+
+  const isSelected = (p) => {
+    if (selectedPieceId && Number(p.id) === Number(selectedPieceId)) return true
+    if (p.selected || p.isAnchor) return true
+    return false
+  }
+
+  // Pre-load confirmed outfits and stylist feedback maps to optimize Step 4 queries
+  const confirmedCounts = new Map()
+  try {
+    const rows = db.prepare(`
+      SELECT op.piece_id, COUNT(*) as cnt, SUM(CASE WHEN o.favorite = 1 THEN 1 ELSE 0 END) as fav_cnt
+      FROM outfit_pieces op
+      JOIN outfits o ON op.outfit_id = o.id
+      GROUP BY op.piece_id
+    `).all()
+    for (const r of rows) {
+      confirmedCounts.set(Number(r.piece_id), { count: r.cnt, favoriteCount: r.fav_cnt })
+    }
+  } catch (err) {
+    console.warn('Failed to query confirmed outfits count:', err.message)
+  }
+
+  const feedbackScores = new Map()
+  try {
+    const feedbackRows = db.prepare(`
+      SELECT id, feedback_type, context_type, context_id, payload, is_gold
+      FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0
+    `).all()
+    for (const row of feedbackRows) {
+      const weight = feedbackWeight(row.feedback_type)
+      if (!weight) continue
+      const signedWeight = weight + (row.is_gold ? Math.sign(weight) * 18 : 0)
+      
+      if (row.context_type === 'piece' && row.context_id) {
+        const pId = Number(row.context_id)
+        feedbackScores.set(pId, (feedbackScores.get(pId) || 0) + signedWeight)
+      }
+      
+      const ids = collectPieceIdsFromFeedbackPayload(row.payload)
+      for (const id of ids) {
+        const pId = Number(id)
+        feedbackScores.set(pId, (feedbackScores.get(pId) || 0) + signedWeight)
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to query stylist feedback memory:', err.message)
+  }
+
+  // Step 1 — No photo
+  const afterStep1 = []
+  for (const p of allowedPieces) {
+    if (isSelected(p)) {
+      afterStep1.push(p)
+    } else if (!p.photo && !p.worn_photo) {
+      exclude(p, 'no photo')
+    } else {
+      afterStep1.push(p)
+    }
+  }
+
+  // Step 2 — Category gate
+  const afterStep2 = []
+  for (const p of afterStep1) {
+    if (isSelected(p)) {
+      afterStep2.push(p)
+    } else if (!includeAccessories && isAccessory(p)) {
+      exclude(p, 'accessories excluded from visual composer')
+    } else {
+      afterStep2.push(p)
+    }
+  }
+
+  // Step 3 — Weather validity gate
+  const afterStep3 = []
+  const isHot = weatherProfile && weatherProfile.isHot
+  const isCold = weatherProfile && weatherProfile.isCold
+
+  if (isHot) {
+    const outerwearCandidates = []
+    for (const p of afterStep2) {
+      if (isSelected(p)) {
+        afterStep3.push(p)
+      } else if ((isOuterwear(p) || isTop(p)) && fabricWeight(p) === 'heavy') {
+        exclude(p, 'hot weather: insulating piece')
+      } else if (isOuterwear(p)) {
+        outerwearCandidates.push(p)
+      } else {
+        afterStep3.push(p)
+      }
+    }
+
+    // Cap outerwear to the 3 lightest pieces
+    if (outerwearCandidates.length > 3) {
+      const weightValues = { 'light': 1, 'medium': 2, 'heavy': 3 }
+      outerwearCandidates.sort((a, b) => {
+        const wa = weightValues[fabricWeight(a)] || 2
+        const wb = weightValues[fabricWeight(b)] || 2
+        if (wa !== wb) return wa - wb
+        return Number(a.id) - Number(b.id) // stable tie-breaker by piece ID
+      })
+
+      for (let i = 0; i < outerwearCandidates.length; i++) {
+        const p = outerwearCandidates[i]
+        if (i < 3) {
+          afterStep3.push(p)
+        } else {
+          exclude(p, 'hot weather: outerwear cap')
+        }
+      }
+    } else {
+      afterStep3.push(...outerwearCandidates)
+    }
+  } else if (isCold) {
+    for (const p of afterStep2) {
+      if (isSelected(p)) {
+        afterStep3.push(p)
+      } else if (bottomKind(p) === 'shorts') {
+        exclude(p, 'cold weather: shorts')
+      } else {
+        afterStep3.push(p)
+      }
+    }
+  } else {
+    // No weather profile, Step 3 is a no-op
+    afterStep3.push(...afterStep2)
+  }
+
+  // Step 4 — Image budget cap
+  let afterStep4 = []
+  if (afterStep3.length > maxImages) {
+    const defaultCeilings = {
+      top: 30,
+      bottom: 25,
+      shoes: 15,
+      dress: 10,
+      outerwear: 8,
+      other: 5
+    }
+    const sumCeilings = Object.values(defaultCeilings).reduce((a, b) => a + b, 0)
+    const ceilings = { ...defaultCeilings }
+    if (sumCeilings > maxImages) {
+      const factor = maxImages / sumCeilings
+      for (const cat of Object.keys(ceilings)) {
+        ceilings[cat] = Math.floor(defaultCeilings[cat] * factor)
+      }
+    }
+
+    // Group surviving pieces by category
+    const byCategory = {
+      top: [],
+      bottom: [],
+      shoes: [],
+      dress: [],
+      outerwear: [],
+      other: []
+    }
+
+    for (const p of afterStep3) {
+      const group = wardrobeCategoryGroup(p)
+      if (byCategory[group]) {
+        byCategory[group].push(p)
+      } else {
+        byCategory.other.push(p)
+      }
+    }
+
+    // Sort and limit per category
+    for (const cat of Object.keys(byCategory)) {
+      const pieces = byCategory[cat]
+      const limit = ceilings[cat]
+
+      // Sort by relevance score descending, stably by piece ID ascending
+      pieces.sort((a, b) => {
+        const ra = getRelevanceScore(a)
+        const rb = getRelevanceScore(b)
+        if (ra !== rb) return rb - ra
+        return Number(a.id) - Number(b.id)
+      })
+
+      let categoryKeptCount = 0
+      for (const p of pieces) {
+        if (isSelected(p)) {
+          afterStep4.push(p)
+          categoryKeptCount++
+        } else if (categoryKeptCount < limit) {
+          afterStep4.push(p)
+          categoryKeptCount++
+        } else {
+          exclude(p, 'roster cap: category limit')
+        }
+      }
+    }
+  } else {
+    afterStep4.push(...afterStep3)
+  }
+
+  function getRelevanceScore(p) {
+    const occasionScore = pieceOccasionScore(p, occasion)
+    const conf = confirmedCounts.get(Number(p.id)) || { count: 0, favoriteCount: 0 }
+    const historyBonus = conf.count * 8 + conf.favoriteCount * 12
+    const fbScore = feedbackScores.get(Number(p.id)) || 0
+    const feedbackBonus = fbScore > 0 ? fbScore : 0
+    const recencyPenalty = sessionInfluence && sessionInfluence.pieceRecency
+      ? (sessionInfluence.pieceRecency.get(Number(p.id)) || 0)
+      : 0
+    return occasionScore + historyBonus + feedbackBonus - recencyPenalty
+  }
+
+  // Step 5 — Final guard
+  if (afterStep4.length > maxImages) {
+    // Sort globally by relevance descending, then by ID
+    afterStep4.sort((a, b) => {
+      const ra = getRelevanceScore(a)
+      const rb = getRelevanceScore(b)
+      if (ra !== rb) return rb - ra
+      return Number(a.id) - Number(b.id)
+    })
+
+    console.warn(`[buildVisualComposerRoster] Roster count (${afterStep4.length}) exceeds maxImages (${maxImages}) even after category limits. Trimming globally.`)
+
+    let finalKeptCount = 0
+    for (const p of afterStep4) {
+      if (isSelected(p)) {
+        roster.push(p)
+        finalKeptCount++
+      } else if (finalKeptCount < maxImages) {
+        roster.push(p)
+        finalKeptCount++
+      } else {
+        exclude(p, 'roster cap: global limit')
+      }
+    }
+  } else {
+    roster.push(...afterStep4)
+  }
+
+  // Populate debug category counts
+  for (const p of roster) {
+    const group = wardrobeCategoryGroup(p)
+    debug.categoryCounts[group] = (debug.categoryCounts[group] || 0) + 1
+  }
+
+  return { roster, excluded, debug }
 }
 
 export function wholeWardrobeMoodProfile(mood = '') {
