@@ -101,7 +101,9 @@ import {
   buildWholeWardrobeFeedbackInfluence,
   saveWholeWardrobeSession,
   getRecentWholeWardrobeSessionInfluence,
-  mergeStyleProfilePatch
+  mergeStyleProfilePatch,
+  outfitStylisticStrengthScore,
+  sortByStylisticStrength
 } from './rules.js'
 
 // ── Basic helper/utility functions ───────────────────────────────────────────
@@ -600,55 +602,6 @@ export function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidateP
   }
 }
 
-export function outfitStylisticStrengthScore(outfit = {}, selectedPiece = null) {
-  const text = [
-    outfit.label,
-    outfit.dominantDirection,
-    outfit.silhouette,
-    outfit.bestFor,
-    outfit.reason,
-    outfit.watchFor,
-    ...(Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name || '') : [])
-  ].join(' ').toLowerCase()
-  let score = 0
-  const add = (n, reason) => { score += n }
-
-  if (/\b(dark column|column|graphic|contrast|structured|structure|architectural|gallery|modern minimal|clean & modern|clean and modern|earthy & structured|earthy and structured|artistic contrast|modern preppy|city minimal|black minimalist|monochrome chic|relaxed artistic|structured utility|slightly edgy)\b/.test(text)) add(22)
-  if (/\b(black|charcoal|deep navy|espresso|chocolate|plum|olive|cognac|rust|terra.?cotta|ink navy)\b/.test(text)) add(9)
-  if (/\b(pointed|loafer|loafers|ankle boot|boots|boot|structured bag|crossbody|long pendant|belt|blazer|utility|denim|jeans|cigarette|straight|pencil|midi|column skirt|dark denim|cuffed|cuff|mule|oxford)\b/.test(text)) add(10)
-  if (/\b(tension|friction|sharp|grounded|edited|visual thesis|focal|directional|memorable|angular|asymmetry|asymmetric|attitude)\b/.test(text)) add(18)
-  if (/\b(dark|black|charcoal|espresso|deep navy)\b/.test(text) && /\b(pointed|loafer|boot|structured|column|jeans|trouser)\b/.test(text)) add(10)
-
-  if (/\b(luxe neutral|elevated casual|harmonious|harmony|flattering|elongating|draws attention upward|balanced silhouette|balance the body|confidence|comfortable chic|soft romantic|soft neutral|textured monochrome contrast|lightweight layered elegance|luxe neutral layering)\b/.test(text)) add(-34)
-  if (/\b(librarian|catalog|mature|tasteful|polished neutral|sophisticated neutral|respectable|ladylike)\b/.test(text)) add(-30)
-  if (/\b(cream stable slip-on|stable slip-on|soft shoe|light casual sneaker|rounded sneaker|beige|sand-colored|sand colored|cream slip-on|taupe slip-on|white architectural skirt|soft white skirt)\b/.test(text)) add(-18)
-  if (/\b(soft)\b/.test(text) && !/\b(contrast|structure|structured|dark|black|charcoal|pointed|boot|loafer|graphic)\b/.test(text)) add(-18)
-  if (/\b(cream|ivory|white|beige|taupe|sand|blush)\b/.test(text) && /\b(skirt|pant|trouser|shoe|sneaker|slip-on|flat)\b/.test(text) && !/\b(black|charcoal|deep navy|espresso|plum|cognac|rust|graphic|contrast|pointed|boot|structured|dark column)\b/.test(text)) add(-18)
-
-  if (/\b(cream|beige|taupe|ivory|sand|blush)\b/.test(text) && !/\b(black|charcoal|espresso|plum|deep navy|graphic|contrast|pointed|boot|structured|dark column)\b/.test(text)) add(-14)
-  if (/\b(skirt|pants|trouser)\b/.test(text) && !/\b(pointed|loafer|boot|black|structured|dark|cognac|sharp|grounded)\b/.test(text)) add(-8)
-
-  if (!String(outfit.label || '').trim() || /^third wardrobe option|best wardrobe direction|relaxed structured variation|strongest wardrobe column$/i.test(String(outfit.label || '').trim())) add(-8)
-  if (!String(outfit.dominantDirection || '').trim()) add(-6)
-  if (!String(outfit.silhouette || '').trim()) add(-6)
-  return score
-}
-
-export function sortByStylisticStrength(outfits = [], selectedPiece = null) {
-  const strengthOrder = { signature: 8, strong: 5, usable: 2, experimental: 1 }
-  return [...outfits].sort((a, b) => {
-    const as = outfitStylisticStrengthScore(a, selectedPiece) + (strengthOrder[a?.strength] || 3)
-    const bs = outfitStylisticStrengthScore(b, selectedPiece) + (strengthOrder[b?.strength] || 3)
-    return bs - as
-  }).map((o, index) => {
-    const score = outfitStylisticStrengthScore(o, selectedPiece)
-    const copy = { ...o }
-    if (index === 0 && score >= 8) copy.strength = 'signature'
-    else if (score < -15 && copy.strength === 'signature') copy.strength = 'usable'
-    else if (score < -5 && copy.strength === 'strong') copy.strength = 'usable'
-    return copy
-  })
-}
 
 export function locallyGateOutfitDirections(outfits = [], selectedPiece) {
   const selectedId = Number(selectedPiece?.id)

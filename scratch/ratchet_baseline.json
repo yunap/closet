@@ -1,0 +1,13 @@
+{
+  "fileCounts": {
+    "styling-engine/core.js": 60,
+    "styling-engine/occasions.js": 0,
+    "styling-engine/prompts.js": 0,
+    "styling-engine/provider.js": 0,
+    "styling-engine/rules.js": 132,
+    "styling-engine/tools.js": 0,
+    "routes/ai.js": 0,
+    "routes/crud.js": 0
+  },
+  "total": 192
+}
