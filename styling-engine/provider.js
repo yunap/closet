@@ -124,7 +124,7 @@ export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens 
 }
 
 
-export async function askStylistWithTools({ system, messages, maxTokens = 1500 }) {
+export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
   const testResponse = takeTestAiResponse({ system, messages, maxTokens })
   if (testResponse != null) {
     const answerStr = typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
@@ -182,7 +182,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500 }
         for (const tc of message.tool_calls) {
           const name = tc.function.name
           const args = JSON.parse(tc.function.arguments || '{}')
-          const result = await executeTool(name, args)
+          const result = await executeTool(name, args, toolContext)
           if (name === 'store_user_correction') {
             savedCorrections.push(args)
           }
@@ -245,7 +245,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500 }
         for (const tu of toolUses) {
           const name = tu.name
           const args = tu.input
-          const result = await executeTool(name, args)
+          const result = await executeTool(name, args, toolContext)
           if (name === 'store_user_correction') {
             savedCorrections.push(args)
           }

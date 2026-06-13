@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db, parsePiece } from '../db.js'
-import { compatibilityScoreForSelectedItem } from '../styling-engine/rules.js'
+import { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit } from '../styling-engine/rules.js'
 import { bottomKind, fabricWeight } from '../styling-engine/attributes.js'
+import { resolveOccasionProfile } from '../styling-engine/occasions.js'
 
 test('Whale stripe tee hot weather recommendations include appropriate shorts/lightweight bottoms', () => {
   // Query all active pieces
@@ -107,3 +108,248 @@ test('white octopus graphic t-shirt hot weather recommendations include appropri
     `Insulating jeans (${insulatingJeans.length}) should not outnumber hot-appropriate bottoms (${hotAppropriate.length})`
   )
 })
+
+test('scoreWholeWardrobeCandidate applies weather penalties and boosts correctly', () => {
+  const heavyTurtleneck = { id: 1001, name: 'Heavy Turtleneck', category: 'top', fabric_weight: 'heavy', sleeve_type: 'long' }
+  const heavyJeans = { id: 1002, name: 'Heavy Jeans', category: 'bottom', fabric_weight: 'heavy', style_profile_json: { bottom_kind: 'pants' } }
+  const lightShorts = { id: 1003, name: 'Linen Shorts', category: 'bottom', fabric_weight: 'light', style_profile_json: { bottom_kind: 'shorts' } }
+
+  const hotOptions = { mood: 'it is really hot', season: 'current season' }
+
+  // 1. Heavy fabrics & insulating coverages should be penalized in hot weather
+  const heavyRes = scoreWholeWardrobeCandidate([heavyTurtleneck, heavyJeans], hotOptions)
+  assert.ok(heavyRes.reasons.includes('hot weather: heavy fabric'), 'Must penalize heavy fabric')
+  assert.ok(heavyRes.reasons.includes('hot weather: insulating coverage'), 'Must penalize insulating coverage')
+
+  // 2. Light fabrics should be boosted in hot weather
+  const lightRes = scoreWholeWardrobeCandidate([lightShorts], hotOptions)
+  assert.ok(lightRes.reasons.includes('hot weather: lightweight fabric'), 'Must boost lightweight fabric')
+})
+
+test('scoreWholeWardrobeCandidate applies occasion mismatch penalty and outerwear hot-weather penalty correctly', () => {
+  const casualOptions = { occasion: 'casual', mood: 'very hot outside', season: 'current season' }
+  const eveningHeels = { id: 1004, name: 'Evening Heels', category: 'shoes', occasions: ['evening'] }
+  const lightShorts = { id: 1003, name: 'Linen Shorts', category: 'bottom', fabric_weight: 'light', style_profile_json: { bottom_kind: 'shorts' } }
+  const cardigan = { id: 1005, name: 'Light Cardigan', category: 'outerwear', fabric_weight: 'light' }
+
+  // 1. Mismatching occasion (evening shoes for casual) gets a strong -60 penalty
+  const occasionRes = scoreWholeWardrobeCandidate([eveningHeels, lightShorts], casualOptions)
+  assert.ok(occasionRes.reasons.includes('Evening Heels is unsuitable for casual occasion'), 'Must apply occasion mismatch penalty')
+  
+  // 2. Outerwear gets a -30 penalty in hot weather
+  const outerwearRes = scoreWholeWardrobeCandidate([lightShorts, cardigan], casualOptions)
+  assert.ok(outerwearRes.reasons.includes('hot weather: penalize outerwear/layering'), 'Must apply outerwear penalty in hot weather')
+})
+
+test('filterWholeWardrobePiecesForGeneration and wholeWardrobePieceTrustDecision weather-aware filtering', () => {
+  const pHeavy = { id: 9001, name: 'Heavy Wool Coat', category: 'outerwear', fabric_weight: 'heavy' }
+  const pShorts = { id: 9002, name: 'Linen Shorts', category: 'bottom', fabric_weight: 'light', style_profile_json: { bottom_kind: 'shorts' } }
+  const pLight = { id: 9003, name: 'Linen Shirt', category: 'top', fabric_weight: 'light' }
+  const allPieces = [pHeavy, pShorts, pLight]
+
+  // 1. Unfiltered / neutral weather
+  const resNeutral = filterWholeWardrobePiecesForGeneration(allPieces, { weatherProfile: { isHot: false, isCold: false } })
+  assert.equal(resNeutral.allowedPieces.length, 3, 'Should allow all pieces in neutral weather')
+
+  // 2. Hot weather
+  const resHot = filterWholeWardrobePiecesForGeneration(allPieces, { weatherProfile: { isHot: true, isCold: false } })
+  const allowedHotIds = resHot.allowedPieces.map(p => p.id)
+  assert.ok(!allowedHotIds.includes(9001), 'Heavy piece should be suppressed in hot weather')
+  assert.ok(allowedHotIds.includes(9002), 'Shorts should be allowed in hot weather')
+  assert.ok(allowedHotIds.includes(9003), 'Light shirt should be allowed in hot weather')
+  
+  const suppressedHeavy = resHot.suppressedPieces.find(p => p.id === 9001)
+  assert.ok(suppressedHeavy, 'Heavy piece should be in suppressed list')
+  assert.ok(suppressedHeavy.reasons.includes('hot weather: insulating piece'), 'Should have hot weather reason')
+
+  // 3. Cold weather
+  const resCold = filterWholeWardrobePiecesForGeneration(allPieces, { weatherProfile: { isHot: false, isCold: true } })
+  const allowedColdIds = resCold.allowedPieces.map(p => p.id)
+  assert.ok(!allowedColdIds.includes(9002), 'Shorts should be suppressed in cold weather')
+  assert.ok(allowedColdIds.includes(9001), 'Coat should be allowed in cold weather')
+  
+  const suppressedShorts = resCold.suppressedPieces.find(p => p.id === 9002)
+  assert.ok(suppressedShorts, 'Shorts should be in suppressed list')
+  assert.ok(suppressedShorts.reasons.includes('cold weather: shorts'), 'Should have cold weather reason')
+})
+
+test('Visual Composer Roster weather-aware ranking and tiebreaker rotation', () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  
+  // 1. Hot weather Visual Composer Roster check
+  const hotRosterRes = buildVisualComposerRoster(allPieces, {
+    occasion: 'casual',
+    weatherProfile: { isHot: true, isCold: false }
+  })
+  
+  const bottomShorts = hotRosterRes.roster.filter(p => p.category === 'bottom' && bottomKind(p) === 'shorts')
+  assert.ok(bottomShorts.length >= 2, `Should have at least 2 shorts in hot weather visual composer bottoms, found ${bottomShorts.length}`)
+
+  // Verify debug relevance adjustments exist and contain reasons for the shorts
+  assert.ok(hotRosterRes.debug.relevanceAdjustments, 'relevanceAdjustments debug object should exist')
+  for (const s of bottomShorts) {
+    const adj = hotRosterRes.debug.relevanceAdjustments[s.id]
+    assert.ok(adj && adj.some(r => r.includes('hot weather: shorts')), 'Should log hot weather shorts adjustment in debug')
+  }
+
+  // 2. Empty/Neutral weather no-op check: must be identical
+  const emptyRosterRes = buildVisualComposerRoster(allPieces, {
+    occasion: 'casual',
+    weatherProfile: {}
+  })
+  const noWeatherRosterRes = buildVisualComposerRoster(allPieces, {
+    occasion: 'casual',
+    weatherProfile: null
+  })
+  
+  const emptyIds = emptyRosterRes.roster.map(p => p.id)
+  const noWeatherIds = noWeatherRosterRes.roster.map(p => p.id)
+  assert.deepEqual(emptyIds, noWeatherIds, 'Roster output must be identical with empty vs null weatherProfile (no-op)')
+})
+
+test('resolveOccasionProfile matches hiking to outdoor_active and filters prohibited items', () => {
+  const profile = resolveOccasionProfile('casual', 'hiking on a very hot day')
+  assert.ok(profile, 'Should resolve a profile')
+  assert.equal(profile.id, 'outdoor_active', 'Should match hiking to outdoor_active')
+
+  const silkTop = { id: 9901, name: 'Silk Top', category: 'top', reads_as: 'flowing silk top' }
+  const muleShoes = { id: 9902, name: 'Black Mules', category: 'shoes', reads_as: 'casual slide mules' }
+  const sneakers = { id: 9903, name: 'White Sneakers', category: 'shoes', reads_as: 'comfortable leather sneakers' }
+  const cottonTee = { id: 9904, name: 'Cotton Tee', category: 'top', reads_as: 'plain cotton t-shirt' }
+
+  const blackBlouse = { id: 9905, name: 'Black Blouse', category: 'top', reads_as: 'dressy crepe blouse' }
+
+  // 1. Discouraged material (silk) should be allowed in trust decision, but carry score penalty
+  const resSilk = wholeWardrobePieceTrustDecision(silkTop, { occasion: 'casual', mood: 'hiking on a very hot day' })
+  assert.equal(resSilk.allowed, true, 'Silk top should be allowed by trust decision (soft discouraged)')
+  const scoredSilk = scoreWholeWardrobeCandidate([silkTop], { occasion: 'casual', mood: 'hiking on a very hot day' })
+  assert.ok(scoredSilk.reasons.includes('occasion profile: discouraged material (silk)'), 'Should penalize discouraged material')
+
+  // 2. Discouraged footwear (mules) should be allowed in trust decision, but carry score penalty
+  const resMules = wholeWardrobePieceTrustDecision(muleShoes, { occasion: 'casual', mood: 'hiking on a very hot day' })
+  assert.equal(resMules.allowed, true, 'Mule shoes should be allowed by trust decision (soft discouraged)')
+  const scoredMules = scoreWholeWardrobeCandidate([muleShoes], { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const hasMulePenalty = scoredMules.reasons.includes('occasion profile: discouraged footwear (mule)') ||
+                         scoredMules.reasons.includes('occasion profile: discouraged footwear (mules)');
+  assert.ok(hasMulePenalty, 'Should penalize discouraged footwear')
+
+  // 3. Sneakers should be allowed
+  const resSneakers = wholeWardrobePieceTrustDecision(sneakers, { occasion: 'casual', mood: 'hiking on a very hot day' })
+  assert.equal(resSneakers.allowed, true, 'Sneakers should be allowed')
+
+  // 4. Discouraged piece (blouse) should be allowed in trust decision, but carry score penalty
+  const resBlouse = wholeWardrobePieceTrustDecision(blackBlouse, { occasion: 'casual', mood: 'hiking on a very hot day' })
+  assert.equal(resBlouse.allowed, true, 'Blouse should be allowed by trust decision (soft discouraged)')
+  const scoredBlouse = scoreWholeWardrobeCandidate([blackBlouse], { occasion: 'casual', mood: 'hiking on a very hot day' })
+  assert.ok(scoredBlouse.reasons.includes('occasion profile: discouraged piece (blouse)'), 'Should penalize discouraged piece')
+
+  // 5. Preferred items should receive boosts in scoreWholeWardrobeCandidate
+  const scored = scoreWholeWardrobeCandidate([sneakers, cottonTee], { occasion: 'casual', mood: 'hiking on a very hot day' })
+  assert.ok(scored.reasons.includes('occasion profile: preferred material (cotton)'), 'Should boost cotton')
+  assert.ok(scored.reasons.includes('occasion profile: preferred footwear (sneakers)'), 'Should boost sneakers')
+
+  // 6. Test pieceOccasionCompatible normalization with dashes and underscores
+  const athleticShoes = { id: 9906, name: 'Athletic Shoes', category: 'shoes', occasions: ['casual', 'outdoor', 'city'] }
+  assert.equal(pieceOccasionCompatible(athleticShoes, 'outdoor_active'), true, 'Should match outdoor_active profile id with underscores')
+  assert.equal(pieceOccasionCompatible(athleticShoes, 'outdoor-active'), true, 'Should match outdoor-active with dashes')
+  assert.equal(pieceOccasionCompatible(athleticShoes, 'outdoor active'), true, 'Should match outdoor active with spaces')
+})
+
+test('outdoor_active resolves and discourages day dresses, day skirts, and casual/fashion sandals (regression test)', () => {
+  const options = { occasion: 'casual', mood: 'hiking on a very hot day' }
+
+  // 1. Midi dress should be allowed in trust decision but discouraged in scoring (revised: Yuna 2026-06-12 ratification revision)
+  const midiDress = { id: 9910, name: 'green button down midi dress', category: 'dress', reads_as: 'button-up midi dress' }
+  const resDress = wholeWardrobePieceTrustDecision(midiDress, options)
+  assert.equal(resDress.allowed, true, 'Midi dress should be allowed in trust decision (revised: Yuna 2026-06-12 ratification revision)')
+  const scoreDress = scoreWholeWardrobeCandidate([midiDress], options)
+  assert.ok(scoreDress.reasons.includes('occasion profile: discouraged piece (dress)'), 'Should report discouraged piece (dress)')
+
+  // 2. Wedge sandals should be prohibited (testing singular wedge/sandal matching) - heels/wedges are hard prohibited
+  const wedgeSandals = { id: 9911, name: 'black stitched wedge sandals', category: 'shoes', reads_as: 'black wedge sandals' }
+  const resWedge = wholeWardrobePieceTrustDecision(wedgeSandals, options)
+  assert.equal(resWedge.allowed, false, 'Wedge sandals should be prohibited')
+  assert.ok(resWedge.reasons.some(r => r.includes('prohibited footwear (wedge)')), 'Should report prohibited footwear (wedge)')
+
+  // 3. Tiered skirt should be allowed in trust decision but discouraged in scoring (revised: Yuna 2026-06-12 ratification revision)
+  const tieredSkirt = { id: 9912, name: 'black cream botanical tiered midi skirt', category: 'bottom', reads_as: 'botanical tiered midi skirt' }
+  const resSkirt = wholeWardrobePieceTrustDecision(tieredSkirt, options)
+  assert.equal(resSkirt.allowed, true, 'Tiered skirt should be allowed in trust decision (revised: Yuna 2026-06-12 ratification revision)')
+  const scoreSkirt = scoreWholeWardrobeCandidate([tieredSkirt], options)
+  assert.ok(scoreSkirt.reasons.includes('occasion profile: discouraged piece (skirt)'), 'Should report discouraged piece (skirt)')
+
+
+  // 4. Flat leather strap sandals should be allowed by trust but discouraged in scoring
+  const leatherSandals = { id: 9913, name: 'brown leather strap sandals', category: 'shoes', reads_as: 'versatile casual sandal' }
+  const resSandal = wholeWardrobePieceTrustDecision(leatherSandals, options)
+  assert.equal(resSandal.allowed, true, 'Casual sandals should be allowed in trust decision (soft discouraged)')
+  const scoreSandal = scoreWholeWardrobeCandidate([leatherSandals], options)
+  assert.ok(scoreSandal.reasons.includes('occasion profile: discouraged footwear (sandal)'), 'Should report discouraged footwear (sandal)')
+
+  // 5. Medium/heavy full-insulating bottoms (like jeans) should be prohibited in hot weather (hard weather filter)
+  const whiteJeans = { id: 9914, name: 'white slim crop jeans', category: 'bottom', fabric_weight: 'medium', reads_as: 'slim cropped jeans' }
+  const resJeans = wholeWardrobePieceTrustDecision(whiteJeans, { ...options, weatherProfile: { isHot: true, isCold: false } })
+  assert.equal(resJeans.allowed, false, 'Slim crop jeans should be prohibited in hot weather')
+  assert.ok(resJeans.reasons.includes('hot weather: insulating piece'), 'Should report hot weather: insulating piece')
+})
+
+test('Trail active outdoor profile additional constraints and repair tests', () => {
+  // Test 1: Trust decision for skort and shorts (allowed) - ratified: Yuna 2026-06-12
+  const skort = { id: 9920, name: 'active sports skort', category: 'bottom', reads_as: 'cotton blend active skort' }
+  const shorts = { id: 9921, name: 'active utility shorts', category: 'bottom', reads_as: 'utility shorts' }
+  const options = { occasion: 'casual', mood: 'hiking' }
+  
+  const resSkort = wholeWardrobePieceTrustDecision(skort, options)
+  assert.equal(resSkort.allowed, true, 'Skort should be allowed on trail')
+  const resShorts = wholeWardrobePieceTrustDecision(shorts, options)
+  assert.equal(resShorts.allowed, true, 'Shorts should be allowed on trail')
+
+  // Test 2: Warm boots and suede penalty in scoring
+  const ankleBoots = { id: 9922, name: 'leather ankle boots', category: 'shoes', reads_as: 'warm leather ankle boots' }
+  const suedeSneakers = { id: 9923, name: 'suede sneakers', category: 'shoes', reads_as: 'suede athletic sneakers' }
+
+  // Hot weather -> boots discouraged
+  const scoredBootsHot = scoreWholeWardrobeCandidate([ankleBoots], { occasion: 'casual', mood: 'hiking on a hot day' })
+  assert.ok(scoredBootsHot.reasons.includes('occasion profile: discouraged footwear (ankle boots)'), 'Boots should be discouraged in heat')
+  
+  // Normal weather -> boots not discouraged
+  const scoredBootsNormal = scoreWholeWardrobeCandidate([ankleBoots], { occasion: 'casual', mood: 'hiking' })
+  assert.ok(!scoredBootsNormal.reasons.includes('occasion profile: discouraged footwear (ankle boots)'), 'Boots should not be discouraged in cool weather')
+
+  // Suede -> penalized regardless of weather
+  const scoredSuedeNormal = scoreWholeWardrobeCandidate([suedeSneakers], { occasion: 'casual', mood: 'hiking' })
+  assert.ok(scoredSuedeNormal.reasons.includes('occasion profile: discouraged material (suede)'), 'Suede should be discouraged in all weather')
+
+  // Test 3: Taupe suede ankle boots piece ID 200 is absent from allowedPieces under hiking
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const allowedRes = filterWholeWardrobePiecesForGeneration(allPieces, { occasion: 'casual', mood: 'hiking' })
+  const allowedIds = allowedRes.allowedPieces.map(p => Number(p.id))
+  assert.ok(!allowedIds.includes(200), 'Taupe suede ankle boots (ID 200) must be absent from allowedPieces for trail/hike occasion')
+
+  // Test 6: Footwear Gate and Repair
+  // An outfit composed with canvas slip-ons is repaired to sneakers when sneakers are allowed
+  const testPool = [
+    { id: 10, name: 'Cotton Tee', category: 'top', reads_as: 'cotton tee shirt' },
+    { id: 20, name: 'Linen Shorts', category: 'bottom', reads_as: 'linen shorts' },
+    { id: 30, name: 'Canvas Slip-ons', category: 'shoes', reads_as: 'canvas slip-on loafers' },
+    { id: 40, name: 'Trail Sneakers', category: 'shoes', reads_as: 'trail running sneakers', occasions: ['casual', 'outdoor'] }
+  ]
+  const mockOutfit = {
+    label: 'Test Outfit',
+    pieceIds: [10, 20, 30]
+  }
+  const repaired = repairWholeWardrobeOutfit(mockOutfit, testPool, 'casual', 'hiking')
+  assert.ok(repaired.pieceIds.includes(40), 'Should repair shoe to trail sneakers')
+  assert.ok(!repaired.pieceIds.includes(30), 'Should swap out canvas slip-ons')
+
+  // When no trail-capable shoe is in the pool, keep it but append watchFor warning
+  const testPoolNoShoes = [
+    { id: 10, name: 'Cotton Tee', category: 'top', reads_as: 'cotton tee shirt' },
+    { id: 20, name: 'Linen Shorts', category: 'bottom', reads_as: 'linen shorts' },
+    { id: 30, name: 'Canvas Slip-ons', category: 'shoes', reads_as: 'canvas slip-on loafers' }
+  ]
+  const repairedNoShoes = repairWholeWardrobeOutfit(mockOutfit, testPoolNoShoes, 'casual', 'hiking')
+  assert.ok(repairedNoShoes.pieceIds.includes(30), 'Should keep canvas slip-ons if no alternative exists')
+  assert.ok(repairedNoShoes.watchFor.includes('footwear is not trail-rated — closest available match.'), 'Should append warning to watchFor')
+})
+

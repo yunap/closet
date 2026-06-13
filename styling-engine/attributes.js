@@ -340,3 +340,41 @@ export function isDarkPiece(p) {
   return /\b(black|navy|dark|charcoal|brown|chocolate|espresso)\b/i.test(blob)
 }
 
+export function pieceMatchesMaterial(p, material) {
+  const blob = pieceTextBlob(p)
+  const cleanMat = material.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+  const regex = new RegExp(`\\b${cleanMat}\\b`, 'i')
+  return regex.test(blob)
+}
+
+export function pieceMatchesFootwear(p, footwear) {
+  const blob = pieceTextBlob(p)
+  const cleanFw = footwear.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+  const regex = new RegExp(`\\b${cleanFw}\\b`, 'i')
+  return regex.test(blob)
+}
+
+export function pieceMatchesPieceName(p, name) {
+  const blob = pieceTextBlob(p)
+  const cleanName = name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+  const regex = new RegExp(`\\b${cleanName}\\b`, 'i')
+  return regex.test(blob)
+}
+
+export function necklineWarmth(p) {
+  if (!p) return 'neutral'
+  const neck = String(p.neckline || '').toLowerCase().trim()
+  if (/\b(mock|cowl|turtle)\b/i.test(neck)) return 'warm'
+  return 'neutral'
+}
+
+export function sleeveCoverage(p) {
+  if (!p || !p.sleeve_type) return null
+  const s = String(p.sleeve_type || '').toLowerCase().trim()
+  if (/\b(3\/4|long)\b/i.test(s)) return 'long'
+  if (/\b(short|cap|elbow)\b/i.test(s)) return 'short'
+  if (/\b(none|sleeveless|strap|tank|cami|camisole|halter)\b/i.test(s)) return 'none'
+  return null
+}
+
+

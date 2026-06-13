@@ -447,6 +447,12 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.ok(json.debug.finalReturnedCount >= 1)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 1)
 
+  // Verify occasion profile rules are present in the system prompt for the agent
+  const agentCalls = aiCalls.filter(c => c.system.includes('personal visual stylist agent'))
+  assert.equal(agentCalls.length, 1)
+  assert.ok(agentCalls[0].system.includes('OCCASION & CLIMATE PROFILES (RULES-AS-DATA)'))
+  assert.ok(agentCalls[0].system.includes('Occasion & Weather Classification'))
+
   const response = await fetch(`${baseUrl}/api/ai/whole-wardrobe-session-memory`, { method: 'DELETE' })
   const resetJson = await response.json()
   assert.equal(response.status, 200)
@@ -500,6 +506,12 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   // Verify that the second call received rotation warning texts (meaning it saw recently shown garments)
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
   assert.equal(visualComposerCalls.length, 2)
+
+  // Verify occasion profile rules are present in the system prompt for the visual composer
+  for (const call of visualComposerCalls) {
+    assert.ok(call.system.includes('OCCASION & CLIMATE PROFILES (RULES-AS-DATA)'))
+    assert.ok(call.system.includes('Occasion & Weather Classification'))
+  }
 
   const firstCallText = visualComposerCalls[0].messages[0].content[0].text
   const secondCallText = visualComposerCalls[1].messages[0].content[0].text
@@ -1076,7 +1088,7 @@ test('executeTool get_garment_details loads text and base64 photo blocks', async
   
   // Ensure uploads directory exists and write a valid dummy 1x1 JPEG to satisfy sharp resizing
   fs.mkdirSync(uploadsDir, { recursive: true })
-  const dummy1x1Jpeg = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64')
+  const dummy1x1Jpeg = Buffer.from('/9j/4AAQSkZJRgABAQAAZABkAAD/2wCEABQQEBkSGScXFycyJh8mMi4mJiYmLj41NTU1NT5EQUFBQUFBREREREREREREREREREREREREREREREREREREREQBFRkZIBwgJhgYJjYmICY2RDYrKzZERERCNUJERERERERERERERERERERERERERERERERERERERERERERERERERP/AABEIAAEAAQMBIgACEQEDEQH/xABMAAEBAAAAAAAAAAAAAAAAAAAABQEBAQAAAAAAAAAAAAAAAAAABQYQAQAAAAAAAAAAAAAAAAAAAAARAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJQA9Yv/2Q==', 'base64')
   fs.writeFileSync(mockFilePath, dummy1x1Jpeg)
 
   // Seed db piece to reference this photo
@@ -1271,6 +1283,84 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
     const hasBlackOrDenim = archCand.pieces.some(p => p.name.includes('Black') || p.name.includes('Denim'))
     assert.ok(!hasBlackOrDenim, 'Soft Architecture candidate should contain no black or denim')
   }
+})
+
+test('Agent OCCASION PROFILE prompt block and wardrobe coverage contract tests', async () => {
+  // Test 1: Agent message with occasion "hiking" vs "casual"
+  aiCalls = []
+  
+  // Call with hiking
+  await postJson('/api/ai/generate-wardrobe-outfits', {
+    occasion: 'hiking',
+    season: 'current season',
+    mood: 'artistic minimalist',
+    limit: 1
+  })
+  
+  const hikeCall = aiCalls.find(c => c.system.includes('personal visual stylist agent'))
+  assert.ok(hikeCall, 'Should have styled agent call')
+  const hikeUserMessage = hikeCall.messages[0].content
+  assert.ok(hikeUserMessage.includes('OCCASION PROFILE — Trail / Active Outdoor:'), 'Should contain OCCASION PROFILE header')
+  assert.ok(hikeUserMessage.includes('Use sparingly and justify in watchFor if chosen:'), 'Should contain Use sparingly block')
+  assert.ok(hikeUserMessage.includes('suede'), 'Should list suede in discouraged')
+  assert.ok(hikeUserMessage.includes('boot'), 'Should list boots in discouraged')
+  
+  // Call with casual and empty mood
+  aiCalls = []
+  await postJson('/api/ai/generate-wardrobe-outfits', {
+    occasion: 'casual',
+    season: 'current season',
+    mood: '',
+    limit: 1
+  })
+  
+  const casualCall = aiCalls.find(c => c.system.includes('personal visual stylist agent'))
+  assert.ok(casualCall, 'Should have styled agent call')
+  const casualUserMessage = casualCall.messages[0].content
+  assert.ok(!casualUserMessage.includes('OCCASION PROFILE'), 'Should NOT contain OCCASION PROFILE block for casual/empty mood')
+
+  // Test 2: Wardrobe coverage note for trail active outdoor (low tops/shoes vs ample)
+  const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {
+    occasion: 'hiking',
+    season: 'current season',
+    mood: '',
+    limit: 1
+  })
+  
+  assert.ok(coverageJson.debug.profileCoverage, 'profileCoverage must be populated in debug')
+  assert.equal(coverageJson.debug.profileCoverage.tops, 0, 'Seed pool has 0 trail-ready tops')
+  assert.equal(coverageJson.debug.profileCoverage.shoes, 0, 'Seed pool has 0 trail-ready shoes')
+  assert.ok(coverageJson.feedback.includes('Your wardrobe has limited trail-specific tops and footwear'), 'Feedback must report limited tops and footwear')
+
+  // Now seed trail-ready pieces to test ample coverage behavior
+  for (let i = 0; i < 5; i++) {
+    insertPiece({
+      name: `cotton hiking tee ${i}`,
+      category: 'top',
+      occasions: ['casual', 'outdoor'],
+      reads_as: 'cotton blend tee'
+    })
+  }
+  
+  for (let i = 0; i < 3; i++) {
+    insertPiece({
+      name: `rugged trail sneakers ${i}`,
+      category: 'shoes',
+      occasions: ['casual', 'outdoor'],
+      reads_as: 'comfortable running sneakers'
+    })
+  }
+  
+  const ampleCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {
+    occasion: 'hiking',
+    season: 'current season',
+    mood: '',
+    limit: 1
+  })
+  
+  assert.equal(ampleCoverageJson.debug.profileCoverage.tops >= 5, true, 'Should now have >= 5 trail-ready tops')
+  assert.equal(ampleCoverageJson.debug.profileCoverage.shoes >= 3, true, 'Should now have >= 3 trail-ready shoes')
+  assert.ok(!ampleCoverageJson.feedback.includes('limited trail-specific'), 'Feedback must not contain limited coverage note with ample coverage')
 })
 
 

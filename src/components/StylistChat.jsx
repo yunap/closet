@@ -1287,12 +1287,12 @@ export default function AskClaude({
                     const piece = hydrateDisplayPiece(rawPiece)
                     const photo = piece?.photo || piece?.worn_photo
                     return (
-                      <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} style={{ width: 58, display: 'grid', gap: 4 }}>
+                      <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} style={{ width: 72, display: 'grid', gap: 4 }}>
                         <button
                           type="button"
                           disabled={!photo}
                           onClick={() => photo && setPreviewImage({ src: `/uploads/${photo}`, title: piece?.name || 'Garment', meta: piece?.category || '' })}
-                          style={{ width: 58, height: 58, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: photo ? 'zoom-in' : 'default' }}
+                          style={{ width: 72, height: 72, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: photo ? 'zoom-in' : 'default' }}
                           aria-label={photo ? `Open ${piece?.name || 'garment'} preview` : undefined}
                         >
                           {photo ? (
@@ -1306,39 +1306,80 @@ export default function AskClaude({
                         </button>
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
                         {message?.wholeWardrobe && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const key = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`
-                              toggleStylistFeedback({
-                                key,
-                                feedbackType: 'wrong_item_read',
-                                targetType: 'whole_wardrobe_outfit',
-                                label: `Bad piece: ${piece?.name || 'Garment'}`,
-                                note: `${piece?.name || 'This piece'} was the bad piece choice in ${outfit.label || `outfit ${idx + 1}`}.`,
-                                payload: {
-                                  outfit,
-                                  messageIndex,
-                                  outfitIndex: idx,
-                                  pieceId: piece?.id || null,
-                                  pieceName: piece?.name || '',
-                                  pieceCategory: piece?.category || '',
-                                  pieceIds: outfit.pieceIds || [],
-                                  pieces: outfit.pieces || [],
-                                  formulaFamily: outfit.formulaFamily || '',
-                                  archetypeId: outfit.archetypeId || '',
-                                  occasion: wardrobeOutfitOccasion,
-                                  season: wardrobeOutfitSeason,
-                                  mood: wardrobeOutfitMood,
-                                },
-                                contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
-                              })
-                            }}
-                            style={{ fontSize: 9, lineHeight: 1, color: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--donate)' : 'var(--text-light)', padding: '3px 4px', borderRadius: 8, border: '1px solid var(--border)', background: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
-                            title="Tell the engine this garment was the wrong choice for this outfit"
-                          >
-                            {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ issue' : 'piece issue'}
-                          </button>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const key = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`
+                                toggleStylistFeedback({
+                                  key,
+                                  feedbackType: 'wrong_item_read',
+                                  targetType: 'whole_wardrobe_outfit',
+                                  label: `Bad piece: ${piece?.name || 'Garment'}`,
+                                  note: `${piece?.name || 'This piece'} was the bad piece choice in ${outfit.label || `outfit ${idx + 1}`}.`,
+                                  payload: {
+                                    outfit,
+                                    messageIndex,
+                                    outfitIndex: idx,
+                                    pieceId: piece?.id || null,
+                                    pieceName: piece?.name || '',
+                                    pieceCategory: piece?.category || '',
+                                    pieceIds: outfit.pieceIds || [],
+                                    pieces: outfit.pieces || [],
+                                    formulaFamily: outfit.formulaFamily || '',
+                                    archetypeId: outfit.archetypeId || '',
+                                    occasion: wardrobeOutfitOccasion,
+                                    season: wardrobeOutfitSeason,
+                                    mood: wardrobeOutfitMood,
+                                  },
+                                  contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                                })
+                              }}
+                              style={{
+                                fontSize: 8.5,
+                                lineHeight: 1.25,
+                                width: '100%',
+                                boxSizing: 'border-box',
+                                color: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--danger)' : 'var(--text-light)',
+                                padding: '3px 4px',
+                                borderRadius: 8,
+                                border: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '1px solid rgba(168,64,64,0.3)' : '1px solid var(--border)',
+                                background: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--danger-bg)' : 'var(--surface-2)',
+                                cursor: 'pointer'
+                              }}
+                              title="Tell the engine this garment was the wrong choice for this outfit"
+                            >
+                              {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ issue' : 'piece issue'}
+                            </button>
+                            {(() => {
+                              const msgOccasion = message.queryOptions?.occasion || wardrobeOutfitOccasion || 'casual'
+                              const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+                              const exclusions = (piece?.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+                              const isExcluded = exclusions.includes(normMsgOccasion)
+                              const displayOccasionName = String(msgOccasion || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleOccasionExclusion(piece.id, msgOccasion, isExcluded)}
+                                  style={{
+                                    fontSize: 8.5,
+                                    lineHeight: 1.25,
+                                    width: '100%',
+                                    boxSizing: 'border-box',
+                                    color: isExcluded ? 'var(--danger)' : 'var(--text-light)',
+                                    padding: '3px 4px',
+                                    borderRadius: 8,
+                                    border: isExcluded ? '1px solid rgba(168,64,64,0.3)' : '1px solid var(--border)',
+                                    background: isExcluded ? 'var(--danger-bg)' : 'var(--surface-2)',
+                                    cursor: 'pointer'
+                                  }}
+                                  title={`Exclude from ${displayOccasionName}`}
+                                >
+                                  {isExcluded ? `✓ Wrong for ${displayOccasionName}` : `Wrong for ${displayOccasionName}`}
+                                </button>
+                              )
+                            })()}
+                          </div>
                         )}
                       </div>
                     )
@@ -1688,6 +1729,30 @@ export default function AskClaude({
       return
     }
     await saveStylistFeedback(args)
+  }
+
+  const toggleOccasionExclusion = async (pieceId, occasion, currentlyExcluded) => {
+    try {
+      const res = await fetch(`/api/pieces/${pieceId}/occasion-exclusion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ occasion, excluded: !currentlyExcluded })
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || 'Failed to toggle occasion exclusion')
+      }
+      const updatedPiece = await res.json()
+      setPieces(prev => prev.map(p => Number(p.id) === Number(pieceId) ? updatedPiece : p))
+      if (!currentlyExcluded) {
+        triggerToast(`won't appear for ${occasion} again`)
+      } else {
+        triggerToast('restored')
+      }
+    } catch (err) {
+      console.error(err)
+      triggerToast('Error updating occasion exclusion')
+    }
   }
 
   const saveGeneratedBoard = async ({ key, board, boardType = 'wardrobe', messageIndex = null, boardIndex = null, contextOverride = null }) => {
@@ -2878,6 +2943,8 @@ export default function AskClaude({
               <option value="evening">Evening</option>
               <option value="gallery / art event">Gallery / art event</option>
               <option value="travel">Travel</option>
+              <option value="outdoor active">Outdoor active</option>
+              <option value="concert">Concert</option>
             </select>
             <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
               <option value="current season">Current season</option>
@@ -2992,6 +3059,8 @@ export default function AskClaude({
                     <option value="evening">Evening</option>
                     <option value="gallery / art event">Gallery / art event</option>
                     <option value="travel">Travel</option>
+                    <option value="outdoor active">Outdoor active</option>
+                    <option value="concert">Concert</option>
                   </select>
                   <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
                     <option value="current season">Current season</option>
@@ -3319,7 +3388,7 @@ export default function AskClaude({
                       <>
                         <div className="custom-select-backdrop" onClick={() => setOccasionMenuOpen(false)} />
                         <div className="custom-select-dropdown" style={{ minWidth: 150, fontSize: 12, left: 0, right: 'auto' }}>
-                          {['casual', 'city', 'smart casual', 'evening', 'gallery / art event', 'travel'].map(occ => (
+                          {['casual', 'city', 'smart casual', 'evening', 'gallery / art event', 'travel', 'outdoor active'].map(occ => (
                             <button
                               key={occ}
                               type="button"

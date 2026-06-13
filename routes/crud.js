@@ -157,6 +157,50 @@ router.patch('/pieces/:id/favorite', (req, res) => {
   res.json({ favorite: Boolean(newVal) })
 })
 
+router.post('/pieces/:id/occasion-exclusion', (req, res) => {
+  const { id } = req.params
+  const { occasion, excluded } = req.body || {}
+  if (!occasion) {
+    return res.status(400).json({ error: 'occasion is required' })
+  }
+  const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(id)
+  if (!piece) {
+    return res.status(404).json({ error: 'Piece not found' })
+  }
+
+  const parsed = parsePiece(piece)
+
+  const normOccasion = String(occasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+  let exclusions = (parsed.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+
+  const d = new Date()
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const date = `${year}-${month}-${day}`
+
+  const rules = parsed.styling_rules_learned || []
+
+  if (excluded) {
+    if (!exclusions.includes(normOccasion)) {
+      exclusions.push(normOccasion)
+    }
+    const note = `Excluded from ${occasion} by Yuna (${date})`
+    rules.push(note)
+  } else {
+    exclusions = exclusions.filter(o => o !== normOccasion)
+    const note = `Restored for ${occasion} by Yuna (${date})`
+    rules.push(note)
+  }
+
+  db.prepare('UPDATE pieces SET occasion_exclusions = ?, styling_rules_learned = ? WHERE id = ?')
+    .run(JSON.stringify(exclusions), JSON.stringify(rules), id)
+
+  const updated = db.prepare('SELECT * FROM pieces WHERE id = ?').get(id)
+  res.json(parsePiece(updated))
+})
+
+
 // ── Outfits API ────────────────────────────────────────────────────────────────
 router.get('/outfits', (req, res) => {
   const { occasion, season, favorites } = req.query

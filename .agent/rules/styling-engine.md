@@ -35,19 +35,17 @@ These extend the Engineering Principles in `AGENTS.md` with engine-specific mech
   State the intended ordering in the PR.
 - Validity belongs in pool filters (suppression, weather physics, roster building), not in
   large penalties. Preferences belong in scores, not filters.
+- Occasion-profile prohibitions are validity-only; anything debatable is a discouraged/preferred soft signal. New entries are [proposed] until Yuna ratifies.
+- occasions.js is frozen — do not add profiles or extend its lists except by Yuna's ratification; prefer piece-level metadata and the exclusion feature for occasion corrections.
+
 
 ## Prompts and providers
 
-- All system prompts and prompt fragments live in `prompts.js` as named exports — no inline
-  prompt strings in routes or core pipelines.
-- The model is never asked to honor constraints that code can enforce (ID validity, suppressed
-  pieces, image budgets): enforce structurally, instruct only for judgment. Soft "do not use X"
-  prompt guards are a last resort, not a design.
-- Mandatory output slots create improvisation: if an element becomes optional (shoes,
-  accessories), update the prompt's composition rules AND the validation/repair layer AND the
-  renderer expectations together.
-- Provider limits are guarded in code (Claude: max 100 images/request; budget rosters to ≤90).
-  A request must never be able to fail on a provider limit that was knowable beforehand.
+- All system prompts and prompt fragments live in `prompts.js` as named exports — no inline prompt strings in routes or core pipelines.
+- **Style Constitution constraints**: All system prompts must quote or reference the ratified Style Constitution layers exported from `prompts.js` (`BODY_CONTRACT`, `PROVEN_FORMULAS`, `AESTHETIC_GRAVITY`, `LANE_NEUTRALITY`, `WORKING_STYLE`). Models/agents must not invent style preferences, signature colors, or unratified drift labels. Style lanes are open and never gatekept. The `check_style_claims.js` script automatically guards against regression of unauthorized taste terms.
+- The model is never asked to honor constraints that code can enforce (ID validity, suppressed pieces, image budgets): enforce structurally, instruct only for judgment. Soft "do not use X" prompt guards are a last resort, not a design.
+- Mandatory output slots create improvisation: if an element becomes optional (shoes, accessories), update the prompt's composition rules AND the validation/repair layer AND the renderer expectations together.
+- Provider limits are guarded in code (Claude: max 100 images/request; budget rosters to ≤90). A request must never be able to fail on a provider limit that was knowable beforehand.
 
 ## Verification workflow for engine changes
 

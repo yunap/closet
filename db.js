@@ -27,6 +27,7 @@ db.exec(`
     fit_confidence TEXT DEFAULT 'unknown',
     role_permission TEXT DEFAULT 'auto',
     occasion_permissions TEXT DEFAULT '[]',
+    occasion_exclusions  TEXT DEFAULT '[]',
     engine_notes TEXT DEFAULT '',
     favorite     INTEGER DEFAULT 0,
     photo        TEXT,
@@ -136,6 +137,7 @@ const NEW_COLUMNS = [
   'fit_confidence TEXT DEFAULT "unknown"',
   'role_permission TEXT DEFAULT "auto"',
   'occasion_permissions TEXT DEFAULT "[]"',
+  'occasion_exclusions TEXT DEFAULT "[]"',
   'engine_notes TEXT DEFAULT ""',
   'style_profile_json TEXT DEFAULT "{}"',
 ]
@@ -258,6 +260,7 @@ export const parsePiece = p => p ? ({
   colors:                JSON.parse(p.colors                || '[]'),
   occasions:             JSON.parse(p.occasions             || '[]'),
   occasion_permissions:   JSON.parse(p.occasion_permissions  || '[]'),
+  occasion_exclusions:    JSON.parse(p.occasion_exclusions   || '[]'),
   styling_rules_learned: JSON.parse(p.styling_rules_learned || '[]'),
   pairs_well_with:       JSON.parse(p.pairs_well_with       || '[]'),
   tried_and_rejected:    JSON.parse(p.tried_and_rejected    || '[]'),

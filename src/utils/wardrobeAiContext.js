@@ -60,6 +60,15 @@ export function computeWaistbandNote(piece = {}) {
   if (piece.waistband_type === 'drawstring_relaxed') return 'drawstring — no tuck'
   return null
 }
+export function normalizeOccasionForConfidence(occ) {
+  const norm = String(occ || '').toLowerCase().replace('-', ' ').trim()
+  if (norm.startsWith('outdoor')) return 'outdoor'
+  if (norm.startsWith('smart') || norm.includes('smart')) return 'smart-casual'
+  if (norm.includes('art') || norm.includes('gallery')) return 'city'
+  if (norm.includes('travel')) return 'city'
+  if (norm.includes('home') || norm.includes('lounge')) return 'home'
+  return norm.replace(/\s+/g, '-')
+}
 
 export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', explorationMode = 'moderate' } = {}) {
   const status = String(piece.recommendation_status || 'trusted')
@@ -74,7 +83,8 @@ export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', expl
     ...intelligence.doNotPairRules,
     ...Object.values(intelligence.realWearNotes || {})
   ].join(' ').toLowerCase()
-  const occasionConfidence = occasion ? String(intelligence.occasionConfidence?.[occasion] || '').toLowerCase() : ''
+  const normOcc = normalizeOccasionForConfidence(occasion)
+  const occasionConfidence = normOcc ? String(intelligence.occasionConfidence?.[normOcc] || '').toLowerCase() : ''
   const reasons = []
   const aggressive = explorationMode === 'aggressive'
 

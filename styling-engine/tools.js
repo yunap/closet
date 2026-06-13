@@ -1,8 +1,9 @@
 import path from 'path'
 import fs from 'fs'
 import { db, uploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision } from './rules.js'
 import { prepareImageForClaude } from './provider.js'
+import { resolveOccasionProfile } from './occasions.js'
 
 export const STYLIST_TOOLS = [
   {
@@ -72,7 +73,7 @@ export const STYLIST_TOOLS = [
   }
 ]
 
-export async function executeTool(name, args) {
+export async function executeTool(name, args, toolContext = {}) {
   console.log(`\n🤖 [Agent Tool Call] ${name} (${JSON.stringify(args)})`)
   try {
     switch (name) {
@@ -115,19 +116,39 @@ export async function executeTool(name, args) {
           )
         }
         if (occasion) {
-          const oLower = occasion.toLowerCase()
-          filtered = filtered.filter(p => p.occasions.some(o => o.toLowerCase().includes(oLower)))
+          filtered = filtered.filter(p => {
+            if (!pieceOccasionCompatible(p, occasion)) return false
+            const trust = wholeWardrobePieceTrustDecision(p, { occasion })
+            return trust.allowed
+          })
         }
         if (query) {
           const qLower = query.toLowerCase()
-          filtered = filtered.filter(p => 
-            p.name.toLowerCase().includes(qLower) || 
-            (p.notes && p.notes.toLowerCase().includes(qLower))
-          )
+          const resolvedProfile = resolveOccasionProfile(query, '')
+          filtered = filtered.filter(p => {
+            const matchesText = p.name.toLowerCase().includes(qLower) || 
+                               (p.notes && p.notes.toLowerCase().includes(qLower))
+            if (matchesText) return true
+            if (resolvedProfile) {
+              return pieceOccasionCompatible(p, resolvedProfile.id)
+            }
+            return false
+          })
+        }
+
+        let excludedCount = 0
+        if (toolContext && toolContext.allowedPieceIds) {
+          const allowedSet = toolContext.allowedPieceIds instanceof Set 
+            ? toolContext.allowedPieceIds 
+            : new Set(Array.isArray(toolContext.allowedPieceIds) ? toolContext.allowedPieceIds.map(Number) : [])
+          
+          const beforeFilterLength = filtered.length
+          filtered = filtered.filter(p => allowedSet.has(Number(p.id)))
+          excludedCount = beforeFilterLength - filtered.length
         }
         
         console.log(`🔍 [Agent Tool Call] search_wardrobe returned ${filtered.length} items.`)
-        return filtered.map(p => ({
+        const resultList = filtered.map(p => ({
           id: p.id,
           name: p.name,
           category: p.category,
@@ -146,32 +167,61 @@ export async function executeTool(name, args) {
           hem_finish: p.hem_finish,
           notes: p.notes ? p.notes.slice(0, 120) : ''
         }))
+
+        if (excludedCount > 0) {
+          resultList.push({
+            note: `(${excludedCount} pieces hidden: unavailable for this occasion/weather)`
+          })
+        }
+
+        return resultList
       }
       case 'get_garment_details': {
         const { ids } = args
         if (!Array.isArray(ids) || !ids.length) return []
-        const placeholders = ids.map(() => '?').join(',')
-        const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${placeholders})`).all(...ids.map(Number)).map(parsePiece)
         
         const details = []
-        for (const p of rows) {
+        for (const id of ids) {
+          const numId = Number(id)
+          let allowed = true
+          if (toolContext && toolContext.allowedPieceIds) {
+            const allowedSet = toolContext.allowedPieceIds instanceof Set 
+              ? toolContext.allowedPieceIds 
+              : new Set(Array.isArray(toolContext.allowedPieceIds) ? toolContext.allowedPieceIds.map(Number) : [])
+            allowed = allowedSet.has(numId)
+          }
+
+          if (!allowed) {
+            details.push({
+              id: numId,
+              text: `piece ${numId} is not available for Yuna's current request`
+            })
+            continue
+          }
+
+          const p = db.prepare(`SELECT * FROM pieces WHERE id = ?`).get(numId)
+          if (!p) {
+            continue
+          }
+          const parsed = parsePiece(p)
+          
           let imageData = null
-          const photoFile = p.worn_photo || p.photo || ''
+          const photoFile = parsed.worn_photo || parsed.photo || ''
           if (photoFile) {
             const filePath = path.join(uploadsDir, photoFile)
             if (fs.existsSync(filePath)) {
               try {
-                console.log(`📸 [Agent Vision] Resizing reference photo for piece ${p.id} (${photoFile})`)
+                console.log(`📸 [Agent Vision] Resizing reference photo for piece ${parsed.id} (${photoFile})`)
                 imageData = await prepareImageForClaude(filePath)
               } catch (err) {
-                console.error(`Error loading photo for piece ${p.id}:`, err)
+                console.error(`Error loading photo for piece ${parsed.id}:`, err)
               }
             }
           }
           details.push({
-            id: p.id,
-            name: p.name,
-            text: buildPieceText(p),
+            id: parsed.id,
+            name: parsed.name,
+            text: buildPieceText(parsed),
             image: imageData
           })
         }

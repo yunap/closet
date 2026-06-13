@@ -1,6 +1,8 @@
 import { db, safeJsonParse } from '../db.js'
 import { autoStylingTrustDecision, buildWardrobePieceTruthText } from '../src/utils/wardrobeAiContext.js'
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
+import { resolveOccasionProfile } from './occasions.js'
+
 import {
   fabricWeight,
   bottomKind,
@@ -18,7 +20,12 @@ import {
   isOuterwear,
   isTop,
   wardrobeCategoryGroup,
-  isDarkPiece
+  isDarkPiece,
+  pieceMatchesMaterial,
+  pieceMatchesFootwear,
+  pieceMatchesPieceName,
+  necklineWarmth,
+  sleeveCoverage
 } from './attributes.js'
 
 export function isStyleSelectedQuestion(question = '') {
@@ -610,7 +617,8 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
 
   const selectedExpressive = textIncludesAny(selectedBlob, ['loud', 'bold', 'graphic', 'floral', 'stripe', 'abstract', 'multi', 'pattern'])
   const candidateExpressive = textIncludesAny(candidateBlob, ['loud', 'bold', 'graphic', 'floral', 'stripe', 'abstract', 'multi', 'pattern'])
-  if (selectedExpressive && candidateExpressive) { score -= 5; reasons.push('two expressive pieces risk') }
+  // TODO: a register attribute in attributes.js could one day let the penalty fire only on cross-register pairs.
+  if (selectedExpressive && candidateExpressive) { score -= 5; reasons.push('expressive competition risk') }
 
   const feedbackInfluence = getFeedbackInfluenceForPair(selected, candidate)
   if (feedbackInfluence) {
@@ -644,7 +652,8 @@ export function rankedComplementaryWardrobeFor(piece, allPieces, limit = 24, opt
       const scored = compatibilityScoreForSelectedItem(piece, p, options)
       const trust = wholeWardrobePieceTrustDecision(p, {
         occasion: options.occasion || 'casual',
-        explorationMode: options.explorationMode || 'moderate'
+        explorationMode: options.explorationMode || 'moderate',
+        weatherProfile: options.weatherProfile
       })
       return {
         piece: p,
@@ -750,6 +759,7 @@ export function parsePiece(p) {
     colors:                JSON.parse(p.colors                || '[]'),
     occasions:             JSON.parse(p.occasions             || '[]'),
     occasion_permissions:   JSON.parse(p.occasion_permissions  || '[]'),
+    occasion_exclusions:    JSON.parse(p.occasion_exclusions   || '[]'),
     styling_rules_learned: JSON.parse(p.styling_rules_learned || '[]'),
     pairs_well_with:       JSON.parse(p.pairs_well_with       || '[]'),
     tried_and_rejected:    JSON.parse(p.tried_and_rejected    || '[]'),
@@ -1143,7 +1153,33 @@ export function wholeWardrobeFormulaFamily(outfit = {}, candidatePieces = [], oc
   return outfit.formulaFamily || wholeWardrobeArchetypeFor(outfit, candidatePieces, occasion).formulaFamily || wholeWardrobeFormulaType(outfit)
 }
 
-export function piecePriorityForMission(piece, missionId, colorFamily = '', focalColor = '', moodProfile = null) {
+export function pieceOccasionCompatible(piece, occasion = '') {
+  const normOccasion = String(occasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+  if (!normOccasion) return true
+  const pOccasions = (piece.occasions || []).map(o => String(o).toLowerCase().replace(/[-_]+/g, ' ').trim())
+  if (pOccasions.length === 0) return true
+  let isCompatible = pOccasions.includes(normOccasion)
+  if (!isCompatible) {
+    if (normOccasion === 'evening' && pOccasions.includes('smart casual')) {
+      isCompatible = true
+    } else if (normOccasion === 'smart casual' && (pOccasions.includes('evening') || pOccasions.includes('city'))) {
+      isCompatible = true
+    } else if (normOccasion === 'gallery / art event' && (pOccasions.includes('city') || pOccasions.includes('smart casual') || pOccasions.includes('evening'))) {
+      isCompatible = true
+    } else if (normOccasion === 'city' && pOccasions.includes('smart casual')) {
+      isCompatible = true
+    } else if (normOccasion === 'casual' && (pOccasions.includes('city') || pOccasions.includes('home') || pOccasions.includes('outdoor') || pOccasions.includes('outdoor active'))) {
+      isCompatible = true
+    } else if (normOccasion === 'outdoor active' && (pOccasions.includes('outdoor') || pOccasions.includes('casual'))) {
+      isCompatible = true
+    } else if (normOccasion === 'outdoor' && (pOccasions.includes('outdoor active') || pOccasions.includes('casual'))) {
+      isCompatible = true
+    }
+  }
+  return isCompatible
+}
+
+export function piecePriorityForMission(piece, missionId, colorFamily = '', focalColor = '', moodProfile = null, weatherProfile = null, occasion = '') {
   const blob = pieceTextBlob(piece)
   const name = pieceNameBlob(piece)
   const group = wardrobeCategoryGroup(piece)
@@ -1201,12 +1237,34 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
     if (/\b(soft|gauzy|drape|oversized|beige|cream|ivory|taupe)\b/.test(blob)) score -= 1
     if (moodProfile?.id === 'modern_bohemian_restraint') score += bohoSignalForPiece(piece) * 5
   }
+
+  // Weather adjustments added to piece priority
+  if (weatherProfile && weatherProfile.isHot) {
+    if (pieceFabricWeight(piece) === 'heavy') score -= 12
+    if (pieceFabricWeight(piece) === 'light') score += 10
+    if (pieceBareness(piece) === 'high')      score += 8
+    if (pieceCoverage(piece) === 'full-insulating') score -= 8
+  } else if (weatherProfile && weatherProfile.isCold) {
+    if (pieceFabricWeight(piece) === 'heavy') score += 10
+    if (pieceFabricWeight(piece) === 'light') score -= 12
+    if (pieceBareness(piece) === 'high')      score -= 8
+    if (pieceCoverage(piece) === 'full-insulating') score += 8
+  }
+
+  // Occasion adjustments added to piece priority
+  if (occasion) {
+    if (!pieceOccasionCompatible(piece, occasion)) {
+      score -= 60
+    }
+  }
+
   return score
 }
 
 export function wholeWardrobePieceBucket(allPieces = [], options = {}) {
   const bucket = { top: [], bottom: [], dress: [], outerwear: [], shoes: [], accessory: [], other: [] }
   const moodProfile = wholeWardrobeMoodProfile(options.mood)
+  const weatherProfile = options.weatherProfile || weatherProfileFromContext(options)
   for (const piece of allPieces) {
     const group = wardrobeCategoryGroup(piece)
     if (bucket[group]) bucket[group].push(piece)
@@ -1214,26 +1272,155 @@ export function wholeWardrobePieceBucket(allPieces = [], options = {}) {
   }
   for (const key of Object.keys(bucket)) {
     bucket[key].sort((a, b) => {
-      const priorityA = piecePriorityForMission(a, options.missionId, options.colorFamily, options.focalColor, moodProfile)
-      const priorityB = piecePriorityForMission(b, options.missionId, options.colorFamily, options.focalColor, moodProfile)
+      const priorityA = piecePriorityForMission(a, options.missionId, options.colorFamily, options.focalColor, moodProfile, weatherProfile, options.occasion)
+      const priorityB = piecePriorityForMission(b, options.missionId, options.colorFamily, options.focalColor, moodProfile, weatherProfile, options.occasion)
       return priorityB - priorityA || String(a.name).localeCompare(String(b.name))
     })
   }
   return bucket
 }
 
-export function wholeWardrobePieceTrustDecision(piece = {}, { occasion = 'casual', explorationMode = 'moderate' } = {}) {
-  return autoStylingTrustDecision(piece, { occasion, explorationMode })
+export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
+  const { occasion = 'casual', explorationMode = 'moderate', weatherProfile = {} } = options
+
+  const reqOccasion = String(occasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+  const exclusions = (piece.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+  if (exclusions.includes(reqOccasion)) {
+    const role = String(piece.role_permission || 'auto')
+    const intelligence = pieceGarmentIntelligence(piece)
+    const profileTrust = String(intelligence.autoUseTrust || '').toLowerCase()
+    return {
+      allowed: false,
+      supportOnly: role === 'support_only' || profileTrust === 'support_only',
+      reasons: [`user-excluded for ${occasion}`]
+    }
+  }
+
+  const occasionProfile = resolveOccasionProfile(occasion, options.mood || '')
+  const checkOccasion = occasionProfile ? occasionProfile.id : occasion
+  const decision = autoStylingTrustDecision(piece, { occasion: checkOccasion, explorationMode })
+  const reasons = decision.reasons ? [...decision.reasons] : []
+
+  if (weatherProfile.isHot) {
+    const isHeavy = pieceFabricWeight(piece) === 'heavy'
+    const isUpperBodyPiece = piece.category === 'outerwear' || wardrobeCategoryGroup(piece) === 'outerwear' || piece.category === 'top' || piece.category === 'dress'
+    const hasInsulatingCoverage = pieceCoverage(piece) === 'full-insulating'
+    const hasWarmNeckline = necklineWarmth(piece) === 'warm'
+    const hasWarmSleeves = sleeveCoverage(piece) === 'long'
+    const isMediumOrHeavy = pieceFabricWeight(piece) === 'medium' || pieceFabricWeight(piece) === 'heavy'
+
+    const isInsulatingTopOrDress = isUpperBodyPiece && (
+      hasInsulatingCoverage || 
+      (hasWarmNeckline && isMediumOrHeavy) ||
+      (hasWarmSleeves && isMediumOrHeavy)
+    )
+    const isInsulatingBottom = wardrobeCategoryGroup(piece) === 'bottom' && hasInsulatingCoverage && isMediumOrHeavy
+
+    if (isHeavy || isInsulatingTopOrDress || isInsulatingBottom) {
+      reasons.push('hot weather: insulating piece')
+    }
+  }
+
+  if (weatherProfile.isCold) {
+    if (bottomKind(piece) === 'shorts') {
+      reasons.push('cold weather: shorts')
+    }
+  }
+
+  if (occasionProfile && occasionProfile.rules) {
+    // Prohibited materials
+    const prohibitedMaterials = occasionProfile.rules.prohibited_materials ? [...occasionProfile.rules.prohibited_materials] : []
+    if (weatherProfile.isHot && occasionProfile.rules.prohibited_materials_warm) {
+      prohibitedMaterials.push(...occasionProfile.rules.prohibited_materials_warm)
+    }
+    for (const mat of prohibitedMaterials) {
+      if (pieceMatchesMaterial(piece, mat)) {
+        reasons.push(`occasion profile: prohibited material (${mat})`)
+        break
+      }
+    }
+
+    // Prohibited footwear (if category is shoes)
+    if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
+      const prohibitedFootwear = occasionProfile.rules.prohibited_footwear ? [...occasionProfile.rules.prohibited_footwear] : []
+      if (weatherProfile.isHot && occasionProfile.rules.prohibited_footwear_summer) {
+        prohibitedFootwear.push(...occasionProfile.rules.prohibited_footwear_summer)
+      }
+      for (const fw of prohibitedFootwear) {
+        if (pieceMatchesFootwear(piece, fw)) {
+          reasons.push(`occasion profile: prohibited footwear (${fw})`)
+          break
+        }
+      }
+    }
+
+    // Prohibited pieces
+    const prohibitedPieces = occasionProfile.rules.prohibited_pieces ? [...occasionProfile.rules.prohibited_pieces] : []
+    for (const item of prohibitedPieces) {
+      if (pieceMatchesPieceName(piece, item)) {
+        reasons.push(`occasion profile: prohibited piece (${item})`)
+        break
+      }
+    }
+  }
+
+  return {
+    ...decision,
+    allowed: reasons.length === 0,
+    reasons
+  }
 }
 
 export function filterWholeWardrobePiecesForGeneration(allPieces = [], options = {}) {
+  const { weatherProfile = {} } = options
   const allowedPieces = []
   const suppressedPieces = []
+
   for (const piece of allPieces) {
     const decision = wholeWardrobePieceTrustDecision(piece, options)
-    if (decision.allowed) allowedPieces.push(piece)
-    else suppressedPieces.push({ id: piece.id, name: piece.name, category: wardrobeCategoryGroup(piece), reasons: decision.reasons })
+    if (decision.allowed) {
+      allowedPieces.push(piece)
+    } else {
+      suppressedPieces.push({
+        id: piece.id,
+        name: piece.name,
+        category: wardrobeCategoryGroup(piece),
+        reasons: decision.reasons
+      })
+    }
   }
+
+  if (weatherProfile.isHot) {
+    const outerwearPieces = allowedPieces.filter(p => p.category === 'outerwear' || wardrobeCategoryGroup(p) === 'outerwear')
+    if (outerwearPieces.length > 3) {
+      const weightScore = { 'light': 1, 'medium': 2, 'heavy': 3 }
+      const getWeightVal = (p) => weightScore[pieceFabricWeight(p)] || 2
+
+      outerwearPieces.sort((a, b) => {
+        const diff = getWeightVal(a) - getWeightVal(b)
+        if (diff !== 0) return diff
+        return a.id - b.id // deterministic tie-breaker
+      })
+
+      const toSuppress = outerwearPieces.slice(3)
+      const toSuppressIds = new Set(toSuppress.map(p => p.id))
+
+      let i = allowedPieces.length
+      while (i--) {
+        const p = allowedPieces[i]
+        if (toSuppressIds.has(p.id)) {
+          allowedPieces.splice(i, 1)
+          suppressedPieces.push({
+            id: p.id,
+            name: p.name,
+            category: wardrobeCategoryGroup(p),
+            reasons: ['hot weather: outerwear cap']
+          })
+        }
+      }
+    }
+  }
+
   return { allowedPieces, suppressedPieces }
 }
 
@@ -1243,7 +1430,8 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   sessionInfluence = null,      // existing recency map, optional
   maxImages = 90,                // hard ceiling, below Claude's 100-image limit
   selectedPieceId = null,
-  includeAccessories = false
+  includeAccessories = false,
+  mood = ''
 } = {}) {
   const roster = []
   const excluded = []
@@ -1344,7 +1532,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     for (const p of afterStep2) {
       if (isSelected(p)) {
         afterStep3.push(p)
-      } else if ((isOuterwear(p) || isTop(p)) && fabricWeight(p) === 'heavy') {
+      } else if (((isOuterwear(p) || isTop(p)) && fabricWeight(p) === 'heavy') || (wardrobeCategoryGroup(p) === 'bottom' && pieceCoverage(p) === 'full-insulating' && (fabricWeight(p) === 'medium' || fabricWeight(p) === 'heavy'))) {
         exclude(p, 'hot weather: insulating piece')
       } else if (isOuterwear(p)) {
         outerwearCandidates.push(p)
@@ -1433,13 +1621,8 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       const pieces = byCategory[cat]
       const limit = ceilings[cat]
 
-      // Sort by relevance score descending, stably by piece ID ascending
-      pieces.sort((a, b) => {
-        const ra = getRelevanceScore(a)
-        const rb = getRelevanceScore(b)
-        if (ra !== rb) return rb - ra
-        return Number(a.id) - Number(b.id)
-      })
+      // Sort by relevance score descending, stably by recency and piece ID ascending
+      pieces.sort((a, b) => comparePieces(a, b))
 
       let categoryKeptCount = 0
       for (const p of pieces) {
@@ -1458,27 +1641,158 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     afterStep4.push(...afterStep3)
   }
 
+  function pushAdjustmentReason(pieceId, reason) {
+    if (!debug.relevanceAdjustments) {
+      debug.relevanceAdjustments = {}
+    }
+    if (!debug.relevanceAdjustments[pieceId]) {
+      debug.relevanceAdjustments[pieceId] = []
+    }
+    debug.relevanceAdjustments[pieceId].push(reason)
+  }
+
   function getRelevanceScore(p) {
     const occasionScore = pieceOccasionScore(p, occasion)
     const conf = confirmedCounts.get(Number(p.id)) || { count: 0, favoriteCount: 0 }
-    const historyBonus = conf.count * 8 + conf.favoriteCount * 12
+    let historyBonus = conf.count * 8 + conf.favoriteCount * 12
+    if (historyBonus > 24) {
+      historyBonus = 24
+      pushAdjustmentReason(p.id, 'history bonus capped')
+    }
     const fbScore = feedbackScores.get(Number(p.id)) || 0
     const feedbackBonus = fbScore > 0 ? fbScore : 0
     const recencyPenalty = sessionInfluence && sessionInfluence.pieceRecency
       ? (sessionInfluence.pieceRecency.get(Number(p.id)) || 0)
       : 0
-    return occasionScore + historyBonus + feedbackBonus - recencyPenalty
+      
+    let weatherBonus = 0
+    if (weatherProfile && weatherProfile.isHot) {
+      const isLight = fabricWeight(p) === 'light'
+      const isHeavy = fabricWeight(p) === 'heavy'
+      const isShorts = bottomKind(p) === 'shorts'
+
+      if (isLight) {
+        weatherBonus += 10
+        pushAdjustmentReason(p.id, 'hot weather: lightweight fabric (+10)')
+      }
+      if (isShorts) {
+        weatherBonus += 8
+        pushAdjustmentReason(p.id, 'hot weather: shorts (+8)')
+      }
+      if (isHeavy) {
+        weatherBonus -= 10
+        pushAdjustmentReason(p.id, 'hot weather: heavy fabric (-10)')
+      }
+    } else if (weatherProfile && weatherProfile.isCold) {
+      const isLight = fabricWeight(p) === 'light'
+      const isHeavy = fabricWeight(p) === 'heavy'
+
+      if (isLight) {
+        const catGroup = wardrobeCategoryGroup(p)
+        if (catGroup === 'bottom' || catGroup === 'dress') {
+          weatherBonus -= 10
+          pushAdjustmentReason(p.id, 'cold weather: lightweight fabric (-10)')
+        }
+      }
+      if (isHeavy) {
+        weatherBonus += 10
+        pushAdjustmentReason(p.id, 'cold weather: heavy fabric (+10)')
+      }
+    }
+
+    let occasionProfileBonus = 0
+    const occasionProfile = resolveOccasionProfile(occasion, mood)
+    if (occasionProfile && occasionProfile.rules) {
+      const preferredMaterials = occasionProfile.rules.preferred_materials ? [...occasionProfile.rules.preferred_materials] : []
+      const preferredFootwear = occasionProfile.rules.preferred_footwear ? [...occasionProfile.rules.preferred_footwear] : []
+      const discouragedMaterials = occasionProfile.rules.discouraged_materials ? [...occasionProfile.rules.discouraged_materials] : []
+      if (weatherProfile && weatherProfile.isHot && occasionProfile.rules.discouraged_materials_warm) {
+        discouragedMaterials.push(...occasionProfile.rules.discouraged_materials_warm)
+      }
+      const discouragedFootwear = occasionProfile.rules.discouraged_footwear ? [...occasionProfile.rules.discouraged_footwear] : []
+      if (weatherProfile && weatherProfile.isHot && occasionProfile.rules.discouraged_footwear_summer) {
+        discouragedFootwear.push(...occasionProfile.rules.discouraged_footwear_summer)
+      }
+      if (weatherProfile && weatherProfile.isHot && occasionProfile.rules.discouraged_footwear_warm) {
+        discouragedFootwear.push(...occasionProfile.rules.discouraged_footwear_warm)
+      }
+      const discouragedPieces = occasionProfile.rules.discouraged_pieces ? [...occasionProfile.rules.discouraged_pieces] : []
+
+      // Preferred materials boost
+      for (const mat of preferredMaterials) {
+        if (pieceMatchesMaterial(p, mat)) {
+          occasionProfileBonus += 8
+          pushAdjustmentReason(p.id, `occasion profile: preferred material (${mat}) (+8)`)
+          break
+        }
+      }
+
+      // Preferred footwear boost
+      if (p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes') {
+        for (const fw of preferredFootwear) {
+          if (pieceMatchesFootwear(p, fw)) {
+            occasionProfileBonus += 10
+            pushAdjustmentReason(p.id, `occasion profile: preferred footwear (${fw}) (+10)`)
+            break
+          }
+        }
+      }
+
+      // Discouraged materials penalty
+      for (const mat of discouragedMaterials) {
+        if (pieceMatchesMaterial(p, mat)) {
+          occasionProfileBonus -= 8
+          pushAdjustmentReason(p.id, `occasion profile: discouraged material (${mat}) (-8)`)
+          break
+        }
+      }
+
+      // Discouraged footwear penalty
+      if (p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes') {
+        for (const fw of discouragedFootwear) {
+          if (pieceMatchesFootwear(p, fw)) {
+            occasionProfileBonus -= 10
+            pushAdjustmentReason(p.id, `occasion profile: discouraged footwear (${fw}) (-10)`)
+            break
+          }
+        }
+      }
+
+      // Discouraged pieces penalty
+      for (const item of discouragedPieces) {
+        if (pieceMatchesPieceName(p, item)) {
+          occasionProfileBonus -= 10
+          pushAdjustmentReason(p.id, `occasion profile: discouraged piece (${item}) (-10)`)
+          break
+        }
+      }
+    }
+    
+    return occasionScore + historyBonus + feedbackBonus - recencyPenalty + weatherBonus + occasionProfileBonus
+  }
+
+  function comparePieces(a, b) {
+    const ra = getRelevanceScore(a)
+    const rb = getRelevanceScore(b)
+    if (ra !== rb) return rb - ra
+
+    // Tie-breaker 1: less-recently-shown first
+    const recencyA = sessionInfluence && sessionInfluence.pieceRecency
+      ? (sessionInfluence.pieceRecency.get(Number(a.id)) || 0)
+      : 0
+    const recencyB = sessionInfluence && sessionInfluence.pieceRecency
+      ? (sessionInfluence.pieceRecency.get(Number(b.id)) || 0)
+      : 0
+    if (recencyA !== recencyB) return recencyA - recencyB
+
+    // Tie-breaker 2: piece ID ascending (final fallback)
+    return Number(a.id) - Number(b.id)
   }
 
   // Step 5 — Final guard
   if (afterStep4.length > maxImages) {
-    // Sort globally by relevance descending, then by ID
-    afterStep4.sort((a, b) => {
-      const ra = getRelevanceScore(a)
-      const rb = getRelevanceScore(b)
-      if (ra !== rb) return rb - ra
-      return Number(a.id) - Number(b.id)
-    })
+    // Sort globally by relevance descending, stably by recency and piece ID ascending
+    afterStep4.sort((a, b) => comparePieces(a, b))
 
     console.warn(`[buildVisualComposerRoster] Roster count (${afterStep4.length}) exceeds maxImages (${maxImages}) even after category limits. Trimming globally.`)
 
@@ -1695,7 +2009,7 @@ export function wholeWardrobeReasonFromPieces(outfit = {}) {
   const softAnchor = visualWeight.some(v => v.softness >= 2) && visualWeight.some(v => v.structure >= 2)
   if (colorPop) return 'controlled color pop provides artistic tension to the neutral column'
   if (softAnchor) return 'structured support piece stabilizes the soft natural drape'
-  return 'simple balanced separates that follow Yuna\'s vertical line'
+  return 'simple balanced separates that follow a stable vertical column'
 }
 
 export function wholeWardrobeWatchFromPieces(outfit = {}) {
@@ -1790,7 +2104,7 @@ export function wholeWardrobeOutfitsFromCandidates(candidates = [], candidatePie
     watchFor: wholeWardrobeWatchFromPieces({ pieces: candidate.pieces }),
     localScore: candidate.localScore,
     missionId: candidate.missionId,
-  }, candidatePieces), candidatePieces, options.occasion, options.mood))
+  }, candidatePieces), candidatePieces, options.occasion, options.mood, options))
 }
 
 export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
@@ -1800,6 +2114,43 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   let score = 0
   const reasons = []
   const add = (n, reason) => { score += n; if (reason) reasons.push(reason) }
+
+  // Weather appropriateness
+  const weather = options.weatherProfile || weatherProfileFromContext(options)
+  if (weather.isHot) {
+    for (const piece of pieces) {
+      if (pieceFabricWeight(piece) === 'heavy') add(-12, 'hot weather: heavy fabric')
+      if (pieceFabricWeight(piece) === 'light') add(10, 'hot weather: lightweight fabric')
+      if (pieceBareness(piece) === 'high')      add(8, 'hot weather: skin-friendly cut')
+      if (pieceCoverage(piece) === 'full-insulating') add(-8, 'hot weather: insulating coverage')
+    }
+    if (pieces.some(p => wardrobeCategoryGroup(p) === 'outerwear')) {
+      add(-30, 'hot weather: penalize outerwear/layering')
+    }
+  } else if (weather.isCold) {
+    for (const piece of pieces) {
+      if (pieceFabricWeight(piece) === 'heavy') add(10, 'cold weather: heavy fabric')
+      if (pieceFabricWeight(piece) === 'light') {
+        const catGroup = wardrobeCategoryGroup(piece)
+        if (catGroup === 'bottom' || catGroup === 'dress') {
+          add(-12, 'cold weather: lightweight fabric')
+        }
+      }
+      if (pieceBareness(piece) === 'high')      add(-8, 'cold weather: skin-friendly cut')
+      if (pieceCoverage(piece) === 'full-insulating') add(8, 'cold weather: insulating coverage')
+    }
+    const hasWarmLayer = pieces.some(piece => {
+      const catGroup = wardrobeCategoryGroup(piece)
+      if (catGroup === 'top' || catGroup === 'outerwear' || catGroup === 'dress') {
+        const weight = pieceFabricWeight(piece)
+        return weight === 'medium' || weight === 'heavy'
+      }
+      return false
+    })
+    if (!hasWarmLayer) {
+      add(-14, 'cold weather: no warm layer in ensemble')
+    }
+  }
 
   if (groups.includes('top') && groups.includes('bottom')) add(14, 'complete separates')
   if (groups.includes('dress')) add(12, 'complete dress base')
@@ -1838,34 +2189,79 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   // Occasion alignment checks
   const occasion = String(options.occasion || '').toLowerCase().trim()
   if (occasion) {
-    const normOccasion = occasion.replace('-', ' ').trim()
     for (const piece of pieces) {
-      const pOccasions = (piece.occasions || []).map(o => String(o).toLowerCase().replace('-', ' ').trim())
-      if (pOccasions.length > 0) {
-        let isCompatible = pOccasions.includes(normOccasion)
-        if (!isCompatible) {
-          if (normOccasion === 'evening' && pOccasions.includes('smart casual')) {
-            isCompatible = true
-          } else if (normOccasion === 'smart casual' && (pOccasions.includes('evening') || pOccasions.includes('city'))) {
-            isCompatible = true
-          } else if (normOccasion === 'gallery / art event' && (pOccasions.includes('city') || pOccasions.includes('smart casual') || pOccasions.includes('evening'))) {
-            isCompatible = true
-          } else if (normOccasion === 'city' && pOccasions.includes('smart casual')) {
-            isCompatible = true
-          } else if (normOccasion === 'casual' && (pOccasions.includes('city') || pOccasions.includes('home') || pOccasions.includes('outdoor'))) {
-            isCompatible = true
+      if (!pieceOccasionCompatible(piece, occasion)) {
+        add(-60, `${piece.name} is unsuitable for ${occasion} occasion`)
+      }
+    }
+  }
+
+  // Occasion profile boosts/penalties
+  const occasionProfile = resolveOccasionProfile(occasion, options.mood || '')
+  if (occasionProfile && occasionProfile.rules) {
+    const preferredMaterials = occasionProfile.rules.preferred_materials ? [...occasionProfile.rules.preferred_materials] : []
+    const preferredFootwear = occasionProfile.rules.preferred_footwear ? [...occasionProfile.rules.preferred_footwear] : []
+    const discouragedMaterials = occasionProfile.rules.discouraged_materials ? [...occasionProfile.rules.discouraged_materials] : []
+    if (weather.isHot && occasionProfile.rules.discouraged_materials_warm) {
+      discouragedMaterials.push(...occasionProfile.rules.discouraged_materials_warm)
+    }
+    const discouragedFootwear = occasionProfile.rules.discouraged_footwear ? [...occasionProfile.rules.discouraged_footwear] : []
+    if (weather.isHot && occasionProfile.rules.discouraged_footwear_summer) {
+      discouragedFootwear.push(...occasionProfile.rules.discouraged_footwear_summer)
+    }
+    if (weather.isHot && occasionProfile.rules.discouraged_footwear_warm) {
+      discouragedFootwear.push(...occasionProfile.rules.discouraged_footwear_warm)
+    }
+    const discouragedPieces = occasionProfile.rules.discouraged_pieces ? [...occasionProfile.rules.discouraged_pieces] : []
+
+    for (const piece of pieces) {
+      // Preferred materials boost
+      for (const mat of preferredMaterials) {
+        if (pieceMatchesMaterial(piece, mat)) {
+          add(8, `occasion profile: preferred material (${mat})`)
+          break
+        }
+      }
+
+      // Preferred footwear boost (if category is shoes)
+      if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
+        for (const fw of preferredFootwear) {
+          if (pieceMatchesFootwear(piece, fw)) {
+            add(10, `occasion profile: preferred footwear (${fw})`)
+            break
           }
         }
-        if (!isCompatible) {
-          if (normOccasion === 'evening') {
-            add(-60, `${piece.name} is unsuitable for evening occasion`)
-          } else {
-            add(-25, `${piece.name} is unsuitable for ${occasion} occasion`)
+      }
+
+      // Discouraged materials penalty
+      for (const mat of discouragedMaterials) {
+        if (pieceMatchesMaterial(piece, mat)) {
+          add(-8, `occasion profile: discouraged material (${mat})`)
+          break
+        }
+      }
+
+      // Discouraged footwear penalty (if category is shoes)
+      if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
+        for (const fw of discouragedFootwear) {
+          if (pieceMatchesFootwear(piece, fw)) {
+            add(-10, `occasion profile: discouraged footwear (${fw})`)
+            break
           }
+        }
+      }
+
+      // Discouraged pieces penalty
+      for (const item of discouragedPieces) {
+        if (pieceMatchesPieceName(piece, item)) {
+          add(-10, `occasion profile: discouraged piece (${item})`)
+          break
         }
       }
     }
   }
+
+
 
   // Clashing shoe/dress formality check
   const dress = pieces.find(p => wardrobeCategoryGroup(p) === 'dress')
@@ -2451,8 +2847,84 @@ export function hasGenericWholeWardrobeText(outfit = {}) {
   return /\b(balances artfulness with modernity|playful touch|overall look|creates an artistic visual|refined silhouette|visual balance|contrasts well|modern artistic element|clean silhouette|may overwhelm the look|potential boxiness|ensure the playful elements do not overwhelm)\b/.test(text)
 }
 
-export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion = 'casual', mood = '') {
+export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion = 'casual', mood = '', options = {}) {
   const repaired = rewriteWholeWardrobeOutfitWithArchetype({ ...outfit }, candidatePieces, occasion)
+  
+  // Footwear gate & repair
+  const occasionProfile = resolveOccasionProfile(occasion, mood)
+  if (occasionProfile && occasionProfile.rules && occasionProfile.rules.required_footwear) {
+    const pieces = wholeWardrobeFullPieces(repaired, candidatePieces)
+    const currentShoe = pieces.find(p => p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes')
+    if (currentShoe) {
+      const isTrailRated = occasionProfile.rules.required_footwear.some(fw => pieceMatchesFootwear(currentShoe, fw))
+      if (!isTrailRated) {
+        const weatherProfile = options.weatherProfile || weatherProfileFromContext({ mood, season: options.season })
+        const { allowedPieces } = filterWholeWardrobePiecesForGeneration(candidatePieces, { occasion, weatherProfile, mood })
+        
+        const getShoeRelevance = (shoe) => {
+          let score = pieceOccasionScore(shoe, occasion)
+          const preferredFootwear = occasionProfile.rules.preferred_footwear || []
+          const discouragedFootwear = [
+            ...(occasionProfile.rules.discouraged_footwear || []),
+            ...(weatherProfile.isHot && occasionProfile.rules.discouraged_footwear_summer ? occasionProfile.rules.discouraged_footwear_summer : []),
+            ...(weatherProfile.isHot && occasionProfile.rules.discouraged_footwear_warm ? occasionProfile.rules.discouraged_footwear_warm : [])
+          ]
+          for (const fw of preferredFootwear) {
+            if (pieceMatchesFootwear(shoe, fw)) {
+              score += 10
+              break
+            }
+          }
+          for (const fw of discouragedFootwear) {
+            if (pieceMatchesFootwear(shoe, fw)) {
+              score -= 10
+              break
+            }
+          }
+          if (occasionProfile.rules.discouraged_materials) {
+            for (const mat of occasionProfile.rules.discouraged_materials) {
+              if (pieceMatchesMaterial(shoe, mat)) {
+                score -= 8
+                break
+              }
+            }
+          }
+          return score
+        }
+        
+        const candidateShoes = allowedPieces.filter(p => {
+          if (p.category !== 'shoes' && wardrobeCategoryGroup(p) !== 'shoes') return false
+          return occasionProfile.rules.required_footwear.some(fw => pieceMatchesFootwear(p, fw))
+        })
+        
+        if (candidateShoes.length > 0) {
+          candidateShoes.sort((a, b) => {
+            const scoreA = getShoeRelevance(a)
+            const scoreB = getShoeRelevance(b)
+            if (scoreA !== scoreB) return scoreB - scoreA
+            return a.id - b.id
+          })
+          const bestShoe = candidateShoes[0]
+          
+          if (Array.isArray(repaired.pieceIds)) {
+            repaired.pieceIds = repaired.pieceIds.map(id => Number(id) === Number(currentShoe.id) ? Number(bestShoe.id) : Number(id))
+          }
+          if (Array.isArray(repaired.pieces)) {
+            repaired.pieces = repaired.pieces.map(p => Number(p.id) === Number(currentShoe.id) ? bestShoe : p)
+          }
+          const updatedRepaired = rewriteWholeWardrobeOutfitWithArchetype(repaired, candidatePieces, occasion)
+          Object.assign(repaired, updatedRepaired)
+        } else {
+          const warning = "footwear is not trail-rated — closest available match."
+          if (!repaired.watchFor || repaired.watchFor === 'none') {
+            repaired.watchFor = warning
+          } else if (!repaired.watchFor.includes(warning)) {
+            repaired.watchFor = `${repaired.watchFor}; ${warning}`
+          }
+        }
+      }
+    }
+  }
   if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.label || '').trim()) repaired.label = wholeWardrobeLabelFromPieces(repaired)
   if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.dominantDirection || '').trim() || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.dominantDirection = wholeWardrobeArchetypeFor(repaired, candidatePieces, occasion).direction
   if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.silhouette || '').trim() || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.silhouette = wholeWardrobeSilhouetteFromPieces(repaired)
@@ -2698,6 +3170,26 @@ export function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {
 
   return { outfits: selected, rejected }
 }
+export function isOutfitStructurallyValid(pieces = [], { requireShoes = true } = {}) {
+  const groups = pieces.map(p => wardrobeCategoryGroup(p))
+  const shoeCount = groups.filter(g => g === 'shoes').length
+  const bottomCount = groups.filter(g => g === 'bottom').length
+  const dressCount = groups.filter(g => g === 'dress').length
+  const topCount = groups.filter(g => g === 'top').length
+
+  if (shoeCount > 1) return false
+  if (requireShoes && shoeCount !== 1) return false
+  if (bottomCount > 1) return false
+  if (dressCount > 1) return false
+
+  if (dressCount === 1) {
+    if (bottomCount > 0) return false
+  } else {
+    if (topCount < 1 || bottomCount !== 1) return false
+  }
+  return true
+}
+
 export function normalizeWholeWardrobeStrengths(outfits = []) {
   return outfits.map((outfit, index) => ({
     ...outfit,
@@ -2705,21 +3197,17 @@ export function normalizeWholeWardrobeStrengths(outfits = []) {
   }))
 }
 
-export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes = true, requireDress = false, requireNonGraphicTop = false, candidatePieces = [], occasion = 'casual', mood = '' } = {}) {
+export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes = true, requireDress = false, requireNonGraphicTop = false, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null } = {}) {
   const seen = new Set()
   const accepted = []
   const rejected = []
   for (const outfit of outfits) {
-    const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood)
+    const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood, { season, weatherProfile })
     const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
-    const groups = pieces.map(p => wardrobeCategoryGroup(p))
-    const hasSeparates = groups.includes('top') && groups.includes('bottom')
-    const hasDress = groups.includes('dress')
-    const hasShoes = groups.includes('shoes')
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
     const key = (repaired.pieceIds || pieces.map(p => p.id)).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
 
-    if ((!hasSeparates && !hasDress) || (requireShoes && !hasShoes)) {
+    if (!isOutfitStructurallyValid(pieces, { requireShoes })) {
       rejected.push({ label: repaired?.label || 'unnamed', reason: 'not a complete wardrobe outfit' })
       continue
     }

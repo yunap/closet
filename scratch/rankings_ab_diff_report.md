@@ -1,6 +1,6 @@
 # A/B Rankings Comparison Report (Pre-remediation vs. Post-remediation)
 
-Generated on: 2026-06-11T07:13:47.503Z
+Generated on: 2026-06-12T06:57:50.477Z
 
 This report compares top-12 garment recommendations side-by-side to identify semantic changes.
 
@@ -24,7 +24,7 @@ This report compares top-12 garment recommendations side-by-side to identify sem
 
 ### Entered the Top-12
 - **black cream botanical tiered midi skirt** (ID: 92) [Current Rank #11, score 23 (was #49)]
-  - *Reasons*: needed bottom for selected top; grounded skirt anchor; stable vertical bottom; Yuna palette; soft + soft risk; two expressive pieces risk
+  - *Reasons*: needed bottom for selected top; grounded skirt anchor; stable vertical bottom; Yuna palette; soft + soft risk; expressive competition risk
 
 ### Left the Top-12
 - **light grey zip detail skinny pants** (ID: 111) [Baseline Rank #12, score 22 (now #13)]

@@ -11,7 +11,18 @@ import {
   RENDERER_CALIBRATION_SYSTEM,
   WHOLE_WARDROBE_EVALUATOR_SYSTEM,
   STYLIST_SYSTEM,
-  COMPARE_OUTFITS_SYSTEM
+  COMPARE_OUTFITS_SYSTEM,
+  EXPRESSIVE_HIERARCHY_RULES,
+  VISUAL_SUPPORT_CRITIC_SYSTEM,
+  VISUAL_WARDROBE_CRITIC_SYSTEM,
+  EDITORIAL_IMAGE_BASE_PROMPT,
+  EDITORIAL_IMAGE_SUBJECT_PROMPT,
+  EDITORIAL_IMAGE_SHOES_RULE,
+  EDITORIAL_IMAGE_REALISM_RULE,
+  BODY_CONTRACT,
+  PROVEN_FORMULAS,
+  AESTHETIC_GRAVITY,
+  LANE_NEUTRALITY
 } from './prompts.js'
 
 import {
@@ -22,7 +33,7 @@ import {
   ACTIVE_STYLIST_MODEL
 } from './provider.js'
 
-import { OCCASION_PROFILES } from './occasions.js'
+import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 
 import {
   parsePiece,
@@ -1308,7 +1319,7 @@ export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, ran
     return `${index + 1}. id ${piece.id}: ${piece.name} (${piece.category})\n${buildPieceText(piece)}`
   }).join('\n\n')
   const raw = await askStylist({
-    system: `You are Yuna's visual support-piece critic. Rank candidate saved garments by actual visual compatibility with the selected garment and occasion. Do not invent pieces. Use the photos/contact sheet first, then text truth. Return ONLY JSON.`,
+    system: VISUAL_SUPPORT_CRITIC_SYSTEM,
     maxTokens: 900,
     messages: [{
       role: 'user',
@@ -1387,7 +1398,7 @@ export async function rankWholeWardrobeCandidatesWithVision({ candidates = [], c
   const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
   const moodProfile = wholeWardrobeMoodProfile(mood)
   const raw = await askStylist({
-    system: `You are Yuna's visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize Yuna's known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`,
+    system: VISUAL_WARDROBE_CRITIC_SYSTEM,
     maxTokens: 900,
     messages: [{
       role: 'user',
@@ -1986,7 +1997,7 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
   ].filter(Boolean).join('\n')
 }
 
-export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = new Map(), occasion = 'casual', season = 'current season' }) {
+export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = new Map(), occasion = 'casual', season = 'current season', mood = '' }) {
   const outfitLines = outfits.map((outfit, index) => {
     const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number).filter(Boolean) : []
     const pieces = ids.map(id => piecesById.get(id)).filter(Boolean)
@@ -1999,6 +2010,11 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
       `Pieces: ${pieceText}`
     ].filter(Boolean).join('\n')
   }).join('\n\n')
+
+  const profile = resolveOccasionProfile(occasion, mood)
+  const occasionLine = profile
+    ? `Occasion: ${profile.label} — style the garments for ${profile.vibe}; movement-ready, no added dressy accessories.`
+    : `Occasion: ${occasion}. Season: ${season}.`
 
   return [
     'Generate ONE realistic visual comparison sheet containing separate full-body outfit previews for the listed saved wardrobe outfits.',
@@ -2022,7 +2038,7 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
     'Style direction:',
     '- Relaxed artistic realism, grounded personal style, believable wearable outfits.',
     '- Avoid fashion fantasy, influencer polish, generic catalog styling, and overly decorative accessories.',
-    `Occasion: ${occasion}. Season: ${season}.`,
+    occasionLine,
     '',
     `Outfit panels:\n${outfitLines}`
   ].filter(Boolean).join('\n')
@@ -2247,7 +2263,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
   }
 }
 
-export async function createWholeWardrobeComparisonSheetImage({ outfits = [], piecesById = new Map(), occasion, season }) {
+export async function createWholeWardrobeComparisonSheetImage({ outfits = [], piecesById = new Map(), occasion, season, mood = '' }) {
   const startedAt = Date.now()
   const timings = {}
   const filename = `generated-boards/whole-wardrobe-comparison-${Date.now()}-${Math.round(Math.random() * 1e6)}.png`
@@ -2311,7 +2327,7 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
       contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches a listed panel.' : 'Taste calibration reference only.' })
     }
 
-    contentParts.push({ type: 'input_text', text: wholeWardrobeComparisonSheetPrompt({ outfits: shown, piecesById, occasion, season }) })
+    contentParts.push({ type: 'input_text', text: wholeWardrobeComparisonSheetPrompt({ outfits: shown, piecesById, occasion, season, mood }) })
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
       model: 'gpt-4o',
@@ -2998,17 +3014,22 @@ export function editorialImagePrompt({ selectedPiece, direction, occasion, seaso
     : 'Silhouette: fitted or structured upper half + full-length bottom (wide-leg, straight-leg, flowing maxi/midi). The lower half is usually full-length unless a specific suggested piece says otherwise.'
  
   return [
-    'Full-figure personal styling concept image. Full outfit visible from head to shoes. Simple neutral or natural background, soft daylight or studio light. No text, labels, watermarks, or additional people.',
+    EDITORIAL_IMAGE_BASE_PROMPT,
  
-    'Subject: a real woman with medium curly hair (natural, not styled), warm olive skin tone, strong facial features, direct and warm expression. Natural relaxed posture with slight asymmetry — weight shifted, hand in pocket or at side, not front-facing catalog stance.',
+    EDITORIAL_IMAGE_SUBJECT_PROMPT,
  
-    'Aesthetic: Urban Artisan. One expressive element per outfit — either an interesting top (pattern, texture, color-block) OR a skirt with movement — never both at once. The rest of the outfit is quieter and grounds the expression.',
+    `Style Constitution:
+${BODY_CONTRACT}
+${PROVEN_FORMULAS}
+${AESTHETIC_GRAVITY}
+${LANE_NEUTRALITY}
+${EXPRESSIVE_HIERARCHY_RULES}`,
  
     silhouetteRule,
  
-    'Shoes: pointed-toe dark flat, black or cognac kitten heel, slim-soled leather loafer, or ankle boot with edge. NEVER round-toe flat, chunky sole, white sneaker, Oxford shoe, or beige/neutral casual slip-on.',
+    EDITORIAL_IMAGE_SHOES_RULE,
  
-    'Clothing must look real: visible fabric weight, natural folds and drape, slight tension where fitted. No idealized tailoring, no AI-smooth perfection, no beauty retouching.',
+    EDITORIAL_IMAGE_REALISM_RULE,
  
     `ANCHOR GARMENT — preserve exactly: ${pieceDesc}.`,
     anchorRules ? `Anchor fidelity: ${anchorRules}` : '',
@@ -3799,7 +3820,7 @@ export async function buildStylistConversationPayload(body) {
     `Current turn mode: ${conversationMode}.`,
     `Mode instructions: ${modeDirectiveText}`,
     `Turn directive: ${conversationDirective}`,
-    'If mode is new_request and required context (both location/city and weather/season/dates) is present, answer the user’s request directly using wardrobe context by recommending specific items from Yuna\'s closet. Keep the response natural, following the Conversational Flow guidelines and Examples. If details like location/city, weather, season, or dates are missing, do not recommend garments or suggest outfits; you must ask exactly one clear clarifying question to gather this context.',
+    'If mode is new_request and required context (both location/city and weather/season/dates/timing) is present, answer the user’s request directly using wardrobe context by recommending specific items from Yuna\'s closet. Keep the response natural, following the Conversational Flow guidelines and Examples. If details like location/city or weather/season/dates/timing are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather this missing context (e.g., "Where are you going, and what is the expected weather?").',
     'If mode is followup, answer the specific follow-up directly in a friendly conversational tone without restarting the whole evaluation, outfit generation, packing list, or plan.',
     'If mode is correction, acknowledge the correction, revise only the relevant mistaken point, and do not defend a contradiction.',
     'If mode is explanation, explain how the previous recommendation was made using the available context.',

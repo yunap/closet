@@ -92,5 +92,5 @@ grounding, generic safe solutions.
 - Be cost-conscious with generation: preview-before-render patterns, log `response.usage`
   where available, print cost estimates and require explicit confirmation before batch API
   runs (e.g. vision re-tagging the whole wardrobe).
-- Keep diffs small and reviewable; one concern per commit; new features additive behind their
-  own routes/flags rather than modifying working flows in place.
+- Keep diffs small and reviewable; one concern per commit; new features additive behind their own routes/flags rather than modifying working flows in place.
+- **Prompt-Layer Style Constitution constraints**: All style/taste claims and constraints in system prompts must interpolate the ratified Style Constitution layers exported from [prompts.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/styling-engine/prompts.js) (`BODY_CONTRACT`, `PROVEN_FORMULAS`, `AESTHETIC_GRAVITY`, `LANE_NEUTRALITY`, `WORKING_STYLE`). Models and agents must not invent style preferences, signature colors, or unratified drift labels. Style lanes are open and never gatekept. The [check_style_claims.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/scratch/check_style_claims.js) script automatically guards against regression of unauthorized taste terms.
