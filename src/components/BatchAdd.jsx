@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 
 const CATEGORIES = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
-const OCCASIONS  = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home']
+const OCCASIONS  = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
 const SEASONS    = ['warm', 'cool', 'year-round']
 const COLOR_OPTIONS = [
   { name: 'black', hex: '#2A2420' }, { name: 'white', hex: '#F5F2EC' },

@@ -523,6 +523,28 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
     score -= 14
     reasons.push(`weak ${occasion} occasion fit`)
   }
+
+  if (options.comfortConstraint && (candidate.category === 'shoes' || wardrobeCategoryGroup(candidate) === 'shoes')) {
+    const { discouraged_footwear = [], keep_footwear = [] } = options.comfortConstraint
+    let matchedKeep = false
+    for (const fw of keep_footwear) {
+      if (pieceMatchesFootwear(candidate, fw)) {
+        score += 10
+        reasons.push(`comfort constraint: preferred footwear (${fw})`)
+        matchedKeep = true
+        break
+      }
+    }
+    if (!matchedKeep) {
+      for (const fw of discouraged_footwear) {
+        if (pieceMatchesFootwear(candidate, fw)) {
+          score -= 10
+          reasons.push(`comfort constraint: discouraged footwear (${fw})`)
+          break
+        }
+      }
+    }
+  }
   const layerIssue = optionalLayerCoherenceIssue(selected, candidate, [], { occasion })
   if (layerIssue) {
     score -= 24
@@ -2281,6 +2303,30 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
         if (pieceMatchesPieceName(piece, item)) {
           add(-10, `occasion profile: discouraged piece (${item})`)
           break
+        }
+      }
+    }
+  }
+
+  if (options.comfortConstraint) {
+    const { discouraged_footwear = [], keep_footwear = [] } = options.comfortConstraint
+    for (const piece of pieces) {
+      if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
+        let matchedKeep = false
+        for (const fw of keep_footwear) {
+          if (pieceMatchesFootwear(piece, fw)) {
+            add(10, `comfort constraint: preferred footwear (${fw})`)
+            matchedKeep = true
+            break
+          }
+        }
+        if (!matchedKeep) {
+          for (const fw of discouraged_footwear) {
+            if (pieceMatchesFootwear(piece, fw)) {
+              add(-10, `comfort constraint: discouraged footwear (${fw})`)
+              break
+            }
+          }
         }
       }
     }

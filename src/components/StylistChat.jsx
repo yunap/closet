@@ -25,14 +25,9 @@ const GENERATED_BOARD_FEEDBACK_LABELS = [
   ['bad_grounding', 'Bad grounding'],
 ]
 
-const WHOLE_WARDROBE_FEEDBACK_LABELS = [
-  ['works', 'Use more like this'],
-  ['good_formula', 'Good formula'],
-  ['good_pieces', 'Good pieces'],
-  ['not_me', 'Not me'],
-  ['wrong_item_read', 'Bad piece choice'],
-  ['bad_occasion', 'Bad occasion'],
-  ['fit_issue', 'Fit issue'],
+const OUTFIT_FEEDBACK_LABELS = [
+  ['works', 'More like this'],
+  ['not_me', 'Not for me'],
 ]
 
 const formatMs = (ms) => {
@@ -631,7 +626,11 @@ export default function AskClaude({
     if (message?.wholeWardrobe) return 'Outfits built from saved wardrobe pieces. Garment photos are shown below; image generation is optional.'
     const text = String(message?.text || '')
     const titleMatch = text.match(/Generated outfit ideas for:\*\*\s*([^\n]+)/i)
-    const itemName = titleMatch ? titleMatch[1].replace(/\*/g, '').trim() : activeContext?.name
+    const firstOutfit = message?.structuredOutfits?.[0]
+    const heroPieceName = firstOutfit?.pieces?.[0]?.name
+    const itemName = titleMatch 
+      ? titleMatch[1].replace(/\*/g, '').trim() 
+      : (activeContext?.name || heroPieceName || 'your wardrobe')
     if (hasBoards) return `Outfit directions for ${itemName}. Visuals are shown below for selected ideas.`
     return `Outfit ideas for ${itemName}. Saved wardrobe pieces are shown when available; image generation is optional.`
   }
@@ -1305,7 +1304,7 @@ export default function AskClaude({
                           )}
                         </button>
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
-                        {message?.wholeWardrobe && (
+                        {(message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
                             <button
                               type="button"
@@ -1332,7 +1331,7 @@ export default function AskClaude({
                                     season: wardrobeOutfitSeason,
                                     mood: wardrobeOutfitMood,
                                   },
-                                  contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                                  contextOverride: activeContext?.type === 'piece' ? activeContext : { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
                                 })
                               }}
                               style={{
@@ -1347,12 +1346,12 @@ export default function AskClaude({
                                 background: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--danger-bg)' : 'var(--surface-2)',
                                 cursor: 'pointer'
                               }}
-                              title="Tell the engine this garment was the wrong choice for this outfit"
+                              title="Replace just this piece next time — the rest of the outfit stays, and the piece stays in your wardrobe."
                             >
-                              {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ issue' : 'piece issue'}
+                              {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ Swapped out' : 'Swap this out'}
                             </button>
                             {(() => {
-                              const msgOccasion = message.queryOptions?.occasion || wardrobeOutfitOccasion || 'casual'
+                              const msgOccasion = message.queryOptions?.occasion || outfit.bestFor || outfit.occasion || wardrobeOutfitOccasion || 'casual'
                               const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
                               const exclusions = (piece?.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
                               const isExcluded = exclusions.includes(normMsgOccasion)
@@ -1423,7 +1422,7 @@ export default function AskClaude({
                 </details>
               )}
 
-              {message?.wholeWardrobe && (
+              {(message?.wholeWardrobe || (activeContext?.type !== 'piece' && !outfit.pieceId && Array.isArray(outfit.pieces) && outfit.pieces.length > 0)) && (
                 <>
                   <div style={{ marginTop: 9, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                     <button
@@ -1440,7 +1439,7 @@ export default function AskClaude({
                     >
                       {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
                     </button>
-                    {WHOLE_WARDROBE_FEEDBACK_LABELS.map(([type, label]) => {
+                    {OUTFIT_FEEDBACK_LABELS.map(([type, label]) => {
                       const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
                       const isSaved = feedbackSaved.has(key)
                       return (
@@ -1467,8 +1466,15 @@ export default function AskClaude({
                             },
                             appendToPiece: activeContext?.type === 'piece'
                           })}
-                          disabled={isSaved}
-                          style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
+                          style={{
+                            fontSize: 10,
+                            color: isSaved ? 'var(--donate)' : 'var(--text-muted)',
+                            padding: '2px 7px',
+                            borderRadius: 10,
+                            border: '1px solid var(--border)',
+                            background: isSaved ? 'var(--surface-2)' : 'var(--surface)',
+                            cursor: 'pointer'
+                          }}
                         >
                           {isSaved ? '✓ ' : ''}{label}
                         </button>
@@ -2305,6 +2311,8 @@ export default function AskClaude({
       let replyOutfitName = null
       let replyDebug = null
       let replyMode = null
+      let replyWholeWardrobe = false
+      let replyQueryOptions = null
 
       if (outfitToSend && compareId) {
         const res = await fetch('/api/ai/compare-outfits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitAId: outfitToSend.id, outfitBId: compareId, question: q || 'Which outfit works better for me?', history: historySnapshot }) })
@@ -2486,15 +2494,36 @@ export default function AskClaude({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
           triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
         }
-        setThreadMemory({
-          ...threadMemory,
-          type: 'generated_outfit',
-          latestOutfit: rememberedOutfit,
-        })
+        if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
+          const source = data.structuredOutfitsSource || 'whole_wardrobe'
+          replyQueryOptions = {
+            occasion: data.structuredOutfitsOccasion || 'casual',
+            season: data.structuredOutfitsSeason || 'current season',
+            mood: data.structuredOutfitsMood || '',
+            mission: data.structuredOutfitsMission || 'mix',
+          }
+          if (source === 'whole_wardrobe') {
+            replyWholeWardrobe = true
+            replyStructuredOutfits = replyStructuredOutfits.map(outfit => ({ ...outfit, textOnly: true, wholeWardrobe: true }))
+          }
+          setThreadMemory({
+            type: 'generated_outfits',
+            source,
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source }),
+            latestOutfits: replyStructuredOutfits,
+          })
+        } else {
+          setThreadMemory({
+            ...threadMemory,
+            type: 'generated_outfit',
+            latestOutfit: rememberedOutfit,
+          })
+        }
 
       } else if (activeContext?.type === 'outfit' || (threadMemory?.type === 'outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q))) {
         const activeOutfitId = activeContext?.type === 'outfit' ? activeContext.id : threadMemory.id
@@ -2535,17 +2564,38 @@ export default function AskClaude({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
           triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
         }
-        setThreadMemory({
-          type: 'outfit',
-          id: activeOutfit.id,
-          name: activeOutfit.name,
-          latestEvaluation: threadMemory?.latestEvaluation || null,
-          latestEvaluationText: memoryText,
-        })
+        if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
+          const source = data.structuredOutfitsSource || 'whole_wardrobe'
+          replyQueryOptions = {
+            occasion: data.structuredOutfitsOccasion || 'casual',
+            season: data.structuredOutfitsSeason || 'current season',
+            mood: data.structuredOutfitsMood || '',
+            mission: data.structuredOutfitsMission || 'mix',
+          }
+          if (source === 'whole_wardrobe') {
+            replyWholeWardrobe = true
+            replyStructuredOutfits = replyStructuredOutfits.map(outfit => ({ ...outfit, textOnly: true, wholeWardrobe: true }))
+          }
+          setThreadMemory({
+            type: 'generated_outfits',
+            source,
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source }),
+            latestOutfits: replyStructuredOutfits,
+          })
+        } else {
+          setThreadMemory({
+            type: 'outfit',
+            id: activeOutfit.id,
+            name: activeOutfit.name,
+            latestEvaluation: threadMemory?.latestEvaluation || null,
+            latestEvaluationText: memoryText,
+          })
+        }
 
       } else {
         const generatedContext = threadMemory?.type === 'generated_outfits'
@@ -2574,28 +2624,49 @@ export default function AskClaude({
         const data = await res.json()
         replyText = data.answer || data.error || 'Something went wrong.'
         replyDebug = data.debug || null
+        replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
           triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
+        }
+        if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
+          const source = data.structuredOutfitsSource || 'whole_wardrobe'
+          replyQueryOptions = {
+            occasion: data.structuredOutfitsOccasion || 'casual',
+            season: data.structuredOutfitsSeason || 'current season',
+            mood: data.structuredOutfitsMood || '',
+            mission: data.structuredOutfitsMission || 'mix',
+          }
+          if (source === 'whole_wardrobe') {
+            replyWholeWardrobe = true
+            replyStructuredOutfits = replyStructuredOutfits.map(outfit => ({ ...outfit, textOnly: true, wholeWardrobe: true }))
+          }
+          setThreadMemory({
+            type: 'generated_outfits',
+            source,
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source }),
+            latestOutfits: replyStructuredOutfits,
+          })
         }
       }
       setMessages(m => [...m, {
         role: 'assistant',
         text: replyText,
         structuredOutfits: replyStructuredOutfits,
+        wholeWardrobe: replyWholeWardrobe,
         wardrobeEvaluation: replyWardrobeEvaluation,
         textOnly: replyWardrobeEvaluation,
         outfitName: replyOutfitName,
         debug: replyDebug,
         mode: replyMode,
-        queryOptions: shouldGenerateOutfits || shouldGenerateEditorialVisuals || shouldGenerateActiveEditorialVisuals ? {
+        queryOptions: replyQueryOptions || (shouldGenerateOutfits || shouldGenerateEditorialVisuals || shouldGenerateActiveEditorialVisuals ? {
           occasion: effectiveGenerateOccasion,
           season: effectiveGenerateSeason,
           idealOnly: effectiveIdealOnlyMode,
           includeMissingPieces: effectiveIncludeMissingPieces,
           mission: effectiveGenerateMission,
           mood: effectiveGenerateMood,
-        } : null
+        } : null)
       }])
       addToHistory('assistant', replyText)
 
@@ -2943,6 +3014,7 @@ export default function AskClaude({
               <option value="evening">Evening</option>
               <option value="gallery / art event">Gallery / art event</option>
               <option value="travel">Travel</option>
+              <option value="walking">Walking</option>
               <option value="outdoor active">Outdoor active</option>
               <option value="concert">Concert</option>
             </select>
@@ -3059,6 +3131,7 @@ export default function AskClaude({
                     <option value="evening">Evening</option>
                     <option value="gallery / art event">Gallery / art event</option>
                     <option value="travel">Travel</option>
+                    <option value="walking">Walking</option>
                     <option value="outdoor active">Outdoor active</option>
                     <option value="concert">Concert</option>
                   </select>
@@ -3388,7 +3461,7 @@ export default function AskClaude({
                       <>
                         <div className="custom-select-backdrop" onClick={() => setOccasionMenuOpen(false)} />
                         <div className="custom-select-dropdown" style={{ minWidth: 150, fontSize: 12, left: 0, right: 'auto' }}>
-                          {['casual', 'city', 'smart casual', 'evening', 'gallery / art event', 'travel', 'outdoor active'].map(occ => (
+                          {['casual', 'city', 'smart casual', 'evening', 'gallery / art event', 'travel', 'walking', 'outdoor active'].map(occ => (
                             <button
                               key={occ}
                               type="button"

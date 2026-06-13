@@ -18,6 +18,11 @@ import {
 } from '../styling-engine/provider.js'
 
 import {
+  resolveComfortFootwearConstraint,
+  applyComfortFootwearRepair
+} from '../styling-engine/footwear-comfort.js'
+
+import {
   STYLIST_SYSTEM,
   STYLE_SELECTED_ITEM_SYSTEM,
   STYLE_SELECTED_ITEM_FEW_SHOTS,
@@ -620,136 +625,154 @@ router.post('/evaluate-piece', async (req, res) => {
 })
 
 // ── AI Outfit Generation ──────────────────────────────────────────────────────
-router.post('/generate-outfits-for-piece', async (req, res) => {
-  const { pieceId, occasion = 'casual', season = 'current season', mission = 'mix', mood = '', question, history, includeMissingPieces = false, idealOnly = false } = req.body
-  console.log(`\n[0] 🧥 POST /api/ai/generate-outfits-for-piece called:`)
+export async function generateOutfitsForPieceInternal({
+  pieceId,
+  occasion = 'casual',
+  season = 'current season',
+  mission = 'mix',
+  mood = '',
+  question,
+  history,
+  includeMissingPieces = false,
+  idealOnly = false
+}) {
+  console.log(`\n[0] 🧥 generateOutfitsForPieceInternal called:`)
   console.log(`    - pieceId: ${pieceId}`)
   console.log(`    - occasion: "${occasion}" | season: "${season}" | mission: "${mission}" | mood: "${mood}"`)
   console.log(`    - includeMissingPieces: ${includeMissingPieces} | idealOnly: ${idealOnly}`)
+  
+  const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
+  if (!piece) {
+    throw new Error(`Piece ID ${pieceId} not found in database.`)
+  }
+
+  const parsedPiece = parsePiece(piece)
+  const idealMode = Boolean(includeMissingPieces || idealOnly || /ideal|missing|new ideas|do not have|don't have|dont have|not in my wardrobe|wish list|wardrobe gap/i.test(String(question || '')))
+  const idealOnlyMode = Boolean(idealOnly || /new ideas|do not limit|not limited|not just my wardrobe|ignore wardrobe|conceptual/i.test(String(question || '')))
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const weatherProfile = weatherProfileFromContext({ mood, season })
+  const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood, request: question })
+  let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint })
+  console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
+  const confirmedOutfitsText = getConfirmedOutfitMemory()
+  const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
+  const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16)
+  const goldFeedbackText = buildGoldStandardFeedbackMemory(parsedPiece.id, 10)
+  const selectedSavedBoardText = getSavedBoardMemory('piece', parsedPiece.id, 10)
+  const globalSavedBoardText = getSavedBoardMemory(null, null, 12)
+  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
+  const calibrationMemoryText = getCalibrationMemoryForStylist(32)
+
+  const memoryText = [
+    selectedPieceOutfitsText ? `Saved outfits already using this selected garment:\n${selectedPieceOutfitsText}` : `Saved outfits using this selected garment: none yet`,
+    goldFeedbackText ? `High-authority signature/works feedback for this garment. Reinforce similar formulas:\n${goldFeedbackText}` : '',
+    selectedSavedBoardText ? `Saved visual boards for this garment. Use strongly boards are high-authority outfit memory:\n${selectedSavedBoardText}` : '',
+    selectedFeedbackText ? `Recent feedback for this garment. Signature/Works should be reinforced; Not me/Too soft/Proportion problem should suppress similar ideas:\n${selectedFeedbackText}` : '',
+    confirmedOutfitsText ? `Confirmed/favorite outfit memory for Yuna's taste filter:\n${confirmedOutfitsText}` : '',
+    globalSavedBoardText ? `Global saved board memory. Use strongly boards should bias ranking when relevant:\n${globalSavedBoardText}` : '',
+    calibrationMemoryText ? `Calibration Library memory. This is higher authority than broad style theory for taste boundaries and identity-preservation:\n${calibrationMemoryText}` : '',
+    globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : ''
+  ].filter(Boolean).join('\n\n')
+
+  let visualCriticDebug = null
+  if (!idealOnlyMode) {
+    try {
+      const visualReview = await withTimeout(rankSelectedPieceCandidatesWithVision({
+        selectedPiece: parsedPiece,
+        rankedCandidates,
+        occasion,
+        season,
+        mission,
+        mood,
+        question,
+        memoryText
+      }), 20000, 'Selected-piece visual critic')
+      if (visualReview?.rankedCandidates?.length) {
+        rankedCandidates = visualReview.rankedCandidates
+        visualCriticDebug = visualReview.debug || null
+      }
+    } catch (err) {
+      console.warn('Selected-piece visual critic fallback:', err.message)
+      visualCriticDebug = { error: err.message }
+    }
+  }
+
+  const composed = await composeStructuredOutfitsForPiece({
+    selectedPiece: parsedPiece,
+    rankedCandidates,
+    occasion,
+    season,
+    mission,
+    mood,
+    question,
+    idealMode,
+    idealOnlyMode,
+    memoryText,
+    history
+  })
+
+  let structuredOutfits = Array.isArray(composed.outfits) ? composed.outfits : []
+  if (structuredOutfits.length > 0) {
+    console.log(`    - Successfully generated ${structuredOutfits.length} outfits from AI stylist composer.`)
+  } else if (!idealOnlyMode) {
+    console.log(`    - AI stylist composer returned 0 outfits. Falling back to local wardrobe directions.`)
+    structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, rankedCandidates, { occasion })
+  }
+  if (!structuredOutfits.length) {
+    console.log(`    - Local fallback generated 0 outfits. Using absolute basic backfill.`)
+    const candidates = (rankedCandidates || []).map(r => r.piece).filter(Boolean)
+    const selectedGroup = wardrobeCategoryGroup(parsedPiece)
+    const supporting = candidates.filter(p => Number(p.id) !== Number(parsedPiece.id)).slice(0, 4)
+    structuredOutfits = [normalizeGeneratedOutfitObject({
+      label: 'Best available wardrobe direction',
+      strength: 'usable',
+      dominantDirection: 'simple closet-based pairing using the selected garment',
+      silhouette: selectedGroup === 'bottom' ? 'selected bottom with a controlled top' : selectedGroup === 'top' ? 'selected top with the cleanest available bottom' : 'selected garment with restrained support pieces',
+      bestFor: 'testing from saved wardrobe pieces',
+      pieceIds: [parsedPiece.id, ...supporting.map(p => p.id)].filter(Boolean).slice(0, 5),
+      pieces: [parsedPiece, ...supporting].map(p => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        photo: p.photo || null,
+        worn_photo: p.worn_photo || null
+      })).slice(0, 5),
+      reason: 'Fallback direction generated locally because the AI response did not return visible outfit cards.',
+    }, parsedPiece, [parsedPiece, ...candidates])]
+  }
+
+  if (comfortConstraint) {
+    structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, allPieces, comfortConstraint, { weatherProfile, occasion }))
+  }
+  const answer = formatStructuredOutfitFeedback({
+    selectedPiece: parsedPiece,
+    occasion,
+    season,
+    outfits: structuredOutfits,
+    skip: composed.skip,
+    saveableLearning: composed.saveableLearning
+  })
+
+  return {
+    feedback: answer,
+    structuredOutfits,
+    rejectedOutfits: composed.rejected || [],
+    provider: AI_PROVIDER,
+    mode: idealOnlyMode ? 'ideal_new_ideas_only' : idealMode ? 'ideal_styling_directions' : 'generate_outfit_ideas',
+    pipeline: idealOnlyMode ? 'composer_evaluator_renderer_handoff' : 'visual_candidate_reviewer_composer_evaluator_renderer_handoff',
+    idealMode,
+    idealOnlyMode,
+    debug: {
+      visualCritic: visualCriticDebug,
+      weatherProfile
+    }
+  }
+}
+
+router.post('/generate-outfits-for-piece', async (req, res) => {
   try {
-    const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
-    if (!piece) {
-      console.warn(`[0] ⚠️ Piece ID ${pieceId} not found in database.`)
-      return res.status(404).json({ error: 'Piece not found' })
-    }
-
-    const parsedPiece = parsePiece(piece)
-    const idealMode = Boolean(includeMissingPieces || idealOnly || /ideal|missing|new ideas|do not have|don't have|dont have|not in my wardrobe|wish list|wardrobe gap/i.test(String(question || '')))
-    const idealOnlyMode = Boolean(idealOnly || /new ideas|do not limit|not limited|not just my wardrobe|ignore wardrobe|conceptual/i.test(String(question || '')))
-    const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const weatherProfile = weatherProfileFromContext({ mood, season })
-    let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile })
-    console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
-    const confirmedOutfitsText = getConfirmedOutfitMemory()
-    const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
-    const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16)
-    const goldFeedbackText = buildGoldStandardFeedbackMemory(parsedPiece.id, 10)
-    const selectedSavedBoardText = getSavedBoardMemory('piece', parsedPiece.id, 10)
-    const globalSavedBoardText = getSavedBoardMemory(null, null, 12)
-    const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
-    const calibrationMemoryText = getCalibrationMemoryForStylist(32)
-
-    const memoryText = [
-      selectedPieceOutfitsText ? `Saved outfits already using this selected garment:\n${selectedPieceOutfitsText}` : `Saved outfits using this selected garment: none yet`,
-      goldFeedbackText ? `High-authority signature/works feedback for this garment. Reinforce similar formulas:\n${goldFeedbackText}` : '',
-      selectedSavedBoardText ? `Saved visual boards for this garment. Use strongly boards are high-authority outfit memory:\n${selectedSavedBoardText}` : '',
-      selectedFeedbackText ? `Recent feedback for this garment. Signature/Works should be reinforced; Not me/Too soft/Proportion problem should suppress similar ideas:\n${selectedFeedbackText}` : '',
-      confirmedOutfitsText ? `Confirmed/favorite outfit memory for Yuna's taste filter:\n${confirmedOutfitsText}` : '',
-      globalSavedBoardText ? `Global saved board memory. Use strongly boards should bias ranking when relevant:\n${globalSavedBoardText}` : '',
-      calibrationMemoryText ? `Calibration Library memory. This is higher authority than broad style theory for taste boundaries and identity-preservation:\n${calibrationMemoryText}` : '',
-      globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : ''
-    ].filter(Boolean).join('\n\n')
-
-    let visualCriticDebug = null
-    if (!idealOnlyMode) {
-      try {
-        const visualReview = await withTimeout(rankSelectedPieceCandidatesWithVision({
-          selectedPiece: parsedPiece,
-          rankedCandidates,
-          occasion,
-          season,
-          mission,
-          mood,
-          question,
-          memoryText
-        }), 20000, 'Selected-piece visual critic')
-        if (visualReview?.rankedCandidates?.length) {
-          rankedCandidates = visualReview.rankedCandidates
-          visualCriticDebug = visualReview.debug || null
-        }
-      } catch (err) {
-        console.warn('Selected-piece visual critic fallback:', err.message)
-        visualCriticDebug = { error: err.message }
-      }
-    }
-
-    const composed = await composeStructuredOutfitsForPiece({
-      selectedPiece: parsedPiece,
-      rankedCandidates,
-      occasion,
-      season,
-      mission,
-      mood,
-      question,
-      idealMode,
-      idealOnlyMode,
-      memoryText,
-      history
-    })
-
-    let structuredOutfits = Array.isArray(composed.outfits) ? composed.outfits : []
-    if (structuredOutfits.length > 0) {
-      console.log(`    - Successfully generated ${structuredOutfits.length} outfits from AI stylist composer.`)
-    } else if (!idealOnlyMode) {
-      console.log(`    - AI stylist composer returned 0 outfits. Falling back to local wardrobe directions.`)
-      structuredOutfits = buildLocalFallbackOutfitDirections(parsedPiece, rankedCandidates, { occasion })
-    }
-    if (!structuredOutfits.length) {
-      console.log(`    - Local fallback generated 0 outfits. Using absolute basic backfill.`)
-      const candidates = (rankedCandidates || []).map(r => r.piece).filter(Boolean)
-      const selectedGroup = wardrobeCategoryGroup(parsedPiece)
-      const supporting = candidates.filter(p => Number(p.id) !== Number(parsedPiece.id)).slice(0, 4)
-      structuredOutfits = [normalizeGeneratedOutfitObject({
-        label: 'Best available wardrobe direction',
-        strength: 'usable',
-        dominantDirection: 'simple closet-based pairing using the selected garment',
-        silhouette: selectedGroup === 'bottom' ? 'selected bottom with a controlled top' : selectedGroup === 'top' ? 'selected top with the cleanest available bottom' : 'selected garment with restrained support pieces',
-        bestFor: 'testing from saved wardrobe pieces',
-        pieceIds: [parsedPiece.id, ...supporting.map(p => p.id)].filter(Boolean).slice(0, 5),
-        pieces: [parsedPiece, ...supporting].map(p => ({
-          id: p.id,
-          name: p.name,
-          category: p.category,
-          photo: p.photo || null,
-          worn_photo: p.worn_photo || null
-        })).slice(0, 5),
-        reason: 'Fallback direction generated locally because the AI response did not return visible outfit cards.',
-        watchFor: 'Use this as a starting point; refine after seeing the actual garments together.'
-      }, parsedPiece, [parsedPiece, ...candidates])]
-    }
-    const answer = formatStructuredOutfitFeedback({
-      selectedPiece: parsedPiece,
-      occasion,
-      season,
-      outfits: structuredOutfits,
-      skip: composed.skip,
-      saveableLearning: composed.saveableLearning
-    })
-
-    res.json({
-      feedback: answer,
-      structuredOutfits,
-      rejectedOutfits: composed.rejected || [],
-      provider: AI_PROVIDER,
-      mode: idealOnlyMode ? 'ideal_new_ideas_only' : idealMode ? 'ideal_styling_directions' : 'generate_outfit_ideas',
-      pipeline: idealOnlyMode ? 'composer_evaluator_renderer_handoff' : 'visual_candidate_reviewer_composer_evaluator_renderer_handoff',
-      idealMode,
-      idealOnlyMode,
-      debug: {
-        visualCritic: visualCriticDebug,
-        weatherProfile
-      }
-    })
+    const result = await generateOutfitsForPieceInternal(req.body)
+    res.json(result)
   } catch (err) {
     console.error('Generate outfit ideas error:', err)
     res.status(500).json({ error: err.message })
@@ -770,273 +793,282 @@ router.delete('/whole-wardrobe-session-memory', (req, res) => {
   }
 })
 
-router.post('/generate-wardrobe-outfits', async (req, res) => {
-  const {
-    occasion = 'casual',
-    season = 'current season',
-    mood = '',
-    mission = 'mix',
-    limit = 5,
-    explorationMode = 'moderate'
-  } = req.body || {}
-
-  try {
-    const routeStartedAt = Date.now()
-    const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
-    const moodProfile = wholeWardrobeMoodProfile(mood)
-    const weatherProfile = weatherProfileFromContext({ mood, season })
-    const occasionProfile = resolveOccasionProfile(occasion, mood)
-    let occasionProfileGuidance = ''
-    if (occasionProfile) {
-      const preferred = [
-        ...(occasionProfile.rules?.preferred_materials || []),
-        ...(occasionProfile.rules?.preferred_footwear || [])
-      ].join(', ')
-      const discouraged = [
-        ...(occasionProfile.rules?.discouraged_materials || []),
-        ...(occasionProfile.rules?.discouraged_materials_warm || []),
-        ...(occasionProfile.rules?.discouraged_footwear || []),
-        ...(occasionProfile.rules?.discouraged_footwear_summer || []),
-        ...(occasionProfile.rules?.discouraged_footwear_warm || []),
-        ...(occasionProfile.rules?.discouraged_pieces || [])
-      ].join(', ')
-      
-      occasionProfileGuidance = `OCCASION PROFILE — ${occasionProfile.label}:
+export async function generateWholeWardrobeOutfitsInternal({
+  occasion = 'casual',
+  season = 'current season',
+  mood = '',
+  mission = 'mix',
+  limit = 5,
+  explorationMode = 'moderate',
+  question = ''
+}) {
+  const routeStartedAt = Date.now()
+  const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
+  const moodProfile = wholeWardrobeMoodProfile(mood)
+  const weatherProfile = weatherProfileFromContext({ mood, season })
+  const occasionProfile = resolveOccasionProfile(occasion, mood)
+  let occasionProfileGuidance = ''
+  if (occasionProfile) {
+    const preferred = [
+      ...(occasionProfile.rules?.preferred_materials || []),
+      ...(occasionProfile.rules?.preferred_footwear || [])
+    ].join(', ')
+    const discouraged = [
+      ...(occasionProfile.rules?.discouraged_materials || []),
+      ...(occasionProfile.rules?.discouraged_materials_warm || []),
+      ...(occasionProfile.rules?.discouraged_footwear || []),
+      ...(occasionProfile.rules?.discouraged_footwear_summer || []),
+      ...(occasionProfile.rules?.discouraged_footwear_warm || []),
+      ...(occasionProfile.rules?.discouraged_pieces || [])
+    ].join(', ')
+    
+    occasionProfileGuidance = `OCCASION PROFILE — ${occasionProfile.label}:
 Vibe: ${occasionProfile.vibe}
 Lean toward: ${preferred}
 Use sparingly and justify in watchFor if chosen: ${discouraged}
 (Hard-prohibited pieces have already been removed from your searchable wardrobe.)`
+  }
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode, weatherProfile, mood })
+  const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
+  const sessionInfluence = getRecentWholeWardrobeSessionInfluence({ occasion, daysCutoff: 6 })
+  
+  // Choose active missions for this generation run
+  const activeMissions = (mission && mission !== 'mix')
+    ? [mission]
+    : ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
+  const activeMissionsText = OUTFIT_MISSIONS
+    .filter(m => activeMissions.includes(m.id))
+    .map(m => `- ${m.label} (missionId: "${m.id}"): ${m.description}`)
+    .join('\n')
+
+  const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood, request: question })
+
+  let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence, sessionInfluence, activeMissions, comfortConstraint })
+  const candidateFormulaCounts = wholeWardrobeCandidateFormulaCounts(candidates)
+  let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
+  const candidatePieces = candidatePieceIds
+    .map(id => allPieces.find(p => Number(p.id) === Number(id)))
+    .filter(Boolean)
+  const confirmedOutfitsText = getConfirmedOutfitMemory(10)
+  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
+  const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(28)
+  const globalSavedBoardText = getSavedBoardMemory(null, null, 16)
+  const calibrationMemoryText = getCalibrationMemoryForStylist(32)
+  const requireShoes = allPieces.some(p => wardrobeCategoryGroup(p) === 'shoes')
+  const requireDress = allPieces.some(p => wardrobeCategoryGroup(p) === 'dress')
+  const requireNonGraphicTop = allPieces.some(p => wardrobeCategoryGroup(p) === 'top' && !/\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(pieceNameBlob(p)))
+  const timings = {
+    candidateBuildMs: Date.now() - routeStartedAt
+  }
+
+  const memoryText = [
+    confirmedOutfitsText ? `Confirmed/favorite outfit memory:\n${confirmedOutfitsText}` : '',
+    globalSavedBoardText ? `Saved visual board memory. Use strongly boards should bias ranking:\n${globalSavedBoardText}` : '',
+    calibrationMemoryText ? `Calibration Library memory. Higher authority than broad style theory:\n${calibrationMemoryText}` : '',
+    wholeWardrobeFeedbackText ? `Whole-wardrobe outfit feedback. This is direct ranking/correction memory for this feature:\n${wholeWardrobeFeedbackText}` : '',
+    globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : ''
+  ].filter(Boolean).join('\n\n')
+  const rotationWarningsText = sessionInfluence.pieceRecency?.size
+    ? `Recently worn garments (try to avoid using these to rotate wardrobe unless necessary):\n${[...sessionInfluence.pieceRecency.keys()]
+        .map(id => allPieces.find(p => Number(p.id) === Number(id))?.name)
+        .filter(Boolean)
+        .join(', ')}`
+    : ''
+
+  const suppressedListText = suppressedPieces.length
+    ? `Suppressed garments (DO NOT pair or use these for the occasion "${occasion}"):\n${suppressedPieces.map(p => `- ${p.name} (id: ${p.id})`).join('\n')}`
+    : ''
+
+  const candidateText = candidates.slice(0, 25).map((c, idx) => {
+    const pStr = c.pieces.map(p => `${p.id}: ${p.name} (${p.category})`).join(' + ')
+    return `${idx + 1}. [Candidate ID: ${c.candidateId}] [Mission: ${c.missionLabel} (missionId: "${c.missionId}")] Pieces: ${pStr}\n   Visual logic: ${c.localReasons?.join('; ') || ''}`
+  }).join('\n\n')
+
+  let weatherConstraintsBlock = ''
+  if (weatherProfile.isHot) {
+    weatherConstraintsBlock = "WEATHER CONSTRAINTS (hard): it is very hot outside. The searchable wardrobe has already been filtered for weather validity. Prefer lightweight fabrics and breathable cuts; do not add layers or outerwear unless the user asked; if you consider a medium-weight piece (denim, ponte), justify it in watchFor."
+  } else if (weatherProfile.isCold) {
+    weatherConstraintsBlock = "WEATHER CONSTRAINTS (hard): it is very cold outside. The searchable wardrobe has already been filtered for weather validity. Prefer warmer fabrics and appropriate coverage; do not use shorts or extremely bare cuts."
+  }
+
+  const initialUserMessageText = [
+    `Occasion: ${occasion || 'casual'}`,
+    `Season: ${season || 'current season'}`,
+    `Mood: ${mood || 'artistic minimalist'}`,
+    occasionProfileGuidance || '',
+    moodProfile ? `Mood guidance:\n${moodProfile.guidance}` : '',
+    `Active Outfit Missions (every outfit you design MUST be mapped to one of these missions, specifying the "missionId" field in the JSON response):\n${activeMissionsText}`,
+    `Target count: ${requestedLimit} outfits.`,
+    rotationWarningsText,
+    suppressedListText,
+    weatherConstraintsBlock,
+    `Candidate Combinations (prioritize choosing and refining outfits from these pre-sorted candidates, preserving their exact garment IDs and "missionId" fields):\n\n${candidateText}`,
+    `Memory & preferences:\n${memoryText}`,
+    '',
+    `Please review the candidate combinations list, retrieve garment details to inspect their images, and design up to ${requestedLimit} outfits by choosing from the candidate list or building them. Map each outfit to its correct "missionId" in the JSON response.`
+  ].filter(Boolean).join('\n\n')
+
+  let parsed = {}
+  let composerError = null
+  let visualCriticDebug = null
+  const agentStartedAt = Date.now()
+  const toolContext = { allowedPieceIds: new Set(allowedPieces.map(p => Number(p.id))) }
+  try {
+    const { answer: raw } = await withTimeout(askStylistWithTools({
+      system: `${WHOLE_WARDROBE_AGENT_SYSTEM}\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}`,
+      messages: [{ role: 'user', content: initialUserMessageText }],
+      maxTokens: 3000,
+      toolContext
+    }), 65000, 'Whole-wardrobe agent stylist')
+
+    timings.agentStylistMs = Date.now() - agentStartedAt
+    parsed = safeJsonFromModel(raw)
+    visualCriticDebug = { notes: "Executed via dynamic tool-calling stylist agent." }
+  } catch (err) {
+    console.warn('Whole-wardrobe agent fallback:', err.message)
+    composerError = err.message
+    timings.agentStylistMs = timings.agentStylistMs || null
+  }
+
+  const aiReturnedCount = Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0
+  const resolvedOutfits = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
+    const outfitPieceIds = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number) : []
+    const ownedPieces = outfitPieceIds.map(id => allPieces.find(p => Number(p.id) === id)).filter(Boolean)
+    return {
+      ...outfit,
+      pieceIds: outfitPieceIds,
+      pieces: ownedPieces
     }
-    const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode, weatherProfile, mood })
-    const wholeWardrobeFeedbackInfluence = buildWholeWardrobeFeedbackInfluence()
-    const sessionInfluence = getRecentWholeWardrobeSessionInfluence({ occasion, daysCutoff: 6 })
+  })
+
+  let structuredOutfits = resolvedOutfits.map(o => {
+    const normalized = normalizeWholeWardrobeOutfitObject(o, allPieces)
     
-    // Choose active missions for this generation run
-    const activeMissions = (mission && mission !== 'mix')
-      ? [mission]
-      : ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
-    const activeMissionsText = OUTFIT_MISSIONS
-      .filter(m => activeMissions.includes(m.id))
-      .map(m => `- ${m.label} (missionId: "${m.id}"): ${m.description}`)
-      .join('\n')
-
-    let candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, { occasion, season, mood, explorationMode, wholeWardrobeFeedbackInfluence, sessionInfluence, activeMissions })
-    const candidateFormulaCounts = wholeWardrobeCandidateFormulaCounts(candidates)
-    let candidatePieceIds = [...new Set(candidates.flatMap(c => c.pieceIds || []))]
-    const candidatePieces = candidatePieceIds
-      .map(id => allPieces.find(p => Number(p.id) === Number(id)))
-      .filter(Boolean)
-    const confirmedOutfitsText = getConfirmedOutfitMemory(10)
-    const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
-    const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(28)
-    const globalSavedBoardText = getSavedBoardMemory(null, null, 16)
-    const calibrationMemoryText = getCalibrationMemoryForStylist(32)
-    const requireShoes = allPieces.some(p => wardrobeCategoryGroup(p) === 'shoes')
-    const requireDress = allPieces.some(p => wardrobeCategoryGroup(p) === 'dress')
-    const requireNonGraphicTop = allPieces.some(p => wardrobeCategoryGroup(p) === 'top' && !/\b(floral|print|graphic|stripe|striped|pattern|abstract|tapestry)\b/.test(pieceNameBlob(p)))
-    const timings = {
-      candidateBuildMs: Date.now() - routeStartedAt
-    }
-
-    const memoryText = [
-      confirmedOutfitsText ? `Confirmed/favorite outfit memory:\n${confirmedOutfitsText}` : '',
-      globalSavedBoardText ? `Saved visual board memory. Use strongly boards should bias ranking:\n${globalSavedBoardText}` : '',
-      calibrationMemoryText ? `Calibration Library memory. Higher authority than broad style theory:\n${calibrationMemoryText}` : '',
-      wholeWardrobeFeedbackText ? `Whole-wardrobe outfit feedback. This is direct ranking/correction memory for this feature:\n${wholeWardrobeFeedbackText}` : '',
-      globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : ''
-    ].filter(Boolean).join('\n\n')
-    const rotationWarningsText = sessionInfluence.pieceRecency?.size
-      ? `Recently worn garments (try to avoid using these to rotate wardrobe unless necessary):\n${[...sessionInfluence.pieceRecency.keys()]
-          .map(id => allPieces.find(p => Number(p.id) === Number(id))?.name)
-          .filter(Boolean)
-          .join(', ')}`
-      : ''
-
-    const suppressedListText = suppressedPieces.length
-      ? `Suppressed garments (DO NOT pair or use these for the occasion "${occasion}"):\n${suppressedPieces.map(p => `- ${p.name} (id: ${p.id})`).join('\n')}`
-      : ''
-
-    const candidateText = candidates.slice(0, 25).map((c, idx) => {
-      const pStr = c.pieces.map(p => `${p.id}: ${p.name} (${p.category})`).join(' + ')
-      return `${idx + 1}. [Candidate ID: ${c.candidateId}] [Mission: ${c.missionLabel} (missionId: "${c.missionId}")] Pieces: ${pStr}\n   Visual logic: ${c.localReasons?.join('; ') || ''}`
-    }).join('\n\n')
-
-    let weatherConstraintsBlock = ''
-    if (weatherProfile.isHot) {
-      weatherConstraintsBlock = "WEATHER CONSTRAINTS (hard): it is very hot outside. The searchable wardrobe has already been filtered for weather validity. Prefer lightweight fabrics and breathable cuts; do not add layers or outerwear unless the user asked; if you consider a medium-weight piece (denim, ponte), justify it in watchFor."
-    } else if (weatherProfile.isCold) {
-      weatherConstraintsBlock = "WEATHER CONSTRAINTS (hard): it is very cold outside. The searchable wardrobe has already been filtered for weather validity. Prefer warmer fabrics and appropriate coverage; do not use shorts or extremely bare cuts."
-    }
-
-    const initialUserMessageText = [
-      `Occasion: ${occasion || 'casual'}`,
-      `Season: ${season || 'current season'}`,
-      `Mood: ${mood || 'artistic minimalist'}`,
-      occasionProfileGuidance || '',
-      moodProfile ? `Mood guidance:\n${moodProfile.guidance}` : '',
-      `Active Outfit Missions (every outfit you design MUST be mapped to one of these missions, specifying the "missionId" field in the JSON response):\n${activeMissionsText}`,
-      `Target count: ${requestedLimit} outfits.`,
-      rotationWarningsText,
-      suppressedListText,
-      weatherConstraintsBlock,
-      `Candidate Combinations (prioritize choosing and refining outfits from these pre-sorted candidates, preserving their exact garment IDs and "missionId" fields):\n\n${candidateText}`,
-      `Memory & preferences:\n${memoryText}`,
-      '',
-      `Please review the candidate combinations list, retrieve garment details to inspect their images, and design up to ${requestedLimit} outfits by choosing from the candidate list or building them. Map each outfit to its correct "missionId" in the JSON response.`
-    ].filter(Boolean).join('\n\n')
-
-    let parsed = {}
-    let composerError = null
-    let visualCriticDebug = null
-    const agentStartedAt = Date.now()
-    const toolContext = { allowedPieceIds: new Set(allowedPieces.map(p => Number(p.id))) }
-    try {
-      const { answer: raw } = await withTimeout(askStylistWithTools({
-        system: `${WHOLE_WARDROBE_AGENT_SYSTEM}\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}`,
-        messages: [{ role: 'user', content: initialUserMessageText }],
-        maxTokens: 3000,
-        toolContext
-      }), 65000, 'Whole-wardrobe agent stylist')
-
-      timings.agentStylistMs = Date.now() - agentStartedAt
-      parsed = safeJsonFromModel(raw)
-      visualCriticDebug = { notes: "Executed via dynamic tool-calling stylist agent." }
-    } catch (err) {
-      console.warn('Whole-wardrobe agent fallback:', err.message)
-      composerError = err.message
-      timings.agentStylistMs = timings.agentStylistMs || null
-    }
-
-    const aiReturnedCount = Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0
-    const resolvedOutfits = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
-      const outfitPieceIds = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number) : []
-      const ownedPieces = outfitPieceIds.map(id => allPieces.find(p => Number(p.id) === id)).filter(Boolean)
-      return {
-        ...outfit,
-        pieceIds: outfitPieceIds,
-        pieces: ownedPieces
-      }
-    })
-
-    let structuredOutfits = resolvedOutfits.map(o => {
-      const normalized = normalizeWholeWardrobeOutfitObject(o, allPieces)
-      
-      if (mission && mission !== 'mix') {
-        normalized.missionId = mission
-        const activeMission = OUTFIT_MISSIONS.find(m => m.id === mission)
-        normalized.missionLabel = activeMission ? activeMission.label : null
-      } else {
-        // Dynamic labeling: score the combination across all missions to assign the highest-scoring one
-        let bestMissionId = 'unexpected_pairing'
-        let bestScore = -Infinity
-        const allMissionsList = ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
-        for (const mId of allMissionsList) {
-          const scored = scoreWholeWardrobeCandidate(normalized.pieces, { activeMissionId: mId, occasion })
-          if (scored.score > bestScore) {
-            bestScore = scored.score
-            bestMissionId = mId
-          }
+    if (mission && mission !== 'mix') {
+      normalized.missionId = mission
+      const activeMission = OUTFIT_MISSIONS.find(m => m.id === mission)
+      normalized.missionLabel = activeMission ? activeMission.label : null
+    } else {
+      let bestMissionId = 'unexpected_pairing'
+      let bestScore = -Infinity
+      const allMissionsList = ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
+      for (const mId of allMissionsList) {
+        const scored = scoreWholeWardrobeCandidate(normalized.pieces, { activeMissionId: mId, occasion })
+        if (scored.score > bestScore) {
+          bestScore = scored.score
+          bestMissionId = mId
         }
-        normalized.missionId = bestMissionId
-        const activeMission = OUTFIT_MISSIONS.find(m => m.id === bestMissionId)
-        normalized.missionLabel = activeMission ? activeMission.label : null
       }
-      
-      return repairWholeWardrobeOutfit(normalized, allPieces, occasion, mood, { season, weatherProfile })
-    })
-    const localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allPieces, { occasion, mood, season, weatherProfile })
-
-    if (!structuredOutfits.length) {
-      structuredOutfits = localBackfillOutfits.slice(0, Math.max(requestedLimit, 8))
+      normalized.missionId = bestMissionId
+      const activeMission = OUTFIT_MISSIONS.find(m => m.id === bestMissionId)
+      normalized.missionLabel = activeMission ? activeMission.label : null
     }
+    
+    return repairWholeWardrobeOutfit(normalized, allPieces, occasion, mood, { season, weatherProfile })
+  })
+  const localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allPieces, { occasion, mood, season, weatherProfile })
 
-    let diversityRejectedCount = 0
-    let gated = locallyGateWholeWardrobeOutfits(
-      [...structuredOutfits, ...localBackfillOutfits],
+  if (!structuredOutfits.length) {
+    structuredOutfits = localBackfillOutfits.slice(0, Math.max(requestedLimit, 8))
+  }
+
+  let diversityRejectedCount = 0
+  let gated = locallyGateWholeWardrobeOutfits(
+    [...structuredOutfits, ...localBackfillOutfits],
+    requestedLimit,
+    { requireShoes, requireDress, requireNonGraphicTop, candidatePieces: allPieces, occasion, mood, season, weatherProfile }
+  )
+  diversityRejectedCount += gated.rejected?.length || 0
+  structuredOutfits = gated.outfits
+  if (!structuredOutfits.length) {
+    structuredOutfits = locallyGateWholeWardrobeOutfits(
+      localBackfillOutfits.slice(0, Math.max(requestedLimit, 12)),
       requestedLimit,
       { requireShoes, requireDress, requireNonGraphicTop, candidatePieces: allPieces, occasion, mood, season, weatherProfile }
-    )
-    diversityRejectedCount += gated.rejected?.length || 0
-    structuredOutfits = gated.outfits
-    if (!structuredOutfits.length) {
-      structuredOutfits = locallyGateWholeWardrobeOutfits(
-        localBackfillOutfits.slice(0, Math.max(requestedLimit, 12)),
-        requestedLimit,
-        { requireShoes, requireDress, requireNonGraphicTop, candidatePieces: allPieces, occasion, mood, season, weatherProfile }
-      ).outfits
-    }
-    const formulaFamiliesReturned = [...new Set(structuredOutfits.map(outfit => outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, allPieces, occasion)).filter(Boolean))]
-    const archetypeCounts = structuredOutfits.reduce((counts, outfit) => {
-      const id = outfit.archetypeId || wholeWardrobeArchetypeFor(outfit, allPieces, occasion).archetypeId
-      counts[id] = (counts[id] || 0) + 1
-      return counts
-    }, {})
-    saveWholeWardrobeSession({ occasion, outfits: structuredOutfits })
+    ).outfits
+  }
 
-    const { topCoverage, shoeCoverage } = computeWardrobeCoverage(allowedPieces, occasionProfile)
+  if (comfortConstraint) {
+    structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, allPieces, comfortConstraint, { weatherProfile, occasion }))
+  }
+  const formulaFamiliesReturned = [...new Set(structuredOutfits.map(outfit => outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, allPieces, occasion)).filter(Boolean))]
+  const archetypeCounts = structuredOutfits.reduce((counts, outfit) => {
+    const id = outfit.archetypeId || wholeWardrobeArchetypeFor(outfit, allPieces, occasion).archetypeId
+    counts[id] = (counts[id] || 0) + 1
+    return counts
+  }, {})
+  saveWholeWardrobeSession({ occasion, outfits: structuredOutfits })
 
-    let feedback = formatWholeWardrobeOutfitFeedback({
-      occasion,
-      season,
-      mood,
-      outfits: structuredOutfits,
-      skip: parsed.skip || '',
-      saveableLearning: parsed.saveableLearning || ''
-    })
+  const { topCoverage, shoeCoverage } = computeWardrobeCoverage(allowedPieces, occasionProfile)
 
-    const coverageNote = formatCoverageNote(topCoverage, shoeCoverage)
-    if (coverageNote) {
-      feedback = feedback + '\n\n' + coverageNote
-    }
+  let feedback = formatWholeWardrobeOutfitFeedback({
+    occasion,
+    season,
+    mood,
+    outfits: structuredOutfits,
+    skip: parsed.skip || '',
+    saveableLearning: parsed.saveableLearning || ''
+  })
 
-    res.json({
-      feedback,
-      structuredOutfits,
-      rejectedOutfits: [...(parsed.rejected || []), ...(gated.rejected || [])],
-      provider: AI_PROVIDER,
-      mode: 'generate_wardrobe_outfits',
-      pipeline: 'whole_wardrobe_composer_evaluator',
-      debug: {
-        profileCoverage: {
-          tops: topCoverage,
-          shoes: shoeCoverage
-        },
-        candidateCount: candidates.length,
-        candidateFormulaCounts,
-        feedbackInfluenceRowsUsed: wholeWardrobeFeedbackInfluence.rowsUsed,
-        sessionMemory: {
-          recentSessionCount: sessionInfluence.sessionCount || 0,
-          piecePenaltyCount: sessionInfluence.pieceRecency?.size || 0,
-          formulaPenaltyCount: sessionInfluence.formulaRecency?.size || 0
-        },
-        suppressedPieceCount: suppressedPieces.length,
-        suppressedPieces,
-        visualCritic: visualCriticDebug,
-        composerError,
-        timings,
-        archetypeCounts,
-        formulaFamiliesReturned,
-        locallyGeneratedCount: localBackfillOutfits.length,
-        aiReturnedCount,
-        finalReturnedCount: structuredOutfits.length,
-        diversityRejectedCount,
-        agentPickedSuppressedCount: (() => {
-          const allowedPieceIdsSet = new Set(allowedPieces.map(p => Number(p.id)))
-          let count = 0
-          for (const outfit of structuredOutfits) {
-            if (outfit.pieceIds) {
-              for (const id of outfit.pieceIds) {
-                if (!allowedPieceIdsSet.has(Number(id))) {
-                  count++
-                }
+  const coverageNote = formatCoverageNote(topCoverage, shoeCoverage)
+  if (coverageNote) {
+    feedback = feedback + '\n\n' + coverageNote
+  }
+
+  return {
+    feedback,
+    structuredOutfits,
+    rejectedOutfits: [...(parsed.rejected || []), ...(gated.rejected || [])],
+    provider: AI_PROVIDER,
+    mode: 'generate_wardrobe_outfits',
+    pipeline: 'whole_wardrobe_composer_evaluator',
+    debug: {
+      profileCoverage: {
+        tops: topCoverage,
+        shoes: shoeCoverage
+      },
+      candidateCount: candidates.length,
+      candidateFormulaCounts,
+      feedbackInfluenceRowsUsed: wholeWardrobeFeedbackInfluence.rowsUsed,
+      sessionMemory: {
+        recentSessionCount: sessionInfluence.sessionCount || 0,
+        piecePenaltyCount: sessionInfluence.pieceRecency?.size || 0,
+        formulaPenaltyCount: sessionInfluence.formulaRecency?.size || 0
+      },
+      suppressedPieceCount: suppressedPieces.length,
+      suppressedPieces,
+      visualCritic: visualCriticDebug,
+      composerError,
+      timings,
+      archetypeCounts,
+      formulaFamiliesReturned,
+      locallyGeneratedCount: localBackfillOutfits.length,
+      aiReturnedCount,
+      finalReturnedCount: structuredOutfits.length,
+      diversityRejectedCount,
+      agentPickedSuppressedCount: (() => {
+        const allowedPieceIdsSet = new Set(allowedPieces.map(p => Number(p.id)))
+        let count = 0
+        for (const outfit of structuredOutfits) {
+          if (outfit.pieceIds) {
+            for (const id of outfit.pieceIds) {
+              if (!allowedPieceIdsSet.has(Number(id))) {
+                count++
               }
             }
           }
-          return count
-        })()
-      }
-    })
+        }
+        return count
+      })()
+    }
+  }
+}
+
+router.post('/generate-wardrobe-outfits', async (req, res) => {
+  try {
+    const result = await generateWholeWardrobeOutfitsInternal(req.body)
+    res.json(result)
   } catch (err) {
     console.error('Generate whole-wardrobe outfits error:', err)
     res.status(500).json({ error: err.message })
@@ -1056,7 +1088,12 @@ router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
     const weatherProfile = weatherProfileFromContext({ mood, season })
     const occasionProfile = resolveOccasionProfile(occasion, mood)
+    const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood })
     let occasionProfileGuidance = ''
+    if (comfortConstraint) {
+      const walkingGuidance = "All-day walking: avoid stilettos, high heels, pumps, and delicate sandals; prefer low block heels, loafers, flats, sneakers."
+      occasionProfileGuidance = walkingGuidance
+    }
     if (occasionProfile) {
       const preferred = [
         ...(occasionProfile.rules?.preferred_materials || []),
@@ -1085,6 +1122,10 @@ router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
         parts.push(rulesLine)
       }
       occasionProfileGuidance = parts.join('\n')
+    }
+    if (comfortConstraint && occasionProfileGuidance) {
+      const walkingGuidance = "All-day walking: avoid stilettos, high heels, pumps, and delicate sandals; prefer low block heels, loafers, flats, sneakers."
+      occasionProfileGuidance = `${occasionProfileGuidance}\n${walkingGuidance}`
     }
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
 
@@ -1202,6 +1243,10 @@ router.post('/generate-wardrobe-outfits-visual', async (req, res) => {
         { requireShoes: true, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile }
       )
       structuredOutfits = gatedFallback.outfits
+    }
+
+    if (comfortConstraint) {
+      structuredOutfits = structuredOutfits.map(o => applyComfortFootwearRepair(o, allowedPieces, comfortConstraint, { weatherProfile, occasion }))
     }
 
     // Light gating only: completeness + dedupe. Do NOT apply formula diversity caps here —
@@ -2064,13 +2109,35 @@ router.post('/compare-outfits', async (req, res) => {
 })
 router.post('/ask', async (req, res) => {
   try {
+    const toolContext = {
+      generatedOutfits: [],
+      source: 'whole_wardrobe',
+      occasion: 'casual',
+      season: 'current season',
+      mood: '',
+      mission: 'mix',
+      question: req.body.question || ''
+    }
     const payload = await buildStylistConversationPayload(req.body)
-    const { answer, savedCorrections } = await askStylistWithTools(payload)
+    const { answer, savedCorrections } = await askStylistWithTools({
+      ...payload,
+      toolContext
+    })
     const allSaved = [...(savedCorrections || [])]
     if (payload.automaticallySavedCorrection) {
       allSaved.push(payload.automaticallySavedCorrection)
     }
-    res.json({ answer, savedCorrections: allSaved, provider: AI_PROVIDER })
+    res.json({
+      answer,
+      savedCorrections: allSaved,
+      provider: AI_PROVIDER,
+      structuredOutfits: toolContext.generatedOutfits,
+      structuredOutfitsSource: toolContext.source,
+      structuredOutfitsOccasion: toolContext.occasion,
+      structuredOutfitsSeason: toolContext.season,
+      structuredOutfitsMood: toolContext.mood,
+      structuredOutfitsMission: toolContext.mission
+    })
   } catch (err) {
     console.error('AI error:', err)
     res.status(500).json({ error: err.message })

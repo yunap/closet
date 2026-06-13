@@ -70,6 +70,22 @@ export const STYLIST_TOOLS = [
       },
       required: ["note"]
     }
+  },
+  {
+    name: "generate_outfits",
+    description: "Generate complete styled outfit recommendations for Yuna's wardrobe. Trigger this tool when the user asks to generate outfits, see outfit options, or style a piece into full outfits, or when you need to present visual outfit options. It executes the official outfit styling composition pipeline and populates the UI with visual cards.",
+    input_schema: {
+      type: "object",
+      properties: {
+        occasion: { type: "string", description: "The occasion style profile (e.g. casual, city, evening, smart-casual, outdoor, home)." },
+        season: { type: "string", description: "The season/weather context (e.g. warm, cool, year-round)." },
+        mood: { type: "string", description: "Optional description of the vibe or aesthetic direction (e.g. artistic minimal, earthy structure). IMPORTANT: Preserve activity/comfort descriptors (e.g. 'walking', 'on my feet', 'all day') in this field rather than collapsing them into a bare occasion." },
+        mission: { type: "string", description: "Styling mission: 'mix' (default), 'capsule', 'wildcard'." },
+        limit: { type: "integer", description: "Maximum number of outfits to generate (1 to 5, default 5)." },
+        piece_id: { type: "integer", description: "Optional database ID of a specific garment if styling outfits around that piece. If omitted, generates outfits from the whole wardrobe." }
+      },
+      required: ["occasion", "season"]
+    }
   }
 ]
 
@@ -239,6 +255,59 @@ export async function executeTool(name, args, toolContext = {}) {
         const { note, context_type, context_id } = args
         storeUserCorrection(note, context_type || 'general', context_id)
         return { status: "success", message: "Correction stored successfully." }
+      }
+      case 'generate_outfits': {
+        const { occasion, season, mood, mission, limit, piece_id } = args
+        const { generateOutfitsForPieceInternal, generateWholeWardrobeOutfitsInternal } = await import('../routes/ai.js')
+        
+        toolContext.occasion = occasion || 'casual'
+        toolContext.season = season || 'current season'
+        toolContext.mood = mood || ''
+        toolContext.mission = mission || 'mix'
+
+        let result
+        if (piece_id) {
+          toolContext.source = 'selected_piece'
+          result = await generateOutfitsForPieceInternal({
+            pieceId: Number(piece_id),
+            occasion: occasion || 'casual',
+            season: season || 'current season',
+            mission: mission || 'mix',
+            mood: mood || '',
+            includeMissingPieces: false,
+            idealOnly: false,
+            question: toolContext.question || ''
+          })
+        } else {
+          toolContext.source = 'whole_wardrobe'
+          result = await generateWholeWardrobeOutfitsInternal({
+            occasion: occasion || 'casual',
+            season: season || 'current season',
+            mood: mood || '',
+            mission: mission || 'mix',
+            limit: limit || 5,
+            explorationMode: 'moderate',
+            question: toolContext.question || ''
+          })
+        }
+        
+        if (result && result.structuredOutfits) {
+          toolContext.generatedOutfits = result.structuredOutfits
+          return {
+            status: "success",
+            message: `Successfully generated ${result.structuredOutfits.length} outfits.`,
+            outfit_summaries: result.structuredOutfits.map(o => ({
+              label: o.label,
+              dominantDirection: o.dominantDirection,
+              pieceNames: (o.pieces || []).map(p => p.name)
+            }))
+          }
+        } else {
+          return {
+            status: "error",
+            message: "No outfits were generated or failed to invoke generation pipeline."
+          }
+        }
       }
       default:
         throw new Error(`Unknown tool: ${name}`)

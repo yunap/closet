@@ -65,7 +65,7 @@ export function normalizeOccasionForConfidence(occ) {
   if (norm.startsWith('outdoor')) return 'outdoor'
   if (norm.startsWith('smart') || norm.includes('smart')) return 'smart-casual'
   if (norm.includes('art') || norm.includes('gallery')) return 'city'
-  if (norm.includes('travel')) return 'city'
+  if (norm.includes('travel') || norm.includes('walk') || norm.includes('walking')) return 'city'
   if (norm.includes('home') || norm.includes('lounge')) return 'home'
   if (norm.includes('evening')) return 'evening'
   return norm.replace(/\s+/g, '-')

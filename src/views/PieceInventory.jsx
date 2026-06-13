@@ -23,6 +23,7 @@ const OCCASIONS = [
   { value: 'smart-casual', label: 'Smart Casual' },
   { value: 'outdoor',      label: 'Outdoor' },
   { value: 'home',         label: 'Home' },
+  { value: 'walking',      label: 'Walking' },
 ]
 
 const SEASONS = [

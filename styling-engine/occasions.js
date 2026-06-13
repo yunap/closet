@@ -40,7 +40,7 @@ export const OCCASION_PROFILES = [
   {
     id: "city_smart_casual",
     label: "City Smart Casual / Everyday",
-    keywords: ["city", "museum", "shopping", "dinner", "brunch", "office", "everyday", "work"],
+    keywords: ["city", "museum", "shopping", "dinner", "brunch", "office", "everyday", "work", "walk", "walking", "city walk", "street walk"],
     moodKeywords: ["museum", "shopping", "brunch", "office"],
     vibe: "polished, comfortable, walk-friendly, clean columns",
     rules: {

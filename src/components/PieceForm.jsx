@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 const CATEGORIES  = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
-const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home']
+const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
 const SEASONS     = ['warm', 'cool', 'year-round']
 const RECOMMENDATION_STATUSES = [
   { value: 'trusted', label: 'Trusted' },

@@ -8,6 +8,7 @@ const OCCASIONS = [
   { value: 'smart-casual', label: 'Smart Casual' },
   { value: 'outdoor',      label: 'Outdoor' },
   { value: 'home',         label: 'Home' },
+  { value: 'walking',      label: 'Walking' },
 ]
 const SEASONS = [
   { value: '',           label: 'All Seasons' },
@@ -24,7 +25,7 @@ const SORT_OPTIONS = [
   { value: 'least-pieces', label: 'Wardrobe Density (Low)' },
 ]
 const OCCASION_ICONS = {
-  casual: '☀', city: '◈', evening: '◇', 'smart-casual': '✦', outdoor: '◎', home: '○'
+  casual: '☀', city: '◈', evening: '◇', 'smart-casual': '✦', outdoor: '◎', home: '○', walking: '👣'
 }
 const COLOR_BG = {
   'black': '#2A2420', 'white': '#F0EDE8', 'navy': '#1E2D4A', 'cream': '#E8DFC8',

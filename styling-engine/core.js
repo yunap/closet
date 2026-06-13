@@ -3775,7 +3775,7 @@ export async function buildStylistConversationPayload(body) {
       modeDirectiveText = 'The user is asking a follow-up question. Answer it directly and conversationally without restarting evaluation templates.'
       break
     default:
-      modeDirectiveText = 'The user has a new request. Respond directly. If details like destination or season are missing, ask exactly one clear clarifying question; do not generate a placeholder list.'
+      modeDirectiveText = 'The user has a new request. Respond directly. If details like destination or timing/season are completely missing, ask exactly one clear clarifying question; do not generate a placeholder list. Do not ask "when" if a timing or date is already provided.'
   }
 
   const feedbackMemoryParts = []
@@ -3820,7 +3820,7 @@ export async function buildStylistConversationPayload(body) {
     `Current turn mode: ${conversationMode}.`,
     `Mode instructions: ${modeDirectiveText}`,
     `Turn directive: ${conversationDirective}`,
-    'If mode is new_request and required context (both location/city and weather/season/dates/timing) is present, answer the user’s request directly using wardrobe context by recommending specific items from Yuna\'s closet. Keep the response natural, following the Conversational Flow guidelines and Examples. If details like location/city or weather/season/dates/timing are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather this missing context (e.g., "Where are you going, and what is the expected weather?").',
+    'If mode is new_request and required context (both location/city and weather/season/dates/timing) is present, answer the user’s request directly using wardrobe context by recommending specific items from Yuna\'s closet. Keep the response natural, following the Conversational Flow guidelines and Examples. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing/season context (and infer the likely season accordingly, e.g. mid-June in Portland is summer). Do not ask "when" they are visiting if timing is already provided; if weather context is still missing, ask specifically for the expected weather forecast. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city or timing/season/weather are completely missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather this missing context (e.g., "Where are you going, and what is the expected weather?").',
     'If mode is followup, answer the specific follow-up directly in a friendly conversational tone without restarting the whole evaluation, outfit generation, packing list, or plan.',
     'If mode is correction, acknowledge the correction, revise only the relevant mistaken point, and do not defend a contradiction.',
     'If mode is explanation, explain how the previous recommendation was made using the available context.',

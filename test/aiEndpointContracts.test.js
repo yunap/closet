@@ -1078,7 +1078,7 @@ test('freeform ask system prompt includes context persistence and no hallucinati
   assert.match(lastCall.system, /Occasion Realism & Styling Sense:/)
   assert.match(lastCall.system, /Layering Logic & No Double-Vests:/)
   assert.match(lastCall.system, /Precise Garment Naming:/)
-  assert.match(lastCall.system, /Avoid formatting suggestions as a rigid, checklist-style bulleted list/)
+  assert.match(lastCall.system, /Avoid formatting suggestions as generic category-by-category checklists/)
 })
 
 test('executeTool get_garment_details loads text and base64 photo blocks', async () => {
