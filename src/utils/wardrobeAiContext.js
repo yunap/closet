@@ -67,6 +67,7 @@ export function normalizeOccasionForConfidence(occ) {
   if (norm.includes('art') || norm.includes('gallery')) return 'city'
   if (norm.includes('travel')) return 'city'
   if (norm.includes('home') || norm.includes('lounge')) return 'home'
+  if (norm.includes('evening')) return 'evening'
   return norm.replace(/\s+/g, '-')
 }
 
@@ -96,7 +97,13 @@ export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', expl
   if (profileTrust === 'do_not_auto_use') reasons.push('AI profile blocks auto-use')
   if (profileTrust === 'needs_fit_review' && !aggressive) reasons.push('AI profile needs fit review')
   if (profileTrust === 'experimental' && !aggressive) reasons.push('AI profile experimental')
-  if (occasionConfidence === 'low' && !aggressive) reasons.push(`AI profile low confidence for ${occasion}`)
+
+  const explicitOccasions = Array.isArray(piece.occasions) ? piece.occasions.map(o => String(o || '').toLowerCase()) : []
+  const isExplicitlyTagged = explicitOccasions.includes(normOcc) || (occasion && explicitOccasions.includes(String(occasion).toLowerCase()))
+
+  if (occasionConfidence === 'low' && !isExplicitlyTagged && !aggressive) {
+    reasons.push(`AI profile low confidence for ${occasion}`)
+  }
   if (permissions.length && occasion && !permissions.includes(occasion)) reasons.push(`not permitted for ${occasion}`)
   if (/\b(too small|too tight|does not fit|doesn't fit|bad fit|avoid auto|do not auto|do not auto-style|do not auto style|not evening|not for evening|testing only|only when requested|specifically requested|testing whether alteration)\b/.test(`${notes} ${profileNotes}`) && !aggressive) {
     reasons.push('engine notes suppress auto-use')

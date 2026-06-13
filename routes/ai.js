@@ -191,7 +191,11 @@ export async function tagPieceWithProvider(photoInputs) {
   }
 
   const raw = await askStylist(payload)
-  return parseModelJson(raw)
+  const tags = parseModelJson(raw)
+  if (tags && typeof tags === 'object') {
+    tags.tagger_version = 'v1.0.0'
+  }
+  return tags
 }
 
 
@@ -409,10 +413,6 @@ ${categorySpecificFocus}`
       "best_use": "updated stylist role description based on how it behaves/looks on-body. Avoid generic 'casual wear' or 'daily casual' phrases.",
       "risk": "styling or aesthetic risk observed on-body. Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."
     },
-    "style_lanes": {
-      "artistic_minimal": 0, "modern_bohemian": 0, "folk_artisan": 0, "boho_romantic": 0, "boho_festival": 0,
-      "graphic_casual": 0, "earthy_structured": 0, "polished_classic": 0, "romantic_soft": 0, "workwear_utilitarian": 0
-    },
     "visual_roles": ["choose 1-4: hero_piece, support_piece, grounding_piece, sharpener_piece, texture_piece, movement_piece, column_piece, quiet_anchor, color_accent"]
   }
 }`
@@ -437,15 +437,46 @@ ${categorySpecificFocus}`
   }
 })
 
-router.post('/tag-piece', upload.single('photo'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No photo provided' })
-  const filePath = path.join(uploadsDir, req.file.filename)
+router.post('/tag-piece', upload.fields([
+  { name: 'photo', maxCount: 1 },
+  { name: 'worn_photo', maxCount: 1 }
+]), async (req, res) => {
+  const files = req.files || {}
+  const photoFile = files.photo ? files.photo[0] : null
+  const wornPhotoFile = files.worn_photo ? files.worn_photo[0] : null
+
+  if (!photoFile && !wornPhotoFile) {
+    return res.status(400).json({ error: 'No photo provided' })
+  }
+
+  const photos = []
+  if (photoFile) {
+    const filePath = path.join(uploadsDir, photoFile.filename)
+    photos.push({
+      path: filePath,
+      label: 'HANGER PHOTO',
+      guidance: 'Use for literal garment truth: category, color, construction, pattern, fabric, and shape.'
+    })
+  }
+  if (wornPhotoFile) {
+    const filePath = path.join(uploadsDir, wornPhotoFile.filename)
+    photos.push({
+      path: filePath,
+      label: 'WORN PHOTO',
+      guidance: 'Use for fit, drape, scale, real-wear behavior, outfit role, and risks. Do not override literal garment color/category from this styling context.'
+    })
+  }
+
   try {
-    const tags = await tagPieceWithProvider(filePath)
-    fs.unlinkSync(filePath)
+    const tags = await tagPieceWithProvider(photos)
+    photos.forEach(p => {
+      if (fs.existsSync(p.path)) fs.unlinkSync(p.path)
+    })
     res.json(tags)
   } catch (err) {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+    photos.forEach(p => {
+      if (fs.existsSync(p.path)) fs.unlinkSync(p.path)
+    })
     console.error('AI tag error:', err)
     res.status(500).json({ error: err.message })
   }

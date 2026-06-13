@@ -756,31 +756,93 @@ JSON shape:
 
 // ── Dedicated TAG_PIECE prompt ────────────────────────────────────────────────
 export const TAG_PIECE_PROMPT = `Analyze this clothing item. Return ONLY a valid JSON object — no markdown, no explanation, just JSON.
+
 If both photos are provided:
 - Use HANGER PHOTO for literal garment truth: color, category, construction, pattern, texture, fabric read, and shape.
-- Use WORN PHOTO for real-wear behavior (fit placement, scale, drape, maintenance, outfit role, and risks) AND to re-calibrate style_lanes based on how the silhouette transforms on-body. For example, a relaxed boxy knit on the hanger can become a controlled, compact torso focal point when worn, shifting its aesthetic to "Soft Architectural" (which elevates 'artistic_minimal' and 'earthy_structured' scores). Do not discuss body types/body shapes, attractiveness, confidence, or apparent comfort.
+- Use WORN PHOTO for real-wear behavior (fit placement, scale, drape, maintenance, outfit role, and risks) AND to observe how the silhouette transforms on-body. Do not discuss body types/body shapes, attractiveness, confidence, or apparent comfort.
 If only one photo is provided, keep low-confidence real-wear fields empty or set to default/none rather than inventing them.
-For style_lanes, score each lane 0-5, where 0 = not relevant and 5 = strongly native to the garment:
 
-Calibration rules:
-- "artistic_minimal" is for clean, sculptural, or architectural lines, geometric necklines (e.g. asymmetrical button collar, cowl neck), and a controlled, torso-defining silhouette when worn. Elevate this lane to 3-5 (usually 4 or 5) when the worn photo shows the garment fits as a surprisingly compact, controlled, or architectural focal point instead of slouchy/oversized.
-- "earthy_structured" is for garments that balance earthy/natural materials/textures (textured knits, waffle knits, linen) with defined structure or geometry (asymmetrical button necklines, structural hems). Elevate this lane to 3-5 when the worn photo reveals a structured or textured geometry that sits cleanly without slouchy boxiness.
-- "fit_on_body" (only when WORN PHOTO is provided, otherwise leave as "none"):
-  * Select "drapes" (relaxed, fluid, flowing, folds/gathering) for ribbed or waffle knits that drape or flow on the body. Do not default these to "hangs_straight".
-  * Select "skims" or "drapes" if the garment on-body is surprisingly compact, torso-defining, and controlled.
-  * Select "hangs_straight" ONLY if the garment drops vertically without conforming to the body shape (stiffer, heavy woven fabrics like stiff cotton, structured linen, heavy canvas).
-- "casual" is not one bucket. Distinguish errand/lounge casual from intentional daytime casual. Soft linen, lace-trim, wide-leg, sheer, crochet, or dressy-texture pieces may be casual-capable, but usually should be "casual": "medium" unless they clearly read like easy everyday basics. Use "city" or "smart-casual" when the piece needs a more intentional top, shoe, or layer to work.
-- "home" occasion is strict. Use it only for lounge, pajamas, house dresses, slippers, sweats, robe-like pieces, or garments that visibly read indoor/comfort-only. Do not use home just because a garment is soft, relaxed, jersey, knit, elastic, or easy. Never tag standard daytime tops, basic tank tops, everyday t-shirts, jeans, trousers, skirts, or outdoor jackets as "home" unless they are comfort-loungewear, pajamas, or sweatwear. Standard basic layering tops and daytime knits must have "home" confidence scored as "low" or omitted entirely; they are casual, city, or smart-casual, not home.
-- "city" can include relaxed but intentional clothes, long skirts, dark skirts, structured casual pieces, expressive prints, and garments that could work outside the house with grounded styling.
-- "workwear_utilitarian" is strict. Score it 3+ only for real workwear/cargo/technical utility cues: cargo pockets, utility pockets, workwear fabric, field jacket logic, hardware, drawcords, technical/outdoor construction, or clearly practical uniform styling. Buttons alone, dark color, pockets, or casual fabric are not enough.
-- "folk_artisan" is for prairie-adjacent, craft, rustic, handmade, yoke-waist, button-front, patch-pocket, full-skirt, crochet, woven, heathered, or Free People heritage pieces. This is allowed to overlap with modern_bohemian.
-- "modern_bohemian" is for bohemian construction or styling logic with restraint: movement, drape, craft texture, earthy palette, artisan detail, relaxed structure. Do not avoid this lane when the garment objectively belongs there.
-- "boho_romantic" is for lace, flutter, tiering, ruffles, gauze, soft florals, or dreamy/feminine boho. Use it separately from folk_artisan.
-- "boho_festival" is for overt festival styling, fringe, very exposed/cropped silhouettes, novelty boho, or costume-adjacent pieces. Do not use it for restrained artisan pieces.
-- "grounding_piece" is strict. Use it for shoes, dark/straight/column bottoms, strong outerwear, or quiet anchors that visually stabilize an outfit. Do not call a soft, draped, gathered, or movement-heavy skirt a grounding piece unless it is clearly a dark straight column.
-- Long, draped, gathered, button-front, yoke-waist, patch-pocket, Free People-like, or soft full skirts usually read as movement_piece, texture_piece, support_piece, or hero_piece. If they have artisan/prarie construction, prefer folk_artisan and modern_bohemian over workwear_utilitarian.
-- Floral/botanical/print describes surface pattern; it does not automatically mean bohemian. Bohemian requires construction, movement, craft texture, earthy styling logic, or relaxed artistic intent.
-- Capture structural, architectural, and geometric drape details with specificity. Do NOT collapse structured, draped, asymmetrical, or textured items into lazy, generic terms like "cosy casual pullover". Identify defining design cues like asymmetrical button collars, cowl necks, high-low curved design hems, and waffle or textured knits. Reflect these clearly in 'name_suggestion', 'reads_as', and 'notes_suggestion'.
+=== PHYSICAL PROPERTY FRAMEWORK (VOLUME vs. STRUCTURE) ===
+Evaluate the garment's visual structure and weight along these two axes:
+1. Silhouette & Volume:
+   - Compact (fitted, slim, shell, basic tank): Torso-conforming, zero visual bulk. Allows volume elsewhere.
+   - Voluminous (oversized, boxy, bishop sleeve, bell sleeve, full skirt): Stands out as the dominant shape.
+2. Fabric & Drape:
+   - Structured/Stiff (denim, twill, canvas, heavy cotton): Holds its own shape away from the body. Fit matches: "structured" or "hangs_straight".
+   - Fluid/Soft (ribbed knit, waffle knit, smocking/pucker, silk, gauze): Conforms to body contours, moves, or drapes. Fit matches: "skims" or "drapes" (never "structured").
+
+=== DESCRIPTIVE CUES & LABELS ===
+- Sleeve Type: Select "bishop" or "bell" when there is visible sleeve volume (ballooning through the arm, gathered at the shoulder, or cinched tightly at the cuff). Do not default to "long" if these voluminous features are present. Default to "long" only for simple, straight, non-voluminous long sleeves.
+- Hem Finish: Select "design_hem" for high-low, curved shirt-tails, side-slits, or scalloped hems that are styled untucked. Select "straight_loose" for flat, horizontal straight hems.
+- Neckline: Select V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, or other based on construction.
+- Silhouette: Select fitted, slim, relaxed, boxy, A-line, drop-shoulder, or oversized.
+- Fit on Body: Select clings_stretchy, clings_drapey, skims, hangs_straight, drapes, or structured.
+
+- Occasion Suitability — describe, do not stylize. Rate each occasion on the garment's
+  OBJECTIVE construction, not on a texture-to-occasion shortcut:
+  * "outdoor": "high" only for durable, snag-resistant, practical pieces (cargo, technical,
+    sturdy denim, active). "low" for delicate, sheer, loose-knit, or volume that catches/snags.
+  * "evening" & "smart-casual": judge construction formality — refinement of finish, quality
+    of drape, and presence of considered detailing (not raw/utilitarian). Basic jersey tees,
+    raw-hem tanks, sweats, and activewear rate "low". Refined fabrications and finished
+    detailing rate "medium" or "high".
+  * IMPORTANT: a given texture is not inherently dressy or casual. Smocking, ribbing, or puff
+    sleeves appear on both beach cover-ups and evening tops. Judge THIS garment's execution
+    (fabric quality, finish, color depth, overall polish), not the texture category.
+  * When genuinely ambiguous, prefer "medium" over "low" — under-permission hides usable
+    pieces; the composing model and the user can refine from there.
+
+- Style Lanes: Score each lane 0-5 (0 = not relevant, 5 = strongly native):
+  * "artistic_minimal" is for clean, sculptural, or architectural lines, geometric necklines (e.g. asymmetrical button collar, cowl neck), and a controlled, torso-defining silhouette when worn.
+  * "earthy_structured" is for garments that balance earthy/natural materials/textures (textured knits, waffle knits, linen) with defined structure or geometry.
+  * "modern_bohemian" is for bohemian construction or styling logic with restraint: movement, drape, craft texture, earthy palette, artisan detail, relaxed structure. Do not avoid this lane when the garment objectively belongs there.
+  * "folk_artisan" is for prairie-adjacent, craft, rustic, handmade, crochet, woven, heathered, or Free People heritage pieces.
+  * "boho_romantic" is for lace, flutter, tiering, ruffles, gauze, soft florals, or dreamy/feminine boho.
+  * "boho_festival" is for highly expressive, costume-adjacent, or festival-style bohemian pieces with high fringe, heavy tiering, or loud, dense patterns.
+  * "graphic_casual" is for everyday casual wear that features graphic elements (stripes, patterns, prints, band tees, logos) and relaxed silhouettes.
+  * "polished_classic" is for clean, tailored, classic retail garments without expressive bohemian or rustic detailing.
+  * "romantic_soft" is for soft draping, delicate details, bows, ruffles, or feminine shape.
+  * "workwear_utilitarian" is strict. Score 3+ only for real workwear/cargo/technical utility cues.
+  * "home" occasion is strict. Use it only for lounge, pajamas, comfort-loungewear, or sleepwear. Standard basic layering tops and daytime knits must have "home" confidence scored as "low" or omitted entirely.
+
+=== CALIBRATION ANCHORS (range calibration, NOT templates to match) ===
+These three archetypes calibrate how wide the scoring range is. Score the actual garment on
+its own merits; do not pull it toward whichever anchor it superficially resembles.
+
+ANCHOR A — Basic ribbed jersey tank (low expressive baseline)
+  A plain solid-color ribbed cotton tank, flat snug knit, no detailing.
+  silhouette: "fitted", fit_on_body: "skims", sleeve_type: "none",
+  pattern_complexity: "solid".
+  Style lanes: polished_classic: 1, artistic_minimal: 0, modern_bohemian: 0,
+  romantic_soft: 0, earthy_structured: 0.
+  Occasions: casual: "high", city: "medium", smart-casual: "low", evening: "low",
+  outdoor: "medium", home: "high".
+
+ANCHOR B — Classic stiff cotton button-down (single-lane baseline)
+  A solid collared shirt in crisp cotton, tailored, no expressive detailing.
+  silhouette: "slim", fit_on_body: "structured", sleeve_type: "long",
+  pattern_complexity: "solid".
+  Style lanes: polished_classic: 3, all other lanes: 0.
+  Occasions: smart-casual: "high", city: "high", casual: "medium", evening: "low",
+  outdoor: "low", home: "low".
+
+ANCHOR C — Refined textured statement top (high expressive baseline)
+  A solid top in a refined fabrication with sculptural construction — e.g. smocked or
+  pintucked body with volumed (bishop/puff) sleeves and a finished back detail — executed
+  in quality fabric, not jersey.
+  silhouette: "fitted", fit_on_body: "skims", sleeve_type: "bishop",
+  pattern_complexity: "solid".
+  Style lanes: artistic_minimal: 4, romantic_soft: 3, polished_classic: 1,
+  modern_bohemian: 1, earthy_structured: 0.
+  Occasions: smart-casual: "high", city: "high", evening: "high", casual: "medium",
+  outdoor: "low".
+
+Note on Anchor B: This anchor is for crisp, stiff, solid-color tailored shirts. Soft, fluid, fuzzy, or printed/striped button-downs should not be pulled here; they have drape/texture/pattern that introduces graphic_casual, modern_bohemian, or earthy_structured scores and reduces polished_classic.
+
+Note on Anchor C: Anchor C is high-expressive BECAUSE of refined execution + sculptural construction
+together — not because texture alone implies it. A smocked top in cheap jersey with a raw hem
+would score closer to Anchor A. Judge fabric quality and finish, not texture category.
+
 {
   "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'sculptural asymmetrical cowl knit top' or 'black cream botanical midi skirt'",
   "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
@@ -838,7 +900,7 @@ Calibration rules:
         "drape": "",
         "scale": "garment volume/visual territory only; no body shape comments",
         "placement": "",
-        "maintenance": ""
+        "maintenance": "only specify exceptional physical care burdens (e.g. dry clean only, wrinkles easily, pills easily). leave empty or omit for standard machine-washable items."
       },
       "do_not_pair_rules": ["0-4 concrete pairing rules, e.g. avoid another loud pattern, avoid soft wide bottom"]
     }

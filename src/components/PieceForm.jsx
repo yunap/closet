@@ -302,6 +302,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     style_profile_json:    piece?.style_profile_json    || {},
     // Color
     background_color: piece?.background_color || '',
+    tagger_version: piece?.tagger_version || null,
   })
   const [confidenceFlags, setConfidenceFlags] = useState({}) // field -> 'medium'|'low'
 
@@ -386,6 +387,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         fabric_weight:      tags.fabric_weight      || f.fabric_weight,
         style_profile_json: tags.style_profile_json || f.style_profile_json,
         fit_on_body:        (tags.fit_on_body && tags.fit_on_body !== 'none') ? tags.fit_on_body : f.fit_on_body,
+        tagger_version:     tags.tagger_version     || f.tagger_version,
       }))
       // Set confidence flags for medium/low fields
       if (tags._confidence) {

@@ -31,6 +31,7 @@ db.exec(`
     engine_notes TEXT DEFAULT '',
     favorite     INTEGER DEFAULT 0,
     photo        TEXT,
+    tagger_version TEXT,
     date_added   TEXT DEFAULT (datetime('now'))
   );
 
@@ -140,6 +141,7 @@ const NEW_COLUMNS = [
   'occasion_exclusions TEXT DEFAULT "[]"',
   'engine_notes TEXT DEFAULT ""',
   'style_profile_json TEXT DEFAULT "{}"',
+  'tagger_version TEXT',
 ]
 NEW_COLUMNS.forEach(col => {
   try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}

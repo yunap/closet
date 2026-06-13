@@ -52,8 +52,8 @@ export const OCCASION_PROFILES = [
   {
     id: "evening_social",
     label: "Evening Social / Dining",
-    keywords: ["dinner date", "wine bar", "theater", "evening drinks", "night out"],
-    moodKeywords: ["dinner date", "wine bar", "theater", "evening drinks", "night out"],
+    keywords: ["evening", "dinner date", "wine bar", "theater", "evening drinks", "night out"],
+    moodKeywords: ["evening", "dinner date", "wine bar", "theater", "evening drinks", "night out"],
     vibe: "sharp, artistic, low-key drama, deep color palettes, rich textures",
     rules: {
       preferred_materials: ["silk", "satin", "textured knits", "fine wool"],

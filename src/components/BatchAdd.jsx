@@ -31,6 +31,7 @@ function emptyForm() {
     silhouette: null, fabric_category: null, fabric_weight: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
     style_profile_json: {},
+    tagger_version: null,
   }
 }
 
@@ -162,6 +163,272 @@ function ProcessingPhase({ items, thumbnailSize }) {
   )
 }
 
+// ── Phase: Grouping (Staging Area) ───────────────────────────────────────────
+function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel, linkingFromId, setLinkingFromId }) {
+  const [draggedId, setDraggedId] = useState(null)
+  const [dragOverId, setDragOverId] = useState(null)
+  const fileInputRef = useRef()
+
+  const handleFiles = (fileList) => {
+    const newFiles = Array.from(fileList).filter(f => f.type.startsWith('image/'))
+    if (newFiles.length) onAddFiles(newFiles)
+  }
+
+  return (
+    <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: 20, overflowY: 'auto', flex: 1, minHeight: 0 }}>
+      {/* Visual Header & Description */}
+      <div style={{ textAlign: 'center', marginBottom: 8 }}>
+        <div style={{ fontFamily: 'var(--font-serif)', fontSize: 24, fontWeight: 500, color: 'var(--text)', marginBottom: 6 }}>
+          Group Garment Photos
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, padding: '0 10px' }}>
+          💡 Drag a <strong>worn photo</strong> and drop it onto a <strong>hanger photo</strong> to pair them. 
+          Or click <strong>"Link"</strong> on the worn photo, then click the hanger photo.
+        </div>
+      </div>
+
+      {/* Linking instructions banner */}
+      {linkingFromId && (
+        <div style={{
+          padding: '10px 14px',
+          background: 'var(--accent-light)',
+          color: 'var(--accent)',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: 12,
+          fontWeight: 500,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          animation: 'pulse 2s infinite ease-in-out'
+        }}>
+          <span>Select the hanger/flat lay photo for this worn photo...</span>
+          <button style={{ color: 'var(--accent)', fontWeight: 'bold', fontSize: 11 }} onClick={() => setLinkingFromId(null)}>Cancel</button>
+        </div>
+      )}
+
+      {/* Grid of staged items */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+        gap: 16,
+        padding: '4px 0'
+      }}>
+        {items.map((item) => {
+          const isLinkingSource = linkingFromId === item.id
+          const isLinkingTarget = linkingFromId && linkingFromId !== item.id
+          const isDragged = draggedId === item.id
+          const isDragOver = dragOverId === item.id
+
+          return (
+            <div
+              key={item.id}
+              draggable={!linkingFromId}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('text/plain', item.id)
+                setDraggedId(item.id)
+              }}
+              onDragEnd={() => {
+                setDraggedId(null)
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                if (draggedId && draggedId !== item.id) {
+                  setDragOverId(item.id)
+                }
+              }}
+              onDragLeave={() => {
+                setDragOverId(null)
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                const sourceId = e.dataTransfer.getData('text/plain') || draggedId
+                if (sourceId && sourceId !== item.id) {
+                  onLink(sourceId, item.id)
+                }
+                setDragOverId(null)
+                setDraggedId(null)
+              }}
+              style={{
+                background: 'var(--surface)',
+                borderRadius: 'var(--radius)',
+                border: isLinkingSource ? '2px solid var(--accent)' :
+                        isDragOver ? '2px dashed var(--accent)' :
+                        isLinkingTarget ? '2px dashed var(--border)' : '1px solid var(--border-light)',
+                padding: 10,
+                position: 'relative',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                boxShadow: isDragged ? 'var(--shadow-lg)' : 'var(--shadow)',
+                opacity: isDragged ? 0.4 : 1,
+                transform: isDragOver ? 'scale(1.03)' : 'none',
+                transition: 'all 0.2s ease',
+                cursor: linkingFromId ? 'default' : 'grab'
+              }}
+            >
+              {/* Image containers */}
+              <div style={{ position: 'relative', aspectRatio: '1', width: '100%', background: 'var(--surface-2)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                <img src={item.preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                
+                {/* Standalone label */}
+                {!item.wornPreview && (
+                  <span style={{
+                    position: 'absolute',
+                    top: 6,
+                    left: 6,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    padding: '2px 6px',
+                    borderRadius: 10,
+                    background: 'rgba(255, 255, 255, 0.85)',
+                    color: 'var(--text-muted)',
+                    border: '1px solid var(--border-light)'
+                  }}>
+                    Standalone
+                  </span>
+                )}
+
+                {/* Overlapping worn preview if grouped */}
+                {item.wornPreview && (
+                  <>
+                    <span style={{
+                      position: 'absolute',
+                      top: 6,
+                      left: 6,
+                      fontSize: 9,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      padding: '2px 6px',
+                      borderRadius: 10,
+                      background: 'var(--accent-light)',
+                      color: 'var(--accent)',
+                      border: '1px solid var(--accent)'
+                    }}>
+                      Paired
+                    </span>
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 4,
+                      right: 4,
+                      width: 52,
+                      height: 52,
+                      borderRadius: 'var(--radius-sm)',
+                      overflow: 'hidden',
+                      border: '2px solid var(--surface)',
+                      boxShadow: 'var(--shadow-lg)',
+                      background: 'var(--surface-2)'
+                    }}>
+                      <img src={item.wornPreview} alt="Worn" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Action buttons */}
+              <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {/* If linking target, show button to pair here */}
+                {isLinkingTarget ? (
+                  <button
+                    className="btn-primary"
+                    style={{ padding: '6px 8px', fontSize: 11, borderRadius: 'var(--radius-sm)' }}
+                    onClick={() => onLink(linkingFromId, item.id)}
+                  >
+                    🎯 Pair here
+                  </button>
+                ) : item.wornPreview ? (
+                  /* If already paired, show unlink option */
+                  <button
+                    className="btn-secondary"
+                    style={{ padding: '6px 8px', fontSize: 11, borderRadius: 'var(--radius-sm)', color: 'var(--danger)', borderColor: 'rgba(168, 64, 64, 0.2)' }}
+                    onClick={() => onUnlink(item.id)}
+                  >
+                    ✕ Unlink
+                  </button>
+                ) : !linkingFromId ? (
+                  /* Normal link button */
+                  <button
+                    className="btn-secondary"
+                    style={{ padding: '6px 8px', fontSize: 11, borderRadius: 'var(--radius-sm)' }}
+                    onClick={() => setLinkingFromId(item.id)}
+                  >
+                    🔗 Link...
+                  </button>
+                ) : (
+                  /* While linking, disable normal buttons */
+                  <button
+                    className="btn-secondary"
+                    disabled
+                    style={{ padding: '6px 8px', fontSize: 11, borderRadius: 'var(--radius-sm)', opacity: 0.3 }}
+                  >
+                    🔗 Link...
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+
+        {/* ➕ Add photos card */}
+        <div
+          onClick={() => fileInputRef.current.click()}
+          style={{
+            border: '2px dashed var(--border)',
+            borderRadius: 'var(--radius)',
+            aspectRatio: '1',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            background: 'rgba(124, 95, 60, 0.02)',
+            transition: 'all 0.15s ease',
+            padding: 10,
+            gap: 8,
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--accent-light)' }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'rgba(124, 95, 60, 0.02)' }}
+        >
+          <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
+          <span style={{ fontSize: 24 }}>➕</span>
+          <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>Add photos</span>
+        </div>
+      </div>
+
+      {/* Footer Actions */}
+      <div style={{
+        display: 'flex',
+        gap: 12,
+        marginTop: 20,
+        paddingTop: 16,
+        borderTop: '1px solid var(--border-light)'
+      }}>
+        <button className="btn-secondary" onClick={onCancel} style={{ flex: 1 }}>
+          Cancel
+        </button>
+        <button
+          className="btn-primary"
+          onClick={onStart}
+          disabled={items.length === 0}
+          style={{ flex: 2 }}
+        >
+          Analyze items ({items.length} garments) →
+        </button>
+      </div>
+
+      <style>{`
+        @keyframes pulse {
+          0% { opacity: 0.9; }
+          50% { opacity: 0.65; }
+          100% { opacity: 0.9; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
 // ── Phase: Review (one item at a time) ────────────────────────────────────────
 function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
   const item = items[currentIndex]
@@ -184,6 +451,9 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
         if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
       })
       fd.append('photo', item.file)
+      if (item.wornFile) {
+        fd.append('worn_photo', item.wornFile)
+      }
       const res = await fetch('/api/pieces', { method: 'POST', body: fd })
       await res.json()
       onSave()
@@ -215,8 +485,21 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
 
-        {/* Photo */}
-        <img src={item.preview} alt="" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)' }} />
+        {/* Photos */}
+        {item.wornPreview ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Hanger (Garment Detail)</div>
+              <img src={item.preview} alt="Hanger" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border-light)' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Worn (Fit & drape)</div>
+              <img src={item.wornPreview} alt="Worn" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border-light)' }} />
+            </div>
+          </div>
+        ) : (
+          <img src={item.preview} alt="" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)' }} />
+        )}
 
         {item.status === 'error' && (
           <div style={{ padding: '10px 14px', background: 'var(--repair-bg)', color: 'var(--repair)', borderRadius: 'var(--radius-sm)', fontSize: 12 }}>
@@ -308,6 +591,21 @@ function SummaryPhase({ items, onDone, thumbnailSize }) {
           {items.filter(i => i.status === 'saved').map((item, i) => (
             <div key={i} style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-light)', position: 'relative' }}>
               <img src={item.preview} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'contain', background: 'var(--surface-2)', display: 'block' }} />
+              {item.wornPreview && (
+                <div style={{
+                  position: 'absolute',
+                  bottom: 4,
+                  right: 4,
+                  width: 24,
+                  height: 24,
+                  borderRadius: 4,
+                  border: '1px solid var(--surface)',
+                  overflow: 'hidden',
+                  background: 'var(--surface-2)'
+                }}>
+                  <img src={item.wornPreview} alt="Worn" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                </div>
+              )}
               <div style={{ position: 'absolute', inset: 0, background: 'rgba(90,122,90,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 16 }}>✓</div>
             </div>
           ))}
@@ -323,36 +621,117 @@ function SummaryPhase({ items, onDone, thumbnailSize }) {
 
 // ── Main BatchAdd orchestrator ─────────────────────────────────────────────────
 export default function BatchAdd({ onDone }) {
-  const [phase,   setPhase]   = useState('select')   // select | processing | reviewing | summary
+  const [phase,   setPhase]   = useState('select')   // select | grouping | processing | reviewing | summary
   const [items,   setItems]   = useState([])
   const [current, setCurrent] = useState(0)
   const [thumbnailSize, setThumbnailSize] = useState(260)
+  const [linkingFromId, setLinkingFromId] = useState(null)
 
   const updateItem = (index, patch) => {
     setItems(prev => prev.map((it, i) => i === index ? { ...it, ...patch } : it))
   }
 
-  // ── Start processing: tag all photos sequentially ──────────────────────────
-  const startProcessing = async (files) => {
+  // ── File Selection ──────────────────────────────────────────────────────────
+  const handleFilesSelected = (files) => {
     const initial = files.map(file => ({
+      id: Math.random().toString(36).substr(2, 9),
       file,
       preview: URL.createObjectURL(file),
+      wornFile: null,
+      wornPreview: null,
       tags:    null,
       form:    emptyForm(),
       status:  'pending',
     }))
     setItems(initial)
-    setPhase('processing')
+    setPhase('grouping')
+  }
 
-    const updated = [...initial]
-    for (let i = 0; i < files.length; i++) {
-      // mark as tagging
+  // ── Grouping Actions ────────────────────────────────────────────────────────
+  const handleLink = (fromId, toId) => {
+    const wornItem = items.find(it => it.id === fromId)
+    if (!wornItem) return
+    setItems(prev => {
+      const updated = prev.map(item => {
+        if (item.id === toId) {
+          return {
+            ...item,
+            wornFile: wornItem.file,
+            wornPreview: wornItem.preview
+          }
+        }
+        return item
+      })
+      return updated.filter(item => item.id !== fromId)
+    })
+    setLinkingFromId(null)
+  }
+
+  const handleUnlink = (itemId) => {
+    const item = items.find(it => it.id === itemId)
+    if (!item || !item.wornFile) return
+    const restoredItem = {
+      id: Math.random().toString(36).substr(2, 9),
+      file: item.wornFile,
+      preview: item.wornPreview,
+      wornFile: null,
+      wornPreview: null,
+      tags: null,
+      form: emptyForm(),
+      status: 'pending'
+    }
+    setItems(prev => {
+      const updated = prev.map(it => {
+        if (it.id === itemId) {
+          return { ...it, wornFile: null, wornPreview: null }
+        }
+        return it
+      })
+      return [...updated, restoredItem]
+    })
+  }
+
+  const handleAddFiles = (newFiles) => {
+    const additional = newFiles.map(file => ({
+      id: Math.random().toString(36).substr(2, 9),
+      file,
+      preview: URL.createObjectURL(file),
+      wornFile: null,
+      wornPreview: null,
+      tags:    null,
+      form:    emptyForm(),
+      status:  'pending',
+    }))
+    setItems(prev => [...prev, ...additional])
+  }
+
+  const handleCancel = () => {
+    items.forEach(it => {
+      if (it.preview) URL.revokeObjectURL(it.preview)
+      if (it.wornPreview) URL.revokeObjectURL(it.wornPreview)
+    })
+    setItems([])
+    setPhase('select')
+  }
+
+  // ── Start processing: tag all photos sequentially ──────────────────────────
+  const startProcessing = async () => {
+    setPhase('processing')
+    
+    const updated = items.map(it => ({ ...it, status: 'pending' }))
+    setItems(updated)
+
+    for (let i = 0; i < updated.length; i++) {
       updated[i] = { ...updated[i], status: 'tagging' }
       setItems([...updated])
 
       try {
         const fd = new FormData()
-        fd.append('photo', files[i])
+        fd.append('photo', updated[i].file)
+        if (updated[i].wornFile) {
+          fd.append('worn_photo', updated[i].wornFile)
+        }
+        
         const res  = await fetch('/api/ai/tag-piece', { method: 'POST', body: fd })
         const tags = await res.json()
 
@@ -381,6 +760,7 @@ export default function BatchAdd({ onDone }) {
             fabric_category:    tags.fabric_category    || null,
             fabric_weight:      tags.fabric_weight      || null,
             style_profile_json: tags.style_profile_json || {},
+            tagger_version:     tags.tagger_version     || null,
           },
           status: 'ready',
         }
@@ -390,7 +770,6 @@ export default function BatchAdd({ onDone }) {
       setItems([...updated])
     }
 
-    // All done — move to review
     setCurrent(0)
     setPhase('reviewing')
   }
@@ -433,7 +812,19 @@ export default function BatchAdd({ onDone }) {
 
       {/* Phase content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: 560, margin: '0 auto', width: '100%', overflow: 'hidden' }}>
-        {phase === 'select'     && <SelectPhase onFiles={startProcessing} />}
+        {phase === 'select'     && <SelectPhase onFiles={handleFilesSelected} />}
+        {phase === 'grouping'   && (
+          <GroupingPhase
+            items={items}
+            onLink={handleLink}
+            onUnlink={handleUnlink}
+            onStart={startProcessing}
+            onAddFiles={handleAddFiles}
+            onCancel={handleCancel}
+            linkingFromId={linkingFromId}
+            setLinkingFromId={setLinkingFromId}
+          />
+        )}
         {phase === 'processing' && <ProcessingPhase items={items} thumbnailSize={thumbnailSize} />}
         {phase === 'reviewing'  && (
           <ReviewPhase

@@ -423,12 +423,24 @@ export function profileOccasionConfidence(piece = {}, occasion = '') {
   return String(intelligence.occasionConfidence?.[occasion] || '').toLowerCase()
 }
 
+export function isUtilityOrCargoPiece(piece = {}) {
+  const name = String(piece.name || '').toLowerCase()
+  const notes = String(piece.notes || '').toLowerCase()
+  const engineNotes = String(piece.engine_notes || '').toLowerCase()
+  const profile = pieceStyleProfile(piece)
+  
+  if (profile?.style_lanes?.workwear_utilitarian >= 3) return true
+  
+  // TODO: backfill styling profile fields for cargo/utility
+  return /\b(cargo|utility)\b/i.test(`${name} ${notes} ${engineNotes}`)
+}
+
 export function pieceMatchesOccasion(piece = {}, occasion = '') {
   const requested = String(occasion || '').toLowerCase().trim()
   if (!requested) return true
   const occasions = explicitOccasionsForPiece(piece)
+  if (occasions.includes(requested)) return true // User tag overrides AI profile confidence
   const confidence = profileOccasionConfidence(piece, requested)
-  if (occasions.includes(requested)) return confidence !== 'low'
   return confidence === 'high' || confidence === 'medium'
 }
 
@@ -558,7 +570,8 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
       const bottomIsUsefulSkirt = bKind === 'skirt-midi' || bKind === 'skirt-maxi'
       const selectedWeight = visualWeightProfile(selected)
       const candidateWeight = visualWeightProfile(candidate)
-      const selectedNeedsAnchor = selectedWeight.softness >= 2 || (selectedWeight.expressive && textIncludesAny(selectedBlob, ['lace','floral','appliqué','applique','sheer','cream','white','pale','soft']))
+      const selectedIsDark = isDarkPiece(selected)
+      const selectedNeedsAnchor = (selectedWeight.softness >= 2 && !selectedIsDark) || (selectedWeight.expressive && textIncludesAny(selectedBlob, ['lace','floral','appliqué','applique','sheer','cream','white','pale','soft']) && !selectedIsDark)
 
       if (selectedNeedsAnchor && candidateWeight.grounding >= 3) {
         score += 14; reasons.push('visual gravity for soft/expressive top')
@@ -1284,6 +1297,18 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   const { occasion = 'casual', explorationMode = 'moderate', weatherProfile = {} } = options
 
   const reqOccasion = String(occasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+  const isEvening = reqOccasion.includes('evening') || reqOccasion === 'evening social'
+  if (isEvening && wardrobeCategoryGroup(piece) === 'bottom') {
+    const explicitOccasions = explicitOccasionsForPiece(piece)
+    const isCargoOrUtility = isUtilityOrCargoPiece(piece)
+    if (!explicitOccasions.includes('evening') || isCargoOrUtility) {
+      return {
+        allowed: false,
+        supportOnly: false,
+        reasons: [`prohibited bottom for evening settings${isCargoOrUtility ? ' (utility/cargo pants)' : ''}`]
+      }
+    }
+  }
   const exclusions = (piece.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
   if (exclusions.includes(reqOccasion)) {
     const role = String(piece.role_permission || 'auto')

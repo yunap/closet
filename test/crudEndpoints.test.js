@@ -29,6 +29,7 @@ test('POST /api/pieces creates a piece and GET/PUT/PATCH/DELETE verify it', asyn
   fd.append('name', 'test top')
   fd.append('category', 'top')
   fd.append('colors', JSON.stringify(['black']))
+  fd.append('tagger_version', 'v1.0.0')
   
   const res = await fetch(`${baseUrl}/api/pieces`, {
     method: 'POST',
@@ -38,6 +39,7 @@ test('POST /api/pieces creates a piece and GET/PUT/PATCH/DELETE verify it', asyn
   const data = await res.json()
   assert.equal(data.name, 'test top')
   assert.equal(data.category, 'top')
+  assert.equal(data.tagger_version, 'v1.0.0')
   assert.ok(data.id)
   
   // GET /api/pieces lists pieces
@@ -49,17 +51,20 @@ test('POST /api/pieces creates a piece and GET/PUT/PATCH/DELETE verify it', asyn
   const getRes = await fetch(`${baseUrl}/api/pieces/${data.id}`)
   const getData = await getRes.json()
   assert.equal(getData.name, 'test top')
+  assert.equal(getData.tagger_version, 'v1.0.0')
   
   // PUT /api/pieces/:id updates a piece
   const fd2 = new FormData()
   fd2.append('name', 'updated top')
   fd2.append('category', 'top')
+  fd2.append('tagger_version', 'v1.1.0')
   const putRes = await fetch(`${baseUrl}/api/pieces/${data.id}`, {
     method: 'PUT',
     body: fd2
   })
   const putData = await putRes.json()
   assert.equal(putData.name, 'updated top')
+  assert.equal(putData.tagger_version, 'v1.1.0')
   
   // PATCH /api/pieces/:id/favorite favorites a piece
   const favRes = await fetch(`${baseUrl}/api/pieces/${data.id}/favorite`, {

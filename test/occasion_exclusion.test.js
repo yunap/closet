@@ -183,3 +183,45 @@ test('Part 3 & 5 — Occasions freeze guard assertions', () => {
   assert.ok(content.includes('ALLOWED_OCCASION_IDS'), 'Freeze guard must contain ALLOWED_OCCASION_IDS in style claims script')
   assert.ok(content.includes('Forbidden occasion profile found'), 'Freeze guard must throw error when new profile is found')
 })
+
+test('Evening bottoms strict governance and user override tests', () => {
+  // 1. Prohibit cargo/utility bottoms for evening
+  const cargoBottom = {
+    id: 7001,
+    name: 'brown cargo trousers',
+    category: 'bottom',
+    occasions: ['evening'], // Tagged as evening by user
+    style_profile_json: {}
+  }
+  const trustCargo = wholeWardrobePieceTrustDecision(cargoBottom, { occasion: 'evening' })
+  assert.equal(trustCargo.allowed, false, 'Cargo pants must be blocked for evening')
+  assert.ok(trustCargo.reasons[0].includes('utility/cargo pants'), 'Reason must indicate utility/cargo pants block')
+
+  // 2. Prohibit bottoms without explicit "evening" occasion
+  const daytimeBottom = {
+    id: 7002,
+    name: 'beige silk trousers',
+    category: 'bottom',
+    occasions: ['casual', 'city'],
+    style_profile_json: {}
+  }
+  const trustDaytime = wholeWardrobePieceTrustDecision(daytimeBottom, { occasion: 'evening' })
+  assert.equal(trustDaytime.allowed, false, 'Bottom without explicit evening occasion must be blocked')
+
+  // 3. User manual tag overrides AI profile confidence "low"
+  const userTaggedBottom = {
+    id: 7003,
+    name: 'taupe tailoring trousers',
+    category: 'bottom',
+    occasions: ['casual', 'evening'], // explicitly user-tagged as evening
+    style_profile_json: {
+      garment_intelligence: {
+        occasion_confidence: {
+          evening: 'low' // AI says low confidence
+        }
+      }
+    }
+  }
+  const trustUserTagged = wholeWardrobePieceTrustDecision(userTaggedBottom, { occasion: 'evening' })
+  assert.equal(trustUserTagged.allowed, true, 'User manual occasion tag must override AI profile low confidence')
+})
