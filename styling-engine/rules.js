@@ -1396,15 +1396,14 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   const decision = autoStylingTrustDecision(piece, { occasion: checkOccasion, explorationMode })
   const reasons = decision.reasons ? [...decision.reasons] : []
 
-  if (activityProfile?.id === 'hiking') {
+  if (activityProfile?.rules?.gated_occasion_permissions) {
     const permissions = Array.isArray(piece.occasion_permissions) ? piece.occasion_permissions : []
     if (permissions.length) {
       const normalizedPermissions = permissions.map(p => String(p || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
-      const isAllowedForOutdoor = normalizedPermissions.some(p => 
-        p === 'outdoor' || p === 'outdoor active' || p === 'hiking'
-      )
-      if (!isAllowedForOutdoor) {
-        reasons.push(`not permitted for hiking activity`)
+      const gateList = activityProfile.rules.gated_occasion_permissions.map(p => String(p || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+      const isAllowed = normalizedPermissions.some(p => gateList.includes(p))
+      if (!isAllowed) {
+        reasons.push(`not permitted for ${activityProfile.label} activity`)
       }
     }
   }

@@ -40,6 +40,7 @@ export const ACTIVITY_PROFILES = [
     moodKeywords: ["hike", "hiking", "trail"],
     vibe: "practical, comfortable, highly durable, movement-focused",
     rules: {
+      gated_occasion_permissions: ["outdoor", "outdoor active", "hiking"],
       prohibited_materials: [],
       prohibited_footwear: ["heel", "heels", "wedge", "wedges", "dress shoe", "dress shoes", "flip-flop", "flip-flops"],
       prohibited_pieces: [],
