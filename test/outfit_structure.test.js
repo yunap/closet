@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isOutfitStructurallyValid, locallyGateWholeWardrobeOutfits } from '../styling-engine/rules.js'
+import { isOutfitStructurallyValid, locallyGateWholeWardrobeOutfits, inferOutfitArchetype } from '../styling-engine/rules.js'
 
 test('isOutfitStructurallyValid - basic validation cases', () => {
   // 1. Valid separates: 1 top, 1 bottom, 1 shoe
@@ -105,3 +105,23 @@ test('locallyGateWholeWardrobeOutfits - filters invalid outfits', () => {
   assert.equal(result.outfits[0].label, 'Grounded Dress Edit: standard wear')
   assert.ok(result.rejected.some(r => r.reason === 'not a complete wardrobe outfit'))
 })
+
+test('inferOutfitArchetype restricts dress archetypes to outfits containing a dress', () => {
+  const candidatePieces = [
+    { id: 1, name: 'Cotton Dress', category: 'dress' },
+    { id: 2, name: 'Leather Boots', category: 'shoes' },
+    { id: 3, name: 'Cotton Blouse', category: 'top' },
+    { id: 4, name: 'Sage Pants', category: 'bottom' }
+  ]
+
+  // Separates outfit (no dress) -> must not match dress_grounded_sharp
+  const separatesOutfit = { pieceIds: [3, 4, 2] }
+  const arch1 = inferOutfitArchetype(separatesOutfit, candidatePieces)
+  assert.notEqual(arch1.archetypeId, 'dress_grounded_sharp', 'Separates outfits must not match dress archetype')
+
+  // Dress outfit (has dress) -> must match dress_grounded_sharp
+  const dressOutfit = { pieceIds: [1, 2] }
+  const arch2 = inferOutfitArchetype(dressOutfit, candidatePieces)
+  assert.equal(arch2.archetypeId, 'dress_grounded_sharp', 'Dress outfits must match dress archetype')
+})
+

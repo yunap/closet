@@ -522,6 +522,26 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.ok(secondCallText.includes('Recently shown garments'))
 })
 
+test('visual wardrobe composer endpoint propagates activity parameter to LLM prompt', async () => {
+  aiCalls = []
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'current season',
+    mood: 'modern bohemian',
+    activity: 'walking',
+    limit: 2,
+  })
+
+  assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.ok(visualComposerCalls.length >= 1)
+  
+  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  assert.ok(contentText.includes('Activity: walking'), 'The visual composer prompt must contain Activity: walking')
+  assert.ok(contentText.includes('All-day walking: avoid stilettos, high heels, pumps, and delicate sandals'), 'The visual composer prompt must contain walking guidance')
+})
+
 
 test('selected-piece board generation returns saved-garment visual boards', async () => {
   const json = await postJson('/api/ai/generate-outfit-boards', {
@@ -1300,7 +1320,7 @@ test('Agent OCCASION PROFILE prompt block and wardrobe coverage contract tests',
   const hikeCall = aiCalls.find(c => c.system.includes('personal visual stylist agent'))
   assert.ok(hikeCall, 'Should have styled agent call')
   const hikeUserMessage = hikeCall.messages[0].content
-  assert.ok(hikeUserMessage.includes('OCCASION PROFILE — Trail / Active Outdoor:'), 'Should contain OCCASION PROFILE header')
+  assert.ok(hikeUserMessage.includes('ACTIVITY PROFILE — Hiking / Outdoor active:'), 'Should contain ACTIVITY PROFILE header')
   assert.ok(hikeUserMessage.includes('Use sparingly and justify in watchFor if chosen:'), 'Should contain Use sparingly block')
   assert.ok(hikeUserMessage.includes('suede'), 'Should list suede in discouraged')
   assert.ok(hikeUserMessage.includes('boot'), 'Should list boots in discouraged')
@@ -1317,7 +1337,7 @@ test('Agent OCCASION PROFILE prompt block and wardrobe coverage contract tests',
   const casualCall = aiCalls.find(c => c.system.includes('personal visual stylist agent'))
   assert.ok(casualCall, 'Should have styled agent call')
   const casualUserMessage = casualCall.messages[0].content
-  assert.ok(!casualUserMessage.includes('OCCASION PROFILE'), 'Should NOT contain OCCASION PROFILE block for casual/empty mood')
+  assert.ok(!casualUserMessage.includes('OCCASION PROFILE') && !casualUserMessage.includes('ACTIVITY PROFILE'), 'Should NOT contain PROFILE block for casual/empty mood')
 
   // Test 2: Wardrobe coverage note for trail active outdoor (low tops/shoes vs ample)
   const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {

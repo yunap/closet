@@ -2,6 +2,7 @@ import { db, safeJsonParse } from '../db.js'
 import { autoStylingTrustDecision, buildWardrobePieceTruthText } from '../src/utils/wardrobeAiContext.js'
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
 import { resolveOccasionProfile } from './occasions.js'
+import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
 
 import {
   fabricWeight,
@@ -1152,8 +1153,11 @@ export function inferOutfitArchetype(outfit, candidatePieces = [], occasion = 'c
   const roles = inferWholeWardrobeOutfitRoles(pieces)
   const roleSet = new Set(roles)
   const hasRole = (role) => roleSet.has(role)
+  const hasDress = pieces.some(p => wardrobeCategoryGroup(p) === 'dress')
   let best = null
   for (const archetype of WHOLE_WARDROBE_OUTFIT_ARCHETYPES) {
+    if (archetype.id === 'dress_grounded_sharp' && !hasDress) continue
+    if (archetype.id !== 'dress_grounded_sharp' && hasDress) continue
     let score = occasionBiasForArchetype(archetype, occasion) + occasionScoreForOutfit(pieces, occasion)
     for (const role of archetype.preferredRoles || []) if (hasRole(role)) score += 8
     for (const role of archetype.avoidRoles || []) if (hasRole(role)) score -= 12
@@ -1315,6 +1319,42 @@ export function wholeWardrobePieceBucket(allPieces = [], options = {}) {
   return bucket
 }
 
+export function getMergedProfileRules(occasionProfile, activityProfile) {
+  const merged = {
+    prohibited_materials: [],
+    prohibited_materials_warm: [],
+    prohibited_footwear: [],
+    prohibited_footwear_summer: [],
+    prohibited_pieces: [],
+    discouraged_materials: [],
+    discouraged_materials_warm: [],
+    discouraged_footwear: [],
+    discouraged_footwear_summer: [],
+    discouraged_footwear_warm: [],
+    discouraged_pieces: [],
+    preferred_materials: [],
+    preferred_footwear: [],
+    required_footwear: []
+  }
+
+  const profiles = [occasionProfile, activityProfile].filter(Boolean)
+  for (const p of profiles) {
+    if (p.rules) {
+      for (const key of Object.keys(merged)) {
+        if (Array.isArray(p.rules[key])) {
+          merged[key].push(...p.rules[key])
+        }
+      }
+    }
+  }
+
+  for (const key of Object.keys(merged)) {
+    merged[key] = [...new Set(merged[key])]
+  }
+
+  return merged
+}
+
 export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   const { occasion = 'casual', explorationMode = 'moderate', weatherProfile = {} } = options
 
@@ -1344,9 +1384,30 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   }
 
   const occasionProfile = resolveOccasionProfile(occasion, options.mood || '')
+  const activityProfile = resolveActivityProfile({
+    activity: options.activity,
+    occasion,
+    mood: options.mood || '',
+    request: options.request || options.question || ''
+  })
+  const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
+
   const checkOccasion = occasionProfile ? occasionProfile.id : occasion
   const decision = autoStylingTrustDecision(piece, { occasion: checkOccasion, explorationMode })
   const reasons = decision.reasons ? [...decision.reasons] : []
+
+  if (activityProfile?.id === 'hiking') {
+    const permissions = Array.isArray(piece.occasion_permissions) ? piece.occasion_permissions : []
+    if (permissions.length) {
+      const normalizedPermissions = permissions.map(p => String(p || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+      const isAllowedForOutdoor = normalizedPermissions.some(p => 
+        p === 'outdoor' || p === 'outdoor active' || p === 'hiking'
+      )
+      if (!isAllowedForOutdoor) {
+        reasons.push(`not permitted for hiking activity`)
+      }
+    }
+  }
 
   if (weatherProfile.isHot) {
     const isHeavy = pieceFabricWeight(piece) === 'heavy'
@@ -1374,40 +1435,42 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     }
   }
 
-  if (occasionProfile && occasionProfile.rules) {
-    // Prohibited materials
-    const prohibitedMaterials = occasionProfile.rules.prohibited_materials ? [...occasionProfile.rules.prohibited_materials] : []
-    if (weatherProfile.isHot && occasionProfile.rules.prohibited_materials_warm) {
-      prohibitedMaterials.push(...occasionProfile.rules.prohibited_materials_warm)
+  // Evaluate merged rules
+  // Prohibited materials
+  const prohibitedMaterials = mergedRules.prohibited_materials ? [...mergedRules.prohibited_materials] : []
+  if (weatherProfile.isHot && mergedRules.prohibited_materials_warm) {
+    prohibitedMaterials.push(...mergedRules.prohibited_materials_warm)
+  }
+  for (const mat of prohibitedMaterials) {
+    if (pieceMatchesMaterial(piece, mat)) {
+      const source = occasionProfile?.rules?.prohibited_materials?.includes(mat) || (weatherProfile.isHot && occasionProfile?.rules?.prohibited_materials_warm?.includes(mat)) ? 'occasion' : 'activity'
+      reasons.push(`${source} profile: prohibited material (${mat})`)
+      break
     }
-    for (const mat of prohibitedMaterials) {
-      if (pieceMatchesMaterial(piece, mat)) {
-        reasons.push(`occasion profile: prohibited material (${mat})`)
+  }
+
+  // Prohibited footwear (if category is shoes)
+  if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
+    const prohibitedFootwear = mergedRules.prohibited_footwear ? [...mergedRules.prohibited_footwear] : []
+    if (weatherProfile.isHot && mergedRules.prohibited_footwear_summer) {
+      prohibitedFootwear.push(...mergedRules.prohibited_footwear_summer)
+    }
+    for (const fw of prohibitedFootwear) {
+      if (pieceMatchesFootwear(piece, fw)) {
+        const source = occasionProfile?.rules?.prohibited_footwear?.includes(fw) || (weatherProfile.isHot && occasionProfile?.rules?.prohibited_footwear_summer?.includes(fw)) ? 'occasion' : 'activity'
+        reasons.push(`${source} profile: prohibited footwear (${fw})`)
         break
       }
     }
+  }
 
-    // Prohibited footwear (if category is shoes)
-    if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
-      const prohibitedFootwear = occasionProfile.rules.prohibited_footwear ? [...occasionProfile.rules.prohibited_footwear] : []
-      if (weatherProfile.isHot && occasionProfile.rules.prohibited_footwear_summer) {
-        prohibitedFootwear.push(...occasionProfile.rules.prohibited_footwear_summer)
-      }
-      for (const fw of prohibitedFootwear) {
-        if (pieceMatchesFootwear(piece, fw)) {
-          reasons.push(`occasion profile: prohibited footwear (${fw})`)
-          break
-        }
-      }
-    }
-
-    // Prohibited pieces
-    const prohibitedPieces = occasionProfile.rules.prohibited_pieces ? [...occasionProfile.rules.prohibited_pieces] : []
-    for (const item of prohibitedPieces) {
-      if (pieceMatchesPieceName(piece, item)) {
-        reasons.push(`occasion profile: prohibited piece (${item})`)
-        break
-      }
+  // Prohibited pieces
+  const prohibitedPieces = mergedRules.prohibited_pieces ? [...mergedRules.prohibited_pieces] : []
+  for (const item of prohibitedPieces) {
+    if (pieceMatchesPieceName(piece, item)) {
+      const source = occasionProfile?.rules?.prohibited_pieces?.includes(item) ? 'occasion' : 'activity'
+      reasons.push(`${source} profile: prohibited piece (${item})`)
+      break
     }
   }
 
@@ -1478,7 +1541,8 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   maxImages = 90,                // hard ceiling, below Claude's 100-image limit
   selectedPieceId = null,
   includeAccessories = false,
-  mood = ''
+  mood = '',
+  activity = ''
 } = {}) {
   const roster = []
   const excluded = []
@@ -1749,69 +1813,78 @@ export function buildVisualComposerRoster(allowedPieces = [], {
 
     let occasionProfileBonus = 0
     const occasionProfile = resolveOccasionProfile(occasion, mood)
-    if (occasionProfile && occasionProfile.rules) {
-      const preferredMaterials = occasionProfile.rules.preferred_materials ? [...occasionProfile.rules.preferred_materials] : []
-      const preferredFootwear = occasionProfile.rules.preferred_footwear ? [...occasionProfile.rules.preferred_footwear] : []
-      const discouragedMaterials = occasionProfile.rules.discouraged_materials ? [...occasionProfile.rules.discouraged_materials] : []
-      if (weatherProfile && weatherProfile.isHot && occasionProfile.rules.discouraged_materials_warm) {
-        discouragedMaterials.push(...occasionProfile.rules.discouraged_materials_warm)
-      }
-      const discouragedFootwear = occasionProfile.rules.discouraged_footwear ? [...occasionProfile.rules.discouraged_footwear] : []
-      if (weatherProfile && weatherProfile.isHot && occasionProfile.rules.discouraged_footwear_summer) {
-        discouragedFootwear.push(...occasionProfile.rules.discouraged_footwear_summer)
-      }
-      if (weatherProfile && weatherProfile.isHot && occasionProfile.rules.discouraged_footwear_warm) {
-        discouragedFootwear.push(...occasionProfile.rules.discouraged_footwear_warm)
-      }
-      const discouragedPieces = occasionProfile.rules.discouraged_pieces ? [...occasionProfile.rules.discouraged_pieces] : []
+    const activityProfile = resolveActivityProfile({ activity, occasion, mood })
+    const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
 
-      // Preferred materials boost
-      for (const mat of preferredMaterials) {
-        if (pieceMatchesMaterial(p, mat)) {
-          occasionProfileBonus += 8
-          pushAdjustmentReason(p.id, `occasion profile: preferred material (${mat}) (+8)`)
+    const preferredMaterials = mergedRules.preferred_materials || []
+    const preferredFootwear = mergedRules.preferred_footwear || []
+    const discouragedMaterials = mergedRules.discouraged_materials ? [...mergedRules.discouraged_materials] : []
+    if (weatherProfile && weatherProfile.isHot && mergedRules.discouraged_materials_warm) {
+      discouragedMaterials.push(...mergedRules.discouraged_materials_warm)
+    }
+    const discouragedFootwear = mergedRules.discouraged_footwear ? [...mergedRules.discouraged_footwear] : []
+    if (weatherProfile && weatherProfile.isHot && mergedRules.discouraged_footwear_summer) {
+      discouragedFootwear.push(...mergedRules.discouraged_footwear_summer)
+    }
+    if (weatherProfile && weatherProfile.isHot && mergedRules.discouraged_footwear_warm) {
+      discouragedFootwear.push(...mergedRules.discouraged_footwear_warm)
+    }
+    const discouragedPieces = mergedRules.discouraged_pieces || []
+
+    // Preferred materials boost
+    for (const mat of preferredMaterials) {
+      if (pieceMatchesMaterial(p, mat)) {
+        const source = occasionProfile?.rules?.preferred_materials?.includes(mat) ? 'occasion' : 'activity'
+        occasionProfileBonus += 8
+        pushAdjustmentReason(p.id, `${source} profile: preferred material (${mat}) (+8)`)
+        break
+      }
+    }
+
+    // Preferred footwear boost
+    if (p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes') {
+      for (const fw of preferredFootwear) {
+        if (pieceMatchesFootwear(p, fw)) {
+          const source = occasionProfile?.rules?.preferred_footwear?.includes(fw) ? 'occasion' : 'activity'
+          occasionProfileBonus += 10
+          pushAdjustmentReason(p.id, `${source} profile: preferred footwear (${fw}) (+10)`)
           break
         }
       }
+    }
 
-      // Preferred footwear boost
-      if (p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes') {
-        for (const fw of preferredFootwear) {
-          if (pieceMatchesFootwear(p, fw)) {
-            occasionProfileBonus += 10
-            pushAdjustmentReason(p.id, `occasion profile: preferred footwear (${fw}) (+10)`)
-            break
-          }
-        }
+    // Discouraged materials penalty
+    for (const mat of discouragedMaterials) {
+      if (pieceMatchesMaterial(p, mat)) {
+        const source = occasionProfile?.rules?.discouraged_materials?.includes(mat) || (weatherProfile && weatherProfile.isHot && occasionProfile?.rules?.discouraged_materials_warm?.includes(mat)) ? 'occasion' : 'activity'
+        occasionProfileBonus -= 8
+        pushAdjustmentReason(p.id, `${source} profile: discouraged material (${mat}) (-8)`)
+        break
       }
+    }
 
-      // Discouraged materials penalty
-      for (const mat of discouragedMaterials) {
-        if (pieceMatchesMaterial(p, mat)) {
-          occasionProfileBonus -= 8
-          pushAdjustmentReason(p.id, `occasion profile: discouraged material (${mat}) (-8)`)
-          break
-        }
-      }
-
-      // Discouraged footwear penalty
-      if (p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes') {
-        for (const fw of discouragedFootwear) {
-          if (pieceMatchesFootwear(p, fw)) {
-            occasionProfileBonus -= 10
-            pushAdjustmentReason(p.id, `occasion profile: discouraged footwear (${fw}) (-10)`)
-            break
-          }
-        }
-      }
-
-      // Discouraged pieces penalty
-      for (const item of discouragedPieces) {
-        if (pieceMatchesPieceName(p, item)) {
+    // Discouraged footwear penalty
+    if (p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes') {
+      for (const fw of discouragedFootwear) {
+        if (pieceMatchesFootwear(p, fw)) {
+          const source = occasionProfile?.rules?.discouraged_footwear?.includes(fw) || 
+                         (weatherProfile && weatherProfile.isHot && occasionProfile?.rules?.discouraged_footwear_summer?.includes(fw)) ||
+                         (weatherProfile && weatherProfile.isHot && occasionProfile?.rules?.discouraged_footwear_warm?.includes(fw)) 
+                         ? 'occasion' : 'activity'
           occasionProfileBonus -= 10
-          pushAdjustmentReason(p.id, `occasion profile: discouraged piece (${item}) (-10)`)
+          pushAdjustmentReason(p.id, `${source} profile: discouraged footwear (${fw}) (-10)`)
           break
         }
+      }
+    }
+
+    // Discouraged pieces penalty
+    for (const item of discouragedPieces) {
+      if (pieceMatchesPieceName(p, item)) {
+        const source = occasionProfile?.rules?.discouraged_pieces?.includes(item) ? 'occasion' : 'activity'
+        occasionProfileBonus -= 10
+        pushAdjustmentReason(p.id, `${source} profile: discouraged piece (${item}) (-10)`)
+        break
       }
     }
     
@@ -2243,67 +2316,81 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
     }
   }
 
-  // Occasion profile boosts/penalties
+  // Occasion/activity profile boosts/penalties
   const occasionProfile = resolveOccasionProfile(occasion, options.mood || '')
-  if (occasionProfile && occasionProfile.rules) {
-    const preferredMaterials = occasionProfile.rules.preferred_materials ? [...occasionProfile.rules.preferred_materials] : []
-    const preferredFootwear = occasionProfile.rules.preferred_footwear ? [...occasionProfile.rules.preferred_footwear] : []
-    const discouragedMaterials = occasionProfile.rules.discouraged_materials ? [...occasionProfile.rules.discouraged_materials] : []
-    if (weather.isHot && occasionProfile.rules.discouraged_materials_warm) {
-      discouragedMaterials.push(...occasionProfile.rules.discouraged_materials_warm)
-    }
-    const discouragedFootwear = occasionProfile.rules.discouraged_footwear ? [...occasionProfile.rules.discouraged_footwear] : []
-    if (weather.isHot && occasionProfile.rules.discouraged_footwear_summer) {
-      discouragedFootwear.push(...occasionProfile.rules.discouraged_footwear_summer)
-    }
-    if (weather.isHot && occasionProfile.rules.discouraged_footwear_warm) {
-      discouragedFootwear.push(...occasionProfile.rules.discouraged_footwear_warm)
-    }
-    const discouragedPieces = occasionProfile.rules.discouraged_pieces ? [...occasionProfile.rules.discouraged_pieces] : []
+  const activityProfile = resolveActivityProfile({
+    activity: options.activity,
+    occasion,
+    mood: options.mood || '',
+    request: options.request || options.question || ''
+  })
+  const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
 
-    for (const piece of pieces) {
-      // Preferred materials boost
-      for (const mat of preferredMaterials) {
-        if (pieceMatchesMaterial(piece, mat)) {
-          add(8, `occasion profile: preferred material (${mat})`)
+  const preferredMaterials = mergedRules.preferred_materials || []
+  const preferredFootwear = mergedRules.preferred_footwear || []
+  const discouragedMaterials = mergedRules.discouraged_materials ? [...mergedRules.discouraged_materials] : []
+  if (weather.isHot && mergedRules.discouraged_materials_warm) {
+    discouragedMaterials.push(...mergedRules.discouraged_materials_warm)
+  }
+  const discouragedFootwear = mergedRules.discouraged_footwear ? [...mergedRules.discouraged_footwear] : []
+  if (weather.isHot && mergedRules.discouraged_footwear_summer) {
+    discouragedFootwear.push(...mergedRules.discouraged_footwear_summer)
+  }
+  if (weather.isHot && mergedRules.discouraged_footwear_warm) {
+    discouragedFootwear.push(...mergedRules.discouraged_footwear_warm)
+  }
+  const discouragedPieces = mergedRules.discouraged_pieces || []
+
+  for (const piece of pieces) {
+    // Preferred materials boost
+    for (const mat of preferredMaterials) {
+      if (pieceMatchesMaterial(piece, mat)) {
+        const source = occasionProfile?.rules?.preferred_materials?.includes(mat) ? 'occasion' : 'activity'
+        add(8, `${source} profile: preferred material (${mat})`)
+        break
+      }
+    }
+
+    // Preferred footwear boost (if category is shoes)
+    if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
+      for (const fw of preferredFootwear) {
+        if (pieceMatchesFootwear(piece, fw)) {
+          const source = occasionProfile?.rules?.preferred_footwear?.includes(fw) ? 'occasion' : 'activity'
+          add(10, `${source} profile: preferred footwear (${fw})`)
           break
         }
       }
+    }
 
-      // Preferred footwear boost (if category is shoes)
-      if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
-        for (const fw of preferredFootwear) {
-          if (pieceMatchesFootwear(piece, fw)) {
-            add(10, `occasion profile: preferred footwear (${fw})`)
-            break
-          }
-        }
+    // Discouraged materials penalty
+    for (const mat of discouragedMaterials) {
+      if (pieceMatchesMaterial(piece, mat)) {
+        const source = occasionProfile?.rules?.discouraged_materials?.includes(mat) || (weather.isHot && occasionProfile?.rules?.discouraged_materials_warm?.includes(mat)) ? 'occasion' : 'activity'
+        add(-8, `${source} profile: discouraged material (${mat})`)
+        break
       }
+    }
 
-      // Discouraged materials penalty
-      for (const mat of discouragedMaterials) {
-        if (pieceMatchesMaterial(piece, mat)) {
-          add(-8, `occasion profile: discouraged material (${mat})`)
+    // Discouraged footwear penalty (if category is shoes)
+    if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
+      for (const fw of discouragedFootwear) {
+        if (pieceMatchesFootwear(piece, fw)) {
+          const source = occasionProfile?.rules?.discouraged_footwear?.includes(fw) || 
+                         (weather.isHot && occasionProfile?.rules?.discouraged_footwear_summer?.includes(fw)) ||
+                         (weather.isHot && occasionProfile?.rules?.discouraged_footwear_warm?.includes(fw)) 
+                         ? 'occasion' : 'activity'
+          add(-10, `${source} profile: discouraged footwear (${fw})`)
           break
         }
       }
+    }
 
-      // Discouraged footwear penalty (if category is shoes)
-      if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
-        for (const fw of discouragedFootwear) {
-          if (pieceMatchesFootwear(piece, fw)) {
-            add(-10, `occasion profile: discouraged footwear (${fw})`)
-            break
-          }
-        }
-      }
-
-      // Discouraged pieces penalty
-      for (const item of discouragedPieces) {
-        if (pieceMatchesPieceName(piece, item)) {
-          add(-10, `occasion profile: discouraged piece (${item})`)
-          break
-        }
+    // Discouraged pieces penalty
+    for (const item of discouragedPieces) {
+      if (pieceMatchesPieceName(piece, item)) {
+        const source = occasionProfile?.rules?.discouraged_pieces?.includes(item) ? 'occasion' : 'activity'
+        add(-10, `${source} profile: discouraged piece (${item})`)
+        break
       }
     }
   }
@@ -2923,22 +3010,39 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
   
   // Footwear gate & repair
   const occasionProfile = resolveOccasionProfile(occasion, mood)
-  if (occasionProfile && occasionProfile.rules && occasionProfile.rules.required_footwear) {
+  const activityProfile = resolveActivityProfile({
+    activity: options.activity,
+    occasion,
+    mood,
+    request: options.request || options.question || ''
+  })
+  const requiredFootwear = [
+    ...(occasionProfile?.rules?.required_footwear || []),
+    ...(activityProfile?.rules?.required_footwear || [])
+  ]
+
+  if (requiredFootwear.length > 0) {
     const pieces = wholeWardrobeFullPieces(repaired, candidatePieces)
     const currentShoe = pieces.find(p => p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes')
     if (currentShoe) {
-      const isTrailRated = occasionProfile.rules.required_footwear.some(fw => pieceMatchesFootwear(currentShoe, fw))
+      const isTrailRated = requiredFootwear.some(fw => pieceMatchesFootwear(currentShoe, fw))
       if (!isTrailRated) {
         const weatherProfile = options.weatherProfile || weatherProfileFromContext({ mood, season: options.season })
-        const { allowedPieces } = filterWholeWardrobePiecesForGeneration(candidatePieces, { occasion, weatherProfile, mood })
+        const { allowedPieces } = filterWholeWardrobePiecesForGeneration(candidatePieces, { occasion, weatherProfile, mood, activity: options.activity })
         
         const getShoeRelevance = (shoe) => {
           let score = pieceOccasionScore(shoe, occasion)
-          const preferredFootwear = occasionProfile.rules.preferred_footwear || []
+          const preferredFootwear = [
+            ...(occasionProfile?.rules?.preferred_footwear || []),
+            ...(activityProfile?.rules?.preferred_footwear || [])
+          ]
           const discouragedFootwear = [
-            ...(occasionProfile.rules.discouraged_footwear || []),
-            ...(weatherProfile.isHot && occasionProfile.rules.discouraged_footwear_summer ? occasionProfile.rules.discouraged_footwear_summer : []),
-            ...(weatherProfile.isHot && occasionProfile.rules.discouraged_footwear_warm ? occasionProfile.rules.discouraged_footwear_warm : [])
+            ...(occasionProfile?.rules?.discouraged_footwear || []),
+            ...(activityProfile?.rules?.discouraged_footwear || []),
+            ...(weatherProfile.isHot && occasionProfile?.rules?.discouraged_footwear_summer ? occasionProfile.rules.discouraged_footwear_summer : []),
+            ...(weatherProfile.isHot && activityProfile?.rules?.discouraged_footwear_summer ? activityProfile.rules.discouraged_footwear_summer : []),
+            ...(weatherProfile.isHot && occasionProfile?.rules?.discouraged_footwear_warm ? occasionProfile.rules.discouraged_footwear_warm : []),
+            ...(weatherProfile.isHot && activityProfile?.rules?.discouraged_footwear_warm ? activityProfile.rules.discouraged_footwear_warm : [])
           ]
           for (const fw of preferredFootwear) {
             if (pieceMatchesFootwear(shoe, fw)) {
@@ -2952,12 +3056,14 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
               break
             }
           }
-          if (occasionProfile.rules.discouraged_materials) {
-            for (const mat of occasionProfile.rules.discouraged_materials) {
-              if (pieceMatchesMaterial(shoe, mat)) {
-                score -= 8
-                break
-              }
+          const discouragedMaterials = [
+            ...(occasionProfile?.rules?.discouraged_materials || []),
+            ...(activityProfile?.rules?.discouraged_materials || [])
+          ]
+          for (const mat of discouragedMaterials) {
+            if (pieceMatchesMaterial(shoe, mat)) {
+              score -= 8
+              break
             }
           }
           return score
@@ -2965,7 +3071,7 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
         
         const candidateShoes = allowedPieces.filter(p => {
           if (p.category !== 'shoes' && wardrobeCategoryGroup(p) !== 'shoes') return false
-          return occasionProfile.rules.required_footwear.some(fw => pieceMatchesFootwear(p, fw))
+          return requiredFootwear.some(fw => pieceMatchesFootwear(p, fw))
         })
         
         if (candidateShoes.length > 0) {
@@ -3268,12 +3374,12 @@ export function normalizeWholeWardrobeStrengths(outfits = []) {
   }))
 }
 
-export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes = true, requireDress = false, requireNonGraphicTop = false, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null } = {}) {
+export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes = true, requireDress = false, requireNonGraphicTop = false, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null, activity = '' } = {}) {
   const seen = new Set()
   const accepted = []
   const rejected = []
   for (const outfit of outfits) {
-    const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood, { season, weatherProfile })
+    const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood, { season, weatherProfile, activity })
     const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
     const key = (repaired.pieceIds || pieces.map(p => p.id)).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')

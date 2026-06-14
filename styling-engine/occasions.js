@@ -6,29 +6,9 @@
 
 export const OCCASION_PROFILES = [
   {
-    id: "outdoor_active",
-    label: "Trail / Active Outdoor",
-    keywords: ["hike", "hiking", "trail"],
-    moodKeywords: ["hike", "hiking", "trail"],
-    vibe: "practical, comfortable, highly durable, movement-focused",
-    rules: {
-      prohibited_materials: [],
-      prohibited_footwear: ["heel", "heels", "wedge", "wedges", "dress shoe", "dress shoes", "flip-flop", "flip-flops"],
-      prohibited_pieces: [],
-      discouraged_materials: ["silk", "satin", "chiffon", "lace", "suede"], // ratified: Yuna 2026-06-12
-      discouraged_footwear: ["delicate sandal", "delicate sandals", "mule", "mules", "sandal", "sandals"],
-      discouraged_footwear_warm: ["ankle boots", "ankle boot", "boots", "boot"], // ratified: Yuna 2026-06-12
-      discouraged_pieces: ["dress", "dresses", "skirt", "skirts", "blouse", "blouses", "dressy top", "dressy tops", "dressy shorts"], // ratified: Yuna 2026-06-12 (rev — see ratification doc)
-      preferred_materials: ["cotton", "knit", "knitwear", "denim", "utility", "canvas"],
-      preferred_footwear: ["sneakers", "walking flats", "flat rugged boots"],
-      required_footwear: ["sneaker", "sneakers", "athletic", "trail", "rugged", "lace-up", "walking flat", "walking flats"] // ratified: Yuna 2026-06-12
-    }
-  },
-  {
     id: "outdoor_daytime_social",
     label: "Outdoor Daytime Social / Festivals",
     keywords: ["festival", "crafts", "wine festival", "market", "fair", "picnic", "outdoor cafe"],
-    moodKeywords: ["festival", "wine festival", "picnic", "fair"],
     vibe: "relaxed, creative, textured, airy, intentional",
     rules: {
       discouraged_materials_warm: ["cashmere", "heavy wool", "dense knits", "thick corduroy"],
@@ -41,7 +21,6 @@ export const OCCASION_PROFILES = [
     id: "city_smart_casual",
     label: "City Smart Casual / Everyday",
     keywords: ["city", "museum", "shopping", "dinner", "brunch", "office", "everyday", "work", "walk", "walking", "city walk", "street walk"],
-    moodKeywords: ["museum", "shopping", "brunch", "office"],
     vibe: "polished, comfortable, walk-friendly, clean columns",
     rules: {
       discouraged_footwear: ["athletic running shoe", "athletic running shoes"],
@@ -53,7 +32,6 @@ export const OCCASION_PROFILES = [
     id: "evening_social",
     label: "Evening Social / Dining",
     keywords: ["evening", "dinner date", "wine bar", "theater", "evening drinks", "night out"],
-    moodKeywords: ["evening", "dinner date", "wine bar", "theater", "evening drinks", "night out"],
     vibe: "sharp, artistic, low-key drama, deep color palettes, rich textures",
     rules: {
       preferred_materials: ["silk", "satin", "textured knits", "fine wool"],
@@ -64,7 +42,6 @@ export const OCCASION_PROFILES = [
     id: "home_loungewear",
     label: "Home / Loungewear",
     keywords: ["home", "lounge", "sleep", "lazy day", "bed"],
-    moodKeywords: ["lounge", "lazy day", "sleep"],
     vibe: "comfort-first, soft, unstructured",
     rules: {
       discouraged_footwear: ["heeled shoe", "heeled shoes"],
@@ -77,7 +54,6 @@ export const OCCASION_PROFILES = [
 
 export function resolveOccasionProfile(occasion = '', mood = '') {
   const normOccasion = String(occasion || '').toLowerCase().trim()
-  const normMood = String(mood || '').toLowerCase().trim()
   
   // 1. Direct ID match check
   const normOccasionId = normOccasion.replace(/[-\s]+/g, '_')
@@ -96,20 +72,6 @@ export function resolveOccasionProfile(occasion = '', mood = '') {
       }
     }
   }
-
-  // 3. Mood check (using subset moodKeywords)
-  if (normMood) {
-    for (const profile of OCCASION_PROFILES) {
-      const moodKeywords = profile.moodKeywords || []
-      for (const keyword of moodKeywords) {
-        const cleanKeyword = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
-        const regex = new RegExp(`\\b${cleanKeyword}\\b`, 'i')
-        if (regex.test(normMood)) {
-          return profile
-        }
-      }
-    }
-  }
   
   return null
 }
@@ -119,7 +81,6 @@ export function runOccasionStartupAssertions() {
   for (const profile of OCCASION_PROFILES) {
     const lists = [
       profile.keywords,
-      profile.moodKeywords,
       profile.rules?.prohibited_materials,
       profile.rules?.prohibited_materials_warm,
       profile.rules?.prohibited_footwear,

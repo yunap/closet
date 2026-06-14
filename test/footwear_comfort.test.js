@@ -84,8 +84,65 @@ async function seedWardrobe() {
   }
 }
 
+function mockAiHandler({ system, messages }) {
+  const text = String(system || '')
+  
+  if (text.includes('Outfit Composer') || text.includes('Outfit Gate') || text.includes('style_selected_item')) {
+    return {
+      outfits: [{
+        label: 'Mock selected-piece outfit',
+        strength: 'signature',
+        dominantDirection: 'selected garment with quiet support',
+        silhouette: 'selected garment with controlled support pieces',
+        bestFor: 'evening',
+        pieceIds: [seeded.bottom, seeded.top, seeded.stiletto],
+        pieces: [
+          { id: seeded.bottom, name: 'blue jeans', category: 'bottom' },
+          { id: seeded.top, name: 'black tee', category: 'top' },
+          { id: seeded.stiletto, name: 'pointed stiletto heels', category: 'shoes' }
+        ],
+        reason: 'The selected garment is supported by quiet pieces.',
+        watchFor: 'Keep grounding visible.',
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: 'mock selected-piece learning',
+    }
+  }
+
+  if (text.includes('personal visual stylist agent') || text.includes('whole-wardrobe outfit composer') || text.includes("You are Yuna's personal stylist. You are looking at photos")) {
+    return {
+      outfits: [{
+        label: 'Mock whole-wardrobe outfit',
+        strength: 'signature',
+        dominantDirection: 'structure with shoe',
+        silhouette: 'controlled top over lower line',
+        bestFor: 'evening',
+        pieceIds: [seeded.top, seeded.bottom, seeded.stiletto],
+        pieces: [
+          { id: seeded.top, name: 'black tee', category: 'top' },
+          { id: seeded.bottom, name: 'blue jeans', category: 'bottom' },
+          { id: seeded.stiletto, name: 'pointed stiletto heels', category: 'shoes' }
+        ],
+        reason: 'Styling mock reason.',
+        watchFor: 'Keep the shoe visible.',
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: 'mock whole-wardrobe learning',
+    }
+  }
+
+  return 'Mock stylist answer with generated outfit context.'
+}
+
 beforeEach(async () => {
   await seedWardrobe()
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = mockAiHandler
+})
+
+afterEach(() => {
+  delete globalThis.__WARDROBE_AI_TEST_HANDLER__
 })
 
 test('1. Intent detection resolves comfort constraint on walking/feet keywords', () => {
@@ -193,4 +250,87 @@ test('4. occasions.js remains completely unmodified', () => {
     preferred_materials: ["tailored linen", "structured denim", "cardigans", "light outerwear"],
     preferred_footwear: ["loafers", "slip-ons", "low block heels", "clean leather sneakers"]
   }, 'city_smart_casual rules must remain untouched')
+})
+
+test('5. walking is completely de-conflated and removed from occasion lists in StylistChat.jsx', () => {
+  const filePath = path.join(import.meta.dirname || 'src/components', '../src/components/StylistChat.jsx')
+  const content = fs.readFileSync(filePath, 'utf8')
+  
+  // Assert OCCASION_OPTIONS exists and does not contain walking
+  const occasionOptionsMatch = content.match(/const\s+OCCASION_OPTIONS\s*=\s*\[([\s\S]*?)\]/)
+  assert.ok(occasionOptionsMatch, 'OCCASION_OPTIONS must be defined in StylistChat.jsx')
+  const optionsText = occasionOptionsMatch[1]
+  assert.ok(!optionsText.includes('walking'), 'OCCASION_OPTIONS must not contain walking')
+
+  // Assert there is no other hardcoded occasion list containing 'walking'
+  const hardcodedSelects = content.match(/<select[^>]*>[\s\S]*?<option[^>]*value="walking"[^>]*>[\s\S]*?<\/select>/)
+  assert.equal(hardcodedSelects, null, 'No <select> element should contain walking as a hardcoded option')
+})
+
+test('6. Structured activity precedence: activity="walking" triggers constraint, activity="none" acts as no-op', () => {
+  // Case A: activity = 'walking', others empty -> matches
+  const resWalk = resolveComfortFootwearConstraint({ activity: 'walking' })
+  assert.ok(resWalk)
+  assert.equal(resWalk.reason, 'all-day walking comfort')
+
+  // Case B: activity = 'none', others empty -> null
+  const resNone = resolveComfortFootwearConstraint({ activity: 'none' })
+  assert.equal(resNone, null)
+
+  // Case C: activity = 'none', but request has keywords -> fallback still matches
+  const resFallback = resolveComfortFootwearConstraint({ activity: 'none', request: 'lots of walking' })
+  assert.ok(resFallback)
+  assert.equal(resFallback.reason, 'all-day walking comfort')
+})
+
+test('7. Plumbing: activity parameter propagates through the generateOutfitsForPieceInternal pipeline', async () => {
+  const result = await generateOutfitsForPieceInternal({
+    pieceId: seeded.stiletto,
+    occasion: 'evening',
+    season: 'current season',
+    activity: 'walking'
+  })
+
+  assert.ok(result.structuredOutfits.length > 0)
+  for (const outfit of result.structuredOutfits) {
+    const shoe = outfit.pieces.find(p => p.category === 'shoes')
+    assert.notEqual(Number(shoe.id), Number(seeded.stiletto), 'Stilettos must be swapped out when activity is walking')
+    assert.ok(outfit.watchFor.includes('swapped for all-day walking comfort'))
+  }
+})
+
+test('8. Plumbing: generateWholeWardrobeOutfitsInternal propagates activity parameter', async () => {
+  let capturedSystem = null
+  let capturedMessages = null
+  const defaultHandler = globalThis.__WARDROBE_AI_TEST_HANDLER__
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = (args) => {
+    capturedSystem = args.system
+    capturedMessages = args.messages
+    return defaultHandler(args)
+  }
+
+  try {
+    const result = await generateWholeWardrobeOutfitsInternal({
+      occasion: 'evening',
+      season: 'current season',
+      activity: 'walking',
+      limit: 2
+    })
+
+    assert.ok(result.structuredOutfits.length > 0)
+    for (const outfit of result.structuredOutfits) {
+      const shoe = outfit.pieces.find(p => p.category === 'shoes')
+      if (shoe) {
+        assert.notEqual(Number(shoe.id), Number(seeded.stiletto), 'Stilettos must be swapped out when activity is walking')
+        assert.ok(outfit.watchFor.includes('swapped for all-day walking comfort'))
+      }
+    }
+
+    assert.ok(capturedMessages, 'AI must have been called')
+    const userText = capturedMessages[0].content
+    assert.ok(userText.includes('Activity: walking'), 'The prompt must contain Activity: walking')
+    assert.ok(userText.includes('All-day walking: avoid stilettos, high heels, pumps, and delicate sandals; prefer low block heels, loafers, flats, sneakers.'), 'The prompt must contain walking guidance')
+  } finally {
+    globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
+  }
 })

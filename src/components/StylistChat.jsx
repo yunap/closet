@@ -30,6 +30,22 @@ const OUTFIT_FEEDBACK_LABELS = [
   ['not_me', 'Not for me'],
 ]
 
+// Occasion = social register only (activities removed)
+const OCCASION_OPTIONS = [
+  ['casual', 'Casual'], ['city', 'City'], ['smart casual', 'Smart casual'],
+  ['evening', 'Evening'], ['gallery / art event', 'Gallery / art event'],
+  ['travel', 'Travel'],            // oddball, intentionally left for now
+  ['concert', 'Concert'],
+]
+
+// Activity = physical-demand axis, optional, orthogonal to occasion.
+// Only values with real enforcement appear here.
+const ACTIVITY_OPTIONS = [
+  ['none', 'No special activity'],
+  ['walking', 'Lots of walking'],
+  ['hiking', 'Hiking / Outdoor active'],
+]
+
 const formatMs = (ms) => {
   const n = Number(ms)
   if (!Number.isFinite(n)) return null
@@ -412,11 +428,14 @@ export default function AskClaude({
   const [generateSeason, setGenerateSeason] = useState('current season')
   const [generateMission, setGenerateMission] = useState('mix')
   const [generateMood, setGenerateMood] = useState('')
+  const [generateActivity, setGenerateActivity] = useState('none')
   const [missionMenuOpen, setMissionMenuOpen] = useState(false)
+  const [activityMenuOpen, setActivityMenuOpen] = useState(false)
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
   const [wardrobeOutfitMission, setWardrobeOutfitMission] = useState('mix')
+  const [wardrobeOutfitActivity, setWardrobeOutfitActivity] = useState('none')
   const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
   const [recentMemoryResetting, setRecentMemoryResetting] = useState(false)
   const [savedIndices, setSavedIndices] = useState(new Set())
@@ -2068,7 +2087,9 @@ export default function AskClaude({
     const season = wardrobeOutfitSeason || 'current season'
     const mood = wardrobeOutfitMood || 'artistic minimalist'
     const mission = wardrobeOutfitMission || 'mix'
-    const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, ${mood}` : ''}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
+    const activity = wardrobeOutfitActivity || 'none'
+    const activityLabel = activity !== 'none' ? `, ${ACTIVITY_OPTIONS.find(opt => opt[0] === activity)?.[1].toLowerCase()}` : ''
+    const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, ${mood}` : ''}${activityLabel}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
 
     // Automatically spin up a dedicated thread for this wardrobe generation
     const newId = 'thread_' + Date.now()
@@ -2111,7 +2132,7 @@ export default function AskClaude({
       const res = await fetch('/api/ai/generate-wardrobe-outfits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ occasion, season, mood, mission, limit: 5 })
+        body: JSON.stringify({ occasion, season, mood, mission, limit: 5, activity })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate wardrobe outfits')
@@ -2126,7 +2147,7 @@ export default function AskClaude({
         wholeWardrobe: true,
         textOnly: true,
         debug: data.debug || null,
-        queryOptions: { occasion, season, mood, mission },
+        queryOptions: { occasion, season, mood, mission, activity },
       }])
       setThreadMemory({
         type: 'generated_outfits',
@@ -2152,7 +2173,9 @@ export default function AskClaude({
     const occasion = wardrobeOutfitOccasion || 'casual'
     const season = wardrobeOutfitSeason || 'current season'
     const mood = wardrobeOutfitMood || ''
-    const userText = `Use my wardrobe to compose outfits (visual composer) for ${occasion}, ${season}${mood ? `, ${mood}` : ''}.`
+    const activity = wardrobeOutfitActivity || 'none'
+    const activityLabel = activity !== 'none' ? `, ${ACTIVITY_OPTIONS.find(opt => opt[0] === activity)?.[1].toLowerCase()}` : ''
+    const userText = `Use my wardrobe to compose outfits (visual composer) for ${occasion}, ${season}${mood ? `, ${mood}` : ''}${activityLabel}.`
 
     // Automatically spin up a dedicated thread for this wardrobe generation
     const newId = 'thread_' + Date.now()
@@ -2195,7 +2218,7 @@ export default function AskClaude({
       const res = await fetch('/api/ai/generate-wardrobe-outfits-visual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ occasion, season, mood, limit: 5 })
+        body: JSON.stringify({ occasion, season, mood, limit: 5, activity })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate wardrobe outfits')
@@ -2211,7 +2234,7 @@ export default function AskClaude({
         source: 'visual_composer',
         textOnly: true,
         debug: data.debug || null,
-        queryOptions: { occasion, season, mood },
+        queryOptions: { occasion, season, mood, activity },
       }])
       setThreadMemory({
         type: 'generated_outfits',
@@ -2272,6 +2295,7 @@ export default function AskClaude({
     const effectiveGenerateSeason = overrides.generateSeason ?? generateSeason
     const effectiveGenerateMission = overrides.generateMission ?? generateMission
     const effectiveGenerateMood = overrides.generateMood ?? generateMood
+    const effectiveGenerateActivity = overrides.generateActivity ?? generateActivity
     const editorialRequestPattern = /suggest ideal|ideal addition|ideal new|new pieces|completion|completions|missing-piece|missing piece|not.*wardrobe|beyond my wardrobe|ignore my wardrobe|do not use my wardrobe|don't use my wardrobe|dont use my wardrobe|selected garment only|new item/i
     const typedEditorialRequest = editorialRequestPattern.test(q)
     const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (effectiveEditorialVisualMode || typedEditorialRequest))
@@ -2420,7 +2444,7 @@ export default function AskClaude({
         replyMode = 'ideal_styling_directions'
 
       } else if (pieceToSend && shouldGenerateOutfits) {
-        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot }) })
+        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot, activity: effectiveGenerateActivity }) })
         const data = await res.json()
         replyText = data.feedback || data.error || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null
@@ -2576,6 +2600,7 @@ export default function AskClaude({
             season: data.structuredOutfitsSeason || 'current season',
             mood: data.structuredOutfitsMood || '',
             mission: data.structuredOutfitsMission || 'mix',
+            activity: data.structuredOutfitsActivity || 'none',
           }
           if (source === 'whole_wardrobe') {
             replyWholeWardrobe = true
@@ -2619,6 +2644,7 @@ export default function AskClaude({
             threadContext,
             activeContext,
             ...currentChatDateContext(),
+            activity: activeContext?.type === 'piece' ? generateActivity : wardrobeOutfitActivity
           })
         })
         const data = await res.json()
@@ -2636,6 +2662,7 @@ export default function AskClaude({
             season: data.structuredOutfitsSeason || 'current season',
             mood: data.structuredOutfitsMood || '',
             mission: data.structuredOutfitsMission || 'mix',
+            activity: data.structuredOutfitsActivity || 'none',
           }
           if (source === 'whole_wardrobe') {
             replyWholeWardrobe = true
@@ -2666,6 +2693,7 @@ export default function AskClaude({
           includeMissingPieces: effectiveIncludeMissingPieces,
           mission: effectiveGenerateMission,
           mood: effectiveGenerateMood,
+          activity: effectiveGenerateActivity,
         } : null)
       }])
       addToHistory('assistant', replyText)
@@ -3008,15 +3036,14 @@ export default function AskClaude({
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
             <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-              <option value="casual">Casual</option>
-              <option value="city">City</option>
-              <option value="smart casual">Smart casual</option>
-              <option value="evening">Evening</option>
-              <option value="gallery / art event">Gallery / art event</option>
-              <option value="travel">Travel</option>
-              <option value="walking">Walking</option>
-              <option value="outdoor active">Outdoor active</option>
-              <option value="concert">Concert</option>
+              {OCCASION_OPTIONS.map(([val, label]) => (
+                <option key={val} value={val}>{label}</option>
+              ))}
+            </select>
+            <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+              {ACTIVITY_OPTIONS.map(([val, label]) => (
+                <option key={val} value={val}>{label}</option>
+              ))}
             </select>
             <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
               <option value="current season">Current season</option>
@@ -3024,6 +3051,8 @@ export default function AskClaude({
               <option value="summer">Summer</option>
               <option value="fall">Fall</option>
               <option value="winter">Winter</option>
+              <option value="hot weather">Very hot weather</option>
+              <option value="cold weather">Very cold weather</option>
             </select>
             <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
               <option value="mix">Mix of missions</option>
@@ -3034,7 +3063,7 @@ export default function AskClaude({
               <option value="unexpected_pairing">Unexpected Pairing</option>
               <option value="soft_architecture">Soft Architecture</option>
             </select>
-            <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
+            <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood (e.g. minimalist, moody, soft)" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
           </div>
           {recentMemoryStatus && (
             <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
@@ -3125,15 +3154,14 @@ export default function AskClaude({
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
                   <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                    <option value="casual">Casual</option>
-                    <option value="city">City</option>
-                    <option value="smart casual">Smart casual</option>
-                    <option value="evening">Evening</option>
-                    <option value="gallery / art event">Gallery / art event</option>
-                    <option value="travel">Travel</option>
-                    <option value="walking">Walking</option>
-                    <option value="outdoor active">Outdoor active</option>
-                    <option value="concert">Concert</option>
+                    {OCCASION_OPTIONS.map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
+                  </select>
+                  <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
+                    {ACTIVITY_OPTIONS.map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
                   </select>
                   <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
                     <option value="current season">Current season</option>
@@ -3141,6 +3169,8 @@ export default function AskClaude({
                     <option value="summer">Summer</option>
                     <option value="fall">Fall</option>
                     <option value="winter">Winter</option>
+                    <option value="hot weather">Very hot weather</option>
+                    <option value="cold weather">Very cold weather</option>
                   </select>
                   <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
                     <option value="mix">Mix of missions</option>
@@ -3151,7 +3181,7 @@ export default function AskClaude({
                     <option value="unexpected_pairing">Unexpected Pairing</option>
                     <option value="soft_architecture">Soft Architecture</option>
                   </select>
-                  <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Mood" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
+                  <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood (e.g. minimalist, moody, soft)" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
                 </div>
                 {recentMemoryStatus && (
                   <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
@@ -3231,6 +3261,11 @@ export default function AskClaude({
                           {m.queryOptions.mood && m.queryOptions.mood !== 'artistic minimalist' && (
                             <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 3 }} title="Stylist mood/notes">
                               💬 "{m.queryOptions.mood}"
+                            </span>
+                          )}
+                          {m.queryOptions.activity && m.queryOptions.activity !== 'none' && (
+                            <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                              👟 {ACTIVITY_OPTIONS.find(opt => opt[0] === m.queryOptions.activity)?.[1] || m.queryOptions.activity}
                             </span>
                           )}
                         </div>
@@ -3450,6 +3485,7 @@ export default function AskClaude({
                         setOccasionMenuOpen(!occasionMenuOpen);
                         setSeasonMenuOpen(false);
                         setMissionMenuOpen(false);
+                        setActivityMenuOpen(false);
                       }}
                     >
                       <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
@@ -3461,18 +3497,70 @@ export default function AskClaude({
                       <>
                         <div className="custom-select-backdrop" onClick={() => setOccasionMenuOpen(false)} />
                         <div className="custom-select-dropdown" style={{ minWidth: 150, fontSize: 12, left: 0, right: 'auto' }}>
-                          {['casual', 'city', 'smart casual', 'evening', 'gallery / art event', 'travel', 'walking', 'outdoor active'].map(occ => (
+                          {OCCASION_OPTIONS.map(([val, label]) => (
                             <button
-                              key={occ}
+                              key={val}
                               type="button"
-                              className={`custom-select-option ${generateOccasion === occ ? 'active' : ''}`}
+                              className={`custom-select-option ${generateOccasion === val ? 'active' : ''}`}
                               style={{ textTransform: 'capitalize' }}
                               onClick={() => {
-                                setGenerateOccasion(occ);
+                                setGenerateOccasion(val);
                                 setOccasionMenuOpen(false);
                               }}
                             >
-                              {occ}
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="custom-select-container">
+                    <button
+                      type="button"
+                      className={`custom-select-btn ${activityMenuOpen ? 'active' : ''}`}
+                      style={{
+                        height: 32,
+                        minWidth: '100%',
+                        borderRadius: 8,
+                        padding: '0 10px',
+                        fontSize: 12,
+                        border: '1px solid var(--border)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActivityMenuOpen(!activityMenuOpen);
+                        setOccasionMenuOpen(false);
+                        setSeasonMenuOpen(false);
+                        setMissionMenuOpen(false);
+                      }}
+                    >
+                      <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
+                        {ACTIVITY_OPTIONS.find(opt => opt[0] === generateActivity)?.[1] || generateActivity}
+                      </span>
+                      <span className="custom-select-arrow">▾</span>
+                    </button>
+                    {activityMenuOpen && (
+                      <>
+                        <div className="custom-select-backdrop" onClick={() => setActivityMenuOpen(false)} />
+                        <div className="custom-select-dropdown" style={{ minWidth: 150, fontSize: 12, left: 0, right: 'auto' }}>
+                          {ACTIVITY_OPTIONS.map(([val, label]) => (
+                            <button
+                              key={val}
+                              type="button"
+                              className={`custom-select-option ${generateActivity === val ? 'active' : ''}`}
+                              onClick={() => {
+                                setGenerateActivity(val);
+                                setActivityMenuOpen(false);
+                              }}
+                            >
+                              {label}
                             </button>
                           ))}
                         </div>
@@ -3502,6 +3590,7 @@ export default function AskClaude({
                         setSeasonMenuOpen(!seasonMenuOpen);
                         setOccasionMenuOpen(false);
                         setMissionMenuOpen(false);
+                        setActivityMenuOpen(false);
                       }}
                     >
                       <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
@@ -3519,6 +3608,8 @@ export default function AskClaude({
                             { value: 'spring / summer', label: 'Spring / summer' },
                             { value: 'fall', label: 'Fall' },
                             { value: 'winter', label: 'Winter' },
+                            { value: 'hot weather', label: 'Very hot weather' },
+                            { value: 'cold weather', label: 'Very cold weather' },
                             { value: 'year-round', label: 'Year-round' }
                           ].map(s => (
                             <button
@@ -3560,6 +3651,7 @@ export default function AskClaude({
                         setMissionMenuOpen(!missionMenuOpen);
                         setOccasionMenuOpen(false);
                         setSeasonMenuOpen(false);
+                        setActivityMenuOpen(false);
                       }}
                     >
                       <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
@@ -3609,7 +3701,7 @@ export default function AskClaude({
                     type="text"
                     value={generateMood}
                     onChange={e => setGenerateMood(e.target.value)}
-                    placeholder="Mood (e.g. moody, soft)"
+                    placeholder="Aesthetic mood (e.g. minimalist, moody, soft)"
                     style={{
                       height: 32,
                       width: '100%',

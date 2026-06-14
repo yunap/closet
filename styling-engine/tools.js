@@ -276,7 +276,8 @@ export async function executeTool(name, args, toolContext = {}) {
             mood: mood || '',
             includeMissingPieces: false,
             idealOnly: false,
-            question: toolContext.question || ''
+            question: toolContext.question || '',
+            activity: toolContext.activity || ''
           })
         } else {
           toolContext.source = 'whole_wardrobe'
@@ -287,7 +288,8 @@ export async function executeTool(name, args, toolContext = {}) {
             mission: mission || 'mix',
             limit: limit || 5,
             explorationMode: 'moderate',
-            question: toolContext.question || ''
+            question: toolContext.question || '',
+            activity: toolContext.activity || ''
           })
         }
         
