@@ -3208,7 +3208,30 @@ export default function AskClaude({
                       {m.contextMode && <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{m.contextMode}</span>}
                     </span>
                   )}
-                  {m.imagePrev && <img src={m.imagePrev} alt="" style={{ maxWidth: 140, borderRadius: 'var(--radius)', objectFit: 'contain', background: 'var(--surface-2)' }} />}
+                  {m.imagePrev && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage({
+                        src: m.imagePrev,
+                        title: m.contextName || 'Outfit photo',
+                        meta: m.contextMode || ''
+                      })}
+                      style={{
+                        padding: 0,
+                        border: 0,
+                        background: 'transparent',
+                        borderRadius: 'var(--radius)',
+                        overflow: 'hidden',
+                        cursor: 'zoom-in',
+                        display: 'block',
+                        maxWidth: 140,
+                        flexShrink: 0
+                      }}
+                      aria-label="Open outfit photo preview"
+                    >
+                      <img src={m.imagePrev} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -3393,7 +3416,31 @@ export default function AskClaude({
 
       {pending && (
         <div ref={pendingActionRef} style={{ margin: '0 16px 8px', padding: '12px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          {pendingPhoto && <img src={`/uploads/${pendingPhoto}`} alt={pending.name} style={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 6, background: 'var(--surface-2)', flexShrink: 0 }} />}
+          {pendingPhoto && (
+            <button
+              type="button"
+              onClick={() => setPreviewImage({
+                src: `/uploads/${pendingPhoto}`,
+                title: pending.name || 'Outfit',
+                meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
+              })}
+              style={{
+                padding: 0,
+                border: 0,
+                background: 'transparent',
+                borderRadius: 6,
+                overflow: 'hidden',
+                cursor: 'zoom-in',
+                display: 'block',
+                width: 48,
+                height: 48,
+                flexShrink: 0
+              }}
+              aria-label="Preview pending outfit photo"
+            >
+              <img src={`/uploads/${pendingPhoto}`} alt={pending.name} style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
+            </button>
+          )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Choose how to use this piece' : 'Choose how to use this outfit'}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pending.name}</div>
