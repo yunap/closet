@@ -22,6 +22,7 @@ export const ACTIVITY_PROFILES = [
         'kitten heel', 'kitten heels', 'high wedge', 'high wedges', 'high wedge heel', 'high wedge heels',
         'high wedge sandal', 'high wedge sandals'
       ],
+      discouraged_footwear_warm: ['boot', 'boots', 'ankle boot', 'ankle boots'],
       discouraged_pieces: [],
       preferred_materials: [],
       preferred_footwear: [],
@@ -98,6 +99,7 @@ export function resolveComfortFootwearConstraint({ occasion = '', mood = '', req
     return {
       reason: 'all-day walking comfort',
       discouraged_footwear: profile.rules.discouraged_footwear,
+      discouraged_footwear_warm: profile.rules.discouraged_footwear_warm,
       keep_footwear: profile.rules.keep_footwear
     }
   }
@@ -133,22 +135,35 @@ export function applyComfortFootwearRepair(outfit, candidatePieces = [], constra
   if (!currentShoe) return outfit
 
   const matchesAny = (piece, terms) => terms.some(term => pieceMatchesFootwear(piece, term))
+  const warmDiscouragedFootwear = weatherProfile?.isHot ? (constraint.discouraged_footwear_warm || []) : []
+  const discouragedFootwear = [
+    ...(constraint.discouraged_footwear || []),
+    ...warmDiscouragedFootwear
+  ]
+  const keepFootwear = (constraint.keep_footwear || []).filter(term => {
+    if (!warmDiscouragedFootwear.length) return true
+    return !warmDiscouragedFootwear.some(warmTerm => {
+      const a = String(term).toLowerCase()
+      const b = String(warmTerm).toLowerCase()
+      return a.includes(b) || b.includes(a)
+    })
+  })
 
   // Keep-first ordering (hard rule)
-  if (matchesAny(currentShoe, constraint.keep_footwear)) {
+  if (matchesAny(currentShoe, keepFootwear) && !matchesAny(currentShoe, discouragedFootwear)) {
     return outfit
   }
 
-  if (matchesAny(currentShoe, constraint.discouraged_footwear)) {
+  if (matchesAny(currentShoe, discouragedFootwear)) {
     const candidateShoes = candidatePieces.filter(p => {
       if (p.category !== 'shoes' && wardrobeCategoryGroup(p) !== 'shoes') return false
-      return matchesAny(p, constraint.keep_footwear) && !matchesAny(p, constraint.discouraged_footwear)
+      return matchesAny(p, keepFootwear) && !matchesAny(p, discouragedFootwear)
     })
 
     if (candidateShoes.length > 0) {
       const getShoeRelevance = (shoe) => {
         let score = pieceOccasionScore(shoe, occasion)
-        if (matchesAny(shoe, constraint.keep_footwear)) {
+        if (matchesAny(shoe, keepFootwear)) {
           score += 10
         }
 

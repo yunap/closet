@@ -43,6 +43,7 @@ async function seedWardrobe() {
   const shoe2Photo = await makeImage('shoe2.png', '#222222')
   const shoe3Photo = await makeImage('shoe3.png', '#333333')
   const shoe4Photo = await makeImage('shoe4.png', '#444444')
+  const bootPhoto = await makeImage('boot.png', '#6f4d34')
 
   const topId = db.prepare(`
     INSERT INTO pieces (name, category, status, colors, photo, reads_as)
@@ -74,13 +75,19 @@ async function seedWardrobe() {
     VALUES (?, ?, 'active', ?, ?, ?)
   `).run('kitten heels', 'shoes', JSON.stringify(['pink']), shoe4Photo, 'pink delicate kitten heels').lastInsertRowid
 
+  const ankleBootId = db.prepare(`
+    INSERT INTO pieces (name, category, status, colors, photo, reads_as)
+    VALUES (?, ?, 'active', ?, ?, ?)
+  `).run('brown ankle boots', 'shoes', JSON.stringify(['brown']), bootPhoto, 'brown leather ankle boots').lastInsertRowid
+
   seeded = {
     top: topId,
     bottom: bottomId,
     stiletto: stilettoId,
     blockHeel: blockHeelId,
     sneaker: sneakerId,
-    kittenHeel: kittenHeelId
+    kittenHeel: kittenHeelId,
+    ankleBoot: ankleBootId
   }
 }
 
@@ -214,6 +221,38 @@ test('2. applyComfortFootwearRepair swaps stiletto heels but keeps block heels &
   assert.deepEqual(repairedAgain, repairedA, 'Running comfort repair twice should be a no-op')
 })
 
+test('2b. applyComfortFootwearRepair swaps boots for warm-weather walking', () => {
+  const constraint = resolveComfortFootwearConstraint({ activity: 'walking' })
+  assert.ok(constraint)
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const topPiece = allPieces.find(p => p.id === seeded.top)
+  const bottomPiece = allPieces.find(p => p.id === seeded.bottom)
+  const bootPiece = allPieces.find(p => p.id === seeded.ankleBoot)
+
+  const bootOutfit = {
+    label: 'Warm Walk With Boots',
+    pieceIds: [seeded.top, seeded.bottom, seeded.ankleBoot],
+    pieces: [topPiece, bottomPiece, bootPiece],
+    watchFor: 'none'
+  }
+
+  const repairedWarm = applyComfortFootwearRepair(bootOutfit, allPieces, constraint, {
+    occasion: 'casual',
+    activity: 'walking',
+    weatherProfile: { isHot: true, isCold: false }
+  })
+  assert.equal(repairedWarm.pieceIds.includes(seeded.ankleBoot), false, 'Warm walking should swap ankle boots')
+  assert.ok(repairedWarm.watchFor.includes('swapped for all-day walking comfort'))
+
+  const repairedNeutral = applyComfortFootwearRepair(bootOutfit, allPieces, constraint, {
+    occasion: 'casual',
+    activity: 'walking',
+    weatherProfile: { isHot: false, isCold: false }
+  })
+  assert.deepEqual(repairedNeutral.pieceIds, bootOutfit.pieceIds, 'Neutral/cool walking can keep boots')
+})
+
 test('3. Kitten-heel asymmetry: kitten heels are swapped on walk intent but left untouched on long events', () => {
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const topPiece = allPieces.find(p => p.id === seeded.top)
@@ -329,7 +368,7 @@ test('8. Plumbing: generateWholeWardrobeOutfitsInternal propagates activity para
     assert.ok(capturedMessages, 'AI must have been called')
     const userText = capturedMessages[0].content
     assert.ok(userText.includes('Activity: walking'), 'The prompt must contain Activity: walking')
-    assert.ok(userText.includes('All-day walking: avoid stilettos, high heels, pumps, and delicate sandals; prefer low block heels, loafers, flats, sneakers.'), 'The prompt must contain walking guidance')
+    assert.ok(userText.includes('All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots'), 'The prompt must contain walking guidance')
   } finally {
     globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
   }

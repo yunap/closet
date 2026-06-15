@@ -17,6 +17,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_CANDIDATES = '18'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
+const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
 
 let server
 let baseUrl
@@ -378,11 +379,77 @@ test('selected-piece generator returns structured outfit cards', async () => {
   })
 
   assert.equal(json.mode, 'generate_outfit_ideas')
-  assert.equal(json.pipeline, 'visual_candidate_reviewer_composer_evaluator_renderer_handoff')
+  assert.equal(json.pipeline, 'selected_piece_visual_composer')
   assert.ok(Array.isArray(json.structuredOutfits))
   assert.ok(json.structuredOutfits.length >= 1)
   assert.ok(json.structuredOutfits[0].pieceIds.includes(seeded.bottom))
   assert.ok('visualCritic' in json.debug)
+  assert.ok(json.debug.visualCritic.shownPieceCount > 0)
+})
+
+test('selected-piece visual composer pins the selected anchor when model omits it', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    return {
+      outfits: [{
+        label: 'Mock omitted-anchor outfit',
+        strength: 'strong',
+        dominantDirection: 'support pieces without anchor',
+        silhouette: 'dark top with quiet shoe',
+        bestFor: 'city',
+        pieceIds: [seeded.top, seeded.shoe],
+        reason: 'The support pieces are compatible.',
+        watchFor: 'Selected anchor must be restored.',
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: '',
+    }
+  }
+
+  const json = await postJson('/api/ai/generate-outfits-for-piece', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+  })
+
+  assert.equal(json.pipeline, 'selected_piece_visual_composer')
+  assert.ok(json.structuredOutfits[0].pieceIds.includes(seeded.bottom))
+  assert.ok(json.structuredOutfits[0].pieces.some(p => Number(p.id) === Number(seeded.bottom)))
+})
+
+test('selected-piece visual composer repairs boots for June walking', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    return {
+      outfits: [{
+        label: 'Mock June walk with boots',
+        strength: 'strong',
+        dominantDirection: 'structured pants with boot grounding',
+        silhouette: 'wide pant over boot',
+        bestFor: 'casual walk',
+        pieceIds: [seeded.bottom, seeded.top, seeded.boot],
+        reason: 'The boot grounds the pant.',
+        watchFor: 'Warm walking should prefer lighter footwear.',
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: '',
+    }
+  }
+
+  const json = await postJson('/api/ai/generate-outfits-for-piece', {
+    pieceId: seeded.bottom,
+    occasion: 'casual',
+    season: 'current season',
+    activity: 'walking',
+  })
+
+  const first = json.structuredOutfits[0]
+  assert.equal(json.pipeline, 'selected_piece_visual_composer')
+  assert.ok(first.pieceIds.includes(seeded.bottom))
+  assert.equal(first.pieceIds.includes(seeded.boot), false, 'June walking should not return ankle boots')
+  assert.ok(first.watchFor.includes('swapped for all-day walking comfort'))
 })
 
 test('selected-piece generator accepts and forwards mission and mood parameters', async () => {
@@ -397,8 +464,8 @@ test('selected-piece generator accepts and forwards mission and mood parameters'
   assert.equal(json.mode, 'generate_outfit_ideas')
   assert.ok(Array.isArray(json.structuredOutfits))
 
-  const lastCall = aiCalls.find(c => c.system.includes('Outfit Composer') || c.system.includes('Outfit Gate'))
-  assert.ok(lastCall, 'An outfit composer call was recorded')
+  const lastCall = aiCalls.find(c => c.system.includes('SELECTED-ANCHOR CONTRACT'))
+  assert.ok(lastCall, 'A selected-piece visual composer call was recorded')
   const latestMessage = lastCall.messages.at(-1)
   const latestText = Array.isArray(latestMessage?.content)
     ? latestMessage.content.map(part => part?.text || '').join('\n')
@@ -434,7 +501,7 @@ test('editorial-directions-preview generator accepts and forwards mission and mo
 test('whole-wardrobe generator returns cards and records resettable session memory', async () => {
   const json = await postJson('/api/ai/generate-wardrobe-outfits', {
     occasion: 'city',
-    season: 'current season',
+    season: 'spring',
     mood: 'artistic minimalist',
     limit: 3,
   })
@@ -539,7 +606,7 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   
   const contentText = visualComposerCalls[0].messages[0].content[0].text
   assert.ok(contentText.includes('Activity: walking'), 'The visual composer prompt must contain Activity: walking')
-  assert.ok(contentText.includes('All-day walking: avoid stilettos, high heels, pumps, and delicate sandals'), 'The visual composer prompt must contain walking guidance')
+  assert.ok(contentText.includes('All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots'), 'The visual composer prompt must contain walking guidance')
 })
 
 
@@ -625,6 +692,24 @@ test('saved outfit variants endpoint supports creative boards from linked pieces
   assert.equal(json.debug.requestCount, 1)
   assert.equal(json.boards[0].variantMode, 'creative')
   assert.ok(json.boards[0].imageUrl.startsWith('/uploads/generated-boards/'))
+})
+
+test('saved outfit variants prompt treats current season in June as warm-weather context', () => {
+  const prompt = savedOutfitImagePrompt({
+    outfit: { name: 'Summer saved outfit' },
+    pieces: [
+      { id: seeded.top, name: 'emerald sleeveless top', category: 'Top' },
+      { id: seeded.bottom, name: 'beige pleated pants', category: 'Bottom' },
+      { id: seeded.shoe, name: 'brown ankle boots', category: 'Shoes' },
+    ],
+    occasion: 'casual',
+    season: 'current season',
+    variantMode: 'similar',
+    currentDate: new Date('2026-06-15T12:00:00-07:00'),
+  })
+
+  assert.ok(prompt.includes('Warm/current-season realism'))
+  assert.ok(prompt.includes('do not introduce boots, ankle boots, or heavy cold-weather footwear'))
 })
 
 test('wardrobe outfit evaluator sends outfit and linked garment images', async () => {
@@ -1350,7 +1435,17 @@ test('Agent OCCASION PROFILE prompt block and wardrobe coverage contract tests',
   assert.ok(coverageJson.debug.profileCoverage, 'profileCoverage must be populated in debug')
   assert.equal(coverageJson.debug.profileCoverage.tops, 0, 'Seed pool has 0 trail-ready tops')
   assert.equal(coverageJson.debug.profileCoverage.shoes, 0, 'Seed pool has 0 trail-ready shoes')
-  assert.ok(coverageJson.feedback.includes('Your wardrobe has limited trail-specific tops and footwear'), 'Feedback must report limited tops and footwear')
+  assert.ok(coverageJson.feedback.includes('Your wardrobe has limited trail-ready tops and footwear'), 'Feedback must report limited tops and footwear')
+
+  const cityCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {
+    occasion: 'city',
+    season: 'current season',
+    mood: '',
+    limit: 1
+  })
+
+  assert.ok(cityCoverageJson.feedback.includes('Your wardrobe has limited city smart casual / everyday tops'), 'Feedback must use the matched occasion label')
+  assert.ok(!cityCoverageJson.feedback.includes('trail-specific'), 'Non-hiking coverage feedback must not mention trail-specific pieces')
 
   // Now seed trail-ready pieces to test ample coverage behavior
   for (let i = 0; i < 5; i++) {
@@ -1380,9 +1475,5 @@ test('Agent OCCASION PROFILE prompt block and wardrobe coverage contract tests',
   
   assert.equal(ampleCoverageJson.debug.profileCoverage.tops >= 5, true, 'Should now have >= 5 trail-ready tops')
   assert.equal(ampleCoverageJson.debug.profileCoverage.shoes >= 3, true, 'Should now have >= 3 trail-ready shoes')
-  assert.ok(!ampleCoverageJson.feedback.includes('limited trail-specific'), 'Feedback must not contain limited coverage note with ample coverage')
+  assert.ok(!ampleCoverageJson.feedback.includes('limited trail-ready'), 'Feedback must not contain limited coverage note with ample coverage')
 })
-
-
-
-
