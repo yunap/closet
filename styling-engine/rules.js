@@ -1,4 +1,6 @@
-import { db, safeJsonParse } from '../db.js'
+import { db, safeJsonParse, parsePiece } from '../db.js'
+import { confidenceFromProfile } from './taggerMerge.js'
+export { parsePiece }
 import { autoStylingTrustDecision, buildWardrobePieceTruthText } from '../src/utils/wardrobeAiContext.js'
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
 import { resolveOccasionProfile } from './occasions.js'
@@ -139,13 +141,43 @@ export function textIncludesAny(value, words) {
 
 const pieceTextBlobCache = new WeakMap()
 
+const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
+  'hem_finish',
+  'length_hits_at',
+  'silhouette',
+  'fit_on_body',
+  'tuck_behavior',
+  'waistband_type',
+  'sleeve_type'
+])
+
+export function getFieldConfidence(piece, field) {
+  const confidence = String(confidenceFromProfile(piece, field) || '').toLowerCase()
+  if (confidence === 'manual') return 'manual'
+  if (confidence === 'high') return 'high'
+  if (confidence === 'medium') return 'medium'
+  if (confidence === 'low') return 'low'
+  return piece?.tag_state === 'provisional' && STRUCTURE_FIT_CONFIDENCE_FIELDS.has(field) ? 'low' : 'medium'
+}
+
+function trustedField(piece, field) {
+  const confidence = getFieldConfidence(piece, field)
+  return confidence === 'manual' || confidence === 'high' || confidence === 'medium'
+}
+
 export function pieceTextBlob(p) {
   if (p && typeof p === 'object' && pieceTextBlobCache.has(p)) return pieceTextBlobCache.get(p)
   const value = [
     p.name, p.category, p.background_color, p.reads_as, p.pattern_type,
-    p.pattern_scale, p.pattern_complexity, p.hem_finish, p.length_hits_at,
-    p.silhouette, p.fabric_category, p.fabric_weight, p.fit_on_body,
-    p.tuck_behavior, p.waistband_type, p.notes,
+    p.pattern_scale, p.pattern_complexity,
+    trustedField(p, 'hem_finish') ? p.hem_finish : '',
+    trustedField(p, 'length_hits_at') ? p.length_hits_at : '',
+    trustedField(p, 'silhouette') ? p.silhouette : '',
+    p.fabric_category, p.fabric_weight,
+    trustedField(p, 'fit_on_body') ? p.fit_on_body : '',
+    trustedField(p, 'tuck_behavior') ? p.tuck_behavior : '',
+    trustedField(p, 'waistband_type') ? p.waistband_type : '',
+    p.notes,
     ...(p.colors || []), ...(p.occasions || []),
     ...(p.styling_rules_learned || []), ...(p.pairs_well_with || []), ...(p.tried_and_rejected || [])
   ].filter(Boolean).join(' ').toLowerCase()
@@ -789,24 +821,6 @@ function getLinkedPiecesForOutfit(outfitId) {
   return rows.map(p => parsePiece(p))
 }
 
-export function parsePiece(p) {
-  return p ? ({
-    ...p,
-    colors:                JSON.parse(p.colors                || '[]'),
-    occasions:             JSON.parse(p.occasions             || '[]'),
-    occasion_permissions:   JSON.parse(p.occasion_permissions  || '[]'),
-    occasion_exclusions:    JSON.parse(p.occasion_exclusions   || '[]'),
-    styling_rules_learned: JSON.parse(p.styling_rules_learned || '[]'),
-    pairs_well_with:       JSON.parse(p.pairs_well_with       || '[]'),
-    tried_and_rejected:    JSON.parse(p.tried_and_rejected    || '[]'),
-    style_profile_json:    safeJsonParse(p.style_profile_json, {}) || {},
-    recommendation_status: p.recommendation_status || 'trusted',
-    fit_confidence:        p.fit_confidence        || 'unknown',
-    role_permission:       p.role_permission       || 'auto',
-    engine_notes:          p.engine_notes          || '',
-    favorite: Boolean(p.favorite)
-  }) : null
-}
 
 export function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 16) {
   try {
@@ -1086,10 +1100,10 @@ export function inferWholeWardrobePieceRoles(piece = {}) {
     piece.reads_as,
     piece.pattern_type,
     piece.pattern_complexity,
-    piece.silhouette,
+    trustedField(piece, 'silhouette') ? piece.silhouette : '',
     piece.fabric_category,
     piece.fabric_weight,
-    piece.fit_on_body,
+    trustedField(piece, 'fit_on_body') ? piece.fit_on_body : '',
     piece.notes,
     ...(piece.colors || []),
     ...(piece.styling_rules_learned || [])
@@ -3543,5 +3557,4 @@ export function buildBohoWatch(outfit = {}, pieces = []) {
   if (!pieces.some(p => wardrobeCategoryGroup(p) === 'shoes')) return 'Choose the shoe before judging the outfit; boho needs grounded finish, not just texture.'
   return 'Keep the bohemian detail as the clear thesis; avoid adding a second competing accent.'
 }
-
 

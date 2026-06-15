@@ -142,6 +142,8 @@ const NEW_COLUMNS = [
   'engine_notes TEXT DEFAULT ""',
   'style_profile_json TEXT DEFAULT "{}"',
   'tagger_version TEXT',
+  'tag_state TEXT DEFAULT "untagged"',
+  'manual_overrides TEXT DEFAULT "[]"',
 ]
 NEW_COLUMNS.forEach(col => {
   try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
@@ -154,6 +156,35 @@ NEW_COLUMNS.forEach(col => {
 ].forEach(col => {
   try { db.exec(`ALTER TABLE stylist_feedback ADD COLUMN ${col}`) } catch {}
 })
+
+// Backfill lifecycle state only. Do not clear historical structure/fit fields:
+// existing rows may contain hand-corrected truth from before manual_overrides existed.
+try {
+  const untagged = db.prepare("SELECT * FROM pieces WHERE tag_state IS NULL OR tag_state = 'untagged'").all()
+  if (untagged.length > 0) {
+    db.transaction(() => {
+      const updateProvisional = db.prepare(`
+        UPDATE pieces 
+        SET tag_state = 'provisional'
+        WHERE id = ?
+      `)
+      const updateFullyTagged = db.prepare(`
+        UPDATE pieces 
+        SET tag_state = 'fully_tagged'
+        WHERE id = ?
+      `)
+      for (const piece of untagged) {
+        if (piece.worn_photo) {
+          updateFullyTagged.run(piece.id)
+        } else {
+          updateProvisional.run(piece.id)
+        }
+      }
+    })()
+  }
+} catch (err) {
+  console.warn('Backfill migration warning:', err.message)
+}
 
 // ── Seed data (first run only) ─────────────────────────────────────────────────
 const seeded = db.prepare("SELECT value FROM app_meta WHERE key = 'seeded'").get()
@@ -271,6 +302,8 @@ export const parsePiece = p => p ? ({
   fit_confidence:        p.fit_confidence        || 'unknown',
   role_permission:       p.role_permission       || 'auto',
   engine_notes:          p.engine_notes          || '',
+  tag_state:             p.tag_state             || 'untagged',
+  manual_overrides:      safeJsonParse(p.manual_overrides, [])   || [],
   favorite: Boolean(p.favorite)
 }) : null
 

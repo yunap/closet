@@ -48,8 +48,6 @@ export const TAG_PIECE_SYSTEM = `You tag wardrobe items from hanger or flat-lay 
 
 export const EXTRACT_PIECES_SYSTEM = `You analyze outfit photos to identify and extract individual wardrobe items with full styling details. Return only valid JSON matching the requested schema. Capture structural, architectural, and geometric drape details (asymmetric collars, button cowls, design hems, waffle or textured knits) and use elevated styling vocabulary instead of lazy, generic classifications.`
 
-export const FIT_NOTE_SYSTEM = `You inspect clothing fit on-body. Return only valid JSON matching the requested schema. Provide raw, descriptive physical observations without styling fluff, body flattery, or comfort speculation.`
-
 export const VISUAL_SUPPORT_CRITIC_SYSTEM = `You are Yuna's visual support-piece critic. Rank candidate saved garments by actual visual compatibility with the selected garment and occasion. Do not invent pieces. Use the photos/contact sheet first, then text truth. Return ONLY JSON.`
 
 export const VISUAL_WARDROBE_CRITIC_SYSTEM = `You are Yuna's visual wardrobe critic. Rank candidate outfits by what actually works visually from the contact sheet. Prioritize Yuna's known taste and saved calibration memory. Do not invent pieces. Return ONLY JSON.`
@@ -763,10 +761,24 @@ JSON shape:
 // ── Dedicated TAG_PIECE prompt ────────────────────────────────────────────────
 export const TAG_PIECE_PROMPT = `Analyze this clothing item. Return ONLY a valid JSON object — no markdown, no explanation, just JSON.
 
-If both photos are provided:
-- Use HANGER PHOTO for literal garment truth: color, category, construction, pattern, texture, fabric read, and shape.
-- Use WORN PHOTO for real-wear behavior (fit placement, scale, drape, maintenance, outfit role, and risks) AND to observe how the silhouette transforms on-body. Do not discuss body types/body shapes, attractiveness, confidence, or apparent comfort.
-If only one photo is provided, keep low-confidence real-wear fields empty or set to default/none rather than inventing them.
+=== PHOTO PROPERTY AUTHORITY MAP ===
+Step one: classify every provided image in "photo_properties":
+- "fit_visible": true only when the full target garment is visible on a body well enough to judge fit, drape, placement, and length.
+- "real_context": true only when the photo shows a real wearing context/outing/event. A home mirror try-on, try-on hallway, bedroom, closet, or neutral fitting photo is NOT real_context even if the garment is on a body.
+
+Authority follows photo properties, not photo labels:
+- Flat/even-lit whole-garment appearance photos are authoritative for: color, background_color, pattern_type, pattern_scale, pattern_complexity, fabric surface, construction, neckline, sleeve existence.
+- Fit-visible photos are authoritative only for: fit_on_body, drape, length_hits_at, tuck_behavior, waistband_type, and on-body silhouette.
+- Real-context photos are positive evidence for occasion register only when the context clearly matches that occasion. They can raise matching occasion confidence.
+
+Conflict resolution and context-insulation rules:
+1. The worn/fit-visible photo owns how the garment behaves, never what the garment is or what it is inherently for.
+2. Insulate style identity and occasion potential from TRY-ON context. A polished shell photographed at home with shorts is still a polished shell; home setting, shorts, bare legs, or casual styling must not drag its lanes or occasion confidence toward casual.
+3. Use real-wear context only as positive occasion evidence when present. Absence of real_context is neutral; it must not penalize city, smart-casual, or evening potential.
+4. Never infer fit, drape, or length from a photo that is not fit_visible. A hanger-only or cropped/seated/non-fit-visible image must leave fit fields empty/default or low-confidence.
+5. Color authority goes to the best-lit, closest, least-shadowed garment view. If photos disagree materially on color, lower "colors" and "background_color" confidence and explain in cross_photo_agreement_note; do not blindly prefer worn or hanger.
+6. When photos conflict within one authority domain, lower the affected field's confidence rather than silently picking.
+7. Always emit a brief cross-photo agreement note in the JSON where photos disagreed on any field, and emit '_confidence' for every field.
 
 === PHYSICAL PROPERTY FRAMEWORK (VOLUME vs. STRUCTURE) ===
 Evaluate the garment's visual structure and weight along these two axes:
@@ -810,6 +822,9 @@ Evaluate the garment's visual structure and weight along these two axes:
   * "romantic_soft" is for soft draping, delicate details, bows, ruffles, or feminine shape.
   * "workwear_utilitarian" is strict. Score 3+ only for real workwear/cargo/technical utility cues.
   * "home" occasion is strict. Use it only for lounge, pajamas, comfort-loungewear, or sleepwear. Standard basic layering tops and daytime knits must have "home" confidence scored as "low" or omitted entirely.
+  * Quiet/subtle pieces must not collapse to 1/5 across every lane by default. Absence of loudness is not absence of identity: a clean jewel-tone shell can legitimately score polished_classic or artistic_minimal above baseline based on color depth, cut, finish, and refinement.
+
+- Prose binding: notes_suggestion, style_notes, risks, and real_wear_notes must not contradict typed fields. Do not call a print "muted" when pattern_complexity is "loud"; do not call a garment shapeless if silhouette/fit fields say fitted or structured.
 
 === CALIBRATION ANCHORS (range calibration, NOT templates to match) ===
 These three archetypes calibrate how wide the scoring range is. Score the actual garment on
@@ -867,7 +882,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
   "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
-  "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|cashmere|viscose|denim|twill|canvas|corduroy|tweed|velvet|leather|suede|ponte|synthetic|fleece|other",
+  "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
   "fabric_weight": "ultralight|light|medium|heavy",
   "style_profile_json": {
     "style_lanes": {
@@ -912,12 +927,29 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     }
   },
   "_confidence": {
+    "category": "high|medium|low",
+    "colors": "high|medium|low",
+    "background_color": "high|medium|low",
+    "pattern_type": "high|medium|low",
+    "pattern_scale": "high|medium|low",
     "pattern_complexity": "high|medium|low",
     "reads_as": "high|medium|low",
+    "neckline": "high|medium|low",
+    "sleeve_type": "high|medium|low",
+    "length_hits_at": "high|medium|low",
     "silhouette": "high|medium|low",
+    "hem_finish": "high|medium|low",
     "fabric_category": "high|medium|low",
-    "fabric_weight": "high|medium|low"
-  }
+    "fabric_weight": "high|medium|low",
+    "fit_on_body": "high|medium|low",
+    "tuck_behavior": "high|medium|low",
+    "waistband_type": "high|medium|low"
+  },
+  "photo_properties": {
+    "HANGER PHOTO": { "fit_visible": false, "real_context": false, "notes": "short reason" },
+    "WORN PHOTO": { "fit_visible": true, "real_context": false, "notes": "home try-on; fit-visible but not occasion evidence" }
+  },
+  "cross_photo_agreement_note": "detailed notes explaining conflict resolutions, or empty string if no conflicts"
 }`
 
 // ── Dedicated EDITORIAL_NEW_PIECES prompt ───────────────────────────────────

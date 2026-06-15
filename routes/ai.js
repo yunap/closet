@@ -5,6 +5,7 @@ import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
+import { applyTaggerResult, normalizeConfidenceMap, normalizePhotoProperties, tagStateForTaggerResult } from '../styling-engine/taggerMerge.js'
 
 import {
   prepareImageForClaude,
@@ -37,8 +38,7 @@ import {
   TAG_PIECE_PROMPT,
   OUTFIT_MISSIONS,
   TAG_PIECE_SYSTEM,
-  EXTRACT_PIECES_SYSTEM,
-  FIT_NOTE_SYSTEM
+  EXTRACT_PIECES_SYSTEM
 } from '../styling-engine/prompts.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
@@ -174,6 +174,7 @@ const storage = multer.diskStorage({
   }
 })
 const upload = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 } })
+const TAGGER_VERSION = 'v2.0.0-photo-property-authority'
 
 // ── Shared Visual/Tagging helper ──────────────────────────────────────────────
 export async function tagPieceWithProvider(photoInputs) {
@@ -190,7 +191,7 @@ export async function tagPieceWithProvider(photoInputs) {
   content.push({ type: 'text', text: TAG_PIECE_PROMPT })
   const payload = {
     system: TAG_PIECE_SYSTEM,
-    maxTokens: 1000,
+    maxTokens: 1500,
     messages: [{
       role: 'user',
       content
@@ -200,7 +201,16 @@ export async function tagPieceWithProvider(photoInputs) {
   const raw = await askStylist(payload)
   const tags = parseModelJson(raw)
   if (tags && typeof tags === 'object') {
-    tags.tagger_version = 'v1.0.0'
+    tags.tagger_version = TAGGER_VERSION
+    const confidence = normalizeConfidenceMap(tags._confidence || tags.style_profile_json?._confidence || {})
+    const photoProperties = normalizePhotoProperties(tags.photo_properties || tags.style_profile_json?.photo_properties || {})
+    tags.style_profile_json = {
+      ...(tags.style_profile_json || {}),
+      _confidence: confidence,
+      photo_properties: photoProperties
+    }
+    tags._confidence = confidence
+    tags.photo_properties = photoProperties
   }
   return tags
 }
@@ -325,132 +335,6 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
   }
 })
 
-router.post('/fit-note', upload.fields([{ name: 'photo' }, { name: 'hanger_photo' }]), async (req, res) => {
-  const photoFile = req.files?.photo?.[0]
-  const hangerFile = req.files?.hanger_photo?.[0]
-  if (!photoFile) return res.status(400).json({ error: 'No photo provided' })
-
-  const filePath = path.join(uploadsDir, photoFile.filename)
-  let hangerPath = hangerFile ? path.join(uploadsDir, hangerFile.filename) : null
-
-  try {
-    const { base64: wornBase64, mime: wornMime } = await prepareImageForClaude(filePath)
-    fs.unlinkSync(filePath)
-
-    const {
-      piece_name,
-      piece_category,
-      piece_notes = '',
-      engine_notes = '',
-      recommendation_status = 'trusted',
-      fit_confidence = 'unknown',
-      role_permission = 'auto',
-      hanger_photo_path = ''
-    } = req.body
-
-    const isTop    = ['top','outerwear','dress'].includes(piece_category)
-    const isBottom = piece_category === 'bottom'
-
-    // Combine photos
-    const content = []
-    let hasHangerRef = false
-
-    if (hangerPath) {
-      const { base64: hBase64, mime: hMime } = await prepareImageForClaude(hangerPath)
-      fs.unlinkSync(hangerPath)
-      content.push({ type: 'image', source: { type: 'base64', media_type: hMime, data: hBase64 } })
-      hasHangerRef = true
-    } else if (hanger_photo_path) {
-      const savedHangerPath = path.join(uploadsDir, hanger_photo_path)
-      if (fs.existsSync(savedHangerPath)) {
-        const { base64: hBase64, mime: hMime } = await prepareImageForClaude(savedHangerPath)
-        content.push({ type: 'image', source: { type: 'base64', media_type: hMime, data: hBase64 } })
-        hasHangerRef = true
-      }
-    }
-
-    content.push({ type: 'image', source: { type: 'base64', media_type: wornMime, data: wornBase64 } })
-
-    let categorySpecificFocus = ''
-    if (piece_category === 'bottom') {
-      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is a BOTTOM (e.g., pants, skirt, trousers, jeans, shorts). You MUST focus your evaluation ONLY on the lower half of the body (waistband, hips, thighs, drape, hem, waistband type, and length of the pants/skirt). Completely ignore the upper half of the body (any shirt, blouse, cardigan, top, jacket, shoulders), even if they are very prominent or contain lace/details.'
-    } else if (piece_category === 'top') {
-      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is a TOP (e.g., shirt, blouse, t-shirt, sweater, knit). You MUST focus your evaluation ONLY on the upper body (shoulders, bust, sleeves, torso, tucking behavior, and hem of this top). Completely ignore the lower body (pants, jeans, skirt) and shoes.'
-    } else if (piece_category === 'outerwear') {
-      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is OUTERWEAR (e.g., jacket, coat, blazer, cardigan, vest). You MUST focus your evaluation ONLY on the fit, draping, sleeve behavior, and layering of this outer layer. Ignore inner tops/shirts, bottoms, and shoes.'
-    } else if (piece_category === 'dress') {
-      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is a DRESS. Focus your evaluation on the dress\'s full body fit (shoulders, bust, waist, drape, tuck/waist behavior if applicable, and length). Ignore any layering cardigans, jackets, or shoes.'
-    } else if (piece_category === 'shoes') {
-      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is SHOES. Focus your evaluation only on the footwear at the feet (e.g., shape, shaft height, how it meets the hem of the pants).'
-    } else if (piece_category === 'accessory') {
-      categorySpecificFocus = 'CRITICAL FOCUS: The target garment is an ACCESSORY (e.g., belt, bag, scarf). Focus your evaluation only on how that accessory is positioned/worn.'
-    }
-
-    let focusLine = ''
-    if (hasHangerRef) {
-      focusLine = `You are inspecting a garment's fit. You are provided with two images:
-1. HANGER PHOTO (first image): Shows the exact garment being evaluated in isolation.
-2. WORN PHOTO (second image): Shows the person wearing this specific garment in a styling/outfit context.
-
-The garment category is "${piece_category}"${piece_name ? ` and the garment name suggestion is "${piece_name}"` : ''}.
-Match the garment from the HANGER PHOTO with the person's outfit in the WORN PHOTO. Focus your entire fit evaluation ONLY on how this specific "${piece_category}" fits on the body in the Worn Photo. Treat all other garments, accessories, or layers (like cardigans, shirts, or shoes if evaluating a bottom) as neutral context, and do NOT write notes or change fields for them.
-
-${categorySpecificFocus}`
-    } else {
-      focusLine = piece_category
-        ? `The piece being evaluated is a garment in the category: "${piece_category}"${piece_name ? ` named "${piece_name}"` : ''}. Focus your entire evaluation on this ${piece_category} only — treat any other visible clothing as neutral context, not part of the assessment.
-
-${categorySpecificFocus}`
-        : 'Focus on the primary garment visible in this photo.'
-    }
-
-    const trustContext = [
-      piece_notes ? `existing styling notes: ${piece_notes}` : '',
-      engine_notes ? `engine notes: ${engine_notes}` : '',
-      recommendation_status && recommendation_status !== 'trusted' ? `recommendation trust: ${recommendation_status}` : '',
-      fit_confidence && fit_confidence !== 'unknown' ? `fit confidence: ${fit_confidence}` : '',
-      role_permission && role_permission !== 'auto' ? `auto-styling role: ${role_permission}` : ''
-    ].filter(Boolean).join('\n')
-
-    const schemaText = `Return ONLY a valid JSON object — no markdown, no explanation:
-{
-  "note": "1-3 sentence factual fit-mechanics note in lowercase. Mention placement, rise/waist/hem/drape/pulling/bunching/strain if visible or if existing notes flag it. Do not praise style, attractiveness, body, or print. Do not say print/color absorbs fit issues. Net verdict must be one of: works as-is, needs minor adjustment, needs fit review, or do not auto-style.",
-  "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured",
-  "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
-  ${isTop  ? '"tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only",' : ''}
-  ${isBottom ? '"waistband_type": "structured_high_waist|structured_mid_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed",' : ''}
-  "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
-  "fit_confidence": "unknown|low|medium|high",
-  "recommendation_status": "trusted|needs_fit_review",
-  "style_profile_patch": {
-    "style_notes": {
-      "best_use": "updated stylist role description based on how it behaves/looks on-body. Avoid generic 'casual wear' or 'daily casual' phrases.",
-      "risk": "styling or aesthetic risk observed on-body. Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."
-    },
-    "visual_roles": ["choose 1-4: hero_piece, support_piece, grounding_piece, sharpener_piece, texture_piece, movement_piece, column_piece, quiet_anchor, color_accent"]
-  }
-}`
-
-    content.push({ type: 'text', text: [focusLine, trustContext, schemaText].filter(Boolean).join('\n\n') })
-
-    const raw = await askStylist({
-      system: FIT_NOTE_SYSTEM,
-      maxTokens: 1000,
-      messages: [{
-        role: 'user',
-        content
-      }]
-    })
-
-    res.json(parseModelJson(raw))
-  } catch (err) {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
-    if (hangerPath && fs.existsSync(hangerPath)) fs.unlinkSync(hangerPath)
-    console.error('Fit note error:', err)
-    res.status(500).json({ error: err.message })
-  }
-})
-
 router.post('/tag-piece', upload.fields([
   { name: 'photo', maxCount: 1 },
   { name: 'worn_photo', maxCount: 1 }
@@ -483,6 +367,7 @@ router.post('/tag-piece', upload.fields([
 
   try {
     const tags = await tagPieceWithProvider(photos)
+    tags.tag_state = tagStateForTaggerResult(tags, { photo: Boolean(photoFile), worn_photo: Boolean(wornPhotoFile) })
     photos.forEach(p => {
       if (fs.existsSync(p.path)) fs.unlinkSync(p.path)
     })
@@ -496,55 +381,67 @@ router.post('/tag-piece', upload.fields([
   }
 })
 
-router.post('/tag-piece-existing/:id', async (req, res) => {
+const tagExistingHandler = async (req, res) => {
+  const tempFiles = []
   try {
     const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
     if (!piece) return res.status(404).json({ error: 'Piece not found' })
-    if (!piece.photo && !piece.worn_photo) return res.status(400).json({ error: 'This piece has no photo to tag' })
 
     const photos = []
-    if (piece.photo) {
+    const photoFile = req.files?.photo?.[0]
+    if (photoFile) {
+      const filePath = path.join(uploadsDir, photoFile.filename)
+      photos.push({ path: filePath, label: 'HANGER PHOTO', guidance: 'Use for literal garment truth: category, color, construction, pattern, fabric, and shape.' })
+      tempFiles.push(filePath)
+    } else if (piece.photo) {
       const hangerPath = path.join(uploadsDir, piece.photo)
-      if (fs.existsSync(hangerPath)) photos.push({ path: hangerPath, label: 'HANGER PHOTO', guidance: 'Use for literal garment truth: category, color, construction, pattern, fabric, and shape.' })
+      if (fs.existsSync(hangerPath)) {
+        photos.push({ path: hangerPath, label: 'HANGER PHOTO', guidance: 'Use for literal garment truth: category, color, construction, pattern, fabric, and shape.' })
+      }
     }
-    if (piece.worn_photo) {
+
+    const wornPhotoFile = req.files?.worn_photo?.[0]
+    if (wornPhotoFile) {
+      const filePath = path.join(uploadsDir, wornPhotoFile.filename)
+      photos.push({ path: filePath, label: 'WORN PHOTO', guidance: 'Use for fit, drape, scale, real-wear behavior, outfit role, and risks. Do not override literal garment color/category from this styling context.' })
+      tempFiles.push(filePath)
+    } else if (piece.worn_photo) {
       const wornPath = path.join(uploadsDir, piece.worn_photo)
-      if (fs.existsSync(wornPath)) photos.push({ path: wornPath, label: 'WORN PHOTO', guidance: 'Use for fit, drape, scale, real-wear behavior, outfit role, and risks. Do not override literal garment color/category from this styling context.' })
+      if (fs.existsSync(wornPath)) {
+        photos.push({ path: wornPath, label: 'WORN PHOTO', guidance: 'Use for fit, drape, scale, real-wear behavior, outfit role, and risks. Do not override literal garment color/category from this styling context.' })
+      }
     }
-    if (!photos.length) return res.status(404).json({ error: 'Photo file not found in uploads/' })
+
+    if (!photos.length) return res.status(400).json({ error: 'This piece has no photo to tag' })
 
     const tags = await tagPieceWithProvider(photos)
-    res.json(tags)
+    tags.tag_state = tagStateForTaggerResult(tags, {
+      photo: Boolean(photoFile || piece.photo),
+      worn_photo: Boolean(wornPhotoFile || piece.worn_photo)
+    })
+    const merged = applyTaggerResult(parsePiece(piece), tags)
+    tempFiles.forEach(f => {
+      if (fs.existsSync(f)) fs.unlinkSync(f)
+    })
+    res.json(merged)
   } catch (err) {
+    tempFiles.forEach(f => {
+      if (fs.existsSync(f)) fs.unlinkSync(f)
+    })
     console.error('AI retag error:', err)
     res.status(500).json({ error: err.message })
   }
-})
+}
 
-router.post('/tag-piece-claude/:id', async (req, res) => {
-  try {
-    const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
-    if (!piece) return res.status(404).json({ error: 'Piece not found' })
-    if (!piece.photo && !piece.worn_photo) return res.status(400).json({ error: 'This piece has no photo to tag' })
+router.post('/tag-piece-existing/:id', upload.fields([
+  { name: 'photo', maxCount: 1 },
+  { name: 'worn_photo', maxCount: 1 }
+]), tagExistingHandler)
 
-    const photos = []
-    if (piece.photo) {
-      const hangerPath = path.join(uploadsDir, piece.photo)
-      if (fs.existsSync(hangerPath)) photos.push({ path: hangerPath, label: 'HANGER PHOTO', guidance: 'Use for literal garment truth: category, color, construction, pattern, fabric, and shape.' })
-    }
-    if (piece.worn_photo) {
-      const wornPath = path.join(uploadsDir, piece.worn_photo)
-      if (fs.existsSync(wornPath)) photos.push({ path: wornPath, label: 'WORN PHOTO', guidance: 'Use for fit, drape, scale, real-wear behavior, outfit role, and risks. Do not override literal garment color/category from this styling context.' })
-    }
-    if (!photos.length) return res.status(404).json({ error: 'Photo file not found in uploads/' })
-
-    const tags = await tagPieceWithProvider(photos)
-    res.json(tags)
-  } catch (err) {
-    console.error('AI retag error:', err)
-    res.status(500).json({ error: err.message })
-  }
-})
+router.post('/tag-piece-claude/:id', upload.fields([
+  { name: 'photo', maxCount: 1 },
+  { name: 'worn_photo', maxCount: 1 }
+]), tagExistingHandler)
 
 // ── AI Evaluation/Styling ─────────────────────────────────────────────────────
 router.post('/evaluate-piece', async (req, res) => {
@@ -2238,4 +2135,3 @@ router.post('/ask', async (req, res) => {
 })
 
 export default router
-
