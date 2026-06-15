@@ -6,6 +6,8 @@
     "dev": "concurrently \"node server.js\" \"vite\"",
     "build": "vite build",
     "test": "node scratch/check_style_claims.js && node scratch/check_text_matching_ratchet.js && node --test",
+    "inspect:piece": "node scratch/inspect_piece.js",
+    "apply:soft-score-floors": "node scratch/apply_soft_score_floors.js",
     "start": "node server.js"
   },
   "dependencies": {

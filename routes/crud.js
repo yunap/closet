@@ -4,6 +4,13 @@ import path from 'path'
 import fs from 'fs'
 import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { collectPieceIdsFromSavedBoardRow } from '../styling-engine/rules.js'
+import {
+  mergeWithManualOverrides,
+  normalizeManualOverrides,
+  pinManualConfidence,
+  tagStateForPhotos
+} from '../styling-engine/taggerMerge.js'
+import { applySoftScoreFloors } from '../styling-engine/softScoreFloors.js'
 
 const router = express.Router()
 
@@ -90,23 +97,37 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     neckline, sleeve_type, length_hits_at, silhouette,
     fabric_category, fabric_weight, stretch,
     fit_on_body, tuck_behavior, waistband_type,
-    styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version } = req.body
+    styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
+    tag_state, manual_overrides } = req.body
   const photo      = req.files?.photo?.[0]?.filename || null
   const worn_photo = req.files?.worn_photo?.[0]?.filename || null
+  const finalManualOverrides = normalizeManualOverrides(manual_overrides)
+  const parsedStyleProfile = safeJsonParse(style_profile_json, {}) || {}
+  const confidencePinnedProfile = pinManualConfidence(parsedStyleProfile, finalManualOverrides)
+  const finalStyleProfile = applySoftScoreFloors({
+    ...req.body,
+    photo,
+    worn_photo,
+    manual_overrides: finalManualOverrides,
+    style_profile_json: confidencePinnedProfile
+  }).style_profile_json
+  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo })
   const r = db.prepare(`
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, photo, worn_photo,
       recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
       pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
       neckline, sleeve_type, length_hits_at, silhouette,
       fabric_category, fabric_weight, stretch, fit_on_body, tuck_behavior, waistband_type,
-      styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
+      tag_state, manual_overrides)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active', photo, worn_photo,
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
     fabric_category||null, fabric_weight||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
-    styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', style_profile_json||'{}', tagger_version||null)
+    styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile), tagger_version||null,
+    finalTagState, JSON.stringify(finalManualOverrides))
   res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(r.lastInsertRowid)))
 })
 
@@ -119,17 +140,39 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     neckline, sleeve_type, length_hits_at, silhouette,
     fabric_category, fabric_weight, stretch,
     fit_on_body, tuck_behavior, waistband_type,
-    styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version } = req.body
+    styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
+    tag_state, manual_overrides } = req.body
   const photo      = req.files?.photo?.[0]?.filename      || (clear_photo      === 'true' ? null : existing.photo)
   const worn_photo = req.files?.worn_photo?.[0]?.filename  || (clear_worn_photo === 'true' ? null : existing.worn_photo)
   const final_tagger_version = tagger_version === undefined ? existing.tagger_version : tagger_version
+  const existingManualOverrides = normalizeManualOverrides(existing.manual_overrides)
+  const finalManualOverrides = manual_overrides === undefined ? existingManualOverrides : normalizeManualOverrides(manual_overrides)
+  const existingProfile = safeJsonParse(existing.style_profile_json, {}) || {}
+  const submittedProfile = style_profile_json === undefined ? existingProfile : (safeJsonParse(style_profile_json, {}) || {})
+  const profileOverrides = finalManualOverrides.map(path => (
+    path.startsWith('style_profile_json.') ? path.replace(/^style_profile_json\./, '') : path
+  ))
+  const confidencePinnedProfile = pinManualConfidence(
+    mergeWithManualOverrides(existingProfile, submittedProfile, profileOverrides),
+    finalManualOverrides
+  )
+  const finalStyleProfile = applySoftScoreFloors({
+    ...parsePiece(existing),
+    ...req.body,
+    photo,
+    worn_photo,
+    manual_overrides: finalManualOverrides,
+    style_profile_json: confidencePinnedProfile
+  }).style_profile_json
+  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo })
   db.prepare(`
     UPDATE pieces SET name=?,category=?,colors=?,occasions=?,season=?,notes=?,status=?,favorite=?,photo=?,worn_photo=?,
       recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,
       pattern_type=?,pattern_scale=?,pattern_complexity=?,reads_as=?,background_color=?,hem_finish=?,
       neckline=?,sleeve_type=?,length_hits_at=?,silhouette=?,
       fabric_category=?,fabric_weight=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,
-      styling_rules_learned=?,pairs_well_with=?,tried_and_rejected=?,style_profile_json=?,tagger_version=?
+      styling_rules_learned=?,pairs_well_with=?,tried_and_rejected=?,style_profile_json=?,tagger_version=?,
+      tag_state=?,manual_overrides=?
     WHERE id=?
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active',
     favorite==='true'?1:0, photo, worn_photo,
@@ -137,8 +180,8 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
     fabric_category||null, fabric_weight||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
-    styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', style_profile_json||JSON.stringify(existing.style_profile_json ? safeJsonParse(existing.style_profile_json, {}) || {} : {}),
-    final_tagger_version, req.params.id)
+    styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile),
+    final_tagger_version, finalTagState, JSON.stringify(finalManualOverrides), req.params.id)
   res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)))
 })
 

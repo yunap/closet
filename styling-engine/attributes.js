@@ -1,5 +1,25 @@
 // Attributes Module
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
+import { confidenceFromProfile } from './taggerMerge.js'
+
+const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
+  'silhouette',
+  'fit_on_body',
+  'tuck_behavior',
+  'waistband_type',
+  'sleeve_type'
+])
+
+export function getFieldConfidence(piece, field) {
+  const confidence = String(confidenceFromProfile(piece, field) || '').toLowerCase()
+  if (['manual', 'high', 'medium', 'low'].includes(confidence)) return confidence
+  return piece?.tag_state === 'provisional' && STRUCTURE_FIT_CONFIDENCE_FIELDS.has(field) ? 'low' : 'medium'
+}
+
+function trustedField(piece, field) {
+  const confidence = getFieldConfidence(piece, field)
+  return confidence === 'manual' || confidence === 'high' || confidence === 'medium'
+}
 
 export function pieceTextBlob(p) {
   if (!p) return ''
@@ -18,12 +38,12 @@ export function pieceTextBlob(p) {
     p.pattern_type || '',
     p.pattern_scale || '',
     p.pattern_complexity || '',
-    p.silhouette || '',
+    trustedField(p, 'silhouette') ? p.silhouette || '' : '',
     p.fabric_category || '',
     p.fabric_weight || '',
-    p.fit_on_body || '',
-    p.tuck_behavior || '',
-    p.waistband_type || '',
+    trustedField(p, 'fit_on_body') ? p.fit_on_body || '' : '',
+    trustedField(p, 'tuck_behavior') ? p.tuck_behavior || '' : '',
+    trustedField(p, 'waistband_type') ? p.waistband_type || '' : '',
     p.notes || '',
     p.engine_notes || '',
     rules.join(' '),
@@ -370,11 +390,11 @@ export function necklineWarmth(p) {
 
 export function sleeveCoverage(p) {
   if (!p || !p.sleeve_type) return null
+  if (getFieldConfidence(p, 'sleeve_type') === 'low') return null
   const s = String(p.sleeve_type || '').toLowerCase().trim()
   if (/\b(3\/4|long)\b/i.test(s)) return 'long'
   if (/\b(short|cap|elbow)\b/i.test(s)) return 'short'
   if (/\b(none|sleeveless|strap|tank|cami|camisole|halter)\b/i.test(s)) return 'none'
   return null
 }
-
 

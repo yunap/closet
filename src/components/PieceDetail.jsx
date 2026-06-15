@@ -165,6 +165,12 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
             {piece.favorite && <span className="detail-tag" style={{ color: 'var(--accent)' }}>♥ Favorite</span>}
           </div>
 
+          {piece.tag_state === 'provisional' && (
+            <div style={{ fontSize: 12, color: 'var(--accent)', background: 'var(--accent-light)', padding: '9px 11px', borderRadius: 8, marginBottom: 14, lineHeight: 1.45 }}>
+              Provisional tag: Add a worn photo to fully tag fit and drape behavior.
+            </div>
+          )}
+
           {piece.notes && <div className="detail-notes">{piece.notes}</div>}
 
           {/* Styling rules */}
@@ -193,12 +199,6 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
               </div>
             </div>
           )}
-          {piece.photo && !piece.worn_photo && (
-            <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 12, fontStyle: 'italic' }}>
-              Add a worn photo for better stylist feedback
-            </div>
-          )}
-
           {/* Saved boards */}
           {savedBoards.length > 0 && (
             <div style={{ marginBottom: 16 }}>

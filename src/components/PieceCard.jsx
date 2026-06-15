@@ -70,6 +70,7 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
       {/* Badges */}
       <div className="piece-card-badges">
         <span className="badge badge-category">{piece.category}</span>
+        {piece.tag_state === 'provisional' && <span className="badge">provisional</span>}
         {piece.status === 'needs-repair' && <span className="badge badge-repair">repair</span>}
         {piece.status === 'consider-donating' && <span className="badge badge-donate">donate?</span>}
       </div>

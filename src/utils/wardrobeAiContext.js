@@ -24,6 +24,22 @@ export function pieceStyleProfile(piece = {}) {
   return safeJsonParse(piece?.style_profile_json, {}) || {}
 }
 
+export function getFieldConfidence(piece = {}, field) {
+  const profile = pieceStyleProfile(piece)
+  const confidence = String(profile?._confidence?.[field] || '').toLowerCase()
+  if (['manual', 'high', 'medium', 'low'].includes(confidence)) return confidence
+  const manualOverrides = Array.isArray(piece.manual_overrides) ? piece.manual_overrides : []
+  if (manualOverrides.includes(field)) return 'manual'
+  return piece.tag_state === 'provisional' ? 'low' : 'medium'
+}
+
+function trustedFieldText(piece, field, label, value) {
+  if (!value) return null
+  return getFieldConfidence(piece, field) === 'low'
+    ? `${label}: [low confidence - add worn photo] ${value}`
+    : `${label}: ${value}`
+}
+
 export function pieceGarmentIntelligence(piece = {}) {
   const profile = pieceStyleProfile(piece)
   const info = profile?.garment_intelligence && typeof profile.garment_intelligence === 'object'
@@ -131,11 +147,15 @@ export function buildWardrobePieceTruthText(piece = {}) {
 
   if (piece.bottom_shape) parts.push(`bottom shape: ${piece.bottom_shape}`)
   if (piece.leg_opening) parts.push(`leg opening: ${piece.leg_opening}`)
-  if (piece.hem_finish) parts.push(`hem: ${piece.hem_finish}`)
-  if (piece.length_hits_at) parts.push(`hits at: ${piece.length_hits_at}`)
-  if (piece.silhouette) parts.push(`silhouette: ${piece.silhouette}`)
+  const hemText = trustedFieldText(piece, 'hem_finish', 'hem', piece.hem_finish)
+  if (hemText) parts.push(hemText)
+  const lengthText = trustedFieldText(piece, 'length_hits_at', 'hits at', piece.length_hits_at)
+  if (lengthText) parts.push(lengthText)
+  const silhouetteText = trustedFieldText(piece, 'silhouette', 'silhouette', piece.silhouette)
+  if (silhouetteText) parts.push(silhouetteText)
   if (piece.fabric_category) parts.push(`fabric: ${piece.fabric_category}${piece.fabric_weight ? `/${piece.fabric_weight}` : ''}`)
-  if (piece.fit_on_body) parts.push(`fit: ${piece.fit_on_body}`)
+  const fitText = trustedFieldText(piece, 'fit_on_body', 'fit', piece.fit_on_body)
+  if (fitText) parts.push(fitText)
 
   const tuck = computeTuckNote(piece) || computeWaistbandNote(piece)
   if (tuck) parts.push(tuck)

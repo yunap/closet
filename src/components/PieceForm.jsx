@@ -131,7 +131,7 @@ const FABRIC_BY_CATEGORY = {
   default: {
     sectionLabel: 'Fabric',
     fabricLabel: 'Fabric',
-    fabricOptions: ['jersey','knit','linen','silk','satin','cotton','wool','cashmere','viscose','denim','twill','canvas','corduroy','tweed','velvet','leather','suede','ponte','synthetic','fleece','other'],
+    fabricOptions: ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','lace','crochet','wool','cashmere','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other'],
     weightLabel: 'Weight',
     weightOptions: ['ultralight','light','medium','heavy'],
     showStretch: true,
@@ -303,8 +303,10 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     // Color
     background_color: piece?.background_color || '',
     tagger_version: piece?.tagger_version || null,
+    tag_state: piece?.tag_state || 'untagged',
   })
   const [confidenceFlags, setConfidenceFlags] = useState({}) // field -> 'medium'|'low'
+  const [manualOverrides, setManualOverrides] = useState(piece?.manual_overrides || [])
 
   const [hangerFile,  setHangerFile]  = useState(null)
   const [hangerPrev,  setHangerPrev]  = useState(piece?.photo      ? `/uploads/${piece.photo}`      : null)
@@ -319,33 +321,64 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [photoPreviewSize, setPhotoPreviewSize] = useState(180)
   const [previewImage, setPreviewImage] = useState(null)
 
-  const set       = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  const toggleArr = (k, val) => setForm(f => ({
-    ...f,
-    [k]: f[k].includes(val) ? f[k].filter(x => x !== val) : [...f[k], val]
-  }))
+  const markManualOverride = (path) => {
+    setManualOverrides(paths => paths.includes(path) ? paths : [...paths, path])
+    setForm(f => {
+      const profile = f.style_profile_json && typeof f.style_profile_json === 'object' ? f.style_profile_json : {}
+      return {
+        ...f,
+        style_profile_json: {
+          ...profile,
+          _confidence: {
+            ...(profile._confidence || {}),
+            [path]: 'manual'
+          }
+        }
+      }
+    })
+  }
+  const clearManualOverride = (path) => {
+    setManualOverrides(paths => paths.filter(p => p !== path))
+  }
+  const set = (k, v) => {
+    markManualOverride(k)
+    setForm(f => ({ ...f, [k]: v }))
+  }
+  const toggleArr = (k, val) => {
+    markManualOverride(k)
+    setForm(f => ({
+      ...f,
+      [k]: f[k].includes(val) ? f[k].filter(x => x !== val) : [...f[k], val]
+    }))
+  }
   const normalizeProfileList = (value) => {
     if (!value) return []
     if (Array.isArray(value)) return [...new Set(value.map(v => String(v || '').trim()).filter(Boolean))]
     return String(value).split(/[\n;]+/).map(v => v.trim()).filter(Boolean)
   }
-  const mergeStyleProfilePatch = (existing, patch) => {
-    if (!patch || typeof patch !== 'object') return existing || {}
-    const base = typeof existing === 'string'
-      ? (() => { try { return JSON.parse(existing) || {} } catch { return {} } })()
-      : (existing || {})
-    const merged = { ...base, ...patch }
-    if (base.style_lanes || patch.style_lanes) merged.style_lanes = { ...(base.style_lanes || {}), ...(patch.style_lanes || {}) }
-    if (base.style_notes || patch.style_notes) merged.style_notes = { ...(base.style_notes || {}), ...(patch.style_notes || {}) }
-    if (base.garment_intelligence || patch.garment_intelligence) {
-      const b = base.garment_intelligence || {}
-      const p = patch.garment_intelligence || {}
-      merged.garment_intelligence = { ...b, ...p }
-      ;['pairing_requirements', 'failure_risks', 'formula_compatibility', 'do_not_pair_rules'].forEach(key => {
-        if (b[key] || p[key]) merged.garment_intelligence[key] = [...new Set([...normalizeProfileList(b[key]), ...normalizeProfileList(p[key])])]
-      })
-      if (b.real_wear_notes || p.real_wear_notes) merged.garment_intelligence.real_wear_notes = { ...(b.real_wear_notes || {}), ...(p.real_wear_notes || {}) }
-      if (b.occasion_confidence || p.occasion_confidence) merged.garment_intelligence.occasion_confidence = { ...(b.occasion_confidence || {}), ...(p.occasion_confidence || {}) }
+  const isManualOverride = (path) => manualOverrides.some(override => (
+    override === path || path.startsWith(`${override}.`) || override.startsWith(`${path}.`)
+  ))
+  const applyTagValue = (draft, field, value, fallback = draft[field]) => {
+    if (value === undefined || value === null || value === '') return
+    if (isManualOverride(field)) return
+    draft[field] = value || fallback
+  }
+  const mergeTagProfile = (existing, incoming) => {
+    if (!incoming || typeof incoming !== 'object' || manualOverrides.includes('style_profile_json')) return existing
+    const base = existing && typeof existing === 'object' ? existing : {}
+    const merged = { ...base, ...incoming }
+    for (const path of manualOverrides.filter(p => p.startsWith('style_profile_json.'))) {
+      const parts = path.replace(/^style_profile_json\./, '').split('.')
+      let source = base
+      let target = merged
+      for (let i = 0; i < parts.length - 1; i += 1) {
+        source = source?.[parts[i]]
+        target[parts[i]] = { ...(target[parts[i]] || {}) }
+        target = target[parts[i]]
+      }
+      const key = parts[parts.length - 1]
+      if (source && Object.prototype.hasOwnProperty.call(source, key)) target[key] = source[key]
     }
     return merged
   }
@@ -365,34 +398,37 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       }
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
-      setForm(f => ({
-        ...f,
-        category:           tags.category           || f.category,
-        colors:             tags.colors             || f.colors,
-        occasions:          tags.occasions          || f.occasions,
-        season:             tags.season             || f.season,
-        name:               f.name || tags.name_suggestion || '',
-        notes:              f.notes || tags.notes_suggestion || '',
-        background_color:   tags.background_color   || f.background_color,
-        pattern_type:       tags.pattern_type       || f.pattern_type,
-        pattern_scale:      tags.pattern_scale      || f.pattern_scale,
-        pattern_complexity: tags.pattern_complexity || f.pattern_complexity,
-        reads_as:           tags.reads_as           || f.reads_as,
-        hem_finish:         tags.hem_finish         || f.hem_finish,
-        neckline:           tags.neckline           || f.neckline,
-        sleeve_type:        tags.sleeve_type        || f.sleeve_type,
-        length_hits_at:     tags.length_hits_at     || f.length_hits_at,
-        silhouette:         tags.silhouette         || f.silhouette,
-        fabric_category:    tags.fabric_category    || f.fabric_category,
-        fabric_weight:      tags.fabric_weight      || f.fabric_weight,
-        style_profile_json: tags.style_profile_json || f.style_profile_json,
-        fit_on_body:        (tags.fit_on_body && tags.fit_on_body !== 'none') ? tags.fit_on_body : f.fit_on_body,
-        tagger_version:     tags.tagger_version     || f.tagger_version,
-      }))
+      setForm(f => {
+        const next = { ...f }
+        applyTagValue(next, 'category', tags.category)
+        applyTagValue(next, 'colors', tags.colors)
+        applyTagValue(next, 'occasions', tags.occasions)
+        applyTagValue(next, 'season', tags.season)
+        if (!f.name) applyTagValue(next, 'name', tags.name_suggestion, '')
+        if (!f.notes) applyTagValue(next, 'notes', tags.notes_suggestion, '')
+        applyTagValue(next, 'background_color', tags.background_color)
+        applyTagValue(next, 'pattern_type', tags.pattern_type)
+        applyTagValue(next, 'pattern_scale', tags.pattern_scale)
+        applyTagValue(next, 'pattern_complexity', tags.pattern_complexity)
+        applyTagValue(next, 'reads_as', tags.reads_as)
+        applyTagValue(next, 'hem_finish', tags.hem_finish)
+        applyTagValue(next, 'neckline', tags.neckline)
+        applyTagValue(next, 'sleeve_type', tags.sleeve_type)
+        applyTagValue(next, 'length_hits_at', tags.length_hits_at)
+        applyTagValue(next, 'silhouette', tags.silhouette)
+        applyTagValue(next, 'fabric_category', tags.fabric_category)
+        applyTagValue(next, 'fabric_weight', tags.fabric_weight)
+        next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
+        if (tags.fit_on_body && tags.fit_on_body !== 'none') applyTagValue(next, 'fit_on_body', tags.fit_on_body)
+        applyTagValue(next, 'tagger_version', tags.tagger_version)
+        applyTagValue(next, 'tag_state', tags.tag_state || (wornFile || piece?.worn_photo ? 'fully_tagged' : 'provisional'))
+        return next
+      })
       // Set confidence flags for medium/low fields
-      if (tags._confidence) {
+      const tagConfidence = tags.style_profile_json?._confidence || tags._confidence
+      if (tagConfidence) {
         const flags = {}
-        Object.entries(tags._confidence).forEach(([field, conf]) => {
+        Object.entries(tagConfidence).forEach(([field, conf]) => {
           if (conf === 'medium' || conf === 'low') flags[field] = conf
         })
         setConfidenceFlags(flags)
@@ -401,52 +437,36 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     finally { setTagging(false) }
   }
 
-  // Full evaluation from worn photo — sends piece context, auto-fills chips
+  // Combined evaluation from worn photo — routes through the same tagger as hanger photos.
   const handleWornPhoto = async (file) => {
     setWornFile(file); setWornPrev(URL.createObjectURL(file)); setClearWorn(false)
     setFitNoting(true)
     try {
       const fd = new FormData()
-      fd.append('photo', file)
-      if (form.name)     fd.append('piece_name', form.name)
-      if (form.category) fd.append('piece_category', form.category)
-      if (form.notes) fd.append('piece_notes', form.notes)
-      if (form.engine_notes) fd.append('engine_notes', form.engine_notes)
-      if (form.recommendation_status) fd.append('recommendation_status', form.recommendation_status)
-      if (form.fit_confidence) fd.append('fit_confidence', form.fit_confidence)
-      if (form.role_permission) fd.append('role_permission', form.role_permission)
-      
-      // Append hanger photo if available for visual visual-alignment/context
-      if (hangerFile) {
-        fd.append('hanger_photo', hangerFile)
-      } else if (piece?.photo && !clearHanger) {
-        fd.append('hanger_photo_path', piece.photo)
-      }
-
-      const res  = await fetch('/api/ai/fit-note', { method: 'POST', body: fd })
-      const data = await res.json()
-      if (data.error) return
+      fd.append('worn_photo', file)
+      if (hangerFile) fd.append('photo', hangerFile)
+      const res = await fetch(isEdit ? `/api/ai/tag-piece-existing/${piece.id}` : '/api/ai/tag-piece', { method: 'POST', body: fd })
+      const tags = await res.json()
+      if (tags.error) return
       setForm(f => {
-        const updated = { ...f }
-        // Replace any existing fit note rather than appending
-        if (data.note) {
-          const stripped = f.notes
-            .replace(/\n*Fit: [^\n]*/g, '')
-            .replace(/\n*Fit evaluation: [^\n]*/g, '')
-            .trim()
-          updated.notes = stripped ? stripped + '\n\nFit: ' + data.note : 'Fit: ' + data.note
-        }
-        // Always overwrite structured fields from new worn photo
-        if (data.fit_on_body)    updated.fit_on_body    = data.fit_on_body
-        if (data.length_hits_at) updated.length_hits_at = data.length_hits_at
-        if (data.tuck_behavior)  updated.tuck_behavior  = data.tuck_behavior
-        if (data.waistband_type) updated.waistband_type = data.waistband_type
-        if (data.silhouette)     updated.silhouette     = data.silhouette
-        if (data.fit_confidence && (f.fit_confidence === 'unknown' || data.fit_confidence === 'low')) updated.fit_confidence = data.fit_confidence
-        if (data.recommendation_status === 'needs_fit_review' && f.recommendation_status === 'trusted') updated.recommendation_status = data.recommendation_status
-        if (data.style_profile_patch) updated.style_profile_json = mergeStyleProfilePatch(f.style_profile_json, data.style_profile_patch)
-        return updated
+        const next = { ...f }
+        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_type','length_hits_at','silhouette','fabric_category','fabric_weight','fit_on_body','tuck_behavior','waistband_type','tagger_version'].forEach(field => {
+          applyTagValue(next, field, tags[field])
+        })
+        if (!f.name) applyTagValue(next, 'name', tags.name_suggestion || tags.name, '')
+        if (!f.notes) applyTagValue(next, 'notes', tags.notes_suggestion || tags.notes, '')
+        next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
+        applyTagValue(next, 'tag_state', tags.tag_state || 'fully_tagged')
+        return next
       })
+      const confidence = tags.style_profile_json?._confidence || tags._confidence
+      if (confidence) {
+        const flags = {}
+        Object.entries(confidence).forEach(([field, conf]) => {
+          if (conf === 'medium' || conf === 'low') flags[field] = conf
+        })
+        setConfidenceFlags(flags)
+      }
     } catch {}
     finally { setFitNoting(false) }
   }
@@ -458,6 +478,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     Object.entries(form).forEach(([k, v]) => {
       if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
     })
+    fd.append('manual_overrides', JSON.stringify(manualOverrides))
     if (hangerFile)   fd.append('photo', hangerFile)
     else if (clearHanger) fd.append('clear_photo', 'true')
     if (wornFile)     fd.append('worn_photo', wornFile)
@@ -525,7 +546,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       <div className="modal-sheet" onClick={e => e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-header">
-          <span className="modal-title">{isEdit ? 'Edit piece' : 'Add piece'}</span>
+          <span className="modal-title">{isEdit ? `Edit piece #${piece.id}` : 'Add piece'}</span>
           <button className="modal-close" onClick={onCancel}>✕</button>
         </div>
 
@@ -914,6 +935,26 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               color="repair"
             />
           </div>
+
+          {manualOverrides.length > 0 && (
+            <div className="form-group">
+              <label className="form-label">Protected edits</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {manualOverrides.map(path => (
+                  <button
+                    key={path}
+                    type="button"
+                    className="chip-toggle active"
+                    onClick={() => clearManualOverride(path)}
+                    title="Click to let AI update this field again"
+                    style={{ fontSize: 11, textTransform: 'none' }}
+                  >
+                    {path.replace(/_/g, ' ')} ×
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ── Notes ────────────────────────────────────────────────── */}
           <Section label="Notes" />
