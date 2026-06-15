@@ -1,10 +1,26 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db, parsePiece } from '../db.js'
-import { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit } from '../styling-engine/rules.js'
+import { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext } from '../styling-engine/rules.js'
 import { bottomKind, fabricWeight } from '../styling-engine/attributes.js'
 import { resolveOccasionProfile } from '../styling-engine/occasions.js'
 import { resolveActivityProfile } from '../styling-engine/footwear-comfort.js'
+
+test('current season resolves to warm weather during June', () => {
+  const june = weatherProfileFromContext({
+    season: 'current season',
+    currentDate: new Date('2026-06-15T12:00:00')
+  })
+  assert.equal(june.isHot, true)
+  assert.equal(june.isCold, false)
+
+  const january = weatherProfileFromContext({
+    season: 'current season',
+    currentDate: new Date('2026-01-15T12:00:00')
+  })
+  assert.equal(january.isHot, false)
+  assert.equal(january.isCold, true)
+})
 
 test('Whale stripe tee hot weather recommendations include appropriate shorts/lightweight bottoms', () => {
   // Query all active pieces
@@ -352,4 +368,3 @@ test('Trail active outdoor profile additional constraints and repair tests', () 
   assert.ok(repairedNoShoes.pieceIds.includes(30), 'Should keep canvas slip-ons if no alternative exists')
   assert.ok(repairedNoShoes.watchFor.includes('footwear is not trail-rated — closest available match.'), 'Should append warning to watchFor')
 })
-

@@ -671,7 +671,7 @@ export default function AskClaude({
     const pipelineNote = meta.source === 'whole_wardrobe'
       ? 'Generation pipeline: whole-wardrobe outfit generation. Candidate ranking includes a visual critic pass over garment-photo contact sheets before the final text composer chooses returned cards.'
       : meta.source === 'selected_piece'
-        ? 'Generation pipeline: selected-piece outfit generation. The selector first ranks saved garment records, style notes, tags, feedback, and outfit memory, then runs a compact visual critic pass over the selected garment and shortlisted support-piece photos before the final cards are composed. The card thumbnails reflect the pieces reviewed; unless a rendered outfit image exists, discuss garment photos and card context rather than a full worn outfit image.'
+        ? 'Generation pipeline: selected-piece visual composer. The selected garment stays pinned as the anchor while saved wardrobe support pieces are reviewed from photos, confidence-aware tags, feedback, and outfit memory. The card thumbnails reflect the pieces reviewed; unless a rendered outfit image exists, discuss garment photos and card context rather than a full worn outfit image.'
         : ''
     const cardContext = outfits.slice(0, 5).map((outfit, index) => {
       const displayPieces = Array.isArray(outfit?.pieces) ? outfit.pieces : []
@@ -1253,6 +1253,11 @@ export default function AskClaude({
           const boardKey = `${messageIndex}:${idx}`
           const isPreview = Boolean(outfit.previewOnly)
           const isTextOnly = Boolean(outfit.textOnly || message?.textOnly || message?.wholeWardrobe)
+          const hasRenderableOutfitPieces = (Array.isArray(outfit.pieceIds) && outfit.pieceIds.length > 0) ||
+            (Array.isArray(outfit.pieces) && outfit.pieces.some(p => p?.id))
+          const canRenderStructuredOutfit = isPreview
+            ? (activeContext?.type === 'piece' || outfit.pieceId || outfit.selectedPieceId)
+            : !message?.wardrobeEvaluation && hasRenderableOutfitPieces
           const hasRendered = Boolean(boardResults[boardKey]?.length)
           const isRendering = boardLoadingIndex === boardKey
           const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
@@ -1503,7 +1508,7 @@ export default function AskClaude({
                 </>
               )}
 
-              {(activeContext?.type === 'piece' || outfit.pieceId) && !isTextOnly && (
+              {canRenderStructuredOutfit && (
                 <>
                   <div style={{ marginTop: 9, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                     {isPreview ? (

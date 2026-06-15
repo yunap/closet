@@ -36,11 +36,19 @@ export function isStyleSelectedQuestion(question = '') {
   return !q.trim() || /style|wear|pair|outfit|how should|how do i|what goes|what would work|proposal|suggest/.test(q)
 }
 
-export function weatherProfileFromContext({ mood = '', season = '' } = {}) {
+export function weatherProfileFromContext({ mood = '', season = '', currentDate = new Date() } = {}) {
   const text = `${mood} ${season}`.toLowerCase()
+  const month = currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
+    ? currentDate.getMonth()
+    : null
+  const currentSeasonRequested = /\b(current season|current weather|right now|today|this month)\b/.test(text) // ratchet-allow: date-context parsing, not garment text matching
+  const currentSeasonHot = currentSeasonRequested && month !== null && month >= 5 && month <= 7
+  const currentSeasonCold = currentSeasonRequested && month !== null && (month === 11 || month <= 1)
   const isHot = /\b(hot|heat|heatwave|sweltering|scorching|humid|90s|100 degrees)\b/.test(text)
     || /\bsummer\b/.test(text)
+    || currentSeasonHot
   const isCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
+    || currentSeasonCold
   return { isHot: isHot && !isCold, isCold: isCold && !isHot }
 }
 
@@ -3557,4 +3565,3 @@ export function buildBohoWatch(outfit = {}, pieces = []) {
   if (!pieces.some(p => wardrobeCategoryGroup(p) === 'shoes')) return 'Choose the shoe before judging the outfit; boho needs grounded finish, not just texture.'
   return 'Keep the bohemian detail as the clear thesis; avoid adding a second competing accent.'
 }
-

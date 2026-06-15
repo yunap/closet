@@ -114,7 +114,8 @@ import {
   getRecentWholeWardrobeSessionInfluence,
   mergeStyleProfilePatch,
   outfitStylisticStrengthScore,
-  sortByStylisticStrength
+  sortByStylisticStrength,
+  weatherProfileFromContext
 } from './rules.js'
 
 // ── Basic helper/utility functions ───────────────────────────────────────────
@@ -2044,8 +2045,9 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
   ].filter(Boolean).join('\n')
 }
 
-export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', variantMode = 'similar' }) {
+export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', variantMode = 'similar', currentDate = new Date() }) {
   const mode = variantMode === 'creative' ? 'creative' : 'similar'
+  const weatherProfile = weatherProfileFromContext({ season, currentDate })
   const anchorPiece = (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'top')
     || (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'dress')
     || (pieces || [])[0]
@@ -2069,6 +2071,12 @@ export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'c
     '- Keep proportions coherent, visual hierarchy clear, and wearability believable.',
     '- Avoid random novelty, generic catalog styling, influencer polish, bland retail styling, and overly soft beige looks.',
     '- Do not repeat the same skirt shape, same shoe family, same color family, or same layer idea across all three.',
+    weatherProfile.isHot
+      ? '- Warm/current-season realism: do not introduce boots, ankle boots, or heavy cold-weather footwear unless they are already essential to the saved outfit reference; prefer seasonally plausible flats, loafers, sneakers, sandals, or light slip-ons.'
+      : '',
+    weatherProfile.isCold
+      ? '- Cold/current-season realism: avoid bare warm-weather footwear unless the saved outfit reference clearly requires it; prefer seasonally plausible closed shoes, boots, or layers.'
+      : '',
     '',
     mode === 'creative'
       ? 'Creative alternatives mode: allow bigger changes in silhouette, palette, mood, polish level, and outfit category. The ideas may feel exploratory or surprising, but they must still read like plausible personal outfits.'
@@ -2084,7 +2092,7 @@ export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'c
   ].filter(Boolean).join('\n')
 }
 
-export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', index = 1, variantMode = 'similar' }) {
+export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', index = 1, variantMode = 'similar', currentDate = new Date() }) {
   const startedAt = Date.now()
   const timings = {}
   const filename = `generated-boards/saved-outfit-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
@@ -2139,7 +2147,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
       contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion calibration reference.' : 'Taste calibration reference.' })
     }
 
-    contentParts.push({ type: 'input_text', text: savedOutfitImagePrompt({ outfit, pieces, occasion, season, variantMode }) })
+    contentParts.push({ type: 'input_text', text: savedOutfitImagePrompt({ outfit, pieces, occasion, season, variantMode, currentDate }) })
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
       model: 'gpt-4o',
