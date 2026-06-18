@@ -32,8 +32,10 @@ import {
   AI_PROVIDER,
   ACTIVE_STYLIST_MODEL
 } from './provider.js'
+import { isTravelOrPackingRequest } from './stylingIntent.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
+import { extractWeatherContext } from './stylingIntent.js'
 
 import {
   parsePiece,
@@ -3614,6 +3616,17 @@ export const STYLIST_CONVERSATION_MODES = new Set([
   'preference_reaction',
 ])
 
+function shouldAttachGeneratedOutfitReferenceSheet(question = '', conversationMode = 'new_request') {
+  const q = String(question || '').toLowerCase()
+  if (conversationMode === 'new_request') return true
+  return /\b(show|render|visual|visualize|image|photo|picture|see|look|color|colour|texture|pattern|hem|shoe|shoes|skirt|pants|top|dress|cardigan|layer)\b/.test(q) // ratchet-allow: user intent routing for whether to attach generated-card reference images
+}
+
+function isGeneratedSetCoverageAudit(question = '') {
+  const q = String(question || '').toLowerCase()
+  return /\b(coverage|cover|enough|same outfit|only one|backup|laundry|repeat|re-wear|rewear|additional|another|more options?)\b/.test(q) // ratchet-allow: user intent routing for multi-outfit coverage audits
+}
+
 export async function buildStylistConversationPayload(body) {
   const {
     question,
@@ -3629,7 +3642,13 @@ export async function buildStylistConversationPayload(body) {
     outfit,
     pieceIds,
     sessionId = 'default',
-    activeContext
+    activeContext,
+    occasion,
+    season,
+    weather,
+    mood,
+    mission,
+    activity
   } = body
 
   let activeOutfit = outfit
@@ -3650,6 +3669,26 @@ export async function buildStylistConversationPayload(body) {
   const confirmedOutfitsText = getConfirmedOutfitMemory()
   const generatedOutfitContextText = String(generatedContext || '').trim()
   const threadContextText = String(threadContext || '').trim()
+  const extractedWeather = weather || extractWeatherContext([
+    question || '',
+    threadContextText,
+    generatedOutfitContextText,
+    season || '',
+    mood || ''
+  ].join('\n'))
+  const travelOrPackingRequest = isTravelOrPackingRequest(question, occasion)
+  const missingTravelWeather = travelOrPackingRequest && !extractedWeather
+  const establishedStylingContextParts = [
+    occasion ? `occasion=${occasion}` : '',
+    activity ? `activity=${activity}` : '',
+    extractedWeather ? `weather=${extractedWeather}` : '',
+    season ? `season=${season}` : '',
+    mood ? `mood=${mood}` : '',
+    mission ? `mission=${mission}` : '',
+  ].filter(Boolean)
+  const establishedStylingContextText = establishedStylingContextParts.length
+    ? `Established styling context in this thread: ${establishedStylingContextParts.join('; ')}. Reuse these for any follow-up outfit generation unless the user's message changes them.`
+    : ''
 
   const now = currentDate ? new Date(currentDate) : new Date()
   const resolvedCurrentDateLabel = currentDateLabel || new Intl.DateTimeFormat('en-US', {
@@ -3659,10 +3698,6 @@ export async function buildStylistConversationPayload(body) {
     day: 'numeric',
     timeZone: timezone || 'America/Los_Angeles',
   }).format(now)
-
-  const generatedOutfitReferenceSheet = Array.isArray(generatedOutfits) && generatedOutfits.length
-    ? await makeGeneratedOutfitReferenceSheet(generatedOutfits, pieces || [])
-    : null
 
   let outfitImageContent = null
   let attachedImageInventory = []
@@ -3725,6 +3760,7 @@ export async function buildStylistConversationPayload(body) {
 
   const hasThreadContext = Boolean(
     threadContextText ||
+    establishedStylingContextText ||
     generatedOutfitContextText ||
     activeOutfit ||
     (Array.isArray(history) && history.length)
@@ -3733,8 +3769,14 @@ export async function buildStylistConversationPayload(body) {
   const conversationMode = resolveStylistConversationMode(question, {
     requestedMode: requestedConversationMode,
     hasThreadContext,
-    hasGeneratedContext: Boolean(generatedOutfitContextText || generatedOutfitReferenceSheet || activeOutfit),
+    hasGeneratedContext: Boolean(generatedOutfitContextText || (Array.isArray(generatedOutfits) && generatedOutfits.length) || activeOutfit),
   })
+
+  const generatedOutfitReferenceSheet = Array.isArray(generatedOutfits) &&
+    generatedOutfits.length &&
+    shouldAttachGeneratedOutfitReferenceSheet(question, conversationMode)
+    ? await makeGeneratedOutfitReferenceSheet(generatedOutfits, pieces || [])
+    : null
 
   if (activeOutfit) {
     saveStylistConversationState({
@@ -3755,6 +3797,7 @@ export async function buildStylistConversationPayload(body) {
   }
 
   const conversationDirective = buildStylistConversationDirective(conversationMode)
+  const generatedSetCoverageAudit = Boolean(generatedOutfitContextText && isGeneratedSetCoverageAudit(question))
 
   const activeWardrobeText = [
     'The full wardrobe list is omitted from the prompt to save context tokens.',
@@ -3783,7 +3826,9 @@ export async function buildStylistConversationPayload(body) {
       modeDirectiveText = 'The user is asking a follow-up question. Answer it directly and conversationally without restarting evaluation templates.'
       break
     default:
-      modeDirectiveText = 'The user has a new request. Respond directly. If details like destination or timing/season are completely missing, ask exactly one clear clarifying question; do not generate a placeholder list. Do not ask "when" if a timing or date is already provided.'
+      modeDirectiveText = missingTravelWeather
+        ? 'The user has a travel or packing request, but weather/forecast context is missing. Ask exactly one clear clarifying question for the expected weather before suggesting outfits or calling wardrobe search tools. Timing/season alone is not enough for trip packing.'
+        : 'The user has a new request. Respond directly. If details like destination or timing/season are completely missing, ask exactly one clear clarifying question; do not generate a placeholder list. Do not ask "when" if a timing or date is already provided.'
   }
 
   const feedbackMemoryParts = []
@@ -3828,14 +3873,19 @@ export async function buildStylistConversationPayload(body) {
     `Current turn mode: ${conversationMode}.`,
     `Mode instructions: ${modeDirectiveText}`,
     `Turn directive: ${conversationDirective}`,
-    'If mode is new_request and required context (both location/city and weather/season/dates/timing) is present, answer the user’s request directly using wardrobe context by recommending specific items from Yuna\'s closet. Keep the response natural, following the Conversational Flow guidelines and Examples. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing/season context (and infer the likely season accordingly, e.g. mid-June in Portland is summer). Do not ask "when" they are visiting if timing is already provided; if weather context is still missing, ask specifically for the expected weather forecast. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city or timing/season/weather are completely missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather this missing context (e.g., "Where are you going, and what is the expected weather?").',
+    extractedWeather ? `Established weather context for this turn: ${extractedWeather}. Pass this weather to search_wardrobe and apply weatherFit/ruleFit before suggesting garments.` : '',
+    missingTravelWeather ? 'TRAVEL WEATHER BLOCKER: The user gave a travel/packing request without weather or forecast context. Do not call search_wardrobe, do not recommend garments, and do not suggest outfits. Ask one friendly clarification for the expected weather/forecast first.' : '',
+    'If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from Yuna\'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").',
     'If mode is followup, answer the specific follow-up directly in a friendly conversational tone without restarting the whole evaluation, outfit generation, packing list, or plan.',
     'If mode is correction, acknowledge the correction, revise only the relevant mistaken point, and do not defend a contradiction.',
     'If mode is explanation, explain how the previous recommendation was made using the available context.',
     'If mode is preference_reaction, adapt the next advice to the stated preference and keep it concise.',
-    'For followup, correction, explanation, and preference_reaction modes, answer the latest user message first. Do not regenerate the full prior list, plan, or evaluation unless the user explicitly asks for a revised version.',
+    'For followup, correction, explanation, and preference_reaction modes, answer the latest user message first. Do not regenerate the full prior list, plan, or evaluation unless the user explicitly asks for a revised version. For trip or multi-outfit plans, if the user asks to revise, add, check variety, or show/render the outfits, update or use the Current outfit set instead of treating the latest suggestion as a standalone note.',
+    generatedSetCoverageAudit ? 'CURRENT SET COVERAGE AUDIT: The user is asking whether the current multi-outfit set has enough coverage, backup options, or repeat-wear resilience. First audit the current set plainly. If you recommend additional outfits or swaps, you MUST call search_wardrobe with visual:true and the relevant occasion/activity/weather before naming pieces. Suggest only exact owned wardrobe garments returned by search_wardrobe. Do NOT invent aspirational pieces, do NOT add shopping-style [missing wardrobe gap] outfits, and do NOT include a missing wardrobe gap unless an owned-garment search fails and you are explicitly explaining the uncovered gap.' : '',
     'In correction mode, keep the reply to 1–3 short sentences or one compact paragraph unless the user asks for a new complete answer.',
     'Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit. For ordinary chat follow-ups, answer conversationally.',
+    '',
+    establishedStylingContextText,
     '',
     threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',
     '',
@@ -3855,6 +3905,12 @@ export async function buildStylistConversationPayload(body) {
       generatedOutfitContextText,
       '',
       'If the user asks about "the first one", "these outfits", or a generated card, use this current card context.',
+      conversationMode === 'new_request'
+        ? 'For a new outfit-planning request, you may present the current cards as the answer when they directly satisfy the request.'
+        : 'For this follow-up/correction, treat the cards as memory only. Answer the latest question directly; do not repeat the full trip plan or outfit list unless the user explicitly asks to show, render, or regenerate cards.',
+      generatedSetCoverageAudit
+        ? 'For this coverage question, do not create new dinner/trip outfit sections from imagination. Either say the current set is insufficient and search owned wardrobe for concrete backups, or explain the repeat-wear tradeoff using the current cards.'
+        : '',
       generatedOutfitReferenceSheet
         ? 'The current user turn includes a generated outfit garment-reference sheet grouped by card. Use those pixels for garment thumbnail, hanger-photo, worn-photo, ruler, texture, fit, shoe, and detail questions.'
         : 'You can discuss the generated outfit card text and saved garment thumbnails described here.',

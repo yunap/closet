@@ -71,6 +71,7 @@ test('agent_tool_scoping: generate_outfits tool executes and populates toolConte
 
     assert.equal(resWhole.status, 'success')
     assert.equal(toolContext.source, 'whole_wardrobe')
+    assert.equal(toolContext.activity, 'none')
     assert.ok(Array.isArray(toolContext.generatedOutfits))
     assert.ok(toolContext.generatedOutfits.length > 0)
 
@@ -83,8 +84,38 @@ test('agent_tool_scoping: generate_outfits tool executes and populates toolConte
 
     assert.equal(resPiece.status, 'success')
     assert.equal(toolContextPiece.source, 'selected_piece')
+    assert.equal(toolContextPiece.activity, 'none')
     assert.ok(Array.isArray(toolContextPiece.generatedOutfits))
     assert.ok(toolContextPiece.generatedOutfits.length > 0)
+
+    const hikingContext = { generatedOutfits: [] }
+    const resHiking = await executeTool('generate_outfits', {
+      occasion: 'casual',
+      season: 'warm',
+      activity: 'hiking',
+      piece_id: 106
+    }, hikingContext)
+    assert.equal(resHiking.status, 'success')
+    assert.equal(hikingContext.activity, 'hiking')
+
+    const carriedContext = { generatedOutfits: [], activity: 'walking' }
+    const resCarried = await executeTool('generate_outfits', {
+      occasion: 'casual',
+      season: 'warm',
+      piece_id: 106
+    }, carriedContext)
+    assert.equal(resCarried.status, 'success')
+    assert.equal(carriedContext.activity, 'walking')
+
+    const clearedContext = { generatedOutfits: [], activity: 'walking' }
+    const resCleared = await executeTool('generate_outfits', {
+      occasion: 'casual',
+      season: 'warm',
+      activity: 'none',
+      piece_id: 106
+    }, clearedContext)
+    assert.equal(resCleared.status, 'success')
+    assert.equal(clearedContext.activity, 'none')
   } finally {
     delete globalThis.__WARDROBE_AI_TEST_HANDLER__
   }

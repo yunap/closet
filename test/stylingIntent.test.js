@@ -1,0 +1,164 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+
+import { STYLIST_TOOLS } from '../styling-engine/tools.js'
+import { ACTIVITY_PROFILES } from '../styling-engine/footwear-comfort.js'
+import { STYLIST_SYSTEM } from '../styling-engine/prompts.js'
+import {
+  OCCASION_VALUES,
+  ACTIVITY_VALUES,
+  MISSION_VALUES,
+  normalizeActivity,
+  extractWeatherContext,
+  normalizeMission,
+  normalizeOccasion,
+  normalizeStylingIntent
+} from '../styling-engine/stylingIntent.js'
+
+function extractOptionValues(content, constName) {
+  const match = content.match(new RegExp(`const\\s+${constName}\\s*=\\s*\\[([\\s\\S]*?)\\n\\]`))
+  assert.ok(match, `${constName} must be defined`)
+  return [...match[1].matchAll(/'([^']+)'\s*,\s*'[^']+'/g)].map(m => m[1])
+}
+
+function captureWarns(fn) {
+  const originalWarn = console.warn
+  const warnings = []
+  console.warn = (...args) => warnings.push(args.join(' '))
+  try {
+    return { result: fn(), warnings }
+  } finally {
+    console.warn = originalWarn
+  }
+}
+
+test('styling intent vocabulary matches frontend menus and activity profiles', () => {
+  const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
+  const content = fs.readFileSync(chatPath, 'utf8')
+  const frontendOccasions = extractOptionValues(content, 'OCCASION_OPTIONS')
+  const frontendActivities = extractOptionValues(content, 'ACTIVITY_OPTIONS')
+  const activityProfileIds = ACTIVITY_PROFILES.map(p => p.id)
+
+  assert.deepEqual(OCCASION_VALUES, frontendOccasions)
+  assert.deepEqual(ACTIVITY_VALUES, frontendActivities)
+  assert.deepEqual(ACTIVITY_VALUES.filter(v => v !== 'none'), activityProfileIds)
+})
+
+test('generate_outfits schema exposes styling intent enums', () => {
+  const generateTool = STYLIST_TOOLS.find(t => t.name === 'generate_outfits')
+  const searchTool = STYLIST_TOOLS.find(t => t.name === 'search_wardrobe')
+  const renderTool = STYLIST_TOOLS.find(t => t.name === 'render_outfit')
+  assert.ok(generateTool, 'generate_outfits tool must exist')
+  assert.deepEqual(generateTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
+  assert.deepEqual(generateTool.input_schema.properties.activity.enum, ACTIVITY_VALUES)
+  assert.deepEqual(generateTool.input_schema.properties.mission.enum, MISSION_VALUES)
+  assert.deepEqual(generateTool.input_schema.required, ['occasion', 'season'])
+  assert.ok(!generateTool.input_schema.required.includes('activity'), 'activity omission must remain meaningful')
+
+  assert.ok(searchTool.input_schema.properties.weather, 'search_wardrobe should accept weather for fit flags')
+  assert.deepEqual(searchTool.input_schema.properties.activity.enum, ACTIVITY_VALUES)
+  assert.ok(searchTool.input_schema.properties.visual, 'search_wardrobe should accept visual mode')
+  assert.ok(renderTool, 'render_outfit tool must exist')
+  assert.deepEqual(renderTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
+  assert.deepEqual(renderTool.input_schema.required, ['pieces'])
+})
+
+test('normalize styling intent defaults and preserves valid values', () => {
+  assert.equal(normalizeOccasion('gallery / art event'), 'gallery / art event')
+  assert.equal(normalizeOccasion('Evening'), 'evening')
+  assert.equal(normalizeOccasion('outdoor_daytime_social'), 'outdoor_daytime_social')
+  assert.equal(normalizeOccasion('outdoor daytime social'), 'outdoor_daytime_social')
+  assert.equal(normalizeOccasion('wine festival'), 'outdoor_daytime_social')
+  assert.equal(normalizeActivity('walking'), 'walking')
+  assert.equal(normalizeActivity('hiking'), 'hiking')
+  assert.equal(normalizeMission('capsule'), 'capsule')
+
+  const invalidOccasion = captureWarns(() => normalizeOccasion('date night'))
+  assert.equal(invalidOccasion.result, 'casual')
+  assert.ok(invalidOccasion.warnings.some(w => w.includes('off-vocabulary occasion "date night"')))
+
+  const invalidActivity = captureWarns(() => normalizeActivity('dancing'))
+  assert.equal(invalidActivity.result, 'none')
+  assert.ok(invalidActivity.warnings.some(w => w.includes('off-vocabulary activity "dancing"')))
+
+  assert.equal(normalizeActivity(''), 'none')
+  assert.equal(normalizeMission('editorial'), 'mix')
+  assert.deepEqual(normalizeStylingIntent({
+    occasion: 'city',
+    season: '',
+    mood: '  earthy structure  ',
+    mission: 'wildcard'
+  }), {
+    occasion: 'city',
+    season: 'current season',
+    mood: 'earthy structure',
+    mission: 'wildcard'
+  })
+})
+
+test('extractWeatherContext captures lightweight forecast phrases', () => {
+  assert.equal(extractWeatherContext("They say it'll be pretty hot during the day"), 'hot weather')
+  assert.equal(extractWeatherContext('The forecast is mid 80s to 90 degrees'), '90 degrees')
+  assert.equal(extractWeatherContext('Expect rain and wind'), 'rainy weather')
+  assert.equal(extractWeatherContext('Portland in a few days'), '')
+})
+
+test('stylist prompt defaults to text proposals and narrows visual tool triggers', () => {
+  assert.ok(STYLIST_SYSTEM.includes('Proposing Outfits (default)'))
+  assert.ok(STYLIST_SYSTEM.includes('Do not call a generation or rendering tool for these'))
+  assert.ok(STYLIST_SYSTEM.includes("call 'search_wardrobe' with `visual: true`"))
+  assert.ok(STYLIST_SYSTEM.includes('A packing list or garment inventory may appear only as a secondary recap after the outfit sections'))
+  assert.ok(STYLIST_SYSTEM.includes('must never replace the outfit-by-outfit recommendations unless the user explicitly asks for a checklist only'))
+  assert.ok(STYLIST_SYSTEM.includes('color harmony, print scale, texture, visual weight, and proportion'))
+  assert.ok(STYLIST_SYSTEM.includes('run a fresh visual \'search_wardrobe\' scoped to that need'))
+  assert.ok(STYLIST_SYSTEM.includes('cover each stated occasion/use case as a separate proposed outfit'))
+  assert.ok(STYLIST_SYSTEM.includes('Do not collapse distinct stated needs into one generic list'))
+  assert.ok(STYLIST_SYSTEM.includes('Anchor-Piece Recomposition'))
+  assert.ok(STYLIST_SYSTEM.includes('treat that garment as a locked anchor'))
+  assert.ok(STYLIST_SYSTEM.includes('compose fresh outfits around the anchor'))
+  assert.ok(STYLIST_SYSTEM.includes('Do not merely substitute the anchor into prior outfits'))
+  assert.ok(STYLIST_SYSTEM.includes('For shoe anchors, rebuild the outfit color story, formality, and occasion around the shoes'))
+  assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
+  assert.ok(STYLIST_SYSTEM.includes('Treat that set as the canonical packing/styling plan for the thread'))
+  assert.ok(STYLIST_SYSTEM.includes('express it as outfit sections using the required `### Outfit [Number]` / `**Pieces**` / `**Why it works**` format'))
+  assert.ok(STYLIST_SYSTEM.includes('not as a loose garment list'))
+  assert.ok(STYLIST_SYSTEM.includes('update that named entry in the Current outfit set instead of leaving the new idea as a loose note'))
+  assert.ok(STYLIST_SYSTEM.includes('stated length, stated use cases, weather, repeat-wear needs, layers, and shoe comfort'))
+  assert.ok(STYLIST_SYSTEM.includes('render every current entry unless the user clearly asks for a subset'))
+  assert.ok(STYLIST_SYSTEM.includes('Never use vague names like "White sneakers" or "sandals" in the Current outfit set'))
+  assert.ok(STYLIST_SYSTEM.includes('Visualizing an Outfit (explicit only)'))
+  assert.ok(STYLIST_SYSTEM.includes("call 'render_outfit' with the exact pieces"))
+  assert.ok(STYLIST_SYSTEM.includes("Call 'render_outfit' once for each referenced outfit"))
+  assert.ok(STYLIST_SYSTEM.includes('Do not render partial outfits'))
+  assert.ok(STYLIST_SYSTEM.includes('treat each already-assigned top, bottom, dress, shoes, and layer as occupied'))
+  assert.ok(STYLIST_SYSTEM.includes("preserve the original outfit's occasion, social register, and visual thesis"))
+  assert.ok(STYLIST_SYSTEM.includes('Do not downgrade a city, museum, restaurant, winery, gallery, smart-casual, or outdoor daytime social look into a plain casual tee/sneaker formula'))
+  assert.ok(STYLIST_SYSTEM.includes('look first for same-register breathable pieces'))
+  assert.ok(STYLIST_SYSTEM.includes('if the only heat-safe owned choices are more casual, say that as a tradeoff or mark a wardrobe gap'))
+  assert.ok(STYLIST_SYSTEM.includes('A warm layer must be an actual layer/outerwear garment from the wardrobe'))
+  assert.ok(STYLIST_SYSTEM.includes('search `search_wardrobe` with category `outerwear`'))
+  assert.ok(STYLIST_SYSTEM.includes('treat the layer as an add-on to the Current outfit set, not as a standalone outfit'))
+  assert.ok(STYLIST_SYSTEM.includes('Never count a layer-only entry such as "wool shell + loafers" as an outfit'))
+  assert.ok(STYLIST_SYSTEM.includes("Use 'generate_outfits' only when the user explicitly asks the system to compose fresh visual card options from scratch"))
+  assert.ok(STYLIST_SYSTEM.includes('weatherFit'))
+  assert.ok(STYLIST_SYSTEM.includes('ruleFit'))
+  assert.ok(STYLIST_SYSTEM.includes('If an established styling context is provided for this thread'))
+  assert.ok(STYLIST_SYSTEM.includes('A fresh explicit request overrides the established context'))
+  assert.ok(STYLIST_SYSTEM.includes('Require a geographic destination only when the request is about traveling somewhere or packing for a trip'))
+  assert.ok(STYLIST_SYSTEM.includes('For travel or packing, expected weather/forecast is required before recommending garments or outfits'))
+  assert.ok(STYLIST_SYSTEM.includes('timing/season alone is not enough'))
+  assert.ok(STYLIST_SYSTEM.includes('do NOT ask where she is going'))
+  assert.ok(!STYLIST_SYSTEM.includes('before recommending any garments or outfits'))
+})
+
+test('StylistChat carries generated styling context into ask requests', () => {
+  const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
+  const content = fs.readFileSync(chatPath, 'utf8')
+
+  assert.ok(content.includes('const stylingContextFromMemory ='), 'StylistChat should expose a stylingContext request helper')
+  assert.ok((content.match(/stylingContext:\s*\{/g) || []).length >= 3, 'generated outfit thread memory should store stylingContext')
+  assert.ok((content.match(/\.\.\.stylingContextFromMemory\(threadMemory/g) || []).length >= 3, 'ask requests should include carried styling context')
+  assert.ok(!content.includes('activity: activeContext?.type === \'piece\' ? generateActivity : wardrobeOutfitActivity'), 'general ask body should reconcile activity through stylingContext')
+})

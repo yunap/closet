@@ -18,6 +18,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
+const { extractToolResultImages } = await import('../styling-engine/provider.js')
 
 let server
 let baseUrl
@@ -258,6 +259,84 @@ function mockAiHandler({ system, messages }) {
         watchFor: 'Grounding watch',
         visualPrompt: 'Mood reference'
       }]
+    }
+  }
+
+  if (text.includes('FREEFORM_STYLIST_USE_CASE_PLANNER')) {
+    if (/\b(same outfit|spill|wine|four nights|4 nights|enough|variety)\b/i.test(latestText)) {
+      return {
+        shouldCompose: true,
+        reason: 'User is asking for additional dinner coverage from the current set.',
+        slots: [
+          {
+            id: 'dinner_alternative_1',
+            label: 'Dinner Alternative 1',
+            occasion: 'evening',
+            activity: 'none',
+            season: 'cool evening weather',
+            bestFor: 'additional dinner coverage',
+            planNote: 'Use owned wardrobe pieces and avoid exact repeats from the current set.',
+          },
+          {
+            id: 'dinner_alternative_2',
+            label: 'Dinner Alternative 2',
+            occasion: 'evening',
+            activity: 'none',
+            season: 'cool evening weather',
+            bestFor: 'backup dinner option',
+            planNote: 'Use owned wardrobe pieces and keep the register suitable for dinner.',
+          },
+        ],
+      }
+    }
+    if (/pack|packing|trip|travel/i.test(latestText)) {
+      return {
+        shouldCompose: true,
+        reason: 'User needs a multi-use-case packing plan.',
+        slots: [
+          {
+            id: 'city_exploring',
+            label: 'City Exploring',
+            occasion: 'city',
+            activity: 'walking',
+            season: 'hot weather',
+            bestFor: 'hot daytime city exploring and walking',
+            planNote: 'Prioritize breathable garments and walkable shoes.',
+          },
+          {
+            id: 'museum_day',
+            label: 'Museum Day',
+            occasion: 'city',
+            activity: 'none',
+            season: 'hot weather',
+            bestFor: 'museum day and indoor cultural visits',
+            planNote: 'Keep it presentable indoors without overheating outside.',
+          },
+          {
+            id: 'dinner',
+            label: 'Dinner Out',
+            occasion: 'evening',
+            activity: 'none',
+            season: 'cool evening weather',
+            bestFor: 'cooler evening dinner',
+            planNote: 'Use a dinner-register outfit and add a layer only if it helps.',
+          },
+          {
+            id: 'winery',
+            label: 'Winery Day',
+            occasion: 'outdoor_daytime_social',
+            activity: 'walking',
+            season: 'hot weather',
+            bestFor: 'warm daytime winery visit',
+            planNote: 'Keep it outdoor-social and standing-friendly.',
+          },
+        ],
+      }
+    }
+    return {
+      shouldCompose: false,
+      reason: 'Conversational follow-up does not require new structured cards.',
+      slots: [],
     }
   }
 
@@ -971,6 +1050,42 @@ test('freeform ask image follow-ups use current attachment wording', async () =>
   assert.match(lastCall.system, /Turn directive: The user is asking for explanation or rationale/)
 })
 
+test('freeform ask generated outfit follow-up stays conversational without reattaching cards', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'So dinner out is 4 nights, same outfit? What if I spill some wine?',
+    pieces: [],
+    history: [
+      { role: 'user', content: 'Suggest outfits for a Portland trip.' },
+      { role: 'assistant', content: 'Here is the trip plan followed by outfit cards.' },
+    ],
+    generatedContext: 'Outfit 1: City Exploring\nPieces:\n- paisley sleeveless blouse\n\nOutfit 2: Dinner Out\nPieces:\n- black dress',
+    generatedOutfits: [generatedCard()],
+    conversationMode: 'followup',
+    occasion: 'city',
+    season: 'highs 80-90F days, cool evenings',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  assert.ok(Array.isArray(json.structuredOutfits))
+  assert.ok(json.structuredOutfits.length > 0)
+  assert.ok(json.structuredOutfits.every(outfit => /dinner/i.test(outfit.label || '')))
+  assert.ok(json.structuredOutfits.every(outfit => (outfit.pieces || []).every(piece => piece?.id && !piece?.missing)))
+  const lastCall = aiCalls.at(-1)
+  const plannerCall = aiCalls.find(call => /FREEFORM_STYLIST_USE_CASE_PLANNER/.test(call.system || ''))
+  assert.ok(plannerCall, 'follow-up should use the planner to decompose the new coverage need')
+  const latestUserMessage = lastCall.messages.at(-1)
+  assert.match(lastCall.system, /Current turn mode: followup/)
+  assert.match(lastCall.system, /treat the cards as memory only/)
+  assert.match(lastCall.system, /do not repeat the full trip plan or outfit list/)
+  assert.match(lastCall.system, /CURRENT SET COVERAGE AUDIT/)
+  assert.match(lastCall.system, /MUST call search_wardrobe with visual:true/)
+  assert.match(lastCall.system, /Suggest only exact owned wardrobe garments returned by search_wardrobe/)
+  assert.match(lastCall.system, /Do NOT invent aspirational pieces/)
+  assert.match(lastCall.system, /do NOT add shopping-style \[missing wardrobe gap\] outfits/)
+  assert.equal(typeof latestUserMessage.content, 'string')
+  assert.doesNotMatch(latestUserMessage.content, /Attached: current generated outfit garment-reference sheet/)
+})
+
 test('freeform ask shoe follow-up maps to explanation mode and targets shoes', async () => {
   const json = await postJson('/api/ai/ask', {
     question: 'why those shoes?',
@@ -987,6 +1102,35 @@ test('freeform ask shoe follow-up maps to explanation mode and targets shoes', a
   const lastCall = aiCalls.at(-1)
   assert.match(lastCall.system, /Current turn mode: explanation/)
   assert.match(lastCall.system, /Turn directive: The user is asking for explanation or rationale/)
+})
+
+test('freeform ask surfaces established styling context for follow-up generation', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'make these more interesting',
+    pieces: [],
+    history: [
+      { role: 'user', content: 'Use my wardrobe to create outfits for evening, current season, walking.' },
+      { role: 'assistant', content: 'Here are the generated evening outfits.' },
+    ],
+    generatedContext: 'Generated evening outfit cards are visible in the current stylist thread.',
+    conversationMode: 'followup',
+    occasion: 'evening',
+    season: 'current season',
+    mood: 'moody polish',
+    mission: 'wildcard',
+    activity: 'walking',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  assert.equal(json.structuredOutfitsOccasion, 'evening')
+  assert.equal(json.structuredOutfitsSeason, 'current season')
+  assert.equal(json.structuredOutfitsMood, 'moody polish')
+  assert.equal(json.structuredOutfitsMission, 'wildcard')
+  assert.equal(json.structuredOutfitsActivity, 'walking')
+
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /Established styling context in this thread: occasion=evening; activity=walking; season=current season; mood=moody polish; mission=wildcard/)
+  assert.match(lastCall.system, /Reuse these for any follow-up outfit generation unless the user's message changes them/)
 })
 
 test('freeform ask outfit follow-up does not repeat full critique template', async () => {
@@ -1049,9 +1193,152 @@ test('freeform ask broad request triggers clarifying question instruction', asyn
   })
 
   assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  assert.deepEqual(json.structuredOutfits, [])
   const lastCall = aiCalls.at(-1)
-  assert.match(lastCall.system, /ask exactly one clear clarifying question/)
-  assert.match(lastCall.system, /do not generate a placeholder list/)
+  assert.match(lastCall.system, /ask exactly one clear clarifying question/i)
+  assert.match(lastCall.system, /do not recommend garments, and do not suggest outfits/)
+  assert.match(lastCall.system, /TRAVEL WEATHER BLOCKER/)
+  assert.match(lastCall.system, /weather\/forecast context is missing/)
+})
+
+test('freeform ask extracts travel weather and surfaces it to tools', async () => {
+  insertPiece({
+    name: 'paisley sleeveless blouse',
+    category: 'top',
+    colors: ['blue', 'green'],
+    occasions: ['city', 'casual', 'outdoor_daytime_social'],
+    photo: seeded.photos.top,
+    reads_as: 'lightweight sleeveless blouse',
+    fabric_weight: 'light',
+  })
+  insertPiece({
+    name: 'beige tailored linen shorts',
+    category: 'bottom',
+    colors: ['beige'],
+    occasions: ['city', 'casual', 'outdoor_daytime_social'],
+    photo: seeded.photos.bottom,
+    reads_as: 'tailored linen shorts',
+    fabric_category: 'linen',
+    fabric_weight: 'light',
+  })
+  insertPiece({
+    name: 'black cream geometric midi skirt',
+    category: 'bottom',
+    colors: ['black', 'cream'],
+    occasions: ['city', 'evening'],
+    photo: seeded.photos.bottom,
+    reads_as: 'graphic geometric midi skirt',
+    pattern_complexity: 'loud',
+  })
+  insertPiece({
+    name: 'vibrant blue sleeveless top',
+    category: 'top',
+    colors: ['blue'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'bright casual sleeveless top',
+  })
+  insertPiece({
+    name: 'oatmeal crochet knit midi skirt',
+    category: 'bottom',
+    colors: ['oatmeal'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.bottom,
+    reads_as: 'soft crochet knit midi skirt',
+  })
+  insertPiece({
+    name: 'striped knit cardigan',
+    category: 'outerwear',
+    colors: ['cream', 'blue'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.jacket,
+    reads_as: 'casual striped knit cardigan',
+  })
+  insertPiece({
+    name: 'black herringbone pointed heels',
+    category: 'shoes',
+    colors: ['black'],
+    occasions: ['city', 'evening', 'outdoor_daytime_social'],
+    photo: seeded.photos.shoe,
+    reads_as: 'black pointed heel dress shoes',
+  })
+  insertPiece({
+    name: 'grey wool black stripe knit dress',
+    category: 'dress',
+    colors: ['grey', 'black'],
+    occasions: ['city'],
+    photo: seeded.photos.dress,
+    reads_as: 'wool knit fitted stripe midi dress',
+    fabric_category: 'wool',
+    fabric_weight: 'heavy',
+  })
+
+  const json = await postJson('/api/ai/ask', {
+    question: "Hi there! In a few days, I am going to Portland, OR. The trip will take 4-5 days. Mainly city exploring, walking, a few museums, and also a few nice restaurants and one day at a winery. What would you suggest I should pack? They say it'll be pretty hot during the day",
+    pieces: [],
+    history: [],
+    conversationMode: 'new_request',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  assert.ok(Array.isArray(json.structuredOutfits))
+  assert.ok(json.structuredOutfits.length >= 4)
+  assert.ok(json.structuredOutfits.every(outfit => outfit.reason && outfit.reason.length > 20))
+  assert.ok(json.structuredOutfits.some(outfit => /city exploring/i.test(outfit.label || '')))
+  assert.ok(json.structuredOutfits.some(outfit => /dinner/i.test(outfit.label || '')))
+  assert.ok(json.structuredOutfits.some(outfit => /winery/i.test(outfit.label || '')))
+  const dressFormulas = json.structuredOutfits
+    .map(outfit => (outfit.pieces || []).find(piece => piece.category === 'dress')?.id)
+    .filter(Boolean)
+  assert.equal(new Set(dressFormulas).size, dressFormulas.length, 'trip slots should not reuse the same dress formula when alternatives exist')
+  const initialDinner = json.structuredOutfits.find(outfit => /dinner/i.test(outfit.label || ''))
+  const initialDinnerPieces = (initialDinner?.pieces || []).map(piece => piece.name || '').join(' | ').toLowerCase()
+  assert.ok(initialDinner)
+  assert.ok(
+    !(/striped knit cardigan/.test(initialDinnerPieces) && /slip-on|slip on/.test(initialDinnerPieces)),
+    'initial dinner slot should not combine a casual striped cardigan with casual slip-ons'
+  )
+  assert.equal(initialDinner.occasion, 'evening')
+  assert.equal(initialDinner.activity, 'none')
+  const museumOutfit = json.structuredOutfits.find(outfit => /museum/i.test(outfit.label || ''))
+  assert.ok(museumOutfit)
+  assert.equal(museumOutfit.activity, 'none')
+  const museumPieces = (museumOutfit.pieces || []).map(piece => `${piece.name || ''} ${piece.fabric_category || ''} ${piece.fabric_weight || ''}`).join(' | ').toLowerCase()
+  assert.doesNotMatch(museumPieces, /grey wool black stripe knit dress|wool.*heavy/, 'museum slot should not use a heavy wool dress in hot daytime weather')
+  const daytimeTripOutfits = json.structuredOutfits.filter(outfit => outfit.activity === 'walking')
+  assert.ok(daytimeTripOutfits.length >= 2)
+  for (const outfit of daytimeTripOutfits) {
+    const shoeText = (outfit.pieces || [])
+      .filter(piece => piece.category === 'shoes')
+      .map(piece => `${piece.name || ''} ${piece.reads_as || ''}`)
+      .join(' ')
+      .toLowerCase()
+    assert.doesNotMatch(shoeText, /\b(pointed|heel|heels|mule|mules|boot|boots)\b/, `${outfit.label} should use hot-weather walking footwear`)
+    if (outfit.tripSlot !== 'winery') {
+      const lowerHalfText = (outfit.pieces || [])
+        .filter(piece => ['bottom', 'dress'].includes(piece.category))
+        .map(piece => `${piece.name || ''} ${piece.reads_as || ''}`)
+        .join(' ')
+        .toLowerCase()
+      assert.doesNotMatch(lowerHalfText, /\b(geometric midi skirt|crochet knit midi skirt|dress)\b/, `${outfit.label} should not use dressed-up skirts or dresses for hot walking slots`)
+    }
+  }
+  const dinnerPieces = initialDinnerPieces
+  assert.ok(
+    !(/vibrant blue sleeveless top/.test(dinnerPieces) && /oatmeal crochet knit midi skirt/.test(dinnerPieces) && /striped knit cardigan/.test(dinnerPieces)),
+    'dinner slot should not choose the casual crochet skirt plus striped cardigan combination'
+  )
+  assert.equal(json.structuredOutfitsSource, 'whole_wardrobe')
+  const lastCall = aiCalls.at(-1)
+  const plannerCall = aiCalls.find(call => /FREEFORM_STYLIST_USE_CASE_PLANNER/.test(call.system || ''))
+  assert.ok(plannerCall, 'initial trip plan should use the planner to decompose stated use cases')
+  assert.match(plannerCall.system, /Map dinner, evening restaurant, and night-out use cases to occasion "evening" with activity "none"/)
+  assert.match(plannerCall.system, /For museums, galleries, and indoor cultural visits, use activity "none"/)
+  assert.match(lastCall.system, /Established weather context for this turn: hot weather/)
+  assert.match(lastCall.system, /Pass this weather to search_wardrobe/)
+  assert.match(lastCall.system, /CURRENT OUTFIT SET \(LATEST, HIGH AUTHORITY\)/)
+  assert.match(lastCall.system, /pre-composed by the validated wardrobe composer/)
+  assert.doesNotMatch(lastCall.system, /TRAVEL WEATHER BLOCKER/)
 })
 
 test('freeform ask non-visual follow-up prunes base64 images to save tokens', async () => {
@@ -1186,6 +1473,47 @@ test('freeform ask system prompt includes context persistence and no hallucinati
   assert.match(lastCall.system, /Avoid formatting suggestions as generic category-by-category checklists/)
 })
 
+test('StylistChat enables rough preview for rendered freeform outfit cards', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /const isTextOnlyPreviewSet = Boolean\(outfits\[0\]\?\.previewOnly\)/)
+  assert.match(src, /const canGenerateComparison = !isTextOnlyPreviewSet && outfits\.length >= 2/)
+  assert.match(src, /Generate rough preview/)
+})
+
+test('StylistChat shows trip explanation before cards, not inside trip cards', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /Trip plan/)
+  assert.match(src, /getTripPlanNotes/)
+  assert.match(src, /garment and layer photos are prioritized before accessories/)
+  assert.doesNotMatch(src, /Accessories are left out of these cards/)
+  assert.match(src, /outfit\.reason && !isTripCard/)
+  assert.match(src, /const msgOccasion = outfit\.occasion \|\| outfit\.bestFor \|\| message\.queryOptions\?\.occasion/)
+  assert.doesNotMatch(src, /<details open=\{message\?\.wholeWardrobe \|\| outfit\.source === 'trip_precompose'\}/)
+})
+
+test('freeform trip precompose keeps accessories in cards while visual budget may prioritize garments', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  assert.match(src, /function annotateTripOutfit/)
+  assert.doesNotMatch(src, /outfit\.pieces\.filter\(piece => wardrobeCategoryGroup\(piece\) !== 'accessory'\)/)
+})
+
+test('StylistChat parses freeform outfit sections into current outfit memory', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /parseStructuredOutfitsFromAssistantText/)
+  assert.match(src, /OUTFIT_CARD_RESPONSE_PATTERN/)
+  assert.doesNotMatch(src, /OUTFIT_CARD_RESPONSE_PATTERN = .*\\b\(show\|render\|visualize[^\\n]*\|pack\|/)
+  assert.doesNotMatch(src, /OUTFIT_CARD_RESPONSE_PATTERN = .*\\b\(show\|render\|visualize[^\\n]*\|wear\|/)
+  assert.match(src, /const shouldParseAssistantOutfitCards = replyConversationMode === 'new_request' \|\| OUTFIT_CARD_RESPONSE_PATTERN\.test\(q\)/)
+  assert.match(src, /mergeCurrentOutfitSet/)
+  assert.match(src, /unresolvedPieceNames/)
+  assert.match(src, /Needs exact wardrobe match:/)
+  assert.match(src, /outfits\.slice\(0, 5\)\.map/)
+  assert.match(src, /Unresolved cards stay visible here but are skipped for image generation/)
+  assert.match(src, /CURRENT OUTFIT SET \(LATEST, HIGH AUTHORITY\)/)
+  assert.match(src, /source: 'freeform_current_set'/)
+  assert.match(src, /setThreadMemory\(\{\s*type: 'generated_outfits',\s*source: 'freeform_current_set'/)
+})
+
 test('executeTool get_garment_details loads text and base64 photo blocks', async () => {
   // Write a dummy temp image to uploads directory to mock the photo file
   const topPhotoFilename = 'mock-top-photo.jpg'
@@ -1249,6 +1577,165 @@ test('executeTool search_wardrobe supports filtering and returns visual metadata
   assert.equal(res3.length, 0)
 })
 
+test('executeTool search_wardrobe ranks and annotates weather and profile-rule fit', async () => {
+  db.prepare(`
+    UPDATE pieces
+    SET fabric_weight = 'heavy', reads_as = 'black denim heavy full-length jeans'
+    WHERE id = ?
+  `).run(seeded.jeans)
+  db.prepare(`
+    UPDATE pieces
+    SET fabric_weight = 'light', fabric_category = 'linen', reads_as = 'lightweight linen breathable pants'
+    WHERE id = ?
+  `).run(seeded.bottom)
+  db.prepare(`
+    UPDATE pieces
+    SET reads_as = 'flat rugged boots'
+    WHERE id = ?
+  `).run(seeded.boot)
+
+  const bottoms = await executeTool('search_wardrobe', {
+    category: 'bottom',
+    occasion: 'city',
+    weather: 'highs 80-90F'
+  })
+  assert.ok(Array.isArray(bottoms))
+  const linen = bottoms.find(p => p.id === seeded.bottom)
+  const denim = bottoms.find(p => p.id === seeded.jeans)
+  assert.equal(linen.weatherFit, 'lightweight - good for heat')
+  assert.equal(denim.weatherFit, 'heavy - too warm for the heat')
+  assert.ok(bottoms.findIndex(p => p.id === seeded.bottom) < bottoms.findIndex(p => p.id === seeded.jeans))
+
+  const hikingShoes = await executeTool('search_wardrobe', {
+    category: 'shoes',
+    occasion: 'casual',
+    activity: 'hiking'
+  })
+  const boot = hikingShoes.find(p => p.id === seeded.boot)
+  const slipOn = hikingShoes.find(p => p.id === seeded.shoe)
+  assert.equal(boot.ruleFit, 'preferred')
+  assert.equal(slipOn.ruleFit, 'neutral')
+})
+
+test('executeTool search_wardrobe relies on structured occasion instead of dinner query normalization', async () => {
+  const dinnerSearch = await executeTool('search_wardrobe', {
+    occasion: 'evening',
+    weather: '81f',
+    visual: true,
+  })
+  assert.ok(Array.isArray(dinnerSearch))
+  assert.ok(dinnerSearch.length > 0)
+  assert.ok(dinnerSearch.some(item => item.id === seeded.dress))
+  assert.ok(dinnerSearch.every(item => !/Treated "dinner" as the requested occasion/.test(item.note || '')))
+
+  const flexibleEveningTops = await executeTool('search_wardrobe', {
+    category: 'top',
+    occasion: 'evening',
+    weather: '81f',
+  })
+  assert.ok(flexibleEveningTops.some(item => item.id === seeded.top))
+  assert.ok(flexibleEveningTops.some(item => /No active pieces are explicitly tagged for "evening"/.test(item.note || '')))
+})
+
+test('executeTool search_wardrobe uses toolContext weather when model omits weather arg', async () => {
+  db.prepare('UPDATE pieces SET fabric_category = ?, fabric_weight = ? WHERE id = ?').run('linen', 'light', seeded.bottom)
+  db.prepare('UPDATE pieces SET fabric_category = ?, fabric_weight = ? WHERE id = ?').run('denim', 'heavy', seeded.jeans)
+
+  const bottoms = await executeTool('search_wardrobe', {
+    category: 'bottom',
+    occasion: 'city'
+  }, {
+    weather: 'hot weather'
+  })
+
+  const linen = bottoms.find(p => p.id === seeded.bottom)
+  const denim = bottoms.find(p => p.id === seeded.jeans)
+  assert.equal(linen.weatherFit, 'lightweight - good for heat')
+  assert.equal(denim.weatherFit, 'heavy - too warm for the heat')
+})
+
+test('executeTool search_wardrobe visual mode attaches capped low-detail thumbnails', async () => {
+  const visualResults = await executeTool('search_wardrobe', {
+    occasion: 'city',
+    visual: true
+  })
+  const top = visualResults.find(p => p.id === seeded.top)
+  const bottom = visualResults.find(p => p.id === seeded.bottom)
+  assert.ok(top.image)
+  assert.equal(top.image.mime, 'image/jpeg')
+  assert.ok(typeof top.image.base64 === 'string')
+  assert.ok(bottom.image)
+  assert.ok(visualResults.filter(p => p.image).length <= 16)
+
+  const textResults = await executeTool('search_wardrobe', {
+    occasion: 'city'
+  })
+  assert.ok(!textResults.find(p => p.id === seeded.top)?.image)
+})
+
+test('executeTool render_outfit emits a card only when every named piece resolves', async () => {
+  const toolContext = {
+    occasion: 'city',
+    season: 'current season',
+    generatedOutfits: [{
+      label: 'Existing card',
+      occasion: 'city',
+      season: 'current season',
+      pieceIds: [seeded.shoe],
+      pieces: [],
+      previewOnly: true
+    }]
+  }
+  const rendered = await executeTool('render_outfit', {
+    label: 'Winery column',
+    pieces: ['black button detail top', 'light beige linen wide-leg pants'],
+    occasion: 'city',
+    season: 'highs 80-90F'
+  }, toolContext)
+
+  assert.equal(rendered.status, 'success')
+  assert.deepEqual(rendered.pieceNames, ['black button detail top', 'light beige linen wide-leg pants'])
+  assert.deepEqual(rendered.unresolved, [])
+  assert.equal(toolContext.source, 'rendered_outfit')
+  assert.equal(toolContext.generatedOutfits.length, 2)
+  assert.equal(toolContext.generatedOutfits[0].label, 'Existing card')
+  assert.equal(toolContext.generatedOutfits[1].label, 'Winery column')
+  assert.deepEqual(toolContext.generatedOutfits[1].pieceIds, [seeded.top, seeded.bottom])
+  assert.equal(toolContext.generatedOutfits[1].previewOnly, true)
+
+  const failedContext = { generatedOutfits: [...toolContext.generatedOutfits] }
+  const failed = await executeTool('render_outfit', {
+    label: 'Partial outfit',
+    pieces: ['black button detail top', 'not a real garment']
+  }, failedContext)
+
+  assert.equal(failed.status, 'error')
+  assert.deepEqual(failed.pieceNames, ['black button detail top'])
+  assert.deepEqual(failed.unresolved, ['not a real garment'])
+  assert.equal(failedContext.generatedOutfits.length, 2)
+})
+
+test('executeTool render_outfit resolves names with normalized whitespace', async () => {
+  const spacedNameId = insertPiece({
+    name: 'oatmeal linen wide  jogger-style pants',
+    category: 'bottom',
+    colors: ['oatmeal'],
+    occasions: ['city', 'casual'],
+    reads_as: 'linen jogger pants',
+    fabric_category: 'linen',
+  })
+  const toolContext = { generatedOutfits: [] }
+  const rendered = await executeTool('render_outfit', {
+    label: 'Whitespace normalized',
+    pieces: ['black button detail top', 'Oatmeal linen wide jogger-style pants']
+  }, toolContext)
+
+  assert.equal(rendered.status, 'success')
+  assert.deepEqual(rendered.pieceNames, ['black button detail top', 'oatmeal linen wide  jogger-style pants'])
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.deepEqual(toolContext.generatedOutfits[0].pieceIds, [seeded.top, spacedNameId])
+})
+
 test('contentToOpenAI preserves image_url blocks without stringifying them', () => {
   const content = [
     { type: 'text', text: 'Hello!' },
@@ -1260,6 +1747,29 @@ test('contentToOpenAI preserves image_url blocks without stringifying them', () 
   assert.equal(result[0].text, 'Hello!')
   assert.equal(result[1].type, 'image_url')
   assert.deepEqual(result[1].image_url, { url: 'data:image/jpeg;base64,abcdefg' })
+})
+
+test('extractToolResultImages strips image blobs and preserves labeled visual references', () => {
+  const result = [{
+    id: 42,
+    name: 'linen top',
+    weatherFit: 'lightweight - good for heat',
+    ruleFit: 'preferred',
+    image: { mime: 'image/jpeg', base64: 'abc123' },
+    text: 'linen top details'
+  }, {
+    id: 43,
+    name: 'plain pants',
+    text: 'pants details'
+  }]
+
+  const extracted = extractToolResultImages(result)
+  assert.equal(extracted.images.length, 1)
+  assert.equal(extracted.images[0].label, 'ID 42: linen top — preferred, lightweight - good for heat')
+  assert.equal(extracted.images[0].mime, 'image/jpeg')
+  assert.equal(extracted.images[0].base64, 'abc123')
+  assert.ok(!JSON.parse(extracted.textResult)[0].image)
+  assert.equal(JSON.parse(extracted.textResult)[0].text, 'linen top details')
 })
 
 test('saved boards endpoint returns boards linked to piece context_id', async () => {
