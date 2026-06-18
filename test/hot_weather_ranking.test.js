@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db, parsePiece } from '../db.js'
-import { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext } from '../styling-engine/rules.js'
+import { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, getMergedProfileRules, profileRuleFit } from '../styling-engine/rules.js'
 import { bottomKind, fabricWeight } from '../styling-engine/attributes.js'
 import { resolveOccasionProfile } from '../styling-engine/occasions.js'
 import { resolveActivityProfile } from '../styling-engine/footwear-comfort.js'
@@ -20,6 +20,35 @@ test('current season resolves to warm weather during June', () => {
   })
   assert.equal(january.isHot, false)
   assert.equal(january.isCold, true)
+})
+
+test('weatherProfileFromContext and weatherFitForPiece handle numeric hot-weather ranges', () => {
+  const weather = weatherProfileFromContext({ season: 'highs 80-90F and lows 54-60F' })
+  assert.equal(weather.isHot, true)
+  assert.equal(weather.isCold, false)
+
+  const denim = { id: 1, name: 'Black Denim Jeans', category: 'bottom', fabric_category: 'denim' }
+  const linen = { id: 2, name: 'Linen Shorts', category: 'bottom', fabric_weight: 'light' }
+  const denimFit = weatherFitForPiece(denim, weather)
+  const linenFit = weatherFitForPiece(linen, weather)
+  assert.ok(denimFit.score < 0)
+  assert.equal(denimFit.label, 'heavy - too warm for the heat')
+  assert.ok(linenFit.score > denimFit.score)
+  assert.equal(linenFit.label, 'lightweight - good for heat')
+})
+
+test('profileRuleFit prohibited tier matches wholeWardrobePieceTrustDecision hard gating', () => {
+  const activityProfile = resolveActivityProfile({ activity: 'hiking' })
+  const mergedRules = getMergedProfileRules(null, activityProfile)
+  const heel = { id: 3, name: 'Black High Heel Pumps', category: 'shoes', occasions: ['casual'], reads_as: 'formal high heel pumps' }
+
+  const fit = profileRuleFit(heel, mergedRules)
+  assert.equal(fit.tier, 'prohibited')
+  assert.equal(fit.label, 'prohibited footwear')
+
+  const trust = wholeWardrobePieceTrustDecision(heel, { occasion: 'casual', activity: 'hiking' })
+  assert.equal(trust.allowed, false)
+  assert.ok(trust.reasons.some(reason => reason.includes('activity profile: prohibited footwear')))
 })
 
 test('Whale stripe tee hot weather recommendations include appropriate shorts/lightweight bottoms', () => {
@@ -270,6 +299,19 @@ test('resolveActivityProfile matches hiking and filters prohibited items', () =>
   assert.equal(pieceOccasionCompatible(athleticShoes, 'outdoor_active'), true, 'Should match outdoor_active profile id with underscores')
   assert.equal(pieceOccasionCompatible(athleticShoes, 'outdoor-active'), true, 'Should match outdoor-active with dashes')
   assert.equal(pieceOccasionCompatible(athleticShoes, 'outdoor active'), true, 'Should match outdoor active with spaces')
+
+  const smartCasualTop = { id: 9907, name: 'Silk Shell', category: 'top', occasions: ['smart casual'] }
+  const eveningTop = { id: 9908, name: 'Sequined Top', category: 'top', occasions: ['evening'] }
+  const mixedElevatedTop = { id: 9909, name: 'Satin Blouse', category: 'top', occasions: ['smart casual', 'evening'] }
+  const outdoorTop = { id: 9910, name: 'Linen Camp Shirt', category: 'top', occasions: ['outdoor'] }
+  const casualTop = { id: 9911, name: 'Cotton Tee', category: 'top', occasions: ['casual'] }
+  assert.equal(pieceOccasionCompatible(smartCasualTop, 'casual'), true, 'Smart casual pieces should be casual-adjacent')
+  assert.equal(pieceOccasionCompatible(eveningTop, 'casual'), false, 'Evening-only pieces should remain incompatible with casual')
+  assert.equal(pieceOccasionCompatible(mixedElevatedTop, 'casual'), true, 'Mixed smart casual/evening pieces should be casual-adjacent through smart casual')
+  assert.equal(pieceOccasionCompatible(eveningTop, 'gallery / art event'), true, 'Gallery/art event occasion compatibility should remain unchanged')
+  assert.equal(pieceOccasionCompatible(outdoorTop, 'outdoor_daytime_social'), true, 'Outdoor daytime social should accept outdoor pieces')
+  assert.equal(pieceOccasionCompatible(smartCasualTop, 'outdoor_daytime_social'), true, 'Outdoor daytime social should accept elevated daytime pieces')
+  assert.equal(pieceOccasionCompatible(casualTop, 'outdoor_daytime_social'), false, 'Outdoor daytime social should not flatten to every casual piece')
 })
 
 test('outdoor_active rules resolved via activity and discourages day dresses, day skirts, and casual/fashion sandals (regression test)', () => {

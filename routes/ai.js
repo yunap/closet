@@ -42,7 +42,22 @@ import {
 } from '../styling-engine/prompts.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
-import { pieceMatchesMaterial, pieceMatchesFootwear } from '../styling-engine/attributes.js'
+import {
+  bottomKind,
+  fabricWeight,
+  garmentKind,
+  isDarkPiece,
+  pieceMatchesMaterial,
+  pieceMatchesFootwear,
+  sleeveCoverage,
+  textIncludesAny
+} from '../styling-engine/attributes.js'
+import {
+  extractWeatherContext,
+  isTravelOrPackingRequest,
+  normalizeActivity,
+  normalizeOccasion
+} from '../styling-engine/stylingIntent.js'
 
 import {
   isStyleSelectedQuestion,
@@ -164,6 +179,658 @@ import {
 } from '../styling-engine/core.js'
 
 const router = express.Router()
+
+function isBroadOutfitPlanningText(text = '') {
+  const q = String(text || '').toLowerCase()
+  if (!q.trim()) return false
+  if (/\b(show|render|visualize|see|picture|image|why|what about|do you think|evaluate|critique)\b/.test(q)) return false // ratchet-allow: user intent routing words, not garment matching
+  return /\b(outfits?|looks?|pack|packing|trip|travel|capsule|wardrobe)\b/.test(q) && // ratchet-allow: user intent routing words, not garment matching
+    /\b(suggest|recommend|what should|help|plan|pack|wear|put together|create|build)\b/.test(q) // ratchet-allow: user intent routing words, not garment matching
+}
+
+function structuredOutfitContextText(outfits = [], { source = 'whole_wardrobe', reason = '' } = {}) {
+  if (!Array.isArray(outfits) || !outfits.length) return ''
+  const cards = outfits.slice(0, 5).map((outfit, index) => {
+    const pieces = Array.isArray(outfit?.pieces)
+      ? outfit.pieces.map(piece => `${piece?.name || 'Garment'}${piece?.category ? ` (${piece.category})` : ''}${piece?.id ? `, id ${piece.id}` : ''}`).join('\n- ')
+      : ''
+    return [
+      `Outfit ${index + 1}: ${outfit.label || outfit.title || `Structured outfit ${index + 1}`}`,
+      outfit.bestFor ? `Use case: ${outfit.bestFor}` : '',
+      outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
+      outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
+      pieces ? `Pieces:\n- ${pieces}` : '',
+      outfit.reason ? `Reason: ${outfit.reason}` : '',
+      outfit.watchFor ? `Watch: ${outfit.watchFor}` : '',
+    ].filter(Boolean).join('\n')
+  }).join('\n\n')
+  return [
+    'CURRENT OUTFIT SET (LATEST, HIGH AUTHORITY): These structured cards were pre-composed by the validated wardrobe composer before the chat answer. Explain and refine these cards; do not invent a separate prose-only outfit set.',
+    reason ? `Pre-composition reason: ${reason}` : '',
+    source ? `Source: ${source}` : '',
+    cards
+  ].filter(Boolean).join('\n')
+}
+
+const USE_CASE_PLANNER_SYSTEM = `FREEFORM_STYLIST_USE_CASE_PLANNER
+You convert a freeform wardrobe request into outfit use-case slots for a deterministic composer.
+Return strict JSON only:
+{
+  "shouldCompose": boolean,
+  "reason": "short reason",
+  "slots": [
+    {
+      "id": "stable_snake_case",
+      "label": "short user-facing label",
+      "occasion": "casual|city|smart casual|outdoor_daytime_social|evening|gallery / art event|travel|concert",
+      "activity": "none|walking|hiking",
+      "season": "weather/temperature for this slot",
+      "bestFor": "specific use case",
+      "planNote": "one sentence composer guidance"
+    }
+  ]
+}
+Use only needs stated or clearly implied by the user/current outfit set. Do not invent a destination-specific itinerary. Map dinner, evening restaurant, and night-out use cases to occasion "evening" with activity "none" unless the user explicitly says the dinner itself requires substantial walking. For museums, galleries, and indoor cultural visits, use activity "none" unless the user explicitly says that use case involves long walks, lots of walking, or outdoor walking between stops. If the user asks a conversational question that does not need new composed cards, set shouldCompose false.`
+
+function normalizePlannerSlots(rawSlots = [], { extractedWeather = '', fallbackOccasion = 'city', fallbackActivity = '', maxSlots = 5 } = {}) {
+  return (Array.isArray(rawSlots) ? rawSlots : [])
+    .slice(0, maxSlots)
+    .map((slot, index) => {
+      const occasion = normalizeOccasion(slot?.occasion || fallbackOccasion || 'city')
+      const activity = normalizeActivity(slot?.activity || fallbackActivity || 'none')
+      const label = String(slot?.label || '').trim() || (index === 0 ? 'Primary Outfit' : `Outfit ${index + 1}`)
+      return {
+        id: String(slot?.id || label || `slot_${index + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `slot_${index + 1}`,
+        label,
+        occasion,
+        activity,
+        season: String(slot?.season || extractedWeather || 'current season').trim(),
+        bestFor: String(slot?.bestFor || label).trim(),
+        planNote: String(slot?.planNote || '').trim()
+      }
+    })
+    .filter(slot => slot.label && slot.bestFor)
+}
+
+async function planFreeformUseCases({
+  question = '',
+  extractedWeather = '',
+  conversationMode = 'new_request',
+  generatedContext = '',
+  generatedOutfits = [],
+  fallbackOccasion = 'city',
+  fallbackActivity = '',
+  maxSlots = 5
+} = {}) {
+  try {
+    const currentSet = Array.isArray(generatedOutfits) && generatedOutfits.length
+      ? generatedOutfits.slice(0, 8).map((outfit, index) => {
+          const pieces = (outfit?.pieces || []).map(piece => piece?.name).filter(Boolean).join(' + ')
+          return `${index + 1}. ${outfit?.label || outfit?.title || 'Outfit'}: ${pieces}`
+        }).join('\n')
+      : ''
+    const raw = await withTimeout(askStylist({
+      system: USE_CASE_PLANNER_SYSTEM,
+      maxTokens: 900,
+      messages: [{
+        role: 'user',
+        content: [
+          `Conversation mode: ${conversationMode}`,
+          extractedWeather ? `Established weather: ${extractedWeather}` : '',
+          fallbackOccasion ? `Default occasion: ${fallbackOccasion}` : '',
+          fallbackActivity ? `Default activity: ${fallbackActivity}` : '',
+          generatedContext ? `Current set context:\n${String(generatedContext).slice(0, 3000)}` : '',
+          currentSet ? `Current structured cards:\n${currentSet}` : '',
+          `Latest user request:\n${question}`
+        ].filter(Boolean).join('\n\n')
+      }]
+    }), 8000, 'freeform use-case planning')
+    const parsed = safeJsonFromModel(raw)
+    if (!parsed?.shouldCompose) return []
+    return normalizePlannerSlots(parsed.slots, {
+      extractedWeather,
+      fallbackOccasion,
+      fallbackActivity,
+      maxSlots
+    })
+  } catch (err) {
+    console.warn('Freeform use-case planner failed:', err.message)
+    return []
+  }
+}
+
+function annotateTripOutfit(outfit, slot, index = 0) {
+  if (!outfit || !slot) return outfit
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const pieceIds = pieces.map(piece => Number(piece.id)).filter(Boolean)
+  const existingReason = String(outfit.reason || '').trim()
+  const existingWatch = String(outfit.watchFor || '').trim()
+  return {
+    ...outfit,
+    pieces: pieces.length ? pieces : outfit.pieces,
+    pieceIds: pieceIds.length ? pieceIds : outfit.pieceIds,
+    label: slot.label,
+    title: slot.label,
+    bestFor: slot.bestFor,
+    occasion: slot.occasion,
+    activity: slot.activity,
+    tripSlot: slot.id,
+    tripNote: slot.planNote || '',
+    source: 'trip_precompose',
+    strength: index === 0 ? 'signature' : (index <= 2 ? 'strong' : 'usable'),
+    reason: existingReason,
+    watchFor: existingWatch && !/^none$/i.test(existingWatch) ? existingWatch : ''
+  }
+}
+
+function tripSlotComfortConstraint(slot = {}, baseConstraint = null) {
+  if (slot.activity !== 'walking') return baseConstraint
+  return {
+    reason: 'all-day walking comfort',
+    discouraged_footwear: [
+      ...(baseConstraint?.discouraged_footwear || []),
+      'heel', 'heels', 'high heel', 'high heels',
+      'pointed', 'pointed heel', 'pointed heels',
+      'mule', 'mules',
+      'wedge', 'wedges',
+      'dress shoe', 'dress shoes'
+    ],
+    discouraged_footwear_warm: [
+      ...(baseConstraint?.discouraged_footwear_warm || []),
+      'boot', 'boots', 'ankle boot', 'ankle boots'
+    ],
+    keep_footwear: [
+      'loafer', 'loafers',
+      'flat', 'flats',
+      'ballet flat', 'ballet flats',
+      'sneaker', 'sneakers',
+      'slip-on', 'slip-ons',
+      'slip on', 'slip ons',
+      'canvas', 'canvas shoe', 'canvas shoes',
+      'walking flat', 'walking flats'
+    ]
+  }
+}
+
+function tripOutfitKey(outfit = {}) {
+  const ids = (outfit.pieceIds || outfit.pieces?.map(p => p.id) || []).map(Number).filter(Boolean)
+  return ids.slice().sort((a, b) => a - b).join('|')
+}
+
+function tripOutfitFormulaKey(outfit = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const top = pieces.find(p => wardrobeCategoryGroup(p) === 'top')?.id || ''
+  const bottom = pieces.find(p => wardrobeCategoryGroup(p) === 'bottom')?.id || ''
+  const dress = pieces.find(p => wardrobeCategoryGroup(p) === 'dress')?.id || ''
+  return dress ? `dress:${dress}` : `separates:${top}:${bottom}`
+}
+
+function tripPieceHasAny(piece = {}, words = []) {
+  return textIncludesAny(pieceTextBlob(piece), words) // ratchet-allow: trip slot fit reads normalized garment attributes via shared helper
+}
+
+function tripPieceIsDelicateForDay(piece = {}) {
+  return tripPieceHasAny(piece, ['lace', 'crochet', 'satin', 'silk', 'suede', 'sheer', 'chiffon', 'wool', 'leather'])
+}
+
+function tripShoeIsWalkable(piece = {}) {
+  return tripPieceHasAny(piece, [
+    'flat', 'flats',
+    'ballet flat', 'ballet flats',
+    'sneaker', 'sneakers',
+    'slip-on', 'slip-ons', 'slip on', 'slip ons',
+    'canvas',
+    'loafer', 'loafers',
+    'sandal', 'sandals'
+  ])
+}
+
+function tripShoeIsUnstableForWalking(piece = {}) {
+  return tripPieceHasAny(piece, [
+    'heel', 'heels',
+    'pointed', 'pointed heel', 'pointed heels',
+    'mule', 'mules',
+    'wedge', 'wedges',
+    'boot', 'boots', 'ankle boot', 'ankle boots',
+    'dress shoe', 'dress shoes'
+  ])
+}
+
+function isTripDinnerSlot(slot = {}) {
+  return normalizeOccasion(slot.occasion) === 'evening'
+}
+
+function isCasualDinnerShoe(piece = {}) {
+  return tripPieceHasAny(piece, ['sneaker', 'sneakers', 'canvas', 'slip-on', 'slip-ons', 'slip on', 'slip ons', 'trainer', 'trainers'])
+}
+
+function isSharpDinnerShoe(piece = {}) {
+  return tripPieceHasAny(piece, ['mule', 'mules', 'heel', 'heels', 'block heel', 'dress flat', 'dress flats', 'cutout'])
+}
+
+function isCasualDinnerLayer(piece = {}) {
+  return tripPieceHasAny(piece, ['stripe', 'striped', 'hoodie', 'sweatshirt', 'fleece', 'chunky', 'slouchy', 'oversized', 'casual'])
+}
+
+function tripOutfitDinnerRegisterScore(outfit = {}, slot = {}) {
+  if (!isTripDinnerSlot(slot)) return 0
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
+  const bottom = pieces.find(piece => wardrobeCategoryGroup(piece) === 'bottom')
+  const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  const shoe = pieces.find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  let score = 0
+
+  if (dress) score += 34
+  if (top) {
+    if (tripPieceHasAny(top, ['satin', 'silk', 'blouson', 'button-up', 'button up', 'button-down', 'button down', 'cowl', 'black'])) score += 18
+    if (tripPieceHasAny(top, ['graphic', 'tee', 'fruit', 'sweatshirt', 'hoodie'])) score -= 20
+  }
+  if (bottom) {
+    const kind = bottomKind(bottom)
+    if (kind?.startsWith('skirt')) score += 12
+    if (tripPieceHasAny(bottom, ['drawstring', 'jogger', 'cargo', 'denim shorts', 'casual shorts'])) score -= 28
+  }
+  if (shoe) {
+    if (isSharpDinnerShoe(shoe)) score += 16
+    if (isCasualDinnerShoe(shoe)) score -= 24
+    if (tripPieceHasAny(shoe, ['tan', 'beige', 'cream']) && isCasualDinnerShoe(shoe)) score -= 10
+  }
+  if (layer) {
+    score += 4
+    if (isCasualDinnerLayer(layer)) score -= 34
+    if (tripPieceHasAny(layer, ['blazer', 'draped', 'black', 'sheer', 'trim', 'tailored'])) score += 16
+  }
+  if (layer && shoe && isCasualDinnerLayer(layer) && isCasualDinnerShoe(shoe)) score -= 26
+  return score
+}
+
+function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
+  const bottom = pieces.find(piece => wardrobeCategoryGroup(piece) === 'bottom')
+  const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  const shoe = pieces.find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  const isWalking = slot.activity === 'walking'
+  const isDinner = isTripDinnerSlot(slot)
+  const isWinery = slot.occasion === 'outdoor_daytime_social'
+  const isDayWalking = isWalking && !isDinner
+  const isHotDay = Boolean(weatherProfile?.isHot || /\b(hot|80|90|summer)\b/i.test(`${slot.season || ''} ${slot.bestFor || ''}`))
+  const isHotNonDinner = isHotDay && !isDinner
+  const hardRejects = []
+  let score = 0
+
+  if (!shoe) hardRejects.push('missing shoes')
+  if (isHotNonDinner && dress && fabricWeight(dress) === 'heavy') {
+    score -= 90
+    hardRejects.push('heavy dress too warm for hot daytime slot')
+  }
+
+  if (isDayWalking) {
+    if (shoe) {
+      if (tripShoeIsUnstableForWalking(shoe)) hardRejects.push('unstable walking shoes')
+      if (tripShoeIsWalkable(shoe)) score += 24
+    }
+
+    if (bottom) {
+      const kind = bottomKind(bottom)
+      if (kind === 'shorts') score += isHotDay ? 34 : 22
+      else if (kind === 'pants') score += fabricWeight(bottom) === 'light' ? 28 : 16
+      else if (kind === 'skirt-mini') score -= isWinery ? 4 : 12
+      else if (kind === 'skirt-midi') score -= isWinery ? 6 : 48
+      else if (kind === 'skirt-maxi') score -= isWinery ? 12 : 56
+      if (tripPieceIsDelicateForDay(bottom)) score -= isWinery ? 10 : 24
+    }
+
+    if (dress) {
+      score += isWinery ? 14 : -34
+      if (tripPieceIsDelicateForDay(dress)) score -= isWinery ? 6 : 18
+    }
+
+    if (top) {
+      const topKind = garmentKind(top)
+      if (topKind === 'tee' || topKind === 'tank' || topKind === 'button-shirt') score += 10
+      if (tripPieceIsDelicateForDay(top)) score -= isWinery ? 6 : 18
+      if (sleeveCoverage(top) === 'long' && isHotDay) score -= 18
+      if (fabricWeight(top) === 'heavy' && isHotDay) score -= 24
+    }
+
+    if (layer && isHotDay) score -= 18
+    if (!bottom && !dress) score -= 20
+  } else {
+    if (dress) score += 28
+    if (bottom) {
+      const kind = bottomKind(bottom)
+      if (kind?.startsWith('skirt')) score += 14
+      if (tripPieceHasAny(bottom, ['crochet', 'lace', 'jersey', 'drawstring'])) score -= 22
+    }
+    if (top) {
+      if (isDarkPiece(top)) score += 12
+      if (garmentKind(top) === 'button-shirt') score += 10
+      if (tripPieceHasAny(top, ['graphic', 'fruit', 'tee'])) score -= 10
+    }
+    if (shoe) {
+      if (tripPieceHasAny(shoe, ['mule', 'mules', 'heel', 'heels', 'sandal', 'sandals'])) score += 8
+      if (tripPieceHasAny(shoe, ['sneaker', 'canvas'])) score -= 10
+      if (isDinner && isCasualDinnerShoe(shoe)) score -= 18
+    }
+    if (layer) {
+      score += 8
+      if (tripPieceHasAny(layer, ['stripe', 'striped', 'hoodie', 'sweatshirt'])) score -= 20
+      if (isDinner && isCasualDinnerLayer(layer)) score -= 18
+    }
+    if (!dress && !bottom) score -= 20
+    if (isDinner) {
+      score += tripOutfitDinnerRegisterScore(outfit, slot)
+      if (tripOutfitDinnerRegisterScore(outfit, slot) < 0) hardRejects.push('too casual for dinner register')
+    }
+  }
+
+  return {
+    score,
+    hardRejects,
+    accepted: hardRejects.length === 0
+  }
+}
+
+function chooseEveningLayerForOutfit(outfit, allPieces = [], slot = {}) {
+  const pieces = Array.isArray(outfit?.pieces) ? outfit.pieces : []
+  const existingIds = new Set(pieces.map(piece => Number(piece.id)).filter(Boolean))
+  const weatherProfile = weatherProfileFromContext({ season: slot.season || 'cool evening weather' })
+  const { allowedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, {
+    occasion: 'city',
+    explorationMode: 'moderate',
+    weatherProfile,
+    mood: 'cool evening layer',
+    activity: 'none'
+  })
+  const baseScore = tripSlotFitScore(outfit, slot, { weatherProfile }).score
+  const options = allowedPieces
+    .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !existingIds.has(Number(piece.id)))
+    .map(layer => {
+      const nextPieces = [...pieces, layer]
+      const candidate = {
+        ...outfit,
+        pieces: nextPieces,
+        pieceIds: nextPieces.map(piece => Number(piece.id)).filter(Boolean)
+      }
+      const fit = tripSlotFitScore(candidate, slot, { weatherProfile })
+      return { layer, candidate, fit }
+    })
+    .filter(item => item.fit.accepted && item.fit.score >= baseScore + 6)
+    .sort((a, b) => b.fit.score - a.fit.score)
+  return options[0]?.candidate || outfit
+}
+
+function withEveningLayerIfUseful(outfit, allPieces = [], slot = {}) {
+  if (!outfit || !isTripDinnerSlot(slot)) return outfit
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  if (pieces.some(piece => wardrobeCategoryGroup(piece) === 'outerwear')) return outfit
+  const layered = chooseEveningLayerForOutfit(outfit, allPieces, slot)
+  const layer = layered.pieces?.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  if (!layer) return outfit
+  return {
+    ...layered,
+    reason: [
+      outfit.reason,
+      `${layer.name} adds a light evening layer if the evening cools down.`
+    ].filter(Boolean).join(' '),
+    watchFor: outfit.watchFor || ''
+  }
+}
+
+function seedTripUsedSets(outfits = []) {
+  const usedKeys = new Set()
+  const usedTopBottom = new Set()
+  for (const outfit of outfits || []) {
+    const key = tripOutfitKey(outfit)
+    const formulaKey = tripOutfitFormulaKey(outfit)
+    if (key) usedKeys.add(key)
+    if (formulaKey) usedTopBottom.add(formulaKey)
+  }
+  return { usedKeys, usedTopBottom }
+}
+
+function buildLocalTripSlotOutfits({ slots = [], question = '', mood = '', allPieces = [], seedOutfits = [] } = {}) {
+  const picked = []
+  const seeded = seedTripUsedSets(seedOutfits)
+  const usedKeys = seeded.usedKeys
+  const usedTopBottom = seeded.usedTopBottom
+  for (const slot of slots) {
+    const weatherProfile = weatherProfileFromContext({ mood: mood || question, season: slot.season })
+    const { allowedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, {
+      occasion: slot.occasion,
+      explorationMode: 'moderate',
+      weatherProfile,
+      mood: mood || question,
+      activity: slot.activity
+    })
+    const comfortConstraint = tripSlotComfortConstraint(slot, resolveComfortFootwearConstraint({
+      occasion: slot.occasion,
+      mood: mood || question,
+      request: question,
+      activity: slot.activity
+    }))
+    const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
+      occasion: slot.occasion,
+      season: slot.season,
+      mood: mood || question,
+      explorationMode: 'moderate',
+      activeMissions: ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing'],
+      comfortConstraint
+    })
+    const localOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, {
+      occasion: slot.occasion,
+      mood: mood || question,
+      season: slot.season,
+      weatherProfile,
+      activity: slot.activity
+    }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
+    const ranked = locallyGateWholeWardrobeOutfits(localOutfits, Math.max(3, slots.length), {
+      requireShoes: true,
+      candidatePieces: allowedPieces,
+      occasion: slot.occasion,
+      mood: mood || question,
+      season: slot.season,
+      weatherProfile,
+      activity: slot.activity
+    }).outfits
+    const scoredOutfits = [...ranked, ...localOutfits]
+      .map(outfit => {
+        const repaired = applyComfortFootwearRepair(outfit, allowedPieces, comfortConstraint, {
+          weatherProfile,
+          occasion: slot.occasion,
+          mood: mood || question,
+          activity: slot.activity
+        })
+        const finalOutfit = withEveningLayerIfUseful(repaired, allPieces, slot)
+        return {
+          outfit: finalOutfit,
+          fit: tripSlotFitScore(finalOutfit, slot, { weatherProfile })
+        }
+      })
+      .filter(item => tripOutfitKey(item.outfit))
+      .sort((a, b) => {
+        if (a.fit.accepted !== b.fit.accepted) return a.fit.accepted ? -1 : 1
+        if (a.fit.hardRejects.length !== b.fit.hardRejects.length) return a.fit.hardRejects.length - b.fit.hardRejects.length
+        return b.fit.score - a.fit.score
+      })
+    const choice = scoredOutfits.find(({ outfit }) => {
+      const key = tripOutfitKey(outfit)
+      if (!key || usedKeys.has(key)) return false
+      const formulaKey = tripOutfitFormulaKey(outfit)
+      if (formulaKey && usedTopBottom.has(formulaKey)) return false
+      return true
+    })?.outfit || scoredOutfits.find(({ outfit }) => {
+      const key = tripOutfitKey(outfit)
+      if (!key || usedKeys.has(key)) return false
+      const formulaKey = tripOutfitFormulaKey(outfit)
+      return !formulaKey || !usedTopBottom.has(formulaKey)
+    })?.outfit || scoredOutfits.find(({ outfit }) => {
+      const key = tripOutfitKey(outfit)
+      return key && !usedKeys.has(key)
+    })?.outfit || ranked[0] || localOutfits[0]
+    if (choice) {
+      const key = tripOutfitKey(choice)
+      const formulaKey = tripOutfitFormulaKey(choice)
+      usedKeys.add(key)
+      if (formulaKey) usedTopBottom.add(formulaKey)
+      picked.push(annotateTripOutfit(choice, slot, picked.length))
+    } else if (picked[0]) {
+      const repairedFallback = applyComfortFootwearRepair(picked[0], allowedPieces, comfortConstraint, {
+        weatherProfile,
+        occasion: slot.occasion,
+        mood: mood || question,
+        activity: slot.activity
+      })
+      picked.push(annotateTripOutfit(withEveningLayerIfUseful(repairedFallback, allPieces, slot), slot, picked.length))
+    }
+  }
+  return picked
+}
+
+async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeather = '') {
+  const question = body.question || ''
+  const requestedMode = body.conversationMode || 'new_request'
+  if (requestedMode !== 'new_request') return null
+  if (Array.isArray(body.generatedOutfits) && body.generatedOutfits.length) return null
+  if (body.outfit || body.pieceId || body.piece || body.activeContext?.type === 'piece' || body.activeContext?.type === 'outfit') return null
+  const isTravelPlanning = isTravelOrPackingRequest(question, body.occasion)
+  if (!isBroadOutfitPlanningText(question) && !isTravelPlanning) return null
+  if (isTravelPlanning && !extractedWeather) return null
+
+  const fallbackActivity = normalizeActivity(body.activity || 'none')
+  const occasion = normalizeOccasion(body.occasion || (isTravelPlanning ? 'city' : 'casual'))
+  const seasonParts = [body.season || 'current season', extractedWeather].filter(Boolean)
+  const plannedSlots = await planFreeformUseCases({
+    question,
+    extractedWeather,
+    conversationMode: requestedMode,
+    generatedContext: body.generatedContext || '',
+    generatedOutfits: [],
+    fallbackOccasion: occasion,
+    fallbackActivity,
+    maxSlots: isTravelPlanning ? 5 : 3
+  })
+  const result = await generateWholeWardrobeOutfitsInternal({
+    occasion,
+    season: seasonParts.join('; '),
+    mood: body.mood || question,
+    mission: body.mission || 'mix',
+    limit: 5,
+    explorationMode: 'moderate',
+    question,
+    activity: plannedSlots[0]?.activity || fallbackActivity
+  })
+  let structuredOutfits = Array.isArray(result?.structuredOutfits) ? result.structuredOutfits : []
+  if (plannedSlots.length) {
+    const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+    const tripOutfits = buildLocalTripSlotOutfits({
+      slots: plannedSlots,
+      question,
+      mood: body.mood || question,
+      allPieces
+    })
+    if (tripOutfits.length) structuredOutfits = tripOutfits
+  }
+  if (!structuredOutfits.length) {
+    const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+    const weatherProfile = weatherProfileFromContext({ mood: body.mood || question, season: seasonParts.join('; ') })
+    const { allowedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, {
+      occasion,
+      explorationMode: 'moderate',
+      weatherProfile,
+      mood: body.mood || question,
+      activity: fallbackActivity
+    })
+    const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
+      occasion,
+      season: seasonParts.join('; '),
+      mood: body.mood || question,
+      explorationMode: 'moderate',
+      activeMissions: ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing'],
+      comfortConstraint: resolveComfortFootwearConstraint({
+        occasion,
+        mood: body.mood || question,
+        request: question,
+        activity: fallbackActivity
+      })
+    })
+    const localOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, {
+      occasion,
+      mood: body.mood || question,
+      season: seasonParts.join('; '),
+      weatherProfile,
+      activity: fallbackActivity
+    }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
+    structuredOutfits = locallyGateWholeWardrobeOutfits(localOutfits, 5, {
+      requireShoes: true,
+      candidatePieces: allowedPieces,
+      occasion,
+      mood: body.mood || question,
+      season: seasonParts.join('; '),
+      weatherProfile,
+      activity: fallbackActivity
+    }).outfits
+    if (!structuredOutfits.length) structuredOutfits = localOutfits.slice(0, 5)
+  }
+  if (!structuredOutfits.length) return null
+  return {
+    ...result,
+    structuredOutfits,
+    occasion,
+    season: seasonParts.join('; '),
+    activity: plannedSlots[0]?.activity || fallbackActivity,
+    contextText: structuredOutfitContextText(structuredOutfits, {
+      source: 'whole_wardrobe_composer_evaluator',
+      reason: 'freeform multi-outfit planning request'
+    })
+  }
+}
+
+async function maybePrecomposeStructuredFollowupForAsk(body = {}, extractedWeather = '') {
+  const question = body.question || ''
+  const requestedMode = body.conversationMode || 'new_request'
+  if (requestedMode === 'new_request') return null
+  const currentOutfits = Array.isArray(body.generatedOutfits) ? body.generatedOutfits : []
+  if (!currentOutfits.length) return null
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const fallbackOccasion = normalizeOccasion(body.occasion || currentOutfits[0]?.occasion || 'city')
+  const fallbackActivity = normalizeActivity(body.activity || currentOutfits[0]?.activity || 'none')
+  const slots = await planFreeformUseCases({
+    question,
+    extractedWeather,
+    conversationMode: requestedMode,
+    generatedContext: body.generatedContext || '',
+    generatedOutfits: currentOutfits,
+    fallbackOccasion,
+    fallbackActivity,
+    maxSlots: 5
+  })
+  if (!slots.length) return null
+  const structuredOutfits = buildLocalTripSlotOutfits({
+    slots,
+    question,
+    mood: body.mood || question,
+    allPieces,
+    seedOutfits: currentOutfits
+  })
+  if (!structuredOutfits.length) return null
+
+  return {
+    structuredOutfits,
+    occasion: slots[0]?.occasion || fallbackOccasion,
+    season: slots[0]?.season || body.season || 'cool evening weather',
+    activity: slots[0]?.activity || fallbackActivity,
+    contextText: structuredOutfitContextText(structuredOutfits, {
+      source: 'freeform_followup_composer',
+      reason: 'validated owned-wardrobe options for current outfit set follow-up'
+    })
+  }
+}
 
 // Multer storage setup
 const storage = multer.diskStorage({
@@ -2325,17 +2992,38 @@ router.post('/compare-outfits', async (req, res) => {
 })
 router.post('/ask', async (req, res) => {
   try {
+    const extractedWeather = req.body.weather || extractWeatherContext([
+      req.body.question || '',
+      req.body.threadContext || '',
+      req.body.generatedContext || ''
+    ].join('\n'))
+    const precomposed = await maybePrecomposeStructuredOutfitsForAsk(req.body, extractedWeather)
+    const followupPrecomposed = precomposed ? null : await maybePrecomposeStructuredFollowupForAsk(req.body, extractedWeather)
+    const activePrecompose = precomposed || followupPrecomposed
+    const generatedOutfitsForTurn = activePrecompose?.structuredOutfits || []
+    const generatedContextForTurn = [
+      activePrecompose?.contextText || '',
+      req.body.generatedContext || ''
+    ].filter(Boolean).join('\n\n')
     const toolContext = {
-      generatedOutfits: [],
-      source: 'whole_wardrobe',
-      occasion: 'casual',
-      season: 'current season',
-      mood: '',
-      mission: 'mix',
-      activity: req.body.activity || '',
+      generatedOutfits: generatedOutfitsForTurn,
+      source: activePrecompose ? 'whole_wardrobe' : 'whole_wardrobe',
+      occasion: activePrecompose?.occasion || req.body.occasion || 'casual',
+      season: activePrecompose?.season || req.body.season || 'current season',
+      weather: extractedWeather,
+      mood: req.body.mood || '',
+      mission: req.body.mission || 'mix',
+      activity: activePrecompose?.activity || req.body.activity || '',
       question: req.body.question || ''
     }
-    const payload = await buildStylistConversationPayload(req.body)
+    const payload = await buildStylistConversationPayload({
+      ...req.body,
+      generatedContext: generatedContextForTurn,
+      generatedOutfits: generatedOutfitsForTurn.length ? generatedOutfitsForTurn : req.body.generatedOutfits,
+      occasion: activePrecompose?.occasion || req.body.occasion,
+      season: activePrecompose?.season || req.body.season,
+      activity: activePrecompose?.activity || req.body.activity
+    })
     const { answer, savedCorrections } = await askStylistWithTools({
       ...payload,
       toolContext

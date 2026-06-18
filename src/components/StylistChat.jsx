@@ -33,6 +33,7 @@ const OUTFIT_FEEDBACK_LABELS = [
 // Occasion = social register only (activities removed)
 const OCCASION_OPTIONS = [
   ['casual', 'Casual'], ['city', 'City'], ['smart casual', 'Smart casual'],
+  ['outdoor_daytime_social', 'Outdoor daytime social'],
   ['evening', 'Evening'], ['gallery / art event', 'Gallery / art event'],
   ['travel', 'Travel'],            // oddball, intentionally left for now
   ['concert', 'Concert'],
@@ -74,6 +75,7 @@ const renderCost = (timings) => {
 
 const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
 const OUTFIT_FOLLOWUP_PATTERN = /\b(this|it|outfit|idea|look|piece|pieces|make|change|swap|instead|sharper|stronger|softer|better|work|works|risk|risky|why|how|what)\b/i
+const OUTFIT_CARD_RESPONSE_PATTERN = /\b(show|render|visualize|show me the outfits|show the outfits|outfit cards?|compose|generate|regenerate|revise|update|replace|swap|add|another option|other option|different option|another outfit|other outfit|different outfit|more outfit|new outfit)\b/i
 
 const currentChatDateContext = () => {
   const now = new Date()
@@ -121,6 +123,14 @@ const compactThreadContext = (memory = null, activeContext = null) => {
   }
   return parts.join('\n\n')
 }
+
+const stylingContextFromMemory = (memory = null, fallbackActivity = 'none') => ({
+  occasion: memory?.stylingContext?.occasion,
+  season: memory?.stylingContext?.season,
+  mood: memory?.stylingContext?.mood,
+  mission: memory?.stylingContext?.mission,
+  activity: memory?.stylingContext?.activity ?? fallbackActivity,
+})
 
 const compactEvaluationMemory = (evaluation = null) => {
   if (!evaluation || typeof evaluation !== 'object') return ''
@@ -642,7 +652,11 @@ export default function AskClaude({
   }
 
   const getCompactOutfitIntro = (message, hasBoards = false) => {
-    if (message?.wholeWardrobe) return 'Outfits built from saved wardrobe pieces. Garment photos are shown below; image generation is optional.'
+    if (message?.wholeWardrobe) {
+      const hasTripCards = message?.structuredOutfits?.some(outfit => outfit?.source === 'trip_precompose')
+      if (hasTripCards) return 'Trip outfits built from saved wardrobe pieces. Garment photos are shown below; image generation is optional.'
+      return 'Outfits built from saved wardrobe pieces. Garment photos are shown below; image generation is optional.'
+    }
     const text = String(message?.text || '')
     const titleMatch = text.match(/Generated outfit ideas for:\*\*\s*([^\n]+)/i)
     const firstOutfit = message?.structuredOutfits?.[0]
@@ -652,6 +666,25 @@ export default function AskClaude({
       : (activeContext?.name || heroPieceName || 'your wardrobe')
     if (hasBoards) return `Outfit directions for ${itemName}. Visuals are shown below for selected ideas.`
     return `Outfit ideas for ${itemName}. Saved wardrobe pieces are shown when available; image generation is optional.`
+  }
+
+  const getTripPlanNotes = (outfits = []) => {
+    const tripCards = Array.isArray(outfits) ? outfits.filter(outfit => outfit?.source === 'trip_precompose') : []
+    if (!tripCards.length) return []
+    const notes = [
+      'Daytime outfits are chosen for heat and walking; dinner can be a little more polished and layered.',
+      'When image space is limited, garment and layer photos are prioritized before accessories.'
+    ]
+    for (const outfit of tripCards) {
+      if (outfit.tripNote) notes.push(`${outfit.label || outfit.title || 'Outfit'}: ${outfit.tripNote}`)
+    }
+    const seen = new Set()
+    return notes.filter(note => {
+      const key = note.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }).slice(0, 7)
   }
 
   const hydrateDisplayPiece = (piece = {}) => {
@@ -666,13 +699,89 @@ export default function AskClaude({
     }
   }
 
+  const normalizeOutfitPieceName = (value = '') => String(value || '')
+    .replace(/\*\*/g, '')
+    .replace(/^your\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+
+  const resolveNamedWardrobePiece = (name = '') => {
+    const normalized = normalizeOutfitPieceName(name)
+    if (!normalized) return null
+    return pieces.find(piece => normalizeOutfitPieceName(piece?.name) === normalized) || null
+  }
+
+  const parseStructuredOutfitsFromAssistantText = (text = '') => {
+    const raw = String(text || '')
+    if (!/###\s+(?:Revised\s+|Adjusted\s+|Alternative\s+)?Outfit\b/i.test(raw)) return []
+    const sections = raw.split(/(?=^###\s+(?:Revised\s+|Adjusted\s+|Alternative\s+)?Outfit\b)/gim)
+    return sections.map((section, index) => {
+      const titleMatch = section.match(/^###\s+((?:Revised\s+|Adjusted\s+|Alternative\s+)?Outfit\s+(\d+)?:?\s*[^\n]*)/im)
+      if (!titleMatch) return null
+      const piecesMatch = section.match(/^\s*[-–]?\s*\*\*Pieces\*\*\s*:\s*([^\n]+)/im)
+      if (!piecesMatch) return null
+      const names = piecesMatch[1]
+        .split(/\s+\+\s+/)
+        .map(part => part.replace(/\[[^\]]+\]/g, '').replace(/[.;]\s*$/g, '').trim())
+        .filter(Boolean)
+      if (names.length < 2) return null
+      const displayPieces = names.map(name => {
+        const resolved = resolveNamedWardrobePiece(name)
+        return resolved || { name, category: 'unresolved', unresolved: true }
+      })
+      const resolvedPieces = displayPieces.filter(piece => piece && !piece.unresolved && piece.id)
+      const unresolvedPieceNames = displayPieces.filter(piece => piece?.unresolved).map(piece => piece.name)
+      const whyMatch = section.match(/^\s*[-–]?\s*\*\*Why it works\*\*\s*:\s*([\s\S]*?)(?=\n\s*(?:###|[-–]\s*\*\*Pieces\*\*|$))/im)
+      const rawTitle = titleMatch[1].replace(/\*\*/g, '').trim()
+      const cleanedTitle = rawTitle
+        .replace(/^(Revised|Adjusted|Alternative)\s+/i, '')
+        .replace(/^Outfit\s+\d+\s*:?\s*/i, '')
+        .trim()
+      return {
+        label: cleanedTitle || `Outfit ${titleMatch[2] || index + 1}`,
+        title: cleanedTitle || `Outfit ${titleMatch[2] || index + 1}`,
+        outfitNumber: titleMatch[2] ? Number(titleMatch[2]) : index + 1,
+        pieceIds: resolvedPieces.map(piece => Number(piece.id)),
+        pieces: displayPieces,
+        unresolvedPieceNames,
+        reason: whyMatch ? whyMatch[1].replace(/\s+/g, ' ').trim() : '',
+        previewOnly: true,
+        source: 'freeform_current_set',
+      }
+    }).filter(Boolean)
+  }
+
+  const mergeCurrentOutfitSet = (previousOutfits = [], parsedOutfits = []) => {
+    if (!Array.isArray(parsedOutfits) || !parsedOutfits.length) return []
+    const prior = Array.isArray(previousOutfits) ? previousOutfits : []
+    if (!prior.length || parsedOutfits.length >= prior.length) return parsedOutfits
+    const merged = [...prior]
+    for (const parsed of parsedOutfits) {
+      const numberIndex = Number.isFinite(parsed.outfitNumber)
+        ? merged.findIndex(outfit => Number(outfit?.outfitNumber) === Number(parsed.outfitNumber))
+        : -1
+      const labelKey = normalizeOutfitPieceName(parsed.label || parsed.title)
+      const labelIndex = numberIndex >= 0 ? -1 : merged.findIndex(outfit => {
+        const existingLabel = normalizeOutfitPieceName(outfit?.label || outfit?.title)
+        return existingLabel && labelKey && (existingLabel === labelKey || existingLabel.includes(labelKey) || labelKey.includes(existingLabel))
+      })
+      const targetIndex = numberIndex >= 0 ? numberIndex : labelIndex
+      if (targetIndex >= 0) merged[targetIndex] = { ...merged[targetIndex], ...parsed }
+      else merged.push(parsed)
+    }
+    return merged
+  }
+
   const compactGeneratedOutfitContext = (outfits = [], meta = {}) => {
     if (!Array.isArray(outfits) || !outfits.length) return ''
     const pipelineNote = meta.source === 'whole_wardrobe'
       ? 'Generation pipeline: whole-wardrobe outfit generation. Candidate ranking includes a visual critic pass over garment-photo contact sheets before the final text composer chooses returned cards.'
       : meta.source === 'selected_piece'
         ? 'Generation pipeline: selected-piece visual composer. The selected garment stays pinned as the anchor while saved wardrobe support pieces are reviewed from photos, confidence-aware tags, feedback, and outfit memory. The card thumbnails reflect the pieces reviewed; unless a rendered outfit image exists, discuss garment photos and card context rather than a full worn outfit image.'
-        : ''
+        : meta.source === 'freeform_current_set'
+          ? 'CURRENT OUTFIT SET (LATEST, HIGH AUTHORITY): Parsed from the assistant outfit sections in this chat. Treat this as the current plan for follow-up revisions and plural render/show requests.'
+          : ''
     const cardContext = outfits.slice(0, 5).map((outfit, index) => {
       const displayPieces = Array.isArray(outfit?.pieces) ? outfit.pieces : []
       const pieceLines = displayPieces.map(piece => {
@@ -1073,8 +1182,8 @@ export default function AskClaude({
     const comparisonKey = `whole-wardrobe-comparison:${messageIndex}`
     const comparisonBoards = boardResults[comparisonKey] || []
     const isGeneratingComparison = boardLoadingIndex === comparisonKey
-    const isPreviewSet = Boolean(outfits[0]?.previewOnly)
-    const canGenerateComparison = !isPreviewSet && outfits.length >= 2 && outfits.some(outfit => {
+    const isTextOnlyPreviewSet = Boolean(outfits[0]?.previewOnly) && outfits.every(outfit => outfit.previewOnly && (outfit.pieceId || outfit.selectedPieceId || outfit.textOnly))
+    const canGenerateComparison = !isTextOnlyPreviewSet && outfits.length >= 2 && outfits.some(outfit => {
       if (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length >= 2) return true
       return Array.isArray(outfit?.pieces) && outfit.pieces.filter(piece => piece?.id).length >= 2
     })
@@ -1098,7 +1207,7 @@ export default function AskClaude({
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Rough visual preview</div>
-                <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>One quick comparison image for the visible cards. Use individual renders for garment-faithful final images.</div>
+                <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>One quick comparison image for complete saved-piece cards. Unresolved cards stay visible here but are skipped for image generation.</div>
               </div>
               <button
                 type="button"
@@ -1247,7 +1356,19 @@ export default function AskClaude({
             </div>
           )
         })()}
-        {outfits.slice(0, message?.wholeWardrobe ? 5 : 4).map((outfit, idx) => {
+        {(() => {
+          const tripNotes = getTripPlanNotes(outfits)
+          if (!tripNotes.length) return null
+          return (
+            <div style={{ padding: '10px 12px', border: '1px solid var(--border)', background: 'var(--surface-2)', borderRadius: 12, marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 5 }}>Trip plan</div>
+              <div style={{ display: 'grid', gap: 3, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                {tripNotes.map((note, noteIdx) => <div key={noteIdx}>{note}</div>)}
+              </div>
+            </div>
+          )
+        })()}
+        {outfits.slice(0, 5).map((outfit, idx) => {
           const strength = strengthLabel(outfit.strength, idx)
           const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean) : []
           const boardKey = `${messageIndex}:${idx}`
@@ -1262,6 +1383,7 @@ export default function AskClaude({
           const isRendering = boardLoadingIndex === boardKey
           const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
           const showSilhouette = isPreview && !isTextOnly
+          const isTripCard = outfit.source === 'trip_precompose'
 
           const outfitTitle = outfit.label || outfit.title || `Direction ${idx + 1}`
           const historicalCritique = messages.find(msg => msg.role === 'assistant' && msg.wardrobeEvaluation && (msg.outfitName === outfitTitle || msg.outfitName === outfit.label || msg.outfitName === outfit.title))?.text
@@ -1304,6 +1426,11 @@ export default function AskClaude({
                   <strong>Pieces:</strong> {pieces.join(' + ')}
                 </div>
               )}
+              {Array.isArray(outfit.unresolvedPieceNames) && outfit.unresolvedPieceNames.length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 6, lineHeight: 1.4 }}>
+                  <strong>Needs exact wardrobe match:</strong> {outfit.unresolvedPieceNames.join(' + ')}
+                </div>
+              )}
               {Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
                 <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 8 }}>
                   {outfit.pieces.map((rawPiece, pieceIdx) => {
@@ -1328,7 +1455,7 @@ export default function AskClaude({
                           )}
                         </button>
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
-                        {(message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (
+                        {piece?.id && !piece?.unresolved && (message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
                             <button
                               type="button"
@@ -1375,7 +1502,7 @@ export default function AskClaude({
                               {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ Swapped out' : 'Swap this out'}
                             </button>
                             {(() => {
-                              const msgOccasion = message.queryOptions?.occasion || outfit.bestFor || outfit.occasion || wardrobeOutfitOccasion || 'casual'
+                              const msgOccasion = outfit.occasion || outfit.bestFor || message.queryOptions?.occasion || wardrobeOutfitOccasion || 'casual'
                               const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
                               const exclusions = (piece?.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
                               const isExcluded = exclusions.includes(normMsgOccasion)
@@ -1409,10 +1536,10 @@ export default function AskClaude({
                   })}
                 </div>
               )}
-              {outfit.reason && (
+              {outfit.reason && !isTripCard && (
                 <details style={{ marginTop: 8, border: '1px solid var(--border-light)', borderRadius: 8, background: 'var(--surface-2)', padding: '6px 10px' }}>
                   <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--accent)', userSelect: 'none' }}>
-                    🔍 Styling Justification & Watchout
+                    Why this outfit
                   </summary>
                   <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
@@ -2017,6 +2144,13 @@ export default function AskClaude({
         latestEvaluation: data.evaluation || null,
         latestEvaluationText: compactEvaluationMemory(data.evaluation),
         latestContextText: compactGeneratedOutfitContext([evaluatedOutfit], { source: outfit?.wholeWardrobe ? 'whole_wardrobe' : 'selected_piece' }),
+        stylingContext: {
+          occasion: outfit?.occasion || outfit?.bestFor || wardrobeOutfitOccasion,
+          season: outfit?.season || wardrobeOutfitSeason,
+          mood: outfit?.mood || wardrobeOutfitMood,
+          mission: outfit?.mission || wardrobeOutfitMission || 'mix',
+          activity: outfit?.activity || wardrobeOutfitActivity || 'none',
+        },
       })
       setEvaluatedKeys(prev => {
         const next = new Set(prev)
@@ -2160,6 +2294,7 @@ export default function AskClaude({
         name: 'Whole wardrobe generated outfits',
         latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'whole_wardrobe' }),
         latestOutfits: replyStructuredOutfits,
+        stylingContext: { occasion, season, mood, mission: mission || 'mix', activity },
       })
       addToHistory('assistant', replyText)
     } catch (err) {
@@ -2247,6 +2382,7 @@ export default function AskClaude({
         name: 'Whole wardrobe generated outfits',
         latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'whole_wardrobe' }),
         latestOutfits: replyStructuredOutfits,
+        stylingContext: { occasion, season, mood, mission: 'mix', activity },
       })
       addToHistory('assistant', replyText)
     } catch (err) {
@@ -2342,6 +2478,7 @@ export default function AskClaude({
       let replyMode = null
       let replyWholeWardrobe = false
       let replyQueryOptions = null
+      let replyConversationMode = 'new_request'
 
       if (outfitToSend && compareId) {
         const res = await fetch('/api/ai/compare-outfits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitAId: outfitToSend.id, outfitBId: compareId, question: q || 'Which outfit works better for me?', history: historySnapshot }) })
@@ -2461,6 +2598,13 @@ export default function AskClaude({
             name: pieceToSend.name,
             latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'selected_piece' }),
             latestOutfits: replyStructuredOutfits,
+            stylingContext: {
+              occasion: effectiveGenerateOccasion,
+              season: effectiveGenerateSeason,
+              mood: effectiveGenerateMood,
+              mission: effectiveGenerateMission || 'mix',
+              activity: effectiveGenerateActivity,
+            },
           })
         }
 
@@ -2503,6 +2647,7 @@ export default function AskClaude({
           throw new Error('Generated outfit context is missing linked pieces. Re-evaluate the outfit card and try again.')
         }
         const conversationMode = classifyChatTurn(q, { hasThreadMemory: true })
+        replyConversationMode = conversationMode
         const res = await fetch('/api/ai/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2515,6 +2660,7 @@ export default function AskClaude({
             outfit: rememberedOutfit,
             pieceIds: outfitPieceIds,
             activeContext,
+            ...stylingContextFromMemory(threadMemory),
             ...currentChatDateContext(),
           })
         })
@@ -2535,6 +2681,7 @@ export default function AskClaude({
             season: data.structuredOutfitsSeason || 'current season',
             mood: data.structuredOutfitsMood || '',
             mission: data.structuredOutfitsMission || 'mix',
+            activity: data.structuredOutfitsActivity || 'none',
           }
           if (source === 'whole_wardrobe') {
             replyWholeWardrobe = true
@@ -2545,6 +2692,7 @@ export default function AskClaude({
             source,
             latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source }),
             latestOutfits: replyStructuredOutfits,
+            stylingContext: replyQueryOptions,
           })
         } else {
           setThreadMemory({
@@ -2565,6 +2713,7 @@ export default function AskClaude({
           ? threadMemory.latestEvaluationText
           : ''
         const conversationMode = classifyChatTurn(q, { hasThreadMemory: true })
+        replyConversationMode = conversationMode
         const res = await fetch('/api/ai/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2585,6 +2734,7 @@ export default function AskClaude({
             },
             pieceIds: outfitPieceIds,
             activeContext,
+            ...stylingContextFromMemory(threadMemory),
             ...currentChatDateContext(),
           })
         })
@@ -2616,6 +2766,7 @@ export default function AskClaude({
             source,
             latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source }),
             latestOutfits: replyStructuredOutfits,
+            stylingContext: replyQueryOptions,
           })
         } else {
           setThreadMemory({
@@ -2635,6 +2786,7 @@ export default function AskClaude({
           ? threadMemory.latestOutfits || []
           : []
         const conversationMode = classifyChatTurn(q, { hasThreadMemory: Boolean(threadMemory || activeContext) })
+        replyConversationMode = conversationMode
         const threadContext = compactThreadContext(threadMemory, activeContext)
         const res = await fetch('/api/ai/ask', {
           method: 'POST',
@@ -2648,8 +2800,8 @@ export default function AskClaude({
             conversationMode,
             threadContext,
             activeContext,
+            ...stylingContextFromMemory(threadMemory, activeContext?.type === 'piece' ? generateActivity : wardrobeOutfitActivity),
             ...currentChatDateContext(),
-            activity: activeContext?.type === 'piece' ? generateActivity : wardrobeOutfitActivity
           })
         })
         const data = await res.json()
@@ -2678,6 +2830,31 @@ export default function AskClaude({
             source,
             latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source }),
             latestOutfits: replyStructuredOutfits,
+            stylingContext: replyQueryOptions,
+          })
+        }
+      }
+      if (!Array.isArray(replyStructuredOutfits) || !replyStructuredOutfits.length) {
+        const shouldParseAssistantOutfitCards = replyConversationMode === 'new_request' || OUTFIT_CARD_RESPONSE_PATTERN.test(q)
+        const parsedOutfits = parseStructuredOutfitsFromAssistantText(replyText)
+        if (shouldParseAssistantOutfitCards && parsedOutfits.length) {
+          const priorOutfits = threadMemory?.type === 'generated_outfits'
+            ? threadMemory.latestOutfits || []
+            : []
+          replyStructuredOutfits = mergeCurrentOutfitSet(priorOutfits, parsedOutfits)
+          replyQueryOptions = {
+            occasion: threadMemory?.stylingContext?.occasion || effectiveGenerateOccasion || 'casual',
+            season: threadMemory?.stylingContext?.season || effectiveGenerateSeason || 'current season',
+            mood: threadMemory?.stylingContext?.mood || effectiveGenerateMood || '',
+            mission: threadMemory?.stylingContext?.mission || effectiveGenerateMission || 'mix',
+            activity: threadMemory?.stylingContext?.activity || effectiveGenerateActivity || 'none',
+          }
+          setThreadMemory({
+            type: 'generated_outfits',
+            source: 'freeform_current_set',
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'freeform_current_set' }),
+            latestOutfits: replyStructuredOutfits,
+            stylingContext: replyQueryOptions,
           })
         }
       }

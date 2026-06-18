@@ -44,10 +44,17 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const currentSeasonRequested = /\b(current season|current weather|right now|today|this month)\b/.test(text) // ratchet-allow: date-context parsing, not garment text matching
   const currentSeasonHot = currentSeasonRequested && month !== null && month >= 5 && month <= 7
   const currentSeasonCold = currentSeasonRequested && month !== null && (month === 11 || month <= 1)
-  const isHot = /\b(hot|heat|heatwave|sweltering|scorching|humid|90s|100 degrees)\b/.test(text)
+  const fahrenheitValues = [...text.matchAll(/\b(\d{2,3})\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
+    .map(match => Number(match[1]))
+    .filter(n => Number.isFinite(n))
+  const hasHotTemperature = fahrenheitValues.some(n => n >= 80)
+  const hasColdTemperature = fahrenheitValues.some(n => n <= 45)
+  const isHot = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text)
     || /\bsummer\b/.test(text)
+    || hasHotTemperature
     || currentSeasonHot
   const isCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
+    || hasColdTemperature
     || currentSeasonCold
   return { isHot: isHot && !isCold, isCold: isCold && !isHot }
 }
@@ -105,6 +112,31 @@ export function pieceCoverage(p) {
     return 'full-insulating'
   }
   return 'normal'
+}
+
+export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
+  const adjustments = []
+  const fw = pieceFabricWeight(piece)
+  const bare = pieceBareness(piece)
+  const cov = pieceCoverage(piece)
+
+  if (weatherProfile?.isHot) {
+    if (fw === 'heavy') adjustments.push({ score: -12, label: 'heavy - too warm for the heat', reason: 'hot weather: heavy fabric' })
+    if (fw === 'light') adjustments.push({ score: 10, label: 'lightweight - good for heat', reason: 'hot weather: lightweight fabric' })
+    if (bare === 'high') adjustments.push({ score: 8, label: 'skin-friendly cut', reason: 'hot weather: skin-friendly cut' })
+    if (cov === 'full-insulating') adjustments.push({ score: -8, label: 'insulating - too warm', reason: 'hot weather: insulating coverage' })
+  } else if (weatherProfile?.isCold) {
+    if (fw === 'heavy') adjustments.push({ score: 10, label: 'heavy - good for cool weather', reason: 'cold weather: heavy fabric' })
+    if (fw === 'light') adjustments.push({ score: -12, label: 'lightweight - needs layering', reason: 'cold weather: lightweight fabric' })
+    if (bare === 'high') adjustments.push({ score: -8, label: 'skin-friendly cut - too bare for cold', reason: 'cold weather: skin-friendly cut' })
+    if (cov === 'full-insulating') adjustments.push({ score: 8, label: 'insulating - good for cold', reason: 'cold weather: insulating coverage' })
+  }
+
+  return {
+    score: adjustments.reduce((sum, item) => sum + item.score, 0),
+    label: adjustments[0]?.label || 'neutral',
+    adjustments
+  }
 }
 
 
@@ -539,17 +571,12 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
 
   // Weather appropriateness — independent term, applies to every candidate
   const weather = options.weatherProfile || weatherProfileFromContext(options)
-  if (weather.isHot) {
-    if (pieceFabricWeight(candidate) === 'heavy') { score -= 12; reasons.push('hot weather: heavy fabric') }
-    if (pieceFabricWeight(candidate) === 'light') { score += 10; reasons.push('hot weather: lightweight fabric') }
-    if (pieceBareness(candidate) === 'high')      { score += 8;  reasons.push('hot weather: skin-friendly cut') }
-    if (pieceCoverage(candidate) === 'full-insulating') { score -= 8; reasons.push('hot weather: insulating coverage') }
-  }
-  if (weather.isCold) {
-    if (pieceFabricWeight(candidate) === 'heavy') { score += 10; reasons.push('cold weather: heavy fabric') }
-    if (pieceFabricWeight(candidate) === 'light') { score -= 12; reasons.push('cold weather: lightweight fabric') }
-    if (pieceBareness(candidate) === 'high')      { score -= 8;  reasons.push('cold weather: skin-friendly cut') }
-    if (pieceCoverage(candidate) === 'full-insulating') { score += 8;  reasons.push('cold weather: insulating coverage') }
+  const weatherFit = weatherFitForPiece(candidate, weather)
+  if (weatherFit.adjustments.length) {
+    score += weatherFit.score
+    for (const adjustment of weatherFit.adjustments) {
+      reasons.push(adjustment.reason)
+    }
   }
 
   if (candidate.favorite) { score += 4; reasons.push('favorite') }
@@ -1227,9 +1254,11 @@ export function pieceOccasionCompatible(piece, occasion = '') {
       isCompatible = true
     } else if (normOccasion === 'gallery / art event' && (pOccasions.includes('city') || pOccasions.includes('smart casual') || pOccasions.includes('evening'))) {
       isCompatible = true
+    } else if (normOccasion === 'outdoor daytime social' && (pOccasions.includes('outdoor') || pOccasions.includes('city') || pOccasions.includes('smart casual'))) {
+      isCompatible = true
     } else if (normOccasion === 'city' && pOccasions.includes('smart casual')) {
       isCompatible = true
-    } else if (normOccasion === 'casual' && (pOccasions.includes('city') || pOccasions.includes('home') || pOccasions.includes('outdoor') || pOccasions.includes('outdoor active'))) {
+    } else if (normOccasion === 'casual' && (pOccasions.includes('city') || pOccasions.includes('home') || pOccasions.includes('outdoor') || pOccasions.includes('outdoor active') || pOccasions.includes('smart casual'))) {
       isCompatible = true
     } else if (normOccasion === 'outdoor active' && (pOccasions.includes('outdoor') || pOccasions.includes('casual'))) {
       isCompatible = true
@@ -1377,6 +1406,85 @@ export function getMergedProfileRules(occasionProfile, activityProfile) {
   return merged
 }
 
+export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = {}, occasionProfile = null } = {}) {
+  const isShoe = piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes'
+
+  const sourceFor = (key, value, warmKey = '') => {
+    const occasionRules = occasionProfile?.rules || {}
+    if (occasionRules[key]?.includes(value)) return 'occasion'
+    if (warmKey && weatherProfile?.isHot && occasionRules[warmKey]?.includes(value)) return 'occasion'
+    return 'activity'
+  }
+
+  const prohibitedMaterials = [...(mergedRules.prohibited_materials || [])]
+  if (weatherProfile?.isHot && mergedRules.prohibited_materials_warm) {
+    prohibitedMaterials.push(...mergedRules.prohibited_materials_warm)
+  }
+  for (const mat of prohibitedMaterials) {
+    if (pieceMatchesMaterial(piece, mat)) {
+      const source = sourceFor('prohibited_materials', mat, 'prohibited_materials_warm')
+      return { tier: 'prohibited', label: 'prohibited material', reason: `${source} profile: prohibited material (${mat})` }
+    }
+  }
+
+  if (isShoe) {
+    const prohibitedFootwear = [...(mergedRules.prohibited_footwear || [])]
+    if (weatherProfile?.isHot && mergedRules.prohibited_footwear_summer) {
+      prohibitedFootwear.push(...mergedRules.prohibited_footwear_summer)
+    }
+    for (const fw of prohibitedFootwear) {
+      if (pieceMatchesFootwear(piece, fw)) {
+        const source = sourceFor('prohibited_footwear', fw, 'prohibited_footwear_summer')
+        return { tier: 'prohibited', label: 'prohibited footwear', reason: `${source} profile: prohibited footwear (${fw})` }
+      }
+    }
+  }
+
+  for (const item of (mergedRules.prohibited_pieces || [])) {
+    if (pieceMatchesPieceName(piece, item)) {
+      const source = sourceFor('prohibited_pieces', item)
+      return { tier: 'prohibited', label: 'prohibited piece', reason: `${source} profile: prohibited piece (${item})` }
+    }
+  }
+
+  const discouragedMaterials = [...(mergedRules.discouraged_materials || [])]
+  if (weatherProfile?.isHot && mergedRules.discouraged_materials_warm) {
+    discouragedMaterials.push(...mergedRules.discouraged_materials_warm)
+  }
+  for (const mat of discouragedMaterials) {
+    if (pieceMatchesMaterial(piece, mat)) return { tier: 'discouraged', label: 'discouraged material' }
+  }
+
+  const discouragedFootwear = [...(mergedRules.discouraged_footwear || [])]
+  if (weatherProfile?.isHot && mergedRules.discouraged_footwear_summer) {
+    discouragedFootwear.push(...mergedRules.discouraged_footwear_summer)
+  }
+  if (weatherProfile?.isHot && mergedRules.discouraged_footwear_warm) {
+    discouragedFootwear.push(...mergedRules.discouraged_footwear_warm)
+  }
+  if (isShoe) {
+    for (const fw of discouragedFootwear) {
+      if (pieceMatchesFootwear(piece, fw)) return { tier: 'discouraged', label: 'discouraged footwear' }
+    }
+  }
+
+  for (const item of (mergedRules.discouraged_pieces || [])) {
+    if (pieceMatchesPieceName(piece, item)) return { tier: 'discouraged', label: 'discouraged piece' }
+  }
+
+  for (const mat of (mergedRules.preferred_materials || [])) {
+    if (pieceMatchesMaterial(piece, mat)) return { tier: 'preferred', label: 'preferred material' }
+  }
+
+  if (isShoe) {
+    for (const fw of (mergedRules.preferred_footwear || [])) {
+      if (pieceMatchesFootwear(piece, fw)) return { tier: 'preferred', label: 'preferred footwear' }
+    }
+  }
+
+  return { tier: 'neutral', label: 'neutral' }
+}
+
 export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   const { occasion = 'casual', explorationMode = 'moderate', weatherProfile = {} } = options
 
@@ -1456,43 +1564,9 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     }
   }
 
-  // Evaluate merged rules
-  // Prohibited materials
-  const prohibitedMaterials = mergedRules.prohibited_materials ? [...mergedRules.prohibited_materials] : []
-  if (weatherProfile.isHot && mergedRules.prohibited_materials_warm) {
-    prohibitedMaterials.push(...mergedRules.prohibited_materials_warm)
-  }
-  for (const mat of prohibitedMaterials) {
-    if (pieceMatchesMaterial(piece, mat)) {
-      const source = occasionProfile?.rules?.prohibited_materials?.includes(mat) || (weatherProfile.isHot && occasionProfile?.rules?.prohibited_materials_warm?.includes(mat)) ? 'occasion' : 'activity'
-      reasons.push(`${source} profile: prohibited material (${mat})`)
-      break
-    }
-  }
-
-  // Prohibited footwear (if category is shoes)
-  if (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes') {
-    const prohibitedFootwear = mergedRules.prohibited_footwear ? [...mergedRules.prohibited_footwear] : []
-    if (weatherProfile.isHot && mergedRules.prohibited_footwear_summer) {
-      prohibitedFootwear.push(...mergedRules.prohibited_footwear_summer)
-    }
-    for (const fw of prohibitedFootwear) {
-      if (pieceMatchesFootwear(piece, fw)) {
-        const source = occasionProfile?.rules?.prohibited_footwear?.includes(fw) || (weatherProfile.isHot && occasionProfile?.rules?.prohibited_footwear_summer?.includes(fw)) ? 'occasion' : 'activity'
-        reasons.push(`${source} profile: prohibited footwear (${fw})`)
-        break
-      }
-    }
-  }
-
-  // Prohibited pieces
-  const prohibitedPieces = mergedRules.prohibited_pieces ? [...mergedRules.prohibited_pieces] : []
-  for (const item of prohibitedPieces) {
-    if (pieceMatchesPieceName(piece, item)) {
-      const source = occasionProfile?.rules?.prohibited_pieces?.includes(item) ? 'occasion' : 'activity'
-      reasons.push(`${source} profile: prohibited piece (${item})`)
-      break
-    }
+  const profileFit = profileRuleFit(piece, mergedRules, { weatherProfile, occasionProfile })
+  if (profileFit.tier === 'prohibited') {
+    reasons.push(profileFit.reason)
   }
 
   return {

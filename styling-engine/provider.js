@@ -69,6 +69,36 @@ export function contentToOpenAI(content) {
   })
 }
 
+export function normalizeToolImage(image = null) {
+  if (!image) return null
+  const mime = image.mime || image.media_type
+  const base64 = image.base64 || image.data
+  return mime && base64 ? { mime, base64 } : null
+}
+
+export function extractToolResultImages(result) {
+  if (!Array.isArray(result)) {
+    return { textResult: JSON.stringify(result), images: [] }
+  }
+
+  const images = []
+  const stripped = result.map(item => {
+    if (!item || typeof item !== 'object') return item
+    const { image, ...rest } = item
+    const normalizedImage = normalizeToolImage(image)
+    if (normalizedImage) {
+      const flags = [item.ruleFit, item.weatherFit].filter(f => f && f !== 'neutral').join(', ')
+      images.push({
+        ...normalizedImage,
+        label: `ID ${item.id}: ${item.name || 'unnamed garment'}${flags ? ` — ${flags}` : ''}`
+      })
+    }
+    return rest
+  })
+
+  return { textResult: JSON.stringify(stripped), images }
+}
+
 export function parseModelJson(raw) {
   return JSON.parse(String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim())
 }
@@ -187,15 +217,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
             savedCorrections.push(args)
           }
           
-          let toolContent = ''
-          if (name === 'get_garment_details') {
-            toolContent = JSON.stringify(result.map(item => ({ id: item.id, name: item.name, text: item.text })))
-            for (const item of result) {
-              if (item.image) collectedImages.push(item.image)
-            }
-          } else {
-            toolContent = JSON.stringify(result)
-          }
+          const extracted = extractToolResultImages(result)
+          const toolContent = extracted.textResult
+          collectedImages.push(...extracted.images)
 
           toolOutputs.push({
             role: 'tool',
@@ -207,16 +231,17 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         currentMessages.push(...toolOutputs)
 
         if (collectedImages.length > 0) {
-          currentMessages.push({
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Visual reference photos for the garments you requested details for:' },
-              ...collectedImages.map(img => ({
-                type: 'image_url',
-                image_url: { url: `data:${img.mime};base64,${img.base64}` }
-              }))
-            ]
-          })
+          const content = [
+            { type: 'text', text: 'Here are the wardrobe pieces from the tool results. Judge fit, color, texture, print, and proportion by sight:' }
+          ]
+          for (const img of collectedImages) {
+            content.push({ type: 'text', text: img.label })
+            content.push({
+              type: 'image_url',
+              image_url: { url: `data:${img.mime};base64,${img.base64}`, detail: 'low' }
+            })
+          }
+          currentMessages.push({ role: 'user', content })
         }
         continue
       } else {
@@ -250,30 +275,28 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
             savedCorrections.push(args)
           }
           
-          let contentBlocks = []
-          if (name === 'get_garment_details') {
-            const textResult = JSON.stringify(result.map(item => ({ id: item.id, name: item.name, text: item.text })))
+          const extracted = extractToolResultImages(result)
+          const contentBlocks = [{
+            type: 'text',
+            text: extracted.textResult
+          }]
+          if (extracted.images.length) {
             contentBlocks.push({
               type: 'text',
-              text: textResult
+              text: 'Here are the wardrobe pieces from the tool results. Judge fit, color, texture, print, and proportion by sight.'
             })
-            for (const item of result) {
-              if (item.image) {
-                contentBlocks.push({
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: item.image.mime,
-                    data: item.image.base64
-                  }
-                })
-              }
+            for (const img of extracted.images) {
+              contentBlocks.push({ type: 'text', text: img.label })
+              contentBlocks.push({
+                type: 'image',
+                detail: 'low',
+                source: {
+                  type: 'base64',
+                  media_type: img.mime,
+                  data: img.base64
+                }
+              })
             }
-          } else {
-            contentBlocks.push({
-              type: 'text',
-              text: JSON.stringify(result)
-            })
           }
 
           toolResponses.push({
