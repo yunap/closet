@@ -1187,7 +1187,7 @@ ${EXPRESSIVE_HIERARCHY_RULES}
 
 Composition rules:
 - Each outfit: top + bottom + shoes (a dress replaces top + bottom). Outerwear optional. Accessories are styled separately and are not shown — do not invent or reference accessory pieces.
-- Occasion & Weather Classification: Classify the activity, mood, or context (such as "hiking", "trail walk", "beach walk") into the active occasion profile, and strictly follow that profile's prohibited_materials, prohibited_footwear, and preferred style vibe rules from the OCCASION & CLIMATE PROFILES (RULES-AS-DATA) block.
+- Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.
 - Footwear Requirement: If the active occasion profile has required_footwear (e.g. for trail/hiking activities), every outfit must use activity-capable footwear: sneakers/athletic/rugged flats.
 - Reference pieces ONLY by the exact IDs shown in the labels. Never invent pieces.
 - Each outfit must have a different visual thesis — different grounding strategy, proportion logic, or focal/support relationship. Do not return five variations of one formula.

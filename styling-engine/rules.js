@@ -1197,6 +1197,122 @@ export function occasionScoreForOutfit(pieces = [], occasion = '') {
   return score
 }
 
+const ARCHETYPE_MIN_SCORE = 1
+
+const MISSION_FOCAL_COLORS = ['coral', 'orange', 'yellow', 'green', 'olive', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
+const MISSION_NEUTRAL_COLORS = ['black', 'charcoal', 'grey', 'gray', 'navy', 'white', 'cream', 'ivory', 'beige', 'taupe', 'sand', 'oatmeal', 'espresso', 'brown', 'tan']
+const MISSION_PATTERN_VALUES = ['floral', 'print', 'pattern', 'stripe', 'striped', 'abstract', 'tapestry', 'paisley', 'botanical', 'graphic', 'plaid']
+const MISSION_TEXTURE_VALUES = ['crochet', 'knit', 'cashmere', 'corduroy', 'linen', 'silk', 'satin', 'leather', 'suede', 'tweed', 'velvet', 'gauzy', 'drape', 'drapey', 'textured', 'wool']
+const MISSION_SOFT_VALUES = ['soft', 'gauzy', 'drape', 'drapey', 'silk', 'satin', 'cashmere', 'wool', 'linen', 'ruffle', 'cowl', 'flowing']
+const MISSION_STRUCTURED_VALUES = ['structured', 'utility', 'blazer', 'jacket', 'twill', 'denim', 'leather', 'pointed', 'loafer', 'boot', 'pants', 'trousers', 'tailored']
+const MISSION_SHARP_VALUES = ['pointed', 'patent', 'loafer', 'boot', 'mule', 'oxford', 'structured', 'tailored']
+
+function structuredPieceSignalTokens(piece = {}) {
+  return [
+    ...(Array.isArray(piece.colors) ? piece.colors : []),
+    piece.reads_as,
+    piece.pattern_type,
+    piece.pattern_complexity,
+    piece.fabric_category,
+    piece.fabric_weight,
+    piece.silhouette,
+    piece.bottom_shape,
+    piece.length_hits_at,
+    piece.neckline,
+    piece.sleeve_type,
+    piece.hem
+  ].filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+}
+
+function structuredPieceHasAny(piece = {}, values = []) {
+  const tokens = new Set(structuredPieceSignalTokens(piece))
+  return values.some(value => tokens.has(String(value || '').toLowerCase()))
+}
+
+function structuredPieceColorTokens(piece = {}) {
+  return [
+    ...(Array.isArray(piece.colors) ? piece.colors : []),
+    String(piece.reads_as || '')
+  ].join(' ')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+}
+
+function missionColorFamilies(piece = {}) {
+  const tokens = new Set(structuredPieceColorTokens(piece))
+  const families = new Set()
+  if (['black', 'charcoal', 'grey', 'gray'].some(c => tokens.has(c))) families.add('dark_neutral')
+  if (['white', 'cream', 'ivory', 'beige', 'taupe', 'sand', 'oatmeal'].some(c => tokens.has(c))) families.add('light_neutral')
+  if (['brown', 'espresso', 'tan', 'cognac', 'camel'].some(c => tokens.has(c))) families.add('earth')
+  if (['blue', 'navy', 'denim'].some(c => tokens.has(c))) families.add('blue')
+  if (['green', 'olive', 'emerald', 'teal'].some(c => tokens.has(c))) families.add('green')
+  if (['orange', 'yellow', 'mustard', 'ochre', 'rust', 'terracotta', 'coral'].some(c => tokens.has(c))) families.add('warm')
+  if (['red', 'pink', 'purple', 'lavender', 'fuchsia', 'magenta', 'violet', 'lilac', 'plum', 'burgundy'].some(c => tokens.has(c))) families.add('red_purple')
+  return families
+}
+
+function isMissionNeutralPiece(piece = {}) {
+  return structuredPieceHasAny(piece, MISSION_NEUTRAL_COLORS) && !pieceHasFocalColor(piece, MISSION_FOCAL_COLORS)
+}
+
+function isMissionPatternPiece(piece = {}) {
+  return structuredPieceHasAny(piece, MISSION_PATTERN_VALUES) || String(piece.pattern_complexity || '').toLowerCase() === 'loud'
+}
+
+function hasLowVarianceTonalCluster(pieces = []) {
+  const families = new Set()
+  for (const piece of pieces) {
+    for (const family of missionColorFamilies(piece)) families.add(family)
+  }
+  if (!families.size) return false
+  if (families.size === 1) return true
+  const earthyLight = families.size <= 2 && families.has('earth') && families.has('light_neutral')
+  const darkOnly = families.size <= 2 && families.has('dark_neutral') && families.has('blue')
+  if (earthyLight || darkOnly) return true
+  if (families.has('dark_neutral') && (families.has('light_neutral') || families.has('earth') || families.has('warm'))) return false
+  return false
+}
+
+export function qualifiesWholeWardrobeMission(pieces = [], missionId = '') {
+  const realPieces = (pieces || []).filter(Boolean)
+  if (!realPieces.length || !missionId) return false
+  if (missionId === 'controlled_print') {
+    const patternCount = realPieces.filter(isMissionPatternPiece).length
+    return patternCount === 1
+  }
+  if (missionId === 'monochrome_texture') {
+    const textureCount = new Set(realPieces
+      .filter(piece => structuredPieceHasAny(piece, MISSION_TEXTURE_VALUES))
+      .map(piece => String(piece.fabric_category || piece.reads_as || piece.silhouette || '').toLowerCase().trim())
+      .filter(Boolean)
+    ).size
+    return hasLowVarianceTonalCluster(realPieces) && textureCount >= 2
+  }
+  if (missionId === 'structured_soft') {
+    return realPieces.some(piece => structuredPieceHasAny(piece, MISSION_SOFT_VALUES)) &&
+      realPieces.some(piece => structuredPieceHasAny(piece, MISSION_STRUCTURED_VALUES))
+  }
+  if (missionId === 'color_anchor') {
+    const focalCount = realPieces.filter(piece => pieceHasFocalColor(piece, MISSION_FOCAL_COLORS)).length
+    const supportQuiet = realPieces
+      .filter(piece => !pieceHasFocalColor(piece, MISSION_FOCAL_COLORS))
+      .every(piece => isMissionNeutralPiece(piece) && !isMissionPatternPiece(piece))
+    return focalCount === 1 && supportQuiet
+  }
+  if (missionId === 'unexpected_pairing') {
+    const groups = new Set(realPieces.map(wardrobeCategoryGroup).filter(Boolean))
+    const hasSoftOrExpressive = realPieces.some(piece => structuredPieceHasAny(piece, [...MISSION_SOFT_VALUES, ...MISSION_PATTERN_VALUES]) || pieceHasFocalColor(piece, MISSION_FOCAL_COLORS))
+    const hasSharpOrStructured = realPieces.some(piece => structuredPieceHasAny(piece, [...MISSION_STRUCTURED_VALUES, ...MISSION_SHARP_VALUES]))
+    return groups.size >= 3 && hasSoftOrExpressive && hasSharpOrStructured
+  }
+  return false
+}
+
 export function inferOutfitArchetype(outfit, candidatePieces = [], occasion = 'casual') {
   const pieces = wholeWardrobeFullPieces(outfit, candidatePieces)
   const roles = inferWholeWardrobeOutfitRoles(pieces)
@@ -1217,7 +1333,22 @@ export function inferOutfitArchetype(outfit, candidatePieces = [], occasion = 'c
     if (archetype.id === 'earthy_structured_minimal' && hasRole('structure_support') && !hasRole('extra_pattern')) score += 8
     if (!best || score > best.archetypeScore) best = { ...archetype, archetypeScore: score }
   }
-  const fallback = best || WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0]
+  const bestPreferredHits = best
+    ? (best.preferredRoles || []).filter(role => hasRole(role)).length
+    : 0
+  if (!best || best.archetypeScore < ARCHETYPE_MIN_SCORE || bestPreferredHits < 1) {
+    return {
+      archetypeId: null,
+      formulaFamily: null,
+      direction: '',
+      silhouette: '',
+      labelSuggestion: '',
+      archetypeScore: best?.archetypeScore || 0,
+      visualGoal: '',
+      roles
+    }
+  }
+  const fallback = best
   return {
     archetypeId: fallback.id,
     formulaFamily: fallback.formulaFamily,
@@ -1234,7 +1365,7 @@ export function wholeWardrobeArchetypeFor(outfit = {}, candidatePieces = [], occ
   const inferred = inferOutfitArchetype(outfit, candidatePieces, occasion)
   return WHOLE_WARDROBE_OUTFIT_ARCHETYPES.find(a => a.id === inferred.archetypeId)
     ? inferred
-    : { ...WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0], archetypeId: WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0].id, labelSuggestion: WHOLE_WARDROBE_OUTFIT_ARCHETYPES[0].label, archetypeScore: 0, roles: [] }
+    : { archetypeId: null, formulaFamily: null, direction: '', silhouette: '', labelSuggestion: '', archetypeScore: inferred?.archetypeScore || 0, visualGoal: '', roles: inferred?.roles || [] }
 }
 
 export function wholeWardrobeFormulaFamily(outfit = {}, candidatePieces = [], occasion = 'casual') {
@@ -1301,7 +1432,7 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
     if (isSoft) score += 15
     if (isStructured) score += 15
   } else if (missionId === 'color_anchor') {
-    const focalColors = ['coral', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
+    const focalColors = ['coral', 'orange', 'yellow', 'green', 'olive', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
     const hasFocalColor = pieceHasFocalColor(piece, focalColors)
     if (hasFocalColor) {
       score += 40
@@ -2112,11 +2243,11 @@ export function wholeWardrobeFormulaType(outfit = {}) {
 }
 
 export function wholeWardrobeDirectionFromPieces(outfit = {}) {
-  return wholeWardrobeArchetypeFor(outfit).direction || 'standard daily style'
+  return wholeWardrobeArchetypeFor(outfit).direction || ''
 }
 
 export function wholeWardrobeSilhouetteFromPieces(outfit = {}) {
-  return wholeWardrobeArchetypeFor(outfit).silhouette || 'relaxed proportions'
+  return wholeWardrobeArchetypeFor(outfit).silhouette || ''
 }
 
 export function wholeWardrobeGroundingStrategy(outfit = {}) {
@@ -2620,7 +2751,7 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
         add(-80, 'lacks structured/soft tension')
       }
     } else if (activeMissionId === 'color_anchor') {
-      const focalColors = ['coral', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
+      const focalColors = ['coral', 'orange', 'yellow', 'green', 'olive', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
       const focalCount = pieces.filter(p => pieceHasFocalColor(p, focalColors)).length
       
       if (focalCount === 1) {
@@ -2827,15 +2958,18 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
   const moodProfile = wholeWardrobeMoodProfile(options.mood)
   const activeMissions = options.activeMissions || ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
   
+  const requestedCandidateLimit = Math.max(0, Number(options.candidateLimit) || 0)
+  const requestedBucketLimit = Math.max(0, Number(options.candidateBucketLimit) || 0)
   const testCandidateLimit = process.env.NODE_ENV === 'test'
     ? Math.max(0, Number(process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_CANDIDATES) || 0)
     : 0
+  const effectiveCandidateLimit = Math.max(testCandidateLimit, requestedCandidateLimit)
   
   const allMissionsCandidates = []
   const seenKeys = new Set()
   
   const colorFamilies = ['black/charcoal/gray', 'navy/blue', 'brown/espresso/beige/cream/tan', 'olive/earthy']
-  const focalColors = ['rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red']
+  const focalColors = ['rust', 'terracotta', 'mustard', 'ochre', 'olive', 'plum', 'burgundy', 'emerald', 'red']
   
   const chosenColorFamily = colorFamilies[(allPieces.length) % colorFamilies.length]
   const chosenFocalColor = focalColors[(allPieces.length + 3) % focalColors.length]
@@ -2848,10 +2982,10 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
       focalColor: chosenFocalColor
     })
     
-    const maxInitialCandidates = testCandidateLimit ? 20 : 1200
+    const maxInitialCandidates = effectiveCandidateLimit ? Math.max(20, effectiveCandidateLimit * 2) : 1200
     const maxSeparateCandidates = Math.round(maxInitialCandidates * 0.85)
     
-    const sliceForTest = (items, productionLimit) => items.slice(0, testCandidateLimit ? Math.min(items.length, 3) : productionLimit)
+    const sliceForTest = (items, productionLimit) => items.slice(0, effectiveCandidateLimit ? Math.min(items.length, requestedBucketLimit || 3) : productionLimit)
     
     const shoes = bucket.shoes.length ? sliceForTest(bucket.shoes, 10) : [null]
     const tops = sliceForTest(bucket.top, 16)
@@ -2866,6 +3000,7 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
       if (missionCandidates.length >= maxInitialCandidates) return
       const clean = pieces.filter(Boolean)
       if (moodProfile?.id === 'modern_bohemian_restraint' && wholeWardrobeBohoSignalScore(clean) < 2) return
+      if (!qualifiesWholeWardrobeMission(clean, missionId)) return
       
       if (missionId === 'soft_architecture') {
         const hasDenimOrBlack = clean.some(p => /\b(denim|jean|black)\b/.test(pieceTextBlob(p)) || /\b(denim|jean|black)\b/.test(pieceNameBlob(p)))
@@ -2896,10 +3031,10 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
       }
     }
     
-    const baseCandidateLimit = testCandidateLimit ? 4 : 40
-    const layeredBaseLimit = testCandidateLimit ? 2 : 15
-    const layerLimit = testCandidateLimit ? 1 : 2
-    const accessoryLimit = testCandidateLimit ? 1 : 2
+    const baseCandidateLimit = effectiveCandidateLimit ? Math.max(4, Math.round(effectiveCandidateLimit / 4)) : 40
+    const layeredBaseLimit = effectiveCandidateLimit ? 2 : 15
+    const layerLimit = effectiveCandidateLimit ? 1 : 2
+    const accessoryLimit = effectiveCandidateLimit ? 1 : 2
     const base = missionCandidates
       .sort((a, b) => b.score - a.score)
       .slice(0, baseCandidateLimit)
@@ -2910,7 +3045,7 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
     }
     
     const sortedMissionCandidates = missionCandidates.sort((a, b) => b.score - a.score)
-    const topLimit = testCandidateLimit ? 4 : 50
+    const topLimit = effectiveCandidateLimit ? Math.max(4, Math.round(effectiveCandidateLimit / 4)) : 50
     for (const cand of sortedMissionCandidates.slice(0, topLimit)) {
       const globalKey = `${cand.key}-${missionId}`
       if (!seenKeys.has(globalKey)) {
@@ -2921,7 +3056,7 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
   }
   
   const ranked = allMissionsCandidates.sort((a, b) => b.score - a.score)
-  const chosen = selectDiverseWholeWardrobeCandidates(ranked, testCandidateLimit || 60, options)
+  const chosen = selectDiverseWholeWardrobeCandidates(ranked, effectiveCandidateLimit || 60, options)
   
   return chosen.map((candidate, index) => {
     return candidateObjectFromPieces(candidate.pieces, index, { ...options, activeMissionId: candidate.missionId })
@@ -3071,9 +3206,9 @@ export function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePi
   const pieces = wholeWardrobeFullPieces(outfit, candidatePieces)
   const archetype = wholeWardrobeArchetypeFor({ ...outfit, pieces }, candidatePieces, occasion)
   const modifier = wholeWardrobeGarmentModifier(pieces)
-  const label = modifier
+  const label = archetype.labelSuggestion && modifier
     ? `${archetype.labelSuggestion}: ${modifier}`
-    : archetype.labelSuggestion
+    : archetype.labelSuggestion || wholeWardrobeLabelFromPieces({ ...outfit, pieces })
   const silhouetteVariant = wholeWardrobeSilhouetteFromPieces({ ...outfit, pieces })
   const silhouette = silhouetteVariant && silhouetteVariant !== archetype.direction
     ? silhouetteVariant
@@ -3198,10 +3333,11 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
     }
   }
   if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.label || '').trim()) repaired.label = wholeWardrobeLabelFromPieces(repaired)
-  if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.dominantDirection || '').trim() || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.dominantDirection = wholeWardrobeArchetypeFor(repaired, candidatePieces, occasion).direction
-  if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.silhouette || '').trim() || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.silhouette = wholeWardrobeSilhouetteFromPieces(repaired)
+  const repairedArchetype = wholeWardrobeArchetypeFor(repaired, candidatePieces, occasion)
+  if (hasWholeWardrobePlaceholder(repaired) || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.dominantDirection = repairedArchetype.direction || ''
+  if (hasWholeWardrobePlaceholder(repaired) || String(repaired.dominantDirection || '').trim() === String(repaired.silhouette || '').trim()) repaired.silhouette = repairedArchetype.silhouette || ''
   if (hasWholeWardrobePlaceholder(repaired) || !String(repaired.bestFor || '').trim()) repaired.bestFor = 'right-now wardrobe dressing'
-  if (hasWholeWardrobePlaceholder(repaired) || hasGenericWholeWardrobeText(repaired) || !String(repaired.reason || '').trim()) repaired.reason = buildOutfitMechanicsReason(repaired, wholeWardrobeFullPieces(repaired, candidatePieces), wholeWardrobeArchetypeFor(repaired, candidatePieces, occasion))
+  if (hasWholeWardrobePlaceholder(repaired) || hasGenericWholeWardrobeText(repaired) || !String(repaired.reason || '').trim()) repaired.reason = buildOutfitMechanicsReason(repaired, wholeWardrobeFullPieces(repaired, candidatePieces), repairedArchetype)
   if (hasWholeWardrobePlaceholder(repaired) || hasGenericWholeWardrobeText(repaired) || !String(repaired.watchFor || '').trim() || /^none$/i.test(String(repaired.watchFor || '').trim())) repaired.watchFor = wholeWardrobeWatchFromPieces(repaired)
   const moodProfile = wholeWardrobeMoodProfile(mood)
   if (moodProfile?.id === 'modern_bohemian_restraint') {
@@ -3469,18 +3605,60 @@ export function normalizeWholeWardrobeStrengths(outfits = []) {
   }))
 }
 
-export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requireShoes = true, requireDress = false, requireNonGraphicTop = false, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null, activity = '' } = {}) {
+function appendSystemFlag(outfit = {}, type = 'note', message = '') {
+  if (!message) return outfit
+  const systemFlags = Array.isArray(outfit.systemFlags) ? [...outfit.systemFlags] : []
+  if (!systemFlags.some(flag => flag.type === type && flag.message === message)) {
+    systemFlags.push({ type, message })
+  }
+  return { ...outfit, systemFlags }
+}
+
+function scrubBodyShapeFraming(text = '') {
+  return String(text || '')
+    .split(/(?<=[.!?])\s+/)
+    .filter(sentence => !/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/i.test(sentence))
+    .join(' ')
+    .trim()
+}
+
+function pieceExcludedForOccasion(piece = {}, occasion = '') {
+  const requested = String(occasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+  if (!requested) return false
+  return (Array.isArray(piece.occasion_exclusions) ? piece.occasion_exclusions : [])
+    .map(value => String(value || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+    .includes(requested)
+}
+
+export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode = 'gate', requireShoes = true, requireDress = false, requireNonGraphicTop = false, rejectProfileDiscouraged = false, applyDiversity = true, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null, activity = '', sessionInfluence = null } = {}) {
+  const advisorMode = mode === 'advisor'
   const seen = new Set()
   const accepted = []
   const rejected = []
+  const resolvedWeatherProfile = weatherProfile || weatherProfileFromContext({ mood, season })
+  const occasionProfile = resolveOccasionProfile(occasion, mood)
+  const activityProfile = resolveActivityProfile({ activity, occasion, mood })
+  const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
+  const ownedIds = new Set((candidatePieces || []).map(piece => Number(piece.id)).filter(Boolean))
   for (const outfit of outfits) {
-    const repaired = repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood, { season, weatherProfile, activity })
+    let repaired = advisorMode
+      ? { ...outfit }
+      : repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood, { season, weatherProfile: resolvedWeatherProfile, activity })
     const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
+    const pieceIds = pieces.map(piece => Number(piece.id)).filter(Boolean)
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
-    const key = (repaired.pieceIds || pieces.map(p => p.id)).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
+    const key = (repaired.pieceIds || pieceIds).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')
 
     if (!isOutfitStructurallyValid(pieces, { requireShoes })) {
       rejected.push({ label: repaired?.label || 'unnamed', reason: 'not a complete wardrobe outfit' })
+      continue
+    }
+    if (ownedIds.size && pieceIds.some(id => !ownedIds.has(id))) {
+      rejected.push({ label: repaired?.label || 'unnamed', reason: 'contains non-owned piece' })
+      continue
+    }
+    if (pieces.some(piece => pieceExcludedForOccasion(piece, occasion))) {
+      rejected.push({ label: repaired?.label || 'unnamed', reason: `user-excluded for ${occasion}` })
       continue
     }
     if (seen.has(key)) {
@@ -3489,26 +3667,82 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { requi
     }
 
     if (/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/.test(text)) {
-      rejected.push({ label: repaired?.label || 'unnamed', reason: 'uses body-shape/flattery framing' })
-      continue
+      if (advisorMode) {
+        repaired = appendSystemFlag(repaired, 'language', 'Removed body-shape framing from the explanation; review the outfit visually.')
+        const scrubbedReason = scrubBodyShapeFraming(repaired.reason)
+        if (scrubbedReason) repaired.reason = scrubbedReason
+      } else {
+        rejected.push({ label: repaired?.label || 'unnamed', reason: 'uses body-shape/flattery framing' })
+        continue
+      }
     }
     if (wholeWardrobeMissesMood(repaired, mood)) {
-      rejected.push({ label: repaired?.label || 'unnamed', reason: 'misses requested boho mood' })
-      continue
+      if (advisorMode) {
+        repaired = appendSystemFlag(repaired, 'mood', 'May miss the requested mood; compare against the garment photos.')
+      } else {
+        rejected.push({ label: repaired?.label || 'unnamed', reason: 'misses requested boho mood' })
+        continue
+      }
     }
     if ((text.match(/\b(wide|wide-leg|oversized|loose|flowing|voluminous|relaxed)\b/g) || []).length >= 3) {
-      rejected.push({ label: repaired?.label || 'unnamed', reason: 'too much width/volume' })
-      continue
+      if (advisorMode) {
+        repaired = appendSystemFlag(repaired, 'proportion', 'Reads volume-heavy; check that one piece anchors the outfit.')
+      } else {
+        rejected.push({ label: repaired?.label || 'unnamed', reason: 'too much width/volume' })
+        continue
+      }
     }
     if ((text.match(/\b(soft|gauzy|drape|drapey|cream|ivory|beige|taupe|sand)\b/g) || []).length >= 5 && !/\b(black|charcoal|espresso|boot|loafer|pointed|structured|graphic)\b/.test(text)) {
-      rejected.push({ label: repaired?.label || 'unnamed', reason: 'soft neutral drift' })
-      continue
+      if (advisorMode) {
+        repaired = appendSystemFlag(repaired, 'contrast', 'Soft neutral read; check whether it has enough grounding in the photos.')
+      } else {
+        rejected.push({ label: repaired?.label || 'unnamed', reason: 'soft neutral drift' })
+        continue
+      }
     }
 
+    const profileFits = pieces.map(piece => profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeatherProfile, occasionProfile }))
+    const prohibitedFit = profileFits.find(fit => fit.tier === 'prohibited')
+    if (prohibitedFit) {
+      if (advisorMode) {
+        repaired = appendSystemFlag(repaired, 'occasion', prohibitedFit.reason || 'May conflict with this occasion profile.')
+      } else {
+        rejected.push({ label: repaired?.label || 'unnamed', reason: prohibitedFit.reason || prohibitedFit.label || 'profile-prohibited piece' })
+        continue
+      }
+    }
+    const discouragedProfileCount = profileFits.filter(fit => fit.tier === 'discouraged').length
+    if (rejectProfileDiscouraged && discouragedProfileCount) {
+      if (advisorMode) {
+        repaired = appendSystemFlag(repaired, 'occasion', 'Contains a piece the occasion/activity profile usually discourages.')
+      } else {
+        rejected.push({ label: repaired?.label || 'unnamed', reason: 'profile-discouraged piece' })
+        continue
+      }
+    }
+    const profileAdjusted = discouragedProfileCount
+      ? { ...repaired, localScore: (Number(repaired.localScore) || 0) - discouragedProfileCount * 16 }
+      : repaired
+    const recencyPiecePenalty = sessionInfluence?.pieceRecency
+      ? pieceIds.reduce((sum, id) => sum + (sessionInfluence.pieceRecency.get(id) || 0), 0)
+      : 0
+    const formulaFamily = profileAdjusted.formulaFamily || wholeWardrobeFormulaFamily(profileAdjusted, pieces, occasion)
+    const recencyFormulaPenalty = sessionInfluence?.formulaRecency?.get(formulaFamily) || 0
+    const recencyAdjusted = (recencyPiecePenalty || recencyFormulaPenalty)
+      ? {
+          ...profileAdjusted,
+          formulaFamily,
+          localScore: (Number(profileAdjusted.localScore) || 0) - Math.min(recencyPiecePenalty, 40) - Math.min(recencyFormulaPenalty, 35)
+        }
+      : profileAdjusted
+
     seen.add(key)
-    accepted.push(repaired)
+    accepted.push(recencyAdjusted)
   }
-  const diverse = applyWholeWardrobeDiversity(sortByStylisticStrength(accepted, null), limit, { requireDress, requireNonGraphicTop, candidatePieces, occasion, mood })
+  const ranked = advisorMode ? accepted : sortByStylisticStrength(accepted, null)
+  const diverse = applyDiversity
+    ? applyWholeWardrobeDiversity(ranked, limit, { requireDress, requireNonGraphicTop, candidatePieces, occasion, mood })
+    : { outfits: ranked.slice(0, limit), rejected: [] }
   return {
     outfits: normalizeWholeWardrobeStrengths(diverse.outfits),
     rejected: [...rejected, ...diverse.rejected]

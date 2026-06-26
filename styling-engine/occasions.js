@@ -11,9 +11,12 @@ export const OCCASION_PROFILES = [
     keywords: ["festival", "crafts", "wine festival", "market", "fair", "picnic", "outdoor cafe"],
     vibe: "relaxed, creative, textured, airy, intentional",
     rules: {
+      discouraged_materials: ["sweatshirt fleece", "performance fabric"],
       discouraged_materials_warm: ["cashmere", "heavy wool", "dense knits", "thick corduroy"],
+      discouraged_footwear: ["athletic running shoe", "athletic running shoes", "athletic shoe", "athletic shoes", "running shoe", "running shoes", "gym shoe", "gym shoes"],
       discouraged_footwear_summer: ["heavy boot", "heavy boots", "zip ankle boot", "zip ankle boots", "shearling boot", "shearling boots", "thick winter boot", "thick winter boots"],
-      preferred_materials: ["linen", "cotton", "light silk", "tencel", "light textured knits", "knit"],
+      discouraged_pieces: ["hoodie", "hoodies", "sweatshirt", "sweatshirts", "joggers", "jogger pants"],
+      preferred_materials: ["linen", "cotton", "light silk", "tencel", "light textured knits"],
       preferred_footwear: ["canvas slip shoes", "sandals", "loafers", "lightweight flats"]
     }
   },

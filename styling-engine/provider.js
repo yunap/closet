@@ -8,6 +8,107 @@ export const ANTHROPIC_MODEL = process.env.ANTHROPIC_STYLIST_MODEL || 'claude-so
 export const OPENAI_MODEL = process.env.OPENAI_STYLIST_MODEL || 'gpt-4o'
 export const ACTIVE_STYLIST_MODEL = AI_PROVIDER === 'openai' ? OPENAI_MODEL : ANTHROPIC_MODEL
 
+const ANTHROPIC_PRICING_PER_MILLION = [
+  { match: /claude-.*sonnet.*4|claude-sonnet-4/i, input: 3, cacheWrite5m: 3.75, cacheRead: 0.30, output: 15 },
+  { match: /claude-.*haiku.*4\.5|claude-haiku-4/i, input: 1, cacheWrite5m: 1.25, cacheRead: 0.10, output: 5 },
+  { match: /claude-.*opus.*4\.[5-9]|claude-opus-4\.[5-9]/i, input: 5, cacheWrite5m: 6.25, cacheRead: 0.50, output: 25 },
+  { match: /claude-.*opus.*4(?:-|$)|claude-opus-4(?:-|$)/i, input: 15, cacheWrite5m: 18.75, cacheRead: 1.50, output: 75 },
+]
+
+const OPENAI_PRICING_PER_MILLION = [
+  { match: /^gpt-5\.5(?:-|$)/i, input: 5, cachedInput: 0.50, output: 30 },
+  { match: /^gpt-5\.4(?:-|$)/i, input: 2.50, cachedInput: 0.25, output: 15 },
+  { match: /^gpt-5\.4-mini(?:-|$)/i, input: 0.75, cachedInput: 0.075, output: 4.50 },
+  { match: /^gpt-5\.4-nano(?:-|$)/i, input: 0.20, cachedInput: 0.02, output: 1.25 },
+]
+
+function envPricingOverride() {
+  const input = Number(process.env.AI_INPUT_USD_PER_MTOK)
+  const output = Number(process.env.AI_OUTPUT_USD_PER_MTOK)
+  if (!Number.isFinite(input) || !Number.isFinite(output)) return null
+  const cachedInput = Number(process.env.AI_CACHED_INPUT_USD_PER_MTOK)
+  const cacheRead = Number(process.env.AI_CACHE_READ_USD_PER_MTOK)
+  const cacheWrite5m = Number(process.env.AI_CACHE_WRITE_5M_USD_PER_MTOK)
+  return {
+    match: /^env-override$/,
+    input,
+    output,
+    ...(Number.isFinite(cachedInput) ? { cachedInput } : {}),
+    ...(Number.isFinite(cacheRead) ? { cacheRead } : {}),
+    ...(Number.isFinite(cacheWrite5m) ? { cacheWrite5m } : {}),
+    source: 'env'
+  }
+}
+
+function pricingForModel(provider = AI_PROVIDER, model = ACTIVE_STYLIST_MODEL) {
+  const override = envPricingOverride()
+  if (override) return override
+  const table = provider === 'openai' ? OPENAI_PRICING_PER_MILLION : ANTHROPIC_PRICING_PER_MILLION
+  return table.find(entry => entry.match.test(model)) || null
+}
+
+function numberOrZero(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0
+}
+
+export function normalizeAiUsage(rawUsage = null, { provider = AI_PROVIDER, model = ACTIVE_STYLIST_MODEL } = {}) {
+  if (!rawUsage || typeof rawUsage !== 'object') return null
+  if (provider === 'openai') {
+    const promptDetails = rawUsage.prompt_tokens_details || {}
+    return {
+      provider,
+      model,
+      inputTokens: numberOrZero(rawUsage.prompt_tokens),
+      outputTokens: numberOrZero(rawUsage.completion_tokens),
+      totalTokens: numberOrZero(rawUsage.total_tokens),
+      cacheReadInputTokens: numberOrZero(promptDetails.cached_tokens),
+      cacheCreationInputTokens: 0,
+      raw: rawUsage
+    }
+  }
+  const inputTokens = numberOrZero(rawUsage.input_tokens)
+  const outputTokens = numberOrZero(rawUsage.output_tokens)
+  const cacheCreationInputTokens = numberOrZero(rawUsage.cache_creation_input_tokens)
+  const cacheReadInputTokens = numberOrZero(rawUsage.cache_read_input_tokens)
+  return {
+    provider,
+    model,
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens,
+    cacheReadInputTokens,
+    cacheCreationInputTokens,
+    raw: rawUsage
+  }
+}
+
+export function estimateAiUsageCost(usage = null) {
+  if (!usage) return null
+  const pricing = pricingForModel(usage.provider, usage.model)
+  if (!pricing) {
+    return {
+      estimatedUsd: null,
+      pricingAvailable: false,
+      reason: `No local pricing entry for ${usage.provider}:${usage.model}`
+    }
+  }
+  const billableInputTokens = Math.max(0, numberOrZero(usage.inputTokens) - numberOrZero(usage.cacheReadInputTokens))
+  const inputUsd = billableInputTokens * pricing.input / 1_000_000
+  const outputUsd = numberOrZero(usage.outputTokens) * pricing.output / 1_000_000
+  const cacheReadUsd = numberOrZero(usage.cacheReadInputTokens) * (pricing.cacheRead || pricing.cachedInput || pricing.input) / 1_000_000
+  const cacheCreationUsd = numberOrZero(usage.cacheCreationInputTokens) * (pricing.cacheWrite5m || pricing.input) / 1_000_000
+  const estimatedUsd = inputUsd + outputUsd + cacheReadUsd + cacheCreationUsd
+  return {
+    estimatedUsd: Number(estimatedUsd.toFixed(6)),
+    pricingAvailable: true,
+    inputUsd: Number(inputUsd.toFixed(6)),
+    outputUsd: Number(outputUsd.toFixed(6)),
+    cacheReadUsd: Number(cacheReadUsd.toFixed(6)),
+    cacheCreationUsd: Number(cacheCreationUsd.toFixed(6)),
+    ratesPerMillion: pricing
+  }
+}
+
 export function assertProviderKey() {
   if (AI_PROVIDER === 'openai' && !process.env.OPENAI_API_KEY) {
     throw new Error('AI_PROVIDER=openai but no OPENAI_API_KEY set in .env')
@@ -26,18 +127,20 @@ export async function prepareImageForClaude(filePath) {
   return { base64: buffer.toString('base64'), mime: 'image/jpeg' }
 }
 
-const wardrobeThumbCache = new Map() // key: `${pieceId}:${filename}` -> { media_type, data }
+const wardrobeThumbCache = new Map() // key: `${pieceId}:${filename}:${maxPx}` -> { media_type, data }
 
-export async function prepareWardrobeThumb(filePath, cacheKey) {
-  if (cacheKey && wardrobeThumbCache.has(cacheKey)) return wardrobeThumbCache.get(cacheKey)
+export async function prepareWardrobeThumb(filePath, cacheKey, { maxPx = 448 } = {}) {
+  const normalizedMaxPx = Math.max(1, Math.min(1568, Number(maxPx) || 448))
+  const cacheKeyWithSize = cacheKey ? `${cacheKey}:${normalizedMaxPx}` : ''
+  if (cacheKeyWithSize && wardrobeThumbCache.has(cacheKeyWithSize)) return wardrobeThumbCache.get(cacheKeyWithSize)
   const sharp = (await import('sharp')).default
   const buffer = await sharp(filePath)
-    .resize(448, 448, { fit: 'inside', withoutEnlargement: true })
+    .resize(normalizedMaxPx, normalizedMaxPx, { fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 70 })
     .toBuffer()
   const result = { media_type: 'image/jpeg', data: buffer.toString('base64') }
-  if (cacheKey) {
-    wardrobeThumbCache.set(cacheKey, result)
+  if (cacheKeyWithSize) {
+    wardrobeThumbCache.set(cacheKeyWithSize, result)
     if (wardrobeThumbCache.size > 300) {
       // simple eviction: drop oldest entry
       wardrobeThumbCache.delete(wardrobeThumbCache.keys().next().value)
@@ -104,6 +207,11 @@ export function parseModelJson(raw) {
 }
 
 export async function askClaude({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
+  const { text } = await askClaudeWithUsage({ system, messages, maxTokens })
+  return text
+}
+
+export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('No ANTHROPIC_API_KEY set in .env')
   }
@@ -114,7 +222,10 @@ export async function askClaude({ system = STYLIST_SYSTEM, messages, maxTokens =
     system,
     messages
   })
-  return response.content?.[0]?.text || ''
+  return {
+    text: response.content?.[0]?.text || '',
+    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
+  }
 }
 
 export function takeTestAiResponse({ system = '', messages = [], maxTokens = 1200 } = {}) {
@@ -130,9 +241,17 @@ export function takeTestAiResponse({ system = '', messages = [], maxTokens = 120
 }
 
 export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
+  const { text } = await askStylistWithUsage({ system, messages, maxTokens })
+  return text
+}
+
+export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
   const testResponse = takeTestAiResponse({ system, messages, maxTokens })
   if (testResponse != null) {
-    return typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
+    return {
+      text: typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse),
+      usage: normalizeAiUsage(testResponse?.usage || null)
+    }
   }
 
   assertProviderKey()
@@ -147,10 +266,13 @@ export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens 
         ...messages.map(m => ({ role: m.role, content: contentToOpenAI(m.content) }))
       ]
     })
-    return response.choices?.[0]?.message?.content || ''
+    return {
+      text: response.choices?.[0]?.message?.content || '',
+      usage: normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+    }
   }
 
-  return askClaude({ system, messages, maxTokens })
+  return askClaudeWithUsage({ system, messages, maxTokens })
 }
 
 

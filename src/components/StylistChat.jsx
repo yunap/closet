@@ -671,8 +671,12 @@ export default function AskClaude({
   const getTripPlanNotes = (outfits = []) => {
     const tripCards = Array.isArray(outfits) ? outfits.filter(outfit => outfit?.source === 'trip_precompose') : []
     if (!tripCards.length) return []
+    const first = tripCards[0] || {}
+    const computedLines = Array.isArray(first.tripPlanLines) ? first.tripPlanLines : []
+    const coverageLines = tripCards.map(outfit => outfit.coverageLine).filter(Boolean)
     const notes = [
-      'Daytime outfits are chosen for heat and walking; dinner can be a little more polished and layered.',
+      ...computedLines,
+      ...coverageLines,
       'When image space is limited, garment and layer photos are prioritized before accessories.'
     ]
     for (const outfit of tripCards) {
@@ -1368,7 +1372,7 @@ export default function AskClaude({
             </div>
           )
         })()}
-        {outfits.slice(0, 5).map((outfit, idx) => {
+        {outfits.slice(0, 8).map((outfit, idx) => {
           const strength = strengthLabel(outfit.strength, idx)
           const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean) : []
           const boardKey = `${messageIndex}:${idx}`
@@ -1404,14 +1408,14 @@ export default function AskClaude({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                   <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
-                  <div style={{ fontSize: 10, color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{strength}</div>
+                  <div style={{ fontSize: 10, color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isTripCard ? (outfit.coveragePosition || 'trip look') : strength}</div>
                 </div>
                 {showSilhouette && renderColorBalanceBar(outfit)}
-              {(outfit.missionLabel || outfit.dominantDirection || outfit.silhouette || outfit.bestFor) && (
+              {((!isTripCard && (outfit.missionLabel || outfit.dominantDirection || outfit.silhouette)) || outfit.bestFor) && (
                 <div style={{ display: 'grid', gap: 2, marginTop: 6, fontSize: 13, color: 'var(--text-light)', lineHeight: 1.45 }}>
-                  {outfit.missionLabel && <div><strong>Mission:</strong> {outfit.missionLabel}</div>}
-                  {outfit.dominantDirection && <div><strong>Direction:</strong> {outfit.dominantDirection}</div>}
-                  {outfit.silhouette && <div><strong>Silhouette:</strong> {outfit.silhouette}</div>}
+                  {!isTripCard && outfit.missionLabel && <div><strong>Mission:</strong> {outfit.missionLabel}</div>}
+                  {!isTripCard && outfit.dominantDirection && <div><strong>Direction:</strong> {outfit.dominantDirection}</div>}
+                  {!isTripCard && outfit.silhouette && <div><strong>Silhouette:</strong> {outfit.silhouette}</div>}
                   {outfit.bestFor && <div><strong>Best for:</strong> {outfit.bestFor}</div>}
                 </div>
               )}
@@ -1506,7 +1510,10 @@ export default function AskClaude({
                               const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
                               const exclusions = (piece?.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
                               const isExcluded = exclusions.includes(normMsgOccasion)
-                              const displayOccasionName = String(msgOccasion || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                              const exclusionDisplaySource = isTripCard
+                                ? (outfit.label || outfit.title || outfit.bestFor || msgOccasion)
+                                : msgOccasion
+                              const displayOccasionName = String(exclusionDisplaySource || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
                               return (
                                 <button
                                   type="button"
@@ -1548,6 +1555,20 @@ export default function AskClaude({
                     {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 6 }}>
                         <strong>Watch:</strong> {outfit.watchFor}
+                      </div>
+                    )}
+                    {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (
+                      <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
+                        {outfit.systemFlags.map((flag, flagIndex) => (
+                          <div key={`${flag.type || 'note'}-${flagIndex}`} style={{ fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4 }}>
+                            <strong>{flag.type || 'Note'}:</strong> {flag.message}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {outfit.systemSuggestion?.message && (
+                      <div style={{ fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4, marginTop: 6 }}>
+                        <strong>System suggests:</strong> {outfit.systemSuggestion.message}
                       </div>
                     )}
                   </div>

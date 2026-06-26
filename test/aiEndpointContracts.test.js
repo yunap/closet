@@ -18,7 +18,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
-const { extractToolResultImages } = await import('../styling-engine/provider.js')
+const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost } = await import('../styling-engine/provider.js')
 
 let server
 let baseUrl
@@ -293,6 +293,10 @@ function mockAiHandler({ system, messages }) {
       return {
         shouldCompose: true,
         reason: 'User needs a multi-use-case packing plan.',
+        tripSummary: {
+          durationText: '4-5 days',
+          dayBreakdown: 'about 3 city/museum daytime days, 4 dinners, and 1 winery day',
+        },
         slots: [
           {
             id: 'city_exploring',
@@ -301,16 +305,9 @@ function mockAiHandler({ system, messages }) {
             activity: 'walking',
             season: 'hot weather',
             bestFor: 'hot daytime city exploring and walking',
+            coverage: '3 city/museum daytime days',
+            targetOutfits: 2,
             planNote: 'Prioritize breathable garments and walkable shoes.',
-          },
-          {
-            id: 'museum_day',
-            label: 'Museum Day',
-            occasion: 'city',
-            activity: 'none',
-            season: 'hot weather',
-            bestFor: 'museum day and indoor cultural visits',
-            planNote: 'Keep it presentable indoors without overheating outside.',
           },
           {
             id: 'dinner',
@@ -319,6 +316,8 @@ function mockAiHandler({ system, messages }) {
             activity: 'none',
             season: 'cool evening weather',
             bestFor: 'cooler evening dinner',
+            coverage: '4 dinners',
+            targetOutfits: 2,
             planNote: 'Use a dinner-register outfit and add a layer only if it helps.',
           },
           {
@@ -328,6 +327,8 @@ function mockAiHandler({ system, messages }) {
             activity: 'walking',
             season: 'hot weather',
             bestFor: 'warm daytime winery visit',
+            coverage: '1 winery day',
+            targetOutfits: 1,
             planNote: 'Keep it outdoor-social and standing-friendly.',
           },
         ],
@@ -346,6 +347,56 @@ function mockAiHandler({ system, messages }) {
       rejected: [],
       skip: '',
       saveableLearning: 'mock selected-piece learning',
+    }
+  }
+
+  if (text.includes("You are Yuna's personal stylist. You are looking at photos") && /Occasion:\s*outdoor_daytime_social/i.test(latestText)) {
+    const badTop = db.prepare("SELECT id FROM pieces WHERE name = ?").get('multicolor floral hooded sweatshirt')?.id
+    const badShoe = db.prepare("SELECT id FROM pieces WHERE name = ?").get('light grey knit athletic shoes')?.id
+    const goodTop = db.prepare("SELECT id FROM pieces WHERE name = ?").get('olive ruffled sleeveless top')?.id
+    const goodBottom = db.prepare("SELECT id FROM pieces WHERE name = ?").get('black cream botanical tiered midi skirt')?.id
+    const goodShoe = db.prepare("SELECT id FROM pieces WHERE name = ?").get('black slip-on loafers')?.id
+    return {
+      outfits: [{
+        label: 'Too casual outdoor social',
+        strength: 'signature',
+        dominantDirection: 'soft casual comfort',
+        silhouette: 'relaxed top over easy lower line',
+        bestFor: 'outdoor daytime social',
+        pieceIds: [badTop, seeded.bottom, badShoe].filter(Boolean),
+        reason: 'The hoodie and athletic shoes make the outfit easy for walking.',
+        watchFor: 'Very casual.',
+      }, {
+        label: 'Intentional outdoor social',
+        strength: 'strong',
+        dominantDirection: 'botanical structure with grounded loafers',
+        silhouette: 'expressive top over controlled midi line',
+        bestFor: 'outdoor daytime social',
+        pieceIds: [goodTop, goodBottom, goodShoe].filter(Boolean),
+        reason: 'The textured top and botanical skirt keep the outfit social while the loafers stay walkable.',
+        watchFor: 'Keep the shoe visible.',
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: 'mock outdoor-social visual pass',
+    }
+  }
+
+  if (text.includes("You are Yuna's personal stylist. You are looking at photos") && /Activity:\s*walking/i.test(latestText)) {
+    return {
+      outfits: [{
+        label: 'Mock walking outfit with boots',
+        strength: 'signature',
+        dominantDirection: 'city structure with boot',
+        silhouette: 'controlled top over grounded lower line',
+        bestFor: 'walking',
+        pieceIds: [seeded.top, seeded.bottom, seeded.boot],
+        reason: 'The boot grounds the light trouser visually.',
+        watchFor: 'May not be ideal for long walking.',
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: 'mock walking visual pass',
     }
   }
 
@@ -623,6 +674,12 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.ok(json.structuredOutfits.length >= 1)
   assert.ok(json.debug.shownPieceCount > 0)
   assert.ok(json.debug.aiReturnedCount >= 1)
+  assert.equal(json.debug.imageDetail, 'high')
+  assert.equal(json.debug.thumbPx, 768)
+  assert.equal(Object.hasOwn(json.debug, 'composerUsage'), true)
+  assert.equal(json.debug.finalSelection.mode, 'advisor')
+  assert.equal(json.debug.finalSelection.applyDiversity, false)
+  assert.equal(json.debug.sessionMemory.recentSessionCount, 0)
 
   // Verify that rotation sessions are saved
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 1)
@@ -648,15 +705,21 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   })
 
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 2)
+  assert.ok(json2.debug.sessionMemory.recentSessionCount >= 1)
+  assert.ok(json2.debug.sessionMemory.piecePenaltyCount >= 1)
+  assert.equal(json2.debug.sessionMemory.rotationWarningShown, true)
   
   // Verify that the second call received rotation warning texts (meaning it saw recently shown garments)
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
   assert.equal(visualComposerCalls.length, 2)
 
-  // Verify occasion profile rules are present in the system prompt for the visual composer
+  // Verify the full rules blob is not present in the visual composer prompt; the lean digest stays in the user message.
   for (const call of visualComposerCalls) {
-    assert.ok(call.system.includes('OCCASION & CLIMATE PROFILES (RULES-AS-DATA)'))
+    assert.ok(!call.system.includes('RULES-AS-DATA'))
     assert.ok(call.system.includes('Occasion & Weather Classification'))
+    assert.ok(call.messages[0].content.some(part => part.type === 'text' && /Occasion guidance:/i.test(part.text || '')))
+    assert.ok(call.messages[0].content.some(part => part.type === 'image' && ['high', 'auto'].includes(part.detail)))
+    assert.ok(!call.messages[0].content.some(part => part.type === 'image' && part.detail === 'low'))
   }
 
   const firstCallText = visualComposerCalls[0].messages[0].content[0].text
@@ -686,6 +749,98 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   const contentText = visualComposerCalls[0].messages[0].content[0].text
   assert.ok(contentText.includes('Activity: walking'), 'The visual composer prompt must contain Activity: walking')
   assert.ok(contentText.includes('All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots'), 'The visual composer prompt must contain walking guidance')
+  const returnedNames = json.structuredOutfits.flatMap(o => o.pieces || []).map(p => p.name).join(' ').toLowerCase()
+  assert.match(returnedNames, /brown ankle boots/, 'visual composer should keep the model-selected shoe visible')
+  assert.ok(json.structuredOutfits.some(outfit => outfit.systemSuggestion?.type === 'comfort' && Number(outfit.systemSuggestion.swapOut) === Number(seeded.boot)))
+})
+
+test('visual wardrobe composer returns model outfits and annotates outdoor social concerns', async () => {
+  aiCalls = []
+
+  const badTopPhoto = await makeImage('outdoor-bad-top.png', '#b86442')
+  const badShoePhoto = await makeImage('outdoor-bad-shoe.png', '#c8c8c8')
+  const goodTopPhoto = await makeImage('outdoor-good-top.png', '#6f7b4c')
+  const goodBottomPhoto = await makeImage('outdoor-good-bottom.png', '#15120f')
+  const goodShoePhoto = await makeImage('outdoor-good-shoe.png', '#111111')
+
+  insertPiece({
+    name: 'multicolor floral hooded sweatshirt',
+    category: 'top',
+    colors: ['multi'],
+    occasions: ['outdoor_daytime_social', 'casual'],
+    photo: badTopPhoto,
+    reads_as: 'casual hoodie sweatshirt fleece',
+    fabric_category: 'sweatshirt fleece',
+    fabric_weight: 'medium',
+  })
+  insertPiece({
+    name: 'light grey knit athletic shoes',
+    category: 'shoes',
+    colors: ['grey'],
+    occasions: ['outdoor_daytime_social', 'casual'],
+    photo: badShoePhoto,
+    reads_as: 'athletic running shoes gym shoes',
+    fabric_category: 'knit',
+  })
+  insertPiece({
+    name: 'olive ruffled sleeveless top',
+    category: 'top',
+    colors: ['olive'],
+    occasions: ['outdoor_daytime_social', 'city'],
+    photo: goodTopPhoto,
+    reads_as: 'intentional textured sleeveless top',
+    silhouette: 'structured sleeveless top',
+    fabric_category: 'cotton',
+    fabric_weight: 'light',
+  })
+  insertPiece({
+    name: 'black cream botanical tiered midi skirt',
+    category: 'bottom',
+    colors: ['black', 'cream'],
+    occasions: ['outdoor_daytime_social', 'city'],
+    photo: goodBottomPhoto,
+    reads_as: 'botanical midi skirt with visual structure',
+    pattern_type: 'botanical',
+    pattern_scale: 'medium',
+    pattern_complexity: 'medium',
+    silhouette: 'tiered midi skirt',
+    fabric_category: 'cotton',
+    fabric_weight: 'light',
+    length_hits_at: 'midi',
+  })
+  insertPiece({
+    name: 'black slip-on loafers',
+    category: 'shoes',
+    colors: ['black'],
+    occasions: ['outdoor_daytime_social', 'city'],
+    photo: goodShoePhoto,
+    reads_as: 'grounded black loafers lightweight flats',
+  })
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'outdoor_daytime_social',
+    season: 'current season',
+    activity: 'walking',
+    limit: 2,
+  })
+
+  assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
+  assert.equal(json.structuredOutfits.length, 2)
+  const returnedNames = json.structuredOutfits.flatMap(o => o.pieces || []).map(p => p.name).join(' ').toLowerCase()
+  assert.match(returnedNames, /hooded sweatshirt|athletic shoes/, 'visual composer should not silently remove model outfits for taste concerns')
+  assert.match(returnedNames, /olive ruffled sleeveless top|botanical tiered midi skirt|black slip-on loafers/)
+  const flaggedOutfit = json.structuredOutfits.find(outfit => (outfit.pieces || []).some(piece => /hooded sweatshirt|athletic shoes/i.test(piece.name || '')))
+  assert.ok(flaggedOutfit)
+  assert.ok(Array.isArray(flaggedOutfit.systemFlags))
+  assert.ok(flaggedOutfit.systemFlags.some(flag => flag.type === 'occasion'))
+  assert.equal(json.debug.finalSelection.localFillAdded, 0)
+  assert.equal(json.debug.finalSelection.modelGateOutfits, 2)
+
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  assert.match(contentText, /use sparingly and justify in watchFor:/i)
+  assert.match(contentText, /hoodie/i)
+  assert.match(contentText, /athletic running shoe/i)
 })
 
 
@@ -1086,6 +1241,30 @@ test('freeform ask generated outfit follow-up stays conversational without reatt
   assert.doesNotMatch(latestUserMessage.content, /Attached: current generated outfit garment-reference sheet/)
 })
 
+test('freeform ask selected-item generated outfit follow-up does not become trip precompose', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'same outfit, but could I use taupe knit lace-up sneakers with this top?',
+    pieces: [],
+    history: [
+      { role: 'user', content: 'Use my wardrobe to make outfits with this selected top.' },
+      { role: 'assistant', content: 'Here are selected-item outfit cards.' },
+    ],
+    generatedContext: 'Outfit: Relaxed City Day\nPieces:\n- selected top\n- green utility shorts',
+    generatedOutfits: [selectedPieceOutfit()],
+    conversationMode: 'followup',
+    activeContext: { type: 'piece', id: seeded.top, name: 'black button detail top' },
+    occasion: 'city',
+    season: 'current season',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  assert.deepEqual(json.structuredOutfits, [])
+  assert.ok(!aiCalls.some(call => /FREEFORM_STYLIST_USE_CASE_PLANNER/.test(call.system || '')), 'selected-item follow-up should not invoke trip planner precompose')
+  const lastCall = aiCalls.at(-1)
+  assert.doesNotMatch(lastCall.system, /CURRENT OUTFIT SET \(LATEST, HIGH AUTHORITY\)/)
+  assert.doesNotMatch(lastCall.system, /Trip outfits built from saved wardrobe pieces/)
+})
+
 test('freeform ask shoe follow-up maps to explanation mode and targets shoes', async () => {
   const json = await postJson('/api/ai/ask', {
     question: 'why those shoes?',
@@ -1222,6 +1401,18 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
     fabric_weight: 'light',
   })
   insertPiece({
+    name: 'olive flowing linen midi skirt',
+    category: 'bottom',
+    colors: ['olive'],
+    occasions: ['city', 'casual', 'outdoor_daytime_social'],
+    photo: seeded.photos.bottom,
+    reads_as: 'flowing linen midi skirt',
+    bottom_shape: 'full skirt',
+    length_hits_at: 'midi',
+    fabric_category: 'linen',
+    fabric_weight: 'light',
+  })
+  insertPiece({
     name: 'black cream geometric midi skirt',
     category: 'bottom',
     colors: ['black', 'cream'],
@@ -1282,11 +1473,40 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
 
   assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
   assert.ok(Array.isArray(json.structuredOutfits))
-  assert.ok(json.structuredOutfits.length >= 4)
+  assert.ok(json.structuredOutfits.length >= 5)
+  assert.ok(json.structuredOutfits.length <= 8)
   assert.ok(json.structuredOutfits.every(outfit => outfit.reason && outfit.reason.length > 20))
   assert.ok(json.structuredOutfits.some(outfit => /city exploring/i.test(outfit.label || '')))
   assert.ok(json.structuredOutfits.some(outfit => /dinner/i.test(outfit.label || '')))
   assert.ok(json.structuredOutfits.some(outfit => /winery/i.test(outfit.label || '')))
+  assert.ok(json.structuredOutfits.every(outfit => outfit.source === 'trip_precompose'))
+  assert.ok(json.structuredOutfits.every(outfit => !outfit.strength && !outfit.missionLabel && !outfit.dominantDirection && !outfit.silhouette))
+  assert.ok(json.structuredOutfits.every(outfit => outfit.coverage && outfit.coveragePosition && outfit.coverageLine))
+  assert.ok(json.structuredOutfits.some(outfit => /3 city\/museum daytime days/i.test(outfit.coverage || '')))
+  assert.ok(json.structuredOutfits.some(outfit => /4 dinners/i.test(outfit.coverage || '')))
+  assert.ok(json.structuredOutfits.some(outfit => /1 winery day/i.test(outfit.coverage || '')))
+  assert.ok(json.structuredOutfits[0].tripSummary)
+  assert.match(json.structuredOutfits[0].tripSummary.dayBreakdown, /city\/museum daytime days/)
+  assert.ok(json.structuredOutfits[0].pieceReuse)
+  assert.equal(typeof json.structuredOutfits[0].pieceReuse.distinctPieces, 'number')
+  assert.ok(json.structuredOutfits[0].pieceReuse.summary)
+  const cityLooks = json.structuredOutfits.filter(outfit => outfit.tripSlot === 'city_exploring')
+  const dinnerLooks = json.structuredOutfits.filter(outfit => outfit.tripSlot === 'dinner')
+  assert.ok(cityLooks.length >= 2, 'planner-requested daytime coverage should produce rotating city looks when candidates exist')
+  assert.ok(dinnerLooks.length >= 2, 'planner-requested dinner coverage should produce rotating dinner looks when candidates exist')
+  const cityBottomSilhouettes = new Set(cityLooks.map(outfit => {
+    const bottom = (outfit.pieces || []).find(piece => piece.category === 'bottom')
+    return [bottom?.bottom_shape, bottom?.length_hits_at, bottom?.name].filter(Boolean).join('|')
+  }).filter(Boolean))
+  assert.ok(cityBottomSilhouettes.size >= 2, 'city looks should prefer different bottom silhouettes when close-quality options exist')
+  const daytimeLowerHalfText = json.structuredOutfits
+    .filter(outfit => outfit.activity === 'walking')
+    .flatMap(outfit => outfit.pieces || [])
+    .filter(piece => ['bottom', 'dress'].includes(piece.category))
+    .map(piece => `${piece.name || ''} ${piece.reads_as || ''}`)
+    .join(' ')
+    .toLowerCase()
+  assert.match(daytimeLowerHalfText, /olive flowing linen midi skirt|wide-leg pants/, 'breathable flowing lower-half options should be eligible for daytime trip slots')
   const dressFormulas = json.structuredOutfits
     .map(outfit => (outfit.pieces || []).find(piece => piece.category === 'dress')?.id)
     .filter(Boolean)
@@ -1300,11 +1520,7 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
   )
   assert.equal(initialDinner.occasion, 'evening')
   assert.equal(initialDinner.activity, 'none')
-  const museumOutfit = json.structuredOutfits.find(outfit => /museum/i.test(outfit.label || ''))
-  assert.ok(museumOutfit)
-  assert.equal(museumOutfit.activity, 'none')
-  const museumPieces = (museumOutfit.pieces || []).map(piece => `${piece.name || ''} ${piece.fabric_category || ''} ${piece.fabric_weight || ''}`).join(' | ').toLowerCase()
-  assert.doesNotMatch(museumPieces, /grey wool black stripe knit dress|wool.*heavy/, 'museum slot should not use a heavy wool dress in hot daytime weather')
+  assert.doesNotMatch(initialDinnerPieces, /grey wool black stripe knit dress|wool.*heavy/, 'warm-trip dinner slot should not choose a heavy wool dress')
   const daytimeTripOutfits = json.structuredOutfits.filter(outfit => outfit.activity === 'walking')
   assert.ok(daytimeTripOutfits.length >= 2)
   for (const outfit of daytimeTripOutfits) {
@@ -1320,7 +1536,7 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
         .map(piece => `${piece.name || ''} ${piece.reads_as || ''}`)
         .join(' ')
         .toLowerCase()
-      assert.doesNotMatch(lowerHalfText, /\b(geometric midi skirt|crochet knit midi skirt|dress)\b/, `${outfit.label} should not use dressed-up skirts or dresses for hot walking slots`)
+      assert.doesNotMatch(lowerHalfText, /\b(geometric midi skirt|crochet knit midi skirt|dress)\b/, `${outfit.label} should not use dressy/heavy skirts or dresses for hot walking slots`)
     }
   }
   const dinnerPieces = initialDinnerPieces
@@ -1333,7 +1549,9 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
   const plannerCall = aiCalls.find(call => /FREEFORM_STYLIST_USE_CASE_PLANNER/.test(call.system || ''))
   assert.ok(plannerCall, 'initial trip plan should use the planner to decompose stated use cases')
   assert.match(plannerCall.system, /Map dinner, evening restaurant, and night-out use cases to occasion "evening" with activity "none"/)
-  assert.match(plannerCall.system, /For museums, galleries, and indoor cultural visits, use activity "none"/)
+  assert.match(plannerCall.system, /museum day is still part of the daytime city experience/)
+  assert.match(plannerCall.system, /targetOutfits/)
+  assert.match(plannerCall.system, /tripSummary/)
   assert.match(lastCall.system, /Established weather context for this turn: hot weather/)
   assert.match(lastCall.system, /Pass this weather to search_wardrobe/)
   assert.match(lastCall.system, /CURRENT OUTFIT SET \(LATEST, HIGH AUTHORITY\)/)
@@ -1487,6 +1705,11 @@ test('StylistChat shows trip explanation before cards, not inside trip cards', (
   assert.match(src, /garment and layer photos are prioritized before accessories/)
   assert.doesNotMatch(src, /Accessories are left out of these cards/)
   assert.match(src, /outfit\.reason && !isTripCard/)
+  assert.match(src, /outfit\.coveragePosition/)
+  assert.match(src, /const exclusionDisplaySource = isTripCard/)
+  assert.match(src, /!isTripCard && outfit\.missionLabel/)
+  assert.match(src, /!isTripCard && outfit\.dominantDirection/)
+  assert.match(src, /!isTripCard && outfit\.silhouette/)
   assert.match(src, /const msgOccasion = outfit\.occasion \|\| outfit\.bestFor \|\| message\.queryOptions\?\.occasion/)
   assert.doesNotMatch(src, /<details open=\{message\?\.wholeWardrobe \|\| outfit\.source === 'trip_precompose'\}/)
 })
@@ -1495,6 +1718,15 @@ test('freeform trip precompose keeps accessories in cards while visual budget ma
   const src = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
   assert.match(src, /function annotateTripOutfit/)
   assert.doesNotMatch(src, /outfit\.pieces\.filter\(piece => wardrobeCategoryGroup\(piece\) !== 'accessory'\)/)
+  assert.doesNotMatch(src, /function tripPieceHasAny/)
+  assert.doesNotMatch(src, /ratchet-allow: trip slot fit/)
+  assert.doesNotMatch(src, /skirt-midi'\) score -= isWinery \? 6 : 48/)
+  assert.doesNotMatch(src, /skirt-maxi'\) score -= isWinery \? 12 : 56/)
+  assert.match(src, /function tripPieceHasStructuredValue/)
+  assert.match(src, /TRIP_WALKABLE_FOOTWEAR_TERMS/)
+  assert.match(src, /tripDaytimeBottomScore/)
+  assert.match(src, /tripOutfitAestheticGravityScore/)
+  assert.match(src, /outfitStylisticStrengthScore/)
 })
 
 test('StylistChat parses freeform outfit sections into current outfit memory', () => {
@@ -1507,7 +1739,7 @@ test('StylistChat parses freeform outfit sections into current outfit memory', (
   assert.match(src, /mergeCurrentOutfitSet/)
   assert.match(src, /unresolvedPieceNames/)
   assert.match(src, /Needs exact wardrobe match:/)
-  assert.match(src, /outfits\.slice\(0, 5\)\.map/)
+  assert.match(src, /outfits\.slice\(0, 8\)\.map/)
   assert.match(src, /Unresolved cards stay visible here but are skipped for image generation/)
   assert.match(src, /CURRENT OUTFIT SET \(LATEST, HIGH AUTHORITY\)/)
   assert.match(src, /source: 'freeform_current_set'/)
@@ -1635,6 +1867,25 @@ test('executeTool search_wardrobe relies on structured occasion instead of dinne
   })
   assert.ok(flexibleEveningTops.some(item => item.id === seeded.top))
   assert.ok(flexibleEveningTops.some(item => /No active pieces are explicitly tagged for "evening"/.test(item.note || '')))
+})
+
+test('executeTool search_wardrobe treats occasion-only queries canonically', async () => {
+  const decoy = insertPiece({
+    name: 'literal brunch note tee',
+    category: 'top',
+    colors: ['blue'],
+    occasions: ['home'],
+    notes: 'brunch wedding gallery',
+    reads_as: 'soft home tee'
+  })
+
+  const brunchSearch = await executeTool('search_wardrobe', { query: 'brunch' })
+  assert.ok(brunchSearch.some(item => item.id === seeded.top), 'brunch should resolve to city-compatible pieces')
+  assert.ok(!brunchSearch.some(item => item.id === decoy), 'brunch should not be treated as literal garment-note text')
+
+  const weddingSearch = await executeTool('search_wardrobe', { query: 'wedding' })
+  assert.ok(weddingSearch.some(item => item.id === seeded.dress), 'wedding should resolve to evening-compatible pieces')
+  assert.ok(!weddingSearch.some(item => item.id === decoy), 'wedding should not be treated as literal garment-note text')
 })
 
 test('executeTool search_wardrobe uses toolContext weather when model omits weather arg', async () => {
@@ -1770,6 +2021,58 @@ test('extractToolResultImages strips image blobs and preserves labeled visual re
   assert.equal(extracted.images[0].base64, 'abc123')
   assert.ok(!JSON.parse(extracted.textResult)[0].image)
   assert.equal(JSON.parse(extracted.textResult)[0].text, 'linen top details')
+})
+
+test('provider usage helpers normalize tokens and estimate known model costs', () => {
+  const anthropicUsage = normalizeAiUsage({
+    input_tokens: 100000,
+    output_tokens: 2000,
+    cache_read_input_tokens: 10000,
+    cache_creation_input_tokens: 0,
+  }, { provider: 'anthropic', model: 'claude-sonnet-4-6' })
+  const anthropicCost = estimateAiUsageCost(anthropicUsage)
+  assert.equal(anthropicUsage.inputTokens, 100000)
+  assert.equal(anthropicUsage.outputTokens, 2000)
+  assert.equal(anthropicUsage.cacheReadInputTokens, 10000)
+  assert.equal(anthropicCost.pricingAvailable, true)
+  assert.equal(anthropicCost.estimatedUsd, 0.303)
+
+  const openAiUsage = normalizeAiUsage({
+    prompt_tokens: 4000,
+    completion_tokens: 500,
+    total_tokens: 4500,
+    prompt_tokens_details: { cached_tokens: 1000 },
+  }, { provider: 'openai', model: 'gpt-5.4' })
+  const openAiCost = estimateAiUsageCost(openAiUsage)
+  assert.equal(openAiUsage.inputTokens, 4000)
+  assert.equal(openAiUsage.outputTokens, 500)
+  assert.equal(openAiUsage.cacheReadInputTokens, 1000)
+  assert.equal(openAiCost.pricingAvailable, true)
+  assert.equal(openAiCost.estimatedUsd, 0.01525)
+
+  const unknownCost = estimateAiUsageCost({ provider: 'openai', model: 'gpt-4o', inputTokens: 1000, outputTokens: 100 })
+  assert.equal(unknownCost.pricingAvailable, false)
+  assert.equal(unknownCost.estimatedUsd, null)
+
+  const previousInput = process.env.AI_INPUT_USD_PER_MTOK
+  const previousOutput = process.env.AI_OUTPUT_USD_PER_MTOK
+  const previousCached = process.env.AI_CACHED_INPUT_USD_PER_MTOK
+  process.env.AI_INPUT_USD_PER_MTOK = '2.50'
+  process.env.AI_OUTPUT_USD_PER_MTOK = '10'
+  process.env.AI_CACHED_INPUT_USD_PER_MTOK = '1.25'
+  try {
+    const overrideCost = estimateAiUsageCost({ provider: 'openai', model: 'gpt-4o', inputTokens: 4000, outputTokens: 500, cacheReadInputTokens: 1000 })
+    assert.equal(overrideCost.pricingAvailable, true)
+    assert.equal(overrideCost.estimatedUsd, 0.01375)
+    assert.equal(overrideCost.ratesPerMillion.source, 'env')
+  } finally {
+    if (previousInput == null) delete process.env.AI_INPUT_USD_PER_MTOK
+    else process.env.AI_INPUT_USD_PER_MTOK = previousInput
+    if (previousOutput == null) delete process.env.AI_OUTPUT_USD_PER_MTOK
+    else process.env.AI_OUTPUT_USD_PER_MTOK = previousOutput
+    if (previousCached == null) delete process.env.AI_CACHED_INPUT_USD_PER_MTOK
+    else process.env.AI_CACHED_INPUT_USD_PER_MTOK = previousCached
+  }
 })
 
 test('saved boards endpoint returns boards linked to piece context_id', async () => {

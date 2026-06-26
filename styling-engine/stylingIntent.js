@@ -5,6 +5,15 @@ export const MISSION_VALUES = ['mix', 'capsule', 'wildcard']
 export function normalizeOccasion(value) {
   const v = String(value || '').toLowerCase().trim()
   if (OCCASION_VALUES.includes(v)) return v
+  if (['dinner', 'dining', 'restaurant', 'wine bar', 'theater', 'night', 'night out', 'wedding'].includes(v)) {
+    return 'evening'
+  }
+  if (['brunch', 'museum', 'shopping', 'office', 'work', 'everyday'].includes(v)) {
+    return 'city'
+  }
+  if (['gallery', 'art event', 'gallery event', 'gallery opening'].includes(v)) {
+    return 'gallery / art event'
+  }
   if (['outdoor daytime social', 'outdoor daytime', 'daytime social', 'wine festival', 'outdoor cafe', 'picnic'].includes(v)) {
     return 'outdoor_daytime_social'
   }
