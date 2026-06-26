@@ -44,6 +44,7 @@ These extend the Engineering Principles in `AGENTS.md` with engine-specific mech
 - All system prompts and prompt fragments live in `prompts.js` as named exports — no inline prompt strings in routes or core pipelines.
 - **Style Constitution constraints**: All system prompts must quote or reference the ratified Style Constitution layers exported from `prompts.js` (`BODY_CONTRACT`, `PROVEN_FORMULAS`, `AESTHETIC_GRAVITY`, `LANE_NEUTRALITY`, `WORKING_STYLE`). Models/agents must not invent style preferences, signature colors, or unratified drift labels. Style lanes are open and never gatekept. The `check_style_claims.js` script automatically guards against regression of unauthorized taste terms.
 - The model is never asked to honor constraints that code can enforce (ID validity, suppressed pieces, image budgets): enforce structurally, instruct only for judgment. Soft "do not use X" prompt guards are a last resort, not a design.
+- Garment images for composition go at high/auto detail. Low detail strips the texture, weave, drape, and construction cues the composer depends on; do not lower it for cost without an explicit product decision.
 - Mandatory output slots create improvisation: if an element becomes optional (shoes, accessories), update the prompt's composition rules AND the validation/repair layer AND the renderer expectations together.
 - Provider limits are guarded in code (Claude: max 100 images/request; budget rosters to ≤90). A request must never be able to fail on a provider limit that was knowable beforehand.
 

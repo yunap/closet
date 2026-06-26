@@ -8,6 +8,39 @@ import { resolveActivityProfile } from './footwear-comfort.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 
 const SEARCH_WARDROBE_VISUAL_CAP = 16
+const OCCASION_VALUE_SET = new Set(OCCASION_VALUES)
+const SEARCH_QUERY_OCCASION_SYNONYMS = new Map([
+  ['dinner', 'evening'],
+  ['dining', 'evening'],
+  ['restaurant', 'evening'],
+  ['wine bar', 'evening'],
+  ['theater', 'evening'],
+  ['night', 'evening'],
+  ['night out', 'evening'],
+  ['wedding', 'evening'],
+  ['brunch', 'city'],
+  ['museum', 'city'],
+  ['shopping', 'city'],
+  ['office', 'city'],
+  ['work', 'city'],
+  ['everyday', 'city'],
+  ['gallery', 'gallery / art event'],
+  ['art event', 'gallery / art event'],
+  ['gallery event', 'gallery / art event'],
+  ['gallery opening', 'gallery / art event'],
+  ['outdoor daytime social', 'outdoor_daytime_social'],
+  ['outdoor daytime', 'outdoor_daytime_social'],
+  ['daytime social', 'outdoor_daytime_social'],
+  ['wine festival', 'outdoor_daytime_social'],
+  ['outdoor cafe', 'outdoor_daytime_social'],
+  ['picnic', 'outdoor_daytime_social']
+])
+const PROFILE_TO_CANONICAL_OCCASION = new Map([
+  ['city_smart_casual', 'city'],
+  ['evening_social', 'evening'],
+  ['outdoor_daytime_social', 'outdoor_daytime_social'],
+  ['home_loungewear', 'casual']
+])
 
 function normalizePieceLookupName(name = '') {
   return String(name || '').toLowerCase().replace(/\s+/g, ' ').trim()
@@ -24,6 +57,35 @@ function resolveActivePieceByName(name = '') {
   if (!normalizedName) return null
   const activePieces = db.prepare("SELECT * FROM pieces WHERE status='active'").all()
   return activePieces.find(piece => normalizePieceLookupName(piece.name) === normalizedName) || null
+}
+
+function canonicalOccasionFromQuery(query = '') {
+  const raw = String(query || '').toLowerCase().trim()
+  if (!raw) return ''
+  if (OCCASION_VALUE_SET.has(raw)) return raw
+  const synonymOccasion = SEARCH_QUERY_OCCASION_SYNONYMS.get(raw)
+  if (synonymOccasion) return synonymOccasion
+  const profile = resolveOccasionProfile(raw, '')
+  return PROFILE_TO_CANONICAL_OCCASION.get(profile?.id) || ''
+}
+
+function isOccasionOnlySearchQuery(query = '') {
+  return Boolean(canonicalOccasionFromQuery(query))
+}
+
+function shouldBroadenSparseOccasionSearch(occasion = '') {
+  const profile = resolveOccasionProfile(occasion, '')
+  if (!profile) return true
+  const rules = profile.rules || {}
+  const hardLists = [
+    rules.prohibited_materials,
+    rules.prohibited_materials_warm,
+    rules.prohibited_footwear,
+    rules.prohibited_footwear_summer,
+    rules.prohibited_pieces,
+    rules.discouraged_pieces
+  ]
+  return !hardLists.some(list => Array.isArray(list) && list.length > 0)
 }
 
 export const STYLIST_TOOLS = [
@@ -187,16 +249,22 @@ export async function executeTool(name, args, toolContext = {}) {
         }
         if (query) {
           const qLower = query.toLowerCase()
-          const resolvedProfile = resolveOccasionProfile(query, '')
-          filtered = filtered.filter(p => {
-            const matchesText = p.name.toLowerCase().includes(qLower) || 
-                               (p.notes && p.notes.toLowerCase().includes(qLower))
-            if (matchesText) return true
-            if (resolvedProfile) {
-              return pieceOccasionCompatible(p, resolvedProfile.id)
+          const queryOccasion = isOccasionOnlySearchQuery(query) ? canonicalOccasionFromQuery(query) : ''
+          if (queryOccasion) {
+            const beforeOccasionQueryFilter = filtered
+            const occasionQueryFiltered = filtered.filter(p => pieceOccasionCompatible(p, queryOccasion))
+            if (occasionQueryFiltered.length || !shouldBroadenSparseOccasionSearch(queryOccasion)) {
+              filtered = occasionQueryFiltered
+            } else {
+              filtered = beforeOccasionQueryFilter
+              fallbackNote = `No active pieces are explicitly tagged for "${queryOccasion}"; showing flexible active wardrobe pieces instead, with ruleFit/weatherFit annotations for the requested context.`
             }
-            return false
-          })
+          } else {
+            filtered = filtered.filter(p => 
+              p.name.toLowerCase().includes(qLower) || 
+              (p.notes && p.notes.toLowerCase().includes(qLower))
+            )
+          }
         }
 
         let excludedCount = 0

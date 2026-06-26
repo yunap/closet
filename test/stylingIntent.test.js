@@ -68,6 +68,11 @@ test('generate_outfits schema exposes styling intent enums', () => {
 test('normalize styling intent defaults and preserves valid values', () => {
   assert.equal(normalizeOccasion('gallery / art event'), 'gallery / art event')
   assert.equal(normalizeOccasion('Evening'), 'evening')
+  assert.equal(normalizeOccasion('dinner'), 'evening')
+  assert.equal(normalizeOccasion('wine bar'), 'evening')
+  assert.equal(normalizeOccasion('wedding'), 'evening')
+  assert.equal(normalizeOccasion('brunch'), 'city')
+  assert.equal(normalizeOccasion('gallery'), 'gallery / art event')
   assert.equal(normalizeOccasion('outdoor_daytime_social'), 'outdoor_daytime_social')
   assert.equal(normalizeOccasion('outdoor daytime social'), 'outdoor_daytime_social')
   assert.equal(normalizeOccasion('wine festival'), 'outdoor_daytime_social')
