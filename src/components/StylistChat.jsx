@@ -58,6 +58,33 @@ const timingSummary = (timings = {}) => Object.entries(timings || {})
   .map(([key, value]) => `${key.replace(/Ms$/, '')}: ${formatMs(value)}`)
   .join(' · ')
 
+const formatTokenCount = (value) => {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return '0'
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`
+  return String(Math.round(n))
+}
+
+const composerUsageSummary = (usage = null) => {
+  if (!usage) return ''
+  const provider = usage.provider || 'ai'
+  const model = usage.model ? `${provider}:${usage.model}` : provider
+  const pieces = [
+    model,
+    `in: ${formatTokenCount(usage.inputTokens)}`,
+    `out: ${formatTokenCount(usage.outputTokens)}`,
+  ]
+  const cached = Number(usage.cacheReadInputTokens || usage.cachedInputTokens || 0)
+  if (cached > 0) pieces.push(`cached: ${formatTokenCount(cached)}`)
+  const cost = usage.estimatedCost
+  if (cost?.pricingAvailable && typeof cost.estimatedUsd === 'number') {
+    pieces.push(`est: $${cost.estimatedUsd.toFixed(4)}`)
+  } else if (cost && cost.pricingAvailable === false) {
+    pieces.push('est: unavailable')
+  }
+  return pieces.join(' · ')
+}
+
 const calculateOpenAICost = (timings) => {
   if (!timings || !timings.usage) return null
   const input = (timings.usage.input_tokens || 0) * 0.0000025
@@ -1201,6 +1228,11 @@ export default function AskClaude({
 
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+        {message?.debug?.composerUsage && (
+          <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
+            Composer: {composerUsageSummary(message.debug.composerUsage)}
+          </div>
+        )}
         {(message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings && (
           <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
             Timing: {timingSummary(message.debug.timings)}{renderCost(message.debug.timings)}
@@ -2611,6 +2643,7 @@ export default function AskClaude({
         const data = await res.json()
         replyText = data.feedback || data.error || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null
+        replyDebug = data.debug || null
         if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
           setThreadMemory({
             type: 'generated_outfits',
@@ -3855,7 +3888,8 @@ export default function AskClaude({
                           {[
                             { value: 'current season', label: 'Current season' },
                             { value: 'early spring / cool mild weather', label: 'Early spring' },
-                            { value: 'spring / summer', label: 'Spring / summer' },
+                            { value: 'spring', label: 'Spring' },
+                            { value: 'summer', label: 'Summer' },
                             { value: 'fall', label: 'Fall' },
                             { value: 'winter', label: 'Winter' },
                             { value: 'hot weather', label: 'Very hot weather' },

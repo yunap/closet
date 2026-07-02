@@ -515,6 +515,8 @@ test('selected-piece generator returns structured outfit cards', async () => {
   assert.ok(json.structuredOutfits[0].pieceIds.includes(seeded.bottom))
   assert.ok('visualCritic' in json.debug)
   assert.ok(json.debug.visualCritic.shownPieceCount > 0)
+  assert.equal(Object.hasOwn(json.debug, 'composerUsage'), true)
+  assert.equal(Object.hasOwn(json.debug.visualCritic, 'composerUsage'), true)
 })
 
 test('selected-piece visual composer pins the selected anchor when model omits it', async () => {
@@ -1698,6 +1700,22 @@ test('StylistChat enables rough preview for rendered freeform outfit cards', () 
   assert.match(src, /Generate rough preview/)
 })
 
+test('StylistChat surfaces visual composer usage cost in outfit cards', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /const composerUsageSummary/)
+  assert.match(src, /message\?\.debug\?\.composerUsage/)
+  assert.match(src, /Composer: \{composerUsageSummary\(message\.debug\.composerUsage\)\}/)
+  assert.match(src, /replyDebug = data\.debug \|\| null/)
+})
+
+test('StylistChat selected-piece season menu keeps spring and summer separate', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /\{ value: 'spring', label: 'Spring' \}/)
+  assert.match(src, /\{ value: 'summer', label: 'Summer' \}/)
+  assert.doesNotMatch(src, /Spring \/ summer/)
+  assert.doesNotMatch(src, /spring \/ summer/)
+})
+
 test('StylistChat shows trip explanation before cards, not inside trip cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /Trip plan/)
@@ -2050,7 +2068,11 @@ test('provider usage helpers normalize tokens and estimate known model costs', (
   assert.equal(openAiCost.pricingAvailable, true)
   assert.equal(openAiCost.estimatedUsd, 0.01525)
 
-  const unknownCost = estimateAiUsageCost({ provider: 'openai', model: 'gpt-4o', inputTokens: 1000, outputTokens: 100 })
+  const gpt4oCost = estimateAiUsageCost({ provider: 'openai', model: 'gpt-4o', inputTokens: 54000, outputTokens: 656 })
+  assert.equal(gpt4oCost.pricingAvailable, true)
+  assert.equal(gpt4oCost.estimatedUsd, 0.14156)
+
+  const unknownCost = estimateAiUsageCost({ provider: 'openai', model: 'unknown-openai-model', inputTokens: 1000, outputTokens: 100 })
   assert.equal(unknownCost.pricingAvailable, false)
   assert.equal(unknownCost.estimatedUsd, null)
 
