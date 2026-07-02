@@ -1477,14 +1477,19 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   const timings = { thumbPrepMs: Date.now() - routeStartedAt }
   let parsed = {}
   let composerError = null
+  let composerUsage = null
   try {
-    const raw = await withTimeout(askStylist({
+    const composerStartedAt = Date.now()
+    const composerResult = await withTimeout(askStylistWithUsage({
       system: `${WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(ACTIVITY_PROFILES, null, 2)}`,
       maxTokens: 2000,
       messages: [{ role: 'user', content }]
     }), 90000, 'Selected-piece visual composer')
-    parsed = safeJsonFromModel(raw)
+    timings.composerMs = Date.now() - composerStartedAt
+    composerUsage = composerResult.usage || null
+    parsed = safeJsonFromModel(composerResult.text)
   } catch (err) {
+    timings.composerMs = Date.now() - routeStartedAt - timings.thumbPrepMs
     composerError = err.message
   }
 
@@ -1539,6 +1544,10 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       excludedCounts: rosterDebug.excludedCounts,
       aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
       composerError,
+      composerUsage: composerUsage ? {
+        ...composerUsage,
+        estimatedCost: estimateAiUsageCost(composerUsage)
+      } : null,
       timings
     }
   }
@@ -1974,6 +1983,7 @@ export async function generateOutfitsForPieceInternal({
     idealOnlyMode,
     debug: {
       visualCritic: visualCriticDebug,
+      composerUsage: visualCriticDebug?.composerUsage || null,
       weatherProfile
     }
   }
