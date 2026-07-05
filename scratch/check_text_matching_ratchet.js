@@ -44,7 +44,7 @@ const filesToScan = []
 
 if (fs.existsSync(stylingEngineDir)) {
   fs.readdirSync(stylingEngineDir).forEach(file => {
-    if (file.endsWith('.js') && file !== 'attributes.js') {
+    if (file.endsWith('.js')) {
       filesToScan.push(path.join(stylingEngineDir, file))
     }
   })

@@ -15,7 +15,7 @@ test('Visual Composer Roster - Hot weather filter ladder', () => {
     // Medium outerwear 3
     { id: 5, name: 'Medium Jacket 3', category: 'outerwear', photo: 'img.jpg', fabric_weight: 'medium' },
     // Shorts
-    { id: 6, name: 'Linen Shorts', category: 'bottom', photo: 'img.jpg', style_profile_json: { bottom_kind: 'shorts' } },
+    { id: 6, name: 'Linen Shorts', category: 'bottom', photo: 'img.jpg', fabric_weight: 'light', style_profile_json: { bottom_kind: 'shorts' } },
     // Heavy top
     { id: 7, name: 'Heavy Top', category: 'top', photo: 'img.jpg', fabric_weight: 'heavy' },
     // Normal top
@@ -56,11 +56,11 @@ test('Visual Composer Roster - Hot weather filter ladder', () => {
 test('Visual Composer Roster - Cold weather filter ladder', () => {
   const pieces = [
     // Shorts
-    { id: 1, name: 'Linen Shorts', category: 'bottom', photo: 'img.jpg', style_profile_json: { bottom_kind: 'shorts' } },
+    { id: 1, name: 'Linen Shorts', category: 'bottom', photo: 'img.jpg', fabric_weight: 'light', style_profile_json: { bottom_kind: 'shorts' } },
     // Heavy coat
     { id: 2, name: 'Heavy Coat', category: 'outerwear', photo: 'img.jpg', fabric_weight: 'heavy' },
     // Pants
-    { id: 3, name: 'Jeans', category: 'bottom', photo: 'img.jpg', style_profile_json: { bottom_kind: 'pants' } }
+    { id: 3, name: 'Jeans', category: 'bottom', photo: 'img.jpg', fabric_weight: 'medium', style_profile_json: { bottom_kind: 'pants', coverage: 'full-insulating' } }
   ]
 
   const { roster, excluded } = buildVisualComposerRoster(pieces, {
@@ -176,6 +176,55 @@ test('Visual Composer Roster - Category and global budget ceilings', () => {
   assert.equal(debug.categoryCounts.shoes, 14)
 })
 
+test('Visual Composer Roster - debug reports exact cap cuts and slot coverage', () => {
+  const pieces = []
+  let id = 1
+  for (let i = 1; i <= 35; i++, id++) {
+    pieces.push({ id, name: `Top ${i}`, category: 'top', photo: 'img.jpg', fabric_weight: i <= 30 ? 'light' : 'heavy' })
+  }
+  for (let i = 1; i <= 25; i++, id++) {
+    pieces.push({ id, name: `Bottom ${i}`, category: 'bottom', photo: 'img.jpg', fabric_weight: 'light' })
+  }
+  for (let i = 1; i <= 15; i++, id++) {
+    pieces.push({ id, name: `Shoes ${i}`, category: 'shoes', photo: 'img.jpg' })
+  }
+  for (let i = 1; i <= 10; i++, id++) {
+    pieces.push({ id, name: `Dress ${i}`, category: 'dress', photo: 'img.jpg', fabric_weight: 'light' })
+  }
+  for (let i = 1; i <= 8; i++, id++) {
+    pieces.push({ id, name: `Outerwear ${i}`, category: 'outerwear', photo: 'img.jpg', fabric_weight: 'light' })
+  }
+  for (let i = 1; i <= 5; i++, id++) {
+    pieces.push({ id, name: `Accessory ${i}`, category: 'accessory', photo: 'img.jpg' })
+  }
+
+  const { roster, debug } = buildVisualComposerRoster(pieces, {
+    occasion: 'casual',
+    maxImages: 93,
+    includeAccessories: true
+  })
+
+  assert.equal(debug.postGatePoolSize, 98)
+  assert.equal(debug.capApplied, true)
+  assert.equal(debug.capCutPieces.length, 5)
+  assert.equal(roster.length, 93)
+  assert.deepEqual(debug.slotCoverage, {
+    top: 30,
+    bottom: 25,
+    dress: 10,
+    shoes: 15,
+    outerwear: 8,
+    accessory: 5
+  })
+  for (const piece of debug.capCutPieces) {
+    assert.equal(typeof piece.id, 'number')
+    assert.equal(typeof piece.name, 'string')
+    assert.equal(typeof piece.score, 'number')
+    assert.ok(Array.isArray(piece.topReasons))
+    assert.ok(piece.topReasons.length > 0)
+  }
+})
+
 test('Visual Composer Roster - Determinism and stable tie-breaking', () => {
   const pieces = [
     { id: 4, name: 'Top 4', category: 'top', photo: 'img.jpg' },
@@ -214,10 +263,10 @@ test('Visual Composer Roster - Selected pieces bypass limits and filters', () =>
     // Heavy outerwear in hot weather (normally excluded in Step 3) but passed via selectedPieceId
     { id: 3, name: 'Selected Heavy Outerwear', category: 'outerwear', photo: 'img.jpg', fabric_weight: 'heavy' },
     // Excess top that would normally be trimmed in Step 4
-    { id: 4, name: 'Selected Excess Top', category: 'top', photo: 'img.jpg' },
-    { id: 5, name: 'Normal Top 1', category: 'top', photo: 'img.jpg' },
-    { id: 6, name: 'Normal Top 2', category: 'top', photo: 'img.jpg' },
-    { id: 7, name: 'Normal Top 3', category: 'top', photo: 'img.jpg' }
+    { id: 4, name: 'Selected Excess Top', category: 'top', photo: 'img.jpg', fabric_weight: 'light', selected: true },
+    { id: 5, name: 'Normal Top 1', category: 'top', photo: 'img.jpg', fabric_weight: 'light' },
+    { id: 6, name: 'Normal Top 2', category: 'top', photo: 'img.jpg', fabric_weight: 'light' },
+    { id: 7, name: 'Normal Top 3', category: 'top', photo: 'img.jpg', fabric_weight: 'light' }
   ]
 
   const { roster } = buildVisualComposerRoster(pieces, {

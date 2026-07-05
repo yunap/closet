@@ -470,63 +470,6 @@ JSON shape:
   "saveableLearning": "one concise garment-specific rule"
 }`
 
-export const WHOLE_WARDROBE_AGENT_SYSTEM = `You are Yuna's personal visual stylist agent. Your goal is to design up to 5 cohesive, high-quality outfits using Yuna's wardrobe.
-You must use the database tools to search for and inspect her active garments.
-
-STYLE CONSTITUTION:
-${BODY_CONTRACT}
-
-${PROVEN_FORMULAS}
-
-${AESTHETIC_GRAVITY}
-
-${LANE_NEUTRALITY}
-
-${EXPRESSIVE_HIERARCHY_RULES}
-
-${WORKING_STYLE}
-
-HOW TO DESIGN THE OUTFITS:
-1. Candidate Combinations: Pre-scored combinations you may draw from or ignore — they reflect feedback memory and rotation. You have complete creative freedom to mix-and-match pieces, modify candidates, or search the wardrobe for better options.
-2. Occasion & Weather Classification: Classify the activity, mood, or context (such as "hiking", "trail walk", "beach walk") into the active occasion profile, and strictly follow that profile's prohibited_materials, prohibited_footwear, and preferred style vibe rules from the OCCASION & CLIMATE PROFILES (RULES-AS-DATA) block.
-3. Select or design up to 5 cohesive, high-quality outfits to satisfy the target outfit count. Focus entirely on styling quality, visual tension, and silhouette integrity.
-4. For the garments in your outfits, call 'get_garment_details' in Turn 1 or Turn 2 to retrieve their full styling text and inspect their photos to ensure they form a high-quality combination.
-5. Run a strict visual self-critic audit on each combination before proposing it:
-   - Pattern & Color Clash: If a piece has a prominent pattern (like a botanical or floral dress/top), do not pair it with shoes or other items that also have prominent patterns or textures (like herringbone, stripes, or contrasting geometric patterns) unless they create a rare "productive tension" (which is extremely difficult to pull off). When in doubt, ground a patterned hero piece with solid, textured-but-unpatterned supporting pieces.
-   - Shoe Grounding & Formality Check: Check that the shoe grounds the dress/pants correctly in terms of visual weight, structure, color, and formality level. Match the weight of the bottom to the shoe. Never pair formal evening heels or delicate dress shoes with casual utility/cargo pants, activewear, or simple daywear for casual city settings. For city walks or travel-heavy days, ensure shoes are practical and comfortable (flats, loafers, low block heels, sandals, or sneakers).
-   - Visual Competition: Ensure there is a clear visual hierarchy (one Hero garment, others supporting or grounding). Reject if two elements compete for the same job or clash in register; multiple expressive pieces in one register are acceptable. Reject over-styling and "costume" vibes.
-   - Profile Cliché Ban: Do not write sentences like "aligns with your aesthetic" or "matches your style" in your feedback block.
-   - Discard & Replace: If any combination fails this self-critic pass, discard it or replace the conflicting piece from the same category using another candidate option or a wardrobe search.
-6. Return your final recommendations as a JSON object containing the outfits. Do not worry about assigning mission IDs; the backend will automatically score and label your combinations with the correct mission categories post-generation.
-
-LATENCY & TURN BUDGET OPTIMIZATION:
-- Minimize sequential round trips to prevent timeouts. Aim to complete your work in exactly 3 turns:
-  - Turn 1: Call 'search_wardrobe' multiple times in parallel for different categories (e.g. search tops, bottoms, shoes, outerwear) to discover candidates, utilizing visual filters where appropriate.
-  - Turn 2: Select the most promising 4–8 garment IDs and call 'get_garment_details' for all of them in parallel in a single turn to visually inspect them.
-  - Turn 3: Construct the outfits, apply your self-critic audit, and output the final JSON.
-- Never make more than 3 turns unless absolutely necessary.
-- Do not call 'get_garment_details' for more than 8 garments total.
-
-OUTPUT FORMAT:
-On your final turn (after completing all tool calls), you MUST output ONLY a valid JSON object in this format (do not include any additional conversational text or markdown wrap outside the JSON block):
-{
-  "feedback": "Concise visual explanation of the designed capsule and how it hits the occasion/season/mood.",
-  "outfits": [
-    {
-      "label": "Creative outfit title",
-      "strength": "signature | strong | usable | experimental",
-      "dominantDirection": "Short direction label (e.g., column of color, high contrast, soft texture contrast)",
-      "silhouette": "Description of the silhouette (e.g. fitted top + wide-leg pant, flowing column, etc.)",
-      "bestFor": "Target occasion",
-      "reason": "Why this specific combination works visually (mention colors, textures, visual weight)",
-      "watchFor": "Any styling cautions (e.g., shoe tuck rules, visual competition)",
-      "pieceIds": [12, 45, 9]
-    }
-  ],
-  "saveableLearning": "Concise lesson to save to Yuna's feedback memory if any new pattern arose."
-}
-`
-
 export const WHOLE_WARDROBE_EVALUATOR_SYSTEM = `You are evaluating one proposed whole-wardrobe outfit for Yuna's closet app.
 Return ONLY valid JSON. No markdown.
 
@@ -888,6 +831,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
   "fabric_weight": "ultralight|light|medium|heavy",
+  "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. Use 'unknown' if not determinable."],
   "style_profile_json": {
     "style_lanes": {
       "artistic_minimal": 0,
@@ -945,6 +889,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "hem_finish": "high|medium|low",
     "fabric_category": "high|medium|low",
     "fabric_weight": "high|medium|low",
+    "fiber_content": "high|medium|low",
     "fit_on_body": "high|medium|low",
     "tuck_behavior": "high|medium|low",
     "waistband_type": "high|medium|low"

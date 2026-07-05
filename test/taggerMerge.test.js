@@ -44,6 +44,19 @@ test('applyTaggerResult persists normalized confidence and photo properties', ()
   assert.equal(merged.style_profile_json.photo_properties['WORN PHOTO'].real_context, false)
 })
 
+test('applyTaggerResult normalizes fiber content to canonical values', () => {
+  const merged = applyTaggerResult(
+    { id: 1, name: 'test sweater', manual_overrides: [] },
+    {
+      fiber_content: ['Wool', 'mystery fiber', 'linen'],
+      _confidence: { fiber_content: 'medium' }
+    }
+  )
+
+  assert.deepEqual(merged.fiber_content, ['wool', 'unknown', 'linen'])
+  assert.equal(merged.style_profile_json._confidence.fiber_content, 'medium')
+})
+
 test('manual overrides pin confidence and block retag overwrite', () => {
   const merged = applyTaggerResult(
     {
