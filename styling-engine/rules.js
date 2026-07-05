@@ -8,6 +8,10 @@ import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js
 
 import {
   fabricWeight,
+  pieceFabricWeight,
+  pieceBareness,
+  pieceCoverage,
+  pieceHasInsulatingFiber,
   bottomKind,
   colorFamily,
   patternLoudness,
@@ -59,77 +63,27 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   return { isHot: isHot && !isCold, isCold: isCold && !isHot }
 }
 
-export function pieceFabricWeight(p) {
-  if (p.fabric_weight) {
-    const fw = String(p.fabric_weight).toLowerCase().trim()
-    if (fw === 'heavy') return 'heavy'
-    if (fw === 'light' || fw === 'lightweight') return 'light'
-    if (fw === 'medium') return 'medium'
-  }
-  const text = `${p.name || ''} ${p.reads_as || ''}`.toLowerCase()
-  if (/\b(wool|denim|corduroy|leather|fleece)\b/i.test(text)) {
-    // TODO: backfill fabric_weight in metadata; remove fallback
-    return 'heavy'
-  }
-  if (/\b(linen|gauze|crinkle|seersucker)\b/i.test(text)) {
-    // TODO: backfill fabric_weight in metadata; remove fallback
-    return 'light'
-  }
-  return 'medium'
-}
-
-export function pieceBareness(p) {
-  if (p.style_profile_json?.bareness) {
-    return String(p.style_profile_json.bareness).toLowerCase().trim()
-  }
-  if (p.sleeve_type && /\b(sleeveless|tank|strapless|halter|camisole)\b/i.test(p.sleeve_type)) {
-    return 'high'
-  }
-  if (p.length_hits_at && /\b(mini|short|mid-thigh|upper-thigh)\b/i.test(p.length_hits_at)) {
-    return 'high'
-  }
-  const text = `${p.name || ''} ${p.reads_as || ''}`.toLowerCase()
-  if (/\b(shorts?|mini|tank|sleeveless|camisole|cami|halter|strapless|sandals?|mules?|crop|cropped|shortie|cut-offs?)\b/i.test(text)) {
-    // TODO: backfill bareness in metadata; remove fallback
-    return 'high'
-  }
-  return 'normal'
-}
-
-export function pieceCoverage(p) {
-  if (p.style_profile_json?.coverage) {
-    return String(p.style_profile_json.coverage).toLowerCase().trim()
-  }
-  if (p.sleeve_type && /\b(long)\b/i.test(p.sleeve_type)) {
-    return 'full-insulating'
-  }
-  if (p.length_hits_at && /\b(full|ankle|floor|maxi)\b/i.test(p.length_hits_at)) {
-    return 'full-insulating'
-  }
-  const text = `${p.name || ''} ${p.reads_as || ''}`.toLowerCase()
-  if (/\b(pants|trousers|jeans|denim|sweaters?|coats?|jackets?|blazers?|boots?|maxi|tunic|cardigans?|trench|parka|turtleneck)\b/i.test(text)) {
-    // TODO: backfill coverage in metadata; remove fallback
-    return 'full-insulating'
-  }
-  return 'normal'
-}
+export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js'
 
 export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
   const adjustments = []
   const fw = pieceFabricWeight(piece)
   const bare = pieceBareness(piece)
   const cov = pieceCoverage(piece)
+  const hasInsulatingFiber = pieceHasInsulatingFiber(piece)
 
   if (weatherProfile?.isHot) {
     if (fw === 'heavy') adjustments.push({ score: -12, label: 'heavy - too warm for the heat', reason: 'hot weather: heavy fabric' })
     if (fw === 'light') adjustments.push({ score: 10, label: 'lightweight - good for heat', reason: 'hot weather: lightweight fabric' })
     if (bare === 'high') adjustments.push({ score: 8, label: 'skin-friendly cut', reason: 'hot weather: skin-friendly cut' })
     if (cov === 'full-insulating') adjustments.push({ score: -8, label: 'insulating - too warm', reason: 'hot weather: insulating coverage' })
+    if (hasInsulatingFiber && fw !== 'light') adjustments.push({ score: -12, label: 'insulating fiber - too warm', reason: 'hot weather: insulating fiber' })
   } else if (weatherProfile?.isCold) {
     if (fw === 'heavy') adjustments.push({ score: 10, label: 'heavy - good for cool weather', reason: 'cold weather: heavy fabric' })
     if (fw === 'light') adjustments.push({ score: -12, label: 'lightweight - needs layering', reason: 'cold weather: lightweight fabric' })
     if (bare === 'high') adjustments.push({ score: -8, label: 'skin-friendly cut - too bare for cold', reason: 'cold weather: skin-friendly cut' })
     if (cov === 'full-insulating') adjustments.push({ score: 8, label: 'insulating - good for cold', reason: 'cold weather: insulating coverage' })
+    if (hasInsulatingFiber && cov !== 'full-insulating') adjustments.push({ score: 8, label: 'insulating fiber - good for cold', reason: 'cold weather: insulating fiber' })
   }
 
   return {
@@ -1670,12 +1624,14 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   }
 
   if (weatherProfile.isHot) {
-    const isHeavy = pieceFabricWeight(piece) === 'heavy'
+    const weight = pieceFabricWeight(piece)
+    const isHeavy = weight === 'heavy'
     const isUpperBodyPiece = piece.category === 'outerwear' || wardrobeCategoryGroup(piece) === 'outerwear' || piece.category === 'top' || piece.category === 'dress'
     const hasInsulatingCoverage = pieceCoverage(piece) === 'full-insulating'
     const hasWarmNeckline = necklineWarmth(piece) === 'warm'
     const hasWarmSleeves = sleeveCoverage(piece) === 'long'
-    const isMediumOrHeavy = pieceFabricWeight(piece) === 'medium' || pieceFabricWeight(piece) === 'heavy'
+    const isMediumOrHeavy = weight === 'medium' || weight === 'heavy'
+    const hasHotInsulatingFiber = pieceHasInsulatingFiber(piece) && weight !== 'light'
 
     const isInsulatingTopOrDress = isUpperBodyPiece && (
       hasInsulatingCoverage || 
@@ -1684,7 +1640,9 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     )
     const isInsulatingBottom = wardrobeCategoryGroup(piece) === 'bottom' && hasInsulatingCoverage && isMediumOrHeavy
 
-    if (isHeavy || isInsulatingTopOrDress || isInsulatingBottom) {
+    if (hasHotInsulatingFiber) {
+      reasons.push('hot weather: insulating fiber')
+    } else if (isHeavy || isInsulatingTopOrDress || isInsulatingBottom) {
       reasons.push('hot weather: insulating piece')
     }
   }
@@ -1768,13 +1726,20 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   selectedPieceId = null,
   includeAccessories = false,
   mood = '',
-  activity = ''
+  activity = '',
+  recordMetadataTodos = true
 } = {}) {
   const roster = []
   const excluded = []
+  const capCutReasons = new Set(['roster cap: category limit', 'roster cap: global limit'])
+  const scoreCache = new Map()
   const debug = {
     excludedCounts: {},
-    categoryCounts: {}
+    categoryCounts: {},
+    postGatePoolSize: 0,
+    capApplied: false,
+    capCutPieces: [],
+    slotCoverage: { top: 0, bottom: 0, dress: 0, shoes: 0, outerwear: 0, accessory: 0 }
   }
 
   const exclude = (piece, reason) => {
@@ -1784,6 +1749,42 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       reason
     })
     debug.excludedCounts[reason] = (debug.excludedCounts[reason] || 0) + 1
+  }
+
+  const ensureMetadataTodo = (piece, field) => {
+    if (!recordMetadataTodos) return
+    const description = `${piece.name || `Piece ${piece.id}`}: missing ${field} — retag to restore weather-gated visibility`
+    try {
+      const linkedPiece = db.prepare('SELECT id FROM pieces WHERE id = ?').get(piece.id)
+      if (!linkedPiece) return
+      const existing = db.prepare(`
+        SELECT id FROM todos
+        WHERE completed = 0
+          AND linked_piece_id = ?
+          AND description LIKE ?
+        LIMIT 1
+      `).get(piece.id, `%missing ${field}%`)
+      if (!existing) {
+        db.prepare('INSERT INTO todos (type, description, linked_piece_id) VALUES (?, ?, ?)').run('metadata', description, piece.id)
+      }
+    } catch (err) {
+      console.warn('Failed to create metadata todo:', err.message)
+    }
+  }
+
+  const missingWeatherGateField = (piece) => {
+    if (!isHot && !isCold) return null
+    const group = wardrobeCategoryGroup(piece)
+    if (isAccessory(piece) || group === 'shoes') return null
+    const needsFabricWeight = group === 'top' || group === 'outerwear' || group === 'dress' || group === 'bottom'
+    if (needsFabricWeight && pieceFabricWeight(piece) === null) return 'fabric_weight'
+    const needsCoverage = group === 'bottom' && (pieceFabricWeight(piece) === 'medium' || pieceFabricWeight(piece) === 'heavy')
+    if (needsCoverage && pieceCoverage(piece) === null) return 'style_profile_json.coverage'
+    const fibers = Array.isArray(piece?.fiber_content) ? piece.fiber_content : []
+    const fabricCategory = String(piece?.fabric_category || '').toLowerCase().trim()
+    const insulatingCategories = new Set(['wool', 'cashmere', 'fleece', 'down', 'mohair', 'alpaca'])
+    if (isHot && fibers.length === 0 && insulatingCategories.has(fabricCategory)) return 'fiber_content'
+    return null
   }
 
   const isSelected = (p) => {
@@ -1867,8 +1868,15 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   if (isHot) {
     const outerwearCandidates = []
     for (const p of afterStep2) {
+      const missingField = missingWeatherGateField(p)
       if (isSelected(p)) {
         afterStep3.push(p)
+      } else if (missingField) {
+        const reason = `metadata missing: ${missingField} (weather gate active)`
+        exclude(p, reason)
+        ensureMetadataTodo(p, missingField)
+      } else if (pieceHasInsulatingFiber(p) && pieceFabricWeight(p) !== 'light') {
+        exclude(p, 'hot weather: insulating fiber')
       } else if (((isOuterwear(p) || isTop(p)) && fabricWeight(p) === 'heavy') || (wardrobeCategoryGroup(p) === 'bottom' && pieceCoverage(p) === 'full-insulating' && (fabricWeight(p) === 'medium' || fabricWeight(p) === 'heavy'))) {
         exclude(p, 'hot weather: insulating piece')
       } else if (isOuterwear(p)) {
@@ -1901,8 +1909,13 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     }
   } else if (isCold) {
     for (const p of afterStep2) {
+      const missingField = missingWeatherGateField(p)
       if (isSelected(p)) {
         afterStep3.push(p)
+      } else if (missingField) {
+        const reason = `metadata missing: ${missingField} (weather gate active)`
+        exclude(p, reason)
+        ensureMetadataTodo(p, missingField)
       } else if (bottomKind(p) === 'shorts') {
         exclude(p, 'cold weather: shorts')
       } else {
@@ -1913,6 +1926,8 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     // No weather profile, Step 3 is a no-op
     afterStep3.push(...afterStep2)
   }
+  debug.postGatePoolSize = afterStep3.length
+  debug.capApplied = afterStep3.length > maxImages
 
   // Step 4 — Image budget cap
   let afterStep4 = []
@@ -1989,6 +2004,8 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   }
 
   function getRelevanceScore(p) {
+    const cacheKey = Number(p.id)
+    if (scoreCache.has(cacheKey)) return scoreCache.get(cacheKey)
     const occasionScore = pieceOccasionScore(p, occasion)
     const conf = confirmedCounts.get(Number(p.id)) || { count: 0, favoriteCount: 0 }
     let historyBonus = conf.count * 8 + conf.favoriteCount * 12
@@ -2114,7 +2131,9 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       }
     }
     
-    return occasionScore + historyBonus + feedbackBonus - recencyPenalty + weatherBonus + occasionProfileBonus
+    const score = occasionScore + historyBonus + feedbackBonus - recencyPenalty + weatherBonus + occasionProfileBonus
+    scoreCache.set(cacheKey, score)
+    return score
   }
 
   function comparePieces(a, b) {
@@ -2162,7 +2181,26 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   for (const p of roster) {
     const group = wardrobeCategoryGroup(p)
     debug.categoryCounts[group] = (debug.categoryCounts[group] || 0) + 1
+    const slot = Object.prototype.hasOwnProperty.call(debug.slotCoverage, group) ? group : 'accessory'
+    debug.slotCoverage[slot] += 1
   }
+  const pieceById = new Map(allowedPieces.map(p => [Number(p.id), p]))
+  debug.capCutPieces = excluded
+    .filter(item => capCutReasons.has(item.reason))
+    .map(item => {
+      const piece = pieceById.get(Number(item.pieceId)) || item
+      const score = getRelevanceScore(piece)
+      const topReasons = (debug.relevanceAdjustments?.[item.pieceId] || [])
+        .filter(Boolean)
+        .slice(0, 3)
+      return {
+        id: Number(item.pieceId),
+        name: item.name,
+        score,
+        topReasons: topReasons.length ? topReasons : [item.reason],
+        reason: item.reason
+      }
+    })
 
   return { roster, excluded, debug }
 }
@@ -2465,25 +2503,23 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   const weather = options.weatherProfile || weatherProfileFromContext(options)
   if (weather.isHot) {
     for (const piece of pieces) {
-      if (pieceFabricWeight(piece) === 'heavy') add(-12, 'hot weather: heavy fabric')
-      if (pieceFabricWeight(piece) === 'light') add(10, 'hot weather: lightweight fabric')
-      if (pieceBareness(piece) === 'high')      add(8, 'hot weather: skin-friendly cut')
-      if (pieceCoverage(piece) === 'full-insulating') add(-8, 'hot weather: insulating coverage')
+      const fit = weatherFitForPiece(piece, weather)
+      add(fit.score)
+      for (const adjustment of fit.adjustments) reasons.push(adjustment.reason)
     }
     if (pieces.some(p => wardrobeCategoryGroup(p) === 'outerwear')) {
       add(-30, 'hot weather: penalize outerwear/layering')
     }
   } else if (weather.isCold) {
     for (const piece of pieces) {
-      if (pieceFabricWeight(piece) === 'heavy') add(10, 'cold weather: heavy fabric')
-      if (pieceFabricWeight(piece) === 'light') {
-        const catGroup = wardrobeCategoryGroup(piece)
-        if (catGroup === 'bottom' || catGroup === 'dress') {
-          add(-12, 'cold weather: lightweight fabric')
+      const fit = weatherFitForPiece(piece, weather)
+      for (const adjustment of fit.adjustments) {
+        if (adjustment.reason === 'cold weather: lightweight fabric') {
+          const catGroup = wardrobeCategoryGroup(piece)
+          if (catGroup !== 'bottom' && catGroup !== 'dress') continue
         }
+        add(adjustment.score, adjustment.reason)
       }
-      if (pieceBareness(piece) === 'high')      add(-8, 'cold weather: skin-friendly cut')
-      if (pieceCoverage(piece) === 'full-insulating') add(8, 'cold weather: insulating coverage')
     }
     const hasWarmLayer = pieces.some(piece => {
       const catGroup = wardrobeCategoryGroup(piece)

@@ -2,6 +2,11 @@
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
 import { confidenceFromProfile } from './taggerMerge.js'
 
+export const FIBER_VALUES = ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
+  'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
+  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown']
+export const INSULATING_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down'])
+
 const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
   'silhouette',
   'fit_on_body',
@@ -41,6 +46,7 @@ export function pieceTextBlob(p) {
     trustedField(p, 'silhouette') ? p.silhouette || '' : '',
     p.fabric_category || '',
     p.fabric_weight || '',
+    ...(Array.isArray(p.fiber_content) ? p.fiber_content : []),
     trustedField(p, 'fit_on_body') ? p.fit_on_body || '' : '',
     trustedField(p, 'tuck_behavior') ? p.tuck_behavior || '' : '',
     trustedField(p, 'waistband_type') ? p.waistband_type || '' : '',
@@ -57,21 +63,46 @@ export function textIncludesAny(value, words) {
 }
 
 export function fabricWeight(p) {
-  // TODO: backfill fabric_weight
   if (p.fabric_weight) {
     const fw = String(p.fabric_weight).toLowerCase().trim()
     if (fw === 'heavy') return 'heavy'
-    if (fw === 'light' || fw === 'lightweight') return 'light'
+    if (fw === 'ultralight' || fw === 'light' || fw === 'lightweight') return 'light'
     if (fw === 'medium') return 'medium'
   }
-  const text = `${p.name || ''} ${p.reads_as || ''}`.toLowerCase()
-  if (/\b(wool|denim|corduroy|leather|fleece)\b/i.test(text)) {
-    return 'heavy'
+  return null
+}
+
+export const pieceFabricWeight = fabricWeight
+
+export function pieceBareness(p) {
+  if (p?.style_profile_json?.bareness) {
+    return String(p.style_profile_json.bareness).toLowerCase().trim()
   }
-  if (/\b(linen|gauze|crinkle|seersucker)\b/i.test(text)) {
-    return 'light'
+  if (p?.sleeve_type && /\b(sleeveless|tank|strapless|halter|camisole)\b/i.test(p.sleeve_type)) {
+    return 'high'
   }
-  return 'medium'
+  if (p?.length_hits_at && /\b(mini|short|mid-thigh|upper-thigh)\b/i.test(p.length_hits_at)) {
+    return 'high'
+  }
+  return null
+}
+
+export function pieceCoverage(p) {
+  if (p?.style_profile_json?.coverage) {
+    return String(p.style_profile_json.coverage).toLowerCase().trim()
+  }
+  if (p?.sleeve_type && /\b(long)\b/i.test(p.sleeve_type)) {
+    return 'full-insulating'
+  }
+  if (p?.length_hits_at && /\b(full|ankle|floor|maxi)\b/i.test(p.length_hits_at)) {
+    return 'full-insulating'
+  }
+  return null
+}
+
+export function pieceHasInsulatingFiber(p) {
+  const fibers = Array.isArray(p?.fiber_content) ? p.fiber_content : []
+  return fibers.some(f => INSULATING_FIBERS.has(String(f).toLowerCase().trim()))
 }
 
 export function bottomKind(p) {
@@ -397,4 +428,3 @@ export function sleeveCoverage(p) {
   if (/\b(none|sleeveless|strap|tank|cami|camisole|halter)\b/i.test(s)) return 'none'
   return null
 }
-

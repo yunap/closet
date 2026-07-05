@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db, parsePiece } from '../db.js'
 import { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, getMergedProfileRules, profileRuleFit } from '../styling-engine/rules.js'
-import { bottomKind, fabricWeight } from '../styling-engine/attributes.js'
+import { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight } from '../styling-engine/attributes.js'
 import { resolveOccasionProfile } from '../styling-engine/occasions.js'
 import { resolveActivityProfile } from '../styling-engine/footwear-comfort.js'
 
@@ -27,7 +27,7 @@ test('weatherProfileFromContext and weatherFitForPiece handle numeric hot-weathe
   assert.equal(weather.isHot, true)
   assert.equal(weather.isCold, false)
 
-  const denim = { id: 1, name: 'Black Denim Jeans', category: 'bottom', fabric_category: 'denim' }
+  const denim = { id: 1, name: 'Black Denim Jeans', category: 'bottom', fabric_category: 'denim', fabric_weight: 'heavy' }
   const linen = { id: 2, name: 'Linen Shorts', category: 'bottom', fabric_weight: 'light' }
   const denimFit = weatherFitForPiece(denim, weather)
   const linenFit = weatherFitForPiece(linen, weather)
@@ -35,6 +35,82 @@ test('weatherProfileFromContext and weatherFitForPiece handle numeric hot-weathe
   assert.equal(denimFit.label, 'heavy - too warm for the heat')
   assert.ok(linenFit.score > denimFit.score)
   assert.equal(linenFit.label, 'lightweight - good for heat')
+})
+
+test('gate metadata helpers use structured fields without text guessing', () => {
+  assert.equal(pieceFabricWeight({ fabric_weight: 'ultralight' }), 'light')
+
+  const suggestiveNameOnly = {
+    id: 7001,
+    name: 'Sleeveless Wool Shell',
+    category: 'top',
+    reads_as: '',
+    style_profile_json: {}
+  }
+  assert.equal(pieceFabricWeight(suggestiveNameOnly), null)
+  assert.equal(pieceCoverage(suggestiveNameOnly), null)
+  assert.equal(pieceBareness(suggestiveNameOnly), null)
+})
+
+test('hot visual roster excludes insulating fiber but keeps light wool gauze', () => {
+  const woolShell = {
+    id: 7101,
+    name: 'cream wool shell',
+    category: 'top',
+    photo: 'img.jpg',
+    fabric_weight: 'medium',
+    fiber_content: ['wool'],
+    sleeve_type: 'sleeveless'
+  }
+  const woolGauze = {
+    id: 7102,
+    name: 'light wool gauze tank',
+    category: 'top',
+    photo: 'img.jpg',
+    fabric_weight: 'light',
+    fiber_content: ['wool'],
+    sleeve_type: 'sleeveless'
+  }
+  const res = buildVisualComposerRoster([woolShell, woolGauze], {
+    weatherProfile: { isHot: true, isCold: false },
+    includeAccessories: true
+  })
+  assert.ok(res.excluded.some(item => item.pieceId === woolShell.id && item.reason === 'hot weather: insulating fiber'))
+  assert.ok(res.roster.some(item => item.id === woolGauze.id))
+})
+
+test('active weather gate creates deduped metadata todos for missing fabric weight only when weather is active', () => {
+  db.prepare("DELETE FROM todos WHERE type = 'metadata'").run()
+  const insertedId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, status, photo, style_profile_json, fiber_content)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('mystery summer top', 'top', '[]', '["casual"]', 'active', 'img.jpg', '{}', '["cotton"]').lastInsertRowid
+  try {
+    const missingWeight = parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(insertedId))
+
+    const neutral = buildVisualComposerRoster([missingWeight], {
+      weatherProfile: null,
+      includeAccessories: true
+    })
+    assert.ok(neutral.roster.some(item => item.id === missingWeight.id))
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata'").get().count, 0)
+
+    const hotOne = buildVisualComposerRoster([missingWeight], {
+      weatherProfile: { isHot: true, isCold: false },
+      includeAccessories: true
+    })
+    assert.ok(hotOne.excluded.some(item => item.pieceId === missingWeight.id && item.reason === 'metadata missing: fabric_weight (weather gate active)'))
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ? AND description LIKE ?").get(missingWeight.id, '%missing fabric_weight%').count, 1)
+
+    buildVisualComposerRoster([missingWeight], {
+      weatherProfile: { isHot: true, isCold: false },
+      includeAccessories: true
+    })
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ? AND description LIKE ?").get(missingWeight.id, '%missing fabric_weight%').count, 1)
+  } finally {
+    db.prepare('DELETE FROM todos WHERE linked_piece_id = ?').run(insertedId)
+    db.prepare('DELETE FROM pieces WHERE id = ?').run(insertedId)
+  }
 })
 
 test('profileRuleFit prohibited tier matches wholeWardrobePieceTrustDecision hard gating', () => {
@@ -345,7 +421,7 @@ test('outdoor_active rules resolved via activity and discourages day dresses, da
   assert.ok(scoreSandal.reasons.includes('activity profile: discouraged footwear (sandal)'), 'Should report discouraged footwear (sandal)')
 
   // 5. Medium/heavy full-insulating bottoms (like jeans) should be prohibited in hot weather (hard weather filter)
-  const whiteJeans = { id: 9914, name: 'white slim crop jeans', category: 'bottom', fabric_weight: 'medium', reads_as: 'slim cropped jeans' }
+  const whiteJeans = { id: 9914, name: 'white slim crop jeans', category: 'bottom', fabric_weight: 'medium', reads_as: 'slim cropped jeans', style_profile_json: { coverage: 'full-insulating' } }
   const resJeans = wholeWardrobePieceTrustDecision(whiteJeans, { ...options, weatherProfile: { isHot: true, isCold: false } })
   assert.equal(resJeans.allowed, false, 'Slim crop jeans should be prohibited in hot weather')
   assert.ok(resJeans.reasons.includes('hot weather: insulating piece'), 'Should report hot weather: insulating piece')

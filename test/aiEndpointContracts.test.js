@@ -57,6 +57,7 @@ function resetTables() {
     'saved_boards',
     'stylist_feedback',
     'whole_wardrobe_sessions',
+    'generation_runs',
     'calibration_images',
     'stylist_conversation_state',
   ]) {
@@ -97,6 +98,7 @@ async function seedWardrobe() {
     photo: photos.top,
     reads_as: 'quiet dark structured top',
     silhouette: 'fitted',
+    fabric_weight: 'light',
     style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
   })
   const bottom = insertPiece({
@@ -110,6 +112,9 @@ async function seedWardrobe() {
     bottom_shape: 'wide_leg',
     length_hits_at: 'full-length',
     fabric_category: 'linen',
+    fabric_weight: 'light',
+    fiber_content: ['linen'],
+    style_profile_json: { coverage: 'normal', bareness: 'normal' },
   })
   const jeans = insertPiece({
     name: 'black bootcut denim jeans',
@@ -120,6 +125,9 @@ async function seedWardrobe() {
     reads_as: 'quiet dark neutral',
     bottom_shape: 'bootcut',
     fabric_category: 'denim',
+    fabric_weight: 'medium',
+    fiber_content: ['denim'],
+    style_profile_json: { coverage: 'full-insulating', bareness: 'normal' },
   })
   const shoe = insertPiece({
     name: 'cream slip-on shoes',
@@ -144,6 +152,8 @@ async function seedWardrobe() {
     occasions: ['city'],
     photo: photos.jacket,
     reads_as: 'quiet structured layer',
+    fabric_weight: 'medium',
+    fiber_content: ['cotton'],
   })
   const dress = insertPiece({
     name: 'plum wool dress',
@@ -152,6 +162,8 @@ async function seedWardrobe() {
     occasions: ['city', 'evening'],
     photo: photos.dress,
     reads_as: 'simple one piece column',
+    fabric_weight: 'heavy',
+    fiber_content: ['wool'],
   })
 
   const outfitId = db.prepare(`
@@ -188,6 +200,7 @@ function insertPiece(overrides = {}) {
     silhouette: '',
     fabric_category: '',
     fabric_weight: '',
+    fiber_content: [],
     length_hits_at: '',
     style_profile_json: {},
     ...overrides,
@@ -197,13 +210,13 @@ function insertPiece(overrides = {}) {
       name, category, colors, occasions, season, notes, status,
       recommendation_status, fit_confidence, role_permission, occasion_permissions,
       engine_notes, photo, worn_photo, pattern_type, pattern_scale,
-      pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight,
+      pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content,
       length_hits_at, style_profile_json
     ) VALUES (
       @name, @category, @colors, @occasions, @season, @notes, @status,
       @recommendation_status, @fit_confidence, @role_permission, @occasion_permissions,
       @engine_notes, @photo, @worn_photo, @pattern_type, @pattern_scale,
-      @pattern_complexity, @reads_as, @silhouette, @fabric_category, @fabric_weight,
+      @pattern_complexity, @reads_as, @silhouette, @fabric_category, @fabric_weight, @fiber_content,
       @length_hits_at, @style_profile_json
     )
   `).run({
@@ -211,6 +224,7 @@ function insertPiece(overrides = {}) {
     colors: JSON.stringify(piece.colors),
     occasions: JSON.stringify(piece.occasions),
     occasion_permissions: JSON.stringify(piece.occasion_permissions),
+    fiber_content: JSON.stringify(piece.fiber_content),
     style_profile_json: JSON.stringify(piece.style_profile_json),
   }).lastInsertRowid
 }
@@ -515,8 +529,48 @@ test('selected-piece generator returns structured outfit cards', async () => {
   assert.ok(json.structuredOutfits[0].pieceIds.includes(seeded.bottom))
   assert.ok('visualCritic' in json.debug)
   assert.ok(json.debug.visualCritic.shownPieceCount > 0)
+  assert.equal(json.debug.visualCritic.thumbPx, 768)
+  assert.ok(['high', 'auto'].includes(json.debug.visualCritic.imageDetail))
+  assert.equal(typeof json.debug.visualCritic.postGatePoolSize, 'number')
+  assert.equal(typeof json.debug.visualCritic.capApplied, 'boolean')
+  assert.deepEqual(json.debug.visualCritic.capCutPieces, [])
+  assert.deepEqual(Object.keys(json.debug.visualCritic.slotCoverage).sort(), ['accessory', 'bottom', 'dress', 'outerwear', 'shoes', 'top'])
+  assert.ok(json.debug.visualCritic.postGatePoolSize <= 54)
   assert.equal(Object.hasOwn(json.debug, 'composerUsage'), true)
   assert.equal(Object.hasOwn(json.debug.visualCritic, 'composerUsage'), true)
+  const generationRun = db.prepare('SELECT * FROM generation_runs WHERE flow = ?').get('anchor_visual')
+  assert.ok(generationRun)
+  assert.equal(generationRun.occasion, 'city')
+  assert.equal(generationRun.roster_count, json.debug.visualCritic.rosterCount)
+  assert.equal(generationRun.pool_size, json.debug.visualCritic.postGatePoolSize)
+  assert.equal(generationRun.cap_applied, 0)
+  assert.deepEqual(JSON.parse(generationRun.cut_ids), [])
+
+  const composerCall = aiCalls.find(c => c.system.includes('SELECTED-ANCHOR CONTRACT'))
+  assert.ok(composerCall, 'A selected-piece visual composer call was recorded')
+  const content = composerCall.messages[0].content
+  const anchorLabelIndex = content.findIndex(part => part.type === 'text' && part.text.includes(`SELECTED ANCHOR ID ${seeded.bottom}`))
+  assert.ok(anchorLabelIndex >= 0, 'Selected anchor label should be present in composer content')
+  assert.equal(content[anchorLabelIndex + 1]?.type, 'image')
+  assert.equal(content[anchorLabelIndex + 1]?.detail, 'high')
+  assert.ok(content.some((part, index) =>
+    part.type === 'text' &&
+    part.text.startsWith('SUPPORT ID ') &&
+    ['high', 'auto'].includes(content[index + 1]?.detail)
+  ))
+  assert.ok(!content.some(part => part.type === 'image' && part.detail === 'low'))
+})
+
+test('generation_runs is not written on selected-piece error path', async () => {
+  const response = await fetch(`${baseUrl}/api/ai/generate-outfits-for-piece`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pieceId: 999999, occasion: 'city' }),
+  })
+  const json = await response.json()
+  assert.equal(response.status, 500)
+  assert.match(json.error, /not found/i)
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM generation_runs').get().count, 0)
 })
 
 test('selected-piece visual composer pins the selected anchor when model omits it', async () => {
@@ -638,19 +692,22 @@ test('whole-wardrobe generator returns cards and records resettable session memo
     limit: 3,
   })
 
-  assert.equal(json.mode, 'generate_wardrobe_outfits')
-  assert.equal(json.pipeline, 'whole_wardrobe_composer_evaluator')
+  assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
+  assert.equal(json.pipeline, 'full_wardrobe_visual_composer')
+  assert.equal(json.deprecated, true)
   assert.ok(Array.isArray(json.structuredOutfits))
   assert.ok(json.structuredOutfits.length >= 1)
-  assert.ok(json.debug.candidateCount > 0)
+  assert.ok(json.debug.shownPieceCount > 0)
+  assert.ok(json.debug.rosterCount > 0)
+  assert.equal(json.debug.thumbPx, 768)
+  assert.ok(['high', 'auto'].includes(json.debug.imageDetail))
   assert.ok(json.debug.finalReturnedCount >= 1)
+  assert.equal(Object.hasOwn(json.debug.timings, 'agentStylistMs'), false)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 1)
 
-  // Verify occasion profile rules are present in the system prompt for the agent
-  const agentCalls = aiCalls.filter(c => c.system.includes('personal visual stylist agent'))
-  assert.equal(agentCalls.length, 1)
-  assert.ok(agentCalls[0].system.includes('OCCASION & CLIMATE PROFILES (RULES-AS-DATA)'))
-  assert.ok(agentCalls[0].system.includes('Occasion & Weather Classification'))
+  const composerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.equal(composerCalls.length, 1)
+  assert.ok(!composerCalls[0].system.includes('personal visual stylist agent'))
 
   const response = await fetch(`${baseUrl}/api/ai/whole-wardrobe-session-memory`, { method: 'DELETE' })
   const resetJson = await response.json()
@@ -678,6 +735,11 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.ok(json.debug.aiReturnedCount >= 1)
   assert.equal(json.debug.imageDetail, 'high')
   assert.equal(json.debug.thumbPx, 768)
+  assert.equal(typeof json.debug.postGatePoolSize, 'number')
+  assert.equal(typeof json.debug.capApplied, 'boolean')
+  assert.deepEqual(json.debug.capCutPieces, [])
+  assert.deepEqual(Object.keys(json.debug.slotCoverage).sort(), ['accessory', 'bottom', 'dress', 'outerwear', 'shoes', 'top'])
+  assert.ok(json.debug.postGatePoolSize <= 90)
   assert.equal(Object.hasOwn(json.debug, 'composerUsage'), true)
   assert.equal(json.debug.finalSelection.mode, 'advisor')
   assert.equal(json.debug.finalSelection.applyDiversity, false)
@@ -685,6 +747,13 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
 
   // Verify that rotation sessions are saved
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 1)
+  const firstRun = db.prepare('SELECT * FROM generation_runs WHERE flow = ?').get('whole_wardrobe_visual')
+  assert.ok(firstRun)
+  assert.equal(firstRun.occasion, 'city')
+  assert.equal(firstRun.roster_count, json.debug.rosterCount)
+  assert.equal(firstRun.pool_size, json.debug.postGatePoolSize)
+  assert.equal(firstRun.cap_applied, 0)
+  assert.deepEqual(JSON.parse(firstRun.cut_ids), [])
 
   // 1. Generate an image from a visual-composer card via the existing /api/ai/generate-wardrobe-outfit-image endpoint
   const outfit = json.structuredOutfits[0]
@@ -707,6 +776,7 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   })
 
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 2)
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM generation_runs WHERE flow = 'whole_wardrobe_visual'").get().count, 2)
   assert.ok(json2.debug.sessionMemory.recentSessionCount >= 1)
   assert.ok(json2.debug.sessionMemory.piecePenaltyCount >= 1)
   assert.equal(json2.debug.sessionMemory.rotationWarningShown, true)
@@ -754,6 +824,28 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   const returnedNames = json.structuredOutfits.flatMap(o => o.pieces || []).map(p => p.name).join(' ').toLowerCase()
   assert.match(returnedNames, /brown ankle boots/, 'visual composer should keep the model-selected shoe visible')
   assert.ok(json.structuredOutfits.some(outfit => outfit.systemSuggestion?.type === 'comfort' && Number(outfit.systemSuggestion.swapOut) === Number(seeded.boot)))
+})
+
+test('visual wardrobe composer failure uses local fallback without retired agent call', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system }) => {
+    aiCalls.push({ system, messages: [] })
+    if (String(system || '').includes("You are Yuna's personal stylist. You are looking at photos")) {
+      throw new Error('mock composer outage')
+    }
+    return mockAiHandler({ system, messages: [] })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'current season',
+    mood: 'modern bohemian',
+    limit: 2,
+  })
+
+  assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
+  assert.equal(json.debug.composerError, 'mock composer outage')
+  assert.ok(Array.isArray(json.structuredOutfits))
+  assert.ok(!aiCalls.some(call => String(call.system || '').includes('personal visual stylist agent')))
 })
 
 test('visual wardrobe composer returns model outfits and annotates outdoor social concerns', async () => {
@@ -1413,6 +1505,21 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
     length_hits_at: 'midi',
     fabric_category: 'linen',
     fabric_weight: 'light',
+    fiber_content: ['linen'],
+    style_profile_json: { bottom_kind: 'skirt-midi', coverage: 'normal', bareness: 'normal' },
+  })
+  insertPiece({
+    name: 'sage lightweight wide-leg pants',
+    category: 'bottom',
+    colors: ['green'],
+    occasions: ['city', 'casual', 'outdoor_daytime_social'],
+    photo: seeded.photos.bottom,
+    reads_as: 'breathable lightweight wide-leg pants',
+    length_hits_at: 'full-length',
+    fabric_category: 'linen',
+    fabric_weight: 'light',
+    fiber_content: ['linen'],
+    style_profile_json: { bottom_kind: 'pants', coverage: 'normal', bareness: 'normal' },
   })
   insertPiece({
     name: 'black cream geometric midi skirt',
@@ -1422,6 +1529,44 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
     photo: seeded.photos.bottom,
     reads_as: 'graphic geometric midi skirt',
     pattern_complexity: 'loud',
+    fabric_weight: 'medium',
+    fiber_content: ['polyester'],
+    style_profile_json: { bottom_kind: 'skirt-midi', coverage: 'full-insulating', bareness: 'normal' },
+  })
+  insertPiece({
+    name: 'black satin evening blouse',
+    category: 'top',
+    colors: ['black'],
+    occasions: ['evening'],
+    photo: seeded.photos.top,
+    reads_as: 'polished lightweight satin blouse',
+    fabric_category: 'satin',
+    fabric_weight: 'light',
+    fiber_content: ['polyester'],
+  })
+  insertPiece({
+    name: 'black lightweight evening trousers',
+    category: 'bottom',
+    colors: ['black'],
+    occasions: ['evening'],
+    photo: seeded.photos.bottom,
+    reads_as: 'lightweight polished evening trousers',
+    length_hits_at: 'full-length',
+    fabric_weight: 'light',
+    fiber_content: ['polyester'],
+    style_profile_json: { bottom_kind: 'pants', coverage: 'normal', bareness: 'normal' },
+  })
+  insertPiece({
+    name: 'plum lightweight evening skirt',
+    category: 'bottom',
+    colors: ['plum'],
+    occasions: ['evening'],
+    photo: seeded.photos.bottom,
+    reads_as: 'lightweight evening midi skirt',
+    length_hits_at: 'midi',
+    fabric_weight: 'light',
+    fiber_content: ['polyester'],
+    style_profile_json: { bottom_kind: 'skirt-midi', coverage: 'normal', bareness: 'normal' },
   })
   insertPiece({
     name: 'vibrant blue sleeveless top',
@@ -1438,6 +1583,9 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
     occasions: ['city', 'casual'],
     photo: seeded.photos.bottom,
     reads_as: 'soft crochet knit midi skirt',
+    fabric_weight: 'medium',
+    fiber_content: ['cotton'],
+    style_profile_json: { bottom_kind: 'skirt-midi', coverage: 'full-insulating', bareness: 'normal' },
   })
   insertPiece({
     name: 'striped knit cardigan',
@@ -1547,6 +1695,11 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
     'dinner slot should not choose the casual crochet skirt plus striped cardigan combination'
   )
   assert.equal(json.structuredOutfitsSource, 'whole_wardrobe')
+  assert.ok(json.structuredOutfitsDebug, 'chat precompose should expose visual composer debug')
+  assert.ok(json.structuredOutfitsDebug.rosterCount > 0)
+  assert.equal(json.structuredOutfitsDebug.thumbPx, 768)
+  assert.ok(['high', 'auto'].includes(json.structuredOutfitsDebug.imageDetail))
+  assert.equal(Object.hasOwn(json.structuredOutfitsDebug.timings || {}, 'agentStylistMs'), false)
   const lastCall = aiCalls.at(-1)
   const plannerCall = aiCalls.find(call => /FREEFORM_STYLIST_USE_CASE_PLANNER/.test(call.system || ''))
   assert.ok(plannerCall, 'initial trip plan should use the planner to decompose stated use cases')
@@ -2225,8 +2378,8 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
   }
 })
 
-test('Agent OCCASION PROFILE prompt block and wardrobe coverage contract tests', async () => {
-  // Test 1: Agent message with occasion "hiking" vs "casual"
+test('Visual composer occasion profile prompt block and wardrobe coverage contract tests', async () => {
+  // Test 1: Visual composer user message with occasion "hiking" vs "casual"
   aiCalls = []
   
   // Call with hiking
@@ -2237,11 +2390,11 @@ test('Agent OCCASION PROFILE prompt block and wardrobe coverage contract tests',
     limit: 1
   })
   
-  const hikeCall = aiCalls.find(c => c.system.includes('personal visual stylist agent'))
-  assert.ok(hikeCall, 'Should have styled agent call')
-  const hikeUserMessage = hikeCall.messages[0].content
-  assert.ok(hikeUserMessage.includes('ACTIVITY PROFILE — Hiking / Outdoor active:'), 'Should contain ACTIVITY PROFILE header')
-  assert.ok(hikeUserMessage.includes('Use sparingly and justify in watchFor if chosen:'), 'Should contain Use sparingly block')
+  const hikeCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.ok(hikeCall, 'Should have visual composer call')
+  const hikeUserMessage = hikeCall.messages[0].content.map(part => part?.text || '').join('\n')
+  assert.ok(hikeUserMessage.includes('Occasion guidance:'), 'Should contain occasion guidance header')
+  assert.ok(hikeUserMessage.includes('use sparingly and justify in watchFor'), 'Should contain use-sparingly block')
   assert.ok(hikeUserMessage.includes('suede'), 'Should list suede in discouraged')
   assert.ok(hikeUserMessage.includes('boot'), 'Should list boots in discouraged')
   
@@ -2254,10 +2407,10 @@ test('Agent OCCASION PROFILE prompt block and wardrobe coverage contract tests',
     limit: 1
   })
   
-  const casualCall = aiCalls.find(c => c.system.includes('personal visual stylist agent'))
-  assert.ok(casualCall, 'Should have styled agent call')
-  const casualUserMessage = casualCall.messages[0].content
-  assert.ok(!casualUserMessage.includes('OCCASION PROFILE') && !casualUserMessage.includes('ACTIVITY PROFILE'), 'Should NOT contain PROFILE block for casual/empty mood')
+  const casualCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.ok(casualCall, 'Should have visual composer call')
+  const casualUserMessage = casualCall.messages[0].content.map(part => part?.text || '').join('\n')
+  assert.ok(!casualUserMessage.includes('Occasion guidance:'), 'Should NOT contain guidance block for casual/empty mood')
 
   // Test 2: Wardrobe coverage note for trail active outdoor (low tops/shoes vs ample)
   const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {

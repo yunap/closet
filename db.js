@@ -117,6 +117,18 @@ db.exec(`
     formula_families TEXT NOT NULL DEFAULT '[]'
   );
 
+  CREATE TABLE IF NOT EXISTS generation_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    flow          TEXT NOT NULL,
+    occasion      TEXT DEFAULT '',
+    weather       TEXT DEFAULT '',
+    roster_count  INTEGER,
+    pool_size     INTEGER,
+    cap_applied   INTEGER DEFAULT 0,
+    cut_ids       TEXT DEFAULT '[]',
+    created_at    TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS stylist_conversation_state (
     session_id   TEXT PRIMARY KEY,
     state_json   TEXT NOT NULL,
@@ -131,6 +143,7 @@ const NEW_COLUMNS = [
   'reads_as TEXT', 'hem_finish TEXT',
   'neckline TEXT', 'sleeve_type TEXT', 'length_hits_at TEXT',
   'silhouette TEXT', 'fabric_category TEXT', 'fabric_weight TEXT',
+  'fiber_content TEXT DEFAULT "[]"',
   'stretch TEXT', 'fit_on_body TEXT', 'tuck_behavior TEXT', 'waistband_type TEXT',
   'styling_rules_learned TEXT', 'pairs_well_with TEXT', 'tried_and_rejected TEXT',
   'background_color TEXT',
@@ -298,6 +311,7 @@ export const parsePiece = p => p ? ({
   pairs_well_with:       JSON.parse(p.pairs_well_with       || '[]'),
   tried_and_rejected:    JSON.parse(p.tried_and_rejected    || '[]'),
   style_profile_json:    safeJsonParse(p.style_profile_json, {}) || {},
+  fiber_content:         safeJsonParse(p.fiber_content, [])      || [],
   recommendation_status: p.recommendation_status || 'trusted',
   fit_confidence:        p.fit_confidence        || 'unknown',
   role_permission:       p.role_permission       || 'auto',

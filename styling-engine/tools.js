@@ -476,7 +476,7 @@ export async function executeTool(name, args, toolContext = {}) {
       }
       case 'generate_outfits': {
         const { occasion, season, mood, mission, limit, piece_id, activity } = args
-        const { generateOutfitsForPieceInternal, generateWholeWardrobeOutfitsInternal } = await import('../routes/ai.js')
+        const { generateOutfitsForPieceInternal, generateWholeWardrobeOutfitsVisualInternal } = await import('../routes/ai.js')
         const intent = normalizeStylingIntent({ occasion, season, mood, mission })
         const resolvedActivity = (activity !== undefined && activity !== null && activity !== '')
           ? normalizeActivity(activity)
@@ -505,7 +505,7 @@ export async function executeTool(name, args, toolContext = {}) {
           })
         } else {
           toolContext.source = 'whole_wardrobe'
-          result = await generateWholeWardrobeOutfitsInternal({
+          result = await generateWholeWardrobeOutfitsVisualInternal({
             occasion: intent.occasion,
             season: resolvedSeason,
             mood: intent.mood,

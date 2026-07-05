@@ -2314,14 +2314,14 @@ export default function AskClaude({
     setRecentMemoryStatus('')
     setLoading(true)
     startStatusSequence([
-      { ms: 0, text: 'Building outfit candidates from your wardrobe...' },
-      { ms: 5000, text: 'Checking the visual mix from garment photos...' },
-      { ms: 18000, text: 'Composing the strongest set and applying your feedback...' },
-      { ms: 36000, text: 'Still working. The visual critic can take a little while.' },
+      { ms: 0, text: 'Preparing wardrobe photos…' },
+      { ms: 6000, text: 'The stylist is looking at your full wardrobe…' },
+      { ms: 22000, text: 'Composing outfits…' },
+      { ms: 40000, text: 'Still working. Sending many images takes a moment.' },
     ])
 
     try {
-      const res = await fetch('/api/ai/generate-wardrobe-outfits', {
+      const res = await fetch('/api/ai/generate-wardrobe-outfits-visual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ occasion, season, mood, mission, limit: 5, activity })
@@ -2337,6 +2337,7 @@ export default function AskClaude({
         text: replyText,
         structuredOutfits: replyStructuredOutfits,
         wholeWardrobe: true,
+        source: 'visual_composer',
         textOnly: true,
         debug: data.debug || null,
         queryOptions: { occasion, season, mood, mission, activity },
@@ -2348,94 +2349,6 @@ export default function AskClaude({
         latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'whole_wardrobe' }),
         latestOutfits: replyStructuredOutfits,
         stylingContext: { occasion, season, mood, mission: mission || 'mix', activity },
-      })
-      addToHistory('assistant', replyText)
-    } catch (err) {
-      const errText = `Error: ${err.message}`
-      setMessages(m => [...m, { role: 'assistant', text: errText }])
-      addToHistory('assistant', errText)
-    } finally {
-      clearLoadingTimers()
-      setLoadingStatus('')
-      setLoading(false)
-    }
-  }
-
-  const generateWholeWardrobeOutfitsVisual = async () => {
-    if (loading) return
-    const occasion = wardrobeOutfitOccasion || 'casual'
-    const season = wardrobeOutfitSeason || 'current season'
-    const mood = wardrobeOutfitMood || ''
-    const activity = wardrobeOutfitActivity || 'none'
-    const activityLabel = activity !== 'none' ? `, ${ACTIVITY_OPTIONS.find(opt => opt[0] === activity)?.[1].toLowerCase()}` : ''
-    const userText = `Use my wardrobe to compose outfits (visual composer) for ${occasion}, ${season}${mood ? `, ${mood}` : ''}${activityLabel}.`
-
-    // Automatically spin up a dedicated thread for this wardrobe generation
-    const newId = 'thread_' + Date.now()
-    const title = `Visual: ${occasion}, ${season}`
-    const newThread = {
-      id: newId,
-      title,
-      messages: [
-        { role: 'user', text: userText, contextName: 'Visual composer' }
-      ],
-      chatHistory: [
-        { role: 'user', content: userText }
-      ],
-      threadMemory: null,
-      activeContext: null,
-      updatedAt: Date.now()
-    }
-
-    setThreads(prev => [newThread, ...prev])
-    setCurrentThreadId(newId)
-    setMessages(newThread.messages)
-    setChatHistory(newThread.chatHistory)
-    setThreadMemory(null)
-    setActiveContext(null)
-
-    try {
-      localStorage.setItem('stylist_current_thread_id', newId)
-    } catch (e) {}
-
-    setRecentMemoryStatus('')
-    setLoading(true)
-    startStatusSequence([
-      { ms: 0, text: 'Preparing wardrobe photos…' },
-      { ms: 6000, text: 'The stylist is looking at your full wardrobe…' },
-      { ms: 22000, text: 'Composing outfits…' },
-      { ms: 40000, text: 'Still working. Sending many images takes a moment.' },
-    ])
-
-    try {
-      const res = await fetch('/api/ai/generate-wardrobe-outfits-visual', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ occasion, season, mood, limit: 5, activity })
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Could not generate wardrobe outfits')
-      const replyText = data.feedback || 'Here are the outfits composed from your wardrobe.'
-      const replyStructuredOutfits = Array.isArray(data.structuredOutfits)
-        ? data.structuredOutfits.map(outfit => ({ ...outfit, textOnly: true, wholeWardrobe: true }))
-        : null
-      setMessages(m => [...m, {
-        role: 'assistant',
-        text: replyText,
-        structuredOutfits: replyStructuredOutfits,
-        wholeWardrobe: true,
-        source: 'visual_composer',
-        textOnly: true,
-        debug: data.debug || null,
-        queryOptions: { occasion, season, mood, activity },
-      }])
-      setThreadMemory({
-        type: 'generated_outfits',
-        source: 'whole_wardrobe',
-        name: 'Whole wardrobe generated outfits',
-        latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'whole_wardrobe' }),
-        latestOutfits: replyStructuredOutfits,
-        stylingContext: { occasion, season, mood, mission: 'mix', activity },
       })
       addToHistory('assistant', replyText)
     } catch (err) {
@@ -3255,13 +3168,6 @@ export default function AskClaude({
                 {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
               </button>
               <button
-                onClick={generateWholeWardrobeOutfitsVisual}
-                disabled={loading}
-                style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
-              >
-                {loading ? 'Creating...' : 'Create (visual composer)'}
-              </button>
-              <button
                 onClick={generateWholeWardrobeOutfits}
                 disabled={loading}
                 style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
@@ -3371,13 +3277,6 @@ export default function AskClaude({
                       style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
                     >
                       {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
-                    </button>
-                    <button
-                      onClick={generateWholeWardrobeOutfitsVisual}
-                      disabled={loading}
-                      style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
-                    >
-                      {loading ? 'Creating...' : 'Create (visual composer)'}
                     </button>
                     <button
                       onClick={generateWholeWardrobeOutfits}

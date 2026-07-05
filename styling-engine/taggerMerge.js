@@ -2,6 +2,9 @@ import { applySoftScoreFloors } from './softScoreFloors.js'
 
 const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
+const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
+  'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
+  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown'])
 
 export const CONFIDENCE_FIELDS = [
   'category',
@@ -18,6 +21,7 @@ export const CONFIDENCE_FIELDS = [
   'hem_finish',
   'fabric_category',
   'fabric_weight',
+  'fiber_content',
   'fit_on_body',
   'tuck_behavior',
   'waistband_type'
@@ -29,6 +33,15 @@ export function normalizeConfidenceMap(value = {}, fields = CONFIDENCE_FIELDS) {
     const confidence = String(source[field] || '').toLowerCase()
     return [field, VALID_CONFIDENCE.has(confidence) ? confidence : 'low']
   }))
+}
+
+export function normalizeFiberContent(value = []) {
+  const raw = Array.isArray(value) ? value : []
+  const normalized = raw
+    .map(v => String(v || '').toLowerCase().trim())
+    .map(v => VALID_FIBERS.has(v) ? v : 'unknown')
+    .filter(Boolean)
+  return [...new Set(normalized.length ? normalized : ['unknown'])]
 }
 
 export function normalizePhotoProperties(value = {}) {
@@ -151,6 +164,7 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   const incomingConfidence = normalizeConfidenceMap(tags._confidence || incomingProfile._confidence || {})
   const photoProperties = normalizePhotoProperties(tags.photo_properties || incomingProfile.photo_properties || {})
   const patch = { ...tags }
+  if ('fiber_content' in patch) patch.fiber_content = normalizeFiberContent(patch.fiber_content)
   delete patch._confidence
   delete patch.photo_properties
   delete patch.cross_photo_agreement_note

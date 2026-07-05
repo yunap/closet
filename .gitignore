@@ -13,4 +13,6 @@ scratch/*
 !scratch/ratchet_baseline.json
 !scratch/rankings_ab_diff_report.md
 !scratch/diagnose_anchor_selectivity.js
-
+!scratch/audit_gate_metadata.js
+!scratch/backfill_gate_metadata.js
+!scratch/recall_at_cap.js
