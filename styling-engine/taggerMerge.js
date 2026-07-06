@@ -5,6 +5,9 @@ const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
 const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
   'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
   'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown'])
+const VALID_FORMALITY = new Set(['lounge', 'everyday', 'elevated', 'dressy'])
+const VALID_HEEL_HEIGHT = new Set(['flat', 'low', 'mid', 'high'])
+const VALID_WALK_SUPPORT = new Set(['high', 'medium', 'low'])
 
 export const CONFIDENCE_FIELDS = [
   'category',
@@ -22,6 +25,9 @@ export const CONFIDENCE_FIELDS = [
   'fabric_category',
   'fabric_weight',
   'fiber_content',
+  'formality',
+  'heel_height',
+  'walk_support',
   'fit_on_body',
   'tuck_behavior',
   'waistband_type'
@@ -42,6 +48,23 @@ export function normalizeFiberContent(value = []) {
     .map(v => VALID_FIBERS.has(v) ? v : 'unknown')
     .filter(Boolean)
   return [...new Set(normalized.length ? normalized : ['unknown'])]
+}
+
+function normalizeEnumValue(value, validValues) {
+  const normalized = String(value || '').toLowerCase().trim()
+  return validValues.has(normalized) ? normalized : null
+}
+
+export function normalizeFormality(value) {
+  return normalizeEnumValue(value, VALID_FORMALITY)
+}
+
+export function normalizeHeelHeight(value) {
+  return normalizeEnumValue(value, VALID_HEEL_HEIGHT)
+}
+
+export function normalizeWalkSupport(value) {
+  return normalizeEnumValue(value, VALID_WALK_SUPPORT)
 }
 
 export function normalizePhotoProperties(value = {}) {
@@ -165,6 +188,9 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   const photoProperties = normalizePhotoProperties(tags.photo_properties || incomingProfile.photo_properties || {})
   const patch = { ...tags }
   if ('fiber_content' in patch) patch.fiber_content = normalizeFiberContent(patch.fiber_content)
+  if ('formality' in patch) patch.formality = normalizeFormality(patch.formality)
+  if ('heel_height' in patch) patch.heel_height = normalizeHeelHeight(patch.heel_height)
+  if ('walk_support' in patch) patch.walk_support = normalizeWalkSupport(patch.walk_support)
   delete patch._confidence
   delete patch.photo_properties
   delete patch.cross_photo_agreement_note

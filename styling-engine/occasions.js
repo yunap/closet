@@ -10,6 +10,7 @@ export const OCCASION_PROFILES = [
     label: "Outdoor Daytime Social / Festivals",
     keywords: ["festival", "crafts", "wine festival", "market", "fair", "picnic", "outdoor cafe"],
     vibe: "relaxed, creative, textured, airy, intentional",
+    register_ceiling: "elevated",
     rules: {
       discouraged_materials: ["sweatshirt fleece", "performance fabric"],
       discouraged_materials_warm: ["cashmere", "heavy wool", "dense knits", "thick corduroy"],
@@ -23,8 +24,9 @@ export const OCCASION_PROFILES = [
   {
     id: "city_smart_casual",
     label: "City Smart Casual / Everyday",
-    keywords: ["city", "museum", "shopping", "dinner", "brunch", "office", "everyday", "work"],
+    keywords: ["city", "museum", "shopping", "dinner", "brunch", "office", "everyday", "smart casual", "smart-casual", "work"],
     vibe: "polished, comfortable, walk-friendly, clean columns",
+    register_ceiling: "elevated",
     rules: {
       discouraged_footwear: ["athletic running shoe", "athletic running shoes"],
       preferred_materials: ["tailored linen", "structured denim", "cardigans", "light outerwear"],
@@ -32,13 +34,47 @@ export const OCCASION_PROFILES = [
     }
   },
   {
+    id: "casual",
+    label: "Casual / Everyday",
+    keywords: ["casual", "coffee", "errands", "park", "low-key", "low key"],
+    vibe: "low-key, easy, everyday, unforced",
+    register_ceiling: "everyday",
+    rules: {
+      preferred_materials: ["cotton", "linen", "denim", "jersey", "knit"],
+      preferred_footwear: ["sneakers", "flats", "slip-ons", "loafers"]
+    }
+  },
+  {
     id: "evening_social",
     label: "Evening Social / Dining",
     keywords: ["evening", "dinner date", "wine bar", "theater", "evening drinks", "night out"],
     vibe: "sharp, artistic, low-key drama, deep color palettes, rich textures",
+    register_ceiling: "dressy",
     rules: {
       preferred_materials: ["silk", "satin", "textured knits", "fine wool"],
       preferred_footwear: ["mules", "block heels", "dress flats", "refined boots"]
+    }
+  },
+  {
+    id: "gallery_art_event",
+    label: "Gallery / Art Event",
+    keywords: ["gallery", "art event", "gallery opening", "museum opening"],
+    vibe: "artful, intentional, gallery-appropriate",
+    register_ceiling: "elevated",
+    rules: {
+      preferred_materials: ["textured knits", "linen", "silk", "fine wool"],
+      preferred_footwear: ["loafers", "dress flats", "low block heels", "refined boots"]
+    }
+  },
+  {
+    id: "concert",
+    label: "Concert",
+    keywords: ["concert", "show", "live music"],
+    vibe: "expressive, grounded, movement-friendly",
+    register_ceiling: "elevated",
+    rules: {
+      preferred_materials: ["denim", "knit", "leather", "textured cotton"],
+      preferred_footwear: ["boots", "loafers", "flats", "sneakers"]
     }
   },
   {
@@ -46,6 +82,7 @@ export const OCCASION_PROFILES = [
     label: "Home / Loungewear",
     keywords: ["home", "lounge", "sleep", "lazy day", "bed"],
     vibe: "comfort-first, soft, unstructured",
+    register_ceiling: "everyday",
     rules: {
       discouraged_footwear: ["heeled shoe", "heeled shoes"],
       discouraged_pieces: ["structured denim", "outerwear coat", "outerwear coats", "formal blazer", "formal blazers"],

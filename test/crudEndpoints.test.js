@@ -30,6 +30,7 @@ test('POST /api/pieces creates a piece and GET/PUT/PATCH/DELETE verify it', asyn
   fd.append('category', 'top')
   fd.append('colors', JSON.stringify(['black']))
   fd.append('tagger_version', 'v1.0.0')
+  fd.append('formality', 'everyday')
   
   const res = await fetch(`${baseUrl}/api/pieces`, {
     method: 'POST',
@@ -40,6 +41,7 @@ test('POST /api/pieces creates a piece and GET/PUT/PATCH/DELETE verify it', asyn
   assert.equal(data.name, 'test top')
   assert.equal(data.category, 'top')
   assert.equal(data.tagger_version, 'v1.0.0')
+  assert.equal(data.formality, 'everyday')
   assert.ok(data.id)
   
   // GET /api/pieces lists pieces
@@ -58,6 +60,9 @@ test('POST /api/pieces creates a piece and GET/PUT/PATCH/DELETE verify it', asyn
   fd2.append('name', 'updated top')
   fd2.append('category', 'top')
   fd2.append('tagger_version', 'v1.1.0')
+  fd2.append('formality', 'elevated')
+  fd2.append('heel_height', 'flat')
+  fd2.append('walk_support', 'high')
   const putRes = await fetch(`${baseUrl}/api/pieces/${data.id}`, {
     method: 'PUT',
     body: fd2
@@ -65,6 +70,9 @@ test('POST /api/pieces creates a piece and GET/PUT/PATCH/DELETE verify it', asyn
   const putData = await putRes.json()
   assert.equal(putData.name, 'updated top')
   assert.equal(putData.tagger_version, 'v1.1.0')
+  assert.equal(putData.formality, 'elevated')
+  assert.equal(putData.heel_height, 'flat')
+  assert.equal(putData.walk_support, 'high')
   
   // PATCH /api/pieces/:id/favorite favorites a piece
   const favRes = await fetch(`${baseUrl}/api/pieces/${data.id}/favorite`, {
@@ -89,6 +97,12 @@ test('POST /api/outfits and GET /api/outfits', async () => {
   const resPiece = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdPiece })
   const piece = await resPiece.json()
 
+  const fdPiece2 = new FormData()
+  fdPiece2.append('name', 'indoor blouse')
+  fdPiece2.append('category', 'top')
+  const resPiece2 = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fdPiece2 })
+  const piece2 = await resPiece2.json()
+
   const fdOutfit = new FormData()
   fdOutfit.append('name', 'test outfit')
   fdOutfit.append('occasion', 'casual')
@@ -104,6 +118,31 @@ test('POST /api/outfits and GET /api/outfits', async () => {
   const match = outfits.find(o => o.id === outfit.id)
   assert.ok(match)
   assert.equal(match.pieces[0].id, piece.id)
+
+  const fdUpdate = new FormData()
+  fdUpdate.append('name', 'edited indoor outfit')
+  fdUpdate.append('occasion', 'evening')
+  fdUpdate.append('season', 'indoor')
+  fdUpdate.append('notes', 'weather does not apply')
+  fdUpdate.append('status', 'confirmed')
+  fdUpdate.append('favorite', 'false')
+  fdUpdate.append('pieceIds', JSON.stringify([piece2.id]))
+  const putRes = await fetch(`${baseUrl}/api/outfits/${outfit.id}`, { method: 'PUT', body: fdUpdate })
+  assert.equal(putRes.status, 200)
+  const updated = await putRes.json()
+  assert.equal(updated.name, 'edited indoor outfit')
+  assert.equal(updated.occasion, 'evening')
+  assert.equal(updated.season, 'indoor')
+  assert.equal(updated.notes, 'weather does not apply')
+  assert.deepEqual(updated.pieces.map(p => p.id), [piece2.id])
+
+  const indoorFilterRes = await fetch(`${baseUrl}/api/outfits?season=indoor`)
+  const indoorFiltered = await indoorFilterRes.json()
+  assert.ok(indoorFiltered.some(o => o.id === outfit.id))
+
+  const warmFilterRes = await fetch(`${baseUrl}/api/outfits?season=warm`)
+  const warmFiltered = await warmFilterRes.json()
+  assert.ok(warmFiltered.some(o => o.id === outfit.id), 'indoor outfits should appear under warm browsing')
 })
 
 test('POST, GET, PUT, DELETE todos', async () => {
@@ -197,6 +236,4 @@ test('GET /api/pieces/meta and color/fabric filtering', async () => {
   await fetch(`${baseUrl}/api/pieces/${piece1.id}`, { method: 'DELETE' })
   await fetch(`${baseUrl}/api/pieces/${piece2.id}`, { method: 'DELETE' })
 })
-
-
 

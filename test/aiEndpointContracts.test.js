@@ -201,6 +201,7 @@ function insertPiece(overrides = {}) {
     fabric_category: '',
     fabric_weight: '',
     fiber_content: [],
+    formality: 'everyday',
     length_hits_at: '',
     style_profile_json: {},
     ...overrides,
@@ -211,13 +212,13 @@ function insertPiece(overrides = {}) {
       recommendation_status, fit_confidence, role_permission, occasion_permissions,
       engine_notes, photo, worn_photo, pattern_type, pattern_scale,
       pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content,
-      length_hits_at, style_profile_json
+      formality, length_hits_at, style_profile_json
     ) VALUES (
       @name, @category, @colors, @occasions, @season, @notes, @status,
       @recommendation_status, @fit_confidence, @role_permission, @occasion_permissions,
       @engine_notes, @photo, @worn_photo, @pattern_type, @pattern_scale,
       @pattern_complexity, @reads_as, @silhouette, @fabric_category, @fabric_weight, @fiber_content,
-      @length_hits_at, @style_profile_json
+      @formality, @length_hits_at, @style_profile_json
     )
   `).run({
     ...piece,
@@ -2410,7 +2411,8 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   const casualCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
   assert.ok(casualCall, 'Should have visual composer call')
   const casualUserMessage = casualCall.messages[0].content.map(part => part?.text || '').join('\n')
-  assert.ok(!casualUserMessage.includes('Occasion guidance:'), 'Should NOT contain guidance block for casual/empty mood')
+  assert.ok(casualUserMessage.includes('Occasion guidance:'), 'Casual is now a ratified occasion profile and should contain guidance')
+  assert.equal(casualCall.messages[0].content.some(part => part?.text?.includes('Occasion Vibe: low-key, easy, everyday, unforced')), true)
 
   // Test 2: Wardrobe coverage note for trail active outdoor (low tops/shoes vs ample)
   const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {

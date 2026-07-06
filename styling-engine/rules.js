@@ -9,9 +9,13 @@ import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js
 import {
   fabricWeight,
   pieceFabricWeight,
+  FORMALITY_VALUES,
   pieceBareness,
   pieceCoverage,
   pieceHasInsulatingFiber,
+  pieceFormality,
+  formalityRank,
+  pieceWalkSupport,
   bottomKind,
   colorFamily,
   patternLoudness,
@@ -41,6 +45,9 @@ export function isStyleSelectedQuestion(question = '') {
 }
 
 export function weatherProfileFromContext({ mood = '', season = '', currentDate = new Date() } = {}) {
+  if (String(season || '').trim().toLowerCase() === 'indoor') {
+    return { isHot: false, isCold: false }
+  }
   const text = `${mood} ${season}`.toLowerCase()
   const month = currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
     ? currentDate.getMonth()
@@ -91,6 +98,156 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
     label: adjustments[0]?.label || 'neutral',
     adjustments
   }
+}
+
+export function resolveFormalityIntent(options = {}) {
+  const text = [
+    options.formality,
+    options.register,
+    options.mood,
+    options.occasion,
+    options.activity,
+    options.request,
+    options.question
+  ].filter(Boolean).join(' ').toLowerCase()
+  const avoid = new Set()
+  let target = null
+  const has = pattern => pattern.test(text) // ratchet-allow: user-intent parsing, not garment text matching
+
+  if (has(/\b(not|no|avoid|less)\s+(?:too\s+)?dressy\b/) || has(/\bnot\s+formal\b/)) avoid.add('dressy')
+  if (has(/\b(not|no|avoid|less)\s+(?:too\s+)?elevated\b/)) avoid.add('elevated')
+  if (has(/\b(not|no|avoid|less)\s+(?:too\s+)?(?:lounge|loungey|loungy|sloppy|athletic)\b/)) avoid.add('lounge')
+  if (has(/\bnot\s+(?:too\s+)?casual\b/)) avoid.add('lounge')
+
+  const positiveText = text
+    .replace(/\b(?:not|no|avoid|less)\s+(?:too\s+)?(?:dressy|formal|elevated|lounge|loungey|loungy|sloppy|athletic|casual)\b/g, ' ')
+
+  if (/\b(more|make it|make this|feel|keep it|same outfit,?)\s+(?:more\s+)?everyday\b/.test(positiveText) || /\beveryday\b/.test(positiveText)) target = 'everyday'
+  if (/\b(more|make it|make this|feel|keep it|same outfit,?)\s+(?:more\s+)?elevated\b/.test(positiveText) || /\belevated\b/.test(positiveText)) target = 'elevated'
+  if (/\b(dressy|formal|going out|night out)\b/.test(positiveText)) target = 'dressy'
+  if (/\b(lounge|loungey|loungy|home comfort|comfort-first)\b/.test(positiveText)) target = 'lounge'
+
+  const walkable = has(/\b(walkable|walking|all-day walk|all day walk|lots of walking|city exploring|travel day)\b/)
+  return {
+    target,
+    targetRank: target ? formalityRank(target) : null,
+    avoid,
+    walkable,
+    active: Boolean(target || avoid.size || walkable)
+  }
+}
+
+export function resolveRegisterCeiling(options = {}) {
+  const intent = options.formalityIntent || resolveFormalityIntent(options)
+
+  if (intent.target !== null && intent.targetRank !== null) {
+    return intent.target
+  }
+
+  const candidates = []
+  const occasionCeiling = options.occasionProfile?.register_ceiling
+  const occasionCeilingRank = formalityRank(occasionCeiling)
+  if (occasionCeilingRank !== null) candidates.push(occasionCeilingRank)
+
+  const activityCeiling = options.activityProfile?.rules?.register_ceiling
+  const activityCeilingRank = formalityRank(activityCeiling)
+  if (activityCeilingRank !== null) candidates.push(activityCeilingRank)
+
+  if (intent.avoid?.has('dressy')) candidates.push(formalityRank('elevated'))
+  if (intent.avoid?.has('elevated')) candidates.push(formalityRank('everyday'))
+  if (intent.avoid?.has('everyday')) candidates.push(formalityRank('lounge'))
+
+  const validCandidates = candidates.filter(rank => rank !== null)
+  if (!validCandidates.length) return null
+  return FORMALITY_VALUES[Math.min(...validCandidates)]
+}
+
+export function formalityFitForPiece(piece = {}, options = {}) {
+  const intent = options.formalityIntent || resolveFormalityIntent(options)
+  const formality = pieceFormality(piece)
+  const rank = formalityRank(formality)
+  const adjustments = []
+  const add = (score, reason) => adjustments.push({ score, reason })
+  if (!formality || rank === null || !intent.active) {
+    return { score: 0, adjustments, formality, rank, intent }
+  }
+
+  if (intent.avoid?.has(formality)) add(-24, `register: avoid ${formality}`)
+
+  if (intent.targetRank !== null) {
+    const distance = Math.abs(rank - intent.targetRank)
+    if (distance === 0) add(10, `register: ${formality} matches request`)
+    else if (distance === 1) add(-6, `register: ${formality} near ${intent.target}`)
+    else add(-18, `register: ${formality} too far from ${intent.target}`)
+  }
+
+  if (intent.walkable && (piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes')) {
+    const support = pieceWalkSupport(piece)
+    if (piece.heel_height === 'high' || support === 'low') add(-18, 'register: not walkable enough')
+    else if (support === 'high') add(8, 'register: walkable shoe')
+  }
+
+  return {
+    score: adjustments.reduce((sum, item) => sum + item.score, 0),
+    adjustments,
+    formality,
+    rank,
+    intent
+  }
+}
+
+export function formalityFitForOutfit(pieces = [], options = {}) {
+  const intent = options.formalityIntent || resolveFormalityIntent(options)
+  const adjustments = []
+  const add = (score, reason) => adjustments.push({ score, reason })
+  const ranked = pieces
+    .map(piece => ({ piece, formality: pieceFormality(piece), rank: formalityRank(pieceFormality(piece)) }))
+    .filter(item => item.rank !== null && !isAccessory(item.piece))
+  if (!ranked.length) return { score: 0, adjustments, intent }
+
+  if (intent.active) {
+    for (const item of ranked) {
+      const fit = formalityFitForPiece(item.piece, { ...options, formalityIntent: intent })
+      for (const adjustment of fit.adjustments) add(adjustment.score, `${item.piece.name}: ${adjustment.reason}`)
+    }
+  }
+
+  const groups = ranked.map(item => wardrobeCategoryGroup(item.piece))
+  const min = Math.min(...ranked.map(item => item.rank))
+  const max = Math.max(...ranked.map(item => item.rank))
+  const spread = max - min
+  if (spread >= 3) add(-22, 'register clash: lounge/everyday mixed with dressy')
+  else if (spread === 2) add(-8, 'register spread needs intentional styling')
+
+  const hasLounge = ranked.some(item => item.formality === 'lounge')
+  if (hasLounge && ranked.some(item => item.formality === 'elevated' || item.formality === 'dressy')) {
+    add(-18, 'register clash: lounge with polished pieces')
+  }
+  if (intent.target === 'dressy' && !ranked.some(item => item.rank >= 2) && groups.some(group => ['top', 'bottom', 'dress'].includes(group))) {
+    add(-18, 'register: no elevated/dressy anchor for dressy request')
+  }
+  if (intent.target === 'everyday' && ranked.some(item => item.formality === 'dressy')) {
+    add(-14, 'register: dressy piece in everyday request')
+  }
+
+  return {
+    score: adjustments.reduce((sum, item) => sum + item.score, 0),
+    adjustments,
+    intent
+  }
+}
+
+export function explicitFormalityAvoidanceIssue(pieces = [], options = {}) {
+  const intent = options.formalityIntent || resolveFormalityIntent(options)
+  if (!intent.avoid?.size) return null
+  const scopedPieces = (pieces || []).filter(piece => piece && !isAccessory(piece))
+  for (const piece of scopedPieces) {
+    const formality = pieceFormality(piece)
+    if (formality && intent.avoid.has(formality)) {
+      return `explicit register request: avoid ${formality} (${piece.name})`
+    }
+  }
+  return null
 }
 
 
@@ -531,6 +688,20 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
     for (const adjustment of weatherFit.adjustments) {
       reasons.push(adjustment.reason)
     }
+  }
+
+  const candidateFormalityFit = formalityFitForPiece(candidate, options)
+  if (candidateFormalityFit.adjustments.length) {
+    score += candidateFormalityFit.score
+    for (const adjustment of candidateFormalityFit.adjustments) {
+      reasons.push(adjustment.reason)
+    }
+  }
+  const pairFormalityFit = formalityFitForOutfit([selected, candidate], options)
+  if (pairFormalityFit.adjustments.length) {
+    const pairScore = Math.max(-18, Math.min(10, Math.round(pairFormalityFit.score * 0.45)))
+    score += pairScore
+    reasons.push(...pairFormalityFit.adjustments.slice(0, 2).map(adjustment => adjustment.reason))
   }
 
   if (candidate.favorite) { score += 4; reasons.push('favorite') }
@@ -1727,19 +1898,44 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   includeAccessories = false,
   mood = '',
   activity = '',
+  request = '',
+  question = '',
+  occasionProfile = null,
+  activityProfile = null,
   recordMetadataTodos = true
 } = {}) {
   const roster = []
   const excluded = []
   const capCutReasons = new Set(['roster cap: category limit', 'roster cap: global limit'])
   const scoreCache = new Map()
+  const resolvedOccasionProfile = occasionProfile || resolveOccasionProfile(occasion, mood)
+  const resolvedActivityProfile = activityProfile || resolveActivityProfile({ activity, occasion, mood, request: request || question })
+  const formalityIntent = resolveFormalityIntent({ occasion, mood, activity, request, question })
+  const registerCeiling = resolveRegisterCeiling({
+    occasion,
+    mood,
+    activity,
+    request,
+    question,
+    occasionProfile: resolvedOccasionProfile,
+    activityProfile: resolvedActivityProfile,
+    formalityIntent
+  })
+  const registerCeilingRank = formalityRank(registerCeiling)
   const debug = {
     excludedCounts: {},
     categoryCounts: {},
     postGatePoolSize: 0,
     capApplied: false,
     capCutPieces: [],
-    slotCoverage: { top: 0, bottom: 0, dress: 0, shoes: 0, outerwear: 0, accessory: 0 }
+    slotCoverage: { top: 0, bottom: 0, dress: 0, shoes: 0, outerwear: 0, accessory: 0 },
+    registerCeiling,
+    formalityIntent: {
+      target: formalityIntent.target,
+      avoid: [...(formalityIntent.avoid || [])],
+      walkable: formalityIntent.walkable,
+      active: formalityIntent.active
+    }
   }
 
   const exclude = (piece, reason) => {
@@ -1751,9 +1947,9 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     debug.excludedCounts[reason] = (debug.excludedCounts[reason] || 0) + 1
   }
 
-  const ensureMetadataTodo = (piece, field) => {
+  const ensureMetadataTodo = (piece, field, gate = 'weather') => {
     if (!recordMetadataTodos) return
-    const description = `${piece.name || `Piece ${piece.id}`}: missing ${field} — retag to restore weather-gated visibility`
+    const description = `${piece.name || `Piece ${piece.id}`}: missing ${field} — retag to restore ${gate}-gated visibility`
     try {
       const linkedPiece = db.prepare('SELECT id FROM pieces WHERE id = ?').get(piece.id)
       if (!linkedPiece) return
@@ -1784,6 +1980,15 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     const fabricCategory = String(piece?.fabric_category || '').toLowerCase().trim()
     const insulatingCategories = new Set(['wool', 'cashmere', 'fleece', 'down', 'mohair', 'alpaca'])
     if (isHot && fibers.length === 0 && insulatingCategories.has(fabricCategory)) return 'fiber_content'
+    return null
+  }
+
+  const registerGateReason = (piece) => {
+    if (registerCeilingRank === null || isAccessory(piece)) return null
+    const formality = pieceFormality(piece)
+    const rank = formalityRank(formality)
+    if (rank === null) return 'metadata missing: formality (register gate active)'
+    if (rank > registerCeilingRank) return `register: ${formality} exceeds ${registerCeiling} ceiling`
     return null
   }
 
@@ -1860,7 +2065,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     }
   }
 
-  // Step 3 — Weather validity gate
+  // Step 3 — Weather/register validity gate
   const afterStep3 = []
   const isHot = weatherProfile && weatherProfile.isHot
   const isCold = weatherProfile && weatherProfile.isCold
@@ -1869,8 +2074,12 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     const outerwearCandidates = []
     for (const p of afterStep2) {
       const missingField = missingWeatherGateField(p)
+      const registerReason = registerGateReason(p)
       if (isSelected(p)) {
         afterStep3.push(p)
+      } else if (registerReason) {
+        exclude(p, registerReason)
+        if (registerReason.startsWith('metadata missing: formality')) ensureMetadataTodo(p, 'formality', 'register')
       } else if (missingField) {
         const reason = `metadata missing: ${missingField} (weather gate active)`
         exclude(p, reason)
@@ -1910,8 +2119,12 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   } else if (isCold) {
     for (const p of afterStep2) {
       const missingField = missingWeatherGateField(p)
+      const registerReason = registerGateReason(p)
       if (isSelected(p)) {
         afterStep3.push(p)
+      } else if (registerReason) {
+        exclude(p, registerReason)
+        if (registerReason.startsWith('metadata missing: formality')) ensureMetadataTodo(p, 'formality', 'register')
       } else if (missingField) {
         const reason = `metadata missing: ${missingField} (weather gate active)`
         exclude(p, reason)
@@ -1923,8 +2136,17 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       }
     }
   } else {
-    // No weather profile, Step 3 is a no-op
-    afterStep3.push(...afterStep2)
+    for (const p of afterStep2) {
+      const registerReason = registerGateReason(p)
+      if (isSelected(p)) {
+        afterStep3.push(p)
+      } else if (registerReason) {
+        exclude(p, registerReason)
+        if (registerReason.startsWith('metadata missing: formality')) ensureMetadataTodo(p, 'formality', 'register')
+      } else {
+        afterStep3.push(p)
+      }
+    }
   }
   debug.postGatePoolSize = afterStep3.length
   debug.capApplied = afterStep3.length > maxImages
@@ -2055,9 +2277,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     }
 
     let occasionProfileBonus = 0
-    const occasionProfile = resolveOccasionProfile(occasion, mood)
-    const activityProfile = resolveActivityProfile({ activity, occasion, mood })
-    const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
+    const mergedRules = getMergedProfileRules(resolvedOccasionProfile, resolvedActivityProfile)
 
     const preferredMaterials = mergedRules.preferred_materials || []
     const preferredFootwear = mergedRules.preferred_footwear || []
@@ -2077,7 +2297,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     // Preferred materials boost
     for (const mat of preferredMaterials) {
       if (pieceMatchesMaterial(p, mat)) {
-        const source = occasionProfile?.rules?.preferred_materials?.includes(mat) ? 'occasion' : 'activity'
+        const source = resolvedOccasionProfile?.rules?.preferred_materials?.includes(mat) ? 'occasion' : 'activity'
         occasionProfileBonus += 8
         pushAdjustmentReason(p.id, `${source} profile: preferred material (${mat}) (+8)`)
         break
@@ -2088,7 +2308,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     if (p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes') {
       for (const fw of preferredFootwear) {
         if (pieceMatchesFootwear(p, fw)) {
-          const source = occasionProfile?.rules?.preferred_footwear?.includes(fw) ? 'occasion' : 'activity'
+          const source = resolvedOccasionProfile?.rules?.preferred_footwear?.includes(fw) ? 'occasion' : 'activity'
           occasionProfileBonus += 10
           pushAdjustmentReason(p.id, `${source} profile: preferred footwear (${fw}) (+10)`)
           break
@@ -2099,7 +2319,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     // Discouraged materials penalty
     for (const mat of discouragedMaterials) {
       if (pieceMatchesMaterial(p, mat)) {
-        const source = occasionProfile?.rules?.discouraged_materials?.includes(mat) || (weatherProfile && weatherProfile.isHot && occasionProfile?.rules?.discouraged_materials_warm?.includes(mat)) ? 'occasion' : 'activity'
+        const source = resolvedOccasionProfile?.rules?.discouraged_materials?.includes(mat) || (weatherProfile && weatherProfile.isHot && resolvedOccasionProfile?.rules?.discouraged_materials_warm?.includes(mat)) ? 'occasion' : 'activity'
         occasionProfileBonus -= 8
         pushAdjustmentReason(p.id, `${source} profile: discouraged material (${mat}) (-8)`)
         break
@@ -2110,9 +2330,9 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     if (p.category === 'shoes' || wardrobeCategoryGroup(p) === 'shoes') {
       for (const fw of discouragedFootwear) {
         if (pieceMatchesFootwear(p, fw)) {
-          const source = occasionProfile?.rules?.discouraged_footwear?.includes(fw) || 
-                         (weatherProfile && weatherProfile.isHot && occasionProfile?.rules?.discouraged_footwear_summer?.includes(fw)) ||
-                         (weatherProfile && weatherProfile.isHot && occasionProfile?.rules?.discouraged_footwear_warm?.includes(fw)) 
+          const source = resolvedOccasionProfile?.rules?.discouraged_footwear?.includes(fw) || 
+                         (weatherProfile && weatherProfile.isHot && resolvedOccasionProfile?.rules?.discouraged_footwear_summer?.includes(fw)) ||
+                         (weatherProfile && weatherProfile.isHot && resolvedOccasionProfile?.rules?.discouraged_footwear_warm?.includes(fw)) 
                          ? 'occasion' : 'activity'
           occasionProfileBonus -= 10
           pushAdjustmentReason(p.id, `${source} profile: discouraged footwear (${fw}) (-10)`)
@@ -2124,14 +2344,20 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     // Discouraged pieces penalty
     for (const item of discouragedPieces) {
       if (pieceMatchesPieceName(p, item)) {
-        const source = occasionProfile?.rules?.discouraged_pieces?.includes(item) ? 'occasion' : 'activity'
+        const source = resolvedOccasionProfile?.rules?.discouraged_pieces?.includes(item) ? 'occasion' : 'activity'
         occasionProfileBonus -= 10
         pushAdjustmentReason(p.id, `${source} profile: discouraged piece (${item}) (-10)`)
         break
       }
     }
     
-    const score = occasionScore + historyBonus + feedbackBonus - recencyPenalty + weatherBonus + occasionProfileBonus
+    const formalityFit = formalityFitForPiece(p, { occasion, mood, activity, request, question, formalityIntent })
+    for (const adjustment of formalityFit.adjustments) {
+      const sign = adjustment.score >= 0 ? '+' : ''
+      pushAdjustmentReason(p.id, `${adjustment.reason} (${sign}${adjustment.score})`)
+    }
+
+    const score = occasionScore + historyBonus + feedbackBonus - recencyPenalty + weatherBonus + occasionProfileBonus + formalityFit.score
     scoreCache.set(cacheKey, score)
     return score
   }
@@ -2558,6 +2784,13 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
     const decision = wholeWardrobePieceTrustDecision(piece, options)
     if (decision.supportOnly && ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) add(-18, `${piece.name} support-only`)
   }
+
+  const registerFit = formalityFitForOutfit(pieces, options)
+  if (registerFit.adjustments.length) {
+    add(registerFit.score, 'structured register fit')
+    reasons.push(...registerFit.adjustments.map(adjustment => adjustment.reason))
+  }
+
   const intelligenceSet = pieces.map(pieceGarmentIntelligence)
   const profileRoleText = intelligenceSet.map(i => i.bestOutfitRole).filter(Boolean).join(' ')
   const profileRulesText = intelligenceSet.flatMap(i => [...i.pairingRequirements, ...i.failureRisks, ...i.formulaCompatibility, ...i.doNotPairRules]).join(' ').toLowerCase()
@@ -2832,7 +3065,7 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
     }
   }
 
-  return { score, reasons: reasons.slice(0, 6), names }
+  return { score, reasons: reasons.slice(0, 10), names }
 }
 
 export function candidateObjectFromPieces(pieces, index, options) {
@@ -3037,6 +3270,7 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
       const clean = pieces.filter(Boolean)
       if (moodProfile?.id === 'modern_bohemian_restraint' && wholeWardrobeBohoSignalScore(clean) < 2) return
       if (!qualifiesWholeWardrobeMission(clean, missionId)) return
+      if (explicitFormalityAvoidanceIssue(clean, options)) return
       
       if (missionId === 'soft_architecture') {
         const hasDenimOrBlack = clean.some(p => /\b(denim|jean|black)\b/.test(pieceTextBlob(p)) || /\b(denim|jean|black)\b/.test(pieceNameBlob(p)))
@@ -3666,7 +3900,7 @@ function pieceExcludedForOccasion(piece = {}, occasion = '') {
     .includes(requested)
 }
 
-export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode = 'gate', requireShoes = true, requireDress = false, requireNonGraphicTop = false, rejectProfileDiscouraged = false, applyDiversity = true, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null, activity = '', sessionInfluence = null } = {}) {
+export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode = 'gate', requireShoes = true, requireDress = false, requireNonGraphicTop = false, rejectProfileDiscouraged = false, applyDiversity = true, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null, activity = '', sessionInfluence = null, request = '', question = '' } = {}) {
   const advisorMode = mode === 'advisor'
   const seen = new Set()
   const accepted = []
@@ -3701,7 +3935,6 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
       rejected.push({ label: repaired?.label || 'unnamed', reason: 'duplicate formula' })
       continue
     }
-
     if (/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/.test(text)) {
       if (advisorMode) {
         repaired = appendSystemFlag(repaired, 'language', 'Removed body-shape framing from the explanation; review the outfit visually.')

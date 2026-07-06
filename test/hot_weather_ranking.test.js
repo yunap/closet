@@ -37,6 +37,14 @@ test('weatherProfileFromContext and weatherFitForPiece handle numeric hot-weathe
   assert.equal(linenFit.label, 'lightweight - good for heat')
 })
 
+test('weatherProfileFromContext treats indoor season as weather-agnostic even with hot mood text', () => {
+  const hotMood = weatherProfileFromContext({ season: 'indoor', mood: 'hot date night vibes' })
+  assert.deepEqual(hotMood, { isHot: false, isCold: false })
+
+  const indoorOnly = weatherProfileFromContext({ season: 'indoor' })
+  assert.deepEqual(indoorOnly, { isHot: false, isCold: false })
+})
+
 test('gate metadata helpers use structured fields without text guessing', () => {
   assert.equal(pieceFabricWeight({ fabric_weight: 'ultralight' }), 'light')
 
@@ -72,6 +80,7 @@ test('hot visual roster excludes insulating fiber but keeps light wool gauze', (
     sleeve_type: 'sleeveless'
   }
   const res = buildVisualComposerRoster([woolShell, woolGauze], {
+    occasion: 'travel',
     weatherProfile: { isHot: true, isCold: false },
     includeAccessories: true
   })
@@ -89,6 +98,7 @@ test('active weather gate creates deduped metadata todos for missing fabric weig
     const missingWeight = parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(insertedId))
 
     const neutral = buildVisualComposerRoster([missingWeight], {
+      occasion: 'travel',
       weatherProfile: null,
       includeAccessories: true
     })
@@ -96,6 +106,7 @@ test('active weather gate creates deduped metadata todos for missing fabric weig
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata'").get().count, 0)
 
     const hotOne = buildVisualComposerRoster([missingWeight], {
+      occasion: 'travel',
       weatherProfile: { isHot: true, isCold: false },
       includeAccessories: true
     })
@@ -103,6 +114,7 @@ test('active weather gate creates deduped metadata todos for missing fabric weig
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ? AND description LIKE ?").get(missingWeight.id, '%missing fabric_weight%').count, 1)
 
     buildVisualComposerRoster([missingWeight], {
+      occasion: 'travel',
       weatherProfile: { isHot: true, isCold: false },
       includeAccessories: true
     })
@@ -300,7 +312,7 @@ test('Visual Composer Roster weather-aware ranking and tiebreaker rotation', () 
   
   // 1. Hot weather Visual Composer Roster check
   const hotRosterRes = buildVisualComposerRoster(allPieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     weatherProfile: { isHot: true, isCold: false }
   })
   
@@ -316,11 +328,11 @@ test('Visual Composer Roster weather-aware ranking and tiebreaker rotation', () 
 
   // 2. Empty/Neutral weather no-op check: must be identical
   const emptyRosterRes = buildVisualComposerRoster(allPieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     weatherProfile: {}
   })
   const noWeatherRosterRes = buildVisualComposerRoster(allPieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     weatherProfile: null
   })
   
@@ -330,7 +342,7 @@ test('Visual Composer Roster weather-aware ranking and tiebreaker rotation', () 
 })
 
 test('resolveActivityProfile matches hiking and filters prohibited items', () => {
-  const profile = resolveActivityProfile({ occasion: 'casual', mood: 'hiking on a very hot day' })
+  const profile = resolveActivityProfile({ occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.ok(profile, 'Should resolve a profile')
   assert.equal(profile.id, 'hiking', 'Should match hiking')
 
@@ -342,31 +354,31 @@ test('resolveActivityProfile matches hiking and filters prohibited items', () =>
   const blackBlouse = { id: 9905, name: 'Black Blouse', category: 'top', reads_as: 'dressy crepe blouse' }
 
   // 1. Discouraged material (silk) should be allowed in trust decision, but carry score penalty
-  const resSilk = wholeWardrobePieceTrustDecision(silkTop, { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const resSilk = wholeWardrobePieceTrustDecision(silkTop, { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.equal(resSilk.allowed, true, 'Silk top should be allowed by trust decision (soft discouraged)')
-  const scoredSilk = scoreWholeWardrobeCandidate([silkTop], { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const scoredSilk = scoreWholeWardrobeCandidate([silkTop], { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.ok(scoredSilk.reasons.includes('activity profile: discouraged material (silk)'), 'Should penalize discouraged material')
 
   // 2. Discouraged footwear (mules) should be allowed in trust decision, but carry score penalty
-  const resMules = wholeWardrobePieceTrustDecision(muleShoes, { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const resMules = wholeWardrobePieceTrustDecision(muleShoes, { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.equal(resMules.allowed, true, 'Mule shoes should be allowed by trust decision (soft discouraged)')
-  const scoredMules = scoreWholeWardrobeCandidate([muleShoes], { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const scoredMules = scoreWholeWardrobeCandidate([muleShoes], { occasion: 'travel', mood: 'hiking on a very hot day' })
   const hasMulePenalty = scoredMules.reasons.includes('activity profile: discouraged footwear (mule)') ||
                          scoredMules.reasons.includes('activity profile: discouraged footwear (mules)');
   assert.ok(hasMulePenalty, 'Should penalize discouraged footwear')
 
   // 3. Sneakers should be allowed
-  const resSneakers = wholeWardrobePieceTrustDecision(sneakers, { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const resSneakers = wholeWardrobePieceTrustDecision(sneakers, { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.equal(resSneakers.allowed, true, 'Sneakers should be allowed')
 
   // 4. Discouraged piece (blouse) should be allowed in trust decision, but carry score penalty
-  const resBlouse = wholeWardrobePieceTrustDecision(blackBlouse, { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const resBlouse = wholeWardrobePieceTrustDecision(blackBlouse, { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.equal(resBlouse.allowed, true, 'Blouse should be allowed by trust decision (soft discouraged)')
-  const scoredBlouse = scoreWholeWardrobeCandidate([blackBlouse], { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const scoredBlouse = scoreWholeWardrobeCandidate([blackBlouse], { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.ok(scoredBlouse.reasons.includes('activity profile: discouraged piece (blouse)'), 'Should penalize discouraged piece')
 
   // 5. Preferred items should receive boosts in scoreWholeWardrobeCandidate
-  const scored = scoreWholeWardrobeCandidate([sneakers, cottonTee], { occasion: 'casual', mood: 'hiking on a very hot day' })
+  const scored = scoreWholeWardrobeCandidate([sneakers, cottonTee], { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.ok(scored.reasons.includes('activity profile: preferred material (cotton)'), 'Should boost cotton')
   assert.ok(scored.reasons.includes('activity profile: preferred footwear (sneakers)'), 'Should boost sneakers')
 

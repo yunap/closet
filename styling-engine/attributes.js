@@ -6,6 +6,9 @@ export const FIBER_VALUES = ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', '
   'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
   'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown']
 export const INSULATING_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down'])
+export const FORMALITY_VALUES = ['lounge', 'everyday', 'elevated', 'dressy']
+export const HEEL_HEIGHT_VALUES = ['flat', 'low', 'mid', 'high']
+export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
 
 const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
   'silhouette',
@@ -73,6 +76,27 @@ export function fabricWeight(p) {
 }
 
 export const pieceFabricWeight = fabricWeight
+
+export function formalityRank(value) {
+  const normalized = String(value || '').toLowerCase().trim()
+  const idx = FORMALITY_VALUES.indexOf(normalized)
+  return idx === -1 ? null : idx
+}
+
+export function pieceFormality(p) {
+  const normalized = String(p?.formality || '').toLowerCase().trim()
+  return formalityRank(normalized) !== null ? normalized : null
+}
+
+export function pieceHeelHeight(p) {
+  const normalized = String(p?.heel_height || '').toLowerCase().trim()
+  return HEEL_HEIGHT_VALUES.includes(normalized) ? normalized : null
+}
+
+export function pieceWalkSupport(p) {
+  const normalized = String(p?.walk_support || '').toLowerCase().trim()
+  return WALK_SUPPORT_VALUES.includes(normalized) ? normalized : null
+}
 
 export function pieceBareness(p) {
   if (p?.style_profile_json?.bareness) {

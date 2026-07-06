@@ -16,12 +16,13 @@ function insertPiece({
   category,
   photo = 'img.jpg',
   fabric_weight = 'light',
+  formality = 'everyday',
   style_profile_json = {},
   fiber_content = ['cotton']
 }) {
   return db.prepare(`
-    INSERT INTO pieces (name, category, colors, occasions, status, photo, fabric_weight, style_profile_json, fiber_content)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO pieces (name, category, colors, occasions, status, photo, fabric_weight, formality, style_profile_json, fiber_content)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     name,
     category,
@@ -30,16 +31,17 @@ function insertPiece({
     'active',
     photo,
     fabric_weight,
+    formality,
     JSON.stringify(style_profile_json),
     JSON.stringify(fiber_content)
   ).lastInsertRowid
 }
 
-function insertOutfit(name, pieceIds) {
+function insertOutfit(name, pieceIds, { season = 'year-round', occasion = 'casual' } = {}) {
   const outfitId = db.prepare(`
     INSERT INTO outfits (name, occasion, season, status)
     VALUES (?, ?, ?, ?)
-  `).run(name, 'casual', 'year-round', 'confirmed').lastInsertRowid
+  `).run(name, occasion, season, 'confirmed').lastInsertRowid
   for (const pieceId of pieceIds) {
     db.prepare('INSERT INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)').run(outfitId, pieceId)
   }
@@ -50,6 +52,16 @@ test('recall_at_cap replay classifies full recall, gate miss, and cap miss', asy
   const fullTop = insertPiece({ name: 'Full Recall Top', category: 'top' })
   const fullBottom = insertPiece({ name: 'Full Recall Bottom', category: 'bottom' })
   insertOutfit('Full Recall Outfit', [fullTop, fullBottom])
+
+  const indoorWoolTop = insertPiece({
+    name: 'Indoor Wool Shell',
+    category: 'top',
+    fabric_weight: 'heavy',
+    fiber_content: ['wool'],
+    style_profile_json: { coverage: 'full-insulating', bareness: 'normal' }
+  })
+  const indoorBottom = insertPiece({ name: 'Indoor Dinner Pants', category: 'bottom' })
+  insertOutfit('Indoor Weather Agnostic Outfit', [indoorWoolTop, indoorBottom], { season: 'indoor' })
 
   const gateTop = insertPiece({ name: 'Gate Outfit Top', category: 'top' })
   const gateAccessory = insertPiece({ name: 'Gate Outfit Necklace', category: 'accessory' })
@@ -77,6 +89,8 @@ test('recall_at_cap replay classifies full recall, gate miss, and cap miss', asy
   const misses = Object.values(report.flows).flatMap(flow => flow.misses)
 
   assert.ok(!misses.some(miss => miss.outfitName === 'Full Recall Outfit'))
+  assert.ok(!misses.some(miss => miss.outfitName === 'Indoor Weather Agnostic Outfit' && /hot weather/i.test(miss.reason)))
+  assert.ok(report.flows.whole_wardrobe_visual.byWeather.neutral.total > 0)
   assert.ok(misses.some(miss => miss.outfitName === 'Gate Miss Outfit' && miss.layer === 'gate'))
   assert.ok(misses.some(miss => miss.outfitName === 'Cap Miss Outfit' && miss.layer === 'cap'))
 })
