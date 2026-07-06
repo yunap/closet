@@ -743,6 +743,13 @@ Evaluate the garment's visual structure and weight along these two axes:
 - Silhouette: Select fitted, slim, relaxed, boxy, A-line, drop-shoulder, or oversized.
 - Fit on Body: Select clings_stretchy, clings_drapey, skims, hangs_straight, drapes, or structured.
 
+- Formality Register: judge from observable construction, fabric, finish, and wear context signals, calibrated to THIS wardrobe's artisan-nice baseline:
+  * "lounge": athletic/home comfort construction — jersey knits, drawstrings, performance fabric, visible comfort-first design.
+  * "everyday": no-intent wear; matte or naturally textured fabrics, simple construction, minimal hardware/embellishment. Artisan texture, linen, and basic knits do NOT lift a piece out of everyday on their own. Ruffle detailing alone does not lift a piece out of everyday.
+  * "elevated": visible refinement requiring intent — refined drape, deliberate structure, fine knits, polished finish, statement construction details.
+  * "dressy": going-out signals — sheen, lace, sequins, delicate straps, formal tailoring, heels-adjacent styling context.
+  For shoes: "heel_height" is physical heel lift (flat, low, mid, high). "walk_support" is stability/support for lots of walking (high, medium, low); a flat ballet shoe can still be low-support.
+
 - Occasion Suitability — describe, do not stylize. Rate each occasion on the garment's
   OBJECTIVE construction, not on a texture-to-occasion shortcut:
   * "outdoor": "high" only for durable, snag-resistant, practical pieces (cargo, technical,
@@ -832,6 +839,9 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
   "fabric_weight": "ultralight|light|medium|heavy",
   "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. Use 'unknown' if not determinable."],
+  "formality": "lounge|everyday|elevated|dressy",
+  "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
+  "walk_support": "high|medium|low|null (shoes only; null/omit for non-shoes)",
   "style_profile_json": {
     "style_lanes": {
       "artistic_minimal": 0,
@@ -890,6 +900,9 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "fabric_category": "high|medium|low",
     "fabric_weight": "high|medium|low",
     "fiber_content": "high|medium|low",
+    "formality": "high|medium|low",
+    "heel_height": "high|medium|low",
+    "walk_support": "high|medium|low",
     "fit_on_body": "high|medium|low",
     "tuck_behavior": "high|medium|low",
     "waistband_type": "high|medium|low"

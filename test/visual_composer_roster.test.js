@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildVisualComposerRoster } from '../styling-engine/rules.js'
+import { db } from '../db.js'
 
 test('Visual Composer Roster - Hot weather filter ladder', () => {
   const pieces = [
@@ -23,7 +24,7 @@ test('Visual Composer Roster - Hot weather filter ladder', () => {
   ]
 
   const { roster, excluded } = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     weatherProfile: { isHot: true },
     maxImages: 90
   })
@@ -64,7 +65,7 @@ test('Visual Composer Roster - Cold weather filter ladder', () => {
   ]
 
   const { roster, excluded } = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     weatherProfile: { isCold: true },
     maxImages: 90
   })
@@ -91,7 +92,7 @@ test('Visual Composer Roster - No weather no-op check', () => {
   ]
 
   const { roster, excluded } = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     weatherProfile: {}, // no weather detected
     maxImages: 90
   })
@@ -118,14 +119,14 @@ test('Visual Composer Roster - Accessories override check', () => {
 
   // With default (includeAccessories: false)
   const res1 = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     includeAccessories: false
   })
   assert.ok(!res1.roster.some(p => p.id === 1), 'Accessory must be excluded by default')
 
   // With includeAccessories: true
   const res2 = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     includeAccessories: true
   })
   assert.ok(res2.roster.some(p => p.id === 1), 'Accessory must be included when includeAccessories: true')
@@ -147,7 +148,7 @@ test('Visual Composer Roster - Category and global budget ceilings', () => {
 
   // We set maxImages = 90
   const { roster, excluded, debug } = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     maxImages: 90
   })
 
@@ -199,7 +200,7 @@ test('Visual Composer Roster - debug reports exact cap cuts and slot coverage', 
   }
 
   const { roster, debug } = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     maxImages: 93,
     includeAccessories: true
   })
@@ -238,7 +239,7 @@ test('Visual Composer Roster - Determinism and stable tie-breaking', () => {
   }
 
   const { roster, excluded } = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     maxImages: 10 // tops ceiling will be Math.floor(30 * 10 / 93) = 3
   })
 
@@ -270,7 +271,7 @@ test('Visual Composer Roster - Selected pieces bypass limits and filters', () =>
   ]
 
   const { roster } = buildVisualComposerRoster(pieces, {
-    occasion: 'casual',
+    occasion: 'travel',
     weatherProfile: { isHot: true },
     maxImages: 10,
     selectedPieceId: 3
@@ -286,4 +287,113 @@ test('Visual Composer Roster - Selected pieces bypass limits and filters', () =>
   assert.ok(rosterIds.includes(3), 'Selected heavy outerwear must remain')
   // ID 4 (excess top but selected) must remain
   assert.ok(rosterIds.includes(4), 'Selected excess top must remain')
+})
+
+test('Visual Composer Roster - register ceiling excludes above-register pieces before model composition', () => {
+  const pieces = [
+    { id: 1, name: 'Everyday Tee', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 2, name: 'Elevated Trouser', category: 'bottom', photo: 'img.jpg', formality: 'elevated' },
+    { id: 3, name: 'Dressy Mule', category: 'shoes', photo: 'img.jpg', formality: 'dressy' }
+  ]
+
+  const { roster, excluded, debug } = buildVisualComposerRoster(pieces, {
+    occasion: 'city',
+    request: 'not dressy',
+    maxImages: 90
+  })
+
+  assert.deepEqual(roster.map(piece => piece.id).sort((a, b) => a - b), [1, 2])
+  assert.equal(debug.registerCeiling, 'elevated')
+  assert.deepEqual(debug.formalityIntent.avoid, ['dressy'])
+  assert.equal(
+    excluded.find(item => item.pieceId === 3)?.reason,
+    'register: dressy exceeds elevated ceiling'
+  )
+  assert.equal(debug.excludedCounts['register: dressy exceeds elevated ceiling'], 1)
+})
+
+test('Visual Composer Roster - history bonuses cannot rescue above-ceiling pieces', () => {
+  const dressy = { id: 990101, name: 'Favorite Dressy Mule', category: 'shoes', photo: 'img.jpg', formality: 'dressy' }
+  const elevated = { id: 990102, name: 'Elevated Loafer', category: 'shoes', photo: 'img.jpg', formality: 'elevated' }
+  db.prepare('DELETE FROM outfit_pieces WHERE piece_id IN (?, ?)').run(dressy.id, elevated.id)
+  db.prepare('DELETE FROM pieces WHERE id IN (?, ?)').run(dressy.id, elevated.id)
+  db.prepare('INSERT INTO pieces (id, name, category, photo, formality, status) VALUES (?, ?, ?, ?, ?, ?)').run(dressy.id, dressy.name, dressy.category, dressy.photo, dressy.formality, 'active')
+  db.prepare('INSERT INTO pieces (id, name, category, photo, formality, status) VALUES (?, ?, ?, ?, ?, ?)').run(elevated.id, elevated.name, elevated.category, elevated.photo, elevated.formality, 'active')
+  const outfit = db.prepare("INSERT INTO outfits (name, occasion, favorite) VALUES ('register ceiling fixture', 'city', 1)").run()
+  db.prepare('INSERT INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)').run(outfit.lastInsertRowid, dressy.id)
+
+  try {
+    const { roster, excluded } = buildVisualComposerRoster([dressy, elevated], {
+      occasion: 'city',
+      request: 'not dressy',
+      maxImages: 90
+    })
+
+    assert.deepEqual(roster.map(piece => piece.id), [elevated.id])
+    assert.equal(
+      excluded.find(item => item.pieceId === dressy.id)?.reason,
+      'register: dressy exceeds elevated ceiling'
+    )
+  } finally {
+    db.prepare('DELETE FROM outfit_pieces WHERE outfit_id = ?').run(outfit.lastInsertRowid)
+    db.prepare('DELETE FROM outfits WHERE id = ?').run(outfit.lastInsertRowid)
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?)').run(dressy.id, elevated.id)
+  }
+})
+
+test('Visual Composer Roster - active register ceiling requires formality metadata', () => {
+  const missing = { id: 990201, name: 'Mystery Top', category: 'top', photo: 'img.jpg' }
+  db.prepare('DELETE FROM todos WHERE linked_piece_id = ?').run(missing.id)
+  db.prepare('DELETE FROM pieces WHERE id = ?').run(missing.id)
+  db.prepare('INSERT INTO pieces (id, name, category, photo, status) VALUES (?, ?, ?, ?, ?)').run(missing.id, missing.name, missing.category, missing.photo, 'active')
+
+  try {
+    const inactive = buildVisualComposerRoster([missing], {
+      occasion: 'travel',
+      maxImages: 90
+    })
+    assert.deepEqual(inactive.roster.map(piece => piece.id), [missing.id])
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ?").get(missing.id).count, 0)
+
+    const active = buildVisualComposerRoster([missing], {
+      occasion: 'city',
+      request: 'not dressy',
+      maxImages: 90
+    })
+    assert.deepEqual(active.roster, [])
+    assert.equal(active.excluded.find(item => item.pieceId === missing.id)?.reason, 'metadata missing: formality (register gate active)')
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ? AND description LIKE ?").get(missing.id, '%missing formality%').count, 1)
+
+    buildVisualComposerRoster([missing], {
+      occasion: 'city',
+      request: 'not dressy',
+      maxImages: 90
+    })
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ? AND description LIKE ?").get(missing.id, '%missing formality%').count, 1)
+  } finally {
+    db.prepare('DELETE FROM todos WHERE linked_piece_id = ?').run(missing.id)
+    db.prepare('DELETE FROM pieces WHERE id = ?').run(missing.id)
+  }
+})
+
+test('Visual Composer Roster - formality score orders same-register survivors at category cut', () => {
+  const pieces = [
+    { id: 1, name: 'Everyday Top', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 2, name: 'Lounge Top', category: 'top', photo: 'img.jpg', formality: 'lounge' }
+  ]
+  for (let id = 3; id <= 12; id++) {
+    pieces.push({ id, name: `Everyday Bottom ${id}`, category: 'bottom', photo: 'img.jpg', formality: 'everyday' })
+  }
+
+  const { roster, excluded, debug } = buildVisualComposerRoster(pieces, {
+    occasion: 'city',
+    request: 'more everyday',
+    maxImages: 5
+  })
+
+  assert.ok(roster.some(piece => piece.id === 1))
+  assert.ok(!roster.some(piece => piece.id === 2))
+  assert.equal(excluded.find(item => item.pieceId === 2)?.reason, 'roster cap: category limit')
+  assert.ok(debug.relevanceAdjustments[1].some(reason => reason.includes('matches request')))
+  assert.ok(debug.relevanceAdjustments[2].some(reason => reason.includes('near everyday')))
 })

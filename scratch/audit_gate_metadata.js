@@ -1,22 +1,40 @@
 import fs from 'fs'
-import { db, parsePiece } from '../db.js'
+import path from 'path'
+import sharp from 'sharp'
+import { db, parsePiece, uploadsDir } from '../db.js'
 import { confidenceFromProfile } from '../styling-engine/taggerMerge.js'
 
-const GATE_FIELDS = [
-  { key: 'fabric_weight', label: 'fabric_weight', value: piece => piece.fabric_weight },
-  { key: 'style_profile_json.coverage', label: 'coverage', value: piece => piece.style_profile_json?.coverage },
-  { key: 'style_profile_json.bareness', label: 'bareness', value: piece => piece.style_profile_json?.bareness },
-  { key: 'sleeve_type', label: 'sleeve_type', value: piece => piece.sleeve_type },
-  { key: 'length_hits_at', label: 'length_hits_at', value: piece => piece.length_hits_at },
-  { key: 'fiber_content', label: 'fiber_content', value: piece => Array.isArray(piece.fiber_content) && piece.fiber_content.length ? piece.fiber_content : null },
-]
+const FORMALITY_VALUES = ['lounge', 'everyday', 'elevated', 'dressy']
+const WEATHER_SKIP_CATEGORIES = new Set(['accessory', 'accessories', 'jewelry', 'bag', 'bags', 'belt', 'belts', 'scarf', 'scarves', 'hat', 'hats', 'sunglasses', 'shoes', 'shoe'])
+const FORMALITY_SKIP_CATEGORIES = new Set(['accessory', 'accessories', 'jewelry', 'bag', 'bags', 'belt', 'belts', 'scarf', 'scarves', 'hat', 'hats', 'sunglasses'])
 
-const SKIP_CATEGORIES = new Set(['accessory', 'accessories', 'jewelry', 'bag', 'bags', 'belt', 'belts', 'scarf', 'scarves', 'hat', 'hats', 'sunglasses', 'shoes', 'shoe'])
-
-function shouldAuditPiece(piece) {
-  const category = String(piece?.category || '').toLowerCase().trim()
-  return !SKIP_CATEGORIES.has(category)
+function category(piece) {
+  return String(piece?.category || '').toLowerCase().trim()
 }
+
+function isShoe(piece) {
+  return ['shoes', 'shoe'].includes(category(piece))
+}
+
+function isWeatherGatePiece(piece) {
+  return !WEATHER_SKIP_CATEGORIES.has(category(piece))
+}
+
+function isFormalityPiece(piece) {
+  return !FORMALITY_SKIP_CATEGORIES.has(category(piece))
+}
+
+const GATE_FIELDS = [
+  { key: 'fabric_weight', scope: 'weather', appliesTo: isWeatherGatePiece, value: piece => piece.fabric_weight },
+  { key: 'style_profile_json.coverage', scope: 'weather', appliesTo: isWeatherGatePiece, value: piece => piece.style_profile_json?.coverage },
+  { key: 'style_profile_json.bareness', scope: 'weather', appliesTo: isWeatherGatePiece, value: piece => piece.style_profile_json?.bareness },
+  { key: 'sleeve_type', scope: 'weather', appliesTo: isWeatherGatePiece, value: piece => piece.sleeve_type },
+  { key: 'length_hits_at', scope: 'weather', appliesTo: isWeatherGatePiece, value: piece => piece.length_hits_at },
+  { key: 'fiber_content', scope: 'weather', appliesTo: isWeatherGatePiece, value: piece => Array.isArray(piece.fiber_content) && piece.fiber_content.length ? piece.fiber_content : null },
+  { key: 'formality', scope: 'register', appliesTo: isFormalityPiece, value: piece => piece.formality },
+  { key: 'heel_height', scope: 'footwear', appliesTo: isShoe, value: piece => piece.heel_height },
+  { key: 'walk_support', scope: 'footwear', appliesTo: isShoe, value: piece => piece.walk_support },
+]
 
 function isPopulated(value) {
   if (Array.isArray(value)) return value.length > 0
@@ -30,24 +48,99 @@ function confidenceFor(piece, field) {
   return confidenceFromProfile(piece, field) || 'unknown'
 }
 
+function escapeSvg(value = '') {
+  return String(value).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]))
+}
+
+function wrapLabel(value = '', max = 22) {
+  const words = String(value || '').split(/\s+/).filter(Boolean)
+  const lines = []
+  let line = ''
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word
+    if (next.length > max && line) {
+      lines.push(line)
+      line = word
+    } else {
+      line = next
+    }
+  }
+  if (line) lines.push(line)
+  return lines.slice(0, 3)
+}
+
+async function makeTile(piece, width = 150, height = 196) {
+  const photo = piece.photo || piece.worn_photo
+  const filePath = photo ? path.join(uploadsDir, photo) : null
+  let image
+  if (filePath && fs.existsSync(filePath)) {
+    image = await sharp(filePath)
+      .rotate()
+      .resize(width - 16, height - 54, { fit: 'contain', background: { r: 250, g: 248, b: 245, alpha: 0 } })
+      .png()
+      .toBuffer()
+  } else {
+    const fallbackSvg = `<svg width="${width - 16}" height="${height - 54}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" rx="10" fill="#a08f7f"/><text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" font-family="Georgia, serif" font-size="28" font-style="italic" fill="#f5efe8">${escapeSvg((piece.name || '?').charAt(0))}</text></svg>`
+    image = await sharp(Buffer.from(fallbackSvg)).png().toBuffer()
+  }
+  const labelLines = wrapLabel(`${piece.id} ${piece.name}`, 20)
+  const labelSvg = labelLines.map((line, i) => `<text x="${width / 2}" y="${height - 34 + i * 12}" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#5b5149">${escapeSvg(line)}</text>`).join('')
+  const tileSvg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" rx="12" fill="#fbfaf8"/><rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="12" fill="none" stroke="#e2d9d0"/>${labelSvg}</svg>`
+  return sharp(Buffer.from(tileSvg)).composite([{ input: image, left: 8, top: 10 }]).jpeg({ quality: 82 }).toBuffer()
+}
+
+async function writeFormalityContactSheets(pieces = []) {
+  const outDir = 'scratch/formality_contact_sheets'
+  fs.mkdirSync(outDir, { recursive: true })
+  const written = []
+  for (const tier of FORMALITY_VALUES) {
+    const bucket = pieces.filter(piece => String(piece.formality || '').toLowerCase().trim() === tier)
+    if (!bucket.length) continue
+    const cols = 5
+    const tileW = 150
+    const tileH = 196
+    const gap = 14
+    const margin = 24
+    const headerH = 76
+    const rows = Math.ceil(bucket.length / cols)
+    const width = margin * 2 + cols * tileW + (cols - 1) * gap
+    const height = headerH + margin + rows * tileH + Math.max(0, rows - 1) * gap
+    const composites = []
+    for (const [idx, piece] of bucket.entries()) {
+      composites.push({
+        input: await makeTile(piece, tileW, tileH),
+        left: margin + (idx % cols) * (tileW + gap),
+        top: headerH + Math.floor(idx / cols) * (tileH + gap)
+      })
+    }
+    const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#f6f1eb"/><text x="24" y="36" font-family="Georgia, serif" font-size="26" fill="#2f2924">Formality bucket: ${escapeSvg(tier)}</text><text x="24" y="58" font-family="Arial, sans-serif" font-size="13" fill="#786d63">${bucket.length} active pieces. Review for obvious mis-bucketed garments after backfill.</text></svg>`
+    const outPath = path.join(outDir, `formality-${tier}.jpg`)
+    await sharp(Buffer.from(svg)).composite(composites).jpeg({ quality: 86 }).toFile(outPath)
+    written.push(outPath)
+  }
+  return written
+}
+
 const allActivePieces = db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY id").all().map(parsePiece)
-const pieces = allActivePieces.filter(shouldAuditPiece)
 const summary = {}
 const missingByPiece = []
 
 for (const field of GATE_FIELDS) {
+  const applicable = allActivePieces.filter(field.appliesTo)
   summary[field.key] = {
     field: field.key,
+    scope: field.scope,
     populated: 0,
-    total: pieces.length,
+    total: applicable.length,
     percent: 0,
     confidence: {}
   }
 }
 
-for (const piece of pieces) {
+for (const piece of allActivePieces) {
   const missing = []
   for (const field of GATE_FIELDS) {
+    if (!field.appliesTo(piece)) continue
     const value = field.value(piece)
     const populated = isPopulated(value)
     if (populated) summary[field.key].populated += 1
@@ -73,6 +166,7 @@ for (const item of Object.values(summary)) {
 
 console.table(Object.values(summary).map(item => ({
   field: item.field,
+  scope: item.scope,
   populated: item.populated,
   total: item.total,
   percent: `${item.percent}%`,
@@ -86,13 +180,20 @@ if (missingByPiece.length) {
   }
 }
 
+const contactSheets = await writeFormalityContactSheets(allActivePieces.filter(isFormalityPiece))
+if (contactSheets.length) {
+  console.log('\nFormality bucket contact sheets:')
+  for (const sheet of contactSheets) console.log(`- ${sheet}`)
+} else {
+  console.log('\nNo formality contact sheets written yet; no active pieces have formality values.')
+}
+
 const output = {
   generatedAt: new Date().toISOString(),
-  activePieceCountBeforeCategorySkip: allActivePieces.length,
-  activePieceCount: pieces.length,
-  skippedCategoryCount: allActivePieces.length - pieces.length,
+  activePieceCount: allActivePieces.length,
   fields: summary,
-  missingByPiece
+  missingByPiece,
+  formalityContactSheets: contactSheets
 }
 
 fs.writeFileSync('scratch/gate_metadata_audit.json', JSON.stringify(output, null, 2))

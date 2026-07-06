@@ -82,3 +82,35 @@ walking flats, flat rugged boots
 - [x] Mood text can only trigger a profile via strong activity words (hiking, trail,
       festival, picnic, lounge...) — never via generic words (walk, city, work, home).
 - [x] New profile entries by models are `[proposed]` and inert until ratified here.
+
+---
+
+## Ratified Amendment: Register Ceilings For Roster Gating
+
+Status: **ratified by Yuna, 2026-07-05**. These values are wired into `occasions.js`
+as `register_ceiling` fields. A ceiling excludes pieces above the ceiling before the
+visual composer sees images; pieces below the ceiling remain eligible.
+
+Register values: `lounge < everyday < elevated < dressy`.
+
+| Occasion | Ratified `register_ceiling` | Notes |
+|---|---:|---|
+| casual | `everyday` | New profile. Low-key casual should keep the roster genuinely everyday. |
+| city / city_smart_casual | `elevated` | Allows elevated city clothing while excluding dressy unless explicitly requested. |
+| smart casual | `elevated` | Resolved through the city_smart_casual profile. |
+| outdoor daytime social | `elevated` | Festivals/markets/picnics may include elevated pieces, but not dressy by default. |
+| evening | `dressy` | No effective register ceiling. |
+| gallery / art event | `elevated` | Yuna: "mostly elevated for me." Dressy gallery looks via typed request override. |
+| travel | none / `null` | Trip slots carry their own contexts. |
+| concert | `elevated` | Yuna: "mostly elevated for me." Dressy concert looks via typed request override. |
+| home | `everyday` | Home loungewear should not pull in elevated/dressy pieces by default. |
+
+Notes:
+- `casual -> everyday` is the largest behavior change. It would make park-friend,
+  coffee, errands, and low-key social rosters reject `elevated` and `dressy` pieces.
+- Walking as an **activity** gates footwear only. It does not lower register. City + walking
+  should still allow elevated clothing on walkable soles.
+- Hiking as an activity may carry `register_ceiling: everyday` because trail context
+  constrains clothing register, not just shoe comfort.
+- Explicit typed register requests override upward. For example, `dressy` on a city or
+  gallery request raises the effective ceiling to `dressy`; `not dressy` lowers it.

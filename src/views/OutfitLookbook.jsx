@@ -16,6 +16,13 @@ const SEASONS = [
   { value: 'warm',       label: '☀️ Warm Climate' },
   { value: 'cool',       label: '❄️ Cool Climate' },
   { value: 'year-round', label: '🔄 Year-Round' },
+  { value: 'indoor',     label: '🏠 Indoor / Any Weather' },
+]
+const OUTFIT_SEASONS = [
+  { value: 'warm',       label: 'warm' },
+  { value: 'cool',       label: 'cool' },
+  { value: 'year-round', label: 'year-round' },
+  { value: 'indoor',     label: 'indoor' },
 ]
 const SORT_OPTIONS = [
   { value: 'newest',       label: 'Newest First' },
@@ -188,17 +195,19 @@ function ExtractedPieceRow({ piece, checked, onChange }) {
 }
 
 // ── Outfit Form ────────────────────────────────────────────────────────────────
-function OutfitForm({ onSave, onCancel }) {
-  const [name, setName]           = useState('')
-  const [occasion, setOccasion]   = useState('casual')
-  const [season, setSeason]       = useState('year-round')
-  const [notes, setNotes]         = useState('')
-  const [status, setStatus]       = useState('confirmed')
+function OutfitForm({ outfit = null, onSave, onCancel }) {
+  const isEdit = Boolean(outfit)
+  const [name, setName]           = useState(outfit?.name || '')
+  const [occasion, setOccasion]   = useState(outfit?.occasion || 'casual')
+  const [season, setSeason]       = useState(outfit?.season || 'year-round')
+  const [notes, setNotes]         = useState(outfit?.notes || '')
+  const [status, setStatus]       = useState(outfit?.status || 'confirmed')
   const [photoFile, setPhotoFile] = useState(null)
-  const [preview, setPreview]     = useState(null)
+  const [preview, setPreview]     = useState(outfit?.photo ? `/uploads/${outfit.photo}` : null)
   const [scanning, setScanning]   = useState(false)
   const [extracted, setExtracted] = useState([])
   const [selected, setSelected]   = useState([])
+  const [linkedPieceIds]          = useState(() => (outfit?.pieces || []).map(p => p.id))
   const [scanError, setScanError] = useState(null)
   const [saving, setSaving]       = useState(false)
 
@@ -231,7 +240,8 @@ function OutfitForm({ onSave, onCancel }) {
     if (!name.trim()) return
     setSaving(true)
     try {
-      const pieceIds = []
+      const pieceIds = [...linkedPieceIds]
+      let piecesAdded = 0
       for (const piece of extracted.filter((_, i) => selected[i])) {
         const fd = new FormData()
         fd.append('name', piece.name_suggestion || piece.category)
@@ -258,14 +268,19 @@ function OutfitForm({ onSave, onCancel }) {
 
         const res = await fetch('/api/pieces', { method: 'POST', body: fd })
         pieceIds.push((await res.json()).id)
+        piecesAdded++
       }
       const fd = new FormData()
       fd.append('name', name); fd.append('occasion', occasion)
       fd.append('season', season); fd.append('notes', notes)
       fd.append('status', status); fd.append('pieceIds', JSON.stringify(pieceIds))
+      if (isEdit) fd.append('favorite', String(Boolean(outfit?.favorite)))
       if (photoFile) fd.append('photo', photoFile)
-      const res = await fetch('/api/outfits', { method: 'POST', body: fd })
-      onSave(await res.json(), pieceIds.length)
+      const res = await fetch(isEdit ? `/api/outfits/${outfit.id}` : '/api/outfits', {
+        method: isEdit ? 'PUT' : 'POST',
+        body: fd
+      })
+      onSave(await res.json(), piecesAdded)
     } finally { setSaving(false) }
   }
 
@@ -276,14 +291,16 @@ function OutfitForm({ onSave, onCancel }) {
       <div className="modal-sheet" onClick={e => e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-header">
-          <span className="modal-title">Add outfit</span>
+          <span className="modal-title">{isEdit ? 'Edit outfit' : 'Add outfit'}</span>
           <button className="modal-close" onClick={onCancel}>✕</button>
         </div>
         <div className="form-body">
           {preview ? (
             <div className="photo-preview">
               <img src={preview} alt="preview" style={{ maxHeight: 280 }} />
-              <button className="photo-preview-remove" onClick={() => { setPhotoFile(null); setPreview(null); setExtracted([]); setSelected([]) }}>✕</button>
+              {photoFile && (
+                <button className="photo-preview-remove" onClick={() => { setPhotoFile(null); setPreview(outfit?.photo ? `/uploads/${outfit.photo}` : null); setExtracted([]); setSelected([]) }}>✕</button>
+              )}
             </div>
           ) : (
             <label className="photo-upload">
@@ -347,7 +364,9 @@ function OutfitForm({ onSave, onCancel }) {
           <div className="form-group">
             <label className="form-label">Season</label>
             <div className="radio-row">
-              {['warm','cool','year-round'].map(s => <button key={s} className={`radio-btn ${season === s ? 'active' : ''}`} onClick={() => setSeason(s)}>{s}</button>)}
+              {OUTFIT_SEASONS.map(s => (
+                <button key={s.value} className={`radio-btn ${season === s.value ? 'active' : ''}`} onClick={() => setSeason(s.value)}>{s.label}</button>
+              ))}
             </div>
           </div>
           <div className="form-group">
@@ -364,7 +383,7 @@ function OutfitForm({ onSave, onCancel }) {
         <div className="form-actions">
           <button className="btn-secondary" onClick={onCancel}>Cancel</button>
           <button className="btn-primary" onClick={handleSubmit} disabled={saving || !name.trim()}>
-            {saving ? 'Saving…' : selectedCount > 0 ? `Save outfit + ${selectedCount} pieces` : 'Save outfit'}
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : selectedCount > 0 ? `Save outfit + ${selectedCount} pieces` : 'Save outfit'}
           </button>
         </div>
       </div>
@@ -374,7 +393,7 @@ function OutfitForm({ onSave, onCancel }) {
 }
 
 // ── Outfit Detail ──────────────────────────────────────────────────────────────
-function OutfitDetail({ outfit, onClose, onDelete, onSendToStylist, onPiecesUpdated }) {
+function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPiecesUpdated }) {
   const [pieces, setPieces]           = useState(outfit.pieces || [])
   const [showSelector, setShowSelector] = useState(false)
   const [previewImage, setPreviewImage] = useState(null)
@@ -530,6 +549,7 @@ function OutfitDetail({ outfit, onClose, onDelete, onSendToStylist, onPiecesUpda
             </button>
 
             <div className="detail-actions">
+              <button className="btn-secondary" onClick={() => onEdit({ ...outfit, pieces })}>Edit</button>
               <button className="btn-danger" onClick={handleDelete}>Delete</button>
               <button className="btn-secondary" onClick={onClose}>Close</button>
             </div>
@@ -773,6 +793,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
   const [isSortOpen, setIsSortOpen]     = useState(false)
   
   const [showForm, setShowForm]         = useState(false)
+  const [editOutfit, setEditOutfit]     = useState(null)
   const [detail, setDetail]             = useState(null)
   const [toast, setToast]               = useState(null)
 
@@ -834,10 +855,18 @@ export default function OutfitLookbook({ onSendToStylist }) {
 
   const handleSave = (outfit, piecesAdded) => {
     setShowForm(false)
+    setEditOutfit(null)
     fetchOutfits()
     if (piecesAdded > 0) {
       setToast(`Outfit saved · ${piecesAdded} ${piecesAdded === 1 ? 'piece' : 'pieces'} added to wardrobe`)
     }
+  }
+
+  const seasonMatchesFilter = (outfitSeason, selectedSeason) => {
+    if (!selectedSeason) return true
+    if (selectedSeason === 'indoor') return outfitSeason === 'indoor'
+    if (selectedSeason === 'year-round') return outfitSeason === 'year-round' || outfitSeason === 'indoor'
+    return outfitSeason === selectedSeason || outfitSeason === 'year-round' || outfitSeason === 'indoor'
   }
 
   // Client-side filtering & sorting logic (Zero Latency)
@@ -847,12 +876,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
 
     // 2. Climate / Season Filter
     if (filterSeason) {
-      if (filterSeason === 'year-round') {
-        if (o.season !== 'year-round') return false
-      } else {
-        // 'warm' or 'cool' matches exact season OR 'year-round'
-        if (o.season !== filterSeason && o.season !== 'year-round') return false
-      }
+      if (!seasonMatchesFilter(o.season, filterSeason)) return false
     }
 
     // 3. Garment-Aware Search
@@ -922,7 +946,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
       const titleMatch = b.title?.toLowerCase().includes(qSeason)
       const reasonMatch = b.reason?.toLowerCase().includes(qSeason)
       const watchMatch = b.watch_for?.toLowerCase().includes(qSeason)
-      const piecesMatch = b.pieces?.some(p => p.season === filterSeason || p.season === 'year-round')
+      const piecesMatch = b.pieces?.some(p => seasonMatchesFilter(p.season, filterSeason))
       if (!titleMatch && !reasonMatch && !watchMatch && !piecesMatch) return false
     }
 
@@ -1201,13 +1225,14 @@ export default function OutfitLookbook({ onSendToStylist }) {
       )}
  
       {activeSubTab === 'my-outfits' && (
-        <button className="fab" onClick={() => setShowForm(true)}>+</button>
+        <button className="fab" onClick={() => { setEditOutfit(null); setShowForm(true) }}>+</button>
       )}
-      {showForm && <OutfitForm onSave={handleSave} onCancel={() => setShowForm(false)} />}
+      {showForm && <OutfitForm outfit={editOutfit} onSave={handleSave} onCancel={() => { setShowForm(false); setEditOutfit(null) }} />}
       {detail && (
         <OutfitDetail
           outfit={detail}
           onClose={() => setDetail(null)}
+          onEdit={outfit => { setDetail(null); setEditOutfit(outfit); setShowForm(true) }}
           onDelete={handleDelete}
           onSendToStylist={outfit => { setDetail(null); onSendToStylist(outfit) }}
           onPiecesUpdated={fetchOutfits}
