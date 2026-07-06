@@ -15,6 +15,12 @@ const FIT_CONFIDENCE = [
   { value: 'medium', label: 'Medium' },
   { value: 'low', label: 'Low' },
 ]
+const FORMALITY_OPTIONS = [
+  { value: 'lounge', label: 'Lounge' },
+  { value: 'everyday', label: 'Everyday' },
+  { value: 'elevated', label: 'Elevated' },
+  { value: 'dressy', label: 'Dressy' },
+]
 const ROLE_PERMISSIONS = [
   { value: 'auto', label: 'Auto' },
   { value: 'focal_ok', label: 'Focal ok' },
@@ -290,6 +296,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     // Fabric
     fabric_category:    piece?.fabric_category    || null,
     fabric_weight:      piece?.fabric_weight      || null,
+    formality:          piece?.formality          || null,
+    heel_height:        piece?.heel_height        || null,
+    walk_support:       piece?.walk_support       || null,
     stretch:            piece?.stretch            || null,
     // Fit
     fit_on_body:        piece?.fit_on_body        || null,
@@ -418,6 +427,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'silhouette', tags.silhouette)
         applyTagValue(next, 'fabric_category', tags.fabric_category)
         applyTagValue(next, 'fabric_weight', tags.fabric_weight)
+        applyTagValue(next, 'formality', tags.formality)
+        applyTagValue(next, 'heel_height', tags.heel_height)
+        applyTagValue(next, 'walk_support', tags.walk_support)
         next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
         if (tags.fit_on_body && tags.fit_on_body !== 'none') applyTagValue(next, 'fit_on_body', tags.fit_on_body)
         applyTagValue(next, 'tagger_version', tags.tagger_version)
@@ -450,7 +462,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       if (tags.error) return
       setForm(f => {
         const next = { ...f }
-        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_type','length_hits_at','silhouette','fabric_category','fabric_weight','fit_on_body','tuck_behavior','waistband_type','tagger_version'].forEach(field => {
+        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_type','length_hits_at','silhouette','fabric_category','fabric_weight','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','tagger_version'].forEach(field => {
           applyTagValue(next, field, tags[field])
         })
         if (!f.name) applyTagValue(next, 'name', tags.name_suggestion || tags.name, '')
@@ -507,6 +519,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const constructionConfig = CONSTRUCTION_BY_CATEGORY[cat]
   const fabricConfig = FABRIC_BY_CATEGORY[cat] || FABRIC_BY_CATEGORY.default
   const showFitFields = CLOTHING_CATEGORIES.includes(cat)
+  const showFormality = cat !== 'accessory'
   const styleProfile = typeof form.style_profile_json === 'string'
     ? (() => { try { return JSON.parse(form.style_profile_json) || {} } catch { return {} } })()
     : (form.style_profile_json || {})
@@ -668,6 +681,13 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <label className="form-label">Fit confidence</label>
             <ChipRow options={FIT_CONFIDENCE} value={form.fit_confidence} onChange={v => set('fit_confidence', v || 'unknown')} />
           </div>
+
+          {showFormality && (
+            <div className="form-group">
+              <FieldLabel field="formality">Formality</FieldLabel>
+              <ChipRow options={FORMALITY_OPTIONS} value={form.formality} onChange={v => set('formality', v)} />
+            </div>
+          )}
 
           <div className="form-group">
             <label className="form-label">Auto-styling role</label>

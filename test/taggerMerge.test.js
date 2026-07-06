@@ -5,8 +5,17 @@ import {
   CONFIDENCE_FIELDS,
   applyTaggerResult,
   normalizeConfidenceMap,
+  normalizeFormality,
+  normalizeHeelHeight,
+  normalizeWalkSupport,
   tagStateForTaggerResult
 } from '../styling-engine/taggerMerge.js'
+import {
+  formalityRank,
+  pieceFormality,
+  pieceHeelHeight,
+  pieceWalkSupport
+} from '../styling-engine/attributes.js'
 
 test('normalizeConfidenceMap defaults missing and malformed confidence to low', () => {
   const confidence = normalizeConfidenceMap({
@@ -55,6 +64,44 @@ test('applyTaggerResult normalizes fiber content to canonical values', () => {
 
   assert.deepEqual(merged.fiber_content, ['wool', 'unknown', 'linen'])
   assert.equal(merged.style_profile_json._confidence.fiber_content, 'medium')
+})
+
+test('formality and shoe support enums normalize without text guessing', () => {
+  assert.equal(normalizeFormality('Elevated'), 'elevated')
+  assert.equal(normalizeHeelHeight('MID'), 'mid')
+  assert.equal(normalizeWalkSupport('low'), 'low')
+  assert.equal(normalizeFormality('fancy'), null)
+  assert.equal(normalizeHeelHeight('wedge'), null)
+  assert.equal(normalizeWalkSupport('walkable'), null)
+
+  assert.equal(formalityRank('lounge'), 0)
+  assert.equal(formalityRank('dressy'), 3)
+  assert.equal(formalityRank('unknown'), null)
+  assert.equal(pieceFormality({ name: 'lace top', formality: 'dressy' }), 'dressy')
+  assert.equal(pieceFormality({ name: 'dressy lace top' }), null)
+  assert.equal(pieceHeelHeight({ name: 'wedge heel', heel_height: 'high' }), 'high')
+  assert.equal(pieceHeelHeight({ name: 'wedge heel' }), null)
+  assert.equal(pieceWalkSupport({ name: 'ballet flat', walk_support: 'low' }), 'low')
+  assert.equal(pieceWalkSupport({ name: 'ballet flat' }), null)
+})
+
+test('applyTaggerResult normalizes formality and shoe support fields', () => {
+  const merged = applyTaggerResult(
+    { id: 1, name: 'test shoe', manual_overrides: [] },
+    {
+      formality: 'Dressy',
+      heel_height: 'MID',
+      walk_support: 'low',
+      _confidence: { formality: 'medium', heel_height: 'high', walk_support: 'high' }
+    }
+  )
+
+  assert.equal(merged.formality, 'dressy')
+  assert.equal(merged.heel_height, 'mid')
+  assert.equal(merged.walk_support, 'low')
+  assert.equal(merged.style_profile_json._confidence.formality, 'medium')
+  assert.equal(merged.style_profile_json._confidence.heel_height, 'high')
+  assert.equal(merged.style_profile_json._confidence.walk_support, 'high')
 })
 
 test('manual overrides pin confidence and block retag overwrite', () => {

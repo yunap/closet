@@ -6,7 +6,10 @@ import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { collectPieceIdsFromSavedBoardRow } from '../styling-engine/rules.js'
 import {
   mergeWithManualOverrides,
+  normalizeFormality,
+  normalizeHeelHeight,
   normalizeManualOverrides,
+  normalizeWalkSupport,
   pinManualConfidence,
   tagStateForPhotos
 } from '../styling-engine/taggerMerge.js'
@@ -95,7 +98,7 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_type, length_hits_at, silhouette,
-    fabric_category, fabric_weight, fiber_content, stretch,
+    fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, stretch,
     fit_on_body, tuck_behavior, waistband_type,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_state, manual_overrides } = req.body
@@ -117,15 +120,15 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
       recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
       pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
       neckline, sleeve_type, length_hits_at, silhouette,
-      fabric_category, fabric_weight, fiber_content, stretch, fit_on_body, tuck_behavior, waistband_type,
+      fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, stretch, fit_on_body, tuck_behavior, waistband_type,
       styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
       tag_state, manual_overrides)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active', photo, worn_photo,
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, fiber_content||'[]', stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
+    fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile), tagger_version||null,
     finalTagState, JSON.stringify(finalManualOverrides))
   res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(r.lastInsertRowid)))
@@ -138,7 +141,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_type, length_hits_at, silhouette,
-    fabric_category, fabric_weight, fiber_content, stretch,
+    fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, stretch,
     fit_on_body, tuck_behavior, waistband_type,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_state, manual_overrides } = req.body
@@ -170,7 +173,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
       recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,
       pattern_type=?,pattern_scale=?,pattern_complexity=?,reads_as=?,background_color=?,hem_finish=?,
       neckline=?,sleeve_type=?,length_hits_at=?,silhouette=?,
-      fabric_category=?,fabric_weight=?,fiber_content=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,
+      fabric_category=?,fabric_weight=?,fiber_content=?,formality=?,heel_height=?,walk_support=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,
       styling_rules_learned=?,pairs_well_with=?,tried_and_rejected=?,style_profile_json=?,tagger_version=?,
       tag_state=?,manual_overrides=?
     WHERE id=?
@@ -179,7 +182,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, fiber_content||'[]', stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
+    fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile),
     final_tagger_version, finalTagState, JSON.stringify(finalManualOverrides), req.params.id)
   res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)))
@@ -251,7 +254,18 @@ router.get('/outfits', (req, res) => {
   let q = 'SELECT * FROM outfits WHERE 1=1'
   const params = []
   if (occasion) { q += ' AND occasion = ?'; params.push(occasion) }
-  if (season && season !== 'all') { q += ' AND (season = ? OR season = "year-round")'; params.push(season) }
+  if (season && season !== 'all') {
+    if (season === 'indoor') {
+      q += ' AND season = ?'
+      params.push('indoor')
+    } else if (season === 'year-round') {
+      q += ' AND (season = ? OR season = ?)'
+      params.push('year-round', 'indoor')
+    } else {
+      q += ' AND (season = ? OR season = ? OR season = ?)'
+      params.push(season, 'year-round', 'indoor')
+    }
+  }
   if (favorites === 'true') { q += ' AND favorite = 1' }
   q += ' ORDER BY favorite DESC, date_added DESC'
 

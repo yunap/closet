@@ -278,12 +278,13 @@ test('3. Kitten-heel asymmetry: kitten heels are swapped on walk intent but left
   assert.deepEqual(dinnerRepaired.pieceIds, [seeded.top, seeded.bottom, seeded.kittenHeel], 'Kitten heels should remain untouched for dinner')
 })
 
-test('4. occasions.js remains completely unmodified', () => {
+test('4. walking remains de-conflated while city register ceiling is separate from comfort rules', () => {
   const walkProfile = OCCASION_PROFILES.find(p => p.id === 'walking')
   assert.equal(walkProfile, undefined, 'No walking occasion profile should be created in occasions.js')
 
   const cityProfile = OCCASION_PROFILES.find(p => p.id === 'city_smart_casual')
   assert.ok(cityProfile, 'City profile should exist')
+  assert.equal(cityProfile.register_ceiling, 'elevated')
   assert.deepEqual(cityProfile.rules, {
     discouraged_footwear: ["athletic running shoe", "athletic running shoes"],
     preferred_materials: ["tailored linen", "structured denim", "cardigans", "light outerwear"],

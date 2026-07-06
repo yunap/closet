@@ -51,7 +51,8 @@ export const ACTIVITY_PROFILES = [
       discouraged_pieces: ["dress", "dresses", "skirt", "skirts", "blouse", "blouses", "dressy top", "dressy tops", "dressy shorts"],
       preferred_materials: ["cotton", "knit", "knitwear", "denim", "utility", "canvas"],
       preferred_footwear: ["sneakers", "walking flats", "flat rugged boots"],
-      required_footwear: ["sneaker", "sneakers", "athletic", "trail", "rugged", "lace-up", "walking flat", "walking flats"]
+      required_footwear: ["sneaker", "sneakers", "athletic", "trail", "rugged", "lace-up", "walking flat", "walking flats"],
+      register_ceiling: "everyday"
     }
   }
 ]

@@ -471,6 +471,7 @@ export default function AskClaude({
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
+  const [wardrobeOutfitRequest, setWardrobeOutfitRequest] = useState('')
   const [wardrobeOutfitMission, setWardrobeOutfitMission] = useState('mix')
   const [wardrobeOutfitActivity, setWardrobeOutfitActivity] = useState('none')
   const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
@@ -2278,10 +2279,11 @@ export default function AskClaude({
     const occasion = wardrobeOutfitOccasion || 'casual'
     const season = wardrobeOutfitSeason || 'current season'
     const mood = wardrobeOutfitMood || 'artistic minimalist'
+    const request = wardrobeOutfitRequest.trim()
     const mission = wardrobeOutfitMission || 'mix'
     const activity = wardrobeOutfitActivity || 'none'
     const activityLabel = activity !== 'none' ? `, ${ACTIVITY_OPTIONS.find(opt => opt[0] === activity)?.[1].toLowerCase()}` : ''
-    const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, ${mood}` : ''}${activityLabel}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
+    const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, mood: ${mood}` : ''}${request ? `, request: ${request}` : ''}${activityLabel}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
 
     // Automatically spin up a dedicated thread for this wardrobe generation
     const newId = 'thread_' + Date.now()
@@ -2297,6 +2299,10 @@ export default function AskClaude({
       ],
       threadMemory: null,
       activeContext: null,
+      evaluatedKeys: [],
+      boardResults: {},
+      editorialVisualResults: {},
+      evaluationResultsByKey: {},
       updatedAt: Date.now()
     }
 
@@ -2306,6 +2312,12 @@ export default function AskClaude({
     setChatHistory(newThread.chatHistory)
     setThreadMemory(null)
     setActiveContext(null)
+    setEvaluatedKeys(new Set())
+    setBoardResults({})
+    setEditorialVisualResults({})
+    setEvaluationResultsByKey({})
+    setImageStatusByKey({})
+    setBoardLoadingIndex(null)
 
     try {
       localStorage.setItem('stylist_current_thread_id', newId)
@@ -2324,7 +2336,7 @@ export default function AskClaude({
       const res = await fetch('/api/ai/generate-wardrobe-outfits-visual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ occasion, season, mood, mission, limit: 5, activity })
+        body: JSON.stringify({ occasion, season, mood, request, question: request, mission, limit: 5, activity })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not generate wardrobe outfits')
@@ -2340,7 +2352,7 @@ export default function AskClaude({
         source: 'visual_composer',
         textOnly: true,
         debug: data.debug || null,
-        queryOptions: { occasion, season, mood, mission, activity },
+        queryOptions: { occasion, season, mood, request, mission, activity },
       }])
       setThreadMemory({
         type: 'generated_outfits',
@@ -2348,7 +2360,7 @@ export default function AskClaude({
         name: 'Whole wardrobe generated outfits',
         latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'whole_wardrobe' }),
         latestOutfits: replyStructuredOutfits,
-        stylingContext: { occasion, season, mood, mission: mission || 'mix', activity },
+        stylingContext: { occasion, season, mood, request, mission: mission || 'mix', activity },
       })
       addToHistory('assistant', replyText)
     } catch (err) {
@@ -3207,6 +3219,12 @@ export default function AskClaude({
             </select>
             <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood (e.g. minimalist, moody, soft)" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
           </div>
+          <input
+            value={wardrobeOutfitRequest}
+            onChange={e => setWardrobeOutfitRequest(e.target.value)}
+            placeholder="Styling request (e.g. more everyday, not dressy)"
+            style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}
+          />
           {recentMemoryStatus && (
             <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
               {recentMemoryStatus}
@@ -3318,6 +3336,12 @@ export default function AskClaude({
                   </select>
                   <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood (e.g. minimalist, moody, soft)" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
                 </div>
+                <input
+                  value={wardrobeOutfitRequest}
+                  onChange={e => setWardrobeOutfitRequest(e.target.value)}
+                  placeholder="Styling request (e.g. more everyday, not dressy)"
+                  style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}
+                />
                 {recentMemoryStatus && (
                   <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
                     {recentMemoryStatus}
@@ -3419,6 +3443,11 @@ export default function AskClaude({
                           {m.queryOptions.mood && m.queryOptions.mood !== 'artistic minimalist' && (
                             <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 3 }} title="Stylist mood/notes">
                               💬 "{m.queryOptions.mood}"
+                            </span>
+                          )}
+                          {m.queryOptions.request && (
+                            <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 3 }} title="Styling request">
+                              🧭 "{m.queryOptions.request}"
                             </span>
                           )}
                           {m.queryOptions.activity && m.queryOptions.activity !== 'none' && (

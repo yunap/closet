@@ -5,7 +5,7 @@ import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
-import { applyTaggerResult, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, tagStateForTaggerResult } from '../styling-engine/taggerMerge.js'
+import { applyTaggerResult, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult } from '../styling-engine/taggerMerge.js'
 
 import {
   prepareImageForClaude,
@@ -1016,14 +1016,18 @@ function buildLocalTripSlotOutfits({ slots = [], question = '', mood = '', allPi
       activeMissions: ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing'],
       comfortConstraint,
       candidateLimit: 42,
-      candidateBucketLimit: 8
+      candidateBucketLimit: 8,
+      request: question,
+      question
     })
     const localOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, {
       occasion: slot.occasion,
       mood: mood || question,
       season: slot.season,
       weatherProfile,
-      activity: slot.activity
+      activity: slot.activity,
+      request: question,
+      question
     }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
     const ranked = locallyGateWholeWardrobeOutfits(localOutfits, Math.max(3, slots.length), {
       requireShoes: true,
@@ -1160,6 +1164,8 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
       mood: body.mood || question,
       explorationMode: 'moderate',
       activeMissions: ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing'],
+      request: question,
+      question,
       comfortConstraint: resolveComfortFootwearConstraint({
         occasion,
         mood: body.mood || question,
@@ -1172,7 +1178,9 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
       mood: body.mood || question,
       season: seasonParts.join('; '),
       weatherProfile,
-      activity: fallbackActivity
+      activity: fallbackActivity,
+      request: question,
+      question
     }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
     structuredOutfits = locallyGateWholeWardrobeOutfits(localOutfits, 5, {
       requireShoes: true,
@@ -1282,6 +1290,9 @@ export async function tagPieceWithProvider(photoInputs) {
     const confidence = normalizeConfidenceMap(tags._confidence || tags.style_profile_json?._confidence || {})
     const photoProperties = normalizePhotoProperties(tags.photo_properties || tags.style_profile_json?.photo_properties || {})
     tags.fiber_content = normalizeFiberContent(tags.fiber_content)
+    tags.formality = normalizeFormality(tags.formality)
+    tags.heel_height = normalizeHeelHeight(tags.heel_height)
+    tags.walk_support = normalizeWalkSupport(tags.walk_support)
     tags.style_profile_json = {
       ...(tags.style_profile_json || {}),
       _confidence: confidence,
@@ -1405,7 +1416,11 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     sessionInfluence: null,
     maxImages: 54,
     mood,
-    activity
+    activity,
+    request: question,
+    question,
+    occasionProfile,
+    activityProfile
   })
   const rosterPieces = [selectedPiece, ...roster.filter(p => Number(p.id) !== selectedId)]
   const candidatePieces = [...new Map(rosterPieces.map(p => [Number(p.id), p])).values()]
@@ -1566,6 +1581,8 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       rosterCount: candidatePieces.length,
       excludedCount: excluded.length,
       excludedCounts: rosterDebug.excludedCounts,
+      registerCeiling: rosterDebug.registerCeiling,
+      formalityIntent: rosterDebug.formalityIntent,
       postGatePoolSize: rosterDebug.postGatePoolSize,
       capApplied: rosterDebug.capApplied,
       capCutPieces: rosterDebug.capCutPieces,
@@ -1623,6 +1640,9 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|cashmere|viscose|denim|twill|canvas|corduroy|tweed|velvet|leather|suede|ponte|synthetic|fleece|other",
       "fabric_weight": "ultralight|light|medium|heavy",
       "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. Use 'unknown' if not determinable."],
+      "formality": "lounge|everyday|elevated|dressy",
+      "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
+      "walk_support": "high|medium|low|null (shoes only; null/omit for non-shoes)",
       "style_profile_json": {
         "style_lanes": {
           "artistic_minimal": 0, "modern_bohemian": 0, "folk_artisan": 0, "boho_romantic": 0, "boho_festival": 0,
@@ -1881,7 +1901,7 @@ export async function generateOutfitsForPieceInternal({
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const weatherProfile = weatherProfileFromContext({ mood, season })
   const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood, request: question, activity })
-  let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity })
+  let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
   const confirmedOutfitsText = getConfirmedOutfitMemory()
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
@@ -2176,6 +2196,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // Memory context (reuse existing builders, keep it lean)
     const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(20)
     const confirmedOutfitsText = getConfirmedOutfitMemory(8)
+    const stylingRequest = String(request || question || '').trim()
 
     // Compute weather profile and filter the visual composer roster
     const { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(allowedPieces, {
@@ -2184,7 +2205,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       sessionInfluence,
       maxImages: 90,
       mood,
-      activity
+      activity,
+      request: stylingRequest,
+      question,
+      occasionProfile,
+      activityProfile
     })
 
     console.log(`\n[Visual Composer Roster] Filtering active pieces for mood: "${mood}", season: "${season}"`)
@@ -2192,6 +2217,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     console.log(`  - Survived in roster: ${roster.length}`)
     console.log(`  - Excluded: ${excluded.length}`)
     console.log(`  - Excluded reasons count:`, rosterDebug.excludedCounts)
+    console.log(`  - Register ceiling:`, rosterDebug.registerCeiling || 'none', rosterDebug.formalityIntent || {})
 
     const composerThumbPx = 768
     const composerImageDetail = visualComposerImageDetailForRoster(roster.length)
@@ -2211,6 +2237,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       `Occasion: ${occasion}`,
       `Season: ${season}`,
       mood ? `Mood: ${mood}` : '',
+      stylingRequest ? `Styling request: ${stylingRequest}` : '',
       activity && activity !== 'none' ? `Activity: ${activity}` : '',
       occasionProfileGuidance ? `Occasion guidance:\n${occasionProfileGuidance}` : '',
       isWeatherFiltered ? "Off-season pieces have been deprioritized or removed; everything shown is weather-optimized." : '',
@@ -2287,7 +2314,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         activity,
         sessionInfluence,
         candidateLimit: 42,
-        candidateBucketLimit: 8
+        candidateBucketLimit: 8,
+        request: stylingRequest,
+        question
       })
       localBackfillCandidateCount = candidates.length
       localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, { occasion, mood, season, weatherProfile, activity, sessionInfluence })
@@ -2311,7 +2340,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const gatedModel = locallyGateWholeWardrobeOutfits(
       modelOutfits,
       requestedLimit,
-      { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence }
+      { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
     )
     let structuredOutfits = gatedModel.outfits.slice(0, requestedLimit)
     let softBackfillCount = 0
@@ -2323,7 +2352,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       gatedLocal = locallyGateWholeWardrobeOutfits(
         buildVisualLocalBackfill(),
         requestedLimit,
-        { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence }
+        { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
       )
       const seenKeys = new Set(structuredOutfits.map(outfit => {
         const ids = Array.isArray(outfit.pieceIds) && outfit.pieceIds.length
@@ -2436,6 +2465,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         timings,
         rosterCount: roster.length,
         excludedCounts: rosterDebug.excludedCounts,
+        registerCeiling: rosterDebug.registerCeiling,
+        formalityIntent: rosterDebug.formalityIntent,
         postGatePoolSize: rosterDebug.postGatePoolSize,
         capApplied: rosterDebug.capApplied,
         capCutPieces: rosterDebug.capCutPieces,

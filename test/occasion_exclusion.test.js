@@ -124,10 +124,11 @@ test('Part 1, 4 & 5 — Exclusion logic propagates to candidate generation and v
   assert.ok(!rosterIds.includes(9998), 'Roster built from filtered pieces does not contain the excluded piece')
 })
 
-test('Part 4 & 5 — Unprofiled occasion "concert" behavior', () => {
-  // 1. resolveOccasionProfile('concert', '') must return null
+test('Part 4 & 5 — Ratified occasion "concert" behavior', () => {
+  // 1. resolveOccasionProfile('concert', '') now returns the ratified concert profile
   const profile = resolveOccasionProfile('concert', '')
-  assert.equal(profile, null, 'resolveOccasionProfile for concert should return null')
+  assert.equal(profile?.id, 'concert', 'resolveOccasionProfile for concert should return the ratified profile')
+  assert.equal(profile?.register_ceiling, 'elevated')
 
   // 2. Verify that we can generate outfits for concert and allowedPieces filters out exclusions
   const pieceExcluded = {
@@ -145,13 +146,10 @@ test('Part 4 & 5 — Unprofiled occasion "concert" behavior', () => {
 
   const { allowedPieces } = filterWholeWardrobePiecesForGeneration([pieceExcluded, pieceAllowed], { occasion: 'concert' })
   const allowedIds = allowedPieces.map(p => p.id)
-  assert.ok(!allowedIds.includes(8888), 'Should suppress concert exclusion under unprofiled concert occasion')
+  assert.ok(!allowedIds.includes(8888), 'Should suppress concert exclusion under profiled concert occasion')
   assert.ok(allowedIds.includes(8887), 'Should allow the other piece')
 
-  // 3. Verify that if occasionProfile is null, no profile block or coverage note is created
-  // Since resolveOccasionProfile('concert') is null:
-  // - Guidance string stays empty.
-  // - computeWardrobeCoverage is called with null profile, returning null coverages, which results in an empty coverage note.
+  // 3. Verify that profiled concert occasions can produce coverage data.
   const mockComputeWardrobeCoverage = (pieces, prof) => {
     let topCoverage = null
     let shoeCoverage = null
@@ -169,10 +167,10 @@ test('Part 4 & 5 — Unprofiled occasion "concert" behavior', () => {
     return ''
   }
   const coverage = mockComputeWardrobeCoverage(allowedPieces, profile)
-  assert.equal(coverage.topCoverage, null, 'topCoverage should be null for unprofiled occasions')
-  assert.equal(coverage.shoeCoverage, null, 'shoeCoverage should be null for unprofiled occasions')
+  assert.equal(coverage.topCoverage, 5, 'topCoverage should be populated for profiled concert')
+  assert.equal(coverage.shoeCoverage, 3, 'shoeCoverage should be populated for profiled concert')
   const note = mockFormatCoverageNote(coverage.topCoverage, coverage.shoeCoverage)
-  assert.equal(note, '', 'Coverage note must be empty when coverage data is null')
+  assert.equal(note, '', 'Coverage note stays empty when profiled coverage is sufficient')
 })
 
 
