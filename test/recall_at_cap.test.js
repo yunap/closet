@@ -64,8 +64,17 @@ test('recall_at_cap replay classifies full recall, gate miss, and cap miss', asy
   insertOutfit('Indoor Weather Agnostic Outfit', [indoorWoolTop, indoorBottom], { season: 'indoor' })
 
   const gateTop = insertPiece({ name: 'Gate Outfit Top', category: 'top' })
+  const gateBlockedTop = insertPiece({
+    name: 'Gate Blocked Top',
+    category: 'top',
+    style_profile_json: {
+      garment_intelligence: {
+        auto_use_trust: 'do_not_auto_use'
+      }
+    }
+  })
   const gateAccessory = insertPiece({ name: 'Gate Outfit Necklace', category: 'accessory' })
-  insertOutfit('Gate Miss Outfit', [gateTop, gateAccessory])
+  insertOutfit('Gate Miss Outfit', [gateTop, gateBlockedTop, gateAccessory])
 
   const capBottom = insertPiece({ name: 'Cap Outfit Bottom', category: 'bottom' })
   let capTop = null
@@ -84,14 +93,17 @@ test('recall_at_cap replay classifies full recall, gate miss, and cap miss', asy
   `).run('not_me', 'piece', capTop, 'Cap Pool Top 98', '{}')
   insertOutfit('Cap Miss Outfit', [capTop, capBottom])
 
-  await import(`../scratch/recall_at_cap.js?smoke=${Date.now()}`)
+  const { runRecallAtCapReplay } = await import(`../scratch/recall_at_cap.js?smoke=${Date.now()}`)
+  await runRecallAtCapReplay()
   const report = JSON.parse(fs.readFileSync('scratch/recall_at_cap_report.json', 'utf8'))
   const misses = Object.values(report.flows).flatMap(flow => flow.misses)
+  const accessoryMisses = Object.values(report.flows).flatMap(flow => flow.accessories.misses)
 
   assert.ok(!misses.some(miss => miss.outfitName === 'Full Recall Outfit'))
   assert.ok(!misses.some(miss => miss.outfitName === 'Indoor Weather Agnostic Outfit' && /hot weather/i.test(miss.reason)))
   assert.ok(report.flows.whole_wardrobe_visual.byWeather.neutral.total > 0)
   assert.ok(misses.some(miss => miss.outfitName === 'Gate Miss Outfit' && miss.layer === 'gate'))
+  assert.ok(accessoryMisses.some(miss => miss.outfitName === 'Gate Miss Outfit' && miss.missedPieceName === 'Gate Outfit Necklace'))
   assert.ok(misses.some(miss => miss.outfitName === 'Cap Miss Outfit' && miss.layer === 'cap'))
 })
 

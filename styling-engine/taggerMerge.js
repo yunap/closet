@@ -97,6 +97,65 @@ export function normalizeManualOverrides(value) {
   return [...new Set(raw.map(v => String(v || '').trim()).filter(Boolean))]
 }
 
+function getAnchorValue(piece = {}, field = '') {
+  return getPath(piece, field)
+}
+
+function anchorSortValue(piece = {}) {
+  return String(piece.updated_at || piece.updatedAt || piece.date_updated || piece.date_added || '')
+}
+
+function anchorAttrs(piece = {}) {
+  const attrs = []
+  if (piece.fabric_category) attrs.push(`fabric: ${piece.fabric_category}`)
+  if (piece.reads_as) attrs.push(`reads_as: ${piece.reads_as}`)
+  return attrs.length ? ` (${attrs.slice(0, 2).join('; ')})` : ''
+}
+
+export function buildAnchorBlock({ pieces = [], fields = [], perValue = 3 } = {}) {
+  const wantedFields = fields.map(field => String(field || '').trim()).filter(Boolean)
+  if (!wantedFields.length) return { text: '', anchors: [] }
+
+  const buckets = new Map()
+  for (const piece of pieces) {
+    const manualOverrides = normalizeManualOverrides(piece.manual_overrides)
+    for (const field of wantedFields) {
+      if (!manualOverrides.includes(field)) continue
+      const value = getAnchorValue(piece, field)
+      const normalizedValue = Array.isArray(value)
+        ? value.join(', ')
+        : String(value || '').trim()
+      if (!normalizedValue) continue
+      const key = `${field}:${normalizedValue.toLowerCase()}`
+      if (!buckets.has(key)) buckets.set(key, [])
+      buckets.get(key).push({
+        id: Number(piece.id),
+        name: String(piece.name || '').trim(),
+        field,
+        value: normalizedValue,
+        fabric_category: piece.fabric_category || null,
+        reads_as: piece.reads_as || null,
+        photo: piece.photo || null,
+        worn_photo: piece.worn_photo || null,
+        sortValue: anchorSortValue(piece)
+      })
+    }
+  }
+
+  const anchors = [...buckets.values()].flatMap(bucket => bucket
+    .sort((a, b) => String(b.sortValue || '').localeCompare(String(a.sortValue || '')) || Number(b.id) - Number(a.id))
+    .slice(0, perValue))
+  if (!anchors.length) return { text: '', anchors: [] }
+
+  const rows = anchors.map(anchor => (
+    `- ${anchor.field}=${anchor.value}: ${anchor.id} ${anchor.name || '(unnamed piece)'}${anchorAttrs(anchor)}`
+  )).join('\n')
+  return {
+    anchors,
+    text: `\nWardrobe calibration anchors:\nThese assignments are ground truth for THIS wardrobe — calibrate to them, not to general fashion norms.\n${rows}\n`
+  }
+}
+
 function pathParts(path) {
   return String(path || '').split('.').map(part => part.trim()).filter(Boolean)
 }

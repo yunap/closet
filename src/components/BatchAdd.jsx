@@ -1,8 +1,16 @@
 import { useState, useRef } from 'react'
+import { GATE_CRITICAL_FIELDS } from '../../styling-engine/attributes.js'
+import { confidenceMapForPiece, intakeReviewSummary, intakeReviewSummaryText } from '../utils/intakeReview.js'
 
 const CATEGORIES = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS  = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
 const SEASONS    = ['warm', 'cool', 'year-round']
+const FORMALITY_OPTIONS = [
+  { value: 'lounge', label: 'Lounge' },
+  { value: 'everyday', label: 'Everyday' },
+  { value: 'elevated', label: 'Elevated' },
+  { value: 'dressy', label: 'Dressy' },
+]
 const COLOR_OPTIONS = [
   { name: 'black', hex: '#2A2420' }, { name: 'white', hex: '#F5F2EC' },
   { name: 'cream', hex: '#E8DFC8' }, { name: 'beige', hex: '#D6C3A3' },
@@ -29,6 +37,7 @@ function emptyForm() {
     pattern_type: null, pattern_scale: null, pattern_complexity: null, reads_as: '',
     hem_finish: null, neckline: null, sleeve_type: null, length_hits_at: null,
     silhouette: null, fabric_category: null, fabric_weight: null,
+    formality: null, heel_height: null, walk_support: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
     style_profile_json: {},
     tagger_version: null,
@@ -435,12 +444,25 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
   const total = items.length
   const [form, setForm] = useState({ ...emptyForm(), ...item.form })
   const [saving, setSaving] = useState(false)
+  const summary = intakeReviewSummary(form)
+  const confidence = confidenceMapForPiece(form)
 
   const set       = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const toggleArr = (k, val) => setForm(f => ({
     ...f,
     [k]: f[k].includes(val) ? f[k].filter(x => x !== val) : [...f[k], val]
   }))
+  const FieldLabel = ({ field, children }) => {
+    const isGate = GATE_CRITICAL_FIELDS.includes(field)
+    const isLow = String(confidence[field] || '').toLowerCase() === 'low'
+    return (
+      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        {children}
+        {isGate && <span title="Gate-critical field" style={{ fontSize: 9, background: 'var(--accent-light)', color: 'var(--accent)', padding: '1px 6px', borderRadius: 8 }}>gate</span>}
+        {isLow && <span title="AI unsure" style={{ fontSize: 9, background: '#E8A020', color: '#fff', padding: '1px 6px', borderRadius: 8 }}>AI unsure</span>}
+      </label>
+    )
+  }
 
   const handleSave = async () => {
     if (!form.name.trim()) return
@@ -506,6 +528,18 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
             Tagging failed for this photo — fill in manually.
           </div>
         )}
+        {item.status !== 'error' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <span style={{ padding: '4px 9px', borderRadius: 999, background: summary.missingGateCount ? 'var(--repair-bg)' : 'var(--surface-2)', border: '1px solid var(--border-light)', color: summary.missingGateCount ? 'var(--repair)' : 'var(--text-muted)', fontSize: 11 }}>
+              {intakeReviewSummaryText(form)}
+            </span>
+            {summary.missingGateFields.length > 0 && (
+              <span style={{ padding: '4px 9px', borderRadius: 999, background: 'var(--surface-2)', border: '1px solid var(--border-light)', color: 'var(--text-muted)', fontSize: 11 }}>
+                Gate fields missing: {summary.missingGateFields.join(', ')}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Name */}
         <div className="form-group">
@@ -535,7 +569,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
 
         {/* Occasions */}
         <div className="form-group">
-          <label className="form-label">Occasions</label>
+          <FieldLabel field="occasions">Occasions</FieldLabel>
           <div className="chip-grid">
             {OCCASIONS.map(o => <button key={o} className={`chip-toggle ${form.occasions.includes(o) ? 'active' : ''}`} onClick={() => toggleArr('occasions', o)}>{o}</button>)}
           </div>
@@ -548,6 +582,23 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
             {SEASONS.map(s => <button key={s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
           </div>
         </div>
+
+        {form.category !== 'accessory' && (
+          <div className="form-group">
+            <FieldLabel field="formality">Formality</FieldLabel>
+            <div className="radio-row">
+              {FORMALITY_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  className={`radio-btn ${form.formality === opt.value ? 'active' : ''}`}
+                  onClick={() => set('formality', opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Notes */}
         <div className="form-group">
@@ -759,6 +810,9 @@ export default function BatchAdd({ onDone }) {
             silhouette:         tags.silhouette         || null,
             fabric_category:    tags.fabric_category    || null,
             fabric_weight:      tags.fabric_weight      || null,
+            formality:          tags.formality          || null,
+            heel_height:        tags.heel_height        || null,
+            walk_support:       tags.walk_support       || null,
             style_profile_json: tags.style_profile_json || {},
             tagger_version:     tags.tagger_version     || null,
           },

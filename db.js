@@ -126,6 +126,9 @@ db.exec(`
     pool_size     INTEGER,
     cap_applied   INTEGER DEFAULT 0,
     cut_ids       TEXT DEFAULT '[]',
+    requested     INTEGER,
+    delivered     INTEGER,
+    coverage_gaps TEXT DEFAULT '[]',
     created_at    TEXT DEFAULT (datetime('now'))
   );
 
@@ -171,6 +174,14 @@ NEW_COLUMNS.forEach(col => {
   'archived INTEGER DEFAULT 0'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE stylist_feedback ADD COLUMN ${col}`) } catch {}
+})
+
+;[
+  'requested INTEGER',
+  'delivered INTEGER',
+  'coverage_gaps TEXT DEFAULT "[]"'
+].forEach(col => {
+  try { db.exec(`ALTER TABLE generation_runs ADD COLUMN ${col}`) } catch {}
 })
 
 // Backfill lifecycle state only. Do not clear historical structure/fit fields:

@@ -34,3 +34,14 @@ test('indoor season matches warm, cool, and year-round browsing but can be filte
   assert.match(source, /if \(selectedSeason === 'year-round'\) return outfitSeason === 'year-round' \|\| outfitSeason === 'indoor'/)
   assert.match(source, /return outfitSeason === selectedSeason \|\| outfitSeason === 'year-round' \|\| outfitSeason === 'indoor'/)
 })
+
+test('Generated Outfits board images are normalized before rendering and critique handoff', () => {
+  assert.match(source, /const resolveUploadImageSrc = \(photo\) =>/)
+  assert.ok(source.includes("value.replace(/^\\/uploads\\/+uploads\\//, '/uploads/')"))
+  assert.match(source, /value\.startsWith\('generated-boards\/'\)/)
+  assert.match(source, /const uploadsIndex = value\.indexOf\('\/uploads\/'\)/)
+  assert.match(source, /const boardImageSrc = resolveUploadImageSrc\(board\.image_url\)/)
+  assert.match(source, /src=\{boardImageSrc\}/)
+  assert.match(source, /src=\{resolveUploadImageSrc\(b\.image_url\)\}/)
+  assert.match(source, /photo: resolveUploadImageSrc\(board\.image_url\)/)
+})

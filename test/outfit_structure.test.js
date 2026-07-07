@@ -106,6 +106,36 @@ test('locallyGateWholeWardrobeOutfits - filters invalid outfits', () => {
   assert.ok(result.rejected.some(r => r.reason === 'not a complete wardrobe outfit'))
 })
 
+test('locallyGateWholeWardrobeOutfits advisor mode does not post-filter walking footwear by structured enums', () => {
+  const outfit = {
+    label: 'Model Returned Walking Look',
+    pieceIds: [1, 2, 3],
+    pieces: [
+      { id: 1, name: 'Cotton Tee', category: 'top' },
+      { id: 2, name: 'Jeans', category: 'bottom' },
+      { id: 3, name: 'Low-support sandals', category: 'shoes', heel_height: 'flat', walk_support: 'low' }
+    ],
+    reason: 'The model returned this complete outfit.'
+  }
+  const candidatePieces = outfit.pieces
+
+  const result = locallyGateWholeWardrobeOutfits([outfit], 5, {
+    mode: 'advisor',
+    candidatePieces,
+    occasion: 'travel',
+    activity: 'walking',
+    applyDiversity: false
+  })
+
+  assert.equal(result.outfits.length, 1)
+  assert.deepEqual(result.outfits[0].pieceIds, outfit.pieceIds)
+  assert.deepEqual(result.outfits[0].pieces, outfit.pieces)
+  assert.equal(result.outfits[0].label, outfit.label)
+  assert.equal(result.outfits[0].reason, outfit.reason)
+  assert.equal(result.outfits[0].systemFlags, undefined)
+  assert.deepEqual(result.rejected, [])
+})
+
 test('inferOutfitArchetype restricts dress archetypes to outfits containing a dress', () => {
   const candidatePieces = [
     { id: 1, name: 'Cotton Dress', category: 'dress' },

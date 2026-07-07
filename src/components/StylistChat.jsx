@@ -100,9 +100,26 @@ const renderCost = (timings) => {
   return ` · Measured cost: $${cost.toFixed(3)}`
 }
 
+export const resolveUploadImageSrc = (photo) => {
+  const value = String(photo || '').trim()
+  if (!value) return null
+  const dedupedUploads = value.replace(/^\/uploads\/+uploads\//, '/uploads/')
+  if (dedupedUploads !== value) return dedupedUploads
+  if (/^(https?:\/\/|data:|blob:|\/uploads\/)/i.test(value)) return value
+  const uploadsIndex = value.indexOf('/uploads/')
+  if (uploadsIndex >= 0) return value.slice(uploadsIndex)
+  if (value.startsWith('/generated-boards/')) return `/uploads${value}`
+  if (value.startsWith('generated-boards/')) return `/uploads/${value}`
+  if (value.startsWith('uploads/')) return `/${value}`
+  if (value.startsWith('/')) return value
+  return `/uploads/${value}`
+}
+
 const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
 const OUTFIT_FOLLOWUP_PATTERN = /\b(this|it|outfit|idea|look|piece|pieces|make|change|swap|instead|sharper|stronger|softer|better|work|works|risk|risky|why|how|what)\b/i
 const OUTFIT_CARD_RESPONSE_PATTERN = /\b(show|render|visualize|show me the outfits|show the outfits|outfit cards?|compose|generate|regenerate|revise|update|replace|swap|add|another option|other option|different option|another outfit|other outfit|different outfit|more outfit|new outfit)\b/i
+
+const createResultId = (prefix = 'result') => `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e6)}`
 
 const currentChatDateContext = () => {
   const now = new Date()
@@ -470,7 +487,7 @@ export default function AskClaude({
   const [activityMenuOpen, setActivityMenuOpen] = useState(false)
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
-  const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('artistic minimalist')
+  const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('')
   const [wardrobeOutfitRequest, setWardrobeOutfitRequest] = useState('')
   const [wardrobeOutfitMission, setWardrobeOutfitMission] = useState('mix')
   const [wardrobeOutfitActivity, setWardrobeOutfitActivity] = useState('none')
@@ -883,6 +900,7 @@ export default function AskClaude({
   const renderStructuredAdvice = (message, messageIndex) => {
     const outfits = Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : []
     if (!outfits.length) return null
+    const messageResultKey = message?.resultId || messageIndex
 
     const KNOWN_COLORS = {
       black: '#222222',
@@ -1211,7 +1229,7 @@ export default function AskClaude({
       return 'direction'
     }
 
-    const comparisonKey = `whole-wardrobe-comparison:${messageIndex}`
+    const comparisonKey = `whole-wardrobe-comparison:${messageResultKey}`
     const comparisonBoards = boardResults[comparisonKey] || []
     const isGeneratingComparison = boardLoadingIndex === comparisonKey
     const isTextOnlyPreviewSet = Boolean(outfits[0]?.previewOnly) && outfits.every(outfit => outfit.previewOnly && (outfit.pieceId || outfit.selectedPieceId || outfit.textOnly))
@@ -1271,8 +1289,8 @@ export default function AskClaude({
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preview error: {board.error}</div>
                     ) : (
                       <>
-                        <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: board.imageUrl, title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
-                          <img src={board.imageUrl} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
+                        <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
+                          <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
                         </button>
                         <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
                         {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
@@ -1311,7 +1329,7 @@ export default function AskClaude({
           </div>
         )}
         {isIdealAdditions && (() => {
-          const idealComparisonKey = `ideal-additions-comparison:${messageIndex}`
+          const idealComparisonKey = `ideal-additions-comparison:${messageResultKey}`
           const idealComparisonBoards = boardResults[idealComparisonKey] || []
           const isGeneratingIdealComparison = boardLoadingIndex === idealComparisonKey
           return (
@@ -1346,8 +1364,8 @@ export default function AskClaude({
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preview error: {board.error}</div>
                       ) : (
                         <>
-                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: board.imageUrl, title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
-                            <img src={board.imageUrl} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
+                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
+                            <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
                           </button>
                           <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
                           {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
@@ -1408,19 +1426,23 @@ export default function AskClaude({
         {outfits.slice(0, 8).map((outfit, idx) => {
           const strength = strengthLabel(outfit.strength, idx)
           const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean) : []
-          const boardKey = `${messageIndex}:${idx}`
+          const boardKey = `${messageResultKey}:${idx}`
           const isPreview = Boolean(outfit.previewOnly)
           const isTextOnly = Boolean(outfit.textOnly || message?.textOnly || message?.wholeWardrobe)
           const hasRenderableOutfitPieces = (Array.isArray(outfit.pieceIds) && outfit.pieceIds.length > 0) ||
             (Array.isArray(outfit.pieces) && outfit.pieces.some(p => p?.id))
           const canRenderStructuredOutfit = isPreview
             ? (activeContext?.type === 'piece' || outfit.pieceId || outfit.selectedPieceId)
-            : !message?.wardrobeEvaluation && hasRenderableOutfitPieces
+            : !message?.wholeWardrobe && !message?.wardrobeEvaluation && hasRenderableOutfitPieces
           const hasRendered = Boolean(boardResults[boardKey]?.length)
           const isRendering = boardLoadingIndex === boardKey
           const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
           const showSilhouette = isPreview && !isTextOnly
           const isTripCard = outfit.source === 'trip_precompose'
+          const isBrokenCard = Boolean(outfit.broken || outfit.diagnosticOnly)
+          const brokenReasonRows = Array.isArray(outfit.brokenPieces)
+            ? outfit.brokenPieces.filter(piece => piece?.name && piece?.reason)
+            : []
 
           const outfitTitle = outfit.label || outfit.title || `Direction ${idx + 1}`
           const historicalCritique = messages.find(msg => msg.role === 'assistant' && msg.wardrobeEvaluation && (msg.outfitName === outfitTitle || msg.outfitName === outfit.label || msg.outfitName === outfit.title))?.text
@@ -1430,9 +1452,9 @@ export default function AskClaude({
           return (
             <div key={idx} style={{
               padding: '10px 12px',
-              background: idx === 0 ? 'var(--surface)' : 'var(--surface-2)',
+              background: isBrokenCard ? 'var(--repair-bg)' : (idx === 0 ? 'var(--surface)' : 'var(--surface-2)'),
               borderRadius: 12,
-              border: idx === 0 ? '1px solid var(--accent)' : '1px solid var(--border)',
+              border: isBrokenCard ? '1px solid var(--repair)' : (idx === 0 ? '1px solid var(--accent)' : '1px solid var(--border)'),
               boxShadow: idx === 0 ? '0 2px 8px rgba(0,0,0,0.04)' : 'none',
               display: 'flex',
               gap: 12,
@@ -1441,8 +1463,28 @@ export default function AskClaude({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                   <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
-                  <div style={{ fontSize: 10, color: idx === 0 ? 'var(--accent)' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isTripCard ? (outfit.coveragePosition || 'trip look') : strength}</div>
+                  <div style={{ fontSize: 10, color: isBrokenCard ? 'var(--repair)' : (idx === 0 ? 'var(--accent)' : 'var(--text-muted)'), textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isBrokenCard ? 'needs review' : (isTripCard ? (outfit.coveragePosition || 'trip look') : strength)}</div>
                 </div>
+                {isBrokenCard && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45, fontWeight: 600 }}>
+                    Broken diagnostic card: shown to inspect a rejected model proposal.
+                  </div>
+                )}
+                {isBrokenCard && outfit.rejectionReason && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4 }}>
+                    <strong>Rejected reason:</strong> {outfit.rejectionReason}
+                  </div>
+                )}
+                {isBrokenCard && brokenReasonRows.length > 0 && (
+                  <div style={{ marginTop: 6, display: 'grid', gap: 3, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4 }}>
+                    <div style={{ fontWeight: 650 }}>Rejected pieces:</div>
+                    {brokenReasonRows.map((piece, reasonIdx) => (
+                      <div key={`${piece.id || piece.name}-${reasonIdx}`}>
+                        <strong>{piece.name}:</strong> {piece.reason}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {showSilhouette && renderColorBalanceBar(outfit)}
               {((!isTripCard && (outfit.missionLabel || outfit.dominantDirection || outfit.silhouette)) || outfit.bestFor) && (
                 <div style={{ display: 'grid', gap: 2, marginTop: 6, fontSize: 13, color: 'var(--text-light)', lineHeight: 1.45 }}>
@@ -1775,8 +1817,8 @@ export default function AskClaude({
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Render error: {board.error}</div>
                       ) : (
                         <>
-                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: board.imageUrl, title: board.label || outfit.label || 'Generated visual', meta: board.reason || outfit.reason || '' })} aria-label="Open generated visual preview">
-                            <img src={board.imageUrl} alt={board.label} className="generated-visual-image" />
+                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || outfit.label || 'Generated visual', meta: board.reason || outfit.reason || '' })} aria-label="Open generated visual preview">
+                            <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label} className="generated-visual-image" />
                           </button>
                           <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
                           {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
@@ -2278,12 +2320,13 @@ export default function AskClaude({
     if (loading) return
     const occasion = wardrobeOutfitOccasion || 'casual'
     const season = wardrobeOutfitSeason || 'current season'
-    const mood = wardrobeOutfitMood || 'artistic minimalist'
+    const mood = wardrobeOutfitMood.trim()
     const request = wardrobeOutfitRequest.trim()
     const mission = wardrobeOutfitMission || 'mix'
     const activity = wardrobeOutfitActivity || 'none'
     const activityLabel = activity !== 'none' ? `, ${ACTIVITY_OPTIONS.find(opt => opt[0] === activity)?.[1].toLowerCase()}` : ''
     const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, mood: ${mood}` : ''}${request ? `, request: ${request}` : ''}${activityLabel}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
+    const resultId = createResultId('whole-wardrobe')
 
     // Automatically spin up a dedicated thread for this wardrobe generation
     const newId = 'thread_' + Date.now()
@@ -2347,6 +2390,7 @@ export default function AskClaude({
       setMessages(m => [...m, {
         role: 'assistant',
         text: replyText,
+        resultId,
         structuredOutfits: replyStructuredOutfits,
         wholeWardrobe: true,
         source: 'visual_composer',
@@ -2423,7 +2467,7 @@ export default function AskClaude({
     const compareOutfit = compareId ? outfits.find(o => String(o.id) === String(compareId)) : null
 
     let displayPrev = null
-    if (outfitToSend?.photo) displayPrev = `/uploads/${outfitToSend.photo}`
+    if (outfitToSend?.photo) displayPrev = resolveUploadImageSrc(outfitToSend.photo)
     else if (pieceToSend) { const photo = pieceToSend.worn_photo || pieceToSend.photo; if (photo) displayPrev = `/uploads/${photo}` }
     else if (imagePrev) displayPrev = imagePrev
 
@@ -3354,7 +3398,7 @@ export default function AskClaude({
 
         <div className="chat-thread">
           {messages.map((m, i) => {
-            if (m.wardrobeEvaluation || m.contextName === 'Whole wardrobe evaluation') {
+            if (m.contextName === 'Whole wardrobe evaluation') {
               return null
             }
             return (
@@ -3367,11 +3411,13 @@ export default function AskClaude({
                       {m.contextMode && <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{m.contextMode}</span>}
                     </span>
                   )}
-                  {m.imagePrev && (
+                  {m.imagePrev && (() => {
+                    const messageImageSrc = resolveUploadImageSrc(m.imagePrev)
+                    return messageImageSrc ? (
                     <button
                       type="button"
                       onClick={() => setPreviewImage({
-                        src: m.imagePrev,
+                        src: messageImageSrc,
                         title: m.contextName || 'Outfit photo',
                         meta: m.contextMode || ''
                       })}
@@ -3388,9 +3434,10 @@ export default function AskClaude({
                       }}
                       aria-label="Open outfit photo preview"
                     >
-                      <img src={m.imagePrev} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
+                      <img src={messageImageSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
                     </button>
-                  )}
+                    ) : null
+                  })()}
                 </div>
               )}
 
@@ -3400,7 +3447,7 @@ export default function AskClaude({
                 if (m.role === 'assistant' && m.wardrobeEvaluation) {
                   return (
                     <div className={`ai-message ${m.role}`} style={{ padding: '12px 14px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
-                      <details style={{ width: '100%' }}>
+                      <details open={true} style={{ width: '100%' }}>
                         <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--accent)', fontSize: 13, userSelect: 'none' }}>
                           🔍 View Outfit Critique: {m.outfitName || 'Generated Outfit'}
                         </summary>
@@ -3440,7 +3487,7 @@ export default function AskClaude({
                               ⚗️ {m.queryOptions.mission === 'mix' ? 'Mix of missions' : m.queryOptions.mission}
                             </span>
                           )}
-                          {m.queryOptions.mood && m.queryOptions.mood !== 'artistic minimalist' && (
+                          {m.queryOptions.mood && (
                             <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 3 }} title="Stylist mood/notes">
                               💬 "{m.queryOptions.mood}"
                             </span>
@@ -3504,8 +3551,8 @@ export default function AskClaude({
                         <div key={idx} className="generated-visual-card">
                           {visual.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Visual error: {visual.error}</div> : (
                             <>
-                              <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: visual.imageUrl, title: visual.label || 'Generated visual', meta: visual.reason || '' })} aria-label="Open generated visual preview">
-                                <img src={visual.imageUrl} alt={visual.label} className="generated-visual-image" />
+                              <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(visual.imageUrl), title: visual.label || 'Generated visual', meta: visual.reason || '' })} aria-label="Open generated visual preview">
+                                <img src={resolveUploadImageSrc(visual.imageUrl)} alt={visual.label} className="generated-visual-image" />
                               </button>
                               <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{visual.label}</div>
                               {Array.isArray(visual.missingPieces) && visual.missingPieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>Suggested additions: {visual.missingPieces.join(' + ')}</div>}
@@ -3536,8 +3583,8 @@ export default function AskClaude({
                         <div key={idx} className="generated-visual-card">
                           {board.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Board error: {board.error}</div> : (
                             <>
-                              <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: board.imageUrl, title: board.label || 'Generated board', meta: board.reason || '' })} aria-label="Open generated board preview">
-                                <img src={board.imageUrl} alt={board.label} className="generated-visual-image" />
+                              <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Generated board', meta: board.reason || '' })} aria-label="Open generated board preview">
+                                <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label} className="generated-visual-image" />
                               </button>
                               <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
                               {board.reason && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.45 }}>{board.reason}</div>}
@@ -3580,11 +3627,13 @@ export default function AskClaude({
 
       {pending && (
         <div ref={pendingActionRef} style={{ margin: '0 16px 8px', padding: '12px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          {pendingPhoto && (
+          {pendingPhoto && (() => {
+            const pendingPhotoSrc = resolveUploadImageSrc(pendingPhoto)
+            return pendingPhotoSrc ? (
             <button
               type="button"
               onClick={() => setPreviewImage({
-                src: `/uploads/${pendingPhoto}`,
+                src: pendingPhotoSrc,
                 title: pending.name || 'Outfit',
                 meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
               })}
@@ -3602,9 +3651,10 @@ export default function AskClaude({
               }}
               aria-label="Preview pending outfit photo"
             >
-              <img src={`/uploads/${pendingPhoto}`} alt={pending.name} style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
+              <img src={pendingPhotoSrc} alt={pending.name} style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
             </button>
-          )}
+            ) : null
+          })()}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Choose how to use this piece' : 'Choose how to use this outfit'}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pending.name}</div>

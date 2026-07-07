@@ -77,7 +77,7 @@ export function computeWaistbandNote(piece = {}) {
   return null
 }
 export function normalizeOccasionForConfidence(occ) {
-  const norm = String(occ || '').toLowerCase().replace('-', ' ').trim()
+  const norm = String(occ || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
   if (norm.startsWith('outdoor')) return 'outdoor'
   if (norm.startsWith('smart') || norm.includes('smart')) return 'smart-casual'
   if (norm.includes('art') || norm.includes('gallery')) return 'city'
@@ -85,6 +85,31 @@ export function normalizeOccasionForConfidence(occ) {
   if (norm.includes('home') || norm.includes('lounge')) return 'home'
   if (norm.includes('evening')) return 'evening'
   return norm.replace(/\s+/g, '-')
+}
+
+function manualOverridesForPiece(piece = {}) {
+  if (Array.isArray(piece.manual_overrides)) return piece.manual_overrides.map(v => String(v || '').trim())
+  if (typeof piece.manual_overrides === 'string') {
+    try {
+      const parsed = JSON.parse(piece.manual_overrides || '[]')
+      return Array.isArray(parsed) ? parsed.map(v => String(v || '').trim()) : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+function explicitOccasionMatches(piece = {}, occasion = '', normalizedOccasion = '') {
+  const explicitOccasions = Array.isArray(piece.occasions) ? piece.occasions.map(o => String(o || '').toLowerCase()) : []
+  const normalizedExplicit = explicitOccasions.map(normalizeOccasionForConfidence)
+  const rawOccasion = String(occasion || '').toLowerCase()
+  const profileText = rawOccasion.replace(/[-_]+/g, ' ')
+  const aliases = new Set([rawOccasion, normalizedOccasion])
+  if (profileText.includes('city')) aliases.add('city')
+  if (profileText.includes('smart')) aliases.add('smart-casual')
+  return explicitOccasions.some(occ => aliases.has(occ)) ||
+    normalizedExplicit.some(occ => aliases.has(occ))
 }
 
 export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', explorationMode = 'moderate' } = {}) {
@@ -104,6 +129,8 @@ export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', expl
   const occasionConfidence = normOcc ? String(intelligence.occasionConfidence?.[normOcc] || '').toLowerCase() : ''
   const reasons = []
   const aggressive = explorationMode === 'aggressive'
+  const manualOverrides = manualOverridesForPiece(piece)
+  const manuallyTrustedFit = manualOverrides.includes('fit_confidence') && ['high', 'trusted'].includes(fit)
 
   if (status === 'avoid' || status === 'do_not_recommend') reasons.push('recommendation status blocks auto-use')
   if (role === 'never_auto' || role === 'only_when_requested') reasons.push('role permission blocks automatic styling')
@@ -111,11 +138,10 @@ export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', expl
   if (status === 'experimental' && !aggressive) reasons.push('experimental piece held for exploration mode')
   if (fit === 'low' && !aggressive) reasons.push('low fit confidence')
   if (profileTrust === 'do_not_auto_use') reasons.push('AI profile blocks auto-use')
-  if (profileTrust === 'needs_fit_review' && !aggressive) reasons.push('AI profile needs fit review')
+  if (profileTrust === 'needs_fit_review' && !aggressive && !manuallyTrustedFit) reasons.push('AI profile needs fit review')
   if (profileTrust === 'experimental' && !aggressive) reasons.push('AI profile experimental')
 
-  const explicitOccasions = Array.isArray(piece.occasions) ? piece.occasions.map(o => String(o || '').toLowerCase()) : []
-  const isExplicitlyTagged = explicitOccasions.includes(normOcc) || (occasion && explicitOccasions.includes(String(occasion).toLowerCase()))
+  const isExplicitlyTagged = explicitOccasionMatches(piece, occasion, normOcc)
 
   if (occasionConfidence === 'low' && !isExplicitlyTagged && !aggressive) {
     reasons.push(`AI profile low confidence for ${occasion}`)

@@ -77,6 +77,28 @@ test('auto styling trust blocks low-confidence fit and explicit do-not-auto note
   assert.ok(decision.reasons.includes('engine notes suppress auto-use'))
 })
 
+test('manual fit confidence and city tag override stale AI profile fit and profile confidence', () => {
+  const decision = autoStylingTrustDecision({
+    name: 'bold multicolor dot peplum top',
+    recommendation_status: 'trusted',
+    fit_confidence: 'high',
+    manual_overrides: ['fit_confidence', 'occasions'],
+    occasions: ['casual', 'city'],
+    style_profile_json: {
+      garment_intelligence: {
+        auto_use_trust: 'needs_fit_review',
+        occasion_confidence: {
+          'smart-casual': 'low'
+        }
+      }
+    }
+  }, { occasion: 'city_smart_casual' })
+
+  assert.equal(decision.allowed, true)
+  assert.equal(decision.reasons.includes('AI profile needs fit review'), false)
+  assert.equal(decision.reasons.includes('AI profile low confidence for city_smart_casual'), false)
+})
+
 test('auto styling trust does not treat bohemian or folk/artisan as inherently bad', () => {
   const decision = autoStylingTrustDecision({
     name: 'gray folk artisan skirt',

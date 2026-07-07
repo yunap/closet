@@ -93,8 +93,22 @@ async function writeFormalityContactSheets(pieces = []) {
   const outDir = 'scratch/formality_contact_sheets'
   fs.mkdirSync(outDir, { recursive: true })
   const written = []
-  for (const tier of FORMALITY_VALUES) {
-    const bucket = pieces.filter(piece => String(piece.formality || '').toLowerCase().trim() === tier)
+  const sheetSpecs = [
+    ...FORMALITY_VALUES.map(tier => ({
+      key: tier,
+      title: `Formality bucket: ${tier}`,
+      subtitle: 'Review for obvious mis-bucketed garments after backfill.',
+      pieces: pieces.filter(piece => String(piece.formality || '').toLowerCase().trim() === tier)
+    })),
+    {
+      key: 'borderline',
+      title: 'Formality bucket: borderline',
+      subtitle: 'Review these low-confidence formality labels first; they are the likeliest calibration mistakes.',
+      pieces: pieces.filter(piece => confidenceFor(piece, 'formality') === 'low')
+    }
+  ]
+  for (const spec of sheetSpecs) {
+    const bucket = spec.pieces
     if (!bucket.length) continue
     const cols = 5
     const tileW = 150
@@ -113,8 +127,8 @@ async function writeFormalityContactSheets(pieces = []) {
         top: headerH + Math.floor(idx / cols) * (tileH + gap)
       })
     }
-    const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#f6f1eb"/><text x="24" y="36" font-family="Georgia, serif" font-size="26" fill="#2f2924">Formality bucket: ${escapeSvg(tier)}</text><text x="24" y="58" font-family="Arial, sans-serif" font-size="13" fill="#786d63">${bucket.length} active pieces. Review for obvious mis-bucketed garments after backfill.</text></svg>`
-    const outPath = path.join(outDir, `formality-${tier}.jpg`)
+    const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#f6f1eb"/><text x="24" y="36" font-family="Georgia, serif" font-size="26" fill="#2f2924">${escapeSvg(spec.title)}</text><text x="24" y="58" font-family="Arial, sans-serif" font-size="13" fill="#786d63">${bucket.length} active pieces. ${escapeSvg(spec.subtitle)}</text></svg>`
+    const outPath = path.join(outDir, `formality-${spec.key}.jpg`)
     await sharp(Buffer.from(svg)).composite(composites).jpeg({ quality: 86 }).toFile(outPath)
     written.push(outPath)
   }
@@ -184,6 +198,10 @@ const contactSheets = await writeFormalityContactSheets(allActivePieces.filter(i
 if (contactSheets.length) {
   console.log('\nFormality bucket contact sheets:')
   for (const sheet of contactSheets) console.log(`- ${sheet}`)
+  const borderline = contactSheets.find(sheet => sheet.includes('formality-borderline'))
+  if (borderline) {
+    console.log(`Review borderline formality labels first: ${borderline}`)
+  }
 } else {
   console.log('\nNo formality contact sheets written yet; no active pieces have formality values.')
 }
@@ -193,7 +211,8 @@ const output = {
   activePieceCount: allActivePieces.length,
   fields: summary,
   missingByPiece,
-  formalityContactSheets: contactSheets
+  formalityContactSheets: contactSheets,
+  borderlineFormalityContactSheet: contactSheets.find(sheet => sheet.includes('formality-borderline')) || null
 }
 
 fs.writeFileSync('scratch/gate_metadata_audit.json', JSON.stringify(output, null, 2))

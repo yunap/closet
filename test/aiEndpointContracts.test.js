@@ -605,7 +605,7 @@ test('selected-piece visual composer pins the selected anchor when model omits i
   assert.ok(json.structuredOutfits[0].pieces.some(p => Number(p.id) === Number(seeded.bottom)))
 })
 
-test('selected-piece visual composer repairs boots for June walking', async () => {
+test('selected-piece visual composer excludes boots from the June walking roster', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
     return {
@@ -636,7 +636,9 @@ test('selected-piece visual composer repairs boots for June walking', async () =
   assert.equal(json.pipeline, 'selected_piece_visual_composer')
   assert.ok(first.pieceIds.includes(seeded.bottom))
   assert.equal(first.pieceIds.includes(seeded.boot), false, 'June walking should not return ankle boots')
-  assert.ok(first.watchFor.includes('swapped for all-day walking comfort'))
+  const composerCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const composerText = JSON.stringify(composerCall?.messages || [])
+  assert.doesNotMatch(composerText, /brown ankle boots/i, 'June walking should not show ankle boots to the composer roster')
 })
 
 test('selected-piece generator accepts and forwards mission and mood parameters', async () => {
@@ -755,6 +757,9 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.equal(firstRun.pool_size, json.debug.postGatePoolSize)
   assert.equal(firstRun.cap_applied, 0)
   assert.deepEqual(JSON.parse(firstRun.cut_ids), [])
+  assert.equal(firstRun.requested, 3)
+  assert.equal(firstRun.delivered, json.debug.deliveredCount)
+  assert.deepEqual(JSON.parse(firstRun.coverage_gaps), json.debug.activityCoverageGaps)
 
   // 1. Generate an image from a visual-composer card via the existing /api/ai/generate-wardrobe-outfit-image endpoint
   const outfit = json.structuredOutfits[0]
@@ -825,6 +830,77 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   const returnedNames = json.structuredOutfits.flatMap(o => o.pieces || []).map(p => p.name).join(' ').toLowerCase()
   assert.match(returnedNames, /brown ankle boots/, 'visual composer should keep the model-selected shoe visible')
   assert.ok(json.structuredOutfits.some(outfit => outfit.systemSuggestion?.type === 'comfort' && Number(outfit.systemSuggestion.swapOut) === Number(seeded.boot)))
+  const broken = json.structuredOutfits.find(outfit => outfit.broken)
+  assert.ok(broken, 'shortfall should show the broken diagnostic local-fill card')
+  assert.equal(broken.source, 'local-fill')
+  assert.ok(broken.systemFlags.some(flag => flag.type === 'broken'))
+  assert.ok(Array.isArray(broken.brokenPieces) && broken.brokenPieces.length >= 1)
+  assert.equal(json.debug.finalSelection.localFillAdded, 0)
+  assert.equal(json.debug.finalSelection.diagnosticBrokenAdded, 1)
+  assert.equal(json.debug.deliveredCount, 1)
+  assert.equal(json.debug.brokenCardCount, 1)
+})
+
+test('visual wardrobe composer shows rejected model cards as broken diagnostics', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("You are Yuna's personal stylist. You are looking at photos")) {
+      return {
+        outfits: [{
+          label: 'Valid model outfit',
+          strength: 'signature',
+          dominantDirection: 'city structure',
+          silhouette: 'top over bottom',
+          bestFor: 'city',
+          pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+          reason: 'A complete model outfit with top, bottom, and shoe.',
+          watchFor: 'None.',
+        }, {
+          label: 'Model forgot shoes',
+          strength: 'strong',
+          dominantDirection: 'unfinished column',
+          silhouette: 'top over bottom',
+          bestFor: 'city',
+          pieceIds: [seeded.top, seeded.bottom],
+          reason: 'The model proposed a top and bottom but no shoe.',
+          watchFor: 'Missing grounding.',
+        }, {
+          label: 'Model mixed dress and pants',
+          strength: 'usable',
+          dominantDirection: 'overbuilt dress formula',
+          silhouette: 'dress plus bottom',
+          bestFor: 'city',
+          pieceIds: [seeded.dress, seeded.bottom, seeded.shoe],
+          reason: 'The model mixed a dress with a separate bottom.',
+          watchFor: 'Too many lower-body pieces.',
+        }],
+        rejected: [],
+        skip: '',
+        saveableLearning: 'mock rejected model cards',
+      }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'indoor',
+    mood: '',
+    limit: 3,
+  })
+
+  assert.equal(json.debug.aiReturnedCount, 3)
+  assert.equal(json.debug.finalSelection.aiResolvedWithOwnedPieces, 3)
+  assert.equal(json.debug.finalSelection.aiStructurallyValid, 1)
+  const brokenCards = json.structuredOutfits.filter(outfit => outfit.broken)
+  assert.equal(brokenCards.length, 2)
+  assert.ok(brokenCards.every(outfit => outfit.source === 'model-rejected'))
+  assert.deepEqual(
+    brokenCards.map(outfit => outfit.rejectionReason).sort(),
+    ['structural: dress plus bottom', 'structural: missing shoes']
+  )
+  assert.ok(brokenCards.some(outfit => outfit.label.includes('Model forgot shoes')))
+  assert.ok(brokenCards.some(outfit => outfit.label.includes('Model mixed dress and pants')))
 })
 
 test('visual wardrobe composer failure uses local fallback without retired agent call', async () => {
@@ -1862,6 +1938,66 @@ test('StylistChat surfaces visual composer usage cost in outfit cards', () => {
   assert.match(src, /replyDebug = data\.debug \|\| null/)
 })
 
+test('StylistChat whole-wardrobe builder defaults to empty mood', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /const \[wardrobeOutfitMood, setWardrobeOutfitMood\] = useState\(''\)/)
+  assert.match(src, /const mood = wardrobeOutfitMood\.trim\(\)/)
+  assert.doesNotMatch(src, /wardrobeOutfitMood \|\| 'artistic minimalist'/)
+  assert.doesNotMatch(src, /m\.queryOptions\.mood !== 'artistic minimalist'/)
+})
+
+test('StylistChat preserves generated board image urls for critique previews', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /const resolveUploadImageSrc/)
+  assert.ok(src.includes("value.replace(/^\\/uploads\\/+uploads\\//, '/uploads/')"))
+  assert.match(src, /\^\(https\?:\\\/\\\/\|data:\|blob:\|\\\/uploads\\\/\)/)
+  assert.match(src, /const uploadsIndex = value\.indexOf\('\/uploads\/'\)/)
+  assert.match(src, /value\.startsWith\('generated-boards\/'\)/)
+  assert.match(src, /displayPrev = resolveUploadImageSrc\(outfitToSend\.photo\)/)
+  assert.match(src, /const messageImageSrc = resolveUploadImageSrc\(m\.imagePrev\)/)
+  assert.match(src, /const pendingPhotoSrc = resolveUploadImageSrc\(pendingPhoto\)/)
+  assert.match(src, /src: resolveUploadImageSrc\(board\.imageUrl\)/)
+  assert.doesNotMatch(src, /displayPrev = `\\\/uploads\\\/\$\{outfitToSend\.photo\}`/)
+  assert.doesNotMatch(src, /<img src=\{m\.imagePrev\}/)
+  assert.doesNotMatch(src, /src=\{`\\\/uploads\\\/\$\{pendingPhoto\}`\}/)
+})
+
+test('StylistChat renders wardrobe evaluation replies in the chat thread', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.doesNotMatch(src, /if \(m\.wardrobeEvaluation \|\| m\.contextName === 'Whole wardrobe evaluation'\) \{\s*return null\s*\}/)
+  assert.match(src, /if \(m\.role === 'assistant' && m\.wardrobeEvaluation\)/)
+  assert.match(src, /<details open=\{true\} style=\{\{ width: '100%' \}\}>/)
+  assert.match(src, /View Outfit Critique: \{m\.outfitName \|\| 'Generated Outfit'\}/)
+})
+
+test('StylistChat scopes rendered wardrobe boards to each generation result', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /const createResultId = \(prefix = 'result'\)/)
+  assert.match(src, /const resultId = createResultId\('whole-wardrobe'\)/)
+  assert.match(src, /resultId,\s*\n\s*structuredOutfits: replyStructuredOutfits/)
+  assert.match(src, /const messageResultKey = message\?\.resultId \|\| messageIndex/)
+  assert.match(src, /const boardKey = `\$\{messageResultKey\}:\$\{idx\}`/)
+  assert.match(src, /const comparisonKey = `whole-wardrobe-comparison:\$\{messageResultKey\}`/)
+  assert.match(src, /const idealComparisonKey = `ideal-additions-comparison:\$\{messageResultKey\}`/)
+  assert.doesNotMatch(src, /const boardKey = `\$\{messageIndex\}:\$\{idx\}`/)
+})
+
+test('StylistChat does not show duplicate image and evaluation buttons on whole-wardrobe cards', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /const canRenderStructuredOutfit = isPreview[\s\S]*: !message\?\.wholeWardrobe && !message\?\.wardrobeEvaluation && hasRenderableOutfitPieces/)
+  assert.match(src, /\(message\?\.wholeWardrobe \|\| \(activeContext\?\.type !== 'piece'/)
+})
+
+test('StylistChat visibly marks broken diagnostic local-fill cards', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /const isBrokenCard = Boolean\(outfit\.broken \|\| outfit\.diagnosticOnly\)/)
+  assert.match(src, /const brokenReasonRows = Array\.isArray\(outfit\.brokenPieces\)/)
+  assert.match(src, /Broken diagnostic card: shown to inspect a rejected model proposal/)
+  assert.match(src, /Rejected reason:/)
+  assert.match(src, /Rejected pieces:/)
+  assert.match(src, /isBrokenCard \? 'needs review'/)
+})
+
 test('StylistChat selected-piece season menu keeps spring and summer separate', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /\{ value: 'spring', label: 'Spring' \}/)
@@ -2017,7 +2153,7 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
   })
   const boot = hikingShoes.find(p => p.id === seeded.boot)
   const slipOn = hikingShoes.find(p => p.id === seeded.shoe)
-  assert.equal(boot.ruleFit, 'preferred')
+  assert.equal(boot.ruleFit, 'neutral')
   assert.equal(slipOn.ruleFit, 'neutral')
 })
 
@@ -2413,6 +2549,8 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   const casualUserMessage = casualCall.messages[0].content.map(part => part?.text || '').join('\n')
   assert.ok(casualUserMessage.includes('Occasion guidance:'), 'Casual is now a ratified occasion profile and should contain guidance')
   assert.equal(casualCall.messages[0].content.some(part => part?.text?.includes('Occasion Vibe: low-key, easy, everyday, unforced')), true)
+  assert.equal(casualUserMessage.includes('Mood:'), false, 'Empty mood should be omitted from the visual composer prompt')
+  assert.equal(casualUserMessage.includes('artistic minimalist'), false, 'Empty mood must not fall back to artistic minimalist')
 
   // Test 2: Wardrobe coverage note for trail active outdoor (low tops/shoes vs ample)
   const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {
