@@ -11,6 +11,58 @@ const FORMALITY_OPTIONS = [
   { value: 'elevated', label: 'Elevated' },
   { value: 'dressy', label: 'Dressy' },
 ]
+const FABRIC_WEIGHT_OPTIONS = [
+  { value: 'ultralight', label: 'Ultralight' },
+  { value: 'light', label: 'Light' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'heavy', label: 'Heavy' },
+]
+const FIBER_OPTIONS = [
+  'cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 
+  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal', 
+  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic', 
+  'spandex', 'leather', 'suede', 'denim', 'unknown'
+]
+const HEEL_HEIGHT_OPTIONS = [
+  { value: 'flat', label: 'Flat' },
+  { value: 'low', label: 'Low' },
+  { value: 'mid', label: 'Mid' },
+  { value: 'high', label: 'High' },
+]
+const WALK_SUPPORT_OPTIONS = [
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+]
+const REVIEW_CONSTRUCTION_CONFIG = {
+  top: {
+    showNeckline: true,
+    showSleeve: true,
+    silhouetteOptions: ['fitted','slim','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
+    lengthOptions: ['crop','waist','hip','tunic','mid-thigh'],
+    hemOptions: ['straight_loose', 'banded_elastic', 'ribbed', 'design_hem'],
+  },
+  bottom: {
+    silhouetteOptions: ['straight leg','wide leg','bootcut','flare','tapered','barrel','A-line skirt','pencil skirt','full skirt','slip skirt','relaxed','structured'],
+    lengthOptions: ['short','above-knee','knee','midi','maxi','ankle','full-length','cropped'],
+    hemOptions: ['straight_loose', 'cuffed', 'raw', 'tapered', 'banded_elastic', 'slit', 'asymmetrical', 'design_hem'],
+  },
+  dress: {
+    showNeckline: true,
+    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
+    lengthOptions: ['mini','above-knee','knee','midi','maxi'],
+  },
+  outerwear: {
+    showSleeve: true,
+    silhouetteOptions: ['cropped','fitted','boxy','relaxed','oversized','structured','longline'],
+    lengthOptions: ['waist','hip','mid-thigh','knee','longline'],
+  },
+  shoes: {
+    silhouetteOptions: ['pointed','almond','round','square','open-toe','mule','loafer','boot','sandal','heel','flat','sneaker'],
+    lengthOptions: ['open','closed','ankle','mid-calf','knee','over-knee'],
+  }
+}
+
 const COLOR_OPTIONS = [
   { name: 'black', hex: '#2A2420' }, { name: 'white', hex: '#F5F2EC' },
   { name: 'cream', hex: '#E8DFC8' }, { name: 'beige', hex: '#D6C3A3' },
@@ -19,28 +71,30 @@ const COLOR_OPTIONS = [
   { name: 'denim', hex: '#4F6F8F' }, { name: 'brown', hex: '#7A5A3A' },
   { name: 'tan', hex: '#C0A070' }, { name: 'oatmeal', hex: '#D8C8B0' },
   { name: 'amber', hex: '#B07820' }, { name: 'mustard', hex: '#B89020' },
-  { name: 'orange', hex: '#C86030' }, { name: 'red', hex: '#A83A2A' },
-  { name: 'pink', hex: '#C07080' }, { name: 'mauve', hex: '#A7798A' },
-  { name: 'lavender', hex: '#A99AC2' }, { name: 'lilac', hex: '#C4B2D8' },
-  { name: 'plum', hex: '#5A3060' },
-  { name: 'green', hex: '#3A6A3A' }, { name: 'olive', hex: '#5A6030' },
-  { name: 'turquoise', hex: '#2A8080' }, { name: 'light blue', hex: '#7AADCC' },
-  { name: 'periwinkle', hex: '#8888CC' }, { name: 'dark blue', hex: '#1A2040' },
-  { name: 'dark grey', hex: '#484848' }, { name: 'light grey', hex: '#B8B8B8' },
-  { name: 'multi', hex: '#8A6848' },
+  { name: 'yellow', hex: '#EAD870' }, { name: 'orange', hex: '#C86030' },
+  { name: 'rust', hex: '#A85A3A' }, { name: 'red', hex: '#A83A2A' },
+  { name: 'burgundy', hex: '#6B2D3A' }, { name: 'pink', hex: '#C07080' },
+  { name: 'mauve', hex: '#A7798A' }, { name: 'lavender', hex: '#A99AC2' },
+  { name: 'lilac', hex: '#C4B2D8' }, { name: 'plum', hex: '#5A3060' },
+  { name: 'green', hex: '#3A6A3A' }, { name: 'sage', hex: '#96A08A' },
+  { name: 'olive', hex: '#5A6030' }, { name: 'turquoise', hex: '#2A8080' },
+  { name: 'light blue', hex: '#7AADCC' }, { name: 'periwinkle', hex: '#8888CC' },
+  { name: 'dark blue', hex: '#1A2040' }, { name: 'dark grey', hex: '#484848' },
+  { name: 'light grey', hex: '#B8B8B8' }, { name: 'multi', hex: '#8A6848' },
 ]
-const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'lavender', 'lilac']
+const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'lavender', 'lilac', 'yellow', 'sage']
 
 function emptyForm() {
   return {
     name: '', category: 'top', colors: [], occasions: [], season: 'year-round', notes: '', status: 'active',
     pattern_type: null, pattern_scale: null, pattern_complexity: null, reads_as: '',
     hem_finish: null, neckline: null, sleeve_type: null, length_hits_at: null,
-    silhouette: null, fabric_category: null, fabric_weight: null,
+    silhouette: null, fabric_category: null, fabric_weight: null, fiber_content: [],
     formality: null, heel_height: null, walk_support: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
     style_profile_json: {},
     tagger_version: null,
+    manual_overrides: [],
   }
 }
 
@@ -63,7 +117,7 @@ function ThumbnailSizeControl({ value, onChange }) {
 }
 
 // ── Phase: Select ──────────────────────────────────────────────────────────────
-function SelectPhase({ onFiles }) {
+function SelectPhase({ onFiles, onClose }) {
   const inputRef = useRef()
   const [dragging, setDragging] = useState(false)
 
@@ -108,6 +162,15 @@ function SelectPhase({ onFiles }) {
         Hanger or flat lay photos work best.<br />
         Worn photos can be added later per piece.
       </div>
+
+      <button
+        type="button"
+        className="btn-secondary"
+        onClick={onClose}
+        style={{ width: '100%', maxWidth: 200, marginTop: 12 }}
+      >
+        Close / Exit
+      </button>
     </div>
   )
 }
@@ -140,7 +203,7 @@ function ProcessingPhase({ items, thumbnailSize }) {
           <div>
             <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 2 }}>Analyzing photo {items.indexOf(current) + 1}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Claude is reading this piece
+              <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Model is reading this piece
             </div>
           </div>
         </div>
@@ -173,7 +236,7 @@ function ProcessingPhase({ items, thumbnailSize }) {
 }
 
 // ── Phase: Grouping (Staging Area) ───────────────────────────────────────────
-function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel, linkingFromId, setLinkingFromId }) {
+function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel, onRemove, linkingFromId, setLinkingFromId }) {
   const [draggedId, setDraggedId] = useState(null)
   const [dragOverId, setDragOverId] = useState(null)
   const fileInputRef = useRef()
@@ -278,6 +341,35 @@ function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel,
               {/* Image containers */}
               <div style={{ position: 'relative', aspectRatio: '1', width: '100%', background: 'var(--surface-2)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
                 <img src={item.preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                
+                {/* Delete button to remove from batch */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemove(item.id);
+                  }}
+                  style={{
+                    position: 'absolute',
+                    top: 6,
+                    right: 6,
+                    width: 22,
+                    height: 22,
+                    borderRadius: '50%',
+                    background: 'rgba(38, 32, 26, 0.7)',
+                    color: '#fff',
+                    border: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 10,
+                    cursor: 'pointer',
+                    zIndex: 10,
+                  }}
+                  title="Remove from batch"
+                >
+                  ✕
+                </button>
                 
                 {/* Standalone label */}
                 {!item.wornPreview && (
@@ -439,7 +531,7 @@ function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel,
 }
 
 // ── Phase: Review (one item at a time) ────────────────────────────────────────
-function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
+function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thumbnailSize }) {
   const item = items[currentIndex]
   const total = items.length
   const [form, setForm] = useState({ ...emptyForm(), ...item.form })
@@ -447,14 +539,33 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
   const summary = intakeReviewSummary(form)
   const confidence = confidenceMapForPiece(form)
 
-  const set       = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  const toggleArr = (k, val) => setForm(f => ({
-    ...f,
-    [k]: f[k].includes(val) ? f[k].filter(x => x !== val) : [...f[k], val]
-  }))
+  const patternConstFields = [
+    'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
+    'neckline', 'sleeve_type', 'silhouette', 'length_hits_at', 'hem_finish'
+  ]
+  const hasLowConfidencePatternConst = patternConstFields.some(field => 
+    String(confidence[field] || '').toLowerCase() === 'low'
+  )
+  const [detailsExpanded, setDetailsExpanded] = useState(() => {
+    return item.status === 'error' || hasLowConfidencePatternConst
+  })
+
+  const set = (k, v) => setForm(f => {
+    const nextOverrides = f.manual_overrides.includes(k) ? f.manual_overrides : [...f.manual_overrides, k]
+    return { ...f, [k]: v, manual_overrides: nextOverrides }
+  })
+  const toggleArr = (k, val) => setForm(f => {
+    const nextOverrides = f.manual_overrides.includes(k) ? f.manual_overrides : [...f.manual_overrides, k]
+    return {
+      ...f,
+      [k]: f[k].includes(val) ? f[k].filter(x => x !== val) : [...f[k], val],
+      manual_overrides: nextOverrides
+    }
+  })
   const FieldLabel = ({ field, children }) => {
     const isGate = GATE_CRITICAL_FIELDS.includes(field)
-    const isLow = String(confidence[field] || '').toLowerCase() === 'low'
+    const isManual = form.manual_overrides.includes(field)
+    const isLow = !isManual && String(confidence[field] || '').toLowerCase() === 'low'
     return (
       <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         {children}
@@ -476,9 +587,20 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
       if (item.wornFile) {
         fd.append('worn_photo', item.wornFile)
       }
-      const res = await fetch('/api/pieces', { method: 'POST', body: fd })
-      await res.json()
-      onSave()
+      
+      const method = item.dbId ? 'PUT' : 'POST'
+      const url = item.dbId ? `/api/pieces/${item.dbId}` : '/api/pieces'
+      
+      const res = await fetch(url, { method, body: fd })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Server returned status ${res.status}: ${text}`)
+      }
+      const savedPiece = await res.json()
+      onSave(savedPiece.id, form)
+    } catch (err) {
+      console.error('Failed to save item:', err)
+      alert(`Error saving piece: ${err.message}`)
     } finally { setSaving(false) }
   }
 
@@ -509,15 +631,25 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
 
         {/* Photos */}
         {item.wornPreview ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Hanger (Garment Detail)</div>
-              <img src={item.preview} alt="Hanger" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border-light)' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Hanger (Garment Detail)</div>
+                <img src={item.preview} alt="Hanger" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border-light)' }} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Worn (Fit & drape)</div>
+                <img src={item.wornPreview} alt="Worn" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border-light)' }} />
+              </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Worn (Fit & drape)</div>
-              <img src={item.wornPreview} alt="Worn" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border-light)' }} />
-            </div>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onSwap}
+              style={{ padding: '6px 12px', fontSize: 11, alignSelf: 'center', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              🔄 Swap Hanger & Worn Photos
+            </button>
           </div>
         ) : (
           <img src={item.preview} alt="" style={{ width: '100%', maxHeight: thumbnailSize, objectFit: 'contain', background: 'var(--surface-2)', borderRadius: 'var(--radius)' }} />
@@ -600,6 +732,219 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
           </div>
         )}
 
+        <div className="form-group">
+          <FieldLabel field="fabric_category">Fabric Category</FieldLabel>
+          <select
+            className="form-select"
+            value={form.fabric_category || ''}
+            onChange={e => set('fabric_category', e.target.value || null)}
+          >
+            <option value="">-- Select Fabric --</option>
+            {(form.category === 'shoes'
+              ? ['leather','suede','patent','canvas','mesh','synthetic','textile','rubber','other']
+              : form.category === 'accessory'
+              ? ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','other']
+              : ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','lace','crochet','wool','cashmere','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other']
+            ).map(opt => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-group">
+          <FieldLabel field="fabric_weight">Fabric Weight</FieldLabel>
+          <div className="radio-row">
+            {FABRIC_WEIGHT_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                className={`radio-btn ${form.fabric_weight === opt.value ? 'active' : ''}`}
+                onClick={() => set('fabric_weight', opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="form-group">
+          <FieldLabel field="fiber_content">Fiber Content</FieldLabel>
+          <div className="chip-grid">
+            {FIBER_OPTIONS.map(fib => (
+              <button
+                key={fib}
+                className={`chip-toggle ${form.fiber_content && form.fiber_content.includes(fib) ? 'active' : ''}`}
+                onClick={() => toggleArr('fiber_content', fib)}
+                style={{ textTransform: 'capitalize' }}
+              >
+                {fib}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {form.category === 'shoes' && (
+          <>
+            <div className="form-group">
+              <FieldLabel field="heel_height">Heel Height</FieldLabel>
+              <div className="radio-row">
+                {HEEL_HEIGHT_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`radio-btn ${form.heel_height === opt.value ? 'active' : ''}`}
+                    onClick={() => set('heel_height', opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <FieldLabel field="walk_support">Walk Support</FieldLabel>
+              <div className="radio-row">
+                {WALK_SUPPORT_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`radio-btn ${form.walk_support === opt.value ? 'active' : ''}`}
+                    onClick={() => set('walk_support', opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Collapsible Pattern & Construction Details Drawer */}
+        <div style={{ margin: '12px 0 6px' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setDetailsExpanded(!detailsExpanded)}
+            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '10px 14px' }}
+          >
+            <span>{detailsExpanded ? '▼ Hide' : '▶ Show'} Pattern & Construction Details</span>
+            {hasLowConfidencePatternConst && (
+              <span style={{ fontSize: 10, background: '#E8A020', color: '#fff', padding: '1px 6px', borderRadius: 8 }}>
+                AI unsure of details
+              </span>
+            )}
+          </button>
+        </div>
+
+        {detailsExpanded && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '14px', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', background: 'rgba(124, 95, 60, 0.02)' }}>
+            
+            {/* Pattern Type */}
+            <div className="form-group">
+              <FieldLabel field="pattern_type">Pattern Type</FieldLabel>
+              <select className="form-select" value={form.pattern_type || ''} onChange={e => set('pattern_type', e.target.value || null)}>
+                <option value="">-- Select Pattern Type --</option>
+                {['solid','floral','stripe','botanical','geometric','abstract','animal','graphic','plaid','other'].map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Pattern Scale */}
+            <div className="form-group">
+              <FieldLabel field="pattern_scale">Pattern Scale</FieldLabel>
+              <select className="form-select" value={form.pattern_scale || ''} onChange={e => set('pattern_scale', e.target.value || null)}>
+                <option value="">-- Select Pattern Scale --</option>
+                {['none','subtle','medium','bold'].map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Pattern Complexity */}
+            <div className="form-group">
+              <FieldLabel field="pattern_complexity">Pattern Complexity</FieldLabel>
+              <select className="form-select" value={form.pattern_complexity || ''} onChange={e => set('pattern_complexity', e.target.value || null)}>
+                <option value="">-- Select Pattern Complexity --</option>
+                {['solid','quiet','medium','loud'].map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Reads As */}
+            <div className="form-group">
+              <FieldLabel field="reads_as">Reads As</FieldLabel>
+              <input className="form-input" placeholder="e.g. bold warm statement" value={form.reads_as || ''} onChange={e => set('reads_as', e.target.value)} />
+            </div>
+
+            {/* Neckline */}
+            {REVIEW_CONSTRUCTION_CONFIG[form.category]?.showNeckline && (
+              <div className="form-group">
+                <FieldLabel field="neckline">Neckline</FieldLabel>
+                <select className="form-select" value={form.neckline || ''} onChange={e => set('neckline', e.target.value || null)}>
+                  <option value="">-- Select Neckline --</option>
+                  {['V','scoop','crew','boat','mock','cowl','off-shoulder','square','wrap','other'].map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Sleeve Type */}
+            {REVIEW_CONSTRUCTION_CONFIG[form.category]?.showSleeve && (
+              <div className="form-group">
+                <FieldLabel field="sleeve_type">Sleeve</FieldLabel>
+                <select className="form-select" value={form.sleeve_type || ''} onChange={e => set('sleeve_type', e.target.value || null)}>
+                  <option value="">-- Select Sleeve --</option>
+                  {['sleeveless','cap','short','3/4','long','bell','bishop'].map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Silhouette */}
+            {REVIEW_CONSTRUCTION_CONFIG[form.category]?.silhouetteOptions && (
+              <div className="form-group">
+                <FieldLabel field="silhouette">Silhouette / Shape</FieldLabel>
+                <select className="form-select" value={form.silhouette || ''} onChange={e => set('silhouette', e.target.value || null)}>
+                  <option value="">-- Select Silhouette --</option>
+                  {REVIEW_CONSTRUCTION_CONFIG[form.category].silhouetteOptions.map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Length */}
+            {REVIEW_CONSTRUCTION_CONFIG[form.category]?.lengthOptions && (
+              <div className="form-group">
+                <FieldLabel field="length_hits_at">Length / Coverage</FieldLabel>
+                <select className="form-select" value={form.length_hits_at || ''} onChange={e => set('length_hits_at', e.target.value || null)}>
+                  <option value="">-- Select Length --</option>
+                  {REVIEW_CONSTRUCTION_CONFIG[form.category].lengthOptions.map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Hem Finish */}
+            {REVIEW_CONSTRUCTION_CONFIG[form.category]?.hemOptions && (
+              <div className="form-group">
+                <FieldLabel field="hem_finish">Hem / Leg Opening</FieldLabel>
+                <select className="form-select" value={form.hem_finish || ''} onChange={e => set('hem_finish', e.target.value || null)}>
+                  <option value="">-- Select Hem --</option>
+                  {REVIEW_CONSTRUCTION_CONFIG[form.category].hemOptions.map(opt => {
+                    const val = typeof opt === 'string' ? opt : opt.value
+                    const lbl = typeof opt === 'string' ? opt : opt.label
+                    return <option key={val} value={val}>{lbl}</option>
+                  })}
+                </select>
+              </div>
+            )}
+
+          </div>
+        )}
+
         {/* Notes */}
         <div className="form-group">
           <label className="form-label">Notes</label>
@@ -610,8 +955,13 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, thumbnailSize }) {
 
       {/* Fixed bottom actions */}
       <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border-light)', display: 'flex', gap: 10 }}>
-        <button className="btn-secondary" onClick={onSkip} style={{ minWidth: 80 }}>Skip</button>
-        <button className="btn-primary" onClick={handleSave} disabled={saving || !form.name.trim()} style={{ flex: 1 }}>
+        {onPrev && (
+          <button type="button" className="btn-secondary" onClick={onPrev} style={{ minWidth: 80 }}>
+            ← Back
+          </button>
+        )}
+        <button type="button" className="btn-secondary" onClick={onSkip} style={{ minWidth: 80 }}>Skip</button>
+        <button type="button" className="btn-primary" onClick={handleSave} disabled={saving || !form.name.trim()} style={{ flex: 1 }}>
           {saving ? 'Saving…' : currentIndex < total - 1 ? 'Save & next →' : 'Save & finish'}
         </button>
       </div>
@@ -756,6 +1106,32 @@ export default function BatchAdd({ onDone }) {
     setItems(prev => [...prev, ...additional])
   }
 
+  const handleRemove = (itemId) => {
+    setItems(prev => {
+      const target = prev.find(it => it.id === itemId)
+      if (target) {
+        if (target.preview) URL.revokeObjectURL(target.preview)
+        if (target.wornPreview) URL.revokeObjectURL(target.wornPreview)
+      }
+      return prev.filter(it => it.id !== itemId)
+    })
+  }
+
+  const handleSwapPhotos = (index) => {
+    setItems(prev => prev.map((it, i) => {
+      if (i === index) {
+        return {
+          ...it,
+          file:        it.wornFile,
+          preview:     it.wornPreview,
+          wornFile:    it.file,
+          wornPreview: it.preview
+        }
+      }
+      return it
+    }))
+  }
+
   const handleCancel = () => {
     items.forEach(it => {
       if (it.preview) URL.revokeObjectURL(it.preview)
@@ -810,6 +1186,7 @@ export default function BatchAdd({ onDone }) {
             silhouette:         tags.silhouette         || null,
             fabric_category:    tags.fabric_category    || null,
             fabric_weight:      tags.fabric_weight      || null,
+            fiber_content:      tags.fiber_content      || [],
             formality:          tags.formality          || null,
             heel_height:        tags.heel_height        || null,
             walk_support:       tags.walk_support       || null,
@@ -829,8 +1206,8 @@ export default function BatchAdd({ onDone }) {
   }
 
   // ── Save current item ──────────────────────────────────────────────────────
-  const handleSave = () => {
-    updateItem(current, { status: 'saved' })
+  const handleSave = (dbId, finalForm) => {
+    updateItem(current, { status: 'saved', dbId, form: finalForm })
     if (current + 1 < items.length) {
       setCurrent(current + 1)
     } else {
@@ -845,6 +1222,13 @@ export default function BatchAdd({ onDone }) {
       setCurrent(current + 1)
     } else {
       setPhase('summary')
+    }
+  }
+
+  // ── Back to previous item ──────────────────────────────────────────────────
+  const handlePrev = () => {
+    if (current > 0) {
+      setCurrent(current - 1)
     }
   }
 
@@ -866,7 +1250,7 @@ export default function BatchAdd({ onDone }) {
 
       {/* Phase content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: 560, margin: '0 auto', width: '100%', overflow: 'hidden' }}>
-        {phase === 'select'     && <SelectPhase onFiles={handleFilesSelected} />}
+        {phase === 'select'     && <SelectPhase onFiles={handleFilesSelected} onClose={onDone} />}
         {phase === 'grouping'   && (
           <GroupingPhase
             items={items}
@@ -875,6 +1259,7 @@ export default function BatchAdd({ onDone }) {
             onStart={startProcessing}
             onAddFiles={handleAddFiles}
             onCancel={handleCancel}
+            onRemove={handleRemove}
             linkingFromId={linkingFromId}
             setLinkingFromId={setLinkingFromId}
           />
@@ -887,6 +1272,8 @@ export default function BatchAdd({ onDone }) {
             currentIndex={current}
             onSave={handleSave}
             onSkip={handleSkip}
+            onSwap={() => handleSwapPhotos(current)}
+            onPrev={current > 0 ? handlePrev : null}
             thumbnailSize={thumbnailSize}
           />
         )}

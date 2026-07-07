@@ -36,24 +36,43 @@ const STATUSES    = [
   { value: 'donated',           label: '✓ Donated' },
 ]
 const COLOR_OPTIONS = [
-  { name: 'black',      hex: '#2A2420' }, { name: 'white',      hex: '#F5F2EC' },
-  { name: 'cream',      hex: '#E8DFC8' }, { name: 'beige',      hex: '#D6C3A3' },
-  { name: 'taupe',      hex: '#9C8B78' }, { name: 'grey',       hex: '#9A9A9A' },
-  { name: 'charcoal',   hex: '#484848' }, { name: 'navy',       hex: '#1E2D4A' },
-  { name: 'denim',      hex: '#4F6F8F' }, { name: 'brown',      hex: '#7A5A3A' },
-  { name: 'tan',        hex: '#C0A070' }, { name: 'oatmeal',    hex: '#D8C8B0' },
-  { name: 'amber',      hex: '#B07820' }, { name: 'mustard',    hex: '#B89020' },
-  { name: 'orange',     hex: '#C86030' }, { name: 'red',        hex: '#A83A2A' },
-  { name: 'pink',       hex: '#C07080' }, { name: 'mauve',      hex: '#A7798A' },
-  { name: 'lavender',   hex: '#A99AC2' }, { name: 'lilac',      hex: '#C4B2D8' },
-  { name: 'plum',       hex: '#5A3060' },
-  { name: 'green',      hex: '#3A6A3A' }, { name: 'olive',      hex: '#5A6030' },
-  { name: 'turquoise',  hex: '#2A8080' }, { name: 'light blue', hex: '#7AADCC' },
-  { name: 'periwinkle', hex: '#8888CC' }, { name: 'dark blue',  hex: '#1A2040' },
-  { name: 'dark grey',  hex: '#484848' }, { name: 'light grey', hex: '#B8B8B8' },
-  { name: 'multi',      hex: '#8A6848' },
+  { name: 'black', hex: '#2A2420' }, { name: 'white', hex: '#F5F2EC' },
+  { name: 'cream', hex: '#E8DFC8' }, { name: 'beige', hex: '#D6C3A3' },
+  { name: 'taupe', hex: '#9C8B78' }, { name: 'grey', hex: '#9A9A9A' },
+  { name: 'charcoal', hex: '#484848' }, { name: 'navy', hex: '#1E2D4A' },
+  { name: 'denim', hex: '#4F6F8F' }, { name: 'brown', hex: '#7A5A3A' },
+  { name: 'tan', hex: '#C0A070' }, { name: 'oatmeal', hex: '#D8C8B0' },
+  { name: 'amber', hex: '#B07820' }, { name: 'mustard', hex: '#B89020' },
+  { name: 'yellow', hex: '#EAD870' }, { name: 'orange', hex: '#C86030' },
+  { name: 'rust', hex: '#A85A3A' }, { name: 'red', hex: '#A83A2A' },
+  { name: 'burgundy', hex: '#6B2D3A' }, { name: 'pink', hex: '#C07080' },
+  { name: 'mauve', hex: '#A7798A' }, { name: 'lavender', hex: '#A99AC2' },
+  { name: 'lilac', hex: '#C4B2D8' }, { name: 'plum', hex: '#5A3060' },
+  { name: 'green', hex: '#3A6A3A' }, { name: 'sage', hex: '#96A08A' },
+  { name: 'olive', hex: '#5A6030' }, { name: 'turquoise', hex: '#2A8080' },
+  { name: 'light blue', hex: '#7AADCC' }, { name: 'periwinkle', hex: '#8888CC' },
+  { name: 'dark blue', hex: '#1A2040' }, { name: 'dark grey', hex: '#484848' },
+  { name: 'light grey', hex: '#B8B8B8' }, { name: 'multi', hex: '#8A6848' },
+ ]
+const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac', 'yellow', 'sage']
+
+const FIBER_OPTIONS = [
+  'cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 
+  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal', 
+  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic', 
+  'spandex', 'leather', 'suede', 'denim', 'unknown'
 ]
-const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac']
+const HEEL_HEIGHT_OPTIONS = [
+  { value: 'flat', label: 'Flat' },
+  { value: 'low', label: 'Low' },
+  { value: 'mid', label: 'Mid' },
+  { value: 'high', label: 'High' },
+]
+const WALK_SUPPORT_OPTIONS = [
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+]
 
 const CLOTHING_CATEGORIES = ['top', 'bottom', 'dress', 'outerwear']
 
@@ -297,6 +316,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     // Fabric
     fabric_category:    piece?.fabric_category    || null,
     fabric_weight:      piece?.fabric_weight      || null,
+    fiber_content:      piece?.fiber_content      || [],
     formality:          piece?.formality          || null,
     heel_height:        piece?.heel_height        || null,
     walk_support:       piece?.walk_support       || null,
@@ -431,6 +451,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'silhouette', tags.silhouette)
         applyTagValue(next, 'fabric_category', tags.fabric_category)
         applyTagValue(next, 'fabric_weight', tags.fabric_weight)
+        applyTagValue(next, 'fiber_content', tags.fiber_content)
         applyTagValue(next, 'formality', tags.formality)
         applyTagValue(next, 'heel_height', tags.heel_height)
         applyTagValue(next, 'walk_support', tags.walk_support)
@@ -874,11 +895,30 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <ChipRow options={fabricConfig.weightOptions} value={form.fabric_weight} onChange={v => set('fabric_weight', v)} />
           </div>
 
+          <div className="form-group">
+            <FieldLabel field="fiber_content">Fiber content</FieldLabel>
+            <ChipRow options={FIBER_OPTIONS} value={form.fiber_content} onChange={v => set('fiber_content', v)} multi />
+          </div>
+
           {fabricConfig.showStretch && (
             <div className="form-group">
               <label className="form-label">Stretch</label>
               <ChipRow options={['none','minimal','stretchy']} value={form.stretch} onChange={v => set('stretch', v)} />
             </div>
+          )}
+
+          {cat === 'shoes' && (
+            <>
+              <div className="form-group">
+                <FieldLabel field="heel_height">Heel height</FieldLabel>
+                <ChipRow options={HEEL_HEIGHT_OPTIONS} value={form.heel_height} onChange={v => set('heel_height', v)} />
+              </div>
+
+              <div className="form-group">
+                <FieldLabel field="walk_support">Walk support</FieldLabel>
+                <ChipRow options={WALK_SUPPORT_OPTIONS} value={form.walk_support} onChange={v => set('walk_support', v)} />
+              </div>
+            </>
           )}
 
           {/* ── Fit ──────────────────────────────────────────────────── */}

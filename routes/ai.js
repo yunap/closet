@@ -5,7 +5,7 @@ import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
-import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult } from '../styling-engine/taggerMerge.js'
+import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult, normalizeManualOverrides } from '../styling-engine/taggerMerge.js'
 
 import {
   prepareImageForClaude,
@@ -1284,7 +1284,7 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
   return thumbs
 }
 
-export async function tagPieceWithProvider(photoInputs) {
+export async function tagPieceWithProvider(photoInputs, existingPiece = null) {
   const inputs = Array.isArray(photoInputs) ? photoInputs : [{ path: photoInputs, label: 'HANGER PHOTO' }]
   const prepared = await Promise.all(inputs.map(async input => ({
     ...input,
@@ -1297,7 +1297,7 @@ export async function tagPieceWithProvider(photoInputs) {
   }
   const anchorBlock = buildAnchorBlock({
     pieces: db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY id").all().map(parsePiece),
-    fields: ['formality']
+    fields: ['formality', 'fabric_weight']
   })
   if (anchorBlock.text) {
     content.push({ type: 'text', text: anchorBlock.text })
@@ -1307,6 +1307,25 @@ export async function tagPieceWithProvider(photoInputs) {
       { type: 'image', detail: 'low', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } }
     ]))
   }
+
+  // Inject Ground Truth context from user overrides on the existing piece
+  if (existingPiece) {
+    const overrides = normalizeManualOverrides(existingPiece.manual_overrides)
+    const groundTruth = []
+    for (const field of overrides) {
+      const val = existingPiece[field]
+      if (val !== null && val !== undefined && val !== '') {
+        groundTruth.push(`- ${field}: ${Array.isArray(val) ? val.join(', ') : val}`)
+      }
+    }
+    if (groundTruth.length > 0) {
+      content.push({
+        type: 'text',
+        text: `Ground Truth Overrides:\nThe user has manually overridden the following properties for this garment. You MUST align your other predictions with this truth (e.g. if fabric_category is silk, fiber_content should be silk; if a shoe is flat, heel_height should be flat):\n${groundTruth.join('\n')}\n`
+      })
+    }
+  }
+
   content.push({ type: 'text', text: TAG_PIECE_PROMPT })
   const payload = {
     system: TAG_PIECE_SYSTEM,
@@ -1793,7 +1812,7 @@ const tagExistingHandler = async (req, res) => {
 
     if (!photos.length) return res.status(400).json({ error: 'This piece has no photo to tag' })
 
-    const tags = await tagPieceWithProvider(photos)
+    const tags = await tagPieceWithProvider(photos, parsePiece(piece))
     tags.tag_state = tagStateForTaggerResult(tags, {
       photo: Boolean(photoFile || piece.photo),
       worn_photo: Boolean(wornPhotoFile || piece.worn_photo)
