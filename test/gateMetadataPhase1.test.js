@@ -78,7 +78,7 @@ test('anchor block comes from manual overrides and is capped per value', () => {
 test('anchor block is defined once and consumed by intake and backfill', () => {
   const sources = [taggerMerge, routeAi, backfillScript].join('\n')
   assert.equal((sources.match(/function buildAnchorBlock/g) || []).length, 1)
-  assert.match(routeAi, /buildAnchorBlock\(\{[\s\S]*fields: \['formality'\]/)
+  assert.match(routeAi, /buildAnchorBlock\(\{[\s\S]*fields: \['formality',\s*'fabric_weight'\]/)
   assert.match(backfillScript, /buildAnchorBlock\(\{ pieces: allActivePieces\(\), fields: \['formality'\] \}\)/)
 })
 
@@ -164,4 +164,13 @@ test('recall replay segments accessory misses outside headline recall', () => {
 
 test('footwear comfort is explicitly tracked by the text matching ratchet', () => {
   assert.equal(ratchet.fileCounts['styling-engine/footwear-comfort.js'], 0)
+})
+
+test('backfill_retagger.js includes Write-Path Guard and field/confidence constraints', () => {
+  const retaggerSource = fs.readFileSync(new URL('../scratch/backfill_retagger.js', import.meta.url), 'utf8')
+  assert.match(retaggerSource, /Attempted to overwrite manual override field/)
+  assert.match(retaggerSource, /normalizeManualOverrides/)
+  assert.match(retaggerSource, /getPath\(newComparison,\s*override\)/)
+  assert.match(retaggerSource, /--field/)
+  assert.match(retaggerSource, /--confidence/)
 })

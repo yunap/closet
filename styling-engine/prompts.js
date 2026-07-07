@@ -742,6 +742,18 @@ Evaluate the garment's visual structure and weight along these two axes:
 - Neckline: Select V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, or other based on construction.
 - Silhouette: Select fitted, slim, relaxed, boxy, A-line, drop-shoulder, or oversized.
 - Fit on Body: Select clings_stretchy, clings_drapey, skims, hangs_straight, drapes, or structured.
+- Fabric Weight: judge from drape, silhouette structure, hem details, and fiber signals:
+  * "ultralight": sheer or gauzy; light visibly passes through; fabric floats rather than hangs (voile, chiffon, gauze).
+  * "light": soft fluid drape, thin single layer; folds collapse softly (linen shirting, jersey tees, rayon, light knits).
+  * "medium": holds moderate shape; folds have body but no stiffness (standard cotton, shirtweight denim, ponte, midweight knits, technical/athletic synthetics).
+  * "heavy": structured, dense, or lofted; holds its own shape, visible thickness at hems/seams (coating wool, heavyweight denim, quilted or fleece-backed fabrics, leather).
+  * Directives for Fabric Weight:
+    1. Drape is weight made visible: When a worn photo is present, judge weight primarily from how the fabric hangs and moves on the body — stiffness, fold size, cling — not from the hanger shot alone.
+    2. Derive from what you already know: Cross-check weight against your own fiber_content and fabric_category answers — technical synthetics and jersey are rarely heavy; coating wool and quilted fabrics are rarely light. If your weight answer contradicts your fiber answer, reconsider before emitting.
+  * Directives for Fiber Content:
+    1. Align with Fabric Category: Your fiber_content array MUST include the primary fiber of your predicted fabric_category (e.g. if fabric_category is 'silk', include 'silk'; if 'wool' or 'cashmere', include 'wool' or 'cashmere'; if 'linen', include 'linen'; if 'cotton', include 'cotton'; if 'denim', include 'denim'; if 'leather' or 'suede', include 'leather' or 'suede').
+    2. Make reasonable visual inferences: Do not default to 'unknown' too easily. Use visual texture and drape cues to make an educated guess about the most likely fibers (e.g., predict 'cotton' for matte, structured tees; 'viscose', 'rayon', or 'modal' for fluid, slinky jerseys; 'wool', 'cashmere', or 'acrylic' for typical knit sweaters) and assign them a 'low' confidence score rather than outputting 'unknown'. Use 'unknown' only when the fabric is completely unidentifiable.
+  * Confidence guidance: Emit "medium" or "high" confidence when fiber, category, and drape agree; emit "low" only when evidence genuinely conflicts or both photos are uninformative.
 
 - Formality Register: judge from observable construction, fabric, finish, and wear context signals, calibrated to THIS wardrobe's artisan-nice baseline:
   * "lounge": athletic/home comfort construction — jersey knits, drawstrings, performance fabric, visible comfort-first design.
@@ -832,7 +844,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
   "category": "top|bottom|dress|outerwear|shoes|accessory",
   "background_color": "the literal base/background color of the garment, e.g. black, navy, cream, white",
-  "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
+  "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, yellow, orange, rust, red, burgundy, pink, mauve, lavender, lilac, plum, green, sage, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
   "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
   "season": "warm|cool|year-round",
   "pattern_type": "solid|floral|stripe|botanical|geometric|abstract|animal|graphic|plaid|other",
@@ -847,7 +859,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
   "fabric_weight": "ultralight|light|medium|heavy",
-  "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. Use 'unknown' if not determinable."],
+  "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. You MUST align this list with your fabric_category (e.g. if fabric_category is silk, fiber_content must include silk; if fabric_category is linen, fiber_content must include linen). Use 'unknown' if not determinable."],
   "formality": "lounge|everyday|elevated|dressy",
   "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
   "walk_support": "high|medium|low|null (shoes only; null/omit for non-shoes)",
@@ -865,6 +877,8 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
       "workwear_utilitarian": 0
     },
     "visual_roles": ["choose 1-4: hero_piece, support_piece, grounding_piece, sharpener_piece, texture_piece, movement_piece, column_piece, quiet_anchor, color_accent"],
+    "coverage": "normal|full-insulating (full-insulating only if long sleeve or long pants/maxi skirt/dress)",
+    "bareness": "normal|high (high if sleeveless, tank, short shorts, or mini skirt/dress)",
     "style_notes": {
       "best_use": "stylist role description based on design weight (e.g. 'standalone structural top to highlight clipboard geometry', 'soft supporting layer', 'texture-contrast focus piece'). Avoid generic 'casual wear' or 'daily casual' phrases.",
       "risk": "styling or aesthetic risk (e.g. 'can look shapeless if not paired with fitted bottom', 'double texture competition with corduroy'). Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."

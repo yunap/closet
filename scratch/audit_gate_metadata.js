@@ -187,11 +187,74 @@ console.table(Object.values(summary).map(item => ({
   confidence: JSON.stringify(item.confidence)
 })))
 
+function checkWeightContradiction(piece) {
+  const weight = String(piece.fabric_weight || '').toLowerCase().trim();
+  const cat = String(piece.fabric_category || '').toLowerCase().trim();
+  const fibers = Array.isArray(piece.fiber_content) ? piece.fiber_content.map(f => String(f).toLowerCase().trim()) : [];
+  
+  if (weight === 'heavy') {
+    if (cat === 'jersey' || cat === 'technical/performance' || cat === 'mesh') {
+      return `heavy weight contradicts fabric category '${cat}'`;
+    }
+  }
+  if (weight === 'light' || weight === 'ultralight') {
+    if (cat === 'wool' || cat === 'cashmere' || cat === 'tweed') {
+      return `${weight} weight contradicts fabric category '${cat}'`;
+    }
+    const heavyFibers = ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'down'];
+    const foundHeavy = fibers.filter(f => heavyFibers.includes(f));
+    if (foundHeavy.length > 0) {
+      return `${weight} weight contradicts heavy fiber(s): ${foundHeavy.join(', ')}`;
+    }
+  }
+  return null;
+}
+
 if (missingByPiece.length) {
   console.log('\nPieces with missing gate metadata:')
   for (const piece of missingByPiece) {
     console.log(`- ${piece.id} ${piece.name}: ${piece.missing.join(', ')}`)
   }
+}
+
+// Audit fabric_weight distribution & fiber contradiction
+const weightDistribution = {}
+const weightConfidence = {}
+const weightContradictions = []
+
+for (const piece of allActivePieces) {
+  if (!isWeatherGatePiece(piece)) continue
+  const weight = piece.fabric_weight || 'unpopulated'
+  weightDistribution[weight] = (weightDistribution[weight] || 0) + 1
+  
+  const conf = confidenceFor(piece, 'fabric_weight')
+  weightConfidence[conf] = (weightConfidence[conf] || 0) + 1
+  
+  const contradiction = checkWeightContradiction(piece)
+  if (contradiction) {
+    weightContradictions.push({
+      id: piece.id,
+      name: piece.name,
+      fabric_category: piece.fabric_category,
+      fabric_weight: piece.fabric_weight,
+      fiber_content: piece.fiber_content,
+      issue: contradiction
+    })
+  }
+}
+
+console.log('\n==================================================')
+console.log('FABRIC WEIGHT AUDIT DETAILS')
+console.log('==================================================')
+console.log('Tier distribution:')
+console.table(weightDistribution)
+console.log('Confidence distribution:')
+console.table(weightConfidence)
+console.log(`Contradiction shortlist (${weightContradictions.length} pieces found):`)
+if (weightContradictions.length) {
+  console.table(weightContradictions)
+} else {
+  console.log('✅ No fabric weight/fiber contradictions found.')
 }
 
 const contactSheets = await writeFormalityContactSheets(allActivePieces.filter(isFormalityPiece))
@@ -211,6 +274,11 @@ const output = {
   activePieceCount: allActivePieces.length,
   fields: summary,
   missingByPiece,
+  fabricWeightAudit: {
+    tierDistribution: weightDistribution,
+    confidenceDistribution: weightConfidence,
+    contradictions: weightContradictions
+  },
   formalityContactSheets: contactSheets,
   borderlineFormalityContactSheet: contactSheets.find(sheet => sheet.includes('formality-borderline')) || null
 }

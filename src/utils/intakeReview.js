@@ -4,10 +4,31 @@ export function confidenceMapForPiece(piece = {}) {
   return piece.style_profile_json?._confidence || piece._confidence || {}
 }
 
+const REVIEW_EDITABLE_FIELDS = [
+  'category', 'colors', 'occasions', 'season', 'formality',
+  'fabric_category', 'fabric_weight', 'fiber_content', 'heel_height', 'walk_support',
+  'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
+  'neckline', 'sleeve_type', 'silhouette', 'length_hits_at', 'hem_finish'
+]
+
 export function lowConfidenceFields(piece = {}) {
   const confidence = confidenceMapForPiece(piece)
+  const category = String(piece.category || '').toLowerCase()
+  const overrides = Array.isArray(piece.manual_overrides) ? piece.manual_overrides : []
+  
   return Object.entries(confidence)
-    .filter(([, value]) => String(value || '').toLowerCase() === 'low')
+    .filter(([field, value]) => {
+      if (overrides.includes(field)) return false
+      if (String(value || '').toLowerCase() !== 'low') return false
+      if (!REVIEW_EDITABLE_FIELDS.includes(field)) return false
+      
+      // Category specific visibility constraints
+      if ((field === 'heel_height' || field === 'walk_support') && category !== 'shoes') return false
+      if (field === 'neckline' && category !== 'top' && category !== 'dress') return false
+      if (field === 'sleeve_type' && category !== 'top' && category !== 'dress' && category !== 'outerwear') return false
+      
+      return true
+    })
     .map(([field]) => field)
 }
 

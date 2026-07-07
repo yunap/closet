@@ -94,3 +94,11 @@ grounding, generic safe solutions.
   runs (e.g. vision re-tagging the whole wardrobe).
 - Keep diffs small and reviewable; one concern per commit; new features additive behind their own routes/flags rather than modifying working flows in place.
 - **Prompt-Layer Style Constitution constraints**: All style/taste claims and constraints in system prompts must interpolate the ratified Style Constitution layers exported from [prompts.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/styling-engine/prompts.js) (`BODY_CONTRACT`, `PROVEN_FORMULAS`, `AESTHETIC_GRAVITY`, `LANE_NEUTRALITY`, `WORKING_STYLE`). Models and agents must not invent style preferences, signature colors, or unratified drift labels. Style lanes are open and never gatekept. The [check_style_claims.js](file:///Users/yuna/Documents/Codex/2026-05-16/repo-yunap-closet-branch-fix-stylist/scratch/check_style_claims.js) script automatically guards against regression of unauthorized taste terms.
+- **CLI Script Safety**: Any script that runs batch calls or executes third-party LLM/image-generation APIs must implement a `--dry-run` or `--preview` mode that short-circuits *before* initiating any paid API network requests. The dry run must only validate inputs, display the targeted scope, and estimate potential costs without consuming active billing tokens.
+- **Form State Mapping Discipline**: When adding, modifying, or refactoring fields in garment metadata, the agent must ensure the field is fully wired up across all four layers of the React lifecycle:
+  1. Component state initialization constructors (e.g. `useState` defaults matching database types).
+  2. The `handleSubmit` payload serialization.
+  3. The `setForm` callback handlers that merge incoming AI tagging API responses.
+  4. The DOM elements rendering the toggles/chips.
+- **Mandatory E2E Handoff Verification**: Before declaring a UI or form state change complete, the agent must perform a manual E2E check: load an existing item, verify pre-populated toggles, trigger AI Retag to verify real-time visual updates, click Save, and query the local SQLite database to confirm the changes and overrides are persisted cleanly.
+
