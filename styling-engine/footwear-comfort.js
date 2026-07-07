@@ -27,6 +27,8 @@ export const ACTIVITY_PROFILES = [
       preferred_materials: [],
       preferred_footwear: [],
       required_footwear: [],
+      excluded_heel_heights: ['mid', 'high'],
+      excluded_walk_support: ['low'],
       keep_footwear: [
         'block heel', 'block heels', 'low heel', 'low heels', 'low block heel', 'low block heels',
         'loafer', 'loafers', 'flat', 'flats', 'sneaker', 'sneakers', 'slip-on', 'slip-ons',
@@ -41,7 +43,7 @@ export const ACTIVITY_PROFILES = [
     moodKeywords: ["hike", "hiking", "trail"],
     vibe: "practical, comfortable, highly durable, movement-focused",
     rules: {
-      gated_occasion_permissions: ["outdoor", "outdoor active", "hiking"],
+      required_occasion_tags: ["outdoor", "outdoor active", "hiking"],
       prohibited_materials: [],
       prohibited_footwear: ["heel", "heels", "wedge", "wedges", "dress shoe", "dress shoes", "flip-flop", "flip-flops"],
       prohibited_pieces: [],
@@ -52,6 +54,8 @@ export const ACTIVITY_PROFILES = [
       preferred_materials: ["cotton", "knit", "knitwear", "denim", "utility", "canvas"],
       preferred_footwear: ["sneakers", "walking flats", "flat rugged boots"],
       required_footwear: ["sneaker", "sneakers", "athletic", "trail", "rugged", "lace-up", "walking flat", "walking flats"],
+      excluded_heel_heights: ['low', 'mid', 'high'],
+      excluded_walk_support: ['low', 'medium'],
       register_ceiling: "everyday"
     }
   }

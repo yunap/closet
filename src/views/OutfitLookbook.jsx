@@ -60,6 +60,21 @@ const FEEDBACK_LABELS_MAP = {
   bad_grounding: 'Bad Grounding',
 }
 
+const resolveUploadImageSrc = (photo) => {
+  const value = String(photo || '').trim()
+  if (!value) return null
+  const dedupedUploads = value.replace(/^\/uploads\/+uploads\//, '/uploads/')
+  if (dedupedUploads !== value) return dedupedUploads
+  if (/^(https?:\/\/|data:|blob:|\/uploads\/)/i.test(value)) return value
+  const uploadsIndex = value.indexOf('/uploads/')
+  if (uploadsIndex >= 0) return value.slice(uploadsIndex)
+  if (value.startsWith('/generated-boards/')) return `/uploads${value}`
+  if (value.startsWith('generated-boards/')) return `/uploads/${value}`
+  if (value.startsWith('uploads/')) return `/${value}`
+  if (value.startsWith('/')) return value
+  return `/uploads/${value}`
+}
+
 // ── Piece Selector Modal ───────────────────────────────────────────────────────
 function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel }) {
   const [allPieces, setAllPieces] = useState([])
@@ -596,24 +611,25 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
 // ── Board Detail ──────────────────────────────────────────────────────────────
 function BoardDetail({ board, onClose, onDelete, onSendToStylist }) {
   const [previewImage, setPreviewImage] = useState(null)
+  const boardImageSrc = resolveUploadImageSrc(board.image_url)
 
   return (
     <>
       <div className="modal-overlay" onClick={onClose}>
         <div className="modal-sheet" onClick={e => e.stopPropagation()}>
           <div className="modal-handle" />
-          {board.image_url ? (
+          {boardImageSrc ? (
             <button
               type="button"
               className="detail-photo-button"
               onClick={() => setPreviewImage({
-                src: board.image_url,
+                src: boardImageSrc,
                 title: board.title || 'Saved board',
                 meta: board.context_name || ''
               })}
               aria-label={`Open larger photo for ${board.title}`}
             >
-              <img className="detail-photo" src={board.image_url} alt={board.title} />
+              <img className="detail-photo" src={boardImageSrc} alt={board.title} />
             </button>
           ) : (
             <div className="outfit-placeholder" style={{ height: 260, aspectRatio: 'auto', borderRadius: 0 }}>✦</div>
@@ -1200,8 +1216,8 @@ export default function OutfitLookbook({ onSendToStylist }) {
           <div className="outfit-grid animate-grid">
             {filteredAndSortedBoards.map(b => (
               <div key={b.id} className="outfit-card" style={{ position: 'relative' }} onClick={() => setBoardDetail(b)}>
-                {b.image_url ? (
-                  <img className="outfit-photo" src={b.image_url} alt={b.title} loading="lazy" style={{ objectFit: 'cover' }} />
+                {resolveUploadImageSrc(b.image_url) ? (
+                  <img className="outfit-photo" src={resolveUploadImageSrc(b.image_url)} alt={b.title} loading="lazy" style={{ objectFit: 'cover' }} />
                 ) : (
                   <div className="outfit-placeholder">✦</div>
                 )}
@@ -1248,7 +1264,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
             onSendToStylist({
               id: null,
               name: board.title,
-              photo: board.image_url,
+              photo: resolveUploadImageSrc(board.image_url),
               pieces: board.pieces,
               notes: board.reason,
               autoSend: true,

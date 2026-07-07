@@ -125,18 +125,17 @@ test('active weather gate creates deduped metadata todos for missing fabric weig
   }
 })
 
-test('profileRuleFit prohibited tier matches wholeWardrobePieceTrustDecision hard gating', () => {
+test('activity footwear phrase lists no longer drive profileRuleFit hard gating', () => {
   const activityProfile = resolveActivityProfile({ activity: 'hiking' })
   const mergedRules = getMergedProfileRules(null, activityProfile)
   const heel = { id: 3, name: 'Black High Heel Pumps', category: 'shoes', occasions: ['casual'], reads_as: 'formal high heel pumps' }
 
   const fit = profileRuleFit(heel, mergedRules)
-  assert.equal(fit.tier, 'prohibited')
-  assert.equal(fit.label, 'prohibited footwear')
+  assert.equal(fit.tier, 'neutral')
 
   const trust = wholeWardrobePieceTrustDecision(heel, { occasion: 'casual', activity: 'hiking' })
-  assert.equal(trust.allowed, false)
-  assert.ok(trust.reasons.some(reason => reason.includes('activity profile: prohibited footwear')))
+  assert.equal(trust.allowed, true)
+  assert.equal(trust.reasons.some(reason => reason.includes('activity profile: prohibited footwear')), false)
 })
 
 test('Whale stripe tee hot weather recommendations include appropriate shorts/lightweight bottoms', () => {
@@ -359,13 +358,13 @@ test('resolveActivityProfile matches hiking and filters prohibited items', () =>
   const scoredSilk = scoreWholeWardrobeCandidate([silkTop], { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.ok(scoredSilk.reasons.includes('activity profile: discouraged material (silk)'), 'Should penalize discouraged material')
 
-  // 2. Discouraged footwear (mules) should be allowed in trust decision, but carry score penalty
+  // 2. Activity discouraged footwear phrase lists are prompt/repair vocabulary only, not scoring.
   const resMules = wholeWardrobePieceTrustDecision(muleShoes, { occasion: 'travel', mood: 'hiking on a very hot day' })
-  assert.equal(resMules.allowed, true, 'Mule shoes should be allowed by trust decision (soft discouraged)')
+  assert.equal(resMules.allowed, true, 'Mule shoes should be allowed by trust decision')
   const scoredMules = scoreWholeWardrobeCandidate([muleShoes], { occasion: 'travel', mood: 'hiking on a very hot day' })
   const hasMulePenalty = scoredMules.reasons.includes('activity profile: discouraged footwear (mule)') ||
                          scoredMules.reasons.includes('activity profile: discouraged footwear (mules)');
-  assert.ok(hasMulePenalty, 'Should penalize discouraged footwear')
+  assert.equal(hasMulePenalty, false, 'Should not penalize activity footwear phrase lists')
 
   // 3. Sneakers should be allowed
   const resSneakers = wholeWardrobePieceTrustDecision(sneakers, { occasion: 'travel', mood: 'hiking on a very hot day' })
@@ -380,7 +379,7 @@ test('resolveActivityProfile matches hiking and filters prohibited items', () =>
   // 5. Preferred items should receive boosts in scoreWholeWardrobeCandidate
   const scored = scoreWholeWardrobeCandidate([sneakers, cottonTee], { occasion: 'travel', mood: 'hiking on a very hot day' })
   assert.ok(scored.reasons.includes('activity profile: preferred material (cotton)'), 'Should boost cotton')
-  assert.ok(scored.reasons.includes('activity profile: preferred footwear (sneakers)'), 'Should boost sneakers')
+  assert.equal(scored.reasons.includes('activity profile: preferred footwear (sneakers)'), false, 'Should not boost activity footwear phrase lists')
 
   // 6. Test pieceOccasionCompatible normalization with dashes and underscores
   const athleticShoes = { id: 9906, name: 'Athletic Shoes', category: 'shoes', occasions: ['casual', 'outdoor', 'city'] }
@@ -412,11 +411,11 @@ test('outdoor_active rules resolved via activity and discourages day dresses, da
   const scoreDress = scoreWholeWardrobeCandidate([midiDress], options)
   assert.ok(scoreDress.reasons.includes('activity profile: discouraged piece (dress)'), 'Should report discouraged piece (dress)')
 
-  // 2. Wedge sandals should be prohibited (testing singular wedge/sandal matching) - heels/wedges are hard prohibited
+  // 2. Wedge sandal phrase matching is no longer a hard gate; structured heel/support fields own this.
   const wedgeSandals = { id: 9911, name: 'black stitched wedge sandals', category: 'shoes', reads_as: 'black wedge sandals' }
   const resWedge = wholeWardrobePieceTrustDecision(wedgeSandals, options)
-  assert.equal(resWedge.allowed, false, 'Wedge sandals should be prohibited')
-  assert.ok(resWedge.reasons.some(r => r.includes('prohibited footwear (wedge)')), 'Should report prohibited footwear (wedge)')
+  assert.equal(resWedge.allowed, true, 'Wedge sandals should not be prohibited by activity footwear phrases')
+  assert.equal(resWedge.reasons.some(r => r.includes('prohibited footwear (wedge)')), false, 'Should not report prohibited footwear phrase')
 
   // 3. Tiered skirt should be allowed in trust decision but discouraged in scoring (revised: Yuna 2026-06-12 ratification revision)
   const tieredSkirt = { id: 9912, name: 'black cream botanical tiered midi skirt', category: 'bottom', reads_as: 'botanical tiered midi skirt' }
@@ -425,12 +424,12 @@ test('outdoor_active rules resolved via activity and discourages day dresses, da
   const scoreSkirt = scoreWholeWardrobeCandidate([tieredSkirt], options)
   assert.ok(scoreSkirt.reasons.includes('activity profile: discouraged piece (skirt)'), 'Should report discouraged piece (skirt)')
 
-  // 4. Flat leather strap sandals should be allowed by trust but discouraged in scoring
+  // 4. Flat leather strap sandal phrases should not be scored by activity phrase lists
   const leatherSandals = { id: 9913, name: 'brown leather strap sandals', category: 'shoes', reads_as: 'versatile casual sandal' }
   const resSandal = wholeWardrobePieceTrustDecision(leatherSandals, options)
-  assert.equal(resSandal.allowed, true, 'Casual sandals should be allowed in trust decision (soft discouraged)')
+  assert.equal(resSandal.allowed, true, 'Casual sandals should be allowed in trust decision')
   const scoreSandal = scoreWholeWardrobeCandidate([leatherSandals], options)
-  assert.ok(scoreSandal.reasons.includes('activity profile: discouraged footwear (sandal)'), 'Should report discouraged footwear (sandal)')
+  assert.equal(scoreSandal.reasons.includes('activity profile: discouraged footwear (sandal)'), false, 'Should not report activity footwear phrase scoring')
 
   // 5. Medium/heavy full-insulating bottoms (like jeans) should be prohibited in hot weather (hard weather filter)
   const whiteJeans = { id: 9914, name: 'white slim crop jeans', category: 'bottom', fabric_weight: 'medium', reads_as: 'slim cropped jeans', style_profile_json: { coverage: 'full-insulating' } }
@@ -454,9 +453,9 @@ test('Trail active outdoor profile additional constraints and repair tests', () 
   const ankleBoots = { id: 9922, name: 'leather ankle boots', category: 'shoes', reads_as: 'warm leather ankle boots' }
   const suedeSneakers = { id: 9923, name: 'suede sneakers', category: 'shoes', reads_as: 'suede athletic sneakers' }
 
-  // Hot weather -> boots discouraged
+  // Hot weather -> boot phrase list no longer scores; structured footwear gate owns activity suitability.
   const scoredBootsHot = scoreWholeWardrobeCandidate([ankleBoots], { occasion: 'casual', mood: 'hiking on a hot day' })
-  assert.ok(scoredBootsHot.reasons.includes('activity profile: discouraged footwear (ankle boots)'), 'Boots should be discouraged in heat')
+  assert.equal(scoredBootsHot.reasons.includes('activity profile: discouraged footwear (ankle boots)'), false, 'Boot phrase list should not score in heat')
   
   // Normal weather -> boots not discouraged
   const scoredBootsNormal = scoreWholeWardrobeCandidate([ankleBoots], { occasion: 'casual', mood: 'hiking' })
@@ -466,11 +465,25 @@ test('Trail active outdoor profile additional constraints and repair tests', () 
   const scoredSuedeNormal = scoreWholeWardrobeCandidate([suedeSneakers], { occasion: 'casual', mood: 'hiking' })
   assert.ok(scoredSuedeNormal.reasons.includes('activity profile: discouraged material (suede)'), 'Suede should be discouraged in all weather')
 
-  // Test 3: Taupe suede ankle boots piece ID 200 is absent from allowedPieces under hiking
+  // Test 3: Taupe suede ankle boots piece ID 200 is absent from the hiking visual roster
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const allowedRes = filterWholeWardrobePiecesForGeneration(allPieces, { occasion: 'casual', mood: 'hiking' })
   const allowedIds = allowedRes.allowedPieces.map(p => Number(p.id))
-  assert.ok(!allowedIds.includes(200), 'Taupe suede ankle boots (ID 200) must be absent from allowedPieces for trail/hike occasion')
+  assert.ok(allowedIds.includes(200), 'Taupe suede ankle boots (ID 200) can remain in the broad pre-roster pool for diagnostics')
+  const hikingRosterPieces = allowedRes.allowedPieces.map(piece => (
+    Number(piece.id) === 200 ? { ...piece, formality: 'everyday' } : piece
+  ))
+  const hikingRoster = buildVisualComposerRoster(hikingRosterPieces, {
+    occasion: 'casual',
+    activity: 'hiking',
+    maxImages: 90
+  })
+  const hikingRosterIds = hikingRoster.roster.map(p => Number(p.id))
+  assert.ok(!hikingRosterIds.includes(200), 'Taupe suede ankle boots (ID 200) must be absent from the hiking visual roster')
+  assert.match(
+    hikingRoster.excluded.find(item => Number(item.pieceId) === 200)?.reason || '',
+    /^footwear: .* unsuitable for Hiking \/ Outdoor active|^activity: not tagged for Hiking \/ Outdoor active/
+  )
 
   // Test 6: Footwear Gate and Repair
   // An outfit composed with canvas slip-ons is repaired to sneakers when sneakers are allowed

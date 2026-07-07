@@ -9,6 +9,7 @@ export const INSULATING_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca'
 export const FORMALITY_VALUES = ['lounge', 'everyday', 'elevated', 'dressy']
 export const HEEL_HEIGHT_VALUES = ['flat', 'low', 'mid', 'high']
 export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
+export const GATE_CRITICAL_FIELDS = ['formality', 'fabric_weight', 'fiber_content', 'occasions', 'heel_height', 'walk_support']
 
 const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
   'silhouette',
@@ -96,6 +97,30 @@ export function pieceHeelHeight(p) {
 export function pieceWalkSupport(p) {
   const normalized = String(p?.walk_support || '').toLowerCase().trim()
   return WALK_SUPPORT_VALUES.includes(normalized) ? normalized : null
+}
+
+function isPopulated(value) {
+  if (Array.isArray(value)) return value.length > 0
+  return value !== null && value !== undefined && String(value).trim() !== ''
+}
+
+function isShoePiece(piece = {}) {
+  const category = String(piece.category || '').toLowerCase().trim()
+  return category === 'shoe' || category === 'shoes'
+}
+
+export function missingGateFields(piece = {}) {
+  const missing = []
+  if (!isPopulated(piece.formality)) missing.push('formality')
+  if (!isPopulated(piece.fabric_weight)) missing.push('fabric_weight')
+  if (!isPopulated(piece.fiber_content)) missing.push('fiber_content')
+  // Intake treats empty occasions as a curation prompt; later activity gates may treat absence as a weaker statement.
+  if (!isPopulated(piece.occasions)) missing.push('occasions')
+  if (isShoePiece(piece)) {
+    if (!isPopulated(piece.heel_height)) missing.push('heel_height')
+    if (!isPopulated(piece.walk_support)) missing.push('walk_support')
+  }
+  return missing
 }
 
 export function pieceBareness(p) {

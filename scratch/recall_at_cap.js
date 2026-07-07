@@ -2,6 +2,7 @@
 // Weight changes motivated by this report need their own spec with before/after recall@cap and A/B diffs.
 // With a few dozen confirmed outfits, only coarse block-level changes are defensible; per-constant fitting is out of bounds.
 import fs from 'fs'
+import { pathToFileURL } from 'url'
 import { db, parsePiece } from '../db.js'
 import {
   buildVisualComposerRoster,
@@ -10,6 +11,15 @@ import {
 } from '../styling-engine/rules.js'
 
 const OUTPUT_PATH = 'scratch/recall_at_cap_report.json'
+const ACCESSORY_CATEGORIES = new Set(['accessory', 'accessories', 'jewelry', 'bag', 'bags', 'belt', 'belts', 'scarf', 'scarves', 'hat', 'hats', 'sunglasses'])
+
+function category(piece) {
+  return String(piece?.category || '').toLowerCase().trim()
+}
+
+export function isAccessoryPiece(piece = {}) {
+  return ACCESSORY_CATEGORIES.has(category(piece))
+}
 
 function weatherLabel(profile = {}) {
   if (profile.isHot) return 'hot'
@@ -100,15 +110,30 @@ function newReport() {
     generatedAt: new Date().toISOString(),
     confirmedOutfitCount: 0,
     flows: {
-      whole_wardrobe_visual: { overall: metric(), byOccasion: {}, byWeather: {}, misses: [] },
-      anchor_visual: { overall: metric(), byOccasion: {}, byWeather: {}, misses: [] }
+      whole_wardrobe_visual: newFlowReport(),
+      anchor_visual: newFlowReport()
     },
     conclusion: ''
   }
 }
 
-function recordMiss(flowReport, { outfit, piece, layer, reason, anchor = null }) {
-  flowReport.misses.push({
+export function newFlowReport() {
+  return {
+    overall: metric(),
+    byOccasion: {},
+    byWeather: {},
+    misses: [],
+    accessories: {
+      overall: metric(),
+      byOccasion: {},
+      byWeather: {},
+      misses: []
+    }
+  }
+}
+
+function recordMiss(misses, { outfit, piece, layer, reason, anchor = null }) {
+  misses.push({
     outfitId: outfit.id,
     outfitName: outfit.name,
     occasion: outfit.occasion,
@@ -120,6 +145,14 @@ function recordMiss(flowReport, { outfit, piece, layer, reason, anchor = null })
     anchorPieceId: anchor?.id || null,
     anchorPieceName: anchor?.name || null
   })
+}
+
+export function recordReplayPiece(flowReport, { outfit, piece, hit, weatherProfile, miss = null }) {
+  const target = isAccessoryPiece(piece) ? flowReport.accessories : flowReport
+  addMetric({ overall: target.overall }, 'overall', hit)
+  addMetric(target.byOccasion, outfit.occasion, hit)
+  addMetric(target.byWeather, weatherLabel(weatherProfile), hit)
+  if (!hit && miss) recordMiss(target.misses, { outfit, piece, ...miss })
 }
 
 function replayWholeWardrobe(outfit, allActivePieces, report) {
@@ -143,16 +176,13 @@ function replayWholeWardrobe(outfit, allActivePieces, report) {
 
   for (const piece of outfit.pieces) {
     const hit = rosterIds.has(Number(piece.id)) ? 1 : 0
-    addMetric({ overall: flowReport.overall }, 'overall', hit)
-    addMetric(flowReport.byOccasion, outfit.occasion, hit)
-    addMetric(flowReport.byWeather, weatherLabel(weatherProfile), hit)
-    if (!hit) {
-      recordMiss(flowReport, {
-        outfit,
-        piece,
-        ...classifyMiss(piece.id, { suppressed: suppressedPieces, excluded, debug })
-      })
-    }
+    recordReplayPiece(flowReport, {
+      outfit,
+      piece,
+      hit,
+      weatherProfile,
+      miss: hit ? null : classifyMiss(piece.id, { suppressed: suppressedPieces, excluded, debug })
+    })
   }
 }
 
@@ -178,30 +208,37 @@ function replayAnchor(outfit, allActivePieces, report) {
 
     for (const piece of outfit.pieces.filter(piece => Number(piece.id) !== Number(anchor.id))) {
       const hit = rosterIds.has(Number(piece.id)) ? 1 : 0
-      addMetric({ overall: flowReport.overall }, 'overall', hit)
-      addMetric(flowReport.byOccasion, outfit.occasion, hit)
-      addMetric(flowReport.byWeather, weatherLabel(weatherProfile), hit)
-      if (!hit) {
-        recordMiss(flowReport, {
-          outfit,
-          piece,
+      recordReplayPiece(flowReport, {
+        outfit,
+        piece,
+        hit,
+        weatherProfile,
+        miss: hit ? null : {
           anchor,
           ...classifyMiss(piece.id, { excluded, debug, candidateIds })
-        })
-      }
+        }
+      })
     }
   }
 }
 
-function finalizeReport(report) {
+export function finalizeReport(report) {
   for (const flow of Object.values(report.flows)) {
     finalizeMetric(flow.overall)
     for (const item of Object.values(flow.byOccasion)) finalizeMetric(item)
     for (const item of Object.values(flow.byWeather)) finalizeMetric(item)
+    finalizeMetric(flow.accessories.overall)
+    for (const item of Object.values(flow.accessories.byOccasion)) finalizeMetric(item)
+    for (const item of Object.values(flow.accessories.byWeather)) finalizeMetric(item)
   }
 
   const misses = Object.values(report.flows).flatMap(flow => flow.misses)
+  const accessoryMisses = Object.values(report.flows).flatMap(flow => flow.accessories.misses)
   const layerCounts = misses.reduce((counts, miss) => {
+    counts[miss.layer] = (counts[miss.layer] || 0) + 1
+    return counts
+  }, {})
+  const accessoryLayerCounts = accessoryMisses.reduce((counts, miss) => {
     counts[miss.layer] = (counts[miss.layer] || 0) + 1
     return counts
   }, {})
@@ -214,33 +251,47 @@ function finalizeReport(report) {
     report.conclusion = 'Misses are dominated by gates or metadata: scoring is not the primary bottleneck for this dataset.'
   }
   report.layerCounts = layerCounts
+  report.accessoryLayerCounts = accessoryLayerCounts
   return report
 }
 
-const allActivePieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-const outfits = getConfirmedOutfits()
-const report = newReport()
-report.confirmedOutfitCount = outfits.length
+export async function runRecallAtCapReplay({ outputPath = OUTPUT_PATH } = {}) {
+  const allActivePieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const outfits = getConfirmedOutfits()
+  const report = newReport()
+  report.confirmedOutfitCount = outfits.length
 
-for (const outfit of outfits) {
-  replayWholeWardrobe(outfit, allActivePieces, report)
-  replayAnchor(outfit, allActivePieces, report)
+  for (const outfit of outfits) {
+    replayWholeWardrobe(outfit, allActivePieces, report)
+    replayAnchor(outfit, allActivePieces, report)
+  }
+
+  finalizeReport(report)
+  fs.writeFileSync(outputPath, JSON.stringify(report, null, 2))
+  return report
 }
 
-finalizeReport(report)
-fs.writeFileSync(OUTPUT_PATH, JSON.stringify(report, null, 2))
+async function main() {
+  const report = await runRecallAtCapReplay()
 
-console.log(`Confirmed outfits replayed: ${report.confirmedOutfitCount}`)
-for (const [flowName, flow] of Object.entries(report.flows)) {
-  console.log(`\n${flowName}`)
-  console.log(`  overall recall@cap: ${flow.overall.recall} (${flow.overall.hits}/${flow.overall.total})`)
-  console.log(`  misses: ${flow.misses.length}`)
-  if (flow.misses.length) {
-    for (const miss of flow.misses.slice(0, 20)) {
-      const anchor = miss.anchorPieceName ? ` anchored on ${miss.anchorPieceName}` : ''
-      console.log(`  - ${miss.outfitName}${anchor}: missed ${miss.missedPieceName} [${miss.layer}] ${miss.reason}`)
+  console.log(`Confirmed outfits replayed: ${report.confirmedOutfitCount}`)
+  for (const [flowName, flow] of Object.entries(report.flows)) {
+    console.log(`\n${flowName}`)
+    console.log(`  overall recall@cap: ${flow.overall.recall} (${flow.overall.hits}/${flow.overall.total})`)
+    console.log(`  misses: ${flow.misses.length}`)
+    console.log(`  accessories recall@cap: ${flow.accessories.overall.recall} (${flow.accessories.overall.hits}/${flow.accessories.overall.total})`)
+    console.log(`  accessory misses: ${flow.accessories.misses.length}`)
+    if (flow.misses.length) {
+      for (const miss of flow.misses.slice(0, 20)) {
+        const anchor = miss.anchorPieceName ? ` anchored on ${miss.anchorPieceName}` : ''
+        console.log(`  - ${miss.outfitName}${anchor}: missed ${miss.missedPieceName} [${miss.layer}] ${miss.reason}`)
+      }
     }
   }
+  console.log(`\n${report.conclusion}`)
+  console.log(`Wrote ${OUTPUT_PATH}`)
 }
-console.log(`\n${report.conclusion}`)
-console.log(`Wrote ${OUTPUT_PATH}`)
+
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  await main()
+}

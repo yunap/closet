@@ -397,3 +397,335 @@ test('Visual Composer Roster - formality score orders same-register survivors at
   assert.ok(debug.relevanceAdjustments[1].some(reason => reason.includes('matches request')))
   assert.ok(debug.relevanceAdjustments[2].some(reason => reason.includes('near everyday')))
 })
+
+test('Visual Composer Roster - walking activity excludes low-support flat sandals', () => {
+  const strapSandals = {
+    id: 990301,
+    name: 'Brown leather strap sandals',
+    category: 'shoes',
+    photo: 'img.jpg',
+    formality: 'everyday',
+    heel_height: 'flat',
+    walk_support: 'low'
+  }
+  const sneakers = {
+    id: 990302,
+    name: 'Trail sneakers',
+    category: 'shoes',
+    photo: 'img.jpg',
+    formality: 'everyday',
+    heel_height: 'flat',
+    walk_support: 'high'
+  }
+
+  const { roster, excluded, debug } = buildVisualComposerRoster([strapSandals, sneakers], {
+    occasion: 'casual',
+    activity: 'walking',
+    maxImages: 90
+  })
+
+  assert.deepEqual(roster.map(piece => piece.id), [sneakers.id])
+  assert.equal(
+    excluded.find(item => item.pieceId === strapSandals.id)?.reason,
+    'footwear: low support unsuitable for Lots of walking'
+  )
+  assert.equal(debug.excludedCounts['footwear: low support unsuitable for Lots of walking'], 1)
+})
+
+test('Visual Composer Roster - walking excludes mid heels but no activity leaves them available', () => {
+  const midHeel = {
+    id: 990311,
+    name: 'Everyday mid heel',
+    category: 'shoes',
+    photo: 'img.jpg',
+    formality: 'everyday',
+    heel_height: 'mid',
+    walk_support: 'medium'
+  }
+
+  const walking = buildVisualComposerRoster([midHeel], {
+    occasion: 'travel',
+    activity: 'walking',
+    maxImages: 90
+  })
+  assert.deepEqual(walking.roster, [])
+  assert.equal(
+    walking.excluded.find(item => item.pieceId === midHeel.id)?.reason,
+    'footwear: mid heel unsuitable for Lots of walking'
+  )
+
+  const noActivity = buildVisualComposerRoster([midHeel], {
+    occasion: 'travel',
+    activity: 'none',
+    maxImages: 90
+  })
+  assert.deepEqual(noActivity.roster.map(piece => piece.id), [midHeel.id])
+})
+
+test('Visual Composer Roster - athletic shoes survive walking and hiking activity gates', () => {
+  const athletic = {
+    id: 990321,
+    name: 'Light grey knit athletic shoes',
+    category: 'shoes',
+    photo: 'img.jpg',
+    formality: 'everyday',
+    heel_height: 'flat',
+    walk_support: 'high'
+  }
+
+  const walking = buildVisualComposerRoster([athletic], {
+    occasion: 'travel',
+    activity: 'walking',
+    maxImages: 90
+  })
+  const hiking = buildVisualComposerRoster([athletic], {
+    occasion: 'travel',
+    activity: 'hiking',
+    maxImages: 90
+  })
+
+  assert.deepEqual(walking.roster.map(piece => piece.id), [athletic.id])
+  assert.deepEqual(hiking.roster.map(piece => piece.id), [athletic.id])
+})
+
+test('Visual Composer Roster - medium walk support survives walking but not hiking', () => {
+  const mediumSupportFlat = {
+    id: 990331,
+    name: 'Medium support flat',
+    category: 'shoes',
+    photo: 'img.jpg',
+    formality: 'everyday',
+    heel_height: 'flat',
+    walk_support: 'medium'
+  }
+
+  const walking = buildVisualComposerRoster([mediumSupportFlat], {
+    occasion: 'travel',
+    activity: 'walking',
+    maxImages: 90
+  })
+  const hiking = buildVisualComposerRoster([mediumSupportFlat], {
+    occasion: 'travel',
+    activity: 'hiking',
+    maxImages: 90
+  })
+
+  assert.deepEqual(walking.roster.map(piece => piece.id), [mediumSupportFlat.id])
+  assert.deepEqual(hiking.roster, [])
+  assert.equal(
+    hiking.excluded.find(item => item.pieceId === mediumSupportFlat.id)?.reason,
+    'footwear: medium support unsuitable for Hiking / Outdoor active'
+  )
+})
+
+test('Visual Composer Roster - active footwear gate requires comfort metadata only when both shoe enums are missing', () => {
+  const missing = { id: 990341, name: 'Mystery walking shoe', category: 'shoes', photo: 'img.jpg' }
+  const onlyHeel = { id: 990342, name: 'Partial low heel shoe', category: 'shoes', photo: 'img.jpg', heel_height: 'low' }
+  const onlySupport = { id: 990343, name: 'Partial low support shoe', category: 'shoes', photo: 'img.jpg', walk_support: 'low' }
+
+  for (const piece of [missing, onlyHeel, onlySupport]) {
+    db.prepare('DELETE FROM todos WHERE linked_piece_id = ?').run(piece.id)
+    db.prepare('DELETE FROM pieces WHERE id = ?').run(piece.id)
+    db.prepare('INSERT INTO pieces (id, name, category, photo, heel_height, walk_support, status) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      piece.id,
+      piece.name,
+      piece.category,
+      piece.photo,
+      piece.heel_height || null,
+      piece.walk_support || null,
+      'active'
+    )
+  }
+
+  try {
+    const inactive = buildVisualComposerRoster([missing], {
+      occasion: 'travel',
+      activity: 'none',
+      maxImages: 90
+    })
+    assert.deepEqual(inactive.roster.map(piece => piece.id), [missing.id])
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ?").get(missing.id).count, 0)
+
+    const activeMissing = buildVisualComposerRoster([missing], {
+      occasion: 'travel',
+      activity: 'walking',
+      maxImages: 90
+    })
+    assert.deepEqual(activeMissing.roster, [])
+    assert.equal(activeMissing.excluded.find(item => item.pieceId === missing.id)?.reason, 'metadata missing: footwear comfort (activity gate active)')
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ? AND description LIKE ?").get(missing.id, '%missing footwear-comfort%').count, 1)
+
+    buildVisualComposerRoster([missing], {
+      occasion: 'travel',
+      activity: 'walking',
+      maxImages: 90
+    })
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ? AND description LIKE ?").get(missing.id, '%missing footwear-comfort%').count, 1)
+
+    const partialHeel = buildVisualComposerRoster([onlyHeel], {
+      occasion: 'travel',
+      activity: 'walking',
+      maxImages: 90
+    })
+    assert.deepEqual(partialHeel.roster.map(piece => piece.id), [onlyHeel.id])
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ?").get(onlyHeel.id).count, 0)
+
+    const partialSupport = buildVisualComposerRoster([onlySupport], {
+      occasion: 'travel',
+      activity: 'walking',
+      maxImages: 90
+    })
+    assert.deepEqual(partialSupport.roster, [])
+    assert.equal(partialSupport.excluded.find(item => item.pieceId === onlySupport.id)?.reason, 'footwear: low support unsuitable for Lots of walking')
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE type = 'metadata' AND linked_piece_id = ?").get(onlySupport.id).count, 0)
+  } finally {
+    for (const piece of [missing, onlyHeel, onlySupport]) {
+      db.prepare('DELETE FROM todos WHERE linked_piece_id = ?').run(piece.id)
+      db.prepare('DELETE FROM pieces WHERE id = ?').run(piece.id)
+    }
+  }
+})
+
+test('Visual Composer Roster - register and footwear activity gates coexist without masking each other', () => {
+  const pieces = [
+    { id: 990351, name: 'Casual tee', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 990352, name: 'Dressy flat', category: 'shoes', photo: 'img.jpg', formality: 'dressy', heel_height: 'flat', walk_support: 'high' },
+    { id: 990353, name: 'Everyday mid heel', category: 'shoes', photo: 'img.jpg', formality: 'everyday', heel_height: 'mid', walk_support: 'medium' }
+  ]
+
+  const { roster, excluded, debug } = buildVisualComposerRoster(pieces, {
+    occasion: 'casual',
+    activity: 'walking',
+    maxImages: 90
+  })
+
+  assert.deepEqual(roster.map(piece => piece.id), [990351])
+  assert.equal(excluded.find(item => item.pieceId === 990352)?.reason, 'register: dressy exceeds everyday ceiling')
+  assert.equal(excluded.find(item => item.pieceId === 990353)?.reason, 'footwear: mid heel unsuitable for Lots of walking')
+  assert.equal(debug.excludedCounts['register: dressy exceeds everyday ceiling'], 1)
+  assert.equal(debug.excludedCounts['footwear: mid heel unsuitable for Lots of walking'], 1)
+})
+
+test('Visual Composer Roster - footwear activity gate ignores non-shoes and selected shoes', () => {
+  const topWithShoeFields = {
+    id: 990361,
+    name: 'Top with nonsense shoe metadata',
+    category: 'top',
+    photo: 'img.jpg',
+    heel_height: 'high',
+    walk_support: 'low'
+  }
+  const selectedMidHeel = {
+    id: 990362,
+    name: 'Selected mid heel',
+    category: 'shoes',
+    photo: 'img.jpg',
+    heel_height: 'mid',
+    walk_support: 'low'
+  }
+
+  const { roster, excluded } = buildVisualComposerRoster([topWithShoeFields, selectedMidHeel], {
+    occasion: 'travel',
+    activity: 'walking',
+    selectedPieceId: selectedMidHeel.id,
+    maxImages: 90
+  })
+
+  assert.deepEqual(roster.map(piece => piece.id).sort((a, b) => a - b), [topWithShoeFields.id, selectedMidHeel.id])
+  assert.equal(excluded.length, 0)
+})
+
+test('Visual Composer Roster - hiking activity enforces curated outdoor occasion tags when slot coverage is sufficient', () => {
+  const tops = [
+    { id: 991001, name: 'Outdoor tee 1', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991002, name: 'Outdoor tee 2', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor active'] },
+    { id: 991003, name: 'Outdoor tee 3', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['hiking'] }
+  ]
+  const bottoms = [
+    { id: 991011, name: 'Olive cargo drawstring shorts', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['casual', 'outdoor'] },
+    { id: 991012, name: 'Outdoor pants 2', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991013, name: 'Outdoor pants 3', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['hiking'] },
+    { id: 991014, name: 'City corduroy pants', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['casual', 'city'] }
+  ]
+  const shoes = [
+    { id: 991021, name: 'Trail sneaker 1', category: 'shoes', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'], heel_height: 'flat', walk_support: 'high' },
+    { id: 991022, name: 'Trail sneaker 2', category: 'shoes', photo: 'img.jpg', formality: 'everyday', occasions: ['hiking'], heel_height: 'flat', walk_support: 'high' }
+  ]
+
+  const { roster, excluded, debug } = buildVisualComposerRoster([...tops, ...bottoms, ...shoes], {
+    occasion: 'casual',
+    activity: 'hiking',
+    maxImages: 90
+  })
+
+  assert.ok(roster.some(piece => piece.id === 991011))
+  assert.ok(!roster.some(piece => piece.id === 991014))
+  assert.equal(excluded.find(item => item.pieceId === 991014)?.reason, 'activity: not tagged for Hiking / Outdoor active')
+  assert.deepEqual(debug.activityCoverageGaps, [])
+  assert.deepEqual(debug.activityTagEnforcedGroups.sort(), ['bottom', 'shoes', 'top'])
+})
+
+test('Visual Composer Roster - hiking activity degrades thin top coverage while enforcing covered slots', () => {
+  const pieces = [
+    { id: 991101, name: 'Only outdoor tee', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991102, name: 'City tee allowed by degradation', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['city'] },
+    { id: 991111, name: 'Outdoor bottom 1', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991112, name: 'Outdoor bottom 2', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991113, name: 'Outdoor bottom 3', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991114, name: 'City bottom excluded', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['city'] },
+    { id: 991121, name: 'Trail sneaker 1', category: 'shoes', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'], heel_height: 'flat', walk_support: 'high' },
+    { id: 991122, name: 'Trail sneaker 2', category: 'shoes', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'], heel_height: 'flat', walk_support: 'high' }
+  ]
+
+  const { roster, excluded, debug } = buildVisualComposerRoster(pieces, {
+    occasion: 'casual',
+    activity: 'hiking',
+    maxImages: 90
+  })
+
+  assert.ok(roster.some(piece => piece.id === 991102), 'thin top coverage should leave non-outdoor tops visible')
+  assert.ok(!roster.some(piece => piece.id === 991114), 'covered bottom slot should still enforce outdoor tags')
+  assert.equal(excluded.find(item => item.pieceId === 991114)?.reason, 'activity: not tagged for Hiking / Outdoor active')
+  assert.deepEqual(debug.activityCoverageGaps, ['top'])
+  assert.deepEqual(debug.activityTagEnforcedGroups.sort(), ['bottom', 'shoes'])
+})
+
+test('Visual Composer Roster - walking has no curated occasion tag activity gate', () => {
+  const cityShoe = { id: 991201, name: 'City walking flat', category: 'shoes', photo: 'img.jpg', formality: 'everyday', occasions: ['city'], heel_height: 'flat', walk_support: 'high' }
+
+  const { roster, excluded, debug } = buildVisualComposerRoster([cityShoe], {
+    occasion: 'casual',
+    activity: 'walking',
+    maxImages: 90
+  })
+
+  assert.deepEqual(roster.map(piece => piece.id), [cityShoe.id])
+  assert.equal(excluded.some(item => /activity: not tagged/.test(item.reason)), false)
+  assert.deepEqual(debug.activityCoverageGaps, [])
+  assert.deepEqual(debug.activityTagEnforcedGroups, [])
+})
+
+test('Visual Composer Roster - empty occasions are excluded under enforced hiking slots without metadata todo', () => {
+  const pieces = [
+    { id: 991301, name: 'Outdoor top 1', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991302, name: 'Outdoor top 2', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991303, name: 'Outdoor top 3', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991304, name: 'Empty occasion top', category: 'top', photo: 'img.jpg', formality: 'everyday', occasions: [] },
+    { id: 991311, name: 'Outdoor bottom 1', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991312, name: 'Outdoor bottom 2', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991313, name: 'Outdoor bottom 3', category: 'bottom', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'] },
+    { id: 991321, name: 'Trail sneaker 1', category: 'shoes', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'], heel_height: 'flat', walk_support: 'high' },
+    { id: 991322, name: 'Trail sneaker 2', category: 'shoes', photo: 'img.jpg', formality: 'everyday', occasions: ['outdoor'], heel_height: 'flat', walk_support: 'high' }
+  ]
+  db.prepare('DELETE FROM todos WHERE linked_piece_id = ?').run(991304)
+
+  const { roster, excluded } = buildVisualComposerRoster(pieces, {
+    occasion: 'casual',
+    activity: 'hiking',
+    maxImages: 90
+  })
+
+  assert.ok(!roster.some(piece => piece.id === 991304))
+  assert.equal(excluded.find(item => item.pieceId === 991304)?.reason, 'activity: not tagged for Hiking / Outdoor active')
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM todos WHERE linked_piece_id = ?").get(991304).count, 0)
+})

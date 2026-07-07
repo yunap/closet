@@ -5,7 +5,7 @@ import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
-import { applyTaggerResult, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult } from '../styling-engine/taggerMerge.js'
+import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult } from '../styling-engine/taggerMerge.js'
 
 import {
   prepareImageForClaude,
@@ -1262,6 +1262,28 @@ const upload = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 } })
 const TAGGER_VERSION = 'v2.0.0-photo-property-authority'
 
 // ── Shared Visual/Tagging helper ──────────────────────────────────────────────
+async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
+  const thumbs = []
+  for (const anchor of anchors) {
+    if (thumbs.length >= limit) break
+    const photoFile = anchor.photo || anchor.worn_photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(uploadsDir, photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const thumb = await prepareWardrobeThumb(filePath, `tagger-anchor:${anchor.id}:${photoFile}`, { maxPx: 448 })
+      thumbs.push({
+        label: `CALIBRATION ${String(anchor.value || '').toUpperCase()} ANCHOR ${anchor.id}`,
+        guidance: `${anchor.name || '(unnamed piece)'}${anchor.fabric_category ? `; fabric: ${anchor.fabric_category}` : ''}${anchor.reads_as ? `; reads_as: ${anchor.reads_as}` : ''}`,
+        ...thumb
+      })
+    } catch (err) {
+      console.warn(`Skipping tagger calibration anchor ${anchor.id}: ${err.message}`)
+    }
+  }
+  return thumbs
+}
+
 export async function tagPieceWithProvider(photoInputs) {
   const inputs = Array.isArray(photoInputs) ? photoInputs : [{ path: photoInputs, label: 'HANGER PHOTO' }]
   const prepared = await Promise.all(inputs.map(async input => ({
@@ -1272,6 +1294,18 @@ export async function tagPieceWithProvider(photoInputs) {
   for (const input of prepared) {
     content.push({ type: 'text', text: `IMAGE INPUT - [${input.label}]:\nGuidance: ${input.guidance || ''}` })
     content.push({ type: 'image', source: { type: 'base64', media_type: input.mime, data: input.base64 } })
+  }
+  const anchorBlock = buildAnchorBlock({
+    pieces: db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY id").all().map(parsePiece),
+    fields: ['formality']
+  })
+  if (anchorBlock.text) {
+    content.push({ type: 'text', text: anchorBlock.text })
+    const anchorThumbs = await anchorThumbsForTagger(anchorBlock.anchors)
+    content.push(...anchorThumbs.flatMap(thumb => [
+      { type: 'text', text: `${thumb.label}: ${thumb.guidance}` },
+      { type: 'image', detail: 'low', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } }
+    ]))
   }
   content.push({ type: 'text', text: TAG_PIECE_PROMPT })
   const payload = {
@@ -1352,14 +1386,14 @@ function visualComposerImageDetailForRoster(rosterLength = 0) {
   return count <= 45 ? 'high' : 'auto'
 }
 
-function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug = {}, rosterCount = 0 } = {}) {
+function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug = {}, rosterCount = 0, requested = null, delivered = null, coverageGaps = [] } = {}) {
   try {
     const cutIds = Array.isArray(rosterDebug.capCutPieces)
       ? rosterDebug.capCutPieces.map(piece => Number(piece.id)).filter(Number.isFinite)
       : []
     db.prepare(`
-      INSERT INTO generation_runs (flow, occasion, weather, roster_count, pool_size, cap_applied, cut_ids)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO generation_runs (flow, occasion, weather, roster_count, pool_size, cap_applied, cut_ids, requested, delivered, coverage_gaps)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       flow,
       occasion || '',
@@ -1367,7 +1401,10 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
       Number(rosterCount) || 0,
       Number(rosterDebug.postGatePoolSize) || 0,
       rosterDebug.capApplied ? 1 : 0,
-      JSON.stringify(cutIds)
+      JSON.stringify(cutIds),
+      requested === null ? null : Number(requested) || 0,
+      delivered === null ? null : Number(delivered) || 0,
+      JSON.stringify(Array.isArray(coverageGaps) ? coverageGaps : [])
     )
   } catch (err) {
     console.warn('Failed to persist generation run:', err.message)
@@ -1762,6 +1799,8 @@ const tagExistingHandler = async (req, res) => {
       worn_photo: Boolean(wornPhotoFile || piece.worn_photo)
     })
     const merged = applyTaggerResult(parsePiece(piece), tags)
+    merged._confidence = merged.style_profile_json?._confidence || {}
+    merged.photo_properties = merged.style_profile_json?.photo_properties || {}
     tempFiles.forEach(f => {
       if (fs.existsSync(f)) fs.unlinkSync(f)
     })
@@ -2219,6 +2258,15 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     console.log(`  - Excluded reasons count:`, rosterDebug.excludedCounts)
     console.log(`  - Register ceiling:`, rosterDebug.registerCeiling || 'none', rosterDebug.formalityIntent || {})
 
+    const activityFactLine = (() => {
+      const enforced = rosterDebug.activityTagEnforcedGroups || []
+      const gaps = rosterDebug.activityCoverageGaps || []
+      if (!activityProfile?.rules?.required_occasion_tags?.length) return ''
+      if (enforced.length && !gaps.length) return `All roster pieces are rated for ${activityProfile.label}; compose freely.`
+      if (gaps.length) return `Note: limited ${activityProfile.label}-rated coverage for ${gaps.join(', ')}; closest suitable pieces included.`
+      return ''
+    })()
+
     const composerThumbPx = 768
     const composerImageDetail = visualComposerImageDetailForRoster(roster.length)
 
@@ -2239,6 +2287,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       mood ? `Mood: ${mood}` : '',
       stylingRequest ? `Styling request: ${stylingRequest}` : '',
       activity && activity !== 'none' ? `Activity: ${activity}` : '',
+      activityFactLine,
       occasionProfileGuidance ? `Occasion guidance:\n${occasionProfileGuidance}` : '',
       isWeatherFiltered ? "Off-season pieces have been deprioritized or removed; everything shown is weather-optimized." : '',
       `Compose ${requestedLimit} outfits.`,
@@ -2296,7 +2345,26 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       return { ...outfit, pieceIds: owned.map(p => Number(p.id)), pieces: owned }
     }).filter(o => o.pieces.length >= 2)
 
-    let modelOutfits = resolved.map(o => normalizeWholeWardrobeOutfitObject(o, allowedPieces))
+    const normalizedModelOutfits = resolved.map(o => normalizeWholeWardrobeOutfitObject(o, allowedPieces))
+    const structuralRejectionReason = (outfit) => {
+      const groups = (outfit?.pieces || []).map(piece => wardrobeCategoryGroup(piece))
+      const shoeCount = groups.filter(group => group === 'shoes').length
+      const bottomCount = groups.filter(group => group === 'bottom').length
+      const dressCount = groups.filter(group => group === 'dress').length
+      const topCount = groups.filter(group => group === 'top').length
+      if (shoeCount > 1) return 'structural: more than one shoe'
+      if (shoeCount !== 1) return 'structural: missing shoes'
+      if (bottomCount > 1) return 'structural: more than one bottom'
+      if (dressCount > 1) return 'structural: more than one dress'
+      if (dressCount === 1 && bottomCount > 0) return 'structural: dress plus bottom'
+      if (dressCount !== 1 && topCount < 1) return 'structural: missing top'
+      if (dressCount !== 1 && bottomCount !== 1) return 'structural: missing bottom'
+      return 'structural: not a complete wardrobe outfit'
+    }
+    const structurallyRejectedModelOutfits = normalizedModelOutfits
+      .filter(o => !isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+      .map(outfit => ({ outfit, reason: structuralRejectionReason(outfit) }))
+    let modelOutfits = normalizedModelOutfits
       .filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
       .map(outfit => ({
         ...outfit,
@@ -2305,9 +2373,63 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     let localBackfillOutfits = []
     let localBackfillCandidateCount = 0
+    let diagnosticBackfillOutfits = []
+    let diagnosticBackfillCandidateCount = 0
+    const rosterIds = new Set(roster.map(piece => Number(piece.id)))
+    const excludedById = new Map(excluded.map(item => [Number(item.pieceId), item.reason]))
+    const outfitKey = outfit => {
+      const ids = Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+        ? outfit.pieceIds
+        : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
+      return ids.map(Number).filter(Boolean).sort((a, b) => a - b).join('|')
+    }
+    const withLocalFillSource = (outfit, extra = {}) => ({
+      ...outfit,
+      ...extra,
+      source: extra.source || 'local-fill',
+      label: String(outfit.label || '').includes(': standard wear')
+        ? outfit.label
+        : `${outfit.label || 'Local fill outfit'}: standard wear`
+    })
+    const buildBrokenDiagnosticCard = (outfit) => {
+      const brokenPieces = (outfit.pieces || [])
+        .map(piece => ({
+          id: Number(piece.id),
+          name: piece.name,
+          reason: excludedById.get(Number(piece.id)) || (!rosterIds.has(Number(piece.id)) ? 'not in gated visual roster' : '')
+        }))
+        .filter(piece => piece.reason)
+      if (!brokenPieces.length) return null
+      const reasonText = brokenPieces.map(piece => `${piece.name}: ${piece.reason}`).join('; ')
+      return withLocalFillSource(outfit, {
+        broken: true,
+        diagnosticOnly: true,
+        strength: 'needs review',
+        systemFlags: [
+          ...(Array.isArray(outfit.systemFlags) ? outfit.systemFlags : []),
+          { type: 'broken', message: `Diagnostic local-fill card. Violations: ${reasonText}` }
+        ],
+        watchFor: reasonText,
+        reason: `${outfit.reason || 'Local fill candidate shown for debugging.'} Broken because ${reasonText}.`,
+        brokenPieces
+      })
+    }
+    const buildBrokenModelCard = (outfit, rejectionReason = 'rejected by model-output gate') => withLocalFillSource(outfit, {
+      broken: true,
+      diagnosticOnly: true,
+      source: 'model-rejected',
+      strength: 'needs review',
+      rejectionReason,
+      systemFlags: [
+        ...(Array.isArray(outfit.systemFlags) ? outfit.systemFlags : []),
+        { type: 'rejected-model-card', message: rejectionReason }
+      ],
+      watchFor: rejectionReason,
+      reason: `${outfit.reason || 'Model proposal shown for debugging.'} Rejected because ${rejectionReason}.`
+    })
     const buildVisualLocalBackfill = () => {
       if (localBackfillOutfits.length) return localBackfillOutfits
-      const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
+      const candidates = buildWholeWardrobeCandidateOutfits(roster, {
         occasion,
         season,
         mood,
@@ -2319,8 +2441,26 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         question
       })
       localBackfillCandidateCount = candidates.length
-      localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, { occasion, mood, season, weatherProfile, activity, sessionInfluence })
+      localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, roster, { occasion, mood, season, weatherProfile, activity, sessionInfluence })
+        .map(outfit => withLocalFillSource(outfit))
       return localBackfillOutfits
+    }
+    const buildDiagnosticLocalBackfill = () => {
+      if (diagnosticBackfillOutfits.length) return diagnosticBackfillOutfits
+      const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
+        occasion,
+        season,
+        mood,
+        activity,
+        sessionInfluence,
+        candidateLimit: 42,
+        candidateBucketLimit: 8,
+        request: stylingRequest,
+        question
+      })
+      diagnosticBackfillCandidateCount = candidates.length
+      diagnosticBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, { occasion, mood, season, weatherProfile, activity, sessionInfluence })
+      return diagnosticBackfillOutfits
     }
 
     const rejectionSummary = rejected => (Array.isArray(rejected) ? rejected : []).reduce((counts, item) => {
@@ -2344,36 +2484,62 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     )
     let structuredOutfits = gatedModel.outfits.slice(0, requestedLimit)
     let softBackfillCount = 0
+    let diagnosticBrokenCount = 0
     let gatedLocal = { outfits: [], rejected: [] }
     if (structuredOutfits.length < requestedLimit) {
       if (!modelOutfits.length) {
         console.log(`    - Visual Composer AI returned 0 structurally valid outfits. Filling from local candidate generation.`)
+        gatedLocal = locallyGateWholeWardrobeOutfits(
+          buildVisualLocalBackfill(),
+          requestedLimit,
+          { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: roster, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
+        )
+        const seenKeys = new Set(structuredOutfits.map(outfitKey))
+        const fillOutfits = gatedLocal.outfits.filter(outfit => {
+          const key = outfitKey(outfit)
+          if (!key || seenKeys.has(key)) return false
+          seenKeys.add(key)
+          return true
+        })
+        softBackfillCount = Math.min(requestedLimit - structuredOutfits.length, fillOutfits.length)
+        structuredOutfits = [...structuredOutfits, ...fillOutfits.slice(0, requestedLimit - structuredOutfits.length)]
+      } else {
+        const seenKeys = new Set(structuredOutfits.map(outfitKey))
+        const diagnostics = []
+        const rejectedModelDiagnostics = [
+          ...structurallyRejectedModelOutfits,
+          ...gatedModel.rejected
+            .filter(item => item?.outfit)
+            .map(item => ({ outfit: item.outfit, reason: item.reason || 'rejected by model-output gate' }))
+        ]
+        for (const candidate of rejectedModelDiagnostics) {
+          const key = outfitKey(candidate.outfit)
+          if (!key || seenKeys.has(key)) continue
+          const diagnostic = buildBrokenModelCard(candidate.outfit, candidate.reason)
+          if (!diagnostic) continue
+          diagnostics.push(diagnostic)
+          seenKeys.add(key)
+          if (diagnostics.length >= requestedLimit - structuredOutfits.length) break
+        }
+        if (diagnostics.length < requestedLimit - structuredOutfits.length) {
+          for (const candidate of buildDiagnosticLocalBackfill()) {
+            const key = outfitKey(candidate)
+            if (!key || seenKeys.has(key)) continue
+            const diagnostic = buildBrokenDiagnosticCard(candidate)
+            if (!diagnostic) continue
+            diagnostics.push(diagnostic)
+            seenKeys.add(key)
+            if (diagnostics.length >= requestedLimit - structuredOutfits.length) break
+          }
+        }
+        diagnosticBrokenCount = diagnostics.length
+        structuredOutfits = [...structuredOutfits, ...diagnostics]
       }
-      gatedLocal = locallyGateWholeWardrobeOutfits(
-        buildVisualLocalBackfill(),
-        requestedLimit,
-        { mode: 'advisor', requireShoes: true, rejectProfileDiscouraged: true, applyDiversity: false, candidatePieces: allowedPieces, occasion, mood, season, weatherProfile, activity, sessionInfluence, request: stylingRequest, question }
-      )
-      const seenKeys = new Set(structuredOutfits.map(outfit => {
-        const ids = Array.isArray(outfit.pieceIds) && outfit.pieceIds.length
-          ? outfit.pieceIds
-          : (Array.isArray(outfit.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
-        return ids.map(Number).filter(Boolean).sort((a, b) => a - b).join('|')
-      }))
-      const fillOutfits = gatedLocal.outfits.filter(outfit => {
-        const ids = Array.isArray(outfit.pieceIds) && outfit.pieceIds.length
-          ? outfit.pieceIds
-          : (Array.isArray(outfit.pieces) ? outfit.pieces.map(piece => piece?.id) : [])
-        const key = ids.map(Number).filter(Boolean).sort((a, b) => a - b).join('|')
-        if (!key || seenKeys.has(key)) return false
-        seenKeys.add(key)
-        return true
-      })
-      softBackfillCount = Math.min(requestedLimit - structuredOutfits.length, fillOutfits.length)
-      structuredOutfits = [...structuredOutfits, ...fillOutfits.slice(0, requestedLimit - structuredOutfits.length)]
     }
     visualDebugLog.localBackfillCandidates = localBackfillCandidateCount
     visualDebugLog.localBackfillOutfits = localBackfillOutfits.length
+    visualDebugLog.diagnosticBackfillCandidates = diagnosticBackfillCandidateCount
+    visualDebugLog.diagnosticBackfillOutfits = diagnosticBackfillOutfits.length
     visualDebugLog.modelGateOutfits = gatedModel.outfits.length
     visualDebugLog.modelGateRejected = gatedModel.rejected.length
     visualDebugLog.modelGateRejectedReasons = rejectionSummary(gatedModel.rejected)
@@ -2381,6 +2547,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     visualDebugLog.localFillGateRejected = gatedLocal.rejected.length
     visualDebugLog.localFillGateRejectedReasons = rejectionSummary(gatedLocal.rejected)
     visualDebugLog.localFillAdded = softBackfillCount
+    visualDebugLog.diagnosticBrokenAdded = diagnosticBrokenCount
     visualDebugLog.finalBeforeMissionLabels = structuredOutfits.length
     console.log('[Visual Composer Final Selection]', visualDebugLog)
 
@@ -2399,7 +2566,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         : qualifiedMissionForPieces(missionPieces, { occasion, mood, activity })
       return {
         ...outfit,
-        strength: index === 0 ? 'signature' : (index <= 2 ? 'strong' : 'usable'),
+        strength: outfit.broken ? 'needs review' : (index === 0 ? 'signature' : (index <= 2 ? 'strong' : 'usable')),
         formulaFamily: outfit.formulaFamily || wholeWardrobeFormulaFamily(outfit, allowedPieces, occasion),
         missionId: qualifiedMission.missionId,
         missionLabel: qualifiedMission.missionLabel
@@ -2418,16 +2585,22 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     })
 
     const coverageNote = formatCoverageNote(topCoverage, shoeCoverage, { occasion, occasionProfile, activityProfile })
-    if (coverageNote) {
-      feedback = feedback + '\n\n' + coverageNote
-    }
+    const deliveredCount = structuredOutfits.filter(outfit => !outfit.broken).length
+    const shortfallNote = deliveredCount < requestedLimit
+      ? `${deliveredCount} of ${requestedLimit} requested outfits are ready; broken diagnostic cards show what local fill would have added and why it failed the gated roster.`
+      : ''
+    const responseCoverageNote = [shortfallNote, coverageNote].filter(Boolean).join('\n')
+    if (responseCoverageNote) feedback = feedback + '\n\n' + responseCoverageNote
 
     persistGenerationRun({
       flow: 'whole_wardrobe_visual',
       occasion,
       weather: weatherProfile,
       rosterDebug,
-      rosterCount: roster.length
+      rosterCount: roster.length,
+      requested: requestedLimit,
+      delivered: deliveredCount,
+      coverageGaps: rosterDebug.activityCoverageGaps || []
     })
 
     return {
@@ -2436,6 +2609,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       provider: AI_PROVIDER,
       mode: 'generate_wardrobe_outfits_visual',
       pipeline: 'full_wardrobe_visual_composer',
+      coverageNote: responseCoverageNote,
       debug: {
         profileCoverage: {
           tops: topCoverage,
@@ -2446,6 +2620,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
         locallyGeneratedCount: localBackfillOutfits.length,
         finalReturnedCount: structuredOutfits.length,
+        deliveredCount,
+        brokenCardCount: structuredOutfits.filter(outfit => outfit.broken).length,
         advisorFlaggedCount: structuredOutfits.filter(outfit => Array.isArray(outfit.systemFlags) && outfit.systemFlags.length).length,
         localFillAddedCount: softBackfillCount,
         imageDetail: composerImageDetail,
@@ -2465,6 +2641,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         timings,
         rosterCount: roster.length,
         excludedCounts: rosterDebug.excludedCounts,
+        activityCoverageGaps: rosterDebug.activityCoverageGaps || [],
+        activityTagEnforcedGroups: rosterDebug.activityTagEnforcedGroups || [],
         registerCeiling: rosterDebug.registerCeiling,
         formalityIntent: rosterDebug.formalityIntent,
         postGatePoolSize: rosterDebug.postGatePoolSize,

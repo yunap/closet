@@ -747,11 +747,20 @@ Evaluate the garment's visual structure and weight along these two axes:
   * "lounge": athletic/home comfort construction — jersey knits, drawstrings, performance fabric, visible comfort-first design.
   * "everyday": no-intent wear; matte or naturally textured fabrics, simple construction, minimal hardware/embellishment. Artisan texture, linen, and basic knits do NOT lift a piece out of everyday on their own. Ruffle detailing alone does not lift a piece out of everyday.
   * "elevated": visible refinement requiring intent — refined drape, deliberate structure, fine knits, polished finish, statement construction details.
-  * "dressy": going-out signals — sheen, lace, sequins, delicate straps, formal tailoring, heels-adjacent styling context.
+  * Leather and suede jackets (moto, zip, bomber) default to elevated, not dressy, unless embellished or formally tailored.
+  * Knit dresses are not inherently dressy; judge by sheen, cut, and construction, not category.
+  * "dressy": reserved for going-out signals: sheen, sequins, lace as a primary element, formal tailoring, cocktail/evening cuts.
   For shoes: "heel_height" is physical heel lift (flat, low, mid, high). "walk_support" is stability/support for lots of walking (high, medium, low); a flat ballet shoe can still be low-support.
 
 - Occasion Suitability — describe, do not stylize. Rate each occasion on the garment's
   OBJECTIVE construction, not on a texture-to-occasion shortcut:
+  * Tag "outdoor" only when the piece is durable, terrain/sun-appropriate, and wearable somewhere dusty, grassy, or sweaty without worry.
+  * Tag "casual" for no-intent everyday wear.
+  * Tag "city" for polished-casual daytime: walkable but put-together.
+  * Tag "smart-casual" for intentional, office-adjacent, or nice-lunch appropriate pieces.
+  * Tag "evening" for after-dark social wear where going-out signals are acceptable.
+  * Tag "home" only for comfort-first house wear.
+  * Multi-tag generously when the garment honestly qualifies; Yuna can prune extra tags, but under-tagging silently costs roster eligibility.
   * "outdoor": "high" only for durable, snag-resistant, practical pieces (cargo, technical,
     sturdy denim, active). "low" for delicate, sheer, loose-knit, or volume that catches/snags.
   * "evening" & "smart-casual": judge construction formality — refinement of finish, quality

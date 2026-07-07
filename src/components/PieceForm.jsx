@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { GATE_CRITICAL_FIELDS, missingGateFields } from '../../styling-engine/attributes.js'
 
 const CATEGORIES  = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
@@ -314,7 +315,10 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     tagger_version: piece?.tagger_version || null,
     tag_state: piece?.tag_state || 'untagged',
   })
-  const [confidenceFlags, setConfidenceFlags] = useState({}) // field -> 'medium'|'low'
+  const initialConfidence = piece?.style_profile_json?._confidence || {}
+  const [confidenceFlags, setConfidenceFlags] = useState(Object.fromEntries(
+    Object.entries(initialConfidence).filter(([, conf]) => conf === 'medium' || conf === 'low')
+  )) // field -> 'medium'|'low'
   const [manualOverrides, setManualOverrides] = useState(piece?.manual_overrides || [])
 
   const [hangerFile,  setHangerFile]  = useState(null)
@@ -506,10 +510,12 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   // Helper: field label with confidence indicator
   const FieldLabel = ({ field, children }) => {
     const conf = confidenceFlags[field]
+    const isGate = GATE_CRITICAL_FIELDS.includes(field)
     return (
-      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         {children}
-        {conf === 'low'    && <span style={{ fontSize: 9, background: '#E8A020', color: '#fff', padding: '1px 6px', borderRadius: 8, letterSpacing: '0.04em' }}>LOW — VERIFY</span>}
+        {isGate && <span title="Gate-critical field" style={{ fontSize: 9, background: 'var(--accent-light)', color: 'var(--accent)', padding: '1px 6px', borderRadius: 8 }}>gate</span>}
+        {conf === 'low'    && <span title="AI unsure" style={{ fontSize: 9, background: '#E8A020', color: '#fff', padding: '1px 6px', borderRadius: 8, letterSpacing: '0.04em' }}>AI unsure</span>}
         {conf === 'medium' && <span style={{ fontSize: 9, background: 'var(--border)', color: 'var(--text-muted)', padding: '1px 6px', borderRadius: 8 }}>review</span>}
       </label>
     )
@@ -520,6 +526,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const fabricConfig = FABRIC_BY_CATEGORY[cat] || FABRIC_BY_CATEGORY.default
   const showFitFields = CLOTHING_CATEGORIES.includes(cat)
   const showFormality = cat !== 'accessory'
+  const missingGates = missingGateFields(form)
   const styleProfile = typeof form.style_profile_json === 'string'
     ? (() => { try { return JSON.parse(form.style_profile_json) || {} } catch { return {} } })()
     : (form.style_profile_json || {})
@@ -622,6 +629,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           {/* ── Basics ──────────────────────────────────────────────── */}
           <Section label="Basics" />
 
+          {missingGates.length > 0 && (
+            <div className="form-group">
+              <div style={{ display: 'inline-flex', padding: '5px 10px', borderRadius: 999, background: 'var(--repair-bg)', color: 'var(--repair)', border: '1px solid var(--border-light)', fontSize: 11 }}>
+                Gate fields missing: {missingGates.join(', ')}
+              </div>
+            </div>
+          )}
+
           <div className="form-group">
             <label className="form-label">Name</label>
             <input className="form-input" placeholder="e.g. Bold multicolor floral knit top" value={form.name} onChange={e => set('name', e.target.value)} />
@@ -649,7 +664,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Occasions</label>
+            <FieldLabel field="occasions">Occasions</FieldLabel>
             <ChipRow options={OCCASIONS} value={form.occasions} onChange={v => set('occasions', v)} multi />
           </div>
 

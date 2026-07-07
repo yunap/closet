@@ -1410,7 +1410,7 @@ export async function rankWholeWardrobeCandidatesWithVision({ candidates = [], c
         { type: 'text', text: [
           `Occasion: ${occasion || 'casual'}`,
           `Season: ${season || 'current season'}`,
-          `Mood: ${mood || 'artistic minimalist'}`,
+          mood ? `Mood: ${mood}` : '',
           moodProfile ? `Mood interpretation:\n${moodProfile.guidance}` : '',
           memoryText ? `Taste memory:\n${memoryText}` : '',
           `Candidate truth:\n${candidateTruth}`,
