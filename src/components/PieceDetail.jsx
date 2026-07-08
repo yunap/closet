@@ -146,7 +146,10 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
         )}
 
         <div className="detail-body">
-          <div className="detail-title">{piece.name}</div>
+          <div className="detail-title">
+            <span style={{ fontFamily: 'monospace', color: 'var(--text-light)', marginRight: 8, fontSize: '0.85em', fontWeight: 'normal' }}>#{piece.id}</span>
+            {piece.name}
+          </div>
           <div className="detail-category">{piece.category}</div>
 
           <div className="detail-tags">
