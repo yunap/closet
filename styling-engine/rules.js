@@ -128,7 +128,13 @@ export function resolveFormalityIntent(options = {}) {
   if (/\b(dressy|formal|going out|night out)\b/.test(positiveText)) target = 'dressy'
   if (/\b(lounge|loungey|loungy|home comfort|comfort-first)\b/.test(positiveText)) target = 'lounge'
 
-  const walkable = has(/\b(walkable|walking|all-day walk|all day walk|lots of walking|city exploring|travel day)\b/)
+  const activityProfile = options.activityProfile || resolveActivityProfile({
+    activity: options.activity,
+    occasion: options.occasion,
+    request: options.request || options.question || ''
+  })
+  const walkable = activityProfile?.id === 'walking' || activityProfile?.id === 'hiking'
+
   return {
     target,
     targetRank: target ? formalityRank(target) : null,
@@ -1912,8 +1918,17 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   const capCutReasons = new Set(['roster cap: category limit', 'roster cap: global limit'])
   const scoreCache = new Map()
   const resolvedOccasionProfile = occasionProfile || resolveOccasionProfile(occasion, mood)
-  const resolvedActivityProfile = activityProfile || resolveActivityProfile({ activity, occasion, mood, request: request || question })
-  const formalityIntent = resolveFormalityIntent({ occasion, mood, activity, request, question })
+  const resolvedActivityProfile = (activity && activity !== 'none')
+    ? (activityProfile || resolveActivityProfile({ activity }))
+    : null
+  const formalityIntent = resolveFormalityIntent({
+    occasion,
+    mood,
+    activity,
+    request,
+    question,
+    activityProfile: resolvedActivityProfile
+  })
   const registerCeiling = resolveRegisterCeiling({
     occasion,
     mood,
@@ -1925,6 +1940,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     formalityIntent
   })
   const registerCeilingRank = formalityRank(registerCeiling)
+  const telemetryActivityProfile = resolvedActivityProfile || resolveActivityProfile({ occasion, request: request || question })
   const debug = {
     excludedCounts: {},
     categoryCounts: {},
@@ -1940,7 +1956,10 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       avoid: [...(formalityIntent.avoid || [])],
       walkable: formalityIntent.walkable,
       active: formalityIntent.active
-    }
+    },
+    resolvedActivity: telemetryActivityProfile?.id || 'none',
+    activitySource: (activity && activity !== 'none') ? 'dropdown' : (telemetryActivityProfile ? 'inferred' : 'none'),
+    walkable: formalityIntent.walkable
   }
 
   const exclude = (piece, reason) => {

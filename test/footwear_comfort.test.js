@@ -155,7 +155,7 @@ afterEach(() => {
 test('1. Intent detection resolves comfort constraint on walking/feet keywords', () => {
   const cases = [
     { occasion: 'city walking', expectedMatch: true },
-    { mood: 'lots of walking', expectedMatch: true },
+    { mood: 'lots of walking', expectedMatch: false },
     { request: 'on my feet all day', expectedMatch: true },
     { request: 'walking around the city', expectedMatch: true },
     { occasion: 'city', expectedMatch: false },

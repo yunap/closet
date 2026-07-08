@@ -71,7 +71,7 @@ export function resolveActivityProfile({ activity = '', occasion = '', mood = ''
   }
 
   if (normActivity === 'none' || !normActivity) {
-    const haystack = `${occasion} ${mood} ${request}`.toLowerCase()
+    const haystack = `${occasion} ${request}`.toLowerCase()
     
     // Hiking matches first (more restrictive than walking)
     const hikeProfile = ACTIVITY_PROFILES.find(p => p.id === 'hiking')

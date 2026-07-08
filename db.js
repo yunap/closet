@@ -130,6 +130,8 @@ db.exec(`
     requested     INTEGER,
     delivered     INTEGER,
     coverage_gaps TEXT DEFAULT '[]',
+    roster_counts TEXT DEFAULT '{}',
+    activity_source TEXT DEFAULT '',
     created_at    TEXT DEFAULT (datetime('now'))
   );
 
@@ -207,7 +209,9 @@ NEW_COLUMNS.forEach(col => {
 ;[
   'requested INTEGER',
   'delivered INTEGER',
-  'coverage_gaps TEXT DEFAULT "[]"'
+  'coverage_gaps TEXT DEFAULT "[]"',
+  'roster_counts TEXT DEFAULT "{}"',
+  'activity_source TEXT DEFAULT ""'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE generation_runs ADD COLUMN ${col}`) } catch {}
 })

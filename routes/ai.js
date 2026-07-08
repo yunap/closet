@@ -1490,8 +1490,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
       ? rosterDebug.capCutPieces.map(piece => Number(piece.id)).filter(Number.isFinite)
       : []
     db.prepare(`
-      INSERT INTO generation_runs (flow, occasion, weather, roster_count, pool_size, cap_applied, cut_ids, requested, delivered, coverage_gaps)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO generation_runs (flow, occasion, weather, roster_count, pool_size, cap_applied, cut_ids, requested, delivered, coverage_gaps, roster_counts, activity_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       flow,
       occasion || '',
@@ -1502,7 +1502,9 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
       JSON.stringify(cutIds),
       requested === null ? null : Number(requested) || 0,
       delivered === null ? null : Number(delivered) || 0,
-      JSON.stringify(Array.isArray(coverageGaps) ? coverageGaps : [])
+      JSON.stringify(Array.isArray(coverageGaps) ? coverageGaps : []),
+      JSON.stringify(rosterDebug.rosterCounts || rosterDebug.categoryCounts || {}),
+      rosterDebug.activitySource || ''
     )
   } catch (err) {
     console.warn('Failed to persist generation run:', err.message)
@@ -1730,7 +1732,11 @@ async function composeSelectedPieceVisualWardrobeOutfits({
         ...composerUsage,
         estimatedCost: estimateAiUsageCost(composerUsage)
       } : null,
-      timings
+      timings,
+      resolvedActivity: rosterDebug.resolvedActivity,
+      activitySource: rosterDebug.activitySource,
+      walkable: rosterDebug.walkable,
+      rosterCounts: rosterDebug.categoryCounts
     }
   }
 }
@@ -2730,6 +2736,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         capCutPieces: rosterDebug.capCutPieces,
         slotCoverage: rosterDebug.slotCoverage,
         excluded,
+        resolvedActivity: rosterDebug.resolvedActivity,
+        activitySource: rosterDebug.activitySource,
+        walkable: rosterDebug.walkable,
+        rosterCounts: rosterDebug.categoryCounts,
         modelPickedSuppressedCount: (() => {
           const allowedPieceIdsSet = new Set(allowedPieces.map(p => Number(p.id)))
           let count = 0

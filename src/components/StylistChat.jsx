@@ -1988,6 +1988,36 @@ export default function AskClaude({
                     ))}
                   </div>
                 )}
+                {isBrokenCard && (() => {
+                  const trace = message?.debug?.visualCritic || message?.debug
+                  if (!trace) return null
+                  const resolvedAct = trace.resolvedActivity || 'none'
+                  const actSrc = trace.activitySource || 'none'
+                  const isWalk = trace.walkable ? 'true' : 'false'
+                  const regCeil = trace.registerCeiling || 'none'
+                  const counts = trace.rosterCounts || trace.categoryCounts || {}
+                  const countsStr = Object.keys(counts).length > 0
+                    ? Object.entries(counts).map(([cat, cnt]) => `${cat}s: ${cnt}`).join(' · ')
+                    : 'none'
+                  return (
+                    <div style={{
+                      marginTop: 8,
+                      padding: '8px 10px',
+                      background: 'rgba(168, 64, 64, 0.05)',
+                      border: '1px dashed var(--repair)',
+                      borderRadius: 8,
+                      fontSize: 11,
+                      color: 'var(--repair)',
+                      lineHeight: 1.45
+                    }}>
+                      <div style={{ fontWeight: 650, marginBottom: 4 }}>Styling Engine Debug Trace:</div>
+                      <div><strong>Resolved Activity:</strong> {resolvedAct} ({actSrc})</div>
+                      <div><strong>Walkable:</strong> {isWalk}</div>
+                      <div><strong>Register Ceiling:</strong> {regCeil}</div>
+                      <div><strong>Roster counts (survived gates):</strong> {countsStr}</div>
+                    </div>
+                  )
+                })()}
                 {showSilhouette && renderColorBalanceBar(outfit)}
               {((!isTripCard && (outfit.missionLabel || outfit.dominantDirection || outfit.silhouette)) || outfit.bestFor) && (
                 <div style={{ display: 'grid', gap: 2, marginTop: 6, fontSize: 13, color: 'var(--text-light)', lineHeight: 1.45 }}>
@@ -2149,6 +2179,33 @@ export default function AskClaude({
                         <strong>System suggests:</strong> {outfit.systemSuggestion.message}
                       </div>
                     )}
+                    {(() => {
+                      const trace = message?.debug?.visualCritic || message?.debug
+                      if (!trace) return null
+                      const resolvedAct = trace.resolvedActivity || 'none'
+                      const actSrc = trace.activitySource || 'none'
+                      const isWalk = trace.walkable ? 'true' : 'false'
+                      const regCeil = trace.registerCeiling || 'none'
+                      const counts = trace.rosterCounts || trace.categoryCounts || {}
+                      const countsStr = Object.keys(counts).length > 0
+                        ? Object.entries(counts).map(([cat, cnt]) => `${cat}s: ${cnt}`).join(', ')
+                        : 'none'
+                      return (
+                        <div style={{
+                          marginTop: 8,
+                          paddingTop: 6,
+                          borderTop: '1px dashed var(--border-light)',
+                          fontSize: 10.5,
+                          color: 'var(--text-light)',
+                          display: 'grid',
+                          gap: 2
+                        }}>
+                          <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Styling Engine Trace:</div>
+                          <div>Activity: {resolvedAct} ({actSrc}) · Walkable: {isWalk} · Ceiling: {regCeil}</div>
+                          <div>Roster: {countsStr}</div>
+                        </div>
+                      )
+                    })()}
                   </div>
                 </details>
               )}
