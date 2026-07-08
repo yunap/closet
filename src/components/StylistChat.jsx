@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import ThreadRail, { humanizeLabel, deriveBuilderTitle } from './ThreadRail'
 
 const SUGGESTIONS = [
@@ -207,16 +208,15 @@ const compactEvaluationMemory = (evaluation = null) => {
 
 
 
-export default function AskClaude({
+export default function StylistChat({
   initialOutfit,
   initialPiece,
   initialThreadId,
-  onClearOutfit,
-  onClearPiece,
-  onClearThreadId,
   activeContext: externalActiveContext,
   onContextChange,
 }) {
+  const navigate = useNavigate()
+  const location = useLocation()
   const [threads, setThreads] = useState([])
   const [archivedThreads, setArchivedThreads] = useState([])
   const [archivedView, setArchivedView] = useState(false)
@@ -362,7 +362,8 @@ export default function AskClaude({
       
       if (!res.ok) throw new Error('Save failed')
       const updatedMetadata = await res.json()
-      
+
+      let isNewThread = false
       targetSetter(prev => {
         let exists = false
         const next = prev.map(t => {
@@ -381,7 +382,8 @@ export default function AskClaude({
           }
           return t
         })
-        
+
+        isNewThread = !exists
         const finalThreads = exists ? next : [{
           id: updatedMetadata.id,
           title: updatedMetadata.title,
@@ -400,7 +402,13 @@ export default function AskClaude({
         }
         return finalThreads
       })
-      
+
+      // Replace /stylist with /stylist/:id on first save so back button never
+      // lands on the phantom pre-save empty-thread state.
+      if (isNewThread && location.pathname === '/stylist') {
+        navigate('/stylist/' + updatedMetadata.id, { replace: true })
+      }
+
       setActiveThreadMetadata({
         id: updatedMetadata.id,
         title: updatedMetadata.title,
@@ -996,7 +1004,6 @@ export default function AskClaude({
     const prompt = initialOutfit.stylistPrompt || 'What do you think of this outfit?'
     setInput(shouldAutoSend ? '' : prompt)
     setImageFile(null); setImagePrev(null)
-    onClearOutfit?.()
     if (shouldAutoSend) {
       const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? `variants-${initialOutfit.variantMode || 'similar'}` : 'critique'}:${prompt}:${initialOutfit.actionId || ''}`
       if (lastAutoOutfitActionRef.current === actionKey) return
@@ -1017,13 +1024,11 @@ export default function AskClaude({
     setActiveContext({ type: 'piece', id: initialPiece.id, name: initialPiece.name })
     setInput('')
     setImageFile(null); setImagePrev(null)
-    onClearPiece?.()
   }, [initialPiece])
 
   useEffect(() => {
     if (!initialThreadId) return
     openThread(initialThreadId)
-    onClearThreadId?.()
   }, [initialThreadId])
 
   useEffect(() => {

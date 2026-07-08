@@ -1,20 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom'
 import PieceInventory from './views/PieceInventory'
 import OutfitLookbook from './views/OutfitLookbook'
 import AskClaude from './views/AskClaude'
 import VisualLab from './components/VisualLab'
 
 const TABS = [
-  { id: 'pieces',  label: 'Wardrobe', icon: '◈' },
-  { id: 'outfits', label: 'Outfits',  icon: '✦' },
-  { id: 'ask',     label: 'Stylist',  icon: '◇' },
-  { id: 'vislab',  label: 'Visual Lab', icon: '⌾' },
+  { id: 'pieces',  label: 'Wardrobe',    icon: '◈', to: '/wardrobe'   },
+  { id: 'outfits', label: 'Outfits',     icon: '✦', to: '/outfits'    },
+  { id: 'ask',     label: 'Stylist',     icon: '◇', to: '/stylist'    },
+  { id: 'vislab',  label: 'Visual Lab',  icon: '⌾', to: '/visual-lab' },
 ]
 
 export default function App() {
-  const [tab, setTab]                     = useState('pieces')
-  const [stylistOutfit, setStylistOutfit] = useState(null)
-  const [stylistPiece,  setStylistPiece]  = useState(null)
+  const navigate = useNavigate()
   const [pendingTodoCount, setPendingTodoCount] = useState(0)
 
   const fetchPendingCount = useCallback(async () => {
@@ -33,55 +32,47 @@ export default function App() {
     return () => window.removeEventListener('todos-changed', fetchPendingCount)
   }, [fetchPendingCount])
 
-  const [stylistThreadId, setStylistThreadId] = useState(null)
-
-  const sendOutfitToStylist = (outfit) => {
-    setStylistPiece(null)
-    setStylistThreadId(null)
-    setStylistOutfit(outfit ? { ...outfit, actionId: Date.now() } : null)
-    setTab('ask')
-  }
-
+  // Handoff: piece → stylist. Thin wrapper so PieceInventory/OutfitLookbook call-sites are unchanged.
   const sendPieceToStylist = (piece) => {
-    setStylistOutfit(null)
-    setStylistThreadId(null)
-    setStylistPiece(piece)
-    setTab('ask')
+    navigate('/stylist', { state: { piece, outfit: null } })
   }
 
+  // Handoff: outfit → stylist. actionId nonce preserved exactly (fixes lastAutoOutfitActionRef staleness).
+  const sendOutfitToStylist = (outfit) => {
+    navigate('/stylist', { state: { outfit: outfit ? { ...outfit, actionId: Date.now() } : null, piece: null } })
+  }
+
+  // Thread navigation from Lookbook / Visual Lab boards.
   const goToThread = (threadId) => {
-    setStylistOutfit(null)
-    setStylistPiece(null)
-    setStylistThreadId(threadId)
-    setTab('ask')
+    navigate('/stylist/' + threadId)
   }
 
   return (
     <div className="app">
       <main className="app-main">
-        {tab === 'pieces'  && <PieceInventory onSendToStylist={sendPieceToStylist} />}
-        {tab === 'outfits' && <OutfitLookbook onSendToStylist={sendOutfitToStylist} onGoToThread={goToThread} />}
-        {tab === 'ask'     && (
-          <AskClaude
-            initialOutfit={stylistOutfit}
-            initialPiece={stylistPiece}
-            initialThreadId={stylistThreadId}
-            onClearOutfit={() => setStylistOutfit(null)}
-            onClearPiece={() => setStylistPiece(null)}
-            onClearThreadId={() => setStylistThreadId(null)}
-          />
-        )}
-        {tab === 'vislab'  && <VisualLab onGoToThread={goToThread} />}
+        <Routes>
+          <Route path="/" element={<Navigate to="/wardrobe" replace />} />
+          <Route path="/wardrobe"   element={<PieceInventory onSendToStylist={sendPieceToStylist} />} />
+          <Route path="/outfits"    element={<OutfitLookbook onSendToStylist={sendOutfitToStylist} onGoToThread={goToThread} />} />
+          {/* /stylist and /stylist/:threadId intentionally share the same <AskClaude /> element
+              with NO key prop — React reuses the same component instance when only the param
+              changes, preserving all thread state without a remount. */}
+          <Route path="/stylist"           element={<AskClaude />} />
+          <Route path="/stylist/:threadId" element={<AskClaude />} />
+          <Route path="/visual-lab" element={<VisualLab onGoToThread={goToThread} />} />
+        </Routes>
       </main>
 
       <nav className="bottom-nav">
         {TABS.map(t => {
           const isWardrobe = t.id === 'pieces'
           return (
-            <button
+            <NavLink
               key={t.id}
-              className={`nav-btn ${tab === t.id ? 'active' : ''}`}
-              onClick={() => setTab(t.id)}
+              to={t.to}
+              // end=false so /stylist/:threadId also highlights the Stylist tab
+              end={t.id !== 'ask'}
+              className={({ isActive }) => `nav-btn${isActive ? ' active' : ''}`}
               style={{ position: 'relative' }}
             >
               <span className="nav-icon">{t.icon}</span>
@@ -89,7 +80,7 @@ export default function App() {
               {isWardrobe && pendingTodoCount > 0 && (
                 <span className="badge-count nav-badge">{pendingTodoCount}</span>
               )}
-            </button>
+            </NavLink>
           )
         })}
       </nav>
