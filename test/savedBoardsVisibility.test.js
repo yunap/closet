@@ -160,3 +160,36 @@ test('Hidden but favorite board continues to inform calibration/memory', async (
   assert.ok(memory.includes('Calibration Board'), 'Calibration/memory should still include hidden boards')
   assert.ok(memory.includes('Specific calibration details'))
 })
+
+test('Lookbook board removal (PATCH hidden_from_lookbook = true) hides it from Lookbook query but retains it in Visual Lab', async () => {
+  // Create a board
+  const res = await fetch(`${baseUrl}/api/saved-boards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageUrl: 'lookbook_hide.jpg',
+      title: 'Lookbook Hide Test'
+    })
+  })
+  const board = await res.json()
+  const id = board.id
+
+  // Simulate Lookbook's handleBoardDelete (PATCH)
+  const removeRes = await fetch(`${baseUrl}/api/saved-boards/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hidden_from_lookbook: true })
+  })
+  assert.equal(removeRes.status, 200)
+
+  // Verify hidden from Lookbook query
+  const lookbookRes = await fetch(`${baseUrl}/api/saved-boards?excludeHidden=true`)
+  const lookbookBoards = await lookbookRes.json()
+  assert.ok(!lookbookBoards.some(b => b.id === id), 'Should be hidden from Lookbook')
+
+  // Verify visible in Visual Lab query
+  const visualLabRes = await fetch(`${baseUrl}/api/saved-boards`)
+  const visualLabBoards = await visualLabRes.json()
+  assert.ok(visualLabBoards.some(b => b.id === id), 'Should remain in Visual Lab')
+})
+

@@ -1259,8 +1259,8 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist }) {
 
             <div className="detail-actions">
               <button className="btn-danger" onClick={() => {
-                if (confirm(`Delete "${board.title}"?`)) onDelete(board)
-              }}>Delete</button>
+                if (confirm(`Remove "${board.title || 'this board'}" from Lookbook?`)) onDelete(board)
+              }}>Remove</button>
               <button className="btn-secondary" onClick={onClose}>Close</button>
             </div>
           </div>
@@ -1374,7 +1374,11 @@ export default function OutfitLookbook({ onSendToStylist }) {
   }
 
   const handleBoardDelete = async (board) => {
-    await fetch(`/api/saved-boards/${board.id}`, { method: 'DELETE' })
+    await fetch(`/api/saved-boards/${board.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hidden_from_lookbook: true })
+    })
     setBoardDetail(null)
     fetchSavedBoards()
   }
