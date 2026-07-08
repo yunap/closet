@@ -1168,10 +1168,10 @@ ${EXPRESSIVE_HIERARCHY_RULES}
 
 Composition rules:
 - Each outfit: EXACTLY one top AND one bottom, OR exactly one dress; EXACTLY one pair of shoes; optional single outerwear; never two pieces occupying the same slot (no two bottoms, no two tops). Accessories are styled separately and are not shown — do not invent or reference accessory pieces.
-- If no suitable shoe (or any required slot) exists among the shown pieces, you must still output a placeholder for that slot: use the string '[missing wardrobe gap: category]' (e.g. '[missing wardrobe gap: shoes]') in the 'pieceIds' array for that slot rather than substituting a piece from another slot or omitting the slot silently.
+- If no suitable shoe (or any required slot) exists among the shown pieces, you must still output a placeholder for that slot: use the string '[missing wardrobe gap: category]' (e.g. '[missing wardrobe gap: shoes]') as the id/name in the 'pieces' array for that slot rather than substituting a piece from another slot or omitting the slot silently.
 - Occasion & Weather Classification: Honor the occasion guidance provided in the request; the wardrobe shown has already been filtered for validity — compose freely within it.
 - Footwear Requirement: If the active occasion profile has required_footwear (e.g. for trail/hiking activities), every outfit must use activity-capable footwear: sneakers/athletic/rugged flats.
-- Reference pieces ONLY by the exact IDs shown in the labels. Never invent pieces.
+- Reference pieces ONLY by the exact IDs and names shown in the labels. Never invent pieces.
 - Each outfit must have a different visual thesis — different grounding strategy, proportion logic, or focal/support relationship. Do not return five variations of one formula.
 - A little tension is good. If an outfit has no deliberate contrast or graphic decision, it is probably boring.
 - Pattern discipline: one loud piece per outfit, grounded by solid supporting pieces.
@@ -1187,7 +1187,11 @@ JSON shape:
       "dominantDirection": "short style lane",
       "silhouette": "one clear silhouette idea",
       "bestFor": "occasion fit",
-      "pieceIds": [12, 45, 9],
+      "pieces": [
+        {"id": 12, "name": "floral tunic top"},
+        {"id": 45, "name": "slim trousers bottom"},
+        {"id": 9, "name": "casual sneakers shoes"}
+      ],
       "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
       "watchFor": "one real risk or none"
     }

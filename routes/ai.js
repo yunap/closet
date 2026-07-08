@@ -181,6 +181,11 @@ import {
 
 const router = express.Router()
 
+const normalizeForMatch = (str) => {
+  if (!str) return ''
+  return String(str).toLowerCase().trim().replace(/\s+/g, ' ')
+}
+
 function isBroadOutfitPlanningText(text = '') {
   const q = String(text || '').toLowerCase()
   if (!q.trim()) return false
@@ -1484,14 +1489,14 @@ function visualComposerImageDetailForRoster(rosterLength = 0) {
   return count <= 45 ? 'high' : 'auto'
 }
 
-function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug = {}, rosterCount = 0, requested = null, delivered = null, coverageGaps = [] } = {}) {
+function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug = {}, rosterCount = 0, requested = null, delivered = null, coverageGaps = [], unresolvedReferencesCount = 0 } = {}) {
   try {
     const cutIds = Array.isArray(rosterDebug.capCutPieces)
       ? rosterDebug.capCutPieces.map(piece => Number(piece.id)).filter(Number.isFinite)
       : []
     db.prepare(`
-      INSERT INTO generation_runs (flow, occasion, weather, roster_count, pool_size, cap_applied, cut_ids, requested, delivered, coverage_gaps, roster_counts, activity_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO generation_runs (flow, occasion, weather, roster_count, pool_size, cap_applied, cut_ids, requested, delivered, coverage_gaps, roster_counts, activity_source, unresolved_references_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       flow,
       occasion || '',
@@ -1504,7 +1509,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
       delivered === null ? null : Number(delivered) || 0,
       JSON.stringify(Array.isArray(coverageGaps) ? coverageGaps : []),
       JSON.stringify(rosterDebug.rosterCounts || rosterDebug.categoryCounts || {}),
-      rosterDebug.activitySource || ''
+      rosterDebug.activitySource || '',
+      Number(unresolvedReferencesCount) || 0
     )
   } catch (err) {
     console.warn('Failed to persist generation run:', err.message)
@@ -1669,14 +1675,47 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     composerError = err.message
   }
 
+  const unresolvedReferences = []
   const resolved = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
-    const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number) : []
-    if (!ids.includes(selectedId)) ids.unshift(selectedId)
-    const owned = [...new Set(ids)]
-      .filter(id => candidateIds.has(id))
-      .map(id => poolById.get(id) || candidatePieces.find(p => Number(p.id) === id))
-      .filter(Boolean)
-    return { ...outfit, pieceIds: owned.map(p => Number(p.id)), pieces: owned }
+    const incomingPieces = Array.isArray(outfit.pieces) 
+      ? outfit.pieces 
+      : (Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(id => ({ id })) : [])
+    
+    const hasAnchor = incomingPieces.some(p => Number(p.id) === selectedId)
+    if (!hasAnchor) {
+      const anchorPiece = poolById.get(selectedId) || candidatePieces.find(p => Number(p.id) === selectedId)
+      if (anchorPiece) {
+        incomingPieces.unshift({ id: selectedId, name: anchorPiece.name })
+      }
+    }
+
+    const resolvedPieces = []
+    for (const p of incomingPieces) {
+      const id = p?.id
+      const name = p?.name
+      let match = candidatePieces.find(item => Number(item.id) === Number(id))
+      if (!match && name) {
+        match = candidatePieces.find(item => normalizeForMatch(item.name) === normalizeForMatch(name))
+      }
+      if (!match) {
+        unresolvedReferences.push({
+          id,
+          name,
+          outfitLabel: outfit.title || outfit.direction || outfit.label || 'unlabeled'
+        })
+      } else {
+        resolvedPieces.push(match)
+      }
+    }
+    const uniqueResolved = []
+    const seenIds = new Set()
+    for (const p of resolvedPieces) {
+      if (p && !seenIds.has(Number(p.id))) {
+        seenIds.add(Number(p.id))
+        uniqueResolved.push(p)
+      }
+    }
+    return { ...outfit, pieceIds: uniqueResolved.map(p => Number(p.id)), pieces: uniqueResolved }
   }).filter(o => o.pieces.some(p => Number(p.id) === selectedId) && o.pieces.length >= 2)
 
   let outfits = resolved.map(o =>
@@ -1736,7 +1775,9 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       resolvedActivity: rosterDebug.resolvedActivity,
       activitySource: rosterDebug.activitySource,
       walkable: rosterDebug.walkable,
-      rosterCounts: rosterDebug.categoryCounts
+      rosterCounts: rosterDebug.categoryCounts,
+      unresolvedReferences,
+      unresolvedReferencesCount: unresolvedReferences.length
     }
   }
 }
@@ -2425,10 +2466,38 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     }
 
     // Resolve and validate — IDs must exist; reuse existing normalize/repair/gate
+    const unresolvedReferences = []
     const resolved = (Array.isArray(parsed?.outfits) ? parsed.outfits : []).map(outfit => {
-      const ids = Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(Number) : []
-      const owned = ids.map(id => allowedPieces.find(p => Number(p.id) === id)).filter(Boolean)
-      return { ...outfit, pieceIds: owned.map(p => Number(p.id)), pieces: owned }
+      const incomingPieces = Array.isArray(outfit.pieces) 
+        ? outfit.pieces 
+        : (Array.isArray(outfit.pieceIds) ? outfit.pieceIds.map(id => ({ id })) : [])
+      const resolvedPieces = []
+      for (const p of incomingPieces) {
+        const id = p?.id
+        const name = p?.name
+        let match = allowedPieces.find(item => Number(item.id) === Number(id))
+        if (!match && name) {
+          match = allowedPieces.find(item => normalizeForMatch(item.name) === normalizeForMatch(name))
+        }
+        if (!match) {
+          unresolvedReferences.push({
+            id,
+            name,
+            outfitLabel: outfit.title || outfit.direction || outfit.label || 'unlabeled'
+          })
+        } else {
+          resolvedPieces.push(match)
+        }
+      }
+      const uniqueResolved = []
+      const seenIds = new Set()
+      for (const p of resolvedPieces) {
+        if (p && !seenIds.has(Number(p.id))) {
+          seenIds.add(Number(p.id))
+          uniqueResolved.push(p)
+        }
+      }
+      return { ...outfit, pieceIds: uniqueResolved.map(p => Number(p.id)), pieces: uniqueResolved }
     }).filter(o => o.pieces.length >= 2)
 
     const normalizedModelOutfits = resolved.map(o => normalizeWholeWardrobeOutfitObject(o, allowedPieces))
@@ -2500,18 +2569,19 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         brokenPieces
       })
     }
-    const buildBrokenModelCard = (outfit, rejectionReason = 'rejected by model-output gate') => withLocalFillSource(outfit, {
+    const buildBrokenModelCard = (outfit, rejectionReason = 'rejected by model-output gate', resolutionNote = null) => withLocalFillSource(outfit, {
       broken: true,
       diagnosticOnly: true,
       source: 'model-rejected',
       strength: 'needs review',
       rejectionReason,
+      resolutionNote,
       systemFlags: [
         ...(Array.isArray(outfit.systemFlags) ? outfit.systemFlags : []),
-        { type: 'rejected-model-card', message: rejectionReason }
+        { type: 'rejected-model-card', message: rejectionReason, resolutionNote }
       ],
       watchFor: rejectionReason,
-      reason: `${outfit.reason || 'Model proposal shown for debugging.'} Rejected because ${rejectionReason}.`
+      reason: `${outfit.reason || 'Model proposal shown for debugging.'} Rejected because ${rejectionReason}.${resolutionNote ? ` Resolution note: ${resolutionNote}` : ''}`
     })
     const buildVisualLocalBackfill = () => {
       if (localBackfillOutfits.length) return localBackfillOutfits
@@ -2601,7 +2671,16 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         for (const candidate of rejectedModelDiagnostics) {
           const key = outfitKey(candidate.outfit)
           if (!key || seenKeys.has(key)) continue
-          const diagnostic = buildBrokenModelCard(candidate.outfit, candidate.reason)
+          
+          const label = candidate.outfit.title || candidate.outfit.direction || candidate.outfit.label || 'unlabeled'
+          const specificUnresolved = unresolvedReferences.filter(ref => ref.outfitLabel === label)
+          let resolutionNote = null
+          if (specificUnresolved.length > 0) {
+            const details = specificUnresolved.map(ref => `model referenced "${ref.name || 'unknown name'}" (id ${ref.id || 'unknown id'}) — not found in roster, no name match`).join('; ')
+            resolutionNote = `${details}. Piece may have been excluded by a gate after the model saw it, or the ID was invalid.`
+          }
+          
+          const diagnostic = buildBrokenModelCard(candidate.outfit, candidate.reason, resolutionNote)
           if (!diagnostic) continue
           diagnostics.push(diagnostic)
           seenKeys.add(key)
@@ -2686,7 +2765,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       rosterCount: roster.length,
       requested: requestedLimit,
       delivered: deliveredCount,
-      coverageGaps: rosterDebug.activityCoverageGaps || []
+      coverageGaps: rosterDebug.activityCoverageGaps || [],
+      unresolvedReferencesCount: unresolvedReferences.length
     })
 
     return {
@@ -2753,7 +2833,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
             }
           }
           return count
-        })()
+        })(),
+        unresolvedReferences,
+        unresolvedReferencesCount: unresolvedReferences.length
       }
     }
 }

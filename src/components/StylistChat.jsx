@@ -1975,7 +1975,12 @@ export default function AskClaude({
                 )}
                 {isBrokenCard && outfit.rejectionReason && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4 }}>
-                    <strong>Rejected reason:</strong> {outfit.rejectionReason}
+                    <div><strong>Rejected reason:</strong> {outfit.rejectionReason}</div>
+                    {outfit.resolutionNote && (
+                      <div style={{ marginTop: 4, fontStyle: 'italic' }}>
+                        <strong>Resolution note:</strong> {outfit.resolutionNote}
+                      </div>
+                    )}
                   </div>
                 )}
                 {isBrokenCard && brokenReasonRows.length > 0 && (

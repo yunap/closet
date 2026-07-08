@@ -295,3 +295,157 @@ test('8. One-time repair for metadata todos backfills field from description', (
   assert.equal(updated.field, 'fabric_weight')
 })
 
+test('9. Silent piece-drop resolution fallback and unresolved references tracking', async () => {
+  // Test case 1: 1 valid ID-match, 1 name-only-match (wrong ID, correct name), 1 fully unresolvable reference
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    return {
+      outfits: [{
+        label: 'Valid model outfit',
+        strength: 'strong',
+        pieces: [
+          { id: seeded.top, name: 'black tee' },
+          { id: seeded.bottom, name: 'blue jeans' },
+          { id: seeded.sneaker, name: 'sneakers' }
+        ]
+      }, {
+        label: 'Resolution test outfit',
+        strength: 'strong',
+        pieces: [
+          { id: seeded.top, name: 'black tee' }, // Valid ID-match
+          { id: 99999, name: 'blue jeans' }, // Wrong ID, correct name
+          { id: 88888, name: 'fully unresolvable shoes' } // Unresolvable
+        ]
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: ''
+    }
+  }
+
+  const response = await generateWholeWardrobeOutfitsVisualInternal({
+    occasion: 'city',
+    season: 'current season',
+    limit: 2
+  })
+
+  // Verify first resolved completely, second structurally rejected diagnostic card contains resolved pieces
+  const outfits = response.structuredOutfits
+  assert.equal(outfits.length, 2)
+  const testOutfit = outfits[1]
+  assert.equal(testOutfit.pieces.length, 2)
+  const pieceIds = testOutfit.pieces.map(p => Number(p.id))
+  assert.ok(pieceIds.includes(seeded.top))
+  assert.ok(pieceIds.includes(seeded.bottom)) // Resolved via name fallback!
+
+  // Check unresolvedReferences contains the third piece
+  const debug = response.debug
+  assert.ok(debug.unresolvedReferences)
+  const unres = debug.unresolvedReferences.find(r => Number(r.id) === 88888)
+  assert.ok(unres)
+  assert.equal(unres.name, 'fully unresolvable shoes')
+  assert.equal(unres.outfitLabel, 'Resolution test outfit')
+})
+
+test('10. Name-fallback matching: case/whitespace variation normalization', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    return {
+      outfits: [{
+        label: 'Normalization test outfit',
+        strength: 'strong',
+        pieces: [
+          { id: seeded.top, name: 'black tee' },
+          { id: 99999, name: '  BlUe   JeAnS   ' }, // Case/whitespace variation
+          { id: seeded.sneaker, name: 'sneakers' }
+        ]
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: ''
+    }
+  }
+
+  const response = await generateWholeWardrobeOutfitsVisualInternal({
+    occasion: 'city',
+    season: 'current season',
+    limit: 1
+  })
+
+  const testOutfit = response.structuredOutfits[0]
+  const pieceIds = testOutfit.pieces.map(p => Number(p.id))
+  assert.ok(pieceIds.includes(seeded.bottom), 'Should resolve to blue jeans bottom via normalized name matching')
+})
+
+test('11. Diagnostic card renders resolutionNote when unresolvedReferences is non-empty', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    return {
+      outfits: [{
+        label: 'Valid model outfit',
+        strength: 'strong',
+        pieces: [
+          { id: seeded.top, name: 'black tee' },
+          { id: seeded.bottom, name: 'blue jeans' },
+          { id: seeded.sneaker, name: 'sneakers' }
+        ]
+      }, {
+        label: 'Rejected with unresolved',
+        strength: 'strong',
+        pieces: [
+          { id: seeded.top, name: 'black tee' },
+          { id: 99999, name: 'missing bottom item' }, // Missing bottom -> structural rejection
+          { id: seeded.sneaker, name: 'sneakers' }
+        ]
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: ''
+    }
+  }
+
+  const response = await generateWholeWardrobeOutfitsVisualInternal({
+    occasion: 'city',
+    season: 'current season',
+    limit: 2
+  })
+
+  const diagnosticOutfit = response.structuredOutfits.find(o => o.label.includes('Rejected with unresolved'))
+  assert.ok(diagnosticOutfit, 'Should include diagnostic card')
+  assert.equal(diagnosticOutfit.broken, true)
+  assert.ok(diagnosticOutfit.resolutionNote, 'Should have resolutionNote')
+  assert.ok(diagnosticOutfit.resolutionNote.includes('model referenced "missing bottom item"'))
+  assert.ok(diagnosticOutfit.reason.includes('Resolution note:'))
+})
+
+test('12. Full pipeline: mocked model response with stale ID for a real named roster piece resolves and completes outfit', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    return {
+      outfits: [{
+        label: 'Full pipeline outfit',
+        strength: 'strong',
+        pieces: [
+          { id: seeded.top, name: 'black tee' },
+          { id: 99999, name: 'blue jeans' }, // stale ID, real name
+          { id: 88888, name: 'sneakers' } // stale ID, real name
+        ]
+      }],
+      rejected: [],
+      skip: '',
+      saveableLearning: ''
+    }
+  }
+
+  const response = await generateWholeWardrobeOutfitsVisualInternal({
+    occasion: 'city',
+    season: 'current season',
+    limit: 1
+  })
+
+  const testOutfit = response.structuredOutfits[0]
+  assert.equal(testOutfit.broken || false, false, 'Outfit should be completely resolved and valid (not broken)')
+  assert.equal(testOutfit.pieces.length, 3)
+  const pieceIds = testOutfit.pieces.map(p => Number(p.id))
+  assert.ok(pieceIds.includes(seeded.top))
+  assert.ok(pieceIds.includes(seeded.bottom))
+  assert.ok(pieceIds.includes(seeded.sneaker))
+})
+
+

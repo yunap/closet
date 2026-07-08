@@ -132,6 +132,7 @@ db.exec(`
     coverage_gaps TEXT DEFAULT '[]',
     roster_counts TEXT DEFAULT '{}',
     activity_source TEXT DEFAULT '',
+    unresolved_references_count INTEGER DEFAULT 0,
     created_at    TEXT DEFAULT (datetime('now'))
   );
 
@@ -211,7 +212,8 @@ NEW_COLUMNS.forEach(col => {
   'delivered INTEGER',
   'coverage_gaps TEXT DEFAULT "[]"',
   'roster_counts TEXT DEFAULT "{}"',
-  'activity_source TEXT DEFAULT ""'
+  'activity_source TEXT DEFAULT ""',
+  'unresolved_references_count INTEGER DEFAULT 0'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE generation_runs ADD COLUMN ${col}`) } catch {}
 })
