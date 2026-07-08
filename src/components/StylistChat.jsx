@@ -1022,7 +1022,7 @@ export default function AskClaude({
 
   useEffect(() => {
     if (!initialThreadId) return
-    selectThread(initialThreadId)
+    openThread(initialThreadId)
     onClearThreadId?.()
   }, [initialThreadId])
 
