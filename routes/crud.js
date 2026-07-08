@@ -731,4 +731,125 @@ router.delete('/todos/:id', (req, res) => {
   res.json({ success: true })
 })
 
+// ── Chat Threads API ───────────────────────────────────────────────────────────
+router.get('/chat-threads', (req, res) => {
+  try {
+    const showArchived = req.query.archived === 'true' ? 1 : 0
+    const rows = db.prepare(`
+      SELECT id, title, user_renamed, kind, created_at, updated_at, pinned, archived,
+             json_extract(payload, '$.activeContext') as activeContext,
+             COALESCE(json_array_length(payload, '$.messages'), 0) as message_count
+      FROM chat_threads
+      WHERE COALESCE(archived, 0) = ?
+      ORDER BY pinned DESC, updated_at DESC
+    `).all(showArchived)
+    res.json(rows.map(r => ({
+      ...r,
+      user_renamed: Boolean(r.user_renamed),
+      pinned: Boolean(r.pinned),
+      archived: Boolean(r.archived),
+      activeContext: safeJsonParse(r.activeContext)
+    })))
+  } catch (err) {
+    console.error('Error fetching chat threads:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/chat-threads/:id', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM chat_threads WHERE id = ?').get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Not found' })
+    res.json({
+      ...row,
+      user_renamed: Boolean(row.user_renamed),
+      pinned: Boolean(row.pinned),
+      archived: Boolean(row.archived),
+      payload: safeJsonParse(row.payload, {})
+    })
+  } catch (err) {
+    console.error('Error fetching chat thread:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/chat-threads', (req, res) => {
+  try {
+    const { id, title, user_renamed, kind, payload, created_at, updated_at, pinned, archived } = req.body
+    if (!id) return res.status(400).json({ error: 'id is required' })
+
+    const stringifiedPayload = typeof payload === 'object' ? JSON.stringify(payload) : (payload || '{}')
+    const userRenamedInt = user_renamed === true || user_renamed === 1 ? 1 : 0
+    const pinnedInt = pinned === true || pinned === 1 ? 1 : 0
+    const archivedInt = archived === true || archived === 1 ? 1 : 0
+
+    const createdAtVal = created_at || null
+    const updatedAtVal = updated_at || null
+
+    db.prepare(`
+      INSERT INTO chat_threads (id, title, user_renamed, kind, payload, pinned, archived, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')))
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        user_renamed = excluded.user_renamed,
+        kind = excluded.kind,
+        payload = excluded.payload,
+        updated_at = datetime('now')
+    `).run(id, title || 'New Chat', userRenamedInt, kind || 'chat', stringifiedPayload, pinnedInt, archivedInt, createdAtVal, updatedAtVal)
+
+    const row = db.prepare('SELECT * FROM chat_threads WHERE id = ?').get(id)
+    res.json({
+      ...row,
+      user_renamed: Boolean(row.user_renamed),
+      pinned: Boolean(row.pinned),
+      archived: Boolean(row.archived),
+      payload: safeJsonParse(row.payload, {})
+    })
+  } catch (err) {
+    console.error('Error upserting chat thread:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.patch('/chat-threads/:id/pin', (req, res) => {
+  try {
+    const row = db.prepare('SELECT pinned, archived FROM chat_threads WHERE id = ?').get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Not found' })
+    if (row.archived) return res.status(400).json({ error: 'Cannot pin an archived thread' })
+    
+    const nextPinned = row.pinned ? 0 : 1
+    db.prepare('UPDATE chat_threads SET pinned = ? WHERE id = ?').run(nextPinned, req.params.id)
+    res.json({ pinned: Boolean(nextPinned) })
+  } catch (err) {
+    console.error('Error pinning chat thread:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.patch('/chat-threads/:id/archive', (req, res) => {
+  try {
+    const row = db.prepare('SELECT pinned, archived FROM chat_threads WHERE id = ?').get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Not found' })
+    
+    const nextArchived = row.archived ? 0 : 1
+    const nextPinned = nextArchived ? 0 : row.pinned
+    db.prepare('UPDATE chat_threads SET archived = ?, pinned = ? WHERE id = ?').run(nextArchived, nextPinned, req.params.id)
+    res.json({ archived: Boolean(nextArchived), pinned: Boolean(nextPinned) })
+  } catch (err) {
+    console.error('Error archiving chat thread:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/chat-threads/:id', (req, res) => {
+  try {
+    const result = db.prepare('DELETE FROM chat_threads WHERE id = ?').run(req.params.id)
+    if (result.changes === 0) return res.status(404).json({ error: 'Not found' })
+    res.json({ success: true })
+  } catch (err) {
+    console.error('Error deleting chat thread:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router

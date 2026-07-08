@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import ThreadRail, { humanizeLabel, deriveBuilderTitle } from './ThreadRail'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -53,6 +54,16 @@ const formatMs = (ms) => {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`
 }
 
+const getTeaserText = (text) => {
+  if (!text) return ''
+  const trimmed = String(text).trim()
+  const firstSentence = trimmed.split(/[.!?]\s/)[0]
+  if (firstSentence.length < trimmed.length) {
+    return firstSentence + '.'
+  }
+  return firstSentence
+}
+
 const timingSummary = (timings = {}) => Object.entries(timings || {})
   .filter(([, value]) => typeof value === 'number')
   .map(([key, value]) => `${key.replace(/Ms$/, '')}: ${formatMs(value)}`)
@@ -100,7 +111,7 @@ const renderCost = (timings) => {
   return ` · Measured cost: $${cost.toFixed(3)}`
 }
 
-export const resolveUploadImageSrc = (photo) => {
+const resolveUploadImageSrc = (photo) => {
   const value = String(photo || '').trim()
   if (!value) return null
   const dedupedUploads = value.replace(/^\/uploads\/+uploads\//, '/uploads/')
@@ -204,83 +215,26 @@ export default function AskClaude({
   activeContext: externalActiveContext,
   onContextChange,
 }) {
-  const [threads, setThreads] = useState(() => {
-    try {
-      const saved = localStorage.getItem('stylist_chat_threads')
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed
-      }
-    } catch (e) {
-      console.error('Failed to load stylist_chat_threads from localStorage:', e)
-    }
-    
-    // Migration: Wrap legacy single-thread conversation into a thread
-    try {
-      const savedMessages = localStorage.getItem('stylist_chat_messages')
-      if (savedMessages) {
-        const messages = JSON.parse(savedMessages)
-        if (Array.isArray(messages) && messages.length > 0) {
-          const savedHistory = localStorage.getItem('stylist_chat_history')
-          const chatHistory = savedHistory ? JSON.parse(savedHistory) : []
-          const savedMemory = localStorage.getItem('stylist_thread_memory')
-          const threadMemory = savedMemory ? JSON.parse(savedMemory) : null
-          
-          let title = 'Active Conversation'
-          const firstUser = messages.find(m => m.role === 'user')
-          if (firstUser && firstUser.text) {
-            title = firstUser.text.slice(0, 30) + (firstUser.text.length > 30 ? '...' : '')
-          }
-          
-          const legacyThread = {
-            id: 'legacy_active',
-            title,
-            messages,
-            chatHistory,
-            threadMemory,
-            updatedAt: Date.now()
-          }
-          
-          localStorage.removeItem('stylist_chat_messages')
-          localStorage.removeItem('stylist_chat_history')
-          localStorage.removeItem('stylist_thread_memory')
-          
-          return [legacyThread]
-        }
-      }
-    } catch (e) {
-      console.error('Migration to multi-thread failed:', e)
-    }
+  const [threads, setThreads] = useState([])
+  const [archivedThreads, setArchivedThreads] = useState([])
+  const [archivedView, setArchivedView] = useState(false)
+  const [currentThreadId, setCurrentThreadId] = useState('new_chat')
+  const [activeThreadMetadata, setActiveThreadMetadata] = useState(null)
+  const [initialLoading, setInitialLoading] = useState(true)
+  const [loadingThread, setLoadingThread] = useState(false)
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+  const [expandedFeedbackCards, setExpandedFeedbackCards] = useState(new Set())
 
-    return [{
-      id: 'default',
-      title: 'New Chat',
-      messages: [{ role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }],
-      chatHistory: [],
-      threadMemory: null,
-      updatedAt: Date.now()
-    }]
-  })
-
-  const [currentThreadId, setCurrentThreadId] = useState(() => {
-    try {
-      const saved = localStorage.getItem('stylist_current_thread_id')
-      if (saved && threads.some(t => t.id === saved)) return saved
-    } catch (e) {}
-    return threads[0]?.id || 'default'
-  })
-
-  const activeThread = threads.find(t => t.id === currentThreadId) || threads[0]
-
-  const [messages, setMessages] = useState(() => activeThread?.messages || [
+  const [messages, setMessages] = useState([
     { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
   ])
-  const [chatHistory, setChatHistory] = useState(() => activeThread?.chatHistory || [])
-  const [threadMemory, setThreadMemory] = useState(() => activeThread?.threadMemory || null)
-  const [evaluatedKeys, setEvaluatedKeys] = useState(() => new Set(activeThread?.evaluatedKeys || []))
-  const [boardResults, setBoardResults] = useState(() => activeThread?.boardResults || {})
-  const [editorialVisualResults, setEditorialVisualResults] = useState(() => activeThread?.editorialVisualResults || {})
-  const [evaluationResultsByKey, setEvaluationResultsByKey] = useState(() => activeThread?.evaluationResultsByKey || {})
+  const [chatHistory, setChatHistory] = useState([])
+  const [threadMemory, setThreadMemory] = useState(null)
+  const [evaluatedKeys, setEvaluatedKeys] = useState(new Set())
+  const [boardResults, setBoardResults] = useState({})
+  const [editorialVisualResults, setEditorialVisualResults] = useState({})
+  const [evaluationResultsByKey, setEvaluationResultsByKey] = useState({})
+
   const [internalActiveContext, setInternalActiveContext] = useState(null)
   const activeContext = externalActiveContext ?? internalActiveContext
   const setActiveContext = useCallback((nextContext) => {
@@ -288,176 +242,7 @@ export default function AskClaude({
     onContextChange?.(nextContext)
   }, [onContextChange])
 
-  const [toastMessage, setToastMessage] = useState('')
-  const [showToast, setShowToast] = useState(false)
-  const triggerToast = useCallback((msg) => {
-    setToastMessage(msg)
-    setShowToast(true)
-  }, [])
-
-  useEffect(() => {
-    if (!showToast) return
-    const timer = setTimeout(() => {
-      setShowToast(false)
-    }, 3000)
-    return () => clearTimeout(timer)
-  }, [showToast])
-  const lastThreadIdRef = useRef(currentThreadId)
-
-  useEffect(() => {
-    if (lastThreadIdRef.current !== currentThreadId) {
-      lastThreadIdRef.current = currentThreadId
-      return
-    }
-
-    setThreads(prev => {
-      const nextThreads = prev.map(t => {
-        if (t.id === currentThreadId) {
-          let title = t.title
-          if (!t.userRenamed && (title === 'New Chat' || title === 'Active Conversation' || title.startsWith('Wardrobe:'))) {
-            const firstUser = messages.find(m => m.role === 'user')
-            if (firstUser && firstUser.text) {
-              title = firstUser.text.slice(0, 30) + (firstUser.text.length > 30 ? '...' : '')
-            }
-          }
-          return {
-            ...t,
-            title,
-            messages,
-            chatHistory,
-            threadMemory,
-            activeContext,
-            evaluatedKeys: Array.from(evaluatedKeys),
-            boardResults,
-            editorialVisualResults,
-            evaluationResultsByKey,
-            updatedAt: Date.now()
-          }
-        }
-        return t
-      })
-      try {
-        localStorage.setItem('stylist_chat_threads', JSON.stringify(nextThreads))
-      } catch (e) {
-        console.error('Failed to save stylist_chat_threads to localStorage:', e)
-      }
-      return nextThreads
-    })
-  }, [messages, chatHistory, threadMemory, activeContext, currentThreadId, evaluatedKeys, boardResults, editorialVisualResults, evaluationResultsByKey])
-
-  const createNewChat = (title = 'New Chat') => {
-    const newId = 'thread_' + Date.now()
-    const newThread = {
-      id: newId,
-      title,
-      messages: [{ role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }],
-      chatHistory: [],
-      threadMemory: null,
-      activeContext: null,
-      evaluatedKeys: [],
-      boardResults: {},
-      editorialVisualResults: {},
-      evaluationResultsByKey: {},
-      updatedAt: Date.now()
-    }
-    
-    setThreads(prev => [newThread, ...prev])
-    setCurrentThreadId(newId)
-    setMessages(newThread.messages)
-    setChatHistory(newThread.chatHistory)
-    setThreadMemory(newThread.threadMemory)
-    setActiveContext(newThread.activeContext)
-    setEvaluatedKeys(new Set())
-    setBoardResults({})
-    setEditorialVisualResults({})
-    setEvaluationResultsByKey({})
-    
-    try {
-      localStorage.setItem('stylist_current_thread_id', newId)
-    } catch (e) {}
-  }
-
-  const switchThread = (threadId) => {
-    setThreads(prev => {
-      const nextThreads = prev.map(t => {
-        if (t.id === currentThreadId) {
-          return {
-            ...t,
-            messages,
-            chatHistory,
-            threadMemory,
-            activeContext,
-            evaluatedKeys: Array.from(evaluatedKeys),
-            boardResults,
-            editorialVisualResults,
-            evaluationResultsByKey,
-            updatedAt: Date.now()
-          }
-        }
-        return t
-      })
-      try {
-        localStorage.setItem('stylist_chat_threads', JSON.stringify(nextThreads))
-      } catch (e) {}
-      return nextThreads
-    })
-
-    const target = threads.find(t => t.id === threadId)
-    if (target) {
-      setCurrentThreadId(threadId)
-      setMessages(target.messages || [])
-      setChatHistory(target.chatHistory || [])
-      setThreadMemory(target.threadMemory || null)
-      setActiveContext(target.activeContext || null)
-      setEvaluatedKeys(new Set(target.evaluatedKeys || []))
-      setBoardResults(target.boardResults || {})
-      setEditorialVisualResults(target.editorialVisualResults || {})
-      setEvaluationResultsByKey(target.evaluationResultsByKey || {})
-      try {
-        localStorage.setItem('stylist_current_thread_id', threadId)
-      } catch (e) {}
-    }
-  }
-
-  const deleteThread = (threadId) => {
-    if (threads.length <= 1) return
-    const remaining = threads.filter(t => t.id !== threadId)
-    const nextThread = remaining[0]
-    
-    setThreads(remaining)
-    setCurrentThreadId(nextThread.id)
-    setMessages(nextThread.messages || [])
-    setChatHistory(nextThread.chatHistory || [])
-    setThreadMemory(nextThread.threadMemory || null)
-    setActiveContext(nextThread.activeContext || null)
-    setEvaluatedKeys(new Set(nextThread.evaluatedKeys || []))
-    setBoardResults(nextThread.boardResults || {})
-    setEditorialVisualResults(nextThread.editorialVisualResults || {})
-    setEvaluationResultsByKey(nextThread.evaluationResultsByKey || {})
-    
-    try {
-      localStorage.setItem('stylist_chat_threads', JSON.stringify(remaining))
-      localStorage.setItem('stylist_current_thread_id', nextThread.id)
-    } catch (e) {}
-  }
-
-  const renameThread = (threadId, newTitle) => {
-    if (!newTitle.trim()) return
-    setThreads(prev => prev.map(t => {
-      if (t.id === threadId) {
-        return {
-          ...t,
-          title: newTitle.trim(),
-          userRenamed: true,
-          updatedAt: Date.now()
-        }
-      }
-      return t
-    }))
-  }
-
   const [input, setInput] = useState('')
-  const [threadMenuOpen, setThreadMenuOpen] = useState(false)
   const [renamingThreadId, setRenamingThreadId] = useState(null)
   const [renamingTitle, setRenamingTitle] = useState('')
   const [pendingPieceMode, setPendingPieceMode] = useState('wardrobe')
@@ -499,6 +284,7 @@ export default function AskClaude({
   const [boardFeedbackLabels, setBoardFeedbackLabels] = useState({})
   const [boardLearningStatus, setBoardLearningStatus] = useState({})
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
+  const [savedBoardUrls, setSavedBoardUrls] = useState(new Set())
   const [learningOpen, setLearningOpen] = useState(false)
   const [learningRows, setLearningRows] = useState([])
 
@@ -511,6 +297,649 @@ export default function AskClaude({
   const textRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
+  const currentThreadIdRef = useRef(currentThreadId)
+  useEffect(() => {
+    currentThreadIdRef.current = currentThreadId
+  }, [currentThreadId])
+
+  const [toastMessage, setToastMessage] = useState('')
+  const [showToast, setShowToast] = useState(false)
+  const triggerToast = useCallback((msg) => {
+    setToastMessage(msg)
+    setShowToast(true)
+  }, [])
+
+  useEffect(() => {
+    if (!showToast) return
+    const timer = setTimeout(() => {
+      setShowToast(false)
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [showToast])
+
+  const saveThreadState = async (threadId, updatedFields) => {
+    if (threadId === 'new_chat') return
+    
+    const currentPayload = {
+      messages: updatedFields.messages ?? messages,
+      chatHistory: updatedFields.chatHistory ?? chatHistory,
+      threadMemory: updatedFields.threadMemory ?? threadMemory,
+      activeContext: updatedFields.activeContext ?? activeContext,
+      evaluatedKeys: Array.from(updatedFields.evaluatedKeys ?? evaluatedKeys),
+      boardResults: updatedFields.boardResults ?? boardResults,
+      editorialVisualResults: updatedFields.editorialVisualResults ?? editorialVisualResults,
+      evaluationResultsByKey: updatedFields.evaluationResultsByKey ?? evaluationResultsByKey,
+      savedBoardKeys: Array.from(updatedFields.savedBoardKeys ?? savedBoardKeys),
+      feedbackSaved: Array.from(updatedFields.feedbackSaved ?? feedbackSaved),
+      savedIndices: Array.from(updatedFields.savedIndices ?? savedIndices),
+      feedbackIdsByKey: updatedFields.feedbackIdsByKey ?? feedbackIdsByKey,
+      boardFeedbackLabels: updatedFields.boardFeedbackLabels ?? boardFeedbackLabels
+    }
+    
+    const title = updatedFields.title ?? activeThreadMetadata?.title ?? 'Chat'
+    const userRenamed = updatedFields.userRenamed ?? activeThreadMetadata?.user_renamed ?? false
+    const kind = updatedFields.kind ?? activeThreadMetadata?.kind ?? 'chat'
+    
+    const isArchived = archivedThreads.some(t => t.id === threadId)
+    const targetSetter = isArchived ? setArchivedThreads : setThreads
+    
+    try {
+      const res = await fetch('/api/chat-threads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: threadId,
+          title,
+          user_renamed: userRenamed ? 1 : 0,
+          kind,
+          payload: currentPayload,
+          pinned: isArchived ? 0 : (activeThreadMetadata?.pinned ? 1 : 0),
+          archived: isArchived ? 1 : 0
+        })
+      })
+      
+      if (!res.ok) throw new Error('Save failed')
+      const updatedMetadata = await res.json()
+      
+      targetSetter(prev => {
+        let exists = false
+        const next = prev.map(t => {
+          if (t.id === threadId) {
+            exists = true
+            return {
+              ...t,
+              title: updatedMetadata.title,
+              user_renamed: updatedMetadata.user_renamed,
+              kind: updatedMetadata.kind,
+              updated_at: updatedMetadata.updated_at,
+              message_count: updatedMetadata.message_count,
+              pinned: updatedMetadata.pinned,
+              archived: updatedMetadata.archived
+            }
+          }
+          return t
+        })
+        
+        const finalThreads = exists ? next : [{
+          id: updatedMetadata.id,
+          title: updatedMetadata.title,
+          user_renamed: updatedMetadata.user_renamed,
+          kind: updatedMetadata.kind,
+          updated_at: updatedMetadata.updated_at,
+          message_count: updatedMetadata.message_count,
+          pinned: updatedMetadata.pinned,
+          archived: updatedMetadata.archived
+        }, ...next]
+
+        if (!isArchived) {
+          try {
+            localStorage.setItem('stylist_chat_threads', JSON.stringify(finalThreads))
+          } catch {}
+        }
+        return finalThreads
+      })
+      
+      setActiveThreadMetadata({
+        id: updatedMetadata.id,
+        title: updatedMetadata.title,
+        user_renamed: updatedMetadata.user_renamed,
+        kind: updatedMetadata.kind,
+        pinned: updatedMetadata.pinned,
+        archived: updatedMetadata.archived,
+        created_at: updatedMetadata.created_at,
+        updated_at: updatedMetadata.updated_at
+      })
+    } catch (err) {
+      console.error('Failed to save thread state:', err)
+    }
+  }
+
+  const flushSaveThread = async (threadId, data) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = null
+    }
+    await saveThreadState(threadId, data)
+  }
+
+  const openThread = async (threadId) => {
+    if (currentThreadId && currentThreadId !== 'new_chat') {
+      await flushSaveThread(currentThreadId, {
+        messages,
+        chatHistory,
+        threadMemory,
+        activeContext,
+        evaluatedKeys,
+        boardResults,
+        editorialVisualResults,
+        evaluationResultsByKey,
+        savedBoardKeys,
+        feedbackSaved,
+        savedIndices,
+        feedbackIdsByKey,
+        boardFeedbackLabels
+      })
+    }
+
+    // Reset input form and loader states when switching threads
+    setInput('')
+    setImageFile(null)
+    setImagePrev(null)
+    setPendingOutfit(null)
+    setPendingPiece(null)
+    setCompareOutfitId('')
+    setGenerateOutfitMode(false)
+    setEditorialVisualMode(false)
+    clearLoadingTimers()
+    setLoadingStatus('')
+
+    if (threadId === 'new_chat') {
+      setMessages([{ role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }])
+      setChatHistory([])
+      setThreadMemory(null)
+      setActiveContext(null)
+      setEvaluatedKeys(new Set())
+      setBoardResults({})
+      setEditorialVisualResults({})
+      setEvaluationResultsByKey({})
+      setSavedBoardKeys(new Set())
+      setFeedbackSaved(new Set())
+      setSavedIndices(new Set())
+      setFeedbackIdsByKey({})
+      setBoardFeedbackLabels({})
+      setCurrentThreadId('new_chat')
+      setActiveThreadMetadata(null)
+      try {
+        localStorage.setItem('stylist_current_thread_id', 'new_chat')
+      } catch {}
+      return
+    }
+
+    setLoadingThread(true)
+    try {
+      const res = await fetch(`/api/chat-threads/${threadId}`)
+      if (!res.ok) throw new Error('Failed to fetch thread')
+      const thread = await res.json()
+      
+      setMessages(thread.payload.messages || [])
+      setChatHistory(thread.payload.chatHistory || [])
+      setThreadMemory(thread.payload.threadMemory || null)
+      setActiveContext(thread.payload.activeContext || null)
+      setEvaluatedKeys(new Set(thread.payload.evaluatedKeys || []))
+      setBoardResults(thread.payload.boardResults || {})
+      setEditorialVisualResults(thread.payload.editorialVisualResults || {})
+      setEvaluationResultsByKey(thread.payload.evaluationResultsByKey || {})
+      setSavedBoardKeys(new Set(thread.payload.savedBoardKeys || []))
+      setFeedbackSaved(new Set(thread.payload.feedbackSaved || []))
+      setSavedIndices(new Set(thread.payload.savedIndices || []))
+      setFeedbackIdsByKey(thread.payload.feedbackIdsByKey || {})
+      setBoardFeedbackLabels(thread.payload.boardFeedbackLabels || {})
+      
+      setCurrentThreadId(threadId)
+      setActiveThreadMetadata({
+        id: thread.id,
+        title: thread.title,
+        user_renamed: thread.user_renamed,
+        kind: thread.kind,
+        pinned: thread.pinned,
+        archived: thread.archived,
+        created_at: thread.created_at,
+        updated_at: thread.updated_at
+      })
+      try {
+        localStorage.setItem('stylist_current_thread_id', threadId)
+      } catch {}
+    } catch (err) {
+      console.error('Error switching thread:', err)
+    } finally {
+      setLoadingThread(false)
+    }
+  }
+
+  const deleteThread = async (threadId) => {
+    const totalThreads = threads.length + archivedThreads.length
+    if (totalThreads <= 1 && threadId === currentThreadId) return
+    
+    try {
+      const res = await fetch(`/api/chat-threads/${threadId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Delete failed')
+      
+      const remainingActive = threads.filter(t => t.id !== threadId)
+      const remainingArchived = archivedThreads.filter(t => t.id !== threadId)
+      
+      setThreads(remainingActive)
+      setArchivedThreads(remainingArchived)
+      
+      try {
+        localStorage.setItem('stylist_chat_threads', JSON.stringify(remainingActive))
+      } catch {}
+
+      if (currentThreadId === threadId) {
+        const nextThread = remainingActive[0] || remainingArchived[0]
+        if (nextThread) {
+          await openThread(nextThread.id)
+        } else {
+          await openThread('new_chat')
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete thread:', err)
+    }
+  }
+
+  const renameThread = async (threadId, newTitle) => {
+    if (!newTitle.trim()) return
+    
+    const isArchived = archivedThreads.some(t => t.id === threadId)
+    const t = isArchived ? archivedThreads.find(x => x.id === threadId) : threads.find(x => x.id === threadId)
+    if (!t) return
+
+    try {
+      const detailRes = await fetch(`/api/chat-threads/${threadId}`)
+      if (!detailRes.ok) throw new Error('Failed to get thread detail')
+      const detail = await detailRes.json()
+
+      const res = await fetch('/api/chat-threads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: threadId,
+          title: newTitle.trim(),
+          user_renamed: 1,
+          kind: t.kind,
+          payload: detail.payload,
+          pinned: t.pinned ? 1 : 0,
+          archived: t.archived ? 1 : 0
+        })
+      })
+
+      if (!res.ok) throw new Error('Rename failed')
+      const updated = await res.json()
+
+      const targetSetter = isArchived ? setArchivedThreads : setThreads
+      targetSetter(prev => {
+        const next = prev.map(x => x.id === threadId ? {
+          ...x,
+          title: updated.title,
+          user_renamed: updated.user_renamed,
+          updated_at: updated.updated_at
+        } : x)
+        if (!isArchived) {
+          try {
+            localStorage.setItem('stylist_chat_threads', JSON.stringify(next))
+          } catch {}
+        }
+        return next
+      })
+
+      if (currentThreadId === threadId) {
+        setActiveThreadMetadata(prev => prev ? {
+          ...prev,
+          title: updated.title,
+          user_renamed: updated.user_renamed,
+          updated_at: updated.updated_at
+        } : null)
+      }
+    } catch (err) {
+      console.error('Failed to rename thread:', err)
+    }
+  }
+
+  const togglePinThread = async (threadId) => {
+    try {
+      const res = await fetch(`/api/chat-threads/${threadId}/pin`, {
+        method: 'PATCH'
+      })
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error || 'Failed to pin')
+      }
+      const data = await res.json()
+      
+      setThreads(prev => {
+        const next = prev.map(t => t.id === threadId ? { ...t, pinned: data.pinned } : t)
+        const sorted = [...next].sort((a, b) => {
+          const pinA = a.pinned ? 1 : 0
+          const pinB = b.pinned ? 1 : 0
+          if (pinA !== pinB) return pinB - pinA
+          const timeA = new Date(a.updated_at || a.updatedAt || 0).getTime()
+          const timeB = new Date(b.updated_at || b.updatedAt || 0).getTime()
+          return timeB - timeA
+        })
+        try {
+          localStorage.setItem('stylist_chat_threads', JSON.stringify(sorted))
+        } catch {}
+        return sorted
+      })
+      
+      if (currentThreadId === threadId) {
+        setActiveThreadMetadata(prev => prev ? { ...prev, pinned: data.pinned } : null)
+      }
+      triggerToast(data.pinned ? 'Thread pinned to top' : 'Thread unpinned')
+    } catch (err) {
+      console.error('Failed to toggle pin:', err)
+      triggerToast(err.message || 'Error pinning thread')
+    }
+  }
+
+  const toggleArchiveThread = async (threadId) => {
+    try {
+      const res = await fetch(`/api/chat-threads/${threadId}/archive`, {
+        method: 'PATCH'
+      })
+      if (!res.ok) throw new Error('Failed to archive')
+      const data = await res.json()
+
+      let movedThread = null
+
+      if (data.archived) {
+        setThreads(prev => {
+          const match = prev.find(t => t.id === threadId)
+          if (match) movedThread = { ...match, archived: true, pinned: false }
+          const next = prev.filter(t => t.id !== threadId)
+          try {
+            localStorage.setItem('stylist_chat_threads', JSON.stringify(next))
+          } catch {}
+          return next
+        })
+        if (movedThread) {
+          setArchivedThreads(prev => [movedThread, ...prev])
+        }
+        triggerToast('Thread archived')
+      } else {
+        setArchivedThreads(prev => {
+          const match = prev.find(t => t.id === threadId)
+          if (match) movedThread = { ...match, archived: false, pinned: data.pinned }
+          return prev.filter(t => t.id !== threadId)
+        })
+        if (movedThread) {
+          setThreads(prev => {
+            const next = [movedThread, ...prev].sort((a, b) => {
+              const pinA = a.pinned ? 1 : 0
+              const pinB = b.pinned ? 1 : 0
+              if (pinA !== pinB) return pinB - pinA
+              const timeA = new Date(a.updated_at || a.updatedAt || 0).getTime()
+              const timeB = new Date(b.updated_at || b.updatedAt || 0).getTime()
+              return timeB - timeA
+            })
+            try {
+              localStorage.setItem('stylist_chat_threads', JSON.stringify(next))
+            } catch {}
+            return next
+          })
+        }
+        triggerToast('Thread restored to active list')
+      }
+
+      if (currentThreadId === threadId) {
+        setActiveThreadMetadata(prev => prev ? { ...prev, archived: data.archived, pinned: data.pinned } : null)
+      }
+    } catch (err) {
+      console.error('Failed to toggle archive:', err)
+      triggerToast('Error updating archive status')
+    }
+  }
+
+  // Idempotent per-thread migration and initial load
+  useEffect(() => {
+    async function initAndMigrate() {
+      try {
+        const res = await fetch('/api/chat-threads')
+        let serverThreads = res.ok ? await res.json() : []
+
+        const archivedRes = await fetch('/api/chat-threads?archived=true')
+        let serverArchivedThreads = archivedRes.ok ? await archivedRes.json() : []
+
+        let localThreads = []
+        try {
+          const saved = localStorage.getItem('stylist_chat_threads')
+          if (saved) {
+            localThreads = JSON.parse(saved) || []
+          }
+        } catch (e) {
+          console.error('Failed to parse stylist_chat_threads from localStorage:', e)
+        }
+
+        let legacyThread = null
+        try {
+          const savedMessages = localStorage.getItem('stylist_chat_messages')
+          if (savedMessages) {
+            const messages = JSON.parse(savedMessages)
+            if (Array.isArray(messages) && messages.length > 0) {
+              const savedHistory = localStorage.getItem('stylist_chat_history')
+              const chatHistory = savedHistory ? JSON.parse(savedHistory) : []
+              const savedMemory = localStorage.getItem('stylist_thread_memory')
+              const threadMemory = savedMemory ? JSON.parse(savedMemory) : null
+              
+              let title = 'Active Conversation'
+              const firstUser = messages.find(m => m.role === 'user')
+              if (firstUser && firstUser.text) {
+                title = firstUser.text.slice(0, 48) + (firstUser.text.length > 48 ? '...' : '')
+              }
+              
+              legacyThread = {
+                id: 'legacy_active',
+                title,
+                messages,
+                chatHistory,
+                threadMemory,
+                updatedAt: Date.now()
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Failed to parse legacy active keys:', e)
+        }
+
+        const toMigrate = [...localThreads]
+        if (legacyThread) {
+          toMigrate.push(legacyThread)
+        }
+
+        let migratedAny = false
+
+        const toSqliteDateStr = (val) => {
+          if (!val) return null
+          if (typeof val === 'number') {
+            return new Date(val).toISOString().replace('T', ' ').slice(0, 19)
+          }
+          if (typeof val === 'string') {
+            if (/^\d+$/.test(val)) {
+              return new Date(parseInt(val, 10)).toISOString().replace('T', ' ').slice(0, 19)
+            }
+            return val
+          }
+          return null
+        }
+
+        for (const t of toMigrate) {
+          if (!t.id) continue
+          
+          const exists = serverThreads.some(st => st.id === t.id) || serverArchivedThreads.some(st => st.id === t.id)
+          if (exists) continue
+
+          const messages = t.messages || []
+          const hasUserMessage = messages.some(m => m.role === 'user')
+          if (!hasUserMessage) {
+            continue
+          }
+
+          let title = t.title || 'Chat'
+          if (!t.userRenamed && !t.user_renamed) {
+            if (t.kind === 'builder' || title.startsWith('Wardrobe:') || t.threadMemory?.stylingContext) {
+              const context = t.threadMemory?.stylingContext || {}
+              title = deriveBuilderTitle({
+                occasion: context.occasion || '',
+                activity: context.activity || 'none',
+                season: context.season || '',
+                mood: context.mood || '',
+                request: context.request || ''
+              }) || title
+            } else {
+              const firstUser = messages.find(m => m.role === 'user')
+              if (firstUser && firstUser.text) {
+                title = firstUser.text.slice(0, 48) + (firstUser.text.length > 48 ? '...' : '')
+              }
+            }
+          }
+
+          const payload = {
+            messages: t.messages || [],
+            chatHistory: t.chatHistory || [],
+            threadMemory: t.threadMemory || null,
+            activeContext: t.activeContext || null,
+            evaluatedKeys: t.evaluatedKeys || [],
+            boardResults: t.boardResults || {},
+            editorialVisualResults: t.editorialVisualResults || {},
+            evaluationResultsByKey: t.evaluationResultsByKey || {},
+            savedBoardKeys: t.savedBoardKeys || [],
+            feedbackSaved: t.feedbackSaved || [],
+            savedIndices: t.savedIndices || [],
+            feedbackIdsByKey: t.feedbackIdsByKey || {},
+            boardFeedbackLabels: t.boardFeedbackLabels || {}
+          }
+
+          const created_at_val = t.created_at || t.createdAt || t.updatedAt || t.updated_at
+          const updated_at_val = t.updatedAt || t.updated_at
+
+          const upsertRes = await fetch('/api/chat-threads', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: t.id,
+              title,
+              user_renamed: t.userRenamed || t.user_renamed ? 1 : 0,
+              kind: t.kind || 'chat',
+              payload,
+              pinned: t.pinned ? 1 : 0,
+              archived: t.archived ? 1 : 0,
+              created_at: toSqliteDateStr(created_at_val),
+              updated_at: toSqliteDateStr(updated_at_val)
+            })
+          })
+
+          if (upsertRes.ok) {
+            migratedAny = true
+          }
+        }
+
+        if (legacyThread) {
+          localStorage.removeItem('stylist_chat_messages')
+          localStorage.removeItem('stylist_chat_history')
+          localStorage.removeItem('stylist_thread_memory')
+        }
+
+        if (migratedAny) {
+          const refetchRes = await fetch('/api/chat-threads')
+          if (refetchRes.ok) {
+            serverThreads = await refetchRes.json()
+          }
+          const refetchArchivedRes = await fetch('/api/chat-threads?archived=true')
+          if (refetchArchivedRes.ok) {
+            serverArchivedThreads = await refetchArchivedRes.json()
+          }
+        }
+
+        try {
+          localStorage.setItem('stylist_chat_threads', JSON.stringify(serverThreads))
+        } catch {}
+
+        setThreads(serverThreads)
+        setArchivedThreads(serverArchivedThreads)
+
+        const isLaunchingAction = initialOutfit || initialPiece
+        if (!isLaunchingAction) {
+          let activeId = 'new_chat'
+          const savedActiveId = localStorage.getItem('stylist_current_thread_id')
+          if (savedActiveId && (serverThreads.some(st => st.id === savedActiveId) || serverArchivedThreads.some(st => st.id === savedActiveId) || savedActiveId === 'new_chat')) {
+            activeId = savedActiveId
+          } else if (serverThreads.length > 0) {
+            activeId = serverThreads[0].id
+          }
+
+          await openThread(activeId)
+        }
+      } catch (err) {
+        console.error('Initialization/migration failed:', err)
+      } finally {
+        setInitialLoading(false)
+      }
+    }
+
+    initAndMigrate()
+  }, [])
+
+  const debounceTimerRef = useRef(null)
+
+  // Debounced auto-save of active thread updates
+  useEffect(() => {
+    if (currentThreadId === 'new_chat' || initialLoading || loadingThread) return
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      saveThreadState(currentThreadId, {
+        messages,
+        chatHistory,
+        threadMemory,
+        activeContext,
+        evaluatedKeys,
+        boardResults,
+        editorialVisualResults,
+        evaluationResultsByKey,
+        savedBoardKeys,
+        feedbackSaved,
+        savedIndices,
+        feedbackIdsByKey,
+        boardFeedbackLabels
+      })
+    }, 2000)
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+    }
+  }, [
+    messages,
+    chatHistory,
+    threadMemory,
+    activeContext,
+    currentThreadId,
+    evaluatedKeys,
+    boardResults,
+    editorialVisualResults,
+    evaluationResultsByKey,
+    savedBoardKeys,
+    feedbackSaved,
+    savedIndices,
+    feedbackIdsByKey,
+    boardFeedbackLabels
+  ])
+
+
 
   const clearLoadingTimers = () => {
     loadingTimersRef.current.forEach(clearTimeout)
@@ -527,8 +956,22 @@ export default function AskClaude({
   useEffect(() => () => clearLoadingTimers(), [])
 
   useEffect(() => {
+    clearLoadingTimers()
+    setLoadingStatus('')
+  }, [currentThreadId])
+
+  useEffect(() => {
     fetch('/api/pieces').then(r => r.json()).then(setPieces)
     fetch('/api/outfits').then(r => r.json()).then(setOutfits).catch(() => setOutfits([]))
+    fetch('/api/saved-boards?limit=1000')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          const urls = data.map(b => b.imageUrl || b.image_url).filter(Boolean)
+          setSavedBoardUrls(new Set(urls))
+        }
+      })
+      .catch(err => console.error('Failed to fetch saved boards:', err))
   }, [])
 
   useEffect(() => {
@@ -547,7 +990,7 @@ export default function AskClaude({
     setImageFile(null); setImagePrev(null)
     onClearOutfit?.()
     if (shouldAutoSend) {
-      const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? `variants-${initialOutfit.variantMode || 'similar'}` : 'critique'}:${prompt}`
+      const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? `variants-${initialOutfit.variantMode || 'similar'}` : 'critique'}:${prompt}:${initialOutfit.actionId || ''}`
       if (lastAutoOutfitActionRef.current === actionKey) return
       lastAutoOutfitActionRef.current = actionKey
       setTimeout(() => send({ outfit: initialOutfit, input: prompt }), 0)
@@ -1283,26 +1726,57 @@ export default function AskClaude({
                     </div>
                   </div>
                 )}
-                {comparisonBoards.map((board, boardIdx) => (
-                  <div key={boardIdx} className="generated-visual-card">
-                    {board.error ? (
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preview error: {board.error}</div>
-                    ) : (
-                      <>
-                        <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
-                          <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
-                        </button>
-                        <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
-                        {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
-                        {board.debug?.timings && (
-                          <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
-                            Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}{renderCost(board.debug.timings)}
-                          </div>
-                        )}
-                        {(() => {
-                          const saveKey = `whole-wardrobe-preview-sheet:${messageIndex}:${boardIdx}`
-                          const isSaved = savedBoardKeys.has(saveKey)
-                          return (
+                {comparisonBoards.map((board, boardIdx) => {
+                  const saveKey = `whole-wardrobe-preview-sheet:${messageIndex}:${boardIdx}`
+                  const isSaved = savedBoardKeys.has(saveKey) || (board.imageUrl && savedBoardUrls.has(board.imageUrl))
+                  return (
+                    <div key={boardIdx} className="generated-visual-card" style={{ position: 'relative' }}>
+                      {board.error ? (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preview error: {board.error}</div>
+                      ) : (
+                        <>
+                          {isSaved && (
+                            <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                              ✓ Saved preview board
+                            </div>
+                          )}
+                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
+                            <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
+                          </button>
+                          <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
+                          
+                          {board.reason && (
+                            <details className="rationale-details" style={{ marginTop: 4 }}>
+                              <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+                                {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
+                              </summary>
+                              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                {board.reason}
+                              </div>
+                            </details>
+                          )}
+
+                          {board.debug?.timings && (() => {
+                            const cost = calculateOpenAICost(board.debug.timings)
+                            const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
+                            return (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--text-light)', marginTop: 4 }}>
+                                {costStr && <span>Cost: {costStr}</span>}
+                                <details className="telemetry-details" style={{ display: 'inline' }}>
+                                  <summary style={{ cursor: 'pointer', listStyle: 'none', userSelect: 'none' }} title="Click for render details">
+                                    ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Details</span>
+                                  </summary>
+                                  <div style={{ marginTop: 4, background: 'var(--surface-2)', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border-light)' }}>
+                                    Render timing: {timingSummary(board.debug.timings)}
+                                    {board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
+                                    {renderCost(board.debug.timings)}
+                                  </div>
+                                </details>
+                              </div>
+                            )
+                          })()}
+
+                          {!isSaved && (
                             <button
                               type="button"
                               onClick={() => saveGeneratedBoard({
@@ -1313,17 +1787,16 @@ export default function AskClaude({
                                 boardIndex: boardIdx,
                                 contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
                               })}
-                              disabled={isSaved}
-                              style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer', marginTop: 7 }}
+                              style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', marginTop: 7 }}
                             >
-                              {isSaved ? '✓ Saved preview board' : 'Save preview board'}
+                              Save preview board
                             </button>
-                          )
-                        })()}
-                      </>
-                    )}
-                  </div>
-                ))}
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1358,26 +1831,57 @@ export default function AskClaude({
                       </div>
                     </div>
                   )}
-                  {idealComparisonBoards.map((board, boardIdx) => (
-                    <div key={boardIdx} className="generated-visual-card">
-                      {board.error ? (
-                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preview error: {board.error}</div>
-                      ) : (
-                        <>
-                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
-                            <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
-                          </button>
-                          <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
-                          {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
-                          {board.debug?.timings && (
-                            <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
-                              Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}{renderCost(board.debug.timings)}
-                            </div>
-                          )}
-                          {(() => {
-                            const saveKey = `ideal-additions-preview-sheet:${messageIndex}:${boardIdx}`
-                            const isSaved = savedBoardKeys.has(saveKey)
-                            return (
+                  {idealComparisonBoards.map((board, boardIdx) => {
+                    const saveKey = `ideal-additions-preview-sheet:${messageIndex}:${boardIdx}`
+                    const isSaved = savedBoardKeys.has(saveKey) || (board.imageUrl && savedBoardUrls.has(board.imageUrl))
+                    return (
+                      <div key={boardIdx} className="generated-visual-card" style={{ position: 'relative' }}>
+                        {board.error ? (
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Preview error: {board.error}</div>
+                        ) : (
+                          <>
+                            {isSaved && (
+                              <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                                ✓ Saved preview board
+                              </div>
+                            )}
+                            <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
+                              <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
+                            </button>
+                            <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
+                            
+                            {board.reason && (
+                              <details className="rationale-details" style={{ marginTop: 4 }}>
+                                <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+                                  {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
+                                </summary>
+                                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                  {board.reason}
+                                </div>
+                              </details>
+                            )}
+
+                            {board.debug?.timings && (() => {
+                              const cost = calculateOpenAICost(board.debug.timings)
+                              const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
+                              return (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--text-light)', marginTop: 4 }}>
+                                  {costStr && <span>Cost: {costStr}</span>}
+                                  <details className="telemetry-details" style={{ display: 'inline' }}>
+                                    <summary style={{ cursor: 'pointer', listStyle: 'none', userSelect: 'none' }} title="Click for render details">
+                                      ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Details</span>
+                                    </summary>
+                                    <div style={{ marginTop: 4, background: 'var(--surface-2)', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border-light)' }}>
+                                      Render timing: {timingSummary(board.debug.timings)}
+                                      {board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
+                                      {renderCost(board.debug.timings)}
+                                    </div>
+                                  </details>
+                                </div>
+                              )
+                            })()}
+
+                            {!isSaved && (
                               <button
                                 type="button"
                                 onClick={() => saveGeneratedBoard({
@@ -1395,17 +1899,16 @@ export default function AskClaude({
                                     return null
                                   })()
                                 })}
-                                disabled={isSaved}
-                                style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer', marginTop: 7 }}
+                                style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', marginTop: 7 }}
                               >
-                                {isSaved ? '✓ Saved preview board' : 'Save preview board'}
+                                Save preview board
                               </button>
-                            )
-                          })()}
-                        </>
-                      )}
-                    </div>
-                  ))}
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -1811,99 +2314,203 @@ export default function AskClaude({
                       </div>
                     </div>
                   )}
-                  {hasRendered && boardResults[boardKey].map((board, boardIdx) => (
-                    <div key={boardIdx} className="generated-visual-card">
-                      {board.error ? (
-                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Render error: {board.error}</div>
-                      ) : (
-                        <>
-                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || outfit.label || 'Generated visual', meta: board.reason || outfit.reason || '' })} aria-label="Open generated visual preview">
-                            <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label} className="generated-visual-image" />
-                          </button>
-                          <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
-                          {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>{board.reason}</div>}
-                          {board.debug?.timings && (
-                            <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
-                              Render timing: {timingSummary(board.debug.timings)}{board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}{renderCost(board.debug.timings)}
+                  {hasRendered && boardResults[boardKey].map((board, boardIdx) => {
+                    const saveKey = message?.wholeWardrobe ? `whole-wardrobe-board:${messageIndex}:${idx}:${boardIdx}` : `editorial-board:${messageIndex}:${idx}:${boardIdx}`
+                    const isBoardSaved = savedBoardKeys.has(saveKey) || (board.imageUrl && savedBoardUrls.has(board.imageUrl))
+                    return (
+                      <div key={boardIdx} className="generated-visual-card" style={{ position: 'relative' }}>
+                        {board.error ? (
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Render error: {board.error}</div>
+                        ) : (
+                          <>
+                            {isBoardSaved && (
+                              <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                                ✓ Saved board
+                              </div>
+                            )}
+                            <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || outfit.label || 'Generated visual', meta: board.reason || outfit.reason || '' })} aria-label="Open generated visual preview">
+                              <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label} className="generated-visual-image" />
+                            </button>
+                            <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
+                            
+                            {board.reason && (
+                              <details className="rationale-details" style={{ marginTop: 4 }}>
+                                <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+                                  {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
+                                </summary>
+                                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                  {board.reason}
+                                </div>
+                              </details>
+                            )}
+
+                            {board.debug?.timings && (() => {
+                              const cost = calculateOpenAICost(board.debug.timings)
+                              const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
+                              return (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--text-light)', marginTop: 4 }}>
+                                  {costStr && <span>Cost: {costStr}</span>}
+                                  <details className="telemetry-details" style={{ display: 'inline' }}>
+                                    <summary style={{ cursor: 'pointer', listStyle: 'none', userSelect: 'none' }} title="Click for render details">
+                                      ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Details</span>
+                                    </summary>
+                                    <div style={{ marginTop: 4, background: 'var(--surface-2)', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border-light)' }}>
+                                      Render timing: {timingSummary(board.debug.timings)}
+                                      {board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
+                                      {renderCost(board.debug.timings)}
+                                    </div>
+                                  </details>
+                                </div>
+                              )
+                            })()}
+
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 7, flexDirection: 'column', alignItems: 'flex-start' }}>
+                              {!isPreview && activeContext?.type === 'piece' && (() => {
+                                const idealKey = `ideal:${messageIndex}:${idx}:${boardIdx}`
+                                const isExploring = boardLoadingIndex === idealKey
+                                return (
+                                  <button
+                                    onClick={() => exploreIdealAdditionsFromBoard({ board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx })}
+                                    disabled={isExploring}
+                                    style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isExploring ? 'default' : 'pointer', opacity: isExploring ? 0.65 : 1, marginBottom: 4 }}
+                                  >
+                                    {isExploring ? 'Exploring...' : 'Explore ideal additions'}
+                                  </button>
+                                )
+                              })()}
+                              
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
+                                {!isBoardSaved && (
+                                  <button
+                                    onClick={() => saveGeneratedBoard({
+                                      key: saveKey,
+                                      board,
+                                      boardType: message?.wholeWardrobe ? 'whole_wardrobe_board' : 'editorial_direction',
+                                      messageIndex,
+                                      boardIndex: idx,
+                                      contextOverride: message?.wholeWardrobe 
+                                        ? { type: 'wardrobe', id: null, name: 'Whole wardrobe' } 
+                                        : (() => {
+                                            if (activeContext) return activeContext
+                                            const targetPiece = pieces.find(p => Number(p.id) === Number(outfit.pieceId))
+                                            if (targetPiece) {
+                                              return { type: 'piece', id: targetPiece.id, name: targetPiece.name }
+                                            }
+                                            return null
+                                          })()
+                                    })}
+                                    style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}
+                                  >
+                                    Save board
+                                  </button>
+                                )}
+
+                                {(() => {
+                                  const primaryTypes = ['signature', 'works', 'almost', 'not_me']
+                                  const primaryLabels = GENERATED_BOARD_FEEDBACK_LABELS.filter(([type]) => primaryTypes.includes(type))
+                                  const diagnosticLabels = GENERATED_BOARD_FEEDBACK_LABELS.filter(([type]) => !primaryTypes.includes(type))
+
+                                  const hasActiveDiagnostic = diagnosticLabels.some(([type]) => {
+                                    const key = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:${type}`
+                                    return feedbackSaved.has(key)
+                                  })
+
+                                  const cardKey = `board-card:${messageIndex}:${idx}:${boardIdx}`
+                                  const isExpanded = hasActiveDiagnostic || expandedFeedbackCards.has(cardKey)
+
+                                  return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        {primaryLabels.map(([type, label]) => {
+                                          const key = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:${type}`
+                                          const isSaved = feedbackSaved.has(key)
+                                          return (
+                                            <button key={key}
+                                              onClick={() => saveStylistFeedback({
+                                                key,
+                                                feedbackType: type,
+                                                targetType: 'generated_visual_board',
+                                                label: `${board.label || outfit.title || label}`,
+                                                note: board.reason || outfit.reason || '',
+                                                payload: { board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx },
+                                                appendToPiece: (activeContext?.type === 'piece' || outfit.pieceId) && ['signature','works','not_me','too_safe','too_soft','too_generic','wrong_proportions','wrong_silhouette','catalog_drift','weak_structure','weak_contrast','bad_grounding'].includes(type),
+                                                contextOverride: (() => {
+                                                  if (activeContext) return activeContext
+                                                  const targetPiece = pieces.find(p => Number(p.id) === Number(outfit.pieceId))
+                                                  if (targetPiece) {
+                                                    return { type: 'piece', id: targetPiece.id, name: targetPiece.name }
+                                                  }
+                                                  return null
+                                                })()
+                                              })}
+                                              disabled={isSaved}
+                                              style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}
+                                            >
+                                              {isSaved ? '✓ ' : ''}{label}
+                                            </button>
+                                          )
+                                        })}
+
+                                        <button
+                                          type="button"
+                                          onClick={() => setExpandedFeedbackCards(prev => {
+                                            const next = new Set(prev)
+                                            if (next.has(cardKey)) {
+                                              next.delete(cardKey)
+                                            } else {
+                                              next.add(cardKey)
+                                            }
+                                            return next
+                                          })}
+                                          style={{ fontSize: 10, color: 'var(--accent)', cursor: 'pointer', padding: '2px 4px', display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 500, background: 'none', border: 'none' }}
+                                        >
+                                          {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
+                                        </button>
+                                      </div>
+
+                                      {isExpanded && (
+                                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingLeft: 4, borderLeft: '2px solid var(--border-light)', marginTop: 2 }}>
+                                          {diagnosticLabels.map(([type, label]) => {
+                                            const key = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:${type}`
+                                            const isSaved = feedbackSaved.has(key)
+                                            return (
+                                              <button key={key}
+                                                onClick={() => saveStylistFeedback({
+                                                  key,
+                                                  feedbackType: type,
+                                                  targetType: 'generated_visual_board',
+                                                  label: `${board.label || outfit.title || label}`,
+                                                  note: board.reason || outfit.reason || '',
+                                                  payload: { board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx },
+                                                  appendToPiece: (activeContext?.type === 'piece' || outfit.pieceId) && ['signature','works','not_me','too_safe','too_soft','too_generic','wrong_proportions','wrong_silhouette','catalog_drift','weak_structure','weak_contrast','bad_grounding'].includes(type),
+                                                  contextOverride: (() => {
+                                                    if (activeContext) return activeContext
+                                                    const targetPiece = pieces.find(p => Number(p.id) === Number(outfit.pieceId))
+                                                    if (targetPiece) {
+                                                      return { type: 'piece', id: targetPiece.id, name: targetPiece.name }
+                                                    }
+                                                    return null
+                                                  })()
+                                                })}
+                                                disabled={isSaved}
+                                                style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}
+                                              >
+                                                {isSaved ? '✓ ' : ''}{label}
+                                              </button>
+                                            )
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })()}
+                              </div>
                             </div>
-                          )}
-                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 7 }}>
-                            {!isPreview && activeContext?.type === 'piece' && (() => {
-                              const idealKey = `ideal:${messageIndex}:${idx}:${boardIdx}`
-                              const isExploring = boardLoadingIndex === idealKey
-                              return (
-                                <button
-                                  onClick={() => exploreIdealAdditionsFromBoard({ board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx })}
-                                  disabled={isExploring}
-                                  style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isExploring ? 'default' : 'pointer', opacity: isExploring ? 0.65 : 1 }}
-                                >
-                                  {isExploring ? 'Exploring...' : 'Explore ideal additions'}
-                                </button>
-                              )
-                            })()}
-                            {(() => {
-                              const saveKey = message?.wholeWardrobe ? `whole-wardrobe-board:${messageIndex}:${idx}:${boardIdx}` : `editorial-board:${messageIndex}:${idx}:${boardIdx}`
-                              const isBoardSaved = savedBoardKeys.has(saveKey)
-                              return (
-                                <button
-                                  onClick={() => saveGeneratedBoard({
-                                    key: saveKey,
-                                    board,
-                                    boardType: message?.wholeWardrobe ? 'whole_wardrobe_board' : 'editorial_direction',
-                                    messageIndex,
-                                    boardIndex: idx,
-                                    contextOverride: message?.wholeWardrobe 
-                                      ? { type: 'wardrobe', id: null, name: 'Whole wardrobe' } 
-                                      : (() => {
-                                          if (activeContext) return activeContext
-                                          const targetPiece = pieces.find(p => Number(p.id) === Number(outfit.pieceId))
-                                          if (targetPiece) {
-                                            return { type: 'piece', id: targetPiece.id, name: targetPiece.name }
-                                          }
-                                          return null
-                                        })()
-                                  })}
-                                  disabled={isBoardSaved}
-                                  style={{ fontSize: 10, color: isBoardSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isBoardSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isBoardSaved ? 'default' : 'pointer' }}
-                                >
-                                  {isBoardSaved ? '✓ Saved board' : 'Save board'}
-                                </button>
-                              )
-                            })()}
-                            {GENERATED_BOARD_FEEDBACK_LABELS.map(([type, label]) => {
-                              const key = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:${type}`
-                              const isSaved = feedbackSaved.has(key)
-                              return (
-                                <button key={key}
-                                  onClick={() => saveStylistFeedback({
-                                    key,
-                                    feedbackType: type,
-                                    targetType: 'generated_visual_board',
-                                    label: `${board.label || outfit.title || label}`,
-                                    note: board.reason || outfit.reason || '',
-                                    payload: { board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx },
-                                    appendToPiece: (activeContext?.type === 'piece' || outfit.pieceId) && ['signature','works','not_me','too_safe','too_soft','too_generic','wrong_proportions','wrong_silhouette','catalog_drift','weak_structure','weak_contrast','bad_grounding'].includes(type),
-                                    contextOverride: (() => {
-                                      if (activeContext) return activeContext
-                                      const targetPiece = pieces.find(p => Number(p.id) === Number(outfit.pieceId))
-                                      if (targetPiece) {
-                                        return { type: 'piece', id: targetPiece.id, name: targetPiece.name }
-                                      }
-                                      return null
-                                    })()
-                                  })}
-                                  disabled={isSaved}
-                                  style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}
-                                >
-                                  {isSaved ? '✓ ' : ''}{label}
-                                </button>
-                              )
-                            })}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
+                          </>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
               </div>
@@ -2021,6 +2628,7 @@ export default function AskClaude({
     })
     if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Could not save board') }
     setSavedBoardKeys(prev => new Set([...prev, key]))
+    setSavedBoardUrls(prev => new Set([...prev, board.imageUrl]))
   }
 
   const generateVisualBoards = async (resultKey, conceptText, structuredOverride = null, pieceIdOverride = null, sourceMessageIndex = null) => {
@@ -2329,11 +2937,11 @@ export default function AskClaude({
     const resultId = createResultId('whole-wardrobe')
 
     // Automatically spin up a dedicated thread for this wardrobe generation
+    const builderParams = { occasion, activity, season, mood, request }
+    const title = deriveBuilderTitle(builderParams)
     const newId = 'thread_' + Date.now()
-    const title = `Wardrobe: ${occasion}, ${season}`
-    const newThread = {
-      id: newId,
-      title,
+    
+    const initialPayload = {
       messages: [
         { role: 'user', text: userText, contextName: 'Use my wardrobe' }
       ],
@@ -2345,14 +2953,40 @@ export default function AskClaude({
       evaluatedKeys: [],
       boardResults: {},
       editorialVisualResults: {},
-      evaluationResultsByKey: {},
-      updatedAt: Date.now()
+      evaluationResultsByKey: {}
     }
 
-    setThreads(prev => [newThread, ...prev])
+    // Save to server
+    try {
+      await fetch('/api/chat-threads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: newId,
+          title,
+          user_renamed: 0,
+          kind: 'builder',
+          payload: initialPayload
+        })
+      })
+    } catch (e) {
+      console.error('Failed to create builder thread:', e)
+    }
+
+    const newThreadMetadata = {
+      id: newId,
+      title,
+      user_renamed: 0,
+      kind: 'builder',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      message_count: 1
+    }
+
+    setThreads(prev => [newThreadMetadata, ...prev])
     setCurrentThreadId(newId)
-    setMessages(newThread.messages)
-    setChatHistory(newThread.chatHistory)
+    setMessages(initialPayload.messages)
+    setChatHistory(initialPayload.chatHistory)
     setThreadMemory(null)
     setActiveContext(null)
     setEvaluatedKeys(new Set())
@@ -2361,6 +2995,7 @@ export default function AskClaude({
     setEvaluationResultsByKey({})
     setImageStatusByKey({})
     setBoardLoadingIndex(null)
+    setActiveThreadMetadata(newThreadMetadata)
 
     try {
       localStorage.setItem('stylist_current_thread_id', newId)
@@ -2448,7 +3083,7 @@ export default function AskClaude({
       holdActionScrollRef.current = true
     }
 
-    const assistantIndex = messages.length + 1
+    let assistantIndex = messages.length + 1
     const compareId = overrides.compareOutfitId ?? compareOutfitId
     const effectiveGenerateOutfitMode = overrides.generateOutfitMode ?? generateOutfitMode
     const effectiveEditorialVisualMode = overrides.editorialVisualMode ?? editorialVisualMode
@@ -2477,11 +3112,101 @@ export default function AskClaude({
       : shouldGenerateOutfits ? `${effectiveIdealOnlyMode ? 'New ideal ideas for' : effectiveIncludeMissingPieces ? 'Ideal directions for' : 'Use my wardrobe with'} ${pieceToSend?.name}`
       : (outfitToSend?.name || pieceToSend?.name)
 
-    setMessages(m => [...m, {
+    const userMessage = {
       role: 'user', text: q, imagePrev: displayPrev, contextName: userContextName,
       contextMode: compareOutfit && outfitToSend ? getCompareConfidenceText(outfitToSend, compareOutfit) : (outfitToSend ? `${getOutfitConfidenceMode(outfitToSend)?.label} · ${getOutfitConfidenceMode(outfitToSend)?.detail}` : ''),
-    }])
-    addToHistory('user', q || 'What do you think?')
+    }
+
+    let targetThreadId = currentThreadId
+    let isTransitioningNew = currentThreadId === 'new_chat'
+    const forceNewFromExisting = currentThreadId !== 'new_chat' && (outfitToSend || pieceToSend)
+
+    if (forceNewFromExisting) {
+      isTransitioningNew = true
+      
+      // Flush save the old thread first before we switch away from it
+      await flushSaveThread(currentThreadId, {
+        messages,
+        chatHistory,
+        threadMemory,
+        activeContext,
+        evaluatedKeys,
+        boardResults,
+        editorialVisualResults,
+        evaluationResultsByKey
+      })
+    }
+
+    const nextMessages = forceNewFromExisting ? [
+      { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' },
+      userMessage
+    ] : [...messages, userMessage]
+
+    const nextChatHistory = forceNewFromExisting ? [
+      { role: 'user', content: q || 'What do you think?' }
+    ] : [...chatHistory, { role: 'user', content: q || 'What do you think?' }]
+
+    let derivedTitle = 'Chat'
+    let threadKind = 'chat'
+    let targetActiveContext = activeContext
+
+    if (outfitToSend) {
+      targetActiveContext = { type: 'outfit', id: outfitToSend.id, name: outfitToSend.name || outfitToSend.title }
+    } else if (pieceToSend) {
+      targetActiveContext = { type: 'piece', id: pieceToSend.id, name: pieceToSend.name }
+    }
+
+    if (isTransitioningNew) {
+      assistantIndex = 2
+      targetThreadId = 'thread_' + Date.now()
+      
+      // Derive title and kind
+      if (outfitToSend) {
+        threadKind = 'outfit_critique'
+        const outfitName = outfitToSend.name || outfitToSend.title
+        const sessionKind = outfitToSend.imageGenerationMode ?
+          (outfitToSend.variantMode === 'creative' ? 'creative' : 'similar') :
+          'critique'
+        derivedTitle = `${outfitName} · ${sessionKind === 'similar' ? 'Similar' : sessionKind === 'creative' ? 'Creative' : 'Critique'}`
+      } else if (pieceToSend) {
+        threadKind = 'piece'
+        const pieceName = pieceToSend.name
+        const pieceMode = shouldGenerateEditorialVisuals ? 'Ideal additions' :
+                          effectiveIdealOnlyMode ? 'New ideal ideas' :
+                          effectiveIncludeMissingPieces ? 'Ideal directions' :
+                          'Outfits'
+        derivedTitle = `${pieceName} · ${pieceMode}`
+      } else {
+        threadKind = 'chat'
+        derivedTitle = q.slice(0, 48) + (q.length > 48 ? '...' : '')
+      }
+
+      // Add to threads list immediately
+      const newMetadata = {
+        id: targetThreadId,
+        title: derivedTitle,
+        user_renamed: 0,
+        kind: threadKind,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        message_count: 1
+      }
+      setThreads(prev => [newMetadata, ...prev])
+      setCurrentThreadId(targetThreadId)
+      setActiveThreadMetadata(newMetadata)
+      
+      setThreadMemory(null)
+      setEvaluatedKeys(new Set())
+      setBoardResults({})
+      setEditorialVisualResults({})
+      setEvaluationResultsByKey({})
+      if (targetActiveContext) {
+        setActiveContext(targetActiveContext)
+      }
+    }
+
+    setMessages(nextMessages)
+    setChatHistory(nextChatHistory)
 
     setInput(''); setImageFile(null); setImagePrev(null)
     setPendingOutfit(null); setPendingPiece(null); setCompareOutfitId('')
@@ -2489,7 +3214,29 @@ export default function AskClaude({
     setFileInputKey(k => k + 1)
     setLoading(true)
 
-    const historySnapshot = chatHistory
+    // Save the user message to the database immediately (non-debounced for transition, debounced otherwise)
+    if (isTransitioningNew) {
+      await saveThreadState(targetThreadId, {
+        messages: nextMessages,
+        chatHistory: nextChatHistory,
+        title: derivedTitle,
+        userRenamed: false,
+        kind: threadKind,
+        threadMemory: forceNewFromExisting ? null : threadMemory,
+        activeContext: forceNewFromExisting ? targetActiveContext : activeContext,
+        evaluatedKeys: forceNewFromExisting ? [] : Array.from(evaluatedKeys),
+        boardResults: forceNewFromExisting ? {} : boardResults,
+        editorialVisualResults: forceNewFromExisting ? {} : editorialVisualResults,
+        evaluationResultsByKey: forceNewFromExisting ? {} : evaluationResultsByKey
+      })
+    } else {
+      await saveThreadState(targetThreadId, {
+        messages: nextMessages,
+        chatHistory: nextChatHistory
+      })
+    }
+
+    const historySnapshot = nextChatHistory
 
     try {
       let replyText
@@ -2501,6 +3248,8 @@ export default function AskClaude({
       let replyWholeWardrobe = false
       let replyQueryOptions = null
       let replyConversationMode = 'new_request'
+      let nextThreadMemory = threadMemory
+      let generatedBoards = null
 
       if (outfitToSend && compareId) {
         const res = await fetch('/api/ai/compare-outfits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitAId: outfitToSend.id, outfitBId: compareId, question: q || 'Which outfit works better for me?', history: historySnapshot }) })
@@ -2544,7 +3293,7 @@ export default function AskClaude({
         replyText = data.feedback || (savedOutfitVariantMode === 'creative'
           ? 'Generated creative outfit alternatives from the saved outfit photo and linked garment references.'
           : 'Generated similar outfit variants from the saved outfit photo and linked garment references.')
-        setBoardResults(prev => ({ ...prev, [assistantIndex]: data.boards || [data.board || data] }))
+        generatedBoards = data.boards || [data.board || data]
 
       } else if (outfitToSend) {
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
@@ -2580,13 +3329,14 @@ export default function AskClaude({
         replyWardrobeEvaluation = true
         replyOutfitName = outfitToSend.name
         replyDebug = data.debug || null
-        setThreadMemory({
+        nextThreadMemory = {
           type: 'outfit',
           id: outfitToSend.id,
           name: outfitToSend.name,
           latestEvaluation: data.evaluation || null,
           latestEvaluationText: compactEvaluationMemory(data.evaluation),
-        })
+        }
+        setThreadMemory(nextThreadMemory)
 
       } else if (pieceToSend && shouldGenerateEditorialVisuals) {
         // ── PREVIEW MODE: text directions only, no images yet ────────────────
@@ -2610,11 +3360,12 @@ export default function AskClaude({
       } else if (pieceToSend && shouldGenerateOutfits) {
         const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot, activity: effectiveGenerateActivity }) })
         const data = await res.json()
-        replyText = data.feedback || data.error || 'Something went wrong.'
+        if (!res.ok) throw new Error(data.error || 'Something went wrong — try again')
+        replyText = data.feedback || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null
         replyDebug = data.debug || null
         if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
-          setThreadMemory({
+          nextThreadMemory = {
             type: 'generated_outfits',
             source: 'selected_piece',
             id: pieceToSend.id,
@@ -2628,13 +3379,15 @@ export default function AskClaude({
               mission: effectiveGenerateMission || 'mix',
               activity: effectiveGenerateActivity,
             },
-          })
+          }
+          setThreadMemory(nextThreadMemory)
         }
 
       } else if (pieceToSend) {
         const res = await fetch('/api/ai/evaluate-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, question: q || 'How should I style this piece?', history: historySnapshot }) })
         const data = await res.json()
-        replyText = data.feedback || data.error || 'Something went wrong.'
+        if (!res.ok) throw new Error(data.error || 'Something went wrong — try again')
+        replyText = data.feedback || 'Something went wrong.'
 
       } else if (shouldGenerateActiveEditorialVisuals) {
         // ── PREVIEW MODE for active context ──────────────────────────────────
@@ -2659,8 +3412,10 @@ export default function AskClaude({
         const fd = new FormData()
         fd.append('photo', fileToSend)
         fd.append('question', q || 'What do you think of this outfit?')
-        const data = await (await fetch('/api/ai/outfit-feedback', { method: 'POST', body: fd })).json()
-        replyText = data.feedback || data.error || 'Something went wrong.'
+        const res = await fetch('/api/ai/outfit-feedback', { method: 'POST', body: fd })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Something went wrong — try again')
+        replyText = data.feedback || 'Something went wrong.'
       } else if (threadMemory?.type === 'generated_outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q)) {
         const rememberedOutfit = threadMemory.latestOutfit || {}
         const outfitPieceIds = Array.isArray(rememberedOutfit.pieceIds) && rememberedOutfit.pieceIds.length
@@ -2710,19 +3465,21 @@ export default function AskClaude({
             replyWholeWardrobe = true
             replyStructuredOutfits = replyStructuredOutfits.map(outfit => ({ ...outfit, textOnly: true, wholeWardrobe: true }))
           }
-          setThreadMemory({
+          nextThreadMemory = {
             type: 'generated_outfits',
             source,
             latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source }),
             latestOutfits: replyStructuredOutfits,
             stylingContext: replyQueryOptions,
-          })
+          }
+          setThreadMemory(nextThreadMemory)
         } else {
-          setThreadMemory({
+          nextThreadMemory = {
             ...threadMemory,
             type: 'generated_outfit',
             latestOutfit: rememberedOutfit,
-          })
+          }
+          setThreadMemory(nextThreadMemory)
         }
 
       } else if (activeContext?.type === 'outfit' || (threadMemory?.type === 'outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q))) {
@@ -2828,6 +3585,13 @@ export default function AskClaude({
           })
         })
         const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data.error || 'Something went wrong — try again')
+        }
+        if (data.suggestedTitle && isTransitioningNew) {
+          derivedTitle = data.suggestedTitle
+          setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, title: data.suggestedTitle } : t))
+        }
         replyText = data.answer || data.error || 'Something went wrong.'
         replyDebug = data.debug || null
         replyStructuredOutfits = data.structuredOutfits || null
@@ -2879,9 +3643,16 @@ export default function AskClaude({
             latestOutfits: replyStructuredOutfits,
             stylingContext: replyQueryOptions,
           })
+          nextThreadMemory = {
+            type: 'generated_outfits',
+            source: 'freeform_current_set',
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: 'freeform_current_set' }),
+            latestOutfits: replyStructuredOutfits,
+            stylingContext: replyQueryOptions,
+          }
         }
       }
-      setMessages(m => [...m, {
+      const assistantMsg = {
         role: 'assistant',
         text: replyText,
         structuredOutfits: replyStructuredOutfits,
@@ -2900,13 +3671,88 @@ export default function AskClaude({
           mood: effectiveGenerateMood,
           activity: effectiveGenerateActivity,
         } : null)
-      }])
-      addToHistory('assistant', replyText)
+      }
+
+      const updatedMessages = [...nextMessages, assistantMsg]
+      const updatedChatHistory = [...nextChatHistory, { role: 'assistant', content: replyText }]
+
+      const newBoardResults = { ...boardResults }
+      if (generatedBoards) {
+        newBoardResults[updatedMessages.length - 1] = generatedBoards
+      }
+
+      if (currentThreadIdRef.current === targetThreadId) {
+        setMessages(updatedMessages)
+        setChatHistory(updatedChatHistory)
+        if (generatedBoards) {
+          setBoardResults(newBoardResults)
+        }
+      }
+
+      setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, message_count: updatedMessages.length } : t))
+
+      if (targetThreadId !== 'new_chat') {
+        fetch('/api/chat-threads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: targetThreadId,
+            title: derivedTitle || activeThreadMetadata?.title || 'Chat',
+            user_renamed: activeThreadMetadata?.user_renamed ? 1 : 0,
+            kind: threadKind,
+            payload: {
+              messages: updatedMessages,
+              chatHistory: updatedChatHistory,
+              boardResults: newBoardResults,
+              threadMemory: nextThreadMemory,
+              activeContext: forceNewFromExisting ? targetActiveContext : activeContext,
+              evaluatedKeys: forceNewFromExisting ? [] : Array.from(evaluatedKeys),
+              editorialVisualResults: forceNewFromExisting ? {} : editorialVisualResults,
+              evaluationResultsByKey: forceNewFromExisting ? {} : evaluationResultsByKey
+            }
+          })
+        }).catch(err => {
+          console.error('Failed to save assistant reply to database:', err)
+        })
+      }
 
     } catch (err) {
       const errText = `Error: ${err.message}`
-      setMessages(m => [...m, { role: 'assistant', text: errText }])
-      addToHistory('assistant', errText)
+      const errMsg = { role: 'assistant', text: errText }
+      const updatedMessages = [...nextMessages, errMsg]
+      const updatedChatHistory = [...nextChatHistory, { role: 'assistant', content: errText }]
+
+      if (currentThreadIdRef.current === targetThreadId) {
+        setMessages(updatedMessages)
+        setChatHistory(updatedChatHistory)
+      }
+
+      setThreads(prev => prev.map(t => t.id === targetThreadId ? { ...t, message_count: updatedMessages.length } : t))
+
+      if (targetThreadId !== 'new_chat') {
+        fetch('/api/chat-threads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: targetThreadId,
+            title: derivedTitle || activeThreadMetadata?.title || 'Chat',
+            user_renamed: activeThreadMetadata?.user_renamed ? 1 : 0,
+            kind: threadKind,
+            payload: {
+              messages: updatedMessages,
+              chatHistory: updatedChatHistory,
+              boardResults: boardResults,
+              threadMemory: threadMemory,
+              activeContext: forceNewFromExisting ? targetActiveContext : activeContext,
+              evaluatedKeys: forceNewFromExisting ? [] : Array.from(evaluatedKeys),
+              editorialVisualResults: forceNewFromExisting ? {} : editorialVisualResults,
+              evaluationResultsByKey: forceNewFromExisting ? {} : evaluationResultsByKey
+            }
+          })
+        }).catch(dbErr => {
+          console.error('Failed to save error response to database:', dbErr)
+        })
+      }
     } finally {
       setLoading(false)
     }
@@ -2926,34 +3772,7 @@ export default function AskClaude({
   const compareOutfit = compareOutfitId ? outfits.find(o => String(o.id) === String(compareOutfitId)) : null
   const compareConfidenceText = pendingOutfit && compareOutfit ? getCompareConfidenceText(pendingOutfit, compareOutfit) : ''
 
-  const resetChat = () => {
-    setMessages([{ role: 'assistant', text: 'Starting fresh! What can I help you with?' }])
-    setChatHistory([])
-    setThreadMemory(null)
-    setActiveContext(null)
-    setSavedIndices(new Set()); setFeedbackSaved(new Set()); setFeedbackIdsByKey({}); setSavedBoardKeys(new Set()); setEvaluatedKeys(new Set())
-    setBoardResults({}); setEditorialVisualResults({}); setEvaluationResultsByKey({})
-    setBoardLoadingIndex(null); setLearningOpen(false); setLearningRows([])
-    
-    setThreads(prev => prev.map(t => {
-      if (t.id === currentThreadId) {
-        return {
-          ...t,
-          title: 'New Chat',
-          messages: [{ role: 'assistant', text: 'Starting fresh! What can I help you with?' }],
-          chatHistory: [],
-          threadMemory: null,
-          activeContext: null,
-          evaluatedKeys: [],
-          boardResults: {},
-          editorialVisualResults: {},
-          evaluationResultsByKey: {},
-          updatedAt: Date.now()
-        }
-      }
-      return t
-    }))
-  }
+
 
   const latestAssistantIndex = (() => {
     for (let idx = messages.length - 1; idx >= 0; idx--) {
@@ -2962,249 +3781,103 @@ export default function AskClaude({
     return -1
   })()
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
-      {/* Toast Notification */}
-      {showToast && (
-        <div style={{
-          position: 'fixed',
-          bottom: '100px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          backgroundColor: 'rgba(18, 18, 18, 0.95)',
-          backdropFilter: 'blur(8px)',
-          color: '#ffffff',
-          padding: '12px 24px',
-          borderRadius: '24px',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)',
-          border: '1px solid rgba(255, 255, 255, 0.15)',
-          zIndex: 99999,
-          fontSize: '14px',
-          fontWeight: '500',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          pointerEvents: 'none',
-          whiteSpace: 'nowrap',
-          maxWidth: '90%',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis'
-        }}>
-          {toastMessage}
-        </div>
-      )}      {/* Header */}
-      <div className="view-header">
-        <div className="view-header-top">
-          <div>
-            <div className="view-title">Ask Your Stylist</div>
-            <div className="view-subtitle">
-              {pieces.length} pieces
-              {activeContext ? ` · about ${activeContext.name}` : ''}
-              {chatHistory.length > 0 && !activeContext ? ` · ${Math.ceil(chatHistory.length / 2)} exchanges` : ''}
-            </div>
+    <div className="stylist-container">
+      <ThreadRail
+        threads={archivedView ? archivedThreads : threads}
+        currentThreadId={currentThreadId}
+        onSelectThread={openThread}
+        onNewThread={() => openThread('new_chat')}
+        onDeleteThread={deleteThread}
+        onRenameThread={renameThread}
+        archivedView={archivedView}
+        onToggleArchivedView={setArchivedView}
+        onTogglePinThread={togglePinThread}
+        onToggleArchiveThread={toggleArchiveThread}
+      />
+      
+      {mobileDrawerOpen && (
+        <ThreadRail
+          threads={archivedView ? archivedThreads : threads}
+          currentThreadId={currentThreadId}
+          onSelectThread={openThread}
+          onNewThread={() => openThread('new_chat')}
+          onDeleteThread={deleteThread}
+          onRenameThread={renameThread}
+          isMobileDrawer={true}
+          onCloseDrawer={() => setMobileDrawerOpen(false)}
+          archivedView={archivedView}
+          onToggleArchivedView={setArchivedView}
+          onTogglePinThread={togglePinThread}
+          onToggleArchiveThread={toggleArchiveThread}
+        />
+      )}
+
+      <div className="stylist-chat-main">
+        {/* Toast Notification */}
+        {showToast && (
+          <div style={{
+            position: 'fixed',
+            bottom: '100px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: 'rgba(18, 18, 18, 0.95)',
+            backdropFilter: 'blur(8px)',
+            color: '#ffffff',
+            padding: '12px 24px',
+            borderRadius: '24px',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            zIndex: 99999,
+            fontSize: '14px',
+            fontWeight: '500',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+            maxWidth: '90%',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}>
+            {toastMessage}
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button className="chip" style={{ marginTop: 4 }} onClick={() => setWardrobeBuilderOpen(v => !v)}>
-              {wardrobeBuilderOpen ? 'Close builder' : 'Use wardrobe'}
-            </button>
-            {activeContext && (
-              <button className="chip" style={{ marginTop: 4 }} onClick={() => setLearningOpen(v => !v)}>
-                Learning{learningRows.length ? ` · ${learningRows.length}` : ''}
-              </button>
-            )}
-            <div className="custom-select-container" style={{ marginTop: 4 }}>
+        )}
+
+        {/* Header */}
+        <div className="view-header">
+          <div className="view-header-top">
+            <div>
+              <div className="view-title">Ask Your Stylist</div>
+              <div className="view-subtitle">
+                {pieces.length} pieces
+                {activeContext ? ` · about ${activeContext.name}` : ''}
+                {chatHistory.length > 0 && !activeContext ? ` · ${Math.ceil(chatHistory.length / 2)} exchanges` : ''}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <button 
-                className={`custom-select-btn ${threadMenuOpen ? 'active' : ''}`}
-                style={{ 
-                  height: 30, 
-                  minWidth: 140, 
-                  borderRadius: 15, 
-                  padding: '0 12px', 
-                  fontSize: 12, 
-                  border: '1px solid var(--border)',
-                  background: 'var(--surface-2)',
-                  color: 'var(--text-muted)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6
-                }}
-                onClick={(e) => { e.stopPropagation(); setThreadMenuOpen(!threadMenuOpen); }}
+                className="history-mobile-btn" 
+                onClick={() => setMobileDrawerOpen(true)}
+                title="Chat History"
               >
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
-                  💬 {threads.find(t => t.id === currentThreadId)?.title || 'Chat'}
-                </span>
-                <span className="custom-select-arrow">▾</span>
+                🕒 History
               </button>
-              {threadMenuOpen && (
-                <>
-                  <div className="custom-select-backdrop" onClick={() => setThreadMenuOpen(false)} />
-                  <div className="custom-select-dropdown" style={{ minWidth: 200, fontSize: 13, left: 'auto', right: 0 }}>
-                    <div style={{ padding: '6px 12px 4px', fontSize: 10, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Recent Conversations
-                    </div>
-                    {threads.map(t => {
-                      const isActive = t.id === currentThreadId;
-                      const isRenaming = renamingThreadId === t.id;
-                      return (
-                        <div
-                          key={t.id}
-                          className={`custom-select-option ${isActive ? 'active' : ''}`}
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
-                          onClick={() => {
-                            if (!isRenaming) {
-                              switchThread(t.id);
-                              setThreadMenuOpen(false);
-                            }
-                          }}
-                        >
-                          {isRenaming ? (
-                            <>
-                              <input
-                                type="text"
-                                value={renamingTitle}
-                                onChange={(e) => setRenamingTitle(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.stopPropagation();
-                                    renameThread(t.id, renamingTitle);
-                                    setRenamingThreadId(null);
-                                  } else if (e.key === 'Escape') {
-                                    e.stopPropagation();
-                                    setRenamingThreadId(null);
-                                  }
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                style={{
-                                  flex: 1,
-                                  fontSize: 12,
-                                  padding: '2px 4px',
-                                  borderRadius: 4,
-                                  border: '1px solid var(--border)',
-                                  background: 'var(--surface)',
-                                  color: 'var(--text)',
-                                  outline: 'none',
-                                }}
-                                autoFocus
-                              />
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  renameThread(t.id, renamingTitle);
-                                  setRenamingThreadId(null);
-                                }}
-                                style={{
-                                  color: 'var(--donate)',
-                                  fontSize: 12,
-                                  padding: '2px 4px',
-                                  background: 'transparent',
-                                  border: 'none',
-                                  cursor: 'pointer',
-                                }}
-                                title="Save"
-                              >
-                                ✓
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                {t.title}
-                              </span>
-                              <div style={{ display: 'flex', gap: 2, flexShrink: 0, alignItems: 'center' }}>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setRenamingThreadId(t.id);
-                                    setRenamingTitle(t.title);
-                                  }}
-                                  style={{
-                                    color: 'var(--text-light)',
-                                    fontSize: 12,
-                                    padding: '2px 4px',
-                                    border: 'none',
-                                    background: 'transparent',
-                                    cursor: 'pointer',
-                                  }}
-                                  title="Rename thread"
-                                >
-                                  ✎
-                                </button>
-                                {!isActive && threads.length > 1 && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (confirm(`Delete thread "${t.title}"?`)) {
-                                        deleteThread(t.id);
-                                      }
-                                    }}
-                                    style={{
-                                      color: 'var(--text-light)',
-                                      fontSize: 14,
-                                      padding: '2px 4px',
-                                      border: 'none',
-                                      background: 'transparent',
-                                      cursor: 'pointer',
-                                    }}
-                                    title="Delete thread"
-                                  >
-                                    ✕
-                                  </button>
-                                )}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <div className="divider" style={{ margin: '4px 0' }} />
-                    <button
-                      className="custom-select-option"
-                      onClick={() => {
-                        createNewChat('New Chat');
-                        setThreadMenuOpen(false);
-                      }}
-                      style={{ color: 'var(--accent)', fontWeight: 500 }}
-                    >
-                      + New chat thread
-                    </button>
-                    {chatHistory.length > 0 && (
-                      <button
-                        className="custom-select-option"
-                        onClick={() => {
-                          if (confirm('Clear current chat conversation?')) {
-                            resetChat();
-                          }
-                          setThreadMenuOpen(false);
-                        }}
-                      >
-                        ↺ Clear conversation
-                      </button>
-                    )}
-                    {threads.length > 1 && (
-                      <button
-                        className="custom-select-option"
-                        style={{ color: '#a64b4b' }}
-                        onClick={() => {
-                          if (confirm('Delete this chat thread completely?')) {
-                            deleteThread(currentThreadId);
-                          }
-                          setThreadMenuOpen(false);
-                        }}
-                      >
-                        ✕ Delete current thread
-                      </button>
-                    )}
-                  </div>
-                </>
+              <button className="chip" style={{ marginTop: 4 }} onClick={() => setWardrobeBuilderOpen(v => !v)}>
+                {wardrobeBuilderOpen ? 'Close builder' : 'Use wardrobe'}
+              </button>
+              {activeContext && (
+                <button className="chip" style={{ marginTop: 4 }} onClick={() => setLearningOpen(v => !v)}>
+                  Learning{learningRows.length ? ` · ${learningRows.length}` : ''}
+                </button>
               )}
             </div>
           </div>
+          {recentMemoryStatus && (
+            <div style={{ marginTop: 6, fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
+              {recentMemoryStatus}
+            </div>
+          )}
         </div>
-        {recentMemoryStatus && (
-          <div style={{ marginTop: 6, fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
-            {recentMemoryStatus}
-          </div>
-        )}
-      </div>
 
       {/* Wardrobe Builder Panel */}
       {wardrobeBuilderOpen && (
@@ -3442,6 +4115,16 @@ export default function AskClaude({
               )}
 
               {(() => {
+                if (m.isError) {
+                  return (
+                    <div className="ai-message assistant error-bubble" style={{ padding: '12px 14px', background: 'rgba(219, 68, 85, 0.08)', border: '1px solid rgba(219, 68, 85, 0.25)', color: 'var(--text)', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                      <span style={{ fontSize: 16 }}>⚠️</span>
+                      <div style={{ fontSize: 13, lineHeight: 1.45 }}>
+                        {m.text}
+                      </div>
+                    </div>
+                  )
+                }
                 const multi = isMultiOutfitResponse(m)
                 const hasBoards = Boolean(boardResults[i]?.length)
                 if (m.role === 'assistant' && m.wardrobeEvaluation) {
@@ -3519,7 +4202,7 @@ export default function AskClaude({
                 )
               })()}
 
-              {m.role === 'assistant' && i > 0 && activeContext && i === latestAssistantIndex && (
+              {m.role === 'assistant' && !m.isError && i > 0 && activeContext && i === latestAssistantIndex && (
                 <div style={{ marginTop: 4, marginBottom: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
                     {(!boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text)) && (savedIndices.has(i) ? (
@@ -3547,58 +4230,150 @@ export default function AskClaude({
 
                   {editorialVisualResults[i]?.length > 0 && (
                     <div className="generated-visual-grid" style={{ marginTop: 10 }}>
-                      {editorialVisualResults[i].map((visual, idx) => (
-                        <div key={idx} className="generated-visual-card">
-                          {visual.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Visual error: {visual.error}</div> : (
-                            <>
-                              <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(visual.imageUrl), title: visual.label || 'Generated visual', meta: visual.reason || '' })} aria-label="Open generated visual preview">
-                                <img src={resolveUploadImageSrc(visual.imageUrl)} alt={visual.label} className="generated-visual-image" />
-                              </button>
-                              <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{visual.label}</div>
-                              {Array.isArray(visual.missingPieces) && visual.missingPieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>Suggested additions: {visual.missingPieces.join(' + ')}</div>}
-                              {visual.reason && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.45 }}>{visual.reason}</div>}
-                              {visual.watchFor && <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.4 }}><strong>Watch:</strong> {visual.watchFor}</div>}
-                              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 8 }}>
-                                {(() => {
-                                  const key = `editorial-board:${i}:${idx}`
-                                  const isSaved = savedBoardKeys.has(key)
-                                  return <button onClick={() => saveGeneratedBoard({ key, board: visual, boardType: 'editorial_direction', messageIndex: i, boardIndex: idx })} disabled={isSaved} style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--accent)', padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}>{isSaved ? 'Saved board' : 'Save board'}</button>
-                                })()}
-                                {GENERATED_BOARD_FEEDBACK_LABELS.map(([type, label]) => {
-                                  const key = `visual-board:${i}:${idx}:${type}`
-                                  const isSaved = feedbackSaved.has(key)
-                                  return <button key={key} onClick={() => saveStylistFeedback({ key, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { visual, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: activeContext?.type === 'piece' })} disabled={isSaved} style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', background: isSaved ? 'rgba(91,124,76,0.10)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}>{isSaved ? 'saved ' : ''}{label}</button>
-                                })}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ))}
+                      {editorialVisualResults[i].map((visual, idx) => {
+                        const key = `editorial-board:${i}:${idx}`
+                        const isSaved = savedBoardKeys.has(key) || (visual.imageUrl && savedBoardUrls.has(visual.imageUrl))
+                        return (
+                          <div key={idx} className="generated-visual-card" style={{ position: 'relative' }}>
+                            {visual.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Visual error: {visual.error}</div> : (
+                              <>
+                                {isSaved && (
+                                  <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                                    ✓ Saved board
+                                  </div>
+                                )}
+                                <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(visual.imageUrl), title: visual.label || 'Generated visual', meta: visual.reason || '' })} aria-label="Open generated visual preview">
+                                  <img src={resolveUploadImageSrc(visual.imageUrl)} alt={visual.label} className="generated-visual-image" />
+                                </button>
+                                <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{visual.label}</div>
+                                {Array.isArray(visual.missingPieces) && visual.missingPieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>Suggested additions: {visual.missingPieces.join(' + ')}</div>}
+                                
+                                {visual.reason && (
+                                  <details className="rationale-details" style={{ marginTop: 4 }}>
+                                    <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+                                      {getTeaserText(visual.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
+                                    </summary>
+                                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                      {visual.reason}
+                                    </div>
+                                  </details>
+                                )}
+
+                                {visual.watchFor && <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.4 }}><strong>Watch:</strong> {visual.watchFor}</div>}
+                                
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8, width: '100%', alignItems: 'center' }}>
+                                  {!isSaved && (
+                                    <button onClick={() => saveGeneratedBoard({ key, board: visual, boardType: 'editorial_direction', messageIndex: i, boardIndex: idx })} style={{ fontSize: 10, color: 'var(--accent)', padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}>Save board</button>
+                                  )}
+
+                                  {(() => {
+                                    const primaryTypes = ['signature', 'works', 'almost', 'not_me']
+                                    const primaryLabels = GENERATED_BOARD_FEEDBACK_LABELS.filter(([type]) => primaryTypes.includes(type))
+                                    const diagnosticLabels = GENERATED_BOARD_FEEDBACK_LABELS.filter(([type]) => !primaryTypes.includes(type))
+
+                                    const hasActiveDiagnostic = diagnosticLabels.some(([type]) => {
+                                      const k = `visual-board:${i}:${idx}:${type}`
+                                      return feedbackSaved.has(k)
+                                    })
+
+                                    const cardKey = `visual-card:${i}:${idx}`
+                                    const isExpanded = hasActiveDiagnostic || expandedFeedbackCards.has(cardKey)
+
+                                    return (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                          {primaryLabels.map(([type, label]) => {
+                                            const k = `visual-board:${i}:${idx}:${type}`
+                                            const isSavedFeedback = feedbackSaved.has(k)
+                                            return (
+                                              <button key={k} onClick={() => saveStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { visual, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: activeContext?.type === 'piece' })} disabled={isSavedFeedback} style={{ fontSize: 10, color: isSavedFeedback ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', background: isSavedFeedback ? 'rgba(91,124,76,0.10)' : 'var(--surface)', cursor: isSavedFeedback ? 'default' : 'pointer' }}>
+                                                {isSavedFeedback ? '✓ ' : ''}{label}
+                                              </button>
+                                            )
+                                          })}
+
+                                          <button
+                                            type="button"
+                                            onClick={() => setExpandedFeedbackCards(prev => {
+                                              const next = new Set(prev)
+                                              if (next.has(cardKey)) {
+                                                next.delete(cardKey)
+                                              } else {
+                                                next.add(cardKey)
+                                              }
+                                              return next
+                                            })}
+                                            style={{ fontSize: 10, color: 'var(--accent)', cursor: 'pointer', padding: '2px 4px', display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 500, background: 'none', border: 'none' }}
+                                          >
+                                            {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
+                                          </button>
+                                        </div>
+
+                                        {isExpanded && (
+                                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingLeft: 4, borderLeft: '2px solid var(--border-light)', marginTop: 2 }}>
+                                            {diagnosticLabels.map(([type, label]) => {
+                                              const k = `visual-board:${i}:${idx}:${type}`
+                                              const isSavedFeedback = feedbackSaved.has(k)
+                                              return (
+                                                <button key={k} onClick={() => saveStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { visual, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: activeContext?.type === 'piece' })} disabled={isSavedFeedback} style={{ fontSize: 10, color: isSavedFeedback ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', background: isSavedFeedback ? 'rgba(91,124,76,0.10)' : 'var(--surface)', cursor: isSavedFeedback ? 'default' : 'pointer' }}>
+                                                  {isSavedFeedback ? '✓ ' : ''}{label}
+                                                </button>
+                                              )
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
 
                   {boardResults[i]?.length > 0 && !isMultiOutfitResponse(m) && (
                     <div className="generated-visual-grid" style={{ marginTop: 10 }}>
-                      {boardResults[i].map((board, idx) => (
-                        <div key={idx} className="generated-visual-card">
-                          {board.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Board error: {board.error}</div> : (
-                            <>
-                              <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Generated board', meta: board.reason || '' })} aria-label="Open generated board preview">
-                                <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label} className="generated-visual-image" />
-                              </button>
-                              <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
-                              {board.reason && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.45 }}>{board.reason}</div>}
-                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8 }}>
-                                {(() => {
-                                  const saveKey = `wardrobe-board:${i}:${idx}`
-                                  const isBoardSaved = savedBoardKeys.has(saveKey)
-                                  return <button onClick={() => saveGeneratedBoard({ key: saveKey, board, boardType: 'wardrobe_board', messageIndex: i, boardIndex: idx })} disabled={isBoardSaved} style={{ fontSize: 10, color: isBoardSaved ? 'var(--donate)' : 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isBoardSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isBoardSaved ? 'default' : 'pointer' }}>{isBoardSaved ? 'Saved board' : 'Save board'}</button>
-                                })()}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ))}
+                      {boardResults[i].map((board, idx) => {
+                        const saveKey = `wardrobe-board:${i}:${idx}`
+                        const isBoardSaved = savedBoardKeys.has(saveKey) || (board.imageUrl && savedBoardUrls.has(board.imageUrl))
+                        return (
+                          <div key={idx} className="generated-visual-card" style={{ position: 'relative' }}>
+                            {board.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Board error: {board.error}</div> : (
+                              <>
+                                {isBoardSaved && (
+                                  <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                                    ✓ Saved board
+                                  </div>
+                                )}
+                                <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Generated board', meta: board.reason || '' })} aria-label="Open generated board preview">
+                                  <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label} className="generated-visual-image" />
+                                </button>
+                                <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
+                                
+                                {board.reason && (
+                                  <details className="rationale-details" style={{ marginTop: 4 }}>
+                                    <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+                                      {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
+                                    </summary>
+                                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                      {board.reason}
+                                    </div>
+                                  </details>
+                                )}
+
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8 }}>
+                                  {!isBoardSaved && (
+                                    <button onClick={() => saveGeneratedBoard({ key: saveKey, board, boardType: 'wardrobe_board', messageIndex: i, boardIndex: idx })} style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}>Save board</button>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
 
@@ -4086,6 +4861,7 @@ export default function AskClaude({
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
