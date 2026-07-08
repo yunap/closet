@@ -95,6 +95,7 @@ db.exec(`
     payload         TEXT DEFAULT '{}',
     favorite        INTEGER DEFAULT 0,
     archived        INTEGER DEFAULT 0,
+    hidden_from_lookbook INTEGER DEFAULT 0,
     created_at      TEXT DEFAULT (datetime('now'))
   );
 
@@ -205,6 +206,12 @@ NEW_COLUMNS.forEach(col => {
   'archived INTEGER DEFAULT 0'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE stylist_feedback ADD COLUMN ${col}`) } catch {}
+})
+
+;[
+  'hidden_from_lookbook INTEGER DEFAULT 0'
+].forEach(col => {
+  try { db.exec(`ALTER TABLE saved_boards ADD COLUMN ${col}`) } catch {}
 })
 
 ;[

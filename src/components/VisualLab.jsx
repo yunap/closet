@@ -225,6 +225,18 @@ export default function VisualLab({ activeContext } = {}) {
     return updated
   }
 
+  const deleteSavedBoard = async (id) => {
+    try {
+      const res = await fetch(`/api/saved-boards/${id}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) throw new Error(await res.text())
+      setSavedBoards(prev => prev.filter(b => b.id !== id))
+    } catch (err) {
+      alert(`Could not delete board: ${err.message}`)
+    }
+  }
+
   const toggleBoardFeedback = async (row, label) => {
     const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {}
     const current = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
@@ -493,6 +505,10 @@ export default function VisualLab({ activeContext } = {}) {
                       <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }}
                         onClick={() => patchSavedBoard(board, { archived: true })}>Ignore</button>
                     )}
+                    <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }}
+                      onClick={() => patchSavedBoard(board, { hidden_from_lookbook: !board.hidden_from_lookbook })}>
+                      {board.hidden_from_lookbook ? 'Show in Lookbook' : 'Hide from Lookbook'}
+                    </button>
                   </div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
                     {SAVED_BOARD_FEEDBACK_LABELS.map(([label, text]) => {
@@ -521,6 +537,28 @@ export default function VisualLab({ activeContext } = {}) {
                       }).join(', ')}
                     </div>
                   )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, paddingTop: 6, borderTop: '1px solid var(--border-light)' }}>
+                    <button
+                      className="btn-danger"
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: 10,
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'var(--danger-bg)',
+                        color: 'var(--danger)',
+                        border: '1px solid rgba(168,64,64,0.15)',
+                        cursor: 'pointer',
+                        fontWeight: 500,
+                      }}
+                      onClick={async () => {
+                        if (confirm(`Delete "${board.title || 'this board'}" from everywhere?`)) {
+                          await deleteSavedBoard(board.id)
+                        }
+                      }}
+                    >
+                      Delete Board
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

@@ -1338,7 +1338,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
   const fetchSavedBoards = async () => {
     setLoadingBoards(true)
     try {
-      const res = await fetch('/api/saved-boards?limit=100')
+      const res = await fetch('/api/saved-boards?limit=100&excludeHidden=true')
       const data = await res.json()
       setSavedBoards(Array.isArray(data) ? data : [])
     } catch (err) {
@@ -1453,6 +1453,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
   })
 
   const filteredAndSortedBoards = savedBoards.filter(b => {
+    if (b.hidden_from_lookbook) return false
     // 1. Occasion Filter
     if (filterOcc) {
       const qOcc = filterOcc.toLowerCase().replace(/[-_]+/g, ' ')

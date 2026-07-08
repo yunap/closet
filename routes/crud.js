@@ -584,14 +584,15 @@ router.post('/saved-boards', (req, res) => {
       watchFor = '',
       payload = {},
       favorite = false,
+      hidden_from_lookbook = false,
     } = req.body || {}
 
     if (!imageUrl) return res.status(400).json({ error: 'imageUrl is required' })
 
     const result = db.prepare(`
       INSERT INTO saved_boards
-      (board_type, context_type, context_id, context_name, title, image_url, pieces, missing_pieces, reason, watch_for, payload, favorite)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (board_type, context_type, context_id, context_name, title, image_url, pieces, missing_pieces, reason, watch_for, payload, favorite, hidden_from_lookbook)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       boardType || 'wardrobe',
       contextType || null,
@@ -604,7 +605,8 @@ router.post('/saved-boards', (req, res) => {
       reason || '',
       watchFor || '',
       JSON.stringify(payload || {}),
-      favorite ? 1 : 0
+      favorite ? 1 : 0,
+      hidden_from_lookbook ? 1 : 0
     )
 
     const saved = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(result.lastInsertRowid)
@@ -612,6 +614,7 @@ router.post('/saved-boards', (req, res) => {
       ...saved,
       favorite: Boolean(saved.favorite),
       archived: Boolean(saved.archived),
+      hidden_from_lookbook: Boolean(saved.hidden_from_lookbook),
       pieces: safeJsonParse(saved.pieces, []),
       missing_pieces: safeJsonParse(saved.missing_pieces, []),
       payload: safeJsonParse(saved.payload, {})
@@ -624,12 +627,13 @@ router.post('/saved-boards', (req, res) => {
 
 router.get('/saved-boards', (req, res) => {
   try {
-    const { contextType, contextId, pieceId, limit = 100, includeArchived = 'false' } = req.query
+    const { contextType, contextId, pieceId, limit = 100, includeArchived = 'false', excludeHidden = 'false' } = req.query
     const clauses = []
     const params = []
     if (contextType) { clauses.push('context_type = ?'); params.push(contextType) }
     if (contextId) { clauses.push('context_id = ?'); params.push(Number(contextId)) }
     if (includeArchived !== 'true') clauses.push('COALESCE(archived,0) = 0')
+    if (excludeHidden === 'true') clauses.push('COALESCE(hidden_from_lookbook,0) = 0')
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
     const rowLimit = pieceId ? Math.max(Number(limit), 500) : Number(limit)
     const rows = db.prepare(`
@@ -644,6 +648,7 @@ router.get('/saved-boards', (req, res) => {
         ...row,
         favorite: Boolean(row.favorite),
         archived: Boolean(row.archived),
+        hidden_from_lookbook: Boolean(row.hidden_from_lookbook),
         pieces: safeJsonParse(row.pieces, []),
         missing_pieces: safeJsonParse(row.missing_pieces, []),
         payload: safeJsonParse(row.payload, {}),
@@ -664,7 +669,7 @@ router.patch('/saved-boards/:id', (req, res) => {
   try {
     const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(req.params.id)
     if (!row) return res.status(404).json({ error: 'Saved board not found' })
-    const { favorite, archived, title, reason, watchFor, feedbackLabel, feedbackLabels } = req.body || {}
+    const { favorite, archived, title, reason, watchFor, feedbackLabel, feedbackLabels, hidden_from_lookbook } = req.body || {}
     const payload = safeJsonParse(row.payload, {}) || {}
     let nextFeedbackLabels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
     if (Array.isArray(feedbackLabels)) {
@@ -679,19 +684,23 @@ router.patch('/saved-boards/:id', (req, res) => {
     const next = {
       favorite: typeof favorite === 'boolean' ? (favorite ? 1 : 0) : row.favorite || 0,
       archived: typeof archived === 'boolean' ? (archived ? 1 : 0) : row.archived || 0,
+      hidden_from_lookbook: typeof hidden_from_lookbook === 'boolean'
+        ? (hidden_from_lookbook ? 1 : 0)
+        : (typeof hidden_from_lookbook === 'number' ? hidden_from_lookbook : row.hidden_from_lookbook || 0),
       title: typeof title === 'string' ? title : row.title,
       reason: typeof reason === 'string' ? title : row.reason,
       watch_for: typeof watchFor === 'string' ? watchFor : row.watch_for,
       payload: JSON.stringify(nextPayload),
     }
     next.reason = typeof reason === 'string' ? reason : row.reason
-    db.prepare('UPDATE saved_boards SET favorite = ?, archived = ?, title = ?, reason = ?, watch_for = ?, payload = ? WHERE id = ?')
-      .run(next.favorite, next.archived, next.title, next.reason, next.watch_for, next.payload, req.params.id)
+    db.prepare('UPDATE saved_boards SET favorite = ?, archived = ?, hidden_from_lookbook = ?, title = ?, reason = ?, watch_for = ?, payload = ? WHERE id = ?')
+      .run(next.favorite, next.archived, next.hidden_from_lookbook, next.title, next.reason, next.watch_for, next.payload, req.params.id)
     const updated = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(req.params.id)
     res.json({
       ...updated,
       favorite: Boolean(updated.favorite),
       archived: Boolean(updated.archived),
+      hidden_from_lookbook: Boolean(updated.hidden_from_lookbook),
       pieces: safeJsonParse(updated.pieces, []),
       missing_pieces: safeJsonParse(updated.missing_pieces, []),
       payload: safeJsonParse(updated.payload, {})
@@ -704,10 +713,10 @@ router.patch('/saved-boards/:id', (req, res) => {
 
 router.delete('/saved-boards/:id', (req, res) => {
   try {
-    db.prepare('UPDATE saved_boards SET archived = 1 WHERE id = ?').run(req.params.id)
+    db.prepare('DELETE FROM saved_boards WHERE id = ?').run(req.params.id)
     res.json({ success: true })
   } catch (err) {
-    console.error('Archive saved board error:', err)
+    console.error('Delete saved board error:', err)
     res.status(500).json({ error: err.message })
   }
 })
