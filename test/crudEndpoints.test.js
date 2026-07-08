@@ -460,6 +460,34 @@ test('POST /api/ai/ask error boundary returns generic error message', async () =
   assert.equal(data.error, 'Something went wrong — try again')
 })
 
+test('GET /api/pieces search by ID matches correctly', async () => {
+  const fd1 = new FormData()
+  fd1.append('name', 'unique orange top')
+  fd1.append('category', 'top')
+  const res1 = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd1 })
+  const piece1 = await res1.json()
+
+  const fd2 = new FormData()
+  fd2.append('name', 'unique blue pants')
+  fd2.append('category', 'bottom')
+  const res2 = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd2 })
+  const piece2 = await res2.json()
+
+  // Search by exact numeric ID of piece1
+  const searchRes = await fetch(`${baseUrl}/api/pieces?search=${piece1.id}`)
+  assert.equal(searchRes.status, 200)
+  const searchData = await searchRes.json()
+  
+  const hasPiece1 = searchData.some(p => p.id === piece1.id)
+  const hasPiece2 = searchData.some(p => p.id === piece2.id)
+  assert.ok(hasPiece1, 'Should find piece 1')
+  assert.ok(!hasPiece2, 'Should not find piece 2')
+
+  // Clean up
+  await fetch(`${baseUrl}/api/pieces/${piece1.id}`, { method: 'DELETE' })
+  await fetch(`${baseUrl}/api/pieces/${piece2.id}`, { method: 'DELETE' })
+})
+
 
 
 

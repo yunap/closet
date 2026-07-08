@@ -45,7 +45,10 @@ router.get('/pieces', (req, res) => {
   if (season && season !== 'all') { q += " AND (season = ? OR season = 'year-round')"; params.push(season) }
   if (status)    { q += ' AND status = ?';                params.push(status) }
   if (search)    {
+    const searchVal = String(search).trim()
+    const isNum = /^\d+$/.test(searchVal)
     q += ` AND (
+      ${isNum ? 'id = ? OR' : ''}
       name LIKE ? OR
       colors LIKE ? OR
       reads_as LIKE ? OR
@@ -56,6 +59,9 @@ router.get('/pieces', (req, res) => {
       sleeve_type LIKE ?
     )`
     const term = `%${search}%`
+    if (isNum) {
+      params.push(Number(searchVal))
+    }
     params.push(term, term, term, term, term, term, term, term)
   }
   if (occasion)  { q += ' AND occasions LIKE ?';          params.push(`%"${occasion}"%`) }

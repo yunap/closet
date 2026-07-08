@@ -147,7 +147,7 @@ export default function PieceInventory({ onSendToStylist }) {
 
         <div className="search-bar">
           <span className="search-icon">◎</span>
-          <input type="search" placeholder="Search pieces…" value={search} onChange={e => setSearch(e.target.value)} />
+          <input type="search" placeholder="Search pieces by name, tags, or ID…" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
         <div className="filter-row" style={{ marginBottom: 8 }}>
