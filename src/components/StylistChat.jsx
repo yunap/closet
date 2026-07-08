@@ -3866,7 +3866,7 @@ export default function StylistChat({
       <ThreadRail
         threads={archivedView ? archivedThreads : threads}
         currentThreadId={currentThreadId}
-        onSelectThread={openThread}
+        onSelectThread={(threadId) => threadId === 'new_chat' ? openThread('new_chat') : navigate('/stylist/' + threadId)}
         onNewThread={() => openThread('new_chat')}
         onDeleteThread={deleteThread}
         onRenameThread={renameThread}
@@ -3880,7 +3880,7 @@ export default function StylistChat({
         <ThreadRail
           threads={archivedView ? archivedThreads : threads}
           currentThreadId={currentThreadId}
-          onSelectThread={openThread}
+          onSelectThread={(threadId) => threadId === 'new_chat' ? openThread('new_chat') : navigate('/stylist/' + threadId)}
           onNewThread={() => openThread('new_chat')}
           onDeleteThread={deleteThread}
           onRenameThread={renameThread}
