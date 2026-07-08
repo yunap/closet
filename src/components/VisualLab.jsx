@@ -54,7 +54,7 @@ const SAVED_BOARD_FEEDBACK_LABELS = [
 //   onClose         — called when the user closes the panel
 // ──────────────────────────────────────────────────────────────────────────────
 
-export default function VisualLab({ activeContext } = {}) {
+export default function VisualLab({ activeContext, onGoToThread } = {}) {
   const [calibrationImages, setCalibrationImages]           = useState([])
   const [calibrationFilter, setCalibrationFilter]           = useState('active')
   const [calibrationUploadFile, setCalibrationUploadFile]   = useState(null)
@@ -493,6 +493,26 @@ export default function VisualLab({ activeContext } = {}) {
                     </div>
                   )}
                   {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.35 }}>{board.reason}</div>}
+                  {board.payload?.threadId && board.payload.threadId !== 'new_chat' && (
+                    <button
+                      onClick={() => onGoToThread?.(board.payload.threadId)}
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--accent)',
+                        background: 'transparent',
+                        border: 'none',
+                        padding: '2px 0',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        textDecoration: 'underline',
+                        justifySelf: 'start',
+                        marginTop: 2,
+                        marginBottom: 2
+                      }}
+                    >
+                      💬 View generating chat
+                    </button>
+                  )}
                   <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                     <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }}
                       onClick={() => patchSavedBoard(board, { favorite: !board.favorite })}>

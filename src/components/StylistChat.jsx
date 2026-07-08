@@ -210,8 +210,10 @@ const compactEvaluationMemory = (evaluation = null) => {
 export default function AskClaude({
   initialOutfit,
   initialPiece,
+  initialThreadId,
   onClearOutfit,
   onClearPiece,
+  onClearThreadId,
   activeContext: externalActiveContext,
   onContextChange,
 }) {
@@ -478,7 +480,13 @@ export default function AskClaude({
     setLoadingThread(true)
     try {
       const res = await fetch(`/api/chat-threads/${threadId}`)
-      if (!res.ok) throw new Error('Failed to fetch thread')
+      if (!res.ok) {
+        alert('This chat thread is no longer available (it may have been deleted).')
+        setCurrentThreadId('new_chat')
+        setActiveThreadMetadata(null)
+        setLoadingThread(false)
+        return
+      }
       const thread = await res.json()
       
       setMessages(thread.payload.messages || [])
@@ -1011,6 +1019,12 @@ export default function AskClaude({
     setImageFile(null); setImagePrev(null)
     onClearPiece?.()
   }, [initialPiece])
+
+  useEffect(() => {
+    if (!initialThreadId) return
+    selectThread(initialThreadId)
+    onClearThreadId?.()
+  }, [initialThreadId])
 
   useEffect(() => {
     const openingWithAction = initialPiece || (initialOutfit && initialOutfit.autoSend !== true) || pendingPiece || pendingOutfit
@@ -2686,7 +2700,7 @@ export default function AskClaude({
     const res = await fetch('/api/saved-boards', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boardType, contextType: context.type, contextId: context.id, contextName: context.name, title: board.label || board.title || 'Saved board', imageUrl: board.imageUrl, pieces: board.pieces || [], missingPieces: board.missingPieces || [], reason: board.reason || '', watchFor: board.watchFor || '', payload: { board, messageIndex, boardIndex, feedback_labels: existingFeedbackLabels }, feedbackLabels: existingFeedbackLabels })
+      body: JSON.stringify({ boardType, contextType: context.type, contextId: context.id, contextName: context.name, title: board.label || board.title || 'Saved board', imageUrl: board.imageUrl, pieces: board.pieces || [], missingPieces: board.missingPieces || [], reason: board.reason || '', watchFor: board.watchFor || '', payload: { board, messageIndex, boardIndex, feedback_labels: existingFeedbackLabels, threadId: currentThreadId }, feedbackLabels: existingFeedbackLabels })
     })
     if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Could not save board') }
     setSavedBoardKeys(prev => new Set([...prev, key]))

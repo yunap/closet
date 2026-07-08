@@ -33,15 +33,26 @@ export default function App() {
     return () => window.removeEventListener('todos-changed', fetchPendingCount)
   }, [fetchPendingCount])
 
+  const [stylistThreadId, setStylistThreadId] = useState(null)
+
   const sendOutfitToStylist = (outfit) => {
     setStylistPiece(null)
+    setStylistThreadId(null)
     setStylistOutfit(outfit ? { ...outfit, actionId: Date.now() } : null)
     setTab('ask')
   }
 
   const sendPieceToStylist = (piece) => {
     setStylistOutfit(null)
+    setStylistThreadId(null)
     setStylistPiece(piece)
+    setTab('ask')
+  }
+
+  const goToThread = (threadId) => {
+    setStylistOutfit(null)
+    setStylistPiece(null)
+    setStylistThreadId(threadId)
     setTab('ask')
   }
 
@@ -49,16 +60,18 @@ export default function App() {
     <div className="app">
       <main className="app-main">
         {tab === 'pieces'  && <PieceInventory onSendToStylist={sendPieceToStylist} />}
-        {tab === 'outfits' && <OutfitLookbook onSendToStylist={sendOutfitToStylist} />}
+        {tab === 'outfits' && <OutfitLookbook onSendToStylist={sendOutfitToStylist} onGoToThread={goToThread} />}
         {tab === 'ask'     && (
           <AskClaude
             initialOutfit={stylistOutfit}
             initialPiece={stylistPiece}
+            initialThreadId={stylistThreadId}
             onClearOutfit={() => setStylistOutfit(null)}
             onClearPiece={() => setStylistPiece(null)}
+            onClearThreadId={() => setStylistThreadId(null)}
           />
         )}
-        {tab === 'vislab'  && <VisualLab />}
+        {tab === 'vislab'  && <VisualLab onGoToThread={goToThread} />}
       </main>
 
       <nav className="bottom-nav">

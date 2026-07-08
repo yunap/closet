@@ -1119,7 +1119,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
 }
 
 // ── Board Detail ──────────────────────────────────────────────────────────────
-function BoardDetail({ board, onClose, onDelete, onSendToStylist }) {
+function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }) {
   const [previewImage, setPreviewImage] = useState(null)
   const boardImageSrc = resolveUploadImageSrc(board.image_url)
 
@@ -1248,6 +1248,34 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist }) {
               </div>
             )}
 
+            {board.payload?.threadId && board.payload.threadId !== 'new_chat' && (
+              <div style={{ marginBottom: 16 }}>
+                <div className="form-label" style={{ marginBottom: 8 }}>Source conversation</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose?.()
+                    onGoToThread?.(board.payload.threadId)
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 12,
+                    color: 'var(--accent)',
+                    background: 'var(--accent-light)',
+                    border: '1px solid var(--accent)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '6px 12px',
+                    cursor: 'pointer',
+                    fontWeight: 500
+                  }}
+                >
+                  💬 View generating chat
+                </button>
+              </div>
+            )}
+
             <button onClick={() => onSendToStylist(board)} style={{
               width: '100%', padding: '12px', marginBottom: 12,
               background: 'var(--accent)', color: '#fff',
@@ -1308,7 +1336,7 @@ function Toast({ message, onDone }) {
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
-export default function OutfitLookbook({ onSendToStylist }) {
+export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
   const [outfits, setOutfits]           = useState([])
   const [loading, setLoading]           = useState(true)
   const [search, setSearch]             = useState('')
@@ -1774,6 +1802,7 @@ export default function OutfitLookbook({ onSendToStylist }) {
           board={boardDetail}
           onClose={() => setBoardDetail(null)}
           onDelete={handleBoardDelete}
+          onGoToThread={onGoToThread}
           onSendToStylist={board => {
             setBoardDetail(null)
             onSendToStylist({

@@ -193,3 +193,26 @@ test('Lookbook board removal (PATCH hidden_from_lookbook = true) hides it from L
   assert.ok(visualLabBoards.some(b => b.id === id), 'Should remain in Visual Lab')
 })
 
+test('POST /api/saved-boards stores threadId in payload and returns it in responses', async () => {
+  const res = await fetch(`${baseUrl}/api/saved-boards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageUrl: 'with_thread.jpg',
+      title: 'Threaded Board',
+      payload: { threadId: 'thread_xyz123' }
+    })
+  })
+  assert.equal(res.status, 200)
+  const board = await res.json()
+  assert.equal(board.payload.threadId, 'thread_xyz123')
+
+  // Get and check
+  const getRes = await fetch(`${baseUrl}/api/saved-boards`)
+  const boards = await getRes.json()
+  const matched = boards.find(b => b.id === board.id)
+  assert.ok(matched)
+  assert.equal(matched.payload.threadId, 'thread_xyz123')
+})
+
+
