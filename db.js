@@ -58,7 +58,8 @@ db.exec(`
     type            TEXT NOT NULL,
     description     TEXT NOT NULL,
     linked_piece_id INTEGER REFERENCES pieces(id) ON DELETE SET NULL,
-    completed       INTEGER DEFAULT 0
+    completed       INTEGER DEFAULT 0,
+    field           TEXT
   );
 
   CREATE TABLE IF NOT EXISTS app_meta (
@@ -157,6 +158,13 @@ db.exec(`
   'archived INTEGER DEFAULT 0'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE chat_threads ADD COLUMN ${col}`) } catch {}
+})
+
+// Migrate todos to add field column
+;[
+  'field TEXT'
+].forEach(col => {
+  try { db.exec(`ALTER TABLE todos ADD COLUMN ${col}`) } catch {}
 })
 
 // ── Migrate: add new columns to existing DB ───────────────────────────────────

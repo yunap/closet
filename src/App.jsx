@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import PieceInventory from './views/PieceInventory'
 import OutfitLookbook from './views/OutfitLookbook'
 import AskClaude from './views/AskClaude'
@@ -15,6 +15,23 @@ export default function App() {
   const [tab, setTab]                     = useState('pieces')
   const [stylistOutfit, setStylistOutfit] = useState(null)
   const [stylistPiece,  setStylistPiece]  = useState(null)
+  const [pendingTodoCount, setPendingTodoCount] = useState(0)
+
+  const fetchPendingCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/todos')
+      if (res.ok) {
+        const data = await res.json()
+        setPendingTodoCount(data.filter(t => !t.completed).length)
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    fetchPendingCount()
+    window.addEventListener('todos-changed', fetchPendingCount)
+    return () => window.removeEventListener('todos-changed', fetchPendingCount)
+  }, [fetchPendingCount])
 
   const sendOutfitToStylist = (outfit) => {
     setStylistPiece(null)
@@ -45,16 +62,23 @@ export default function App() {
       </main>
 
       <nav className="bottom-nav">
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            className={`nav-btn ${tab === t.id ? 'active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            <span className="nav-icon">{t.icon}</span>
-            <span className="nav-label">{t.label}</span>
-          </button>
-        ))}
+        {TABS.map(t => {
+          const isWardrobe = t.id === 'pieces'
+          return (
+            <button
+              key={t.id}
+              className={`nav-btn ${tab === t.id ? 'active' : ''}`}
+              onClick={() => setTab(t.id)}
+              style={{ position: 'relative' }}
+            >
+              <span className="nav-icon">{t.icon}</span>
+              <span className="nav-label">{t.label}</span>
+              {isWardrobe && pendingTodoCount > 0 && (
+                <span className="badge-count nav-badge">{pendingTodoCount}</span>
+              )}
+            </button>
+          )
+        })}
       </nav>
     </div>
   )

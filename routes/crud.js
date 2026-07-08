@@ -708,15 +708,55 @@ router.delete('/saved-boards/:id', (req, res) => {
 
 // ── Todos API ──────────────────────────────────────────────────────────────────
 router.get('/todos', (req, res) => {
-  const todos = db.prepare('SELECT * FROM todos ORDER BY completed ASC, id ASC').all()
-  res.json(todos.map(t => ({ ...t, completed: Boolean(t.completed) })))
+  const todos = db.prepare(`
+    SELECT t.*, p.name AS piece_name, p.photo AS piece_photo, p.status AS piece_status
+    FROM todos t
+    LEFT JOIN pieces p ON t.linked_piece_id = p.id
+    ORDER BY t.completed ASC, t.id ASC
+  `).all()
+  res.json(todos.map(t => ({
+    ...t,
+    completed: Boolean(t.completed),
+    piece: t.linked_piece_id ? {
+      id: t.linked_piece_id,
+      name: t.piece_name,
+      photo: t.piece_photo,
+      status: t.piece_status
+    } : null
+  })))
 })
 
 router.post('/todos', (req, res) => {
-  const { type, description, linked_piece_id } = req.body
-  const r = db.prepare('INSERT INTO todos (type, description, linked_piece_id) VALUES (?, ?, ?)').run(type, description, linked_piece_id||null)
-  const t = db.prepare('SELECT * FROM todos WHERE id = ?').get(r.lastInsertRowid)
-  res.json({ ...t, completed: Boolean(t.completed) })
+  const { type, description, linked_piece_id, field } = req.body
+  const r = db.prepare('INSERT INTO todos (type, description, linked_piece_id, field) VALUES (?, ?, ?, ?)').run(type, description, linked_piece_id||null, field||null)
+  const t = db.prepare(`
+    SELECT t.*, p.name AS piece_name, p.photo AS piece_photo, p.status AS piece_status
+    FROM todos t
+    LEFT JOIN pieces p ON t.linked_piece_id = p.id
+    WHERE t.id = ?
+  `).get(r.lastInsertRowid)
+  res.json({
+    ...t,
+    completed: Boolean(t.completed),
+    piece: t.linked_piece_id ? {
+      id: t.linked_piece_id,
+      name: t.piece_name,
+      photo: t.piece_photo,
+      status: t.piece_status
+    } : null
+  })
+})
+
+router.post('/todos/clear-orphaned', (req, res) => {
+  const r = db.prepare(`
+    DELETE FROM todos
+    WHERE type = 'metadata'
+      AND (
+        linked_piece_id IS NULL
+        OR linked_piece_id NOT IN (SELECT id FROM pieces WHERE status = 'active')
+      )
+  `).run()
+  res.json({ success: true, deletedCount: r.changes })
 })
 
 router.patch('/todos/:id/toggle', (req, res) => {

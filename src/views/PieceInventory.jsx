@@ -61,6 +61,23 @@ export default function PieceInventory({ onSendToStylist }) {
   const [showBatch, setShowBatch]     = useState(false)
   const [editPiece, setEditPiece]     = useState(null)
   const [detailPiece, setDetailPiece] = useState(null)
+  const [pendingCount, setPendingCount] = useState(0)
+
+  const fetchPendingCount = useCallback(async () => {
+    try {
+      const res = await fetch('/api/todos')
+      if (res.ok) {
+        const data = await res.json()
+        setPendingCount(data.filter(t => !t.completed).length)
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    fetchPendingCount()
+    window.addEventListener('todos-changed', fetchPendingCount)
+    return () => window.removeEventListener('todos-changed', fetchPendingCount)
+  }, [fetchPendingCount])
 
   const fetchMeta = useCallback(async () => {
     try {
@@ -116,7 +133,7 @@ export default function PieceInventory({ onSendToStylist }) {
               onClick={() => setShowTodo(true)}
               style={{ display: 'flex', alignItems: 'center', gap: 4 }}
             >
-              📋 Tasks
+              📋 Tasks {pendingCount > 0 && <span className="badge-count">{pendingCount}</span>}
             </button>
             <button
               className="chip"
@@ -255,7 +272,18 @@ export default function PieceInventory({ onSendToStylist }) {
           <div className="modal-sheet" onClick={e => e.stopPropagation()} style={{ maxHeight: '88dvh', display: 'flex', flexDirection: 'column' }}>
             <div className="modal-handle" />
             <div style={{ overflowY: 'auto', flex: 1, paddingBottom: 24 }}>
-              <TodoList isModal={true} onClose={() => setShowTodo(false)} />
+              <TodoList
+                isModal={true}
+                onClose={() => setShowTodo(false)}
+                onPieceClick={async (pieceId) => {
+                  const res = await fetch(`/api/pieces/${pieceId}`)
+                  if (res.ok) {
+                    const piece = await res.json()
+                    setShowTodo(false)
+                    setDetailPiece(piece)
+                  }
+                }}
+              />
             </div>
           </div>
         </div>

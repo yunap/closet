@@ -1966,7 +1966,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
         LIMIT 1
       `).get(piece.id, `%missing ${field}%`)
       if (!existing) {
-        db.prepare('INSERT INTO todos (type, description, linked_piece_id) VALUES (?, ?, ?)').run('metadata', description, piece.id)
+        db.prepare('INSERT INTO todos (type, description, linked_piece_id, field) VALUES (?, ?, ?, ?)').run('metadata', description, piece.id, field)
       }
     } catch (err) {
       console.warn('Failed to create metadata todo:', err.message)
