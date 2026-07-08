@@ -83,8 +83,11 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
       {/* Info */}
       <div className="piece-card-body">
         <div className="piece-card-name">{piece.name}</div>
-        <div className="piece-card-meta">
-          {piece.colors.slice(0, 2).join(' · ')}
+        <div className="piece-card-meta" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ textTransform: 'capitalize' }}>
+            {piece.colors.slice(0, 2).join(' · ')}
+          </span>
+          <span style={{ fontFamily: 'monospace', opacity: 0.65, fontSize: '0.95em' }}>#{piece.id}</span>
         </div>
       </div>
     </div>
