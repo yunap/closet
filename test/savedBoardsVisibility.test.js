@@ -215,4 +215,47 @@ test('POST /api/saved-boards stores threadId in payload and returns it in respon
   assert.equal(matched.payload.threadId, 'thread_xyz123')
 })
 
+test('GET /api/saved-boards lazy backfills threadId from chat_threads using image_url match', async () => {
+  // Create a chat thread containing the target image url in its payload
+  const targetImageUrl = 'uploads/lazy-backfill-outfit-555.png'
+  const mockThreadId = 'thread_lazy_999'
+  db.prepare(`
+    INSERT INTO chat_threads (id, title, payload)
+    VALUES (?, ?, ?)
+  `).run(mockThreadId, 'Lazy Match Thread', JSON.stringify({
+    messages: [
+      { text: 'Look at this outfit!' }
+    ],
+    boardResults: {
+      'some-key': [{ imageUrl: targetImageUrl }]
+    }
+  }))
+
+  // Create a saved board with the same image_url but NO threadId in its payload
+  const res = await fetch(`${baseUrl}/api/saved-boards`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageUrl: targetImageUrl,
+      title: 'Legacy Board to Backfill',
+      payload: { feedback_labels: ['signature'] }
+    })
+  })
+  const board = await res.json()
+  assert.equal(board.payload.threadId, undefined)
+
+  // Query saved-boards to trigger backfill
+  const getRes = await fetch(`${baseUrl}/api/saved-boards`)
+  const boards = await getRes.json()
+  const matched = boards.find(b => b.id === board.id)
+  assert.ok(matched)
+  assert.equal(matched.payload.threadId, mockThreadId)
+
+  // Verify the database row has indeed been updated with the backfilled payload
+  const checkDb = db.prepare('SELECT payload FROM saved_boards WHERE id = ?').get(board.id)
+  const dbPayload = JSON.parse(checkDb.payload)
+  assert.equal(dbPayload.threadId, mockThreadId)
+})
+
+
 

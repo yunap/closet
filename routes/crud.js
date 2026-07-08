@@ -644,6 +644,20 @@ router.get('/saved-boards', (req, res) => {
     `).all(...params, rowLimit)
     const normalized = rows.map(row => {
       const linked_piece_ids = collectPieceIdsFromSavedBoardRow(row)
+      const payload = safeJsonParse(row.payload, {})
+      if (!payload.threadId && row.image_url) {
+        try {
+          const match = db.prepare('SELECT id FROM chat_threads WHERE payload LIKE ? LIMIT 1')
+            .get(`%${row.image_url}%`)
+          if (match) {
+            payload.threadId = match.id
+            db.prepare('UPDATE saved_boards SET payload = ? WHERE id = ?')
+              .run(JSON.stringify(payload), row.id)
+          }
+        } catch (e) {
+          console.error('Failed to look up or backfill threadId for saved board:', e)
+        }
+      }
       return {
         ...row,
         favorite: Boolean(row.favorite),
@@ -651,7 +665,7 @@ router.get('/saved-boards', (req, res) => {
         hidden_from_lookbook: Boolean(row.hidden_from_lookbook),
         pieces: safeJsonParse(row.pieces, []),
         missing_pieces: safeJsonParse(row.missing_pieces, []),
-        payload: safeJsonParse(row.payload, {}),
+        payload,
         linked_piece_ids,
       }
     })
