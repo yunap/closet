@@ -216,6 +216,19 @@ NEW_COLUMNS.forEach(col => {
   try { db.exec(`ALTER TABLE generation_runs ADD COLUMN ${col}`) } catch {}
 })
 
+// One-time repair for metadata todos with NULL or empty field
+try {
+  const nullFieldTodos = db.prepare("SELECT id, description FROM todos WHERE type = 'metadata' AND (field IS NULL OR field = '')").all()
+  for (const todo of nullFieldTodos) {
+    const match = todo.description.match(/missing\s+([a-z0-9_-]+)\s+—/i)
+    if (match) {
+      db.prepare('UPDATE todos SET field = ? WHERE id = ?').run(match[1].toLowerCase().trim(), todo.id)
+    }
+  }
+} catch (err) {
+  console.warn('Failed to backfill metadata todo fields:', err.message)
+}
+
 // Backfill lifecycle state only. Do not clear historical structure/fit fields:
 // existing rows may contain hand-corrected truth from before manual_overrides existed.
 try {

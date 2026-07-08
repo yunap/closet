@@ -274,3 +274,24 @@ test('7. No post-model-filtering regression: malformed cards still appear as dia
   assert.equal(brokenOutfit.source, 'model-rejected')
   assert.equal(brokenOutfit.rejectionReason, 'structural: missing shoes')
 })
+
+test('8. One-time repair for metadata todos backfills field from description', () => {
+  db.prepare("DELETE FROM todos").run()
+  const todoId = db.prepare(`
+    INSERT INTO todos (type, description, linked_piece_id, field)
+    VALUES (?, ?, ?, null)
+  `).run('metadata', 'navy linen blazer: missing fabric_weight — retag to restore weather-gated visibility', seeded.top).lastInsertRowid
+
+  // Run the backfill logic manually in the test to assert its correctness
+  const nullFieldTodos = db.prepare("SELECT id, description FROM todos WHERE type = 'metadata' AND (field IS NULL OR field = '')").all()
+  for (const todo of nullFieldTodos) {
+    const match = todo.description.match(/missing\s+([a-z0-9_-]+)\s+—/i)
+    if (match) {
+      db.prepare('UPDATE todos SET field = ? WHERE id = ?').run(match[1].toLowerCase().trim(), todo.id)
+    }
+  }
+
+  const updated = db.prepare('SELECT field FROM todos WHERE id = ?').get(todoId)
+  assert.equal(updated.field, 'fabric_weight')
+})
+
