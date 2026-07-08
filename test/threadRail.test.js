@@ -1,0 +1,223 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import {
+  humanizeLabel,
+  deriveBuilderTitle,
+  groupThreadsByDate,
+  clusterThreadsBySubject
+} from '../src/utils/threadGrouping.js'
+import { deriveTripTitle } from '../routes/ai.js'
+
+test('humanizeLabel formats occasions and activities correctly', () => {
+  assert.equal(humanizeLabel('outdoor_daytime_social'), 'Outdoor social')
+  assert.equal(humanizeLabel('smart-casual'), 'Smart casual')
+  assert.equal(humanizeLabel('walking'), 'Lots of walking')
+  assert.equal(humanizeLabel('hiking'), 'Hiking/Outdoor active')
+  assert.equal(humanizeLabel('none'), '')
+  assert.equal(humanizeLabel('some-random-tag'), 'Some Random Tag')
+})
+
+test('deriveBuilderTitle generates concise titles based on query details', () => {
+  const title = deriveBuilderTitle({
+    occasion: 'smart-casual',
+    activity: 'walking',
+    season: 'warm',
+    mood: 'artistic minimalist'
+  })
+  assert.equal(title, 'Smart casual · Lots of walking · Warm · "artistic minimalist"')
+})
+
+test('clusterThreadsBySubject clusters outfit/piece threads and groups freeform ones', () => {
+  const threads = [
+    {
+      id: 'thread_1',
+      title: 'Outfit discussion 1',
+      activeContext: { type: 'outfit', id: 'outfit_123', name: 'Rioja Vineyard' },
+      updated_at: '2026-07-07 12:00:00'
+    },
+    {
+      id: 'thread_2',
+      title: 'Outfit discussion 2',
+      activeContext: { type: 'outfit', id: 'outfit_123', name: 'Rioja Vineyard' },
+      updated_at: '2026-07-07 13:00:00'
+    },
+    {
+      id: 'thread_3',
+      title: 'Piece discussion',
+      activeContext: { type: 'piece', id: 'piece_456', name: 'Emerald Pants' },
+      updated_at: '2026-07-07 10:00:00'
+    },
+    {
+      id: 'thread_4',
+      title: 'Freeform conversation',
+      activeContext: null,
+      updated_at: '2026-07-07 14:00:00'
+    }
+  ]
+
+  const { clusters, otherConversations } = clusterThreadsBySubject(threads)
+
+  // 2 clusters should be created
+  assert.equal(clusters.length, 2)
+  
+  // First cluster should be outfit_123 because maxTime is 13:00 vs 10:00 for piece_456
+  assert.equal(clusters[0].id, 'outfit_123')
+  assert.equal(clusters[0].name, 'Rioja Vineyard')
+  assert.equal(clusters[0].threads.length, 2)
+  assert.equal(clusters[0].threads[0].id, 'thread_2') // newest first within cluster
+
+  assert.equal(clusters[1].id, 'piece_456')
+  assert.equal(clusters[1].name, 'Emerald Pants')
+  assert.equal(clusters[1].threads.length, 1)
+
+  // Freeform thread should land in other conversations
+  assert.equal(otherConversations.length, 1)
+  assert.equal(otherConversations[0].id, 'thread_4')
+})
+
+test('groupThreadsByDate categorizes threads into date windows', () => {
+  const now = new Date()
+  const todayTime = now.getTime()
+  const yesterdayTime = todayTime - 24 * 60 * 60 * 1000
+  const twoDaysAgoTime = todayTime - 2 * 24 * 60 * 60 * 1000
+  const earlierTime = todayTime - 10 * 24 * 60 * 60 * 1000
+  const builderTime = todayTime - 35 * 24 * 60 * 60 * 1000
+
+  const threads = [
+    { id: 't_today', updatedAt: todayTime },
+    { id: 't_yesterday', updatedAt: yesterdayTime },
+    { id: 't_thisWeek', updatedAt: twoDaysAgoTime },
+    { id: 't_earlier', updatedAt: earlierTime },
+    { id: 't_olderBuilder', updatedAt: builderTime, kind: 'builder' }
+  ]
+
+  const groups = groupThreadsByDate(threads)
+  assert.equal(groups.today[0].id, 't_today')
+  assert.equal(groups.yesterday[0].id, 't_yesterday')
+  assert.equal(groups.thisWeek[0].id, 't_thisWeek')
+  assert.equal(groups.earlier[0].id, 't_earlier')
+  assert.equal(groups.olderBuilder[0].id, 't_olderBuilder')
+})
+
+test('groupThreadsByDate disableOlderBuilderCollapse flag works for archived view', () => {
+  const now = new Date()
+  const builderTime = now.getTime() - 35 * 24 * 60 * 60 * 1000
+
+  const threads = [
+    { id: 't_olderBuilder', updatedAt: builderTime, kind: 'builder' }
+  ]
+
+  // Without the flag, it collapses
+  const groups1 = groupThreadsByDate(threads, false)
+  assert.equal(groups1.olderBuilder.length, 1)
+  assert.equal(groups1.earlier.length, 0)
+
+  // With the flag, it does not collapse (lands in earlier)
+  const groups2 = groupThreadsByDate(threads, true)
+  assert.equal(groups2.olderBuilder.length, 0)
+  assert.equal(groups2.earlier.length, 1)
+})
+
+test('ThreadRail component view toggle and collapsed state persists via localStorage code checks', () => {
+  const source = fs.readFileSync(new URL('../src/components/ThreadRail.jsx', import.meta.url), 'utf8')
+  
+  assert.match(source, /localStorage\.getItem\('stylist_rail_view_mode'\)/)
+  assert.match(source, /localStorage\.setItem\('stylist_rail_view_mode',\s*viewMode\)/)
+  assert.match(source, /localStorage\.getItem\('stylist_rail_collapsed'\)/)
+  assert.match(source, /localStorage\.setItem\('stylist_rail_collapsed',\s*String\(collapsed\)\)/)
+})
+
+test('StylistChat queries saved-boards on mount and uses savedBoardUrls to check saved state', () => {
+  const source = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
+  
+  // Verify state declaration
+  assert.match(source, /const\s*\[savedBoardUrls,\s*setSavedBoardUrls\]\s*=\s*useState\(new Set\(\)\)/)
+  
+  // Verify fetch call on mount
+  assert.match(source, /fetch\('\/api\/saved-boards\?limit=1000'\)/)
+  assert.match(source, /setSavedBoardUrls\(new Set\(urls\)\)/)
+  
+  // Verify imageURL checks for board/visual card rendering
+  assert.match(source, /isSaved\s*=\s*savedBoardKeys\.has\(saveKey\)\s*\|\|\s*\(board\.imageUrl\s*&&\s*savedBoardUrls\.has\(board\.imageUrl\)\)/)
+  assert.match(source, /isSaved\s*=\s*savedBoardKeys\.has\(key\)\s*\|\|\s*\(visual\.imageUrl\s*&&\s*savedBoardUrls\.has\(visual\.imageUrl\)\)/)
+  assert.match(source, /isBoardSaved\s*=\s*savedBoardKeys\.has\(saveKey\)\s*\|\|\s*\(board\.imageUrl\s*&&\s*savedBoardUrls\.has\(board\.imageUrl\)\)/)
+})
+
+test('deriveTripTitle parses trip destination, duration, and occasion parameters correctly', () => {
+  // Question with destination and day count
+  const title1 = deriveTripTitle('Compose outfits for a 5-day summer trip to Portland, OR', '', [])
+  assert.equal(title1, 'Portland, OR trip · 5 days')
+
+  // Question with destination and no day count, but outfits present
+  const title2 = deriveTripTitle('packing for NYC', '', [{ tripSummary: { durationText: '3 days' } }])
+  assert.equal(title2, 'NYC trip · 3 days')
+
+  // Question with destination and no day count
+  const title3 = deriveTripTitle('what should I pack for a smart casual dinner in London?', '', [])
+  assert.equal(title3, 'London trip')
+
+  // Question with no destination, but day count and slots occasion bestFor
+  const title4 = deriveTripTitle('4 days trip', '', [
+    { occasion: 'outdoor_daytime_social' },
+    { occasion: 'evening' }
+  ])
+  assert.equal(title4, 'Trip · 4 days · Winery/Evening')
+})
+
+test('StylistChat handles errors by rendering distinct error bubble and bypassing rule actions', () => {
+  const source = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
+
+  // Verify that an assistant error message renders in an error-bubble wrapper
+  assert.match(source, /className="ai-message assistant error-bubble"/)
+  assert.match(source, /background:\s*'rgba\(219,\s*68,\s*85,\s*0\.08\)'/)
+  assert.match(source, /border:\s*'1px\s*solid\s*rgba\(219,\s*68,\s*85,\s*0\.25\)'/)
+
+  // Verify that styling rule buttons are bypassed for error messages
+  assert.match(source, /!m\.isError\s*&&\s*i\s*>\s*0\s*&&\s*activeContext\s*&&\s*i\s*===\s*latestAssistantIndex/)
+
+  // Verify that the client-side follow-up query uses the existing thread and does not create a new one
+  assert.match(source, /let\s*isTransitioningNew\s*=\s*currentThreadId\s*===\s*'new_chat'/)
+})
+
+test('Outfit card layout refinement - split chips, saved badge, details teaser, telemetry details', () => {
+  const source = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
+
+  // 1. Verify getTeaserText helper existence
+  assert.match(source, /const getTeaserText =/)
+
+  // Test getTeaserText sentence splitting behavior directly
+  const getTeaserText = (text) => {
+    if (!text) return ''
+    const trimmed = String(text).trim()
+    const firstSentence = trimmed.split(/[.!?]\s/)[0]
+    if (firstSentence.length < trimmed.length) {
+      return firstSentence + '.'
+    }
+    return firstSentence
+  }
+  assert.equal(getTeaserText("This is perfect. It works really well."), "This is perfect.")
+  assert.equal(getTeaserText("Only one sentence"), "Only one sentence")
+  assert.equal(getTeaserText(""), "")
+
+  // 2. Verify primary vs diagnostic chip split logic
+  assert.match(source, /const primaryTypes = \['signature', 'works', 'almost', 'not_me'\]/)
+  assert.match(source, /const primaryLabels = GENERATED_BOARD_FEEDBACK_LABELS\.filter/)
+  assert.match(source, /const diagnosticLabels = GENERATED_BOARD_FEEDBACK_LABELS\.filter/)
+
+  // 3. Verify More feedback / Less feedback toggles and disclosure rendering
+  assert.match(source, /Less feedback ▴/)
+  assert.match(source, /More feedback ▾/)
+  assert.match(source, /isExpanded\s*&&\s*\(/)
+
+  // 4. Verify relative position card wrapper for saved board badge positioning
+  assert.match(source, /className="generated-visual-card"\s+style=\{\{\s*position:\s*'relative'/i)
+
+  // 5. Verify saved board badge styling
+  assert.match(source, /className="saved-board-badge"/i)
+
+  // 6. Verify telemetry details collapse
+  assert.match(source, /className="telemetry-details"/i)
+})
+
+

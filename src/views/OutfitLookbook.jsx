@@ -76,11 +76,24 @@ const resolveUploadImageSrc = (photo) => {
 }
 
 // ── Piece Selector Modal ───────────────────────────────────────────────────────
-function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel }) {
+// ── Piece Selector Modal ───────────────────────────────────────────────────────
+function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel, singleSelect = false, initialCategory = '' }) {
   const [allPieces, setAllPieces] = useState([])
   const [selected, setSelected]   = useState(new Set(linkedPieceIds))
   const [search, setSearch]       = useState('')
+  const [filterCat, setFilterCat] = useState(initialCategory)
+  const [filterColor, setFilterColor] = useState('')
   const [saving, setSaving]       = useState(false)
+
+  const CATEGORIES = [
+    { value: '',          label: 'All' },
+    { value: 'top',       label: 'Tops' },
+    { value: 'bottom',    label: 'Bottoms' },
+    { value: 'dress',     label: 'Dresses' },
+    { value: 'outerwear', label: 'Outerwear' },
+    { value: 'shoes',     label: 'Shoes' },
+    { value: 'accessory', label: 'Accessories' },
+  ]
 
   useEffect(() => {
     fetch('/api/pieces').then(r => r.json()).then(setAllPieces)
@@ -88,35 +101,64 @@ function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel }) {
 
   const toggle = (id) => setSelected(prev => {
     const next = new Set(prev)
-    next.has(id) ? next.delete(id) : next.add(id)
+    if (singleSelect) {
+      if (next.has(id)) {
+        next.clear()
+      } else {
+        next.clear()
+        next.add(id)
+      }
+    } else {
+      next.has(id) ? next.delete(id) : next.add(id)
+    }
     return next
   })
 
-  const filtered = allPieces.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase())
-  )
+  // Colors available in the fetched pieces list
+  const availableColors = Array.from(
+    new Set(allPieces.flatMap(p => p.colors || []))
+  ).filter(Boolean)
+
+  const filtered = allPieces.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) ||
+                          (p.reads_as || '').toLowerCase().includes(search.toLowerCase())
+    const matchesCat = !filterCat || (p.category || '').toLowerCase() === filterCat.toLowerCase()
+    const matchesColor = !filterColor || (p.colors || []).map(c => c.toLowerCase()).includes(filterColor.toLowerCase())
+    return matchesSearch && matchesCat && matchesColor
+  })
+
+  const linkedPieces = allPieces.filter(p => selected.has(p.id))
 
   const handleSave = async () => {
-    setSaving(true)
-    await fetch(`/api/outfits/${outfitId}/pieces`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pieceIds: [...selected] })
-    })
+    if (outfitId) {
+      setSaving(true)
+      await fetch(`/api/outfits/${outfitId}/pieces`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pieceIds: [...selected] })
+      })
+      setSaving(false)
+    }
     onSave([...selected])
-    setSaving(false)
+  }
+
+  const getSwatchBg = (p) => {
+    if (!p) return '#9A8A78'
+    const color = p.colors?.[0] || ''
+    return COLOR_BG[color.toLowerCase()] || '#9A8A78'
   }
 
   return (
-    <div className="modal-overlay" onClick={onCancel} style={{ zIndex: 300 }}>
-      <div className="modal-sheet" onClick={e => e.stopPropagation()} style={{ maxHeight: '88dvh' }}>
+    <div className="modal-overlay" style={{ zIndex: 300 }}>
+      <div className="modal-sheet" onClick={e => e.stopPropagation()} style={{ maxHeight: '92dvh', display: 'flex', flexDirection: 'column' }}>
         <div className="modal-handle" />
         <div className="modal-header">
           <span className="modal-title">Link pieces</span>
           <button className="modal-close" onClick={onCancel}>✕</button>
         </div>
 
-        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-light)' }}>
+        {/* Filters Panel */}
+        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-light)', display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div className="search-bar" style={{ marginBottom: 0 }}>
             <span className="search-icon">◎</span>
             <input
@@ -126,55 +168,215 @@ function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel }) {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-        </div>
 
-        <div style={{ overflowY: 'auto', flex: 1 }}>
-          {filtered.map(piece => {
-            const isSelected = selected.has(piece.id)
-            const bg = piece.colors[0] ? (COLOR_BG[piece.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
-            return (
-              <div
-                key={piece.id}
-                onClick={() => toggle(piece.id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '10px 20px', cursor: 'pointer',
-                  background: isSelected ? 'var(--accent-light)' : 'transparent',
-                  borderBottom: '1px solid var(--border-light)',
-                  transition: 'background 0.15s',
-                }}
+          {/* Categories - Hide if locked to one via singleSelect */}
+          {!singleSelect && (
+            <div className="filter-row" style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, margin: 0 }}>
+              {CATEGORIES.map(c => (
+                <button
+                  key={c.value}
+                  type="button"
+                  className={`chip ${filterCat === c.value ? 'active' : ''}`}
+                  onClick={() => setFilterCat(c.value)}
+                  style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Colors */}
+          {availableColors.length > 0 && (
+            <div className="filter-row" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: 0 }}>
+              <span style={{ fontSize: 9, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', minWidth: 42, flexShrink: 0 }}>Colors:</span>
+              <button
+                type="button"
+                className={`chip ${!filterColor ? 'active' : ''}`}
+                onClick={() => setFilterColor('')}
+                style={{ fontSize: 10, padding: '2px 6px' }}
               >
-                {/* Tiny photo or color swatch */}
-                <div style={{ width: 40, height: 52, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: bg }}>
-                  {piece.photo && (
-                    <img src={`/uploads/${piece.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                  )}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', marginBottom: 2 }}>{piece.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                    {piece.category} · {piece.colors.slice(0,2).join('/')}
-                  </div>
-                </div>
-                <div style={{
-                  width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-                  border: `2px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
-                  background: isSelected ? 'var(--accent)' : 'transparent',
-                  color: '#fff', fontSize: 11,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  transition: 'all 0.15s',
-                }}>
-                  {isSelected && '✓'}
-                </div>
-              </div>
-            )
-          })}
+                All
+              </button>
+              {availableColors.map(color => {
+                const hex = COLOR_BG[color.toLowerCase()] || '#ccc'
+                const active = filterColor === color
+                const isLight = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac'].includes(color.toLowerCase())
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setFilterColor(active ? '' : color)}
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: '50%',
+                      background: hex,
+                      border: active ? '2px solid var(--accent)' : '1px solid rgba(0,0,0,0.15)',
+                      boxShadow: active ? '0 0 0 1px var(--accent-light)' : 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 0,
+                      position: 'relative',
+                      transition: 'all 0.15s ease'
+                    }}
+                    title={color}
+                  >
+                    {active && (
+                      <span style={{
+                        color: isLight ? '#333' : '#fff',
+                        fontSize: 9,
+                        fontWeight: 'bold',
+                        lineHeight: 1
+                      }}>✓</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
 
-        <div className="form-actions">
+        {/* Scrollable Grid View */}
+        <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
+          {/* Linked Section */}
+          {linkedPieces.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+                Linked Pieces ({linkedPieces.length})
+              </div>
+              <div className="piece-grid" style={{ gap: 12, padding: 0 }}>
+                {linkedPieces.map(piece => {
+                  const bg = getSwatchBg(piece)
+                  return (
+                    <div
+                      key={piece.id}
+                      onClick={() => toggle(piece.id)}
+                      className="piece-card"
+                      style={{
+                        position: 'relative',
+                        border: '1.5px solid var(--accent)',
+                        boxShadow: '0 0 0 1px var(--accent-light)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {piece.photo ? (
+                        <img src={`/uploads/${piece.photo}`} className="piece-photo" alt="" loading="lazy" />
+                      ) : (
+                        <div className="piece-placeholder" style={{ background: bg }}>
+                          <span className="piece-placeholder-letter">{piece.name.charAt(0)}</span>
+                        </div>
+                      )}
+                      
+                      {/* Selection overlay / indicator */}
+                      <div style={{
+                        position: 'absolute',
+                        top: 6,
+                        right: 6,
+                        width: 20,
+                        height: 20,
+                        borderRadius: '50%',
+                        background: 'var(--accent)',
+                        color: '#fff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 10,
+                        fontWeight: 'bold',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.15)'
+                      }}>
+                        ✕
+                      </div>
+
+                      <div className="piece-card-body" style={{ padding: '8px 8px 10px' }}>
+                        <div className="piece-card-name" style={{ fontSize: 11, margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{piece.name}</div>
+                        <div className="piece-card-meta" style={{ fontSize: 10, marginTop: 2 }}>{piece.category}</div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Divider if both sections exist */}
+          {linkedPieces.length > 0 && <hr style={{ border: 'none', borderTop: '1px solid var(--border-light)', margin: '20px 0' }} />}
+
+          {/* All Pieces Section */}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+              All Pieces ({filtered.length})
+            </div>
+            {filtered.length === 0 ? (
+              <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                No pieces match the current filters.
+              </div>
+            ) : (
+              <div className="piece-grid" style={{ gap: 12, padding: 0 }}>
+                {filtered.map(piece => {
+                  const isSelected = selected.has(piece.id)
+                  const bg = getSwatchBg(piece)
+                  return (
+                    <div
+                      key={piece.id}
+                      onClick={() => toggle(piece.id)}
+                      className="piece-card"
+                      style={{
+                        position: 'relative',
+                        border: isSelected ? '1.5px solid var(--accent)' : '1px solid var(--border-light)',
+                        boxShadow: isSelected ? '0 0 0 1px var(--accent-light)' : 'none',
+                        cursor: 'pointer',
+                        opacity: isSelected ? 0.85 : 1
+                      }}
+                    >
+                      {piece.photo ? (
+                        <img src={`/uploads/${piece.photo}`} className="piece-photo" alt="" loading="lazy" />
+                      ) : (
+                        <div className="piece-placeholder" style={{ background: bg }}>
+                          <span className="piece-placeholder-letter">{piece.name.charAt(0)}</span>
+                        </div>
+                      )}
+
+                      {/* Selection checkbox overlay */}
+                      <div style={{
+                        position: 'absolute',
+                        top: 6,
+                        right: 6,
+                        width: 18,
+                        height: 18,
+                        borderRadius: '50%',
+                        border: `1.5px solid ${isSelected ? 'var(--accent)' : 'rgba(255,255,255,0.7)'}`,
+                        background: isSelected ? 'var(--accent)' : 'rgba(0,0,0,0.3)',
+                        color: '#fff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 9,
+                        fontWeight: 'bold',
+                        backdropFilter: 'blur(2px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      }}>
+                        {isSelected && '✓'}
+                      </div>
+
+                      <div className="piece-card-body" style={{ padding: '8px 8px 10px' }}>
+                        <div className="piece-card-name" style={{ fontSize: 11, margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{piece.name}</div>
+                        <div className="piece-card-meta" style={{ fontSize: 10, marginTop: 2 }}>{piece.category}</div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="form-actions" style={{ borderTop: '1px solid var(--border-light)', paddingTop: 16 }}>
           <button className="btn-secondary" onClick={onCancel}>Cancel</button>
           <button className="btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : `Save ${selected.size} ${selected.size === 1 ? 'piece' : 'pieces'}`}
+            {saving ? 'Saving…' : singleSelect ? 'Link selected piece' : `Save ${selected.size} ${selected.size === 1 ? 'piece' : 'pieces'}`}
           </button>
         </div>
       </div>
@@ -182,29 +384,282 @@ function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel }) {
   )
 }
 
+// ── Similarity & Matching Helpers ─────────────────────────────────────────────
+function computeTokenSimilarity(str1, str2) {
+  if (!str1 || !str2) return 0
+  const getTokens = (str) => {
+    return str.toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 1 && !['and', 'with', 'the', 'for', 'in', 'of', 'on', 'at', 'to', 'piece'].includes(w))
+  }
+  const tokens1 = getTokens(str1)
+  const tokens2 = getTokens(str2)
+  if (tokens1.length === 0 || tokens2.length === 0) return 0
+  const set1 = new Set(tokens1)
+  const set2 = new Set(tokens2)
+  const intersection = new Set([...set1].filter(x => set2.has(x)))
+  const union = new Set([...set1, ...set2])
+  return intersection.size / union.size
+}
+
+function findBestMatchForExtracted(extractedPiece, wardrobePieces) {
+  if (!wardrobePieces || wardrobePieces.length === 0) return { piece: null, confidence: 'none', score: 0 }
+  const extCat = (extractedPiece.category || '').toLowerCase()
+  const extColors = (extractedPiece.colors || []).map(c => c.toLowerCase())
+  const extName = (extractedPiece.name_suggestion || '').toLowerCase()
+  const extReadsAs = (extractedPiece.reads_as || '').toLowerCase()
+
+  let bestPiece = null
+  let maxScore = -1
+
+  for (const wp of wardrobePieces) {
+    if ((wp.category || '').toLowerCase() !== extCat) continue
+
+    // Color overlap check
+    const wpColors = (wp.colors || []).map(c => c.toLowerCase())
+    const hasColorOverlap = extColors.some(c => wpColors.includes(c))
+    
+    const sim = Math.max(
+      computeTokenSimilarity(extName, wp.name),
+      computeTokenSimilarity(extName, wp.reads_as),
+      computeTokenSimilarity(extReadsAs, wp.name),
+      computeTokenSimilarity(extReadsAs, wp.reads_as)
+    )
+
+    let score = sim
+    if (hasColorOverlap) {
+      score += 0.2
+    } else if (extColors.length > 0 && wpColors.length > 0) {
+      score -= 0.3
+    }
+
+    if (score > maxScore) {
+      maxScore = score
+      bestPiece = wp
+    }
+  }
+
+  const confidence = maxScore >= 0.45 ? 'high' : (maxScore >= 0.2 ? 'low' : 'none')
+  return { piece: confidence !== 'none' ? bestPiece : null, confidence, score: maxScore }
+}
+
 // ── Extracted piece row (for scan flow) ───────────────────────────────────────
-function ExtractedPieceRow({ piece, checked, onChange }) {
+function ExtractedPieceRow({ piece, actionState, wardrobePieces, onChange }) {
+  const { action, linkedPieceId, bestMatch } = actionState
   const [name, setName] = useState(piece.name_suggestion || '')
-  useEffect(() => { onChange({ ...piece, name_suggestion: name }) }, [name])
+  const [showPicker, setShowPicker] = useState(false)
+
+  useEffect(() => {
+    onChange({ ...piece, name_suggestion: name }, null)
+  }, [name])
+
+  const currentLinkedPiece = wardrobePieces.find(wp => wp.id === linkedPieceId) || bestMatch
+
+  const handleActionChange = (newAction) => {
+    let newLinkedId = linkedPieceId
+    if (newAction === 'link' && !linkedPieceId && bestMatch) {
+      newLinkedId = bestMatch.id
+    }
+    onChange(null, { action: newAction, linkedPieceId: newLinkedId })
+  }
+
+  const handleLinkSelect = (id) => {
+    const selectedPiece = wardrobePieces.find(wp => wp.id === id)
+    onChange(null, { action: 'link', linkedPieceId: id, bestMatch: selectedPiece })
+  }
+
+  const getSwatchBg = (p) => {
+    if (!p) return '#9A8A78'
+    const color = p.colors?.[0] || ''
+    return COLOR_BG[color.toLowerCase()] || '#9A8A78'
+  }
+
+  const isLinkActive = action === 'link'
+  const isCreateActive = action === 'create'
+  const isSkipActive = action === 'skip'
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid var(--border-light)' }}>
-      <button
-        onClick={() => onChange(null, !checked)}
-        style={{
-          width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
-          border: `2px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
-          background: checked ? 'var(--accent)' : 'transparent',
-          color: '#fff', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s',
-        }}
-      >{checked && '✓'}</button>
-      <input
-        value={name} onChange={e => setName(e.target.value)} disabled={!checked}
-        style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 13, color: checked ? 'var(--text)' : 'var(--text-light)', outline: 'none', fontFamily: 'var(--font-sans)' }}
-        placeholder="Name this piece…"
-      />
-      <span style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--surface-2)', padding: '2px 8px', borderRadius: 10, flexShrink: 0, textTransform: 'capitalize' }}>
-        {piece.category}
-      </span>
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10,
+      padding: '12px 0',
+      borderBottom: '1px solid var(--border-light)',
+      opacity: isSkipActive ? 0.5 : 1,
+      transition: 'opacity 0.15s'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+              {piece.category.charAt(0).toUpperCase() + piece.category.slice(1)}
+            </span>
+            {piece.colors && piece.colors.length > 0 && (
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--surface-3)', padding: '2px 8px', borderRadius: 10 }}>
+                {piece.colors.join('/')}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+            Reads as: {piece.reads_as || 'unknown'}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 4, background: 'var(--surface-3)', padding: 3, borderRadius: 8 }}>
+          <button
+            type="button"
+            onClick={() => handleActionChange('link')}
+            style={{
+              padding: '4px 10px',
+              fontSize: 11,
+              fontWeight: 500,
+              border: 'none',
+              borderRadius: 6,
+              background: isLinkActive ? 'var(--accent)' : 'transparent',
+              color: isLinkActive ? '#fff' : 'var(--text-muted)',
+              cursor: 'pointer',
+              transition: 'all 0.15s'
+            }}
+          >
+            Link
+          </button>
+          <button
+            type="button"
+            onClick={() => handleActionChange('create')}
+            style={{
+              padding: '4px 10px',
+              fontSize: 11,
+              fontWeight: 500,
+              border: 'none',
+              borderRadius: 6,
+              background: isCreateActive ? 'var(--accent)' : 'transparent',
+              color: isCreateActive ? '#fff' : 'var(--text-muted)',
+              cursor: 'pointer',
+              transition: 'all 0.15s'
+            }}
+          >
+            Create
+          </button>
+          <button
+            type="button"
+            onClick={() => handleActionChange('skip')}
+            style={{
+              padding: '4px 10px',
+              fontSize: 11,
+              fontWeight: 500,
+              border: 'none',
+              borderRadius: 6,
+              background: isSkipActive ? 'var(--accent)' : 'transparent',
+              color: isSkipActive ? '#fff' : 'var(--text-muted)',
+              cursor: 'pointer',
+              transition: 'all 0.15s'
+            }}
+          >
+            Skip
+          </button>
+        </div>
+      </div>
+
+      {isLinkActive && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          background: 'var(--surface-3)',
+          padding: '8px 12px',
+          borderRadius: 8,
+          border: '1px solid var(--border-light)'
+        }}>
+          <div style={{
+            width: 32,
+            height: 42,
+            borderRadius: 4,
+            overflow: 'hidden',
+            flexShrink: 0,
+            background: getSwatchBg(currentLinkedPiece)
+          }}>
+            {currentLinkedPiece?.photo && (
+              <img
+                src={`/uploads/${currentLinkedPiece.photo}`}
+                alt=""
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            )}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {currentLinkedPiece ? (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                  {currentLinkedPiece.name}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                  Match confidence: <span style={{ fontWeight: 600, color: actionState.confidence === 'high' ? 'var(--accent)' : 'var(--text-light)' }}>{actionState.confidence}</span>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 11, fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                No matching item found
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowPicker(true)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--accent)',
+              fontSize: 11,
+              fontWeight: 500,
+              cursor: 'pointer',
+              padding: '4px 8px'
+            }}
+          >
+            Change
+          </button>
+        </div>
+      )}
+
+      {isCreateActive && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            style={{
+              flex: 1,
+              padding: '8px 12px',
+              fontSize: 13,
+              borderRadius: 8,
+              border: '1px solid var(--border)',
+              background: 'var(--surface-3)',
+              color: 'var(--text)',
+              fontFamily: 'var(--font-sans)',
+              outline: 'none'
+            }}
+            placeholder="Name this piece..."
+          />
+        </div>
+      )}
+
+      {showPicker && (
+        <PieceSelector
+          linkedPieceIds={currentLinkedPiece ? [currentLinkedPiece.id] : []}
+          singleSelect={true}
+          initialCategory={piece.category}
+          onSave={(ids) => {
+            const id = ids[0]
+            if (id) {
+              handleLinkSelect(id)
+            } else {
+              onChange(null, { action: 'link', linkedPieceId: null, bestMatch: null })
+            }
+            setShowPicker(false)
+          }}
+          onCancel={() => setShowPicker(false)}
+        />
+      )}
     </div>
   )
 }
@@ -221,15 +676,23 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
   const [preview, setPreview]     = useState(outfit?.photo ? `/uploads/${outfit.photo}` : null)
   const [scanning, setScanning]   = useState(false)
   const [extracted, setExtracted] = useState([])
-  const [selected, setSelected]   = useState([])
+  const [extractedActions, setExtractedActions] = useState([])
+  const [wardrobePieces, setWardrobePieces] = useState([])
   const [linkedPieceIds]          = useState(() => (outfit?.pieces || []).map(p => p.id))
   const [scanError, setScanError] = useState(null)
   const [saving, setSaving]       = useState(false)
 
+  useEffect(() => {
+    fetch('/api/pieces')
+      .then(r => r.json())
+      .then(setWardrobePieces)
+      .catch(err => console.error('Error fetching wardrobe pieces:', err))
+  }, [])
+
   const handlePhoto = (e) => {
     const f = e.target.files[0]; if (!f) return
     setPhotoFile(f); setPreview(URL.createObjectURL(f))
-    setExtracted([]); setSelected([]); setScanError(null)
+    setExtracted([]); setExtractedActions([]); setScanError(null)
   }
 
   const handleScan = async () => {
@@ -240,15 +703,30 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
       const res  = await fetch('/api/ai/extract-pieces', { method: 'POST', body: fd })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
-      setExtracted(data.pieces || [])
-      setSelected((data.pieces || []).map(() => true))
+      
+      const pieces = data.pieces || []
+      setExtracted(pieces)
+
+      const actions = pieces.map(piece => {
+        const { piece: match, confidence } = findBestMatchForExtracted(piece, wardrobePieces)
+        if (match && confidence === 'high') {
+          return { action: 'link', linkedPieceId: match.id, bestMatch: match, confidence }
+        } else {
+          return { action: 'create', linkedPieceId: match ? match.id : null, bestMatch: match, confidence }
+        }
+      })
+      setExtractedActions(actions)
     } catch { setScanError('Scan failed — add pieces manually later') }
     finally { setScanning(false) }
   }
 
-  const updatePiece = (index, updated, checkedOverride) => {
-    if (updated !== null) setExtracted(prev => prev.map((p, i) => i === index ? { ...p, ...updated } : p))
-    if (checkedOverride !== undefined) setSelected(prev => prev.map((c, i) => i === index ? checkedOverride : c))
+  const updatePiece = (index, updatedPieceFields, updatedActionFields) => {
+    if (updatedPieceFields) {
+      setExtracted(prev => prev.map((p, i) => i === index ? { ...p, ...updatedPieceFields } : p))
+    }
+    if (updatedActionFields) {
+      setExtractedActions(prev => prev.map((a, i) => i === index ? { ...a, ...updatedActionFields } : a))
+    }
   }
 
   const handleSubmit = async () => {
@@ -257,7 +735,21 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
     try {
       const pieceIds = [...linkedPieceIds]
       let piecesAdded = 0
-      for (const piece of extracted.filter((_, i) => selected[i])) {
+      for (let i = 0; i < extracted.length; i++) {
+        const piece = extracted[i]
+        const actionState = extractedActions[i] || { action: 'create', linkedPieceId: null }
+
+        if (actionState.action === 'skip') {
+          continue
+        }
+
+        if (actionState.action === 'link') {
+          if (actionState.linkedPieceId) {
+            pieceIds.push(actionState.linkedPieceId)
+          }
+          continue
+        }
+
         const fd = new FormData()
         fd.append('name', piece.name_suggestion || piece.category)
         fd.append('category', piece.category || 'top')
@@ -299,10 +791,12 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
     } finally { setSaving(false) }
   }
 
-  const selectedCount = selected.filter(Boolean).length
+  const createCount = extractedActions.filter(a => a.action === 'create').length
+  const linkCount = extractedActions.filter(a => a.action === 'link').length
+  const skipCount = extractedActions.filter(a => a.action === 'skip').length
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-overlay">
       <div className="modal-sheet" onClick={e => e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-header">
@@ -314,7 +808,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
             <div className="photo-preview">
               <img src={preview} alt="preview" style={{ maxHeight: 280 }} />
               {photoFile && (
-                <button className="photo-preview-remove" onClick={() => { setPhotoFile(null); setPreview(outfit?.photo ? `/uploads/${outfit.photo}` : null); setExtracted([]); setSelected([]) }}>✕</button>
+                <button className="photo-preview-remove" onClick={() => { setPhotoFile(null); setPreview(outfit?.photo ? `/uploads/${outfit.photo}` : null); setExtracted([]); setExtractedActions([]) }}>✕</button>
               )}
             </div>
           ) : (
@@ -337,7 +831,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
                 cursor: scanning ? 'default' : 'pointer', transition: 'all 0.15s',
               }}>
                 {scanning ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Scanning…</>
-                  : extracted.length > 0 ? `◇ Rescan (${selectedCount} of ${extracted.length} selected)` : '◇ Scan for pieces in this photo'}
+                  : extracted.length > 0 ? `◇ Rescan (${createCount + linkCount} of ${extracted.length} selected)` : '◇ Scan for pieces in this photo'}
               </button>
               {scanError && <div style={{ fontSize: 11, color: 'var(--repair)', marginTop: 4 }}>{scanError}</div>}
             </div>
@@ -346,19 +840,35 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
           {extracted.length > 0 && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <label className="form-label">Found in photo — add to wardrobe</label>
-                <button style={{ fontSize: 11, color: 'var(--accent)' }} onClick={() => setSelected(extracted.map(() => !selected.every(Boolean)))}>
-                  {selected.every(Boolean) ? 'Deselect all' : 'Select all'}
-                </button>
+                <label className="form-label">Found in photo — add or link</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button style={{ fontSize: 11, color: 'var(--accent)' }} onClick={() => setExtractedActions(extracted.map(p => {
+                    const { piece: match, confidence } = findBestMatchForExtracted(p, wardrobePieces)
+                    return { action: match ? 'link' : 'create', linkedPieceId: match ? match.id : null, bestMatch: match, confidence }
+                  }))}>
+                    Reset matches
+                  </button>
+                  <button style={{ fontSize: 11, color: 'var(--accent)' }} onClick={() => setExtractedActions(extractedActions.map(a => ({ ...a, action: 'skip' })))}>
+                    Skip all
+                  </button>
+                </div>
               </div>
               <div style={{ background: 'var(--surface-2)', borderRadius: 'var(--radius-sm)', padding: '0 12px', border: '1px solid var(--border-light)' }}>
                 {extracted.map((piece, i) => (
-                  <ExtractedPieceRow key={i} piece={piece} checked={selected[i]} onChange={(u, c) => updatePiece(i, u, c)} />
+                  <ExtractedPieceRow
+                    key={i}
+                    piece={piece}
+                    actionState={extractedActions[i] || { action: 'create', linkedPieceId: null, bestMatch: null, confidence: 'none' }}
+                    wardrobePieces={wardrobePieces}
+                    onChange={(uPiece, uAction) => updatePiece(i, uPiece, uAction)}
+                  />
                 ))}
               </div>
-              {selectedCount > 0 && (
+              {(createCount > 0 || linkCount > 0) && (
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, textAlign: 'center' }}>
-                  {selectedCount} {selectedCount === 1 ? 'piece' : 'pieces'} will be added and linked
+                  {createCount > 0 && `${createCount} new ${createCount === 1 ? 'piece' : 'pieces'} will be created`}
+                  {createCount > 0 && linkCount > 0 && ' and '}
+                  {linkCount > 0 && `${linkCount} ${linkCount === 1 ? 'piece' : 'pieces'} will be linked`}
                 </div>
               )}
             </div>
@@ -398,7 +908,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
         <div className="form-actions">
           <button className="btn-secondary" onClick={onCancel}>Cancel</button>
           <button className="btn-primary" onClick={handleSubmit} disabled={saving || !name.trim()}>
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : selectedCount > 0 ? `Save outfit + ${selectedCount} pieces` : 'Save outfit'}
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : createCount > 0 ? `Save outfit + ${createCount} new pieces` : 'Save outfit'}
           </button>
         </div>
       </div>

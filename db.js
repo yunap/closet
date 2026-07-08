@@ -137,7 +137,27 @@ db.exec(`
     state_json   TEXT NOT NULL,
     updated_at   TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS chat_threads (
+    id           TEXT PRIMARY KEY,
+    title        TEXT,
+    user_renamed INTEGER DEFAULT 0,
+    kind         TEXT DEFAULT 'chat',
+    payload      TEXT DEFAULT '{}',
+    pinned       INTEGER DEFAULT 0,
+    archived     INTEGER DEFAULT 0,
+    created_at   TEXT DEFAULT (datetime('now')),
+    updated_at   TEXT DEFAULT (datetime('now'))
+  );
 `)
+
+// Migrate chat_threads to add pinned and archived columns
+;[
+  'pinned INTEGER DEFAULT 0',
+  'archived INTEGER DEFAULT 0'
+].forEach(col => {
+  try { db.exec(`ALTER TABLE chat_threads ADD COLUMN ${col}`) } catch {}
+})
 
 // ── Migrate: add new columns to existing DB ───────────────────────────────────
 const NEW_COLUMNS = [

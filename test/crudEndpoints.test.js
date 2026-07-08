@@ -237,3 +237,229 @@ test('GET /api/pieces/meta and color/fabric filtering', async () => {
   await fetch(`${baseUrl}/api/pieces/${piece2.id}`, { method: 'DELETE' })
 })
 
+test('CRUD operations for /api/chat-threads', async () => {
+  const threadId = 'test_thread_' + Date.now()
+  const payload = {
+    messages: [
+      { role: 'assistant', text: 'Hi' },
+      { role: 'user', text: 'Hello' }
+    ]
+  }
+
+  // Create/Upsert Thread
+  const upsertRes = await fetch(`${baseUrl}/api/chat-threads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: threadId,
+      title: 'Test Thread',
+      user_renamed: 0,
+      kind: 'chat',
+      payload
+    })
+  })
+  assert.equal(upsertRes.status, 200)
+  const upserted = await upsertRes.json()
+  assert.equal(upserted.id, threadId)
+  assert.equal(upserted.title, 'Test Thread')
+
+  // List Threads
+  const listRes = await fetch(`${baseUrl}/api/chat-threads`)
+  assert.equal(listRes.status, 200)
+  const list = await listRes.json()
+  const found = list.find(t => t.id === threadId)
+  assert.ok(found)
+  assert.equal(found.title, 'Test Thread')
+  assert.equal(found.message_count, 2)
+
+  // Get Single Thread Detail
+  const getRes = await fetch(`${baseUrl}/api/chat-threads/${threadId}`)
+  assert.equal(getRes.status, 200)
+  const detail = await getRes.json()
+  assert.equal(detail.id, threadId)
+  assert.deepEqual(detail.payload, payload)
+
+  // Delete Thread
+  const deleteRes = await fetch(`${baseUrl}/api/chat-threads/${threadId}`, {
+    method: 'DELETE'
+  })
+  assert.equal(deleteRes.status, 200)
+
+  // Verify Deleted
+  const getRes2 = await fetch(`${baseUrl}/api/chat-threads/${threadId}`)
+  assert.equal(getRes2.status, 404)
+})
+
+test('Pinning, archiving, unpinning, unarchiving, and metadata checks for /api/chat-threads', async () => {
+  const threadId = 'test_thread_meta_' + Date.now()
+  const payload = {
+    messages: [
+      { role: 'assistant', text: 'Hi' }
+    ],
+    activeContext: {
+      type: 'outfit',
+      id: 999,
+      name: 'Rioja outfit'
+    }
+  }
+
+  // Create
+  const upsertRes = await fetch(`${baseUrl}/api/chat-threads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: threadId,
+      title: 'Meta Thread',
+      user_renamed: 0,
+      kind: 'chat',
+      payload
+    })
+  })
+  assert.equal(upsertRes.status, 200)
+
+  // Verify initial states
+  const listRes = await fetch(`${baseUrl}/api/chat-threads`)
+  const list = await listRes.json()
+  const found = list.find(t => t.id === threadId)
+  assert.ok(found)
+  assert.equal(found.pinned, false)
+  assert.equal(found.archived, false)
+  assert.deepEqual(found.activeContext, { type: 'outfit', id: 999, name: 'Rioja outfit' })
+  assert.ok(!found.payload, 'Returned metadata should not contain the full payload')
+
+  // Pin it
+  const pinRes1 = await fetch(`${baseUrl}/api/chat-threads/${threadId}/pin`, {
+    method: 'PATCH'
+  })
+  assert.equal(pinRes1.status, 200)
+  const pinData1 = await pinRes1.json()
+  assert.equal(pinData1.pinned, true)
+
+  // Verify pinned in list
+  const listRes2 = await fetch(`${baseUrl}/api/chat-threads`)
+  const list2 = await listRes2.json()
+  const found2 = list2.find(t => t.id === threadId)
+  assert.equal(found2.pinned, true)
+
+  // Archive it (should also clear pin)
+  const arcRes = await fetch(`${baseUrl}/api/chat-threads/${threadId}/archive`, {
+    method: 'PATCH'
+  })
+  assert.equal(arcRes.status, 200)
+  const arcData = await arcRes.json()
+  assert.equal(arcData.archived, true)
+  assert.equal(arcData.pinned, false) // should clear pin!
+
+  // Verify excluded from default list
+  const listRes3 = await fetch(`${baseUrl}/api/chat-threads`)
+  const list3 = await listRes3.json()
+  const found3 = list3.find(t => t.id === threadId)
+  assert.ok(!found3, 'Archived thread should be excluded from default list')
+
+  // Verify included in archived list
+  const listResArc = await fetch(`${baseUrl}/api/chat-threads?archived=true`)
+  const listArc = await listResArc.json()
+  const foundArc = listArc.find(t => t.id === threadId)
+  assert.ok(foundArc)
+  assert.equal(foundArc.archived, true)
+  assert.equal(foundArc.pinned, false)
+
+  // Unarchive it
+  const unarcRes = await fetch(`${baseUrl}/api/chat-threads/${threadId}/archive`, {
+    method: 'PATCH'
+  })
+  assert.equal(unarcRes.status, 200)
+  const unarcData = await unarcRes.json()
+  assert.equal(unarcData.archived, false)
+
+  // Verify returned to default list
+  const listRes4 = await fetch(`${baseUrl}/api/chat-threads`)
+  const list4 = await listRes4.json()
+  const found4 = list4.find(t => t.id === threadId)
+  assert.ok(found4)
+  assert.equal(found4.archived, false)
+
+  // Clean up
+  await fetch(`${baseUrl}/api/chat-threads/${threadId}`, {
+    method: 'DELETE'
+  })
+})
+
+test('Payload fields round-trip survival test for /api/chat-threads', async () => {
+  const threadId = 'test_thread_roundtrip_' + Date.now()
+  const payload = {
+    messages: [
+      { role: 'assistant', text: 'Hi' }
+    ],
+    chatHistory: [{ query: 'foo', response: 'bar' }],
+    threadMemory: { context: 'test' },
+    activeContext: { type: 'outfit', id: 123, name: 'Rioja Vineyard' },
+    evaluatedKeys: ['key1', 'key2'],
+    boardResults: { '0': [{ id: 1 }] },
+    editorialVisualResults: { '0': [{ id: 2 }] },
+    evaluationResultsByKey: { 'key1': { score: 90 } },
+    savedBoardKeys: ['board_123', 'board_456'],
+    feedbackSaved: ['feed_1', 'feed_2'],
+    savedIndices: [1, 2],
+    feedbackIdsByKey: { 'feed_1': 999 },
+    boardFeedbackLabels: { 'board_123': ['great'] }
+  }
+
+  // Create
+  const upsertRes = await fetch(`${baseUrl}/api/chat-threads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: threadId,
+      title: 'Roundtrip Thread',
+      user_renamed: 0,
+      kind: 'chat',
+      payload
+    })
+  })
+  assert.equal(upsertRes.status, 200)
+
+  // Get Detail
+  const getRes = await fetch(`${baseUrl}/api/chat-threads/${threadId}`)
+  assert.equal(getRes.status, 200)
+  const detail = await getRes.json()
+  
+  assert.equal(detail.id, threadId)
+  assert.deepEqual(detail.payload.messages, payload.messages)
+  assert.deepEqual(detail.payload.chatHistory, payload.chatHistory)
+  assert.deepEqual(detail.payload.threadMemory, payload.threadMemory)
+  assert.deepEqual(detail.payload.activeContext, payload.activeContext)
+  assert.deepEqual(detail.payload.evaluatedKeys, payload.evaluatedKeys)
+  assert.deepEqual(detail.payload.boardResults, payload.boardResults)
+  assert.deepEqual(detail.payload.editorialVisualResults, payload.editorialVisualResults)
+  assert.deepEqual(detail.payload.evaluationResultsByKey, payload.evaluationResultsByKey)
+  assert.deepEqual(detail.payload.savedBoardKeys, payload.savedBoardKeys)
+  assert.deepEqual(detail.payload.feedbackSaved, payload.feedbackSaved)
+  assert.deepEqual(detail.payload.savedIndices, payload.savedIndices)
+  assert.deepEqual(detail.payload.feedbackIdsByKey, payload.feedbackIdsByKey)
+  assert.deepEqual(detail.payload.boardFeedbackLabels, payload.boardFeedbackLabels)
+
+  // Clean up
+  await fetch(`${baseUrl}/api/chat-threads/${threadId}`, {
+    method: 'DELETE'
+  })
+})
+
+test('POST /api/ai/ask error boundary returns generic error message', async () => {
+  const res = await fetch(`${baseUrl}/api/ai/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question: 'test error',
+      history: 'malformed_non_array_triggering_type_error'
+    })
+  })
+  
+  assert.equal(res.status, 500)
+  const data = await res.json()
+  assert.equal(data.error, 'Something went wrong — try again')
+})
+
+
+
+

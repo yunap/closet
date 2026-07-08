@@ -18,7 +18,7 @@ export default function App() {
 
   const sendOutfitToStylist = (outfit) => {
     setStylistPiece(null)
-    setStylistOutfit(outfit)
+    setStylistOutfit(outfit ? { ...outfit, actionId: Date.now() } : null)
     setTab('ask')
   }
 

@@ -1104,6 +1104,85 @@ function buildLocalTripSlotOutfits({ slots = [], question = '', mood = '', allPi
   return attachTripPlanMetadata(picked)
 }
 
+export function deriveTripTitle(question = '', weather = '', outfits = []) {
+  const q = String(question || '').trim()
+  const w = String(weather || '').trim()
+
+  let destination = ''
+  const patterns = [
+    /\b(?:trip to|travel to|headed to|going to|packing for|visit to|visiting|weekend in|days in|vacation in|in)\s+([A-Z][A-Za-z\s,]+)/,
+    /\b(?:trip to|travel to|headed to|going to|packing for|visit to|visiting|weekend in|days in|vacation in)\s+([a-zA-Z\s,]+)/i
+  ]
+  for (const pat of patterns) {
+    const match = q.match(pat)
+    if (match && match[1]) {
+      const dest = match[1].replace(/\b(?:a|an|the|this|some|my|our)\b/i, '').replace(/[.!?]/g, '').trim()
+      if (dest && dest.split(/\s+/).length <= 4 && !/^(?:outfit|wardrobe|summer|winter|spring|fall|weather|clothing|clothes|options|packing|jacket|shirt|pants|skirt|shoes|boots|bag)$/i.test(dest)) {
+        destination = dest.split(/\s+/).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+        break
+      }
+    }
+  }
+
+  if (!destination) {
+    const weatherPatterns = [
+      /\b(?:weather in|forecast for)\s+([A-Za-z\s,]+)/i,
+      /([A-Za-z\s,]+)\s+weather/i
+    ]
+    for (const pat of weatherPatterns) {
+      const match = w.match(pat)
+      if (match && match[1]) {
+        const dest = match[1].replace(/[.!?]/g, '').trim()
+        if (dest && dest.split(/\s+/).length <= 4 && !/^(?:hot|cold|warm|rainy|sunny|chilly|mild|cool|dry|humid|wet)$/i.test(dest)) {
+          destination = dest.split(/\s+/).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+          break
+        }
+      }
+    }
+  }
+
+  let duration = ''
+  const hasTripSummary = Array.isArray(outfits) ? outfits.find(o => o.tripSummary)?.tripSummary : null
+  if (hasTripSummary?.durationText) {
+    duration = hasTripSummary.durationText.trim()
+  }
+  if (!duration) {
+    const match = q.match(/\b(\d+)\s*-?\s*days?\b/i)
+    if (match) {
+      duration = `${match[1]} days`
+    }
+  }
+  if (!duration && Array.isArray(outfits) && outfits.length > 0) {
+    duration = `${outfits.length} days`
+  }
+
+  const occasionLabels = Array.from(new Set(
+    (Array.isArray(outfits) ? outfits : []).map(o => {
+      const occ = o.occasion || o.bestFor
+      if (!occ) return null
+      if (occ === 'outdoor_daytime_social') return 'Winery'
+      if (occ === 'evening') return 'Evening'
+      if (occ === 'gallery / art event') return 'Art'
+      if (occ === 'smart casual') return 'Smart Casual'
+      return String(occ).charAt(0).toUpperCase() + String(occ).slice(1)
+    })
+  )).filter(Boolean)
+  const friendlyOccasions = occasionLabels.join('/')
+
+  if (destination) {
+    if (duration) {
+      return `${destination} trip · ${duration}`
+    }
+    return `${destination} trip`
+  }
+
+  const parts = ['Trip']
+  if (duration) parts.push(duration)
+  if (friendlyOccasions) parts.push(friendlyOccasions)
+
+  return parts.join(' · ')
+}
+
 async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeather = '') {
   const question = body.question || ''
   const requestedMode = body.conversationMode || 'new_request'
@@ -1667,7 +1746,7 @@ router.post('/extract-pieces', upload.single('photo'), async (req, res) => {
 
     const raw = await askStylist({
       system: EXTRACT_PIECES_SYSTEM,
-      maxTokens: 1200,
+      maxTokens: 3000,
       messages: [{
         role: 'user',
         content: [
@@ -1698,26 +1777,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. Use 'unknown' if not determinable."],
       "formality": "lounge|everyday|elevated|dressy",
       "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
-      "walk_support": "high|medium|low|null (shoes only; null/omit for non-shoes)",
-      "style_profile_json": {
-        "style_lanes": {
-          "artistic_minimal": 0, "modern_bohemian": 0, "folk_artisan": 0, "boho_romantic": 0, "boho_festival": 0,
-          "graphic_casual": 0, "earthy_structured": 0, "polished_classic": 0, "romantic_soft": 0, "workwear_utilitarian": 0
-        },
-        "visual_roles": ["choose 1-4: hero_piece, support_piece, grounding_piece, sharpener_piece, texture_piece, movement_piece, column_piece, quiet_anchor, color_accent"],
-        "style_notes": {
-          "best_use": "stylist role description based on design weight. Avoid generic 'casual wear' or 'daily casual' phrases.",
-          "risk": "styling or aesthetic risk. Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."
-        },
-        "garment_intelligence": {
-          "auto_use_trust": "trusted|support_only|experimental|needs_fit_review|do_not_auto_use",
-          "best_outfit_role": "hero|support|grounding|movement|sharpener|color_accent|texture_accent|column",
-          "pairing_requirements": ["0-4 concise engine-facing requirements"],
-          "failure_risks": ["0-4 specific functional/wear risks"],
-          "formula_compatibility": ["0-4 outfit formulas supported"],
-          "do_not_pair_rules": ["0-4 concrete pairing rules"]
-        }
-      }
+      "walk_support": "high|medium|low|null (shoes only; null/omit for non-shoes)"
     }
   ]
 }` }
@@ -1725,6 +1785,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       }]
     })
 
+    console.log('RAW RESPONSE LENGTH:', raw?.length, 'RAW RESPONSE:', raw)
     res.json(parseModelJson(raw))
   } catch (err) {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
@@ -3517,6 +3578,13 @@ router.post('/ask', async (req, res) => {
     if (payload.automaticallySavedCorrection) {
       allSaved.push(payload.automaticallySavedCorrection)
     }
+
+    const isTravel = isTravelOrPackingRequest(req.body.question || '', req.body.occasion || '')
+    let suggestedTitle = null
+    if (isTravel && generatedOutfitsForTurn.length) {
+      suggestedTitle = deriveTripTitle(req.body.question || '', extractedWeather, generatedOutfitsForTurn)
+    }
+
     res.json({
       answer,
       savedCorrections: allSaved,
@@ -3528,11 +3596,12 @@ router.post('/ask', async (req, res) => {
       structuredOutfitsMood: toolContext.mood,
       structuredOutfitsMission: toolContext.mission,
       structuredOutfitsActivity: toolContext.activity,
-      structuredOutfitsDebug: activePrecompose?.debug || null
+      structuredOutfitsDebug: activePrecompose?.debug || null,
+      suggestedTitle
     })
   } catch (err) {
     console.error('AI error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Something went wrong — try again' })
   }
 })
 
