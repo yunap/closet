@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 
 const OCCASIONS = [
   { value: '',             label: 'All Occasions' },
@@ -1337,21 +1338,51 @@ function Toast({ message, onDone }) {
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Filter/tab state — URL-backed so state survives tab switches.
+  const VALID_VIEWS = ['my-outfits', 'generated-outfits']
+  const rawView    = searchParams.get('view')
+  const activeSubTab   = VALID_VIEWS.includes(rawView) ? rawView : 'my-outfits'
+  const search         = searchParams.get('q')        ?? ''
+  const filterOcc      = searchParams.get('occasion') ?? ''
+  const filterSeason   = searchParams.get('season')   ?? ''
+  const sortBy         = searchParams.get('sort')     ?? 'newest'
+  const pinFavs        = searchParams.get('pin') !== '0'  // default true; only written when false
+
+  const setFilter = useCallback((updates) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      for (const [key, value] of Object.entries(updates)) {
+        // Omit default values to keep URLs clean
+        const isDefault =
+          (key === 'view'     && (value === 'my-outfits' || !value)) ||
+          (key === 'sort'     && (value === 'newest'     || !value)) ||
+          (key === 'q'        && !value) ||
+          (key === 'occasion' && !value) ||
+          (key === 'season'   && !value)
+        if (isDefault) {
+          next.delete(key)
+        } else if (key === 'pin') {
+          // pin only written when explicitly false (default is true)
+          if (value === false || value === '0') { next.set('pin', '0') } else { next.delete('pin') }
+        } else {
+          next.set(key, String(value))
+        }
+      }
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
+
   const [outfits, setOutfits]           = useState([])
   const [loading, setLoading]           = useState(true)
-  const [search, setSearch]             = useState('')
-  const [filterOcc, setFilterOcc]       = useState('')
-  const [filterSeason, setFilterSeason] = useState('')
-  const [sortBy, setSortBy]             = useState('newest')
-  const [pinFavs, setPinFavs]           = useState(true)
   const [isSortOpen, setIsSortOpen]     = useState(false)
-  
+
   const [showForm, setShowForm]         = useState(false)
   const [editOutfit, setEditOutfit]     = useState(null)
   const [detail, setDetail]             = useState(null)
   const [toast, setToast]               = useState(null)
 
-  const [activeSubTab, setActiveSubTab] = useState('my-outfits')
   const [savedBoards, setSavedBoards]   = useState([])
   const [loadingBoards, setLoadingBoards] = useState(false)
   const [boardDetail, setBoardDetail]   = useState(null)
@@ -1578,7 +1609,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
           </div>
           <button 
             className={`chip fav-pin-btn ${pinFavs ? 'active' : ''}`} 
-            onClick={() => setPinFavs(f => !f)}
+            onClick={() => setFilter({ pin: !pinFavs })}
           >
             {pinFavs ? '♥ Pinned' : '♡ Pin Favs'}
           </button>
@@ -1588,14 +1619,14 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
           <button
             type="button"
             className={`subtab-btn ${activeSubTab === 'my-outfits' ? 'active' : ''}`}
-            onClick={() => setActiveSubTab('my-outfits')}
+            onClick={() => setFilter({ view: 'my-outfits' })}
           >
             My Outfits
           </button>
           <button
             type="button"
             className={`subtab-btn ${activeSubTab === 'generated-outfits' ? 'active' : ''}`}
-            onClick={() => setActiveSubTab('generated-outfits')}
+            onClick={() => setFilter({ view: 'generated-outfits' })}
           >
             Generated Outfits
           </button>
@@ -1609,7 +1640,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
               type="search" 
               placeholder="Search outfits, garments, colors…" 
               value={search} 
-              onChange={e => setSearch(e.target.value)} 
+              onChange={e => setFilter({ q: e.target.value })}
             />
           </div>
 
@@ -1630,7 +1661,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                       key={opt.value}
                       className={`custom-select-option ${sortBy === opt.value ? 'active' : ''}`}
                       onClick={() => {
-                        setSortBy(opt.value)
+                        setFilter({ sort: opt.value })
                         setIsSortOpen(false)
                       }}
                     >
@@ -1649,7 +1680,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
             <button 
               key={o.value} 
               className={`chip ${filterOcc === o.value ? 'active' : ''}`} 
-              onClick={() => setFilterOcc(o.value)}
+              onClick={() => setFilter({ occasion: o.value })}
             >
               {o.value && (OCCASION_ICONS[o.value] || '✦')} {o.label}
             </button>
@@ -1661,7 +1692,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
             <button 
               key={s.value} 
               className={`chip ${filterSeason === s.value ? 'active' : ''}`} 
-              onClick={() => setFilterSeason(s.value)}
+              onClick={() => setFilter({ season: s.value })}
             >
               {s.label}
             </button>

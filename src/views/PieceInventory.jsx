@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import PieceCard from '../components/PieceCard'
 import PieceForm from '../components/PieceForm'
 import PieceDetail from '../components/PieceDetail'
@@ -45,22 +46,44 @@ const COLOR_HEX_MAP = {
 }
 
 export default function PieceInventory({ onSendToStylist }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Filter state — backed by URL query params so state survives tab switches.
+  // Reads fall back to the same defaults as the old useState initialisers.
+  const search       = searchParams.get('q')        ?? ''
+  const filterCat    = searchParams.get('category') ?? ''
+  const filterOcc    = searchParams.get('occasion') ?? ''
+  const filterSeason = searchParams.get('season')   ?? ''
+  const filterColor  = searchParams.get('color')    ?? ''
+  const filterFabric = searchParams.get('fabric')   ?? ''
+  const favOnly      = searchParams.get('fav') === '1'
+
+  // Helper: write one or more params, omitting defaults to keep URLs clean.
+  // Always uses replace:true — filter changes are not history entries.
+  const setFilter = useCallback((updates) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      for (const [key, value] of Object.entries(updates)) {
+        if (!value || value === false || value === '0') {
+          next.delete(key)
+        } else {
+          next.set(key, value === true ? '1' : String(value))
+        }
+      }
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
+
   const [pieces, setPieces]           = useState([])
   const [loading, setLoading]         = useState(true)
-  const [search, setSearch]           = useState('')
-  const [filterCat, setFilterCat]     = useState('')
-  const [filterOcc, setFilterOcc]     = useState('')
-  const [filterSeason, setFilterSeason] = useState('')
-  const [filterColor, setFilterColor]   = useState('')
-  const [filterFabric, setFilterFabric] = useState('')
-  const [availableColors, setAvailableColors]   = useState([])
-  const [availableFabrics, setAvailableFabrics] = useState([])
-  const [favOnly, setFavOnly]         = useState(false)
+  // showTodo is a modal-open flag — intentionally NOT URL-backed (modal should open fresh each visit)
   const [showTodo, setShowTodo]       = useState(false)
   const [showForm, setShowForm]       = useState(false)
   const [showBatch, setShowBatch]     = useState(false)
   const [editPiece, setEditPiece]     = useState(null)
   const [detailPiece, setDetailPiece] = useState(null)
+  const [availableColors, setAvailableColors]   = useState([])
+  const [availableFabrics, setAvailableFabrics] = useState([])
   const [pendingCount, setPendingCount] = useState(0)
 
   const fetchPendingCount = useCallback(async () => {
@@ -125,7 +148,7 @@ export default function PieceInventory({ onSendToStylist }) {
             <div className="view-subtitle">{pieces.length} pieces{favOnly ? ' · favorites' : ''}</div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
-            <button className={`chip ${favOnly ? 'active' : ''}`} onClick={() => setFavOnly(f => !f)}>
+            <button className={`chip ${favOnly ? 'active' : ''}`} onClick={() => setFilter({ fav: !favOnly })}>
               {favOnly ? '♥' : '♡'}
             </button>
             <button
@@ -147,24 +170,24 @@ export default function PieceInventory({ onSendToStylist }) {
 
         <div className="search-bar">
           <span className="search-icon">◎</span>
-          <input type="search" placeholder="Search pieces by name, tags, or ID…" value={search} onChange={e => setSearch(e.target.value)} />
+          <input type="search" placeholder="Search pieces by name, tags, or ID…" value={search} onChange={e => setFilter({ q: e.target.value })} />
         </div>
 
         <div className="filter-row" style={{ marginBottom: 8 }}>
           {CATEGORIES.map(c => (
-            <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilterCat(c.value)}>{c.label}</button>
+            <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value })}>{c.label}</button>
           ))}
         </div>
 
         <div className="filter-row" style={{ marginBottom: 8 }}>
           {OCCASIONS.map(o => (
-            <button key={o.value} className={`chip ${filterOcc === o.value ? 'active' : ''}`} onClick={() => setFilterOcc(o.value)}>{o.label}</button>
+            <button key={o.value} className={`chip ${filterOcc === o.value ? 'active' : ''}`} onClick={() => setFilter({ occasion: o.value })}>{o.label}</button>
           ))}
         </div>
 
         <div className="filter-row" style={{ marginBottom: 8 }}>
           {SEASONS.map(s => (
-            <button key={s.value} className={`chip ${filterSeason === s.value ? 'active' : ''}`} onClick={() => setFilterSeason(s.value)}>{s.label}</button>
+            <button key={s.value} className={`chip ${filterSeason === s.value ? 'active' : ''}`} onClick={() => setFilter({ season: s.value })}>{s.label}</button>
           ))}
         </div>
 
@@ -173,7 +196,7 @@ export default function PieceInventory({ onSendToStylist }) {
             <span style={{ fontSize: 10, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', minWidth: 52, flexShrink: 0 }}>Colors:</span>
             <button
               className={`chip ${!filterColor ? 'active' : ''}`}
-              onClick={() => setFilterColor('')}
+              onClick={() => setFilter({ color: '' })}
               style={{ fontSize: 11, padding: '3px 8px' }}
             >
               All
@@ -185,7 +208,7 @@ export default function PieceInventory({ onSendToStylist }) {
               return (
                 <button
                   key={color}
-                  onClick={() => setFilterColor(active ? '' : color)}
+                  onClick={() => setFilter({ color: active ? '' : color })}
                   style={{
                     width: 18,
                     height: 18,
@@ -222,7 +245,7 @@ export default function PieceInventory({ onSendToStylist }) {
             <span style={{ fontSize: 10, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', minWidth: 52, flexShrink: 0 }}>Fabrics:</span>
             <button
               className={`chip ${!filterFabric ? 'active' : ''}`}
-              onClick={() => setFilterFabric('')}
+              onClick={() => setFilter({ fabric: '' })}
               style={{ fontSize: 11, padding: '3px 8px' }}
             >
               All
@@ -231,7 +254,7 @@ export default function PieceInventory({ onSendToStylist }) {
               <button
                 key={fabric}
                 className={`chip ${filterFabric === fabric ? 'active' : ''}`}
-                onClick={() => setFilterFabric(filterFabric === fabric ? '' : fabric)}
+                onClick={() => setFilter({ fabric: filterFabric === fabric ? '' : fabric })}
                 style={{ fontSize: 11, padding: '3px 8px', textTransform: 'capitalize' }}
               >
                 {fabric}
