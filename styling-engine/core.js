@@ -2544,10 +2544,15 @@ export async function addEvaluationImage(content, filePath) {
 
 export function uploadedOrSavedOutfitPhotoPath(outfitPhoto = '') {
   if (!outfitPhoto) return ''
-  const outfitFileName = String(outfitPhoto).startsWith('/uploads/')
-    ? path.basename(outfitPhoto)
-    : path.basename(String(outfitPhoto))
-  return path.join(uploadsDir, outfitFileName)
+  const s = String(outfitPhoto)
+  // Preserve the relative path after /uploads/ so subdirectories like
+  // generated-boards/ are not stripped (path.basename would lose them).
+  const uploadsPrefix = '/uploads/'
+  if (s.startsWith(uploadsPrefix)) {
+    return path.join(uploadsDir, s.slice(uploadsPrefix.length))
+  }
+  // Legacy: bare filename or relative path — join directly.
+  return path.join(uploadsDir, path.basename(s))
 }
 
 export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', question = '', attachedImageInventory = [] }) {
@@ -2682,7 +2687,7 @@ export async function evaluateOutfitThroughSharedPipeline({
   const startedAt = Date.now()
   const { pieces } = resolveOutfitEvaluationPieces({ outfit, pieceIds })
   const content = []
-  const outfitPhoto = outfit.photo || outfit.imageUrl || ''
+  const outfitPhoto = outfit.photo || outfit.imageUrl || outfit.image_url || ''
   const savedPhotoPath = uploadedPhotoPath || uploadedOrSavedOutfitPhotoPath(outfitPhoto)
   const outfitImageIncluded = await addEvaluationImage(content, savedPhotoPath)
   if (!outfitImageIncluded && pieces.length < 2 && !allowPhotoOnly) {
@@ -2789,6 +2794,7 @@ export async function evaluateOutfitThroughSharedPipeline({
     model: ACTIVE_STYLIST_MODEL,
     mode: routeMode,
     pipeline: 'whole_wardrobe_outfit_evaluator',
+    evidenceMode,
     debug: {
       timings: { totalMs: Date.now() - startedAt },
       evidenceMode,

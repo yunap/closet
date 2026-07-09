@@ -3407,6 +3407,10 @@ export default function StylistChat({
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not evaluate outfit')
         replyText = data.feedback || 'Outfit evaluation complete.'
+        // Part 4 visibility: surface when no image was available for this critique.
+        if (data.evidenceMode === 'limited') {
+          replyText = '⚠️ _Evaluated from outfit description only — no image was available for this board._\n\n' + replyText
+        }
         replyWardrobeEvaluation = true
         replyOutfitName = outfitToSend.name
         replyDebug = data.debug || null

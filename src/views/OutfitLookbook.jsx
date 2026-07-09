@@ -1836,11 +1836,22 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
           onGoToThread={onGoToThread}
           onSendToStylist={board => {
             setBoardDetail(null)
+            // Extract real piece IDs from board.pieces (shape: {id, name, category, missing}).
+            // resolveOutfitEvaluationPieces reads outfit.pieceIds, not outfit.pieces,
+            // so we must extract them explicitly at the handoff boundary.
+            const boardPieceIds = (board.pieces || [])
+              .map(p => p?.id)
+              .filter(id => id != null && Number(id) > 0)
+              .map(Number)
             onSendToStylist({
               id: null,
               name: board.title,
+              title: board.title,
+              label: board.title,
               photo: resolveUploadImageSrc(board.image_url),
+              pieceIds: boardPieceIds,
               pieces: board.pieces,
+              occasion: board.context_name || '',
               notes: board.reason,
               autoSend: true,
               stylistPrompt: 'Evaluate this styling direction. Tell me whether the pieces work together, what feels risky, and what I should change first.'
