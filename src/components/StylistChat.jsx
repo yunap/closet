@@ -1728,7 +1728,7 @@ export default function StylistChat({
               </div>
               <button
                 type="button"
-                onClick={() => generateWholeWardrobeComparisonSheet(messageIndex, outfits)}
+                onClick={() => generateWholeWardrobeComparisonSheet(messageResultKey, outfits)}
                 disabled={isGeneratingComparison}
                 style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isGeneratingComparison ? 'default' : 'pointer', opacity: isGeneratingComparison ? 0.65 : 1 }}
               >
@@ -1833,7 +1833,7 @@ export default function StylistChat({
                 </div>
                  <button
                   type="button"
-                  onClick={() => generateIdealAdditionsComparisonSheet(messageIndex, outfits)}
+                  onClick={() => generateIdealAdditionsComparisonSheet(messageResultKey, outfits)}
                   disabled={isGeneratingIdealComparison}
                   style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isGeneratingIdealComparison ? 'default' : 'pointer', opacity: isGeneratingIdealComparison ? 0.65 : 1 }}
                 >
@@ -2781,10 +2781,10 @@ export default function StylistChat({
     }
   }
 
-  const generateWholeWardrobeComparisonSheet = async (messageIndex, outfits = []) => {
+  const generateWholeWardrobeComparisonSheet = async (messageResultKey, outfits = []) => {
     const visibleOutfits = outfits.slice(0, 5)
     if (visibleOutfits.length < 2) return
-    const resultKey = `whole-wardrobe-comparison:${messageIndex}`
+    const resultKey = `whole-wardrobe-comparison:${messageResultKey}`
     let statusTimers = []
     const clearImageTimers = () => {
       statusTimers.forEach(clearTimeout)
@@ -2830,12 +2830,12 @@ export default function StylistChat({
     }
   }
 
-  const generateIdealAdditionsComparisonSheet = async (messageIndex, outfits = []) => {
+  const generateIdealAdditionsComparisonSheet = async (messageResultKey, outfits = []) => {
     if (outfits.length < 2) return
     const firstOutfit = outfits[0]
     const pieceId = firstOutfit?.pieceId || activeContext?.id
     if (!pieceId) return
-    const resultKey = `ideal-additions-comparison:${messageIndex}`
+    const resultKey = `ideal-additions-comparison:${messageResultKey}`
     let statusTimers = []
     const clearImageTimers = () => {
       statusTimers.forEach(clearTimeout)
