@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -70,7 +71,18 @@ export default function VisualLab({ activeContext, onGoToThread } = {}) {
   const [savedBoards, setSavedBoards]                       = useState([])
   const [savedBoardsLoading, setSavedBoardsLoading]         = useState(false)
   const [previewImage, setPreviewImage]                     = useState(null)
-  const [activeSection, setActiveSection]                   = useState('references')
+  const [searchParams, setSearchParams] = useSearchParams()
+  // activeSection is URL-backed (survives tab switches); sub-filters stay local.
+  const VALID_SECTIONS = ['references', 'saved', 'upload']
+  const rawSection  = searchParams.get('section')
+  const activeSection = VALID_SECTIONS.includes(rawSection) ? rawSection : 'references'
+  const setActiveSection = (section) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (!section || section === 'references') { next.delete('section') } else { next.set('section', section) }
+      return next
+    }, { replace: true })
+  }
 
   // ── Data loading ─────────────────────────────────────────────────────────────
 
