@@ -164,6 +164,15 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('do NOT ask what weather to expect'))
   assert.ok(STYLIST_SYSTEM.includes('Pass the city/place as `location` on \'search_wardrobe\''))
   assert.ok(STYLIST_SYSTEM.includes('Legion of Honor museum in San Francisco'))
+  // Spec 7 (2026-07-09): spec 4's fix didn't generalize past its own museum-framed example — the
+  // model still asked for weather on "I'm going to Napa on Saturday. What should I wear to a winery
+  // lunch?" despite an occasion (winery lunch) and place (Napa) both being named. Regression test for
+  // the explicit distinguishing test plus the new Example 1c covering travel-flavored wording.
+  assert.ok(STYLIST_SYSTEM.includes('does the request already name a SPECIFIC occasion/event'))
+  assert.ok(STYLIST_SYSTEM.includes('regardless of travel-flavored phrasing like "going to," "trip," or a day-of-week'))
+  assert.ok(STYLIST_SYSTEM.includes('Example 1c'))
+  assert.ok(STYLIST_SYSTEM.includes("I'm going to Napa on Saturday. What should I wear to a winery lunch?"))
+  assert.ok(STYLIST_SYSTEM.includes('a winery lunch is a specific named occasion'))
 })
 
 test('StylistChat carries generated styling context into ask requests', () => {

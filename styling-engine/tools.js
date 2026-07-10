@@ -102,6 +102,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       proposeValidationFails: 0,
       outfitProseWithoutToolCall: 0,
       zeroResultContradictionBlocks: 0,
+      destinationClarificationRetries: 0,
       weatherSource: ''
     }
   }

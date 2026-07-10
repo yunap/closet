@@ -29,20 +29,41 @@ export function looksLikeUnproposedOutfitProse(answerText = '') {
   return distinctLabels.size >= 2
 }
 
-// After the model produces a tool-call-free final answer, apply spec 3 Part 0's checks. Returns
-// { block: true, correctionMessage } to force a retry (0b), or { block: false } after recording the
-// soft flag (0a) as a diagnostic for the client's collapsed details affordance.
-function applyFreeformOutputChecks(answerText, toolContext) {
-  const contradiction = findZeroResultContradiction(answerText, toolContext)
+// Spec 7 Part 2: the model asking a destination/weather clarifying question without ever calling
+// search_wardrobe is the confirmed failure mode (STYLIST_SYSTEM's prompt guidance alone wasn't
+// reliable — same lesson as spec 3 Part 0). Deliberately loose keyword match: a false positive just
+// costs one harmless retry, cheaper than the miss (a full extra clarifying turn from Yuna's side).
+export function looksLikeDestinationOrWeatherQuestion(answerText = '') {
+  const text = String(answerText || '')
+  if (!text.includes('?')) return false // ratchet-allow: model's own reply prose, not garment matching
+  return /\b(what weather|what'?s the weather|what destination|where are you (going|headed)|where'?re you (going|headed|traveling)|what city|which city|what location)\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
+}
+
+// After the model produces a tool-call-free final answer, apply spec 3 Part 0's checks plus spec 7
+// Part 2's. Returns { block: true, correctionMessage } to force a retry (0b or spec 7), or
+// { block: false } after recording any soft flag (0a) as a diagnostic for the client's collapsed
+// details affordance. Retry flags are passed in per-kind so exhausting one retry budget doesn't
+// consume the other.
+function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrectionRetried = false, destinationClarificationRetried = false } = {}) {
+  const contradiction = !zeroResultCorrectionRetried && findZeroResultContradiction(answerText, toolContext)
   if (contradiction) {
     bumpFreeformDiagnostic(toolContext, 'zeroResultContradictionBlocks')
     return {
       block: true,
+      blockType: 'zeroResultContradiction',
       correctionMessage: `You searched for "${contradiction}" and found nothing — do not describe this as a piece Yuna owns. Either offer a real alternative via search_wardrobe or say plainly that she doesn't have this piece.`
     }
   }
   if ((toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 && looksLikeUnproposedOutfitProse(answerText)) {
     bumpFreeformDiagnostic(toolContext, 'outfitProseWithoutToolCall')
+  }
+  if (!destinationClarificationRetried && (toolContext?.freeformDiagnostics?.searchCalls || 0) === 0 && looksLikeDestinationOrWeatherQuestion(answerText)) {
+    bumpFreeformDiagnostic(toolContext, 'destinationClarificationRetries')
+    return {
+      block: true,
+      blockType: 'destinationClarification',
+      correctionMessage: "You asked about weather or destination without calling search_wardrobe first. If this message names any real place or specific occasion (even one word — a city, region, venue, or event), call search_wardrobe with that as `location` and proceed to propose an outfit. Only ask again if you genuinely cannot identify any destination or occasion in the request."
+    }
   }
   return { block: false }
 }
@@ -334,6 +355,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   let currentMessages = [...messages]
   const savedCorrections = []
   let zeroResultCorrectionRetried = false
+  let destinationClarificationRetried = false
 
   for (let iter = 0; iter < 5; iter++) {
     if (AI_PROVIDER === 'openai') {
@@ -415,9 +437,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = message.content || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext)
-        if (check.block && !zeroResultCorrectionRetried) {
-          zeroResultCorrectionRetried = true
+        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried })
+        if (check.block) {
+          if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
+          else zeroResultCorrectionRetried = true
           currentMessages.push({ role: 'assistant', content: finalText })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
@@ -491,9 +514,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = response.content?.[0]?.text || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext)
-        if (check.block && !zeroResultCorrectionRetried) {
-          zeroResultCorrectionRetried = true
+        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried })
+        if (check.block) {
+          if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
+          else zeroResultCorrectionRetried = true
           currentMessages.push({ role: 'assistant', content: response.content })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue

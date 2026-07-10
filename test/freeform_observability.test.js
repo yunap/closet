@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { db } from '../db.js'
 import { executeTool, bumpFreeformDiagnostic } from '../styling-engine/tools.js'
 import { persistFreeformGenerationRun } from '../routes/ai.js'
-import { findZeroResultContradiction, looksLikeUnproposedOutfitProse } from '../styling-engine/provider.js'
+import { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion } from '../styling-engine/provider.js'
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -20,6 +20,7 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     proposeValidationFails: 0,
     outfitProseWithoutToolCall: 0,
     zeroResultContradictionBlocks: 0,
+    destinationClarificationRetries: 0,
     weatherSource: ''
   })
 })
@@ -106,7 +107,8 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
       proposeCalls: 1,
       proposeValidationFails: 1,
       outfitProseWithoutToolCall: 1,
-      zeroResultContradictionBlocks: 1
+      zeroResultContradictionBlocks: 1,
+      destinationClarificationRetries: 1
     }
   })
   const row = db.prepare('SELECT * FROM freeform_generation_runs WHERE session_id = ?').get('test-session')
@@ -118,6 +120,7 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
   assert.equal(row.propose_validation_fails, 1)
   assert.equal(row.outfit_prose_without_tool_count, 1)
   assert.equal(row.zero_result_contradiction_blocks, 1)
+  assert.equal(row.destination_clarification_retries, 1)
 })
 
 // Spec 3 Part 0 (live-testing findings, 2026-07-09):
@@ -175,6 +178,26 @@ test('looksLikeUnproposedOutfitProse does not false-positive on ordinary convers
 test('looksLikeUnproposedOutfitProse requires at least two distinct labeled slots, not one', () => {
   const answer = 'Top: a nice blouse — no other slots mentioned here.'
   assert.equal(looksLikeUnproposedOutfitProse(answer), false)
+})
+
+// Spec 7 Part 2 (destination/weather clarification hardening, 2026-07-09): the live repro was the
+// model asking "What weather are you expecting for the Napa trip on Saturday?" without ever calling
+// search_wardrobe, despite the message naming both a place (Napa) and a specific occasion (winery
+// lunch) — prompt guidance alone wasn't reliable (same lesson as spec 3 Part 0), so this mechanical
+// check backstops it.
+test('looksLikeDestinationOrWeatherQuestion matches the literal live repro', () => {
+  const answer = 'What weather are you expecting for the Napa trip on Saturday? This will help me recommend the most suitable outfit for the winery lunch.'
+  assert.equal(looksLikeDestinationOrWeatherQuestion(answer), true)
+})
+
+test('looksLikeDestinationOrWeatherQuestion does not false-positive on ordinary proposing prose', () => {
+  const answer = 'For your winery lunch in Napa, I\'d go with a linen blouse, tailored trousers, and comfortable flats to handle the gravel paths.'
+  assert.equal(looksLikeDestinationOrWeatherQuestion(answer), false)
+})
+
+test('looksLikeDestinationOrWeatherQuestion requires a question mark, not just matching phrasing', () => {
+  const answer = 'I already checked what weather to expect in Napa and it looks mild, so here is the outfit.'
+  assert.equal(looksLikeDestinationOrWeatherQuestion(answer), false)
 })
 
 test('persistFreeformGenerationRun does not throw when diagnostics are missing', () => {
