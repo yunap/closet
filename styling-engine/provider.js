@@ -39,12 +39,23 @@ export function looksLikeDestinationOrWeatherQuestion(answerText = '') {
   return /\b(what weather|what'?s the weather|what destination|where are you (going|headed)|where'?re you (going|headed|traveling)|what city|which city|what location)\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
 }
 
+// Spec 11: Yuna's own framing — she doesn't mind the app answering some questions in plain prose
+// without going through the model's tools, but explicitly minds an ignored "show" request. Unlike
+// looksLikeUnproposedOutfitProse (which reads the model's ANSWER and only soft-flags), this reads the
+// USER's question — the explicit "show/render this" signal STYLIST_SYSTEM's own "Showing /
+// Re-rendering an Outfit" rule already tells the model to act on via propose_outfit. Confirmed live
+// (2026-07-10): the model doesn't reliably follow that rule on its own, same lesson as spec 3/7 —
+// prompt guidance alone isn't enough, this needs a mechanical backstop too.
+export function looksLikeShowOrRenderRequest(questionText = '') {
+  return /\b(show|render|visuali[sz]e)\b/i.test(String(questionText || '')) // ratchet-allow: user's own request text, not garment matching
+}
+
 // After the model produces a tool-call-free final answer, apply spec 3 Part 0's checks plus spec 7
 // Part 2's. Returns { block: true, correctionMessage } to force a retry (0b or spec 7), or
 // { block: false } after recording any soft flag (0a) as a diagnostic for the client's collapsed
 // details affordance. Retry flags are passed in per-kind so exhausting one retry budget doesn't
 // consume the other.
-function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrectionRetried = false, destinationClarificationRetried = false } = {}) {
+function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrectionRetried = false, destinationClarificationRetried = false, showRequestRetried = false } = {}) {
   const contradiction = !zeroResultCorrectionRetried && findZeroResultContradiction(answerText, toolContext)
   if (contradiction) {
     bumpFreeformDiagnostic(toolContext, 'zeroResultContradictionBlocks')
@@ -63,6 +74,14 @@ function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrecti
       block: true,
       blockType: 'destinationClarification',
       correctionMessage: "You asked about weather or destination without calling search_wardrobe first. If this message names any real place or specific occasion (even one word — a city, region, venue, or event), call search_wardrobe with that as `location` and proceed to propose an outfit. Only ask again if you genuinely cannot identify any destination or occasion in the request."
+    }
+  }
+  if (!showRequestRetried && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 && looksLikeShowOrRenderRequest(toolContext?.question)) {
+    bumpFreeformDiagnostic(toolContext, 'showRequestRetries')
+    return {
+      block: true,
+      blockType: 'showRequest',
+      correctionMessage: "You were asked to show or render an outfit but did not call propose_outfit. If an outfit or outfit set has already been discussed in this conversation, call propose_outfit now with the same verified piece IDs so it renders as a card. If nothing has been discussed yet to show, say so plainly instead of describing an outfit in prose."
     }
   }
   return { block: false }
@@ -356,6 +375,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   const savedCorrections = []
   let zeroResultCorrectionRetried = false
   let destinationClarificationRetried = false
+  let showRequestRetried = false
 
   for (let iter = 0; iter < 5; iter++) {
     if (AI_PROVIDER === 'openai') {
@@ -437,9 +457,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = message.content || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried })
+        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, showRequestRetried })
         if (check.block) {
           if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
+          else if (check.blockType === 'showRequest') showRequestRetried = true
           else zeroResultCorrectionRetried = true
           currentMessages.push({ role: 'assistant', content: finalText })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
@@ -514,9 +535,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = response.content?.[0]?.text || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried })
+        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, showRequestRetried })
         if (check.block) {
           if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
+          else if (check.blockType === 'showRequest') showRequestRetried = true
           else zeroResultCorrectionRetried = true
           currentMessages.push({ role: 'assistant', content: response.content })
           currentMessages.push({ role: 'user', content: check.correctionMessage })

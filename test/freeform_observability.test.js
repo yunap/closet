@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { db } from '../db.js'
 import { executeTool, bumpFreeformDiagnostic } from '../styling-engine/tools.js'
 import { persistFreeformGenerationRun } from '../routes/ai.js'
-import { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion } from '../styling-engine/provider.js'
+import { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, looksLikeShowOrRenderRequest } from '../styling-engine/provider.js'
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -21,6 +21,7 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     outfitProseWithoutToolCall: 0,
     zeroResultContradictionBlocks: 0,
     destinationClarificationRetries: 0,
+    showRequestRetries: 0,
     weatherSource: ''
   })
 })
@@ -108,7 +109,8 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
       proposeValidationFails: 1,
       outfitProseWithoutToolCall: 1,
       zeroResultContradictionBlocks: 1,
-      destinationClarificationRetries: 1
+      destinationClarificationRetries: 1,
+      showRequestRetries: 1
     }
   })
   const row = db.prepare('SELECT * FROM freeform_generation_runs WHERE session_id = ?').get('test-session')
@@ -121,6 +123,7 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
   assert.equal(row.outfit_prose_without_tool_count, 1)
   assert.equal(row.zero_result_contradiction_blocks, 1)
   assert.equal(row.destination_clarification_retries, 1)
+  assert.equal(row.show_request_retries, 1)
 })
 
 // Spec 3 Part 0 (live-testing findings, 2026-07-09):
@@ -198,6 +201,22 @@ test('looksLikeDestinationOrWeatherQuestion does not false-positive on ordinary 
 test('looksLikeDestinationOrWeatherQuestion requires a question mark, not just matching phrasing', () => {
   const answer = 'I already checked what weather to expect in Napa and it looks mild, so here is the outfit.'
   assert.equal(looksLikeDestinationOrWeatherQuestion(answer), false)
+})
+
+// Spec 11 (2026-07-10): Yuna's own framing — plain prose answers to ordinary questions are fine,
+// but an explicit "show/render this" request must actually produce a propose_outfit card. Confirmed
+// live: the model didn't reliably follow STYLIST_SYSTEM's own "Showing / Re-rendering an Outfit"
+// rule on its own ("what should I wear today" then "show" both returned proposeCalls: 0).
+test('looksLikeShowOrRenderRequest matches "show" and its variants', () => {
+  assert.equal(looksLikeShowOrRenderRequest('show'), true)
+  assert.equal(looksLikeShowOrRenderRequest('show the outfit'), true)
+  assert.equal(looksLikeShowOrRenderRequest('can you render that for me?'), true)
+  assert.equal(looksLikeShowOrRenderRequest('visualize this one'), true)
+})
+
+test('looksLikeShowOrRenderRequest does not false-positive on ordinary requests with no show/render intent', () => {
+  assert.equal(looksLikeShowOrRenderRequest('What should I wear today, nothing special?'), false)
+  assert.equal(looksLikeShowOrRenderRequest('Is this too casual for a dinner?'), false)
 })
 
 test('persistFreeformGenerationRun does not throw when diagnostics are missing', () => {

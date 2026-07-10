@@ -4283,7 +4283,8 @@ export default function StylistChat({
                         (m.debug.proposeValidationFails || 0) > 0 ||
                         (m.debug.outfitProseWithoutToolCall || 0) > 0 ||
                         (m.debug.zeroResultContradictionBlocks || 0) > 0 ||
-                        (m.debug.destinationClarificationRetries || 0) > 0
+                        (m.debug.destinationClarificationRetries || 0) > 0 ||
+                        (m.debug.showRequestRetries || 0) > 0
                       )) && (
                         <details className="telemetry-details" style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
                           <summary>ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Search &amp; validation details</span></summary>
@@ -4295,6 +4296,7 @@ export default function StylistChat({
                             {m.debug.outfitProseWithoutToolCall > 0 && <div>⚠ This reply describes an outfit but wasn't proposed as a verified card — treat named pieces as unconfirmed.</div>}
                             {m.debug.zeroResultContradictionBlocks > 0 && <div>⚠ An earlier draft of this reply described a piece that a search found 0 results for; it was auto-corrected before sending.</div>}
                             {m.debug.destinationClarificationRetries > 0 && <div>⚠ An earlier draft asked about destination/weather without searching the wardrobe first; it was auto-corrected before sending.</div>}
+                            {m.debug.showRequestRetries > 0 && <div>⚠ You asked to show/render an outfit and an earlier draft replied in text only; it was auto-corrected to propose the outfit as a card.</div>}
                           </div>
                         </details>
                       )}

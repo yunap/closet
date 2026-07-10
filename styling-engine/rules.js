@@ -4063,7 +4063,7 @@ function pieceExcludedForOccasion(piece = {}, occasion = '') {
     .includes(requested)
 }
 
-export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode = 'gate', requireShoes = true, requireDress = false, requireNonGraphicTop = false, rejectProfileDiscouraged = false, applyDiversity = true, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null, activity = '', sessionInfluence = null, request = '', question = '' } = {}) {
+export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode = 'gate', requireShoes = true, requireDress = false, requireNonGraphicTop = false, rejectProfileDiscouraged = false, applyDiversity = true, repair = undefined, candidatePieces = [], occasion = 'casual', mood = '', season = '', weatherProfile = null, activity = '', sessionInfluence = null, request = '', question = '' } = {}) {
   const advisorMode = mode === 'advisor'
   const seen = new Set()
   const accepted = []
@@ -4081,10 +4081,16 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
   // before shipping. Resolved the same way buildVisualComposerRoster resolves it.
   const registerCeiling = resolveRegisterCeiling({ occasion, activity, mood, request, occasionProfile, activityProfile })
   const ownedIds = new Set((candidatePieces || []).map(piece => Number(piece.id)).filter(Boolean))
+  // Spec 9: repair defaults to running whenever NOT in advisor mode (original behavior), but a
+  // caller can force it on even in advisor mode via options.repair — for locally-generated candidate
+  // outfits (trip-slot ranking, the /ask fallback tier), where there's no LLM composition to preserve,
+  // so a mechanical slot-fill isn't "reinventing" anything the way it would be for a model's own
+  // outfit. Composer callers (LLM-proposed outfits) don't pass this, so their repair-skip is unchanged.
+  const shouldRepair = repair !== undefined ? repair : !advisorMode
   for (const outfit of outfits) {
-    let repaired = advisorMode
-      ? { ...outfit }
-      : repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood, { season, weatherProfile: resolvedWeatherProfile, activity })
+    let repaired = shouldRepair
+      ? repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood, { season, weatherProfile: resolvedWeatherProfile, activity })
+      : { ...outfit }
     const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
     const pieceIds = pieces.map(piece => Number(piece.id)).filter(Boolean)
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()

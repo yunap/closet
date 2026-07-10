@@ -103,6 +103,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       outfitProseWithoutToolCall: 0,
       zeroResultContradictionBlocks: 0,
       destinationClarificationRetries: 0,
+      showRequestRetries: 0,
       weatherSource: ''
     }
   }

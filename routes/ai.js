@@ -1031,6 +1031,12 @@ function buildLocalTripSlotOutfits({ slots = [], question = '', mood = '', allPi
       question
     }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
     const ranked = locallyGateWholeWardrobeOutfits(localOutfits, Math.max(3, slots.length), {
+      mode: 'advisor', // spec 9 — matches the 2026-06-25 advisor-mode decision, closes the "missing
+      // outfit count" gap that only the primary visual composer had been fixed for; applyDiversity
+      // left on (default true) since repeat-wear avoidance across a multi-day trip matters here
+      repair: true, // spec 9 — locally-generated candidates, not LLM output, so a slot-fill repair
+      // isn't "reinventing" a model's composition; decoupled from advisorMode for this reason
+      rejectProfileDiscouraged: true,
       requireShoes: true,
       candidatePieces: allowedPieces,
       occasion: slot.occasion,
@@ -1264,6 +1270,11 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
       question
     }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
     structuredOutfits = locallyGateWholeWardrobeOutfits(localOutfits, 5, {
+      mode: 'advisor', // spec 9 — same as the trip-slot ranking tier above; this is the /ask
+      // precompose's last-resort fallback, the other call site that never got the 2026-06-25
+      // advisor-mode decision
+      repair: true, // spec 9 — locally-generated candidates, not LLM output; see note above
+      rejectProfileDiscouraged: true,
       requireShoes: true,
       candidatePieces: allowedPieces,
       occasion,
@@ -1523,8 +1534,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, show_request_retries, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -1535,6 +1546,7 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.outfitProseWithoutToolCall) || 0,
       Number(diagnostics.zeroResultContradictionBlocks) || 0,
       Number(diagnostics.destinationClarificationRetries) || 0,
+      Number(diagnostics.showRequestRetries) || 0,
       diagnostics.weatherSource || ''
     )
   } catch (err) {
