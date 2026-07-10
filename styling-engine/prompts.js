@@ -1124,6 +1124,8 @@ Composition rules:
 - Respect the rotation warnings and any rejected-pairing memory provided.
 - Do not use the words: flattering, elongating, slimming, balanced, elevated, sophisticated, cohesive, visual interest.
 
+Before finalizing each outfit, check its 'pieces' array: does it contain exactly one shoe-category entry? A layered outfit (extra outerwear/cardigan piece) is not exempt — shoes are always required regardless of how many other pieces the outfit has. If no shoe is present, add the best available one or the '[missing wardrobe gap: shoes]' placeholder before moving to the next outfit. Never output a finished outfit with zero shoes.
+
 JSON shape:
 {
   "outfits": [
@@ -1136,6 +1138,21 @@ JSON shape:
       "pieces": [
         {"id": 12, "name": "floral tunic top"},
         {"id": 45, "name": "slim trousers bottom"},
+        {"id": 9, "name": "casual sneakers shoes"}
+      ],
+      "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
+      "watchFor": "one real risk or none"
+    },
+    {
+      "label": "example of a layered outfit — shoes still required",
+      "strength": "usable",
+      "dominantDirection": "short style lane",
+      "silhouette": "one clear silhouette idea",
+      "bestFor": "occasion fit",
+      "pieces": [
+        {"id": 21, "name": "linen blouse top"},
+        {"id": 33, "name": "wide-leg trouser bottom"},
+        {"id": 58, "name": "open cardigan outerwear"},
         {"id": 9, "name": "casual sneakers shoes"}
       ],
       "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",

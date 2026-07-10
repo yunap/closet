@@ -201,6 +201,12 @@ test('5. Composer prompt string contains the exact-slot hard constraint and the 
   assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('EXACTLY one top AND one bottom, OR exactly one dress'))
   assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('EXACTLY one pair of shoes'))
   assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes("[missing wardrobe gap: category]"))
+  // Live testing (2026-07-10) found a model-proposed layered outfit (top + bottom + cardigan) with
+  // zero shoes despite the rule above — added a self-check immediately before the JSON schema
+  // (proximity to the generation task) plus a layered example demonstrating shoes are still required.
+  assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('A layered outfit (extra outerwear/cardigan piece) is not exempt'))
+  assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('Never output a finished outfit with zero shoes'))
+  assert.ok(WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM.includes('example of a layered outfit — shoes still required'))
 })
 
 test('6. Diagnostic card payload in response and SQLite generation runs logging', async () => {
@@ -273,6 +279,14 @@ test('7. No post-model-filtering regression: malformed cards still appear as dia
   assert.equal(brokenOutfit.broken, true)
   assert.equal(brokenOutfit.source, 'model-rejected')
   assert.equal(brokenOutfit.rejectionReason, 'structural: missing shoes')
+
+  // The specific reason is now also persisted, not just visible on the one card in the UI —
+  // previously this was computed in memory and discarded; the terminal log and generation_runs
+  // both had zero visibility into *why* a model outfit was structurally rejected.
+  const run = db.prepare("SELECT * FROM generation_runs WHERE flow = 'whole_wardrobe_visual' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(run, 'Should have persisted a generation run')
+  const loggedReasons = JSON.parse(run.structural_rejection_reasons)
+  assert.equal(loggedReasons['structural: missing shoes'], 1)
 })
 
 test('8. One-time repair for metadata todos backfills field from description', () => {

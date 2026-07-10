@@ -1884,30 +1884,24 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     }
   }
 
-  // Spec 5: opt-in register-ceiling awareness. Existing callers are unaffected unless they explicitly
-  // pass registerCeiling or applyRegisterCeiling — mirrors spec 1's mode-switch on profileRuleFit
-  // itself. This closes the trip-precompose gap (buildLocalTripSlotOutfits) where a dressy piece
-  // could surface for a register-capped occasion, without touching the other two production callers
-  // (search_wardrobe's pre-filter, rankedComplementaryWardrobeFor) that don't opt in.
+  // Spec 8: register-ceiling and footwear-enum awareness are unconditional here, matching the two
+  // other fully-gated composition paths (search_wardrobe, buildVisualComposerRoster) that already
+  // call the same underlying verdict helpers. Previously this was opt-in per caller (spec 5's
+  // registerCeiling-only opt-in, and activityProfile was never passed at all) — that left every
+  // caller of this function exposed to the exact gate-parity bug class specs 5/7 kept finding one
+  // call site at a time. See spec 8 for the full caller inventory and the register-ceiling rollout.
   const registerCeiling = options.registerCeiling !== undefined
     ? options.registerCeiling
-    : (options.applyRegisterCeiling
-        ? resolveRegisterCeiling({
-            occasion,
-            activity: options.activity,
-            mood: options.mood || '',
-            request: options.request || options.question || '',
-            occasionProfile,
-            activityProfile
-          })
-        : null)
+    : resolveRegisterCeiling({
+        occasion,
+        activity: options.activity,
+        mood: options.mood || '',
+        request: options.request || options.question || '',
+        occasionProfile,
+        activityProfile
+      })
 
-  // Only registerCeiling opts into profileRuleFit's newer gates here — deliberately NOT activityProfile.
-  // Passing activityProfile would also silently switch on the footwear-enum gate (profileRuleFit's
-  // `if (isShoe && activityProfile)` branch) for every caller of this function, which is out of scope
-  // for spec 5 (register-ceiling only) and unreviewed; the two gates are independently checked in
-  // profileRuleFit, so registerCeiling alone is sufficient here.
-  const profileFit = profileRuleFit(piece, mergedRules, { weatherProfile, occasionProfile, registerCeiling })
+  const profileFit = profileRuleFit(piece, mergedRules, { weatherProfile, occasionProfile, activityProfile, registerCeiling })
   if (profileFit.tier === 'prohibited') {
     reasons.push(profileFit.reason)
   }
@@ -4081,6 +4075,11 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
   const occasionProfile = resolveOccasionProfile(occasion, mood)
   const activityProfile = resolveActivityProfile({ activity, occasion, mood })
   const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
+  // Spec 8: this was the one direct profileRuleFit call in the codebase that didn't go through
+  // wholeWardrobePieceTrustDecision and had no register-ceiling/footwear-enum awareness at all — the
+  // final gate an outfit passes through in the /ask precompose fallback tier and trip-slot ranking
+  // before shipping. Resolved the same way buildVisualComposerRoster resolves it.
+  const registerCeiling = resolveRegisterCeiling({ occasion, activity, mood, request, occasionProfile, activityProfile })
   const ownedIds = new Set((candidatePieces || []).map(piece => Number(piece.id)).filter(Boolean))
   for (const outfit of outfits) {
     let repaired = advisorMode
@@ -4142,13 +4141,26 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
       }
     }
 
-    const profileFits = pieces.map(piece => profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeatherProfile, occasionProfile }))
+    const profileFits = pieces.map(piece => profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeatherProfile, occasionProfile, activityProfile, registerCeiling }))
     const prohibitedFit = profileFits.find(fit => fit.tier === 'prohibited')
     if (prohibitedFit) {
       if (advisorMode) {
         repaired = appendSystemFlag(repaired, 'occasion', prohibitedFit.reason || 'May conflict with this occasion profile.')
       } else {
         reject(repaired, prohibitedFit.reason || prohibitedFit.label || 'profile-prohibited piece')
+        continue
+      }
+    }
+    // Spec 8: an enum-gated piece with no heel_height/walk_support/formality tagged resolves to
+    // 'unknown', not 'prohibited' or 'discouraged' — without this, that signal silently vanished
+    // (buildVisualComposerRoster already excludes+flags 'unknown' the same way; this matches it,
+    // per the project's flag-not-guess convention rather than letting untagged data pass silently).
+    const unknownFit = !prohibitedFit && profileFits.find(fit => fit.tier === 'unknown')
+    if (unknownFit) {
+      if (advisorMode) {
+        repaired = appendSystemFlag(repaired, 'occasion', `Not yet tagged for this gate (${unknownFit.label}) — verify manually.`)
+      } else {
+        reject(repaired, unknownFit.label || 'gate metadata not tagged')
         continue
       }
     }

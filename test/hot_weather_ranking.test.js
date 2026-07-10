@@ -465,15 +465,24 @@ test('Trail active outdoor profile additional constraints and repair tests', () 
   const scoredSuedeNormal = scoreWholeWardrobeCandidate([suedeSneakers], { occasion: 'casual', request: 'hiking' })
   assert.ok(scoredSuedeNormal.reasons.includes('activity profile: discouraged material (suede)'), 'Suede should be discouraged in all weather')
 
-  // Test 3: Taupe suede ankle boots piece ID 200 is absent from the hiking visual roster
+  // Test 3: Taupe suede ankle boots piece ID 200 is absent from the hiking pre-roster pool AND
+  // the hiking visual roster (spec 8, 2026-07-09: filterWholeWardrobePiecesForGeneration is now a
+  // real gate everywhere, not a broad diagnostic-only pool — closes the gap where
+  // buildLocalTripSlotOutfits/the `/ask` fallback tier had no downstream re-gate to catch what this
+  // pre-filter let through unfiltered).
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const allowedRes = filterWholeWardrobePiecesForGeneration(allPieces, { occasion: 'casual', request: 'hiking' })
   const allowedIds = allowedRes.allowedPieces.map(p => Number(p.id))
-  assert.ok(allowedIds.includes(200), 'Taupe suede ankle boots (ID 200) can remain in the broad pre-roster pool for diagnostics')
-  const hikingRosterPieces = allowedRes.allowedPieces.map(piece => (
-    Number(piece.id) === 200 ? { ...piece, formality: 'everyday' } : piece
-  ))
-  const hikingRoster = buildVisualComposerRoster(hikingRosterPieces, {
+  assert.ok(!allowedIds.includes(200), 'Taupe suede ankle boots (ID 200) must be excluded from the hiking pre-roster pool')
+  assert.match(
+    allowedRes.suppressedPieces.find(item => Number(item.id) === 200)?.reasons.join(' ') || '',
+    /heel unsuitable|support unsuitable/
+  )
+  // buildVisualComposerRoster's own independent gate (defense in depth, not relying on the
+  // pre-filter above) also excludes it when given the full, unfiltered pool directly — here the
+  // register-ceiling check catches it first (formality: elevated exceeds hiking's "everyday"
+  // ceiling), ahead of the footwear-enum check that caught it in the pre-filter above.
+  const hikingRoster = buildVisualComposerRoster(allPieces, {
     occasion: 'casual',
     activity: 'hiking',
     maxImages: 90
@@ -482,7 +491,7 @@ test('Trail active outdoor profile additional constraints and repair tests', () 
   assert.ok(!hikingRosterIds.includes(200), 'Taupe suede ankle boots (ID 200) must be absent from the hiking visual roster')
   assert.match(
     hikingRoster.excluded.find(item => Number(item.pieceId) === 200)?.reason || '',
-    /^footwear: .* unsuitable for Hiking \/ Outdoor active|^activity: not tagged for Hiking \/ Outdoor active/
+    /^register: .* exceeds .* ceiling|^footwear: .* unsuitable for Hiking \/ Outdoor active|^activity: not tagged for Hiking \/ Outdoor active/
   )
 
   // Test 6: Footwear Gate and Repair

@@ -66,12 +66,14 @@ test('isOutfitStructurallyValid - basic validation cases', () => {
 })
 
 test('locallyGateWholeWardrobeOutfits - filters invalid outfits', () => {
+  // formality tagged on every piece so this test exercises only what it's named for (structural
+  // validity), not spec 8's register-ceiling 'unknown' gate incidentally catching untagged fixtures.
   const candidatePieces = [
-    { id: 1, name: 'Cotton Dress', category: 'dress' },
-    { id: 2, name: 'Leather Boots', category: 'shoes' },
-    { id: 3, name: 'Jeans', category: 'bottom' },
-    { id: 4, name: 'Sneakers', category: 'shoes' },
-    { id: 5, name: 'Loafers', category: 'shoes' }
+    { id: 1, name: 'Cotton Dress', category: 'dress', formality: 'everyday' },
+    { id: 2, name: 'Leather Boots', category: 'shoes', formality: 'everyday' },
+    { id: 3, name: 'Jeans', category: 'bottom', formality: 'everyday' },
+    { id: 4, name: 'Sneakers', category: 'shoes', formality: 'everyday' },
+    { id: 5, name: 'Loafers', category: 'shoes', formality: 'everyday' }
   ]
 
   const outfits = [
@@ -80,8 +82,8 @@ test('locallyGateWholeWardrobeOutfits - filters invalid outfits', () => {
       label: 'Valid Dress Outfit',
       pieceIds: [1, 2],
       pieces: [
-        { id: 1, name: 'Cotton Dress', category: 'dress' },
-        { id: 2, name: 'Leather Boots', category: 'shoes' }
+        { id: 1, name: 'Cotton Dress', category: 'dress', formality: 'everyday' },
+        { id: 2, name: 'Leather Boots', category: 'shoes', formality: 'everyday' }
       ]
     },
     // Invalid: no top, two shoes (the bug reported by user)
@@ -89,9 +91,9 @@ test('locallyGateWholeWardrobeOutfits - filters invalid outfits', () => {
       label: 'Buggy Outfit',
       pieceIds: [3, 4, 5],
       pieces: [
-        { id: 3, name: 'Jeans', category: 'bottom' },
-        { id: 4, name: 'Sneakers', category: 'shoes' },
-        { id: 5, name: 'Loafers', category: 'shoes' }
+        { id: 3, name: 'Jeans', category: 'bottom', formality: 'everyday' },
+        { id: 4, name: 'Sneakers', category: 'shoes', formality: 'everyday' },
+        { id: 5, name: 'Loafers', category: 'shoes', formality: 'everyday' }
       ]
     }
   ]
@@ -106,7 +108,11 @@ test('locallyGateWholeWardrobeOutfits - filters invalid outfits', () => {
   assert.ok(result.rejected.some(r => r.reason === 'not a complete wardrobe outfit'))
 })
 
-test('locallyGateWholeWardrobeOutfits advisor mode does not post-filter walking footwear by structured enums', () => {
+test('locallyGateWholeWardrobeOutfits advisor mode keeps but flags walking footwear caught by structured enums (spec 8)', () => {
+  // Spec 8 (2026-07-09): this final profileRuleFit check previously had no activityProfile/
+  // registerCeiling awareness at all — the walking-unsuitable shoe passed through completely
+  // unflagged. Now it's caught, and — because this is advisor mode — kept with a caution flag
+  // rather than dropped, same treatment as the function's other soft/subjective checks.
   const outfit = {
     label: 'Model Returned Walking Look',
     pieceIds: [1, 2, 3],
@@ -131,9 +137,32 @@ test('locallyGateWholeWardrobeOutfits advisor mode does not post-filter walking 
   assert.deepEqual(result.outfits[0].pieceIds, outfit.pieceIds)
   assert.deepEqual(result.outfits[0].pieces, outfit.pieces)
   assert.equal(result.outfits[0].label, outfit.label)
-  assert.equal(result.outfits[0].reason, outfit.reason)
-  assert.equal(result.outfits[0].systemFlags, undefined)
+  assert.ok(result.outfits[0].systemFlags?.some(f => f.type === 'occasion' && /support unsuitable/.test(f.message)))
   assert.deepEqual(result.rejected, [])
+})
+
+test('locallyGateWholeWardrobeOutfits non-advisor (gate) mode rejects the same walking-unsuitable footwear outright (spec 8)', () => {
+  const outfit = {
+    label: 'Model Returned Walking Look',
+    pieceIds: [1, 2, 3],
+    pieces: [
+      { id: 1, name: 'Cotton Tee', category: 'top' },
+      { id: 2, name: 'Jeans', category: 'bottom' },
+      { id: 3, name: 'Low-support sandals', category: 'shoes', heel_height: 'flat', walk_support: 'low' }
+    ],
+    reason: 'The model returned this complete outfit.'
+  }
+  const candidatePieces = outfit.pieces
+
+  const result = locallyGateWholeWardrobeOutfits([outfit], 5, {
+    candidatePieces,
+    occasion: 'travel',
+    activity: 'walking',
+    applyDiversity: false
+  })
+
+  assert.equal(result.outfits.length, 0)
+  assert.ok(result.rejected.some(r => /support unsuitable/.test(r.reason)))
 })
 
 test('inferOutfitArchetype restricts dress archetypes to outfits containing a dress', () => {

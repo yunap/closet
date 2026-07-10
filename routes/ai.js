@@ -1001,8 +1001,7 @@ function buildLocalTripSlotOutfits({ slots = [], question = '', mood = '', allPi
       weatherProfile,
       mood: mood || question,
       activity: slot.activity,
-      request: question,
-      applyRegisterCeiling: true // spec 5 — closes the register-ceiling gap in trip-precompose
+      request: question
     })
     const comfortConstraint = tripSlotComfortConstraint(slot, resolveComfortFootwearConstraint({
       occasion: slot.occasion,
@@ -1238,8 +1237,7 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
       weatherProfile,
       mood: body.mood || question,
       activity: fallbackActivity,
-      request: question,
-      applyRegisterCeiling: true // spec 5 — same trip-precompose gap, this function's own fallback tier
+      request: question
     })
     const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
       occasion,
@@ -1488,14 +1486,14 @@ function visualComposerImageDetailForRoster(rosterLength = 0) {
   return count <= 45 ? 'high' : 'auto'
 }
 
-function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug = {}, rosterCount = 0, requested = null, delivered = null, coverageGaps = [], unresolvedReferencesCount = 0 } = {}) {
+function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug = {}, rosterCount = 0, requested = null, delivered = null, coverageGaps = [], unresolvedReferencesCount = 0, structuralRejectionReasons = {} } = {}) {
   try {
     const cutIds = Array.isArray(rosterDebug.capCutPieces)
       ? rosterDebug.capCutPieces.map(piece => Number(piece.id)).filter(Number.isFinite)
       : []
     db.prepare(`
-      INSERT INTO generation_runs (flow, occasion, weather, roster_count, pool_size, cap_applied, cut_ids, requested, delivered, coverage_gaps, roster_counts, activity_source, unresolved_references_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO generation_runs (flow, occasion, weather, roster_count, pool_size, cap_applied, cut_ids, requested, delivered, coverage_gaps, roster_counts, activity_source, unresolved_references_count, structural_rejection_reasons)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       flow,
       occasion || '',
@@ -1509,7 +1507,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
       JSON.stringify(Array.isArray(coverageGaps) ? coverageGaps : []),
       JSON.stringify(rosterDebug.rosterCounts || rosterDebug.categoryCounts || {}),
       rosterDebug.activitySource || '',
-      Number(unresolvedReferencesCount) || 0
+      Number(unresolvedReferencesCount) || 0,
+      JSON.stringify(structuralRejectionReasons || {})
     )
   } catch (err) {
     console.warn('Failed to persist generation run:', err.message)
@@ -2719,6 +2718,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     visualDebugLog.modelGateOutfits = gatedModel.outfits.length
     visualDebugLog.modelGateRejected = gatedModel.rejected.length
     visualDebugLog.modelGateRejectedReasons = rejectionSummary(gatedModel.rejected)
+    // Previously invisible: aiStructurallyValid < aiReturnedRaw meant the model produced an
+    // incomplete outfit (e.g. missing shoes), but the specific reason never made it into this log —
+    // only visible by opening the resulting broken diagnostic card in the UI, one at a time.
+    visualDebugLog.structurallyRejectedCount = structurallyRejectedModelOutfits.length
+    visualDebugLog.structurallyRejectedReasons = rejectionSummary(structurallyRejectedModelOutfits)
     visualDebugLog.localFillGateOutfits = gatedLocal.outfits.length
     visualDebugLog.localFillGateRejected = gatedLocal.rejected.length
     visualDebugLog.localFillGateRejectedReasons = rejectionSummary(gatedLocal.rejected)
@@ -2777,7 +2781,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       requested: requestedLimit,
       delivered: deliveredCount,
       coverageGaps: rosterDebug.activityCoverageGaps || [],
-      unresolvedReferencesCount: unresolvedReferences.length
+      unresolvedReferencesCount: unresolvedReferences.length,
+      structuralRejectionReasons: visualDebugLog.structurallyRejectedReasons
     })
 
     return {

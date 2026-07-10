@@ -134,6 +134,7 @@ db.exec(`
     roster_counts TEXT DEFAULT '{}',
     activity_source TEXT DEFAULT '',
     unresolved_references_count INTEGER DEFAULT 0,
+    structural_rejection_reasons TEXT DEFAULT '{}',
     created_at    TEXT DEFAULT (datetime('now'))
   );
 
@@ -235,7 +236,8 @@ NEW_COLUMNS.forEach(col => {
   'coverage_gaps TEXT DEFAULT "[]"',
   'roster_counts TEXT DEFAULT "{}"',
   'activity_source TEXT DEFAULT ""',
-  'unresolved_references_count INTEGER DEFAULT 0'
+  'unresolved_references_count INTEGER DEFAULT 0',
+  'structural_rejection_reasons TEXT DEFAULT "{}"'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE generation_runs ADD COLUMN ${col}`) } catch {}
 })
