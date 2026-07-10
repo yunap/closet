@@ -689,7 +689,7 @@ test('editorial-directions-preview generator accepts and forwards mission and mo
 })
 
 test('whole-wardrobe generator returns cards and records resettable session memory', async () => {
-  const json = await postJson('/api/ai/generate-wardrobe-outfits', {
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'city',
     season: 'spring',
     mood: 'artistic minimalist',
@@ -698,7 +698,6 @@ test('whole-wardrobe generator returns cards and records resettable session memo
 
   assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
   assert.equal(json.pipeline, 'full_wardrobe_visual_composer')
-  assert.equal(json.deprecated, true)
   assert.ok(Array.isArray(json.structuredOutfits))
   assert.ok(json.structuredOutfits.length >= 1)
   assert.ok(json.debug.shownPieceCount > 0)
@@ -2567,7 +2566,7 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   aiCalls = []
   
   // Call with hiking
-  await postJson('/api/ai/generate-wardrobe-outfits', {
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'hiking',
     season: 'current season',
     mood: 'artistic minimalist',
@@ -2584,7 +2583,7 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   
   // Call with casual and empty mood
   aiCalls = []
-  await postJson('/api/ai/generate-wardrobe-outfits', {
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'casual',
     season: 'current season',
     mood: '',
@@ -2600,7 +2599,7 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   assert.equal(casualUserMessage.includes('artistic minimalist'), false, 'Empty mood must not fall back to artistic minimalist')
 
   // Test 2: Wardrobe coverage note for trail active outdoor (low tops/shoes vs ample)
-  const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {
+  const coverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'hiking',
     season: 'current season',
     mood: '',
@@ -2612,7 +2611,7 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   assert.equal(coverageJson.debug.profileCoverage.shoes, 0, 'Seed pool has 0 trail-ready shoes')
   assert.ok(coverageJson.feedback.includes('Your wardrobe has limited trail-ready tops and footwear'), 'Feedback must report limited tops and footwear')
 
-  const cityCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {
+  const cityCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'city',
     season: 'current season',
     mood: '',
@@ -2641,7 +2640,7 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
     })
   }
   
-  const ampleCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits', {
+  const ampleCoverageJson = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'hiking',
     season: 'current season',
     mood: '',

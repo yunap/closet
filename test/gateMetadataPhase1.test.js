@@ -40,8 +40,7 @@ test('tag-piece endpoints share anchor block and response confidence shape', () 
   assert.match(routeAi, /tags\.tag_state = tagStateForTaggerResult/)
   assert.match(routeAi, /merged\._confidence = merged\.style_profile_json\?\._confidence \|\| \{\}/)
   assert.match(routeAi, /router\.post\('\/tag-piece-existing\/:id'/)
-  assert.match(routeAi, /router\.post\('\/tag-piece-claude\/:id'/)
-  assert.equal((routeAi.match(/\]\), tagExistingHandler\)/g) || []).length, 2)
+  assert.equal((routeAi.match(/\]\), tagExistingHandler\)/g) || []).length, 1)
 })
 
 test('gate metadata audit and backfill include register and footwear fields', () => {

@@ -34,7 +34,6 @@ import {
   OUTFIT_BOARD_PLANNER_SYSTEM,
   WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
   EDITORIAL_NEW_PIECES_SYSTEM,
-  RENDERER_CALIBRATION_SYSTEM,
   COMPARE_OUTFITS_SYSTEM,
   TAG_PIECE_PROMPT,
   OUTFIT_MISSIONS,
@@ -144,8 +143,6 @@ import {
   createEditorialConceptImage,
   buildIdealOnlyCompletionsForPiece,
   dedupeAndDifferentiateEditorialDirections,
-  createIdentityPreservingEditImage,
-  createCalibrationConceptImage,
   makeGeneratedOutfitReferenceSheet,
   buildSavedOutfitEvaluationContext,
   getConfirmedOutfitMemory,
@@ -172,11 +169,9 @@ import {
   runGPT4oImageGeneration,
   runOpenAIImageGeneration,
   getOpenAIImageSize,
-  normalizeEditorialDirections,
   anchorFidelityInstructions,
   createPhotoPreservingCollageImage,
-  ownedInventorySummaryForEditorial,
-  chooseIdentityEditSource
+  ownedInventorySummaryForEditorial
 } from '../styling-engine/core.js'
 
 const router = express.Router()
@@ -1976,11 +1971,6 @@ router.post('/tag-piece-existing/:id', upload.fields([
   { name: 'worn_photo', maxCount: 1 }
 ]), tagExistingHandler)
 
-router.post('/tag-piece-claude/:id', upload.fields([
-  { name: 'photo', maxCount: 1 },
-  { name: 'worn_photo', maxCount: 1 }
-]), tagExistingHandler)
-
 // ── AI Evaluation/Styling ─────────────────────────────────────────────────────
 router.post('/evaluate-piece', async (req, res) => {
   const { pieceId, question, history } = req.body
@@ -2265,16 +2255,6 @@ router.delete('/whole-wardrobe-session-memory', (req, res) => {
     })
   } catch (err) {
     console.error('Reset whole-wardrobe session memory error:', err)
-    res.status(500).json({ error: err.message })
-  }
-})
-
-router.post('/generate-wardrobe-outfits', async (req, res) => {
-  try {
-    const result = await generateWholeWardrobeOutfitsVisualInternal(req.body || {})
-    res.json({ ...result, deprecated: true })
-  } catch (err) {
-    console.error('Generate whole-wardrobe outfits error:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -3338,260 +3318,6 @@ router.post('/editorial-render-one', async (req, res) => {
     })
   } catch (err) {
     console.error('Editorial render-one error:', err)
-    res.status(500).json({ error: err.message })
-  }
-})
-
-router.post('/editorial-new-piece-visuals', async (req, res) => {
-  const { pieceId, occasion = 'casual', season = 'current season', question, history } = req.body
-  try {
-    const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
-    if (!piece) return res.status(404).json({ error: 'Piece not found' })
-    const selectedPiece = parsePiece(piece)
-    const ownedRows = db.prepare('SELECT * FROM pieces ORDER BY id DESC LIMIT 500').all().map(parsePiece)
-
-    const content = []
-    const photoFile = piece.worn_photo || piece.photo
-    if (photoFile) {
-      const filePath = path.join(uploadsDir, photoFile)
-      if (fs.existsSync(filePath)) {
-        const { base64, mime } = await prepareImageForClaude(filePath)
-        content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
-      }
-    }
-    const calibrationSummary = getCalibrationReferenceSummary()
-    content.push({ type: 'text', text: [
-      `Selected garment truth:\n\th${buildPieceText(selectedPiece)}`,
-      `Occasion: ${occasion}`,
-      `Season: ${season}`,
-      `User request: ${question || 'Suggest ideal new pieces for this item.'}`,
-      calibrationSummary ? `Renderer calibration library:\n${calibrationSummary}` : '',
-      '',
-      'Generate only conceptual missing-piece additions. Do not use saved wardrobe pairings except for the selected garment. If the wardrobe already has jeans, olive cargo/utility pants, or similar basics, do not present those as new pieces; suggest more specific/different archetypes.'
-    ].filter(Boolean).join('\n') })
-
-    const raw = await askStylist({
-      system: EDITORIAL_NEW_PIECES_SYSTEM,
-      maxTokens: 1200,
-      messages: [
-        ...(history || []).map(h => ({ role: h.role, content: h.content })),
-        { role: 'user', content }
-      ]
-    })
-
-    let parsed = safeJsonFromModel(raw)
-    let directions = Array.isArray(parsed?.directions) ? parsed.directions : []
-    if (!directions.length) {
-      directions = buildIdealOnlyCompletionsForPiece(selectedPiece).map(o => ({
-        title: o.label || 'Ideal direction',
-        missingPieces: (o.missingPieces || []).map(p => p.name),
-        reason: o.reason || '',
-        watchFor: o.watchFor || '',
-        visualPrompt: o.reason || ''
-      }))
-    }
-    directions = dedupeAndDifferentiateEditorialDirections(directions, selectedPiece, ownedRows)
-
-    const visuals = []
-    for (const [idx, direction] of directions.slice(0, 3).entries()) {
-      const rendered = await createEditorialConceptImage({ selectedPiece, direction, index: idx + 1, occasion, season })
-      visuals.push({
-        label: direction.title || `Ideal direction ${idx + 1}`,
-        reason: direction.reason || '',
-        watchFor: direction.watchFor || '',
-        missingPieces: Array.isArray(direction.missingPieces) ? direction.missingPieces : [],
-        imageUrl: rendered.imageUrl,
-        debug: {
-          timings: rendered.timings,
-          renderer: rendered.renderer
-        },
-        mode: 'editorial_new_piece_visual'
-      })
-    }
-    res.json({ visuals, provider: AI_PROVIDER, mode: 'editorial_new_piece_visuals' })
-  } catch (err) {
-    console.error('Editorial new-piece visuals error:', err)
-    res.status(500).json({ error: err.message })
-  }
-})
-
-router.post('/identity-edit-visuals', async (req, res) => {
-  const { pieceId, occasion = 'casual', season = 'current season', question, history } = req.body
-  try {
-    const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
-    if (!piece) return res.status(404).json({ error: 'Piece not found' })
-
-    const sourceInfo = chooseIdentityEditSource(piece)
-    if (!sourceInfo?.path) {
-      return res.status(400).json({ error: 'Identity-preserving edits need either a selected garment worn photo, a Calibration Library real photo/good reference, or a garment photo.' })
-    }
-    const sourcePath = sourceInfo.path
-
-    const selectedPiece = parsePiece(piece)
-    const content = []
-    const { base64, mime } = await prepareImageForClaude(sourcePath)
-    content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
-    content.push({ type: 'text', text: [
-      `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
-      `Occasion: ${occasion}`,
-      `Season: ${season}`,
-      `User request: ${question || 'Create identity-preserving styling edits for this selected item.'}`,
-      '',
-      'Generate exactly three styling directions for editing the provided real photo. Do not make wardrobe pairings. Each direction should suggest conceptual additions only. Keep the selected garment as the anchor. The edit must preserve the real person/photo geometry; choose additions that can be shown without changing body proportions, posture, age read, or garment fit. Prioritize visual composition over pleasant harmony: at least one dark grounded column, one structured/earthy tension option, and one controlled contrast option. Avoid scarves/cardigans as default maturity signals, soft cream/taupe sludge, polite slip-ons, and generic mature-casual elegance.'
-    ].join('\n') })
-
-    let directions = []
-    try {
-      const raw = await askStylist({
-        system: EDITORIAL_NEW_PIECES_SYSTEM,
-        maxTokens: 1300,
-        messages: [
-          ...(history || []).map(h => ({ role: h.role, content: h.content })),
-          { role: 'user', content }
-        ]
-      })
-      const parsed = safeJsonFromModel(raw)
-      directions = normalizeEditorialDirections(parsed?.directions || [])
-    } catch (err) {
-      console.error('Identity edit direction model failed:', err.message)
-    }
-
-    if (!directions.length) directions = buildIdealOnlyCompletionsForPiece(selectedPiece).slice(0, 3)
-    if (!directions.length) directions = defaultCalibrationVariations(selectedPiece)
-    directions = directions.slice(0, 3).map((d, idx) => ({
-      title: d.title || ['Identity-preserving edit A', 'Identity-preserving edit B', 'Identity-preserving edit C'][idx],
-      missingPieces: Array.isArray(d.missingPieces) ? d.missingPieces.map(p => p.name || p).filter(Boolean) : [],
-      reason: d.reason || '',
-      watchFor: d.watchFor || '',
-      visualPrompt: d.visualPrompt || d.reason || ''
-    }))
-
-    const visuals = []
-    for (const [idx, direction] of directions.entries()) {
-      const imageUrl = await createIdentityPreservingEditImage({ sourcePath, sourceLabel: sourceInfo.label, selectedPiece, direction, index: idx + 1, occasion, season })
-      visuals.push({
-        label: direction.title || `Identity edit ${idx + 1}`,
-        reason: direction.reason || '',
-        watchFor: direction.watchFor || '',
-        missingPieces: direction.missingPieces || [],
-        imageUrl,
-        mode: 'identity_edit',
-        calibration: {
-          rendererVersion: 'v36',
-          source: 'real_photo_edit',
-          identityPreserving: true
-        }
-      })
-    }
-
-    res.json({ visuals, provider: AI_PROVIDER, mode: 'identity_edit' })
-  } catch (err) {
-    console.error('Identity edit visuals error:', err)
-    res.status(500).json({ error: err.message })
-  }
-})
-
-// Helper for default calibration variations
-function defaultCalibrationVariations(selectedPiece) {
-  const base = buildIdealOnlyCompletionsForPiece(selectedPiece)
-  const source = base.length ? base : [{ missingPieces: [], reason: '' }]
-  return ['A', 'B', 'C'].map((letter, idx) => {
-    const fallback = source[idx % source.length]
-    const missingPieces = (fallback.missingPieces || []).map(p => p.name || p).filter(Boolean)
-    return {
-      variation: letter,
-      title: letter === 'A' ? 'Softer restrained' : letter === 'B' ? 'Balanced artistic modern' : 'Sharper architectural',
-      silhouetteLabel: letter === 'A' ? 'soft structure / medium grounding' : letter === 'B' ? 'grounded edited baseline' : 'architectural / stronger anchor',
-      missingPieces: missingPieces.length ? missingPieces : ['specific grounded support piece', 'specific stabilizing shoe'],
-      reason: letter === 'A'
-        ? 'Tests whether a softer version can stay intentional without drifting passive.'
-        : letter === 'B'
-          ? 'Tests the most balanced grounded artistic direction.'
-          : 'Tests a sharper architectural version with stronger lower-half weight.',
-      watchFor: letter === 'A' ? 'Too soft or mature-catalog drift.' : letter === 'B' ? 'Too generic if the pieces become basic.' : 'Too severe or over-styled.',
-      visualPrompt: fallback.reason || ''
-    }
-  })
-}
-
-router.post('/generate-calibration-boards', async (req, res) => {
-  const { pieceId, occasion = 'casual', season = 'current season', question, history } = req.body
-  try {
-    const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
-    if (!piece) return res.status(404).json({ error: 'Piece not found' })
-    const selectedPiece = parsePiece(piece)
-
-    const content = []
-    const photoFile = piece.worn_photo || piece.photo
-    if (photoFile) {
-      const filePath = path.join(uploadsDir, photoFile)
-      if (fs.existsSync(filePath)) {
-        const { base64, mime } = await prepareImageForClaude(filePath)
-        content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
-      }
-    }
-    content.push({ type: 'text', text: [
-      `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
-      `Occasion: ${occasion}`,
-      `Season: ${season}`,
-      `User request: ${question || 'Generate renderer calibration variations.'}`,
-      '',
-      'Generate exactly three controlled renderer variations: A softer restrained, B balanced artistic modern, C sharper architectural. Use conceptual supporting pieces, not saved wardrobe pairings. Preserve the selected garment as visual truth.'
-    ].join('\n') })
-
-    let variations = []
-    try {
-      const raw = await askStylist({
-        system: RENDERER_CALIBRATION_SYSTEM,
-        maxTokens: 1200,
-        messages: [
-          ...(history || []).map(h => ({ role: h.role, content: h.content })),
-          { role: 'user', content }
-        ]
-      })
-      const parsed = safeJsonFromModel(raw)
-      variations = Array.isArray(parsed?.variations) ? parsed.variations : []
-    } catch (err) {
-      console.error('Calibration variation model failed:', err.message)
-    }
-
-    if (!variations.length) variations = defaultCalibrationVariations(selectedPiece)
-    variations = variations.slice(0, 3).map((v, idx) => ({
-      variation: v.variation || ['A', 'B', 'C'][idx],
-      title: v.title || ['Softer restrained', 'Balanced artistic modern', 'Sharper architectural'][idx],
-      silhouetteLabel: v.silhouetteLabel || '',
-      missingPieces: Array.isArray(v.missingPieces) ? v.missingPieces : [],
-      reason: v.reason || '',
-      watchFor: v.watchFor || '',
-      visualPrompt: v.visualPrompt || ''
-    }))
-
-    const visuals = []
-    for (const [idx, variation] of variations.entries()) {
-      const rendered = await createCalibrationConceptImage({ selectedPiece, variation, index: idx + 1, occasion, season })
-      visuals.push({
-        label: `${variation.variation || String.fromCharCode(65 + idx)} · ${variation.title || 'Calibration variation'}`,
-        variation: variation.variation || String.fromCharCode(65 + idx),
-        silhouetteLabel: variation.silhouetteLabel || '',
-        reason: variation.reason || '',
-        watchFor: variation.watchFor || '',
-        missingPieces: variation.missingPieces || [],
-        imageUrl: rendered.imageUrl,
-        debug: {
-          timings: rendered.timings,
-          renderer: rendered.renderer
-        },
-        mode: 'renderer_calibration',
-        calibration: {
-          variationType: variation.title || '',
-          silhouetteLabel: variation.silhouetteLabel || '',
-          rendererVersion: 'v32'
-        }
-      })
-    }
-    res.json({ visuals, provider: AI_PROVIDER, mode: 'renderer_calibration' })
-  } catch (err) {
-    console.error('Calibration boards error:', err)
     res.status(500).json({ error: err.message })
   }
 })
