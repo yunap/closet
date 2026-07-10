@@ -1020,6 +1020,42 @@ img { display: block; max-width: 100%; }
   box-shadow: var(--shadow);
 }
 .ai-message.assistant p + p { margin-top: 10px; }
+
+/* Markdown rendering for assistant chat prose — restrained, matches the editorial chat aesthetic. */
+.stylist-markdown { font-size: 14px; line-height: 1.6; color: var(--text); }
+.stylist-markdown > :first-child { margin-top: 0; }
+.stylist-markdown > :last-child { margin-bottom: 0; }
+.stylist-markdown p { margin: 0 0 8px; }
+.stylist-markdown h1,
+.stylist-markdown h2,
+.stylist-markdown h3,
+.stylist-markdown h4 {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+  margin: 12px 0 5px;
+}
+.stylist-markdown strong { font-weight: 650; color: var(--text); }
+.stylist-markdown em { font-style: italic; }
+.stylist-markdown ul,
+.stylist-markdown ol { margin: 4px 0 8px; padding-left: 18px; }
+.stylist-markdown li { margin: 0 0 3px; }
+.stylist-markdown li > p { margin: 0; }
+.stylist-markdown a { color: var(--accent); text-decoration: underline; }
+.stylist-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.stylist-markdown blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-muted);
+}
 .chat-thread { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 
 .generated-visual-grid {

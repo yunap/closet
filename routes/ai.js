@@ -1005,7 +1005,9 @@ function buildLocalTripSlotOutfits({ slots = [], question = '', mood = '', allPi
       explorationMode: 'moderate',
       weatherProfile,
       mood: mood || question,
-      activity: slot.activity
+      activity: slot.activity,
+      request: question,
+      applyRegisterCeiling: true // spec 5 — closes the register-ceiling gap in trip-precompose
     })
     const comfortConstraint = tripSlotComfortConstraint(slot, resolveComfortFootwearConstraint({
       occasion: slot.occasion,
@@ -1240,7 +1242,9 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
       explorationMode: 'moderate',
       weatherProfile,
       mood: body.mood || question,
-      activity: fallbackActivity
+      activity: fallbackActivity,
+      request: question,
+      applyRegisterCeiling: true // spec 5 — same trip-precompose gap, this function's own fallback tier
     })
     const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
       occasion,
@@ -1514,6 +1518,32 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
     )
   } catch (err) {
     console.warn('Failed to persist generation run:', err.message)
+  }
+}
+
+// Spec 3 (freeform observability): the freeform-chat equivalent of persistGenerationRun above —
+// a parallel table since the composer's roster-shaped columns (pool_size, cap_applied, cut_ids) don't
+// apply to a tool-calling chat turn. Makes "how often does validation fail," "how often are pieces
+// gate-excluded" queryable instead of anecdotal, mirroring how generation_runs already serves that
+// role for the composer. Best-effort: never throws into the request.
+export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
+  try {
+    db.prepare(`
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sessionId || '',
+      occasion || '',
+      Number(diagnostics.searchCalls) || 0,
+      Number(diagnostics.gateExcludedTotal) || 0,
+      Number(diagnostics.proposeCalls) || 0,
+      Number(diagnostics.proposeValidationFails) || 0,
+      Number(diagnostics.outfitProseWithoutToolCall) || 0,
+      Number(diagnostics.zeroResultContradictionBlocks) || 0,
+      diagnostics.weatherSource || ''
+    )
+  } catch (err) {
+    console.warn('Failed to persist freeform generation run:', err.message)
   }
 }
 
@@ -3652,7 +3682,9 @@ router.post('/ask', async (req, res) => {
       mood: req.body.mood || '',
       mission: req.body.mission || 'mix',
       activity: activePrecompose?.activity || req.body.activity || '',
-      question: req.body.question || ''
+      question: req.body.question || '',
+      location: req.body.location || '',
+      currentDate: req.body.currentDate || ''
     }
     const payload = await buildStylistConversationPayload({
       ...req.body,
@@ -3677,6 +3709,16 @@ router.post('/ask', async (req, res) => {
       suggestedTitle = deriveTripTitle(req.body.question || '', extractedWeather, generatedOutfitsForTurn)
     }
 
+    // Spec 3: log this turn's freeform diagnostics (gate exclusions, propose_outfit validation
+    // pass/fail) and surface a summary in the response so a proposal's "what got filtered/rejected"
+    // is inspectable, mirroring the composer's excludedCounts debug.
+    const freeformDiagnostics = toolContext.freeformDiagnostics || null
+    persistFreeformGenerationRun({
+      sessionId: req.body.sessionId || '',
+      occasion: toolContext.occasion,
+      diagnostics: freeformDiagnostics || {}
+    })
+
     res.json({
       answer,
       savedCorrections: allSaved,
@@ -3689,6 +3731,7 @@ router.post('/ask', async (req, res) => {
       structuredOutfitsMission: toolContext.mission,
       structuredOutfitsActivity: toolContext.activity,
       structuredOutfitsDebug: activePrecompose?.debug || null,
+      debug: freeformDiagnostics,
       suggestedTitle
     })
   } catch (err) {

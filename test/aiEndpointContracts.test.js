@@ -58,6 +58,7 @@ function resetTables() {
     'stylist_feedback',
     'whole_wardrobe_sessions',
     'generation_runs',
+    'freeform_generation_runs',
     'calibration_images',
     'stylist_conversation_state',
   ]) {
@@ -1920,7 +1921,7 @@ test('freeform ask system prompt includes context persistence and no hallucinati
   assert.match(lastCall.system, /Occasion Realism & Styling Sense:/)
   assert.match(lastCall.system, /Layering Logic & No Double-Vests:/)
   assert.match(lastCall.system, /Precise Garment Naming:/)
-  assert.match(lastCall.system, /Avoid formatting suggestions as generic category-by-category checklists/)
+  assert.match(lastCall.system, /never as a generic category checklist/)
 })
 
 test('StylistChat enables rough preview for rendered freeform outfit cards', () => {
@@ -2128,11 +2129,19 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
     SET fabric_weight = 'light', fabric_category = 'linen', reads_as = 'lightweight linen breathable pants'
     WHERE id = ?
   `).run(seeded.bottom)
+  // search_wardrobe now gates footwear by the heel_height/walk_support enums (spec 1). Tag these
+  // walkable shoes accordingly so they pass the hiking gate as 'neutral' rather than surfacing as
+  // 'unknown' for missing comfort metadata.
   db.prepare(`
     UPDATE pieces
-    SET reads_as = 'flat rugged boots'
+    SET reads_as = 'flat rugged boots', heel_height = 'flat', walk_support = 'high'
     WHERE id = ?
   `).run(seeded.boot)
+  db.prepare(`
+    UPDATE pieces
+    SET heel_height = 'flat', walk_support = 'high'
+    WHERE id = ?
+  `).run(seeded.shoe)
 
   const bottoms = await executeTool('search_wardrobe', {
     category: 'bottom',
@@ -2155,6 +2164,33 @@ test('executeTool search_wardrobe ranks and annotates weather and profile-rule f
   const slipOn = hikingShoes.find(p => p.id === seeded.shoe)
   assert.equal(boot.ruleFit, 'neutral')
   assert.equal(slipOn.ruleFit, 'neutral')
+})
+
+test('executeTool search_wardrobe excludes prohibited pieces in compose mode and surfaces them in explain mode', async () => {
+  const heelId = insertPiece({
+    name: 'test stiletto pumps',
+    category: 'shoes',
+    colors: ['black'],
+    occasions: ['casual'],
+    reads_as: 'sharp high stiletto pumps',
+  })
+  db.prepare("UPDATE pieces SET heel_height = 'high', walk_support = 'low' WHERE id = ?").run(heelId)
+  try {
+    // compose (default): a high heel is prohibited for hiking → filtered out entirely.
+    const composed = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual', activity: 'hiking' })
+    assert.ok(!composed.some(p => p.id === heelId), 'prohibited high heel should be filtered out of compose-mode results')
+    assert.ok(composed.some(p => (p.note || '').includes('filtered out as prohibited')), 'a gate-exclusion note should be present')
+    assert.ok(composed.some(p => p.id && p.ruleFit && p.ruleFit !== 'prohibited'), 'wearable shoes still remain (filter is selective)')
+
+    // explain: the same prohibited piece IS returned, with its reasoning label.
+    const explained = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual', activity: 'hiking', intent: 'explain' })
+    const heel = explained.find(p => p.id === heelId)
+    assert.ok(heel, 'explain mode should return the prohibited piece')
+    assert.equal(heel.ruleFit, 'prohibited')
+    assert.match(heel.ruleFitLabel, /heel unsuitable/)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id = ?').run(heelId)
+  }
 })
 
 test('executeTool search_wardrobe relies on structured occasion instead of dinner query normalization', async () => {
@@ -2232,7 +2268,7 @@ test('executeTool search_wardrobe visual mode attaches capped low-detail thumbna
   assert.ok(!textResults.find(p => p.id === seeded.top)?.image)
 })
 
-test('executeTool render_outfit emits a card only when every named piece resolves', async () => {
+test('executeTool propose_outfit appends a structured card when IDs resolve and roles validate', async () => {
   const toolContext = {
     occasion: 'city',
     season: 'current season',
@@ -2245,54 +2281,65 @@ test('executeTool render_outfit emits a card only when every named piece resolve
       previewOnly: true
     }]
   }
-  const rendered = await executeTool('render_outfit', {
+  const proposed = await executeTool('propose_outfit', {
     label: 'Winery column',
-    pieces: ['black button detail top', 'light beige linen wide-leg pants'],
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ],
     occasion: 'city',
-    season: 'highs 80-90F'
+    season: 'highs 80-90F',
+    why_it_works: 'a column of light neutrals grounded by the shoe',
+    missing_gaps: ['lightweight rain shell']
   }, toolContext)
 
-  assert.equal(rendered.status, 'success')
-  assert.deepEqual(rendered.pieceNames, ['black button detail top', 'light beige linen wide-leg pants'])
-  assert.deepEqual(rendered.unresolved, [])
-  assert.equal(toolContext.source, 'rendered_outfit')
+  assert.equal(proposed.status, 'success')
+  assert.deepEqual(proposed.pieceNames, ['black button detail top', 'light beige linen wide-leg pants', 'cream slip-on shoes'])
+  assert.equal(toolContext.source, 'proposed_outfit')
   assert.equal(toolContext.generatedOutfits.length, 2)
   assert.equal(toolContext.generatedOutfits[0].label, 'Existing card')
-  assert.equal(toolContext.generatedOutfits[1].label, 'Winery column')
-  assert.deepEqual(toolContext.generatedOutfits[1].pieceIds, [seeded.top, seeded.bottom])
-  assert.equal(toolContext.generatedOutfits[1].previewOnly, true)
+  const card = toolContext.generatedOutfits[1]
+  assert.equal(card.label, 'Winery column')
+  assert.deepEqual(card.pieceIds, [seeded.top, seeded.bottom, seeded.shoe])
+  assert.equal(card.pieces[0].role, 'primary_top')
+  assert.deepEqual(card.missingPieces, ['lightweight rain shell'])
+  assert.equal(card.previewOnly, true)
+})
 
-  const failedContext = { generatedOutfits: [...toolContext.generatedOutfits] }
-  const failed = await executeTool('render_outfit', {
-    label: 'Partial outfit',
-    pieces: ['black button detail top', 'not a real garment']
+test('executeTool propose_outfit errors on an unresolved ID and does not append', async () => {
+  const failedContext = { generatedOutfits: [{ label: 'keep me' }] }
+  const failed = await executeTool('propose_outfit', {
+    label: 'Bad ID',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: 999999999, role: 'shoes' }
+    ]
   }, failedContext)
 
   assert.equal(failed.status, 'error')
-  assert.deepEqual(failed.pieceNames, ['black button detail top'])
-  assert.deepEqual(failed.unresolved, ['not a real garment'])
-  assert.equal(failedContext.generatedOutfits.length, 2)
+  assert.deepEqual(failed.unresolvedIds, [999999999])
+  assert.equal(failedContext.generatedOutfits.length, 1)
 })
 
-test('executeTool render_outfit resolves names with normalized whitespace', async () => {
-  const spacedNameId = insertPiece({
-    name: 'oatmeal linen wide  jogger-style pants',
-    category: 'bottom',
-    colors: ['oatmeal'],
-    occasions: ['city', 'casual'],
-    reads_as: 'linen jogger pants',
-    fabric_category: 'linen',
-  })
-  const toolContext = { generatedOutfits: [] }
-  const rendered = await executeTool('render_outfit', {
-    label: 'Whitespace normalized',
-    pieces: ['black button detail top', 'Oatmeal linen wide jogger-style pants']
-  }, toolContext)
+test('executeTool propose_outfit rejects an unresolved role collision (two primary_top) and surfaces it as a visible broken card, not a silent drop', async () => {
+  const vContext = { generatedOutfits: [] }
+  const invalid = await executeTool('propose_outfit', {
+    label: 'Slot collision',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_top' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }, vContext)
 
-  assert.equal(rendered.status, 'success')
-  assert.deepEqual(rendered.pieceNames, ['black button detail top', 'oatmeal linen wide  jogger-style pants'])
-  assert.equal(toolContext.generatedOutfits.length, 1)
-  assert.deepEqual(toolContext.generatedOutfits[0].pieceIds, [seeded.top, spacedNameId])
+  assert.equal(invalid.status, 'validation_error')
+  assert.match(invalid.issues.join(' '), /unresolved top slot/)
+  // Spec 3 Part 1: a failed validation renders visibly (a broken/"needs review" card) rather than
+  // being silently dropped — this is the one behavioral difference from spec 2's original test.
+  assert.equal(vContext.generatedOutfits.length, 1)
+  assert.equal(vContext.generatedOutfits[0].broken, true)
+  assert.match(vContext.generatedOutfits[0].rejectionReason, /unresolved top slot/)
 })
 
 test('contentToOpenAI preserves image_url blocks without stringifying them', () => {

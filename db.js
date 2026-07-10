@@ -137,6 +137,20 @@ db.exec(`
     created_at    TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS freeform_generation_runs (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id              TEXT DEFAULT '',
+    occasion                TEXT DEFAULT '',
+    search_calls            INTEGER DEFAULT 0,
+    gate_excluded_total     INTEGER DEFAULT 0,
+    propose_calls           INTEGER DEFAULT 0,
+    propose_validation_fails INTEGER DEFAULT 0,
+    outfit_prose_without_tool_count INTEGER DEFAULT 0,
+    zero_result_contradiction_blocks INTEGER DEFAULT 0,
+    weather_source          TEXT DEFAULT '',
+    created_at              TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS stylist_conversation_state (
     session_id   TEXT PRIMARY KEY,
     state_json   TEXT NOT NULL,
@@ -223,6 +237,13 @@ NEW_COLUMNS.forEach(col => {
   'unresolved_references_count INTEGER DEFAULT 0'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE generation_runs ADD COLUMN ${col}`) } catch {}
+})
+
+;[
+  'outfit_prose_without_tool_count INTEGER DEFAULT 0',
+  'zero_result_contradiction_blocks INTEGER DEFAULT 0'
+].forEach(col => {
+  try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
 })
 
 // One-time repair for metadata todos with NULL or empty field

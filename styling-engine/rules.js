@@ -1683,7 +1683,30 @@ export function getMergedProfileRules(occasionProfile, activityProfile) {
   return merged
 }
 
-export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = {}, occasionProfile = null } = {}) {
+// Shared footwear-comfort decision — one implementation consumed by both the composer roster gate
+// (footwearGateReason) and profileRuleFit. Pure: returns a verdict; callers format their own labels.
+export function footwearComfortVerdict(piece = {}, excludedHeels = [], excludedSupport = []) {
+  const isShoe = piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes'
+  if (!isShoe || (!excludedHeels.length && !excludedSupport.length)) return { verdict: 'pass' }
+  const heel = pieceHeelHeight(piece)
+  const support = pieceWalkSupport(piece)
+  if (heel === null && support === null) return { verdict: 'unknown' }
+  if (heel !== null && excludedHeels.includes(heel)) return { verdict: 'exclude', dimension: 'heel', value: heel }
+  if (support !== null && excludedSupport.includes(support)) return { verdict: 'exclude', dimension: 'support', value: support }
+  return { verdict: 'pass' }
+}
+
+// Shared register-ceiling decision — consumed by the composer roster gate (registerGateReason) and profileRuleFit.
+export function registerCeilingVerdict(piece = {}, registerCeilingRank = null) {
+  if (registerCeilingRank === null || registerCeilingRank === undefined || isAccessory(piece)) return { verdict: 'pass' }
+  const formality = pieceFormality(piece)
+  const rank = formalityRank(formality)
+  if (rank === null) return { verdict: 'unknown' }
+  if (rank > registerCeilingRank) return { verdict: 'exclude', formality }
+  return { verdict: 'pass' }
+}
+
+export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = {}, occasionProfile = null, activityProfile = null, registerCeiling = null } = {}) {
   const isShoe = piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes'
 
   const sourceFor = (key, value, warmKey = '') => {
@@ -1704,7 +1727,31 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     }
   }
 
-  if (isShoe) {
+  // Structured enum gates — mode-switched: active only for callers that pass activity/register
+  // context (search_wardrobe). Composer-path callers pass neither and fall through to the legacy
+  // phrase-list path below, unchanged. See spec 1 (freeform gate parity).
+  let unknownLabel = null
+  if (isShoe && activityProfile) {
+    const fw = footwearComfortVerdict(
+      piece,
+      activityProfile.rules?.excluded_heel_heights || [],
+      activityProfile.rules?.excluded_walk_support || []
+    )
+    if (fw.verdict === 'exclude') {
+      const label = fw.dimension === 'heel' ? `${fw.value} heel unsuitable` : `${fw.value} support unsuitable`
+      return { tier: 'prohibited', label, reason: `activity profile: ${label}` }
+    }
+    if (fw.verdict === 'unknown') unknownLabel = 'footwear comfort not tagged'
+  }
+  if (registerCeiling) {
+    const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling))
+    if (rv.verdict === 'exclude') {
+      return { tier: 'prohibited', label: `${rv.formality} exceeds ${registerCeiling} ceiling`, reason: `register: ${rv.formality} exceeds ${registerCeiling} ceiling` }
+    }
+    if (rv.verdict === 'unknown' && !unknownLabel) unknownLabel = 'formality not tagged'
+  }
+
+  if (isShoe && !activityProfile) {
     const prohibitedFootwear = [...(mergedRules.prohibited_footwear || [])]
     if (weatherProfile?.isHot && mergedRules.prohibited_footwear_summer) {
       prohibitedFootwear.push(...mergedRules.prohibited_footwear_summer)
@@ -1724,6 +1771,10 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     }
   }
 
+  // Untagged footwear/formality under an active enum gate — surfaced as 'unknown' (after all
+  // prohibited sources, which outrank it; before discouraged, which it outranks).
+  if (unknownLabel) return { tier: 'unknown', label: unknownLabel }
+
   const discouragedMaterials = [...(mergedRules.discouraged_materials || [])]
   if (weatherProfile?.isHot && mergedRules.discouraged_materials_warm) {
     discouragedMaterials.push(...mergedRules.discouraged_materials_warm)
@@ -1739,7 +1790,7 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
   if (weatherProfile?.isHot && mergedRules.discouraged_footwear_warm) {
     discouragedFootwear.push(...mergedRules.discouraged_footwear_warm)
   }
-  if (isShoe) {
+  if (isShoe && !activityProfile) {
     for (const fw of discouragedFootwear) {
       if (pieceMatchesFootwear(piece, fw)) return { tier: 'discouraged', label: 'discouraged footwear' }
     }
@@ -1833,7 +1884,30 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     }
   }
 
-  const profileFit = profileRuleFit(piece, mergedRules, { weatherProfile, occasionProfile })
+  // Spec 5: opt-in register-ceiling awareness. Existing callers are unaffected unless they explicitly
+  // pass registerCeiling or applyRegisterCeiling — mirrors spec 1's mode-switch on profileRuleFit
+  // itself. This closes the trip-precompose gap (buildLocalTripSlotOutfits) where a dressy piece
+  // could surface for a register-capped occasion, without touching the other two production callers
+  // (search_wardrobe's pre-filter, rankedComplementaryWardrobeFor) that don't opt in.
+  const registerCeiling = options.registerCeiling !== undefined
+    ? options.registerCeiling
+    : (options.applyRegisterCeiling
+        ? resolveRegisterCeiling({
+            occasion,
+            activity: options.activity,
+            mood: options.mood || '',
+            request: options.request || options.question || '',
+            occasionProfile,
+            activityProfile
+          })
+        : null)
+
+  // Only registerCeiling opts into profileRuleFit's newer gates here — deliberately NOT activityProfile.
+  // Passing activityProfile would also silently switch on the footwear-enum gate (profileRuleFit's
+  // `if (isShoe && activityProfile)` branch) for every caller of this function, which is out of scope
+  // for spec 5 (register-ceiling only) and unreviewed; the two gates are independently checked in
+  // profileRuleFit, so registerCeiling alone is sufficient here.
+  const profileFit = profileRuleFit(piece, mergedRules, { weatherProfile, occasionProfile, registerCeiling })
   if (profileFit.tier === 'prohibited') {
     reasons.push(profileFit.reason)
   }
@@ -2008,28 +2082,22 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   }
 
   const registerGateReason = (piece) => {
-    if (registerCeilingRank === null || isAccessory(piece)) return null
-    const formality = pieceFormality(piece)
-    const rank = formalityRank(formality)
-    if (rank === null) return 'metadata missing: formality (register gate active)'
-    if (rank > registerCeilingRank) return `register: ${formality} exceeds ${registerCeiling} ceiling`
+    const rv = registerCeilingVerdict(piece, registerCeilingRank)
+    if (rv.verdict === 'unknown') return 'metadata missing: formality (register gate active)'
+    if (rv.verdict === 'exclude') return `register: ${rv.formality} exceeds ${registerCeiling} ceiling`
     return null
   }
 
   const footwearGateReason = (piece) => {
     const rules = resolvedActivityProfile?.rules
     if (!rules) return null
-    const isShoe = piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes'
-    if (!isShoe) return null
-    const excludedHeels = rules.excluded_heel_heights || []
-    const excludedSupport = rules.excluded_walk_support || []
-    if (!excludedHeels.length && !excludedSupport.length) return null
-
-    const heel = pieceHeelHeight(piece)
-    const support = pieceWalkSupport(piece)
-    if (heel === null && support === null) return 'metadata missing: footwear comfort (activity gate active)'
-    if (heel !== null && excludedHeels.includes(heel)) return `footwear: ${heel} heel unsuitable for ${resolvedActivityProfile.label}`
-    if (support !== null && excludedSupport.includes(support)) return `footwear: ${support} support unsuitable for ${resolvedActivityProfile.label}`
+    const fw = footwearComfortVerdict(piece, rules.excluded_heel_heights || [], rules.excluded_walk_support || [])
+    if (fw.verdict === 'unknown') return 'metadata missing: footwear comfort (activity gate active)'
+    if (fw.verdict === 'exclude') {
+      return fw.dimension === 'heel'
+        ? `footwear: ${fw.value} heel unsuitable for ${resolvedActivityProfile.label}`
+        : `footwear: ${fw.value} support unsuitable for ${resolvedActivityProfile.label}`
+    }
     return null
   }
 

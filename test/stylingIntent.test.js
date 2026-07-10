@@ -49,7 +49,7 @@ test('styling intent vocabulary matches frontend menus and activity profiles', (
 test('generate_outfits schema exposes styling intent enums', () => {
   const generateTool = STYLIST_TOOLS.find(t => t.name === 'generate_outfits')
   const searchTool = STYLIST_TOOLS.find(t => t.name === 'search_wardrobe')
-  const renderTool = STYLIST_TOOLS.find(t => t.name === 'render_outfit')
+  const proposeTool = STYLIST_TOOLS.find(t => t.name === 'propose_outfit')
   assert.ok(generateTool, 'generate_outfits tool must exist')
   assert.deepEqual(generateTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
   assert.deepEqual(generateTool.input_schema.properties.activity.enum, ACTIVITY_VALUES)
@@ -60,9 +60,11 @@ test('generate_outfits schema exposes styling intent enums', () => {
   assert.ok(searchTool.input_schema.properties.weather, 'search_wardrobe should accept weather for fit flags')
   assert.deepEqual(searchTool.input_schema.properties.activity.enum, ACTIVITY_VALUES)
   assert.ok(searchTool.input_schema.properties.visual, 'search_wardrobe should accept visual mode')
-  assert.ok(renderTool, 'render_outfit tool must exist')
-  assert.deepEqual(renderTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
-  assert.deepEqual(renderTool.input_schema.required, ['pieces'])
+  assert.ok(proposeTool, 'propose_outfit tool must exist')
+  assert.ok(!STYLIST_TOOLS.some(t => t.name === 'render_outfit'), 'render_outfit must be retired')
+  assert.deepEqual(proposeTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
+  assert.deepEqual(proposeTool.input_schema.required, ['pieces'])
+  assert.ok(proposeTool.input_schema.properties.pieces.items.properties.role.enum.includes('primary_top'), 'propose_outfit pieces carry a role enum')
 })
 
 test('normalize styling intent defaults and preserves valid values', () => {
@@ -110,12 +112,12 @@ test('extractWeatherContext captures lightweight forecast phrases', () => {
   assert.equal(extractWeatherContext('Portland in a few days'), '')
 })
 
-test('stylist prompt defaults to text proposals and narrows visual tool triggers', () => {
+test('stylist prompt proposes via propose_outfit and narrows visual tool triggers', () => {
   assert.ok(STYLIST_SYSTEM.includes('Proposing Outfits (default)'))
-  assert.ok(STYLIST_SYSTEM.includes('Do not call a generation or rendering tool for these'))
+  assert.ok(STYLIST_SYSTEM.includes("Do not call 'generate_outfits' for ordinary styling advice"))
   assert.ok(STYLIST_SYSTEM.includes("call 'search_wardrobe' with `visual: true`"))
-  assert.ok(STYLIST_SYSTEM.includes('A packing list or garment inventory may appear only as a secondary recap after the outfit sections'))
-  assert.ok(STYLIST_SYSTEM.includes('must never replace the outfit-by-outfit recommendations unless the user explicitly asks for a checklist only'))
+  assert.ok(STYLIST_SYSTEM.includes('A packing list or garment inventory may appear only as a secondary recap after the proposed outfits'))
+  assert.ok(STYLIST_SYSTEM.includes('it must never replace them unless the user explicitly asks for a checklist only'))
   assert.ok(STYLIST_SYSTEM.includes('color harmony, print scale, texture, visual weight, and proportion'))
   assert.ok(STYLIST_SYSTEM.includes('run a fresh visual \'search_wardrobe\' scoped to that need'))
   assert.ok(STYLIST_SYSTEM.includes('cover each stated occasion/use case as a separate proposed outfit'))
@@ -126,17 +128,17 @@ test('stylist prompt defaults to text proposals and narrows visual tool triggers
   assert.ok(STYLIST_SYSTEM.includes('Do not merely substitute the anchor into prior outfits'))
   assert.ok(STYLIST_SYSTEM.includes('For shoe anchors, rebuild the outfit color story, formality, and occasion around the shoes'))
   assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
-  assert.ok(STYLIST_SYSTEM.includes('Treat that set as the canonical packing/styling plan for the thread'))
-  assert.ok(STYLIST_SYSTEM.includes('express it as outfit sections using the required `### Outfit [Number]` / `**Pieces**` / `**Why it works**` format'))
-  assert.ok(STYLIST_SYSTEM.includes('not as a loose garment list'))
-  assert.ok(STYLIST_SYSTEM.includes('update that named entry in the Current outfit set instead of leaving the new idea as a loose note'))
+  assert.ok(STYLIST_SYSTEM.includes('as the canonical packing/styling plan for the thread'))
+  assert.ok(STYLIST_SYSTEM.includes("one 'propose_outfit' card per entry (verified piece IDs + roles)"))
+  assert.ok(STYLIST_SYSTEM.includes('the pieces live in the tool call'))
+  assert.ok(STYLIST_SYSTEM.includes("call 'propose_outfit' again for that entry to update it"))
   assert.ok(STYLIST_SYSTEM.includes('stated length, stated use cases, weather, repeat-wear needs, layers, and shoe comfort'))
-  assert.ok(STYLIST_SYSTEM.includes('render every current entry unless the user clearly asks for a subset'))
-  assert.ok(STYLIST_SYSTEM.includes('Never use vague names like "White sneakers" or "sandals" in the Current outfit set'))
-  assert.ok(STYLIST_SYSTEM.includes('Visualizing an Outfit (explicit only)'))
-  assert.ok(STYLIST_SYSTEM.includes("call 'render_outfit' with the exact pieces"))
-  assert.ok(STYLIST_SYSTEM.includes("Call 'render_outfit' once for each referenced outfit"))
-  assert.ok(STYLIST_SYSTEM.includes('Do not render partial outfits'))
+  assert.ok(STYLIST_SYSTEM.includes('re-render every current entry unless the user clearly asks for a subset'))
+  assert.ok(STYLIST_SYSTEM.includes("use \"[missing wardrobe gap: ...]\" (or the tool's missing_gaps) for slots the wardrobe cannot fill"))
+  assert.ok(STYLIST_SYSTEM.includes('Showing / Re-rendering an Outfit'))
+  assert.ok(STYLIST_SYSTEM.includes("propose each concrete outfit by calling 'propose_outfit' with verified piece IDs and roles"))
+  assert.ok(STYLIST_SYSTEM.includes("call 'propose_outfit' for each referenced outfit using the same verified piece IDs and roles"))
+  assert.ok(STYLIST_SYSTEM.includes('never as a generic category checklist'))
   assert.ok(STYLIST_SYSTEM.includes('treat each already-assigned top, bottom, dress, shoes, and layer as occupied'))
   assert.ok(STYLIST_SYSTEM.includes("preserve the original outfit's occasion, social register, and visual thesis"))
   assert.ok(STYLIST_SYSTEM.includes('Do not downgrade a city, museum, restaurant, winery, gallery, smart-casual, or outdoor daytime social look into a plain casual tee/sneaker formula'))
@@ -156,6 +158,12 @@ test('stylist prompt defaults to text proposals and narrows visual tool triggers
   assert.ok(STYLIST_SYSTEM.includes('timing/season alone is not enough'))
   assert.ok(STYLIST_SYSTEM.includes('do NOT ask where she is going'))
   assert.ok(!STYLIST_SYSTEM.includes('before recommending any garments or outfits'))
+  // Spec 4 (live weather): once a real place is named, resolve weather live via location instead of
+  // asking the user — regression test for the "Legion of Honor museum in San Francisco" case, where
+  // the model asked "what weather are you expecting?" despite the city being stated.
+  assert.ok(STYLIST_SYSTEM.includes('do NOT ask what weather to expect'))
+  assert.ok(STYLIST_SYSTEM.includes('Pass the city/place as `location` on \'search_wardrobe\''))
+  assert.ok(STYLIST_SYSTEM.includes('Legion of Honor museum in San Francisco'))
 })
 
 test('StylistChat carries generated styling context into ask requests', () => {

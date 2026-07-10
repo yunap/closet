@@ -1,0 +1,127 @@
+import { weatherProfileFromContext } from './rules.js'
+
+// Spec 4: live weather, built new (not ported — nothing like this existed in the repo before).
+// Provider: Open-Meteo (free, no API key required — https://open-meteo.com) via its geocoding and
+// forecast endpoints. Same output contract as weatherProfileFromContext ({ isHot, isCold }) plus a
+// weatherSource tag, so every existing consumer (profileRuleFit, weatherFitForPiece) is a drop-in —
+// no shape change needed on their side.
+
+const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
+const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
+const HOT_F = 80
+const COLD_F = 45
+const CACHE_TTL_MS = 3 * 60 * 60 * 1000 // 3 hours — coarse enough to avoid per-piece/per-turn hammering
+const FETCH_TIMEOUT_MS = 4000
+
+const geocodeCache = new Map() // normalized location -> { coords, expiresAt }
+const weatherCache = new Map() // `${start}:${end}|${lat},${lon}` -> { data: {highs, lows}, expiresAt }
+
+function defaultFetch(url) {
+  return fetch(url)
+}
+
+function withTimeout(promise, ms) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('weather request timed out')), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+function dateKey(date) {
+  const d = date instanceof Date ? date : new Date(date)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
+}
+
+async function resolveLocationToCoords(location, fetchImpl) {
+  const key = String(location || '').trim().toLowerCase()
+  if (!key) return null
+  const cached = geocodeCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.coords
+  const url = `${GEOCODE_URL}?name=${encodeURIComponent(key)}&count=1&language=en&format=json`
+  const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
+  if (!res?.ok) return null
+  const data = await res.json()
+  const first = data?.results?.[0]
+  if (!first || typeof first.latitude !== 'number' || typeof first.longitude !== 'number') return null
+  const coords = { lat: first.latitude, lon: first.longitude }
+  geocodeCache.set(key, { coords, expiresAt: Date.now() + CACHE_TTL_MS })
+  return coords
+}
+
+async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
+  const start = dateKey(startDate)
+  const end = dateKey(endDate || startDate)
+  if (!start || !end) return null
+  const cacheKey = `${start}:${end}|${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`
+  const cached = weatherCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.data
+  const url = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto&start_date=${start}&end_date=${end}`
+  const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
+  if (!res?.ok) return null
+  const data = await res.json()
+  const highs = data?.daily?.temperature_2m_max || []
+  const lows = data?.daily?.temperature_2m_min || []
+  if (!highs.length || !lows.length) return null
+  const result = { highs, lows }
+  weatherCache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS })
+  return result
+}
+
+// `exclusive`: a single day is rarely legitimately both hot and cold, so isHot/isCold are mutually
+// exclusive (matching weatherProfileFromContext's contract). A multi-day trip range genuinely can
+// span both — non-exclusive lets a packing plan flag both extremes instead of suppressing one.
+function classify(highs, lows, { exclusive = true } = {}) {
+  const maxHigh = Math.max(...highs)
+  const minLow = Math.min(...lows)
+  const isHot = maxHigh >= HOT_F
+  const isCold = minLow <= COLD_F
+  if (!exclusive) return { isHot, isCold }
+  return { isHot: isHot && !isCold, isCold: isCold && !isHot }
+}
+
+async function resolveLive({ startDate, endDate, location, fetchImpl, exclusive }) {
+  const coords = await resolveLocationToCoords(location, fetchImpl)
+  if (!coords) return null
+  const range = await fetchDailyRange(coords, startDate, endDate, fetchImpl)
+  if (!range) return null
+  return { ...classify(range.highs, range.lows, { exclusive }), weatherSource: 'live' }
+}
+
+function heuristic({ mood, season, currentDate }) {
+  return { ...weatherProfileFromContext({ mood, season, currentDate }), weatherSource: 'heuristic' }
+}
+
+// Skip live resolution entirely under `node --test` unless a test explicitly injects its own
+// fetchImpl (used to exercise the live path deterministically without real network calls). This
+// guarantees the automated suite never depends on network access, matching the existing
+// takeTestAiResponse convention in provider.js.
+function shouldSkipLive(fetchImpl) {
+  return process.env.NODE_ENV === 'test' && fetchImpl === defaultFetch
+}
+
+export async function getCurrentWeatherProfile({ date = new Date(), location = '', mood = '', season = '', fetchImpl = defaultFetch } = {}) {
+  if (!location || shouldSkipLive(fetchImpl)) return heuristic({ mood, season, currentDate: date })
+  try {
+    const live = await resolveLive({ startDate: date, endDate: date, location, fetchImpl, exclusive: true })
+    return live || heuristic({ mood, season, currentDate: date })
+  } catch {
+    return heuristic({ mood, season, currentDate: date })
+  }
+}
+
+export async function getWeatherProfileForPlan({ dateRange = {}, location = '', mood = '', season = '', fetchImpl = defaultFetch } = {}) {
+  const { start, end } = dateRange || {}
+  if (!location || !start || shouldSkipLive(fetchImpl)) return heuristic({ mood, season, currentDate: start })
+  try {
+    const live = await resolveLive({ startDate: start, endDate: end || start, location, fetchImpl, exclusive: false })
+    return live || heuristic({ mood, season, currentDate: start })
+  } catch {
+    return heuristic({ mood, season, currentDate: start })
+  }
+}
+
+export function _clearWeatherCachesForTests() {
+  geocodeCache.clear()
+  weatherCache.clear()
+}

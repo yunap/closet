@@ -1,7 +1,51 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { STYLIST_SYSTEM } from './prompts.js'
-import { STYLIST_TOOLS, executeTool } from './tools.js'
+import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic } from './tools.js'
+
+// Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
+// waiting. If the model's final answer then describes that exact query text as a real, ownable
+// piece, that's not a guess — the system had proof at generation time and let it through anyway.
+// Kept mechanical (substring match against a query already proven empty) rather than general fact
+// checking, to stay cheap and low-risk for false positives.
+export function findZeroResultContradiction(answerText = '', toolContext = {}) {
+  const queries = Array.isArray(toolContext?.zeroResultQueries) ? toolContext.zeroResultQueries : []
+  const normalizedAnswer = String(answerText || '').toLowerCase()
+  if (!queries.length || !normalizedAnswer) return null
+  for (const rawQuery of queries) {
+    const normalizedQuery = String(rawQuery || '').toLowerCase().trim()
+    if (normalizedQuery.length >= 6 && normalizedAnswer.includes(normalizedQuery)) return rawQuery
+  }
+  return null
+}
+
+// Spec 3 Part 0a: outfit-shaped prose (a title followed by labeled slot lines) with zero
+// propose_outfit calls this turn — the model wrote what looks like a proposal without going through
+// the tool, so the pieces it named are unverified. Soft signal (flagged, not blocked) since the
+// severe case (0b) is the one with proof of a false claim.
+export function looksLikeUnproposedOutfitProse(answerText = '') {
+  const labelMatches = String(answerText || '').match(/^\s*(?:[-*]\s*)?\*{0,2}(top|bottom|dress|shoes|outerwear|accessory)\*{0,2}\s*:/gim) || []
+  const distinctLabels = new Set(labelMatches.map(m => m.toLowerCase().replace(/[^a-z]/g, '')))
+  return distinctLabels.size >= 2
+}
+
+// After the model produces a tool-call-free final answer, apply spec 3 Part 0's checks. Returns
+// { block: true, correctionMessage } to force a retry (0b), or { block: false } after recording the
+// soft flag (0a) as a diagnostic for the client's collapsed details affordance.
+function applyFreeformOutputChecks(answerText, toolContext) {
+  const contradiction = findZeroResultContradiction(answerText, toolContext)
+  if (contradiction) {
+    bumpFreeformDiagnostic(toolContext, 'zeroResultContradictionBlocks')
+    return {
+      block: true,
+      correctionMessage: `You searched for "${contradiction}" and found nothing — do not describe this as a piece Yuna owns. Either offer a real alternative via search_wardrobe or say plainly that she doesn't have this piece.`
+    }
+  }
+  if ((toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 && looksLikeUnproposedOutfitProse(answerText)) {
+    bumpFreeformDiagnostic(toolContext, 'outfitProseWithoutToolCall')
+  }
+  return { block: false }
+}
 
 export const AI_PROVIDER = (process.env.AI_PROVIDER || 'anthropic').toLowerCase()
 export const ANTHROPIC_MODEL = process.env.ANTHROPIC_STYLIST_MODEL || 'claude-sonnet-4-6'
@@ -289,6 +333,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
 
   let currentMessages = [...messages]
   const savedCorrections = []
+  let zeroResultCorrectionRetried = false
 
   for (let iter = 0; iter < 5; iter++) {
     if (AI_PROVIDER === 'openai') {
@@ -369,7 +414,15 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         }
         continue
       } else {
-        return { answer: message.content || '', savedCorrections }
+        const finalText = message.content || ''
+        const check = applyFreeformOutputChecks(finalText, toolContext)
+        if (check.block && !zeroResultCorrectionRetried) {
+          zeroResultCorrectionRetried = true
+          currentMessages.push({ role: 'assistant', content: finalText })
+          currentMessages.push({ role: 'user', content: check.correctionMessage })
+          continue
+        }
+        return { answer: finalText, savedCorrections }
       }
     } else {
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -437,7 +490,15 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         currentMessages.push(...toolResponses)
         continue
       } else {
-        return { answer: response.content?.[0]?.text || '', savedCorrections }
+        const finalText = response.content?.[0]?.text || ''
+        const check = applyFreeformOutputChecks(finalText, toolContext)
+        if (check.block && !zeroResultCorrectionRetried) {
+          zeroResultCorrectionRetried = true
+          currentMessages.push({ role: 'assistant', content: response.content })
+          currentMessages.push({ role: 'user', content: check.correctionMessage })
+          continue
+        }
+        return { answer: finalText, savedCorrections }
       }
     }
   }

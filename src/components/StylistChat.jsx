@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import ThreadRail, { humanizeLabel, deriveBuilderTitle } from './ThreadRail'
+import MarkdownMessage from './MarkdownMessage.js'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -4234,7 +4235,7 @@ export default function StylistChat({
                   return (
                     <div className={`ai-message ${m.role}`} style={{ padding: '12px 14px' }}>
                       {isPreviewResponse ? (
-                        <p style={{ margin: '0 0 10px', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.45 }}>{m.text}</p>
+                        <MarkdownMessage text={m.text} />
                       ) : (
                         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.45 }}>{getCompactOutfitIntro(m, hasBoards)}</p>
                       )}
@@ -4274,15 +4275,35 @@ export default function StylistChat({
                       )}
                       {hasStructuredIdeas ? renderStructuredAdvice(m, i) : (
                         <div style={{ marginTop: 10 }}>
-                          {m.text.split('\n').filter(Boolean).map((line, j) => <p key={j} style={{ fontSize: 14, lineHeight: 1.55, margin: '0 0 7px', color: 'var(--text)' }}>{line}</p>)}
+                          <MarkdownMessage text={m.text} />
                         </div>
+                      )}
+                      {Boolean(m.debug && (
+                        (m.debug.gateExcludedTotal || 0) > 0 ||
+                        (m.debug.proposeValidationFails || 0) > 0 ||
+                        (m.debug.outfitProseWithoutToolCall || 0) > 0 ||
+                        (m.debug.zeroResultContradictionBlocks || 0) > 0
+                      )) && (
+                        <details className="telemetry-details" style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+                          <summary>ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Search &amp; validation details</span></summary>
+                          <div style={{ marginTop: 4, display: 'grid', gap: 2 }}>
+                            {m.debug.searchCalls > 0 && <div>Wardrobe searches this turn: {m.debug.searchCalls}</div>}
+                            {m.debug.gateExcludedTotal > 0 && <div>Pieces filtered out as prohibited: {m.debug.gateExcludedTotal}</div>}
+                            {m.debug.proposeCalls > 0 && <div>Outfits proposed: {m.debug.proposeCalls}</div>}
+                            {m.debug.proposeValidationFails > 0 && <div>Proposals rejected for invalid structure: {m.debug.proposeValidationFails}</div>}
+                            {m.debug.outfitProseWithoutToolCall > 0 && <div>⚠ This reply describes an outfit but wasn't proposed as a verified card — treat named pieces as unconfirmed.</div>}
+                            {m.debug.zeroResultContradictionBlocks > 0 && <div>⚠ An earlier draft of this reply described a piece that a search found 0 results for; it was auto-corrected before sending.</div>}
+                          </div>
+                        </details>
                       )}
                     </div>
                   )
                 }
                 return (
                   <div className={`ai-message ${m.role}`}>
-                    {m.text.split('\n').filter(Boolean).map((line, j) => <p key={j}>{line}</p>)}
+                    {m.role === 'assistant'
+                      ? <MarkdownMessage text={m.text} />
+                      : m.text.split('\n').filter(Boolean).map((line, j) => <p key={j}>{line}</p>)}
                   </div>
                 )
               })()}
