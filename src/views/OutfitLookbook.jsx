@@ -78,9 +78,12 @@ const resolveUploadImageSrc = (photo) => {
 
 // ── Piece Selector Modal ───────────────────────────────────────────────────────
 // ── Piece Selector Modal ───────────────────────────────────────────────────────
-function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel, singleSelect = false, initialCategory = '' }) {
+function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, onCancel, singleSelect = false, initialCategory = '' }) {
   const [allPieces, setAllPieces] = useState([])
-  const [selected, setSelected]   = useState(new Set(linkedPieceIds))
+  const initialLinkedIds = linkedPieceIds.map(Number).filter(Boolean)
+  const initialMainId = Number(mainPieceId) && initialLinkedIds.includes(Number(mainPieceId)) ? Number(mainPieceId) : null
+  const [selected, setSelected]   = useState(new Set(initialLinkedIds))
+  const [mainId, setMainId]       = useState(initialMainId)
   const [search, setSearch]       = useState('')
   const [filterCat, setFilterCat] = useState(initialCategory)
   const [filterColor, setFilterColor] = useState('')
@@ -100,17 +103,24 @@ function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel, singleSelec
     fetch('/api/pieces').then(r => r.json()).then(setAllPieces)
   }, [])
 
-  const toggle = (id) => setSelected(prev => {
+  const toggle = (rawId) => setSelected(prev => {
+    const id = Number(rawId)
     const next = new Set(prev)
     if (singleSelect) {
       if (next.has(id)) {
         next.clear()
+        setMainId(null)
       } else {
         next.clear()
         next.add(id)
       }
     } else {
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) {
+        next.delete(id)
+        if (mainId === id) setMainId(null)
+      } else {
+        next.add(id)
+      }
     }
     return next
   })
@@ -128,19 +138,21 @@ function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel, singleSelec
     return matchesSearch && matchesCat && matchesColor
   })
 
-  const linkedPieces = allPieces.filter(p => selected.has(p.id))
+  const linkedPieces = allPieces.filter(p => selected.has(Number(p.id)))
 
   const handleSave = async () => {
+    const selectedIds = [...selected]
+    const nextMainId = selected.has(mainId) ? mainId : null
     if (outfitId) {
       setSaving(true)
       await fetch(`/api/outfits/${outfitId}/pieces`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pieceIds: [...selected] })
+        body: JSON.stringify({ pieceIds: selectedIds, mainPieceId: nextMainId })
       })
       setSaving(false)
     }
-    onSave([...selected])
+    onSave(selectedIds, nextMainId)
   }
 
   const getSwatchBg = (p) => {
@@ -251,6 +263,7 @@ function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel, singleSelec
               <div className="piece-grid" style={{ gap: 12, padding: 0 }}>
                 {linkedPieces.map(piece => {
                   const bg = getSwatchBg(piece)
+                  const isMain = mainId === piece.id
                   return (
                     <div
                       key={piece.id}
@@ -290,6 +303,33 @@ function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel, singleSelec
                       }}>
                         ✕
                       </div>
+                      {!singleSelect && (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation()
+                            setMainId(isMain ? null : piece.id)
+                          }}
+                          style={{
+                            position: 'absolute',
+                            top: 7,
+                            left: 7,
+                            padding: '3px 8px',
+                            borderRadius: 999,
+                            border: `1px solid ${isMain ? 'var(--accent)' : 'rgba(255,255,255,0.75)'}`,
+                            background: isMain ? 'var(--accent)' : 'rgba(255,255,255,0.88)',
+                            color: isMain ? '#fff' : 'var(--accent)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            lineHeight: 1,
+                            boxShadow: '0 2px 5px rgba(0,0,0,0.12)',
+                            cursor: 'pointer'
+                          }}
+                          title={isMain ? 'Main piece for variants' : 'Use as main piece for variants'}
+                        >
+                          Main
+                        </button>
+                      )}
 
                       <div className="piece-card-body" style={{ padding: '8px 8px 10px' }}>
                         <div className="piece-card-name" style={{ fontSize: 11, margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{piece.name}</div>
@@ -317,7 +357,7 @@ function PieceSelector({ outfitId, linkedPieceIds, onSave, onCancel, singleSelec
             ) : (
               <div className="piece-grid" style={{ gap: 12, padding: 0 }}>
                 {filtered.map(piece => {
-                  const isSelected = selected.has(piece.id)
+                  const isSelected = selected.has(Number(piece.id))
                   const bg = getSwatchBg(piece)
                   return (
                     <div
@@ -782,6 +822,9 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
       fd.append('name', name); fd.append('occasion', occasion)
       fd.append('season', season); fd.append('notes', notes)
       fd.append('status', status); fd.append('pieceIds', JSON.stringify(pieceIds))
+      if (outfit?.main_piece_id && pieceIds.map(Number).includes(Number(outfit.main_piece_id))) {
+        fd.append('mainPieceId', String(outfit.main_piece_id))
+      }
       if (isEdit) fd.append('favorite', String(Boolean(outfit?.favorite)))
       if (photoFile) fd.append('photo', photoFile)
       const res = await fetch(isEdit ? `/api/outfits/${outfit.id}` : '/api/outfits', {
@@ -921,6 +964,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
 // ── Outfit Detail ──────────────────────────────────────────────────────────────
 function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPiecesUpdated }) {
   const [pieces, setPieces]           = useState(outfit.pieces || [])
+  const [mainPieceId, setMainPieceId] = useState(outfit.main_piece_id || null)
   const [showSelector, setShowSelector] = useState(false)
   const [previewImage, setPreviewImage] = useState(null)
 
@@ -928,13 +972,17 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
     if (confirm(`Delete "${outfit.name}"?`)) onDelete(outfit)
   }
 
-  const handlePiecesSaved = async (selectedIds) => {
+  const handlePiecesSaved = async (selectedIds, nextMainPieceId = null) => {
     setShowSelector(false)
     // Refresh pieces list
     const res  = await fetch(`/api/outfits`)
     const data = await res.json()
     const updated = data.find(o => o.id === outfit.id)
-    if (updated) { setPieces(updated.pieces || []); onPiecesUpdated?.() }
+    if (updated) {
+      setPieces(updated.pieces || [])
+      setMainPieceId(updated.main_piece_id || nextMainPieceId || null)
+      onPiecesUpdated?.()
+    }
   }
 
   return (
@@ -1028,6 +1076,8 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 8 }}>
               <button onClick={() => onSendToStylist({
                 ...outfit,
+                pieces,
+                main_piece_id: mainPieceId,
                 autoSend: true,
                 stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
               })} style={{
@@ -1039,6 +1089,8 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
               </button>
               <button onClick={() => onSendToStylist({
                 ...outfit,
+                pieces,
+                main_piece_id: mainPieceId,
                 autoSend: true,
                 imageGenerationMode: true,
                 variantMode: 'similar',
@@ -1052,6 +1104,8 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
               </button>
               <button onClick={() => onSendToStylist({
                 ...outfit,
+                pieces,
+                main_piece_id: mainPieceId,
                 autoSend: true,
                 imageGenerationMode: true,
                 variantMode: 'creative',
@@ -1065,7 +1119,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
               </button>
             </div>
 
-            <button onClick={() => onSendToStylist(outfit)} style={{
+            <button onClick={() => onSendToStylist({ ...outfit, pieces, main_piece_id: mainPieceId })} style={{
               width: '100%', padding: '11px', marginBottom: 10,
               background: 'var(--accent-light)', color: 'var(--accent)',
               border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
@@ -1075,7 +1129,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
             </button>
 
             <div className="detail-actions">
-              <button className="btn-secondary" onClick={() => onEdit({ ...outfit, pieces })}>Edit</button>
+              <button className="btn-secondary" onClick={() => onEdit({ ...outfit, pieces, main_piece_id: mainPieceId })}>Edit</button>
               <button className="btn-danger" onClick={handleDelete}>Delete</button>
               <button className="btn-secondary" onClick={onClose}>Close</button>
             </div>
@@ -1087,6 +1141,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
         <PieceSelector
           outfitId={outfit.id}
           linkedPieceIds={pieces.map(p => p.id)}
+          mainPieceId={mainPieceId}
           onSave={handlePiecesSaved}
           onCancel={() => setShowSelector(false)}
         />
