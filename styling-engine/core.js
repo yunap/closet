@@ -2835,6 +2835,28 @@ export function normalizeArchetypeText(value = '') {
 export function ownedLooksSimilarToArchetype(archetype = '', ownedPieces = []) {
   const a = normalizeArchetypeText(archetype)
   if (!a) return false
+  const colorFamilies = [
+    ['black', 'black', 'charcoal', 'dark grey', 'dark gray'],
+    ['charcoal', 'black', 'charcoal', 'dark grey', 'dark gray'],
+    ['brown', 'brown', 'chocolate', 'espresso', 'cognac', 'tobacco'],
+    ['camel', 'camel', 'tan', 'caramel', 'tobacco'],
+    ['cream', 'cream', 'ivory', 'white', 'oatmeal', 'beige'],
+    ['navy', 'navy', 'indigo', 'blue'],
+    ['olive', 'olive', 'green', 'khaki'],
+  ]
+  const categoryFamilies = [
+    ['trouser', 'trouser', 'trousers', 'pant', 'pants', 'jean', 'jeans', 'denim', 'barrel', 'utility', 'cargo', 'fatigue'],
+    ['skirt', 'skirt', 'midi', 'pencil', 'column'],
+    ['shoe', 'shoe', 'shoes', 'loafer', 'flat', 'sandal', 'sneaker', 'boot', 'mule', 'heel'],
+    ['bag', 'bag', 'tote', 'purse', 'satchel'],
+    ['jacket', 'jacket', 'blazer', 'cardigan', 'coat', 'vest', 'outerwear'],
+    ['top', 'top', 'shirt', 'blouse', 'tee', 'tank', 'shell', 'sweater', 'knit'],
+  ]
+  const matchingFamilies = (text, families) => families
+    .filter(([, ...words]) => words.some(word => new RegExp(`\\b${word}\\b`).test(text)))
+    .map(([label]) => label)
+  const archetypeColors = matchingFamilies(a, colorFamilies)
+  const archetypeCategories = matchingFamilies(a, categoryFamilies)
   const wantsDenim = /\b(denim|jean|jeans)\b/.test(a)
   const wantsOliveUtility = /\bolive\b/.test(a) && /\b(utility|cargo|barrel|fatigue|workwear)\b/.test(a)
   const wantsCreamTrouser = /\b(cream|ivory|white|oatmeal|beige)\b/.test(a) && /\b(trouser|pant|pants|jean|jeans)\b/.test(a)
@@ -2843,7 +2865,13 @@ export function ownedLooksSimilarToArchetype(archetype = '', ownedPieces = []) {
   for (const p of ownedPieces || []) {
     const n = normalizeForMatch(`${p.name || ''} ${p.category || ''} ${p.colors || ''} ${p.notes || ''}`)
     if (!n) continue
+    const ownedColors = matchingFamilies(n, colorFamilies)
+    const ownedCategories = matchingFamilies(n, categoryFamilies)
     if (a && n.includes(a)) return true
+    if (
+      archetypeColors.some(color => ownedColors.includes(color)) &&
+      archetypeCategories.some(category => ownedCategories.includes(category))
+    ) return true
     if (wantsDenim && /\b(denim|jean|jeans)\b/.test(n)) return true
     if (wantsOliveUtility && /\bolive\b/.test(n) && /\b(utility|cargo|pant|pants|trouser|fatigue|workwear)\b/.test(n)) return true
     if (wantsCreamTrouser && /\b(cream|ivory|white|oatmeal|beige)\b/.test(n) && /\b(trouser|pant|pants|jean|jeans)\b/.test(n)) return true
@@ -2930,11 +2958,14 @@ export function idealAdditionSupportPool(selectedPiece = {}) {
   ]
 }
 
-export function makeDistinctNewPieceArchetype(original = '', selectedPiece = {}, used = new Set()) {
+export function makeDistinctNewPieceArchetype(original = '', selectedPiece = {}, used = new Set(), ownedPieces = []) {
   const pool = idealAdditionSupportPool(selectedPiece)
 
   const o = normalizeArchetypeText(original)
-  let candidate = pool.find(x => !used.has(normalizeArchetypeText(x)) && normalizeArchetypeText(x) !== o)
+  let candidate = pool.find(x => {
+    const key = normalizeArchetypeText(x)
+    return !used.has(key) && key !== o && !ownedLooksSimilarToArchetype(x, ownedPieces)
+  })
   if (!candidate) candidate = `more specific ${String(original || 'editorial support piece').replace(/\(missing piece\)/gi, '').trim()}`
   used.add(normalizeArchetypeText(candidate))
   return candidate
@@ -2970,7 +3001,7 @@ export function dedupeAndDifferentiateEditorialDirections(directions = [], selec
       if (!next) next = 'specific editorial support piece'
       if (violatesAnchorRole(next) || usedMissing.has(key) || ownedLooksSimilarToArchetype(next, ownedPieces)) {
         if (violatesAnchorRole(next)) replacedAnchorRole = true
-        next = makeDistinctNewPieceArchetype(next, selectedPiece, usedMissing)
+        next = makeDistinctNewPieceArchetype(next, selectedPiece, usedMissing, ownedPieces)
       } else {
         usedMissing.add(key)
       }
@@ -2978,7 +3009,7 @@ export function dedupeAndDifferentiateEditorialDirections(directions = [], selec
     }).filter(Boolean)
 
     while (copy.missingPieces.length < 2) {
-      copy.missingPieces.push(makeDistinctNewPieceArchetype('', selectedPiece, usedMissing))
+      copy.missingPieces.push(makeDistinctNewPieceArchetype('', selectedPiece, usedMissing, ownedPieces))
     }
 
     if (replacedAnchorRole && anchorGroup === 'bottom') {
