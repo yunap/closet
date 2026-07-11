@@ -2057,7 +2057,12 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
 export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', variantMode = 'similar', currentDate = new Date() }) {
   const mode = variantMode === 'creative' ? 'creative' : 'similar'
   const weatherProfile = weatherProfileFromContext({ season, currentDate })
-  const anchorPiece = (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'top')
+  const requestedAnchorId = Number(outfit.mainPieceId || outfit.main_piece_id || outfit.anchorPieceId || outfit.anchor_piece_id) || null
+  const userSelectedAnchor = requestedAnchorId
+    ? (pieces || []).find(piece => Number(piece.id) === requestedAnchorId)
+    : null
+  const anchorPiece = userSelectedAnchor
+    || (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'top')
     || (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'dress')
     || (pieces || [])[0]
   const pieceLines = pieces.map((piece, index) => {
@@ -2071,7 +2076,7 @@ export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'c
     'Show the three alternatives side by side as a clean triptych/contact sheet. Each alternative should be a full-body outfit on the same person.',
     'Use the source photo only for identity, proportions, and fit context.',
     'Use the linked garment references when useful. You may change supporting styling pieces freely, but keep the anchor garment.',
-    anchorPiece ? `Keep this linked garment as a visible anchor in all three alternatives unless the saved outfit itself has no clear anchor: ${anchorPiece.name} (${wardrobeCategoryGroup(anchorPiece)}). Do not replace or redesign that anchor garment.` : '',
+    anchorPiece ? `Keep this ${userSelectedAnchor ? 'user-selected main linked garment' : 'linked garment'} as a visible anchor in all three alternatives unless the saved outfit itself has no clear anchor: ${anchorPiece.name} (${wardrobeCategoryGroup(anchorPiece)}). Do not replace or redesign that anchor garment.` : '',
     '',
     'Shared quality rules:',
     '- Avoid mere micro-variations such as only changing tuck, sleeve length, belt, jewelry, or bag.',
@@ -2080,6 +2085,7 @@ export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'c
     '- Keep proportions coherent, visual hierarchy clear, and wearability believable.',
     '- Avoid random novelty, generic catalog styling, influencer polish, bland retail styling, and overly soft beige looks.',
     '- Do not repeat the same skirt shape, same shoe family, same color family, or same layer idea across all three.',
+    '- Across the three alternatives, vary the outfit formula family, silhouette family, grounding/shoe strategy, and focal hierarchy. If two ideas share the same anchor, make the surrounding structure visibly different.',
     weatherProfile.isHot
       ? '- Warm/current-season realism: do not introduce boots, ankle boots, or heavy cold-weather footwear unless they are already essential to the saved outfit reference; prefer seasonally plausible flats, loafers, sneakers, sandals, or light slip-ons.'
       : '',

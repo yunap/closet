@@ -44,6 +44,7 @@ db.exec(`
     status       TEXT DEFAULT 'confirmed',
     favorite     INTEGER DEFAULT 0,
     photo        TEXT,
+    main_piece_id INTEGER REFERENCES pieces(id) ON DELETE SET NULL,
     date_added   TEXT DEFAULT (datetime('now'))
   );
 
@@ -185,6 +186,13 @@ db.exec(`
   'field TEXT'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE todos ADD COLUMN ${col}`) } catch {}
+})
+
+// Migrate outfits to remember the user-selected main linked garment.
+;[
+  'main_piece_id INTEGER REFERENCES pieces(id) ON DELETE SET NULL'
+].forEach(col => {
+  try { db.exec(`ALTER TABLE outfits ADD COLUMN ${col}`) } catch {}
 })
 
 // ── Migrate: add new columns to existing DB ───────────────────────────────────

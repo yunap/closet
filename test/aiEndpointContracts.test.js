@@ -1134,6 +1134,7 @@ test('ideal-additions preview sheet endpoint returns a preview board artifact', 
 })
 
 test('saved outfit variants endpoint supports creative boards from linked pieces', async () => {
+  db.prepare('UPDATE outfits SET main_piece_id = ? WHERE id = ?').run(seeded.shoe, seeded.outfitId)
   const json = await postJson('/api/ai/generate-saved-outfit-image', {
     outfit: { id: seeded.outfitId, name: 'Vest top + white blouse', photo: `/uploads/${seeded.photos.outfit}` },
     occasion: 'city',
@@ -1145,6 +1146,7 @@ test('saved outfit variants endpoint supports creative boards from linked pieces
   assert.equal(json.debug.variantCount, 3)
   assert.equal(json.debug.requestCount, 1)
   assert.equal(json.boards[0].variantMode, 'creative')
+  assert.equal(json.boards[0].mainPieceId, seeded.shoe)
   assert.ok(json.boards[0].imageUrl.startsWith('/uploads/generated-boards/'))
 })
 
@@ -1164,6 +1166,22 @@ test('saved outfit variants prompt treats current season in June as warm-weather
 
   assert.ok(prompt.includes('Warm/current-season realism'))
   assert.ok(prompt.includes('do not introduce boots, ankle boots, or heavy cold-weather footwear'))
+  assert.ok(prompt.includes('vary the outfit formula family, silhouette family, grounding/shoe strategy, and focal hierarchy'))
+
+  const mainPrompt = savedOutfitImagePrompt({
+    outfit: { name: 'Shoe-led saved outfit', mainPieceId: seeded.shoe },
+    pieces: [
+      { id: seeded.top, name: 'emerald sleeveless top', category: 'Top' },
+      { id: seeded.bottom, name: 'beige pleated pants', category: 'Bottom' },
+      { id: seeded.shoe, name: 'bold multicolor floral espadrilles', category: 'Shoes' },
+    ],
+    occasion: 'city',
+    season: 'current season',
+    variantMode: 'creative',
+    currentDate: new Date('2026-06-15T12:00:00-07:00'),
+  })
+  assert.ok(mainPrompt.includes('user-selected main linked garment'))
+  assert.ok(mainPrompt.includes('bold multicolor floral espadrilles (shoes)'))
 })
 
 test('wardrobe outfit evaluator sends outfit and linked garment images', async () => {
