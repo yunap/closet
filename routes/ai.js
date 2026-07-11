@@ -17,7 +17,8 @@ import {
   estimateAiUsageCost,
   parseModelJson,
   AI_PROVIDER,
-  ACTIVE_STYLIST_MODEL
+  ACTIVE_STYLIST_MODEL,
+  describeAiError
 } from '../styling-engine/provider.js'
 
 import {
@@ -55,7 +56,8 @@ import {
   extractWeatherContext,
   isTravelOrPackingRequest,
   normalizeActivity,
-  normalizeOccasion
+  normalizeOccasion,
+  tripRequestNeedsScopeClarification
 } from '../styling-engine/stylingIntent.js'
 
 import {
@@ -185,7 +187,7 @@ function isBroadOutfitPlanningText(text = '') {
   const q = String(text || '').toLowerCase()
   if (!q.trim()) return false
   if (/\b(show|render|visualize|see|picture|image|why|what about|do you think|evaluate|critique)\b/.test(q)) return false // ratchet-allow: user intent routing words, not garment matching
-  return /\b(outfits?|looks?|pack|packing|trip|travel|capsule|wardrobe)\b/.test(q) && // ratchet-allow: user intent routing words, not garment matching
+  return /\b(outfits|looks|pack|packing|trip|travel|capsule|wardrobe)\b/.test(q) && // ratchet-allow: user intent routing words, not garment matching
     /\b(suggest|recommend|what should|help|plan|pack|wear|put together|create|build)\b/.test(q) // ratchet-allow: user intent routing words, not garment matching
 }
 
@@ -853,6 +855,7 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) 
   const isDayWalking = isWalking && !isDinner
   const isHotDay = Boolean(weatherProfile?.isHot || /\b(hot|80|90|summer)\b/i.test(`${slot.season || ''} ${slot.bestFor || ''}`))
   const isHotNonDinner = isHotDay && !isDinner
+  const isColdDay = Boolean(weatherProfile?.isCold || /\b(cold|freezing|winter|chilly)\b/i.test(`${slot.season || ''} ${slot.bestFor || ''}`))
   const hardRejects = []
   let score = 0
 
@@ -864,6 +867,17 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) 
   if (isDinner && isHotDay && dress && fabricWeight(dress) === 'heavy') {
     score -= 70
     hardRejects.push('heavy dress too warm for warm trip dinner')
+  }
+  // Mirrors the missing-shoes hard reject: a piece-level cold-weather gate keeps bare/sleeveless
+  // pieces out, but nothing previously verified the assembled OUTFIT actually carries a warm layer —
+  // "tee + jeans + sneakers" passed every piece-level check individually while providing zero
+  // insulation for a stated cold trip.
+  if (isColdDay) {
+    const hasWarmLayer = Boolean(layer) || (top && fabricWeight(top) === 'heavy') || (dress && fabricWeight(dress) === 'heavy')
+    if (!hasWarmLayer) {
+      score -= 60
+      hardRejects.push('no warm layer for cold weather')
+    }
   }
 
   if (isDayWalking) {
@@ -1199,6 +1213,10 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
   const isTravelPlanning = isTravelOrPackingRequest(question, body.occasion)
   if (!isBroadOutfitPlanningText(question) && !isTravelPlanning) return null
   if (isTravelPlanning && !extractedWeather) return null
+  // A multi-day trip without enough stated activities/use cases shouldn't silently precompose thin
+  // coverage — skip precomposing so the model's own turn can ask what the packing plan should cover,
+  // per tripRequestNeedsScopeClarification's guard (see stylingIntent.js).
+  if (isTravelPlanning && tripRequestNeedsScopeClarification(question)) return null
 
   const fallbackActivity = normalizeActivity(body.activity || 'none')
   const occasion = normalizeOccasion(body.occasion || (isTravelPlanning ? 'city' : 'casual'))
@@ -1534,8 +1552,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, show_request_retries, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -1546,7 +1564,6 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.outfitProseWithoutToolCall) || 0,
       Number(diagnostics.zeroResultContradictionBlocks) || 0,
       Number(diagnostics.destinationClarificationRetries) || 0,
-      Number(diagnostics.showRequestRetries) || 0,
       diagnostics.weatherSource || ''
     )
   } catch (err) {
@@ -2284,7 +2301,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 } = {}) {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
-    const weatherProfile = weatherProfileFromContext({ mood, season })
+    const stylingRequest = String(request || question || '').trim()
+    const weatherProfile = weatherProfileFromContext({ mood: [mood, stylingRequest].filter(Boolean).join(' '), season })
     const occasionProfile = resolveOccasionProfile(occasion, mood)
     const activityProfile = resolveActivityProfile({ activity, occasion, mood, request: request || question || '' })
     const comfortConstraint = resolveComfortFootwearConstraint({
@@ -2371,6 +2389,12 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     // Reuse existing suppression filter (hard filter here — suppressed pieces are simply not shown)
     const { allowedPieces, suppressedPieces } =
       filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode, weatherProfile, mood, activity })
+    const suppressedReasonCounts = suppressedPieces.reduce((acc, piece) => {
+      for (const reason of (piece.reasons || [])) {
+        acc[reason] = (acc[reason] || 0) + 1
+      }
+      return acc
+    }, {})
 
     // Session memory (reuse existing)
     const sessionInfluence = getRecentWholeWardrobeSessionInfluence({ occasion, daysCutoff: 6 })
@@ -2383,8 +2407,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     // Memory context (reuse existing builders, keep it lean)
     const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(20)
-    const confirmedOutfitsText = getConfirmedOutfitMemory(8)
-    const stylingRequest = String(request || question || '').trim()
+    const confirmedOutfitsText = getConfirmedOutfitMemory(8, {
+      allowedPieceIds: allowedPieces.map(piece => Number(piece.id))
+    })
 
     // Compute weather profile and filter the visual composer roster
     const { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(allowedPieces, {
@@ -2401,11 +2426,17 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     })
 
     console.log(`\n[Visual Composer Roster] Filtering active pieces for mood: "${mood}", season: "${season}"`)
+    console.log(`  - Weather profile:`, weatherProfile)
+    console.log(`  - Suppressed before roster: ${suppressedPieces.length}`, suppressedReasonCounts)
     console.log(`  - Total active pieces: ${allowedPieces.length}`)
     console.log(`  - Survived in roster: ${roster.length}`)
     console.log(`  - Excluded: ${excluded.length}`)
     console.log(`  - Excluded reasons count:`, rosterDebug.excludedCounts)
     console.log(`  - Register ceiling:`, rosterDebug.registerCeiling || 'none', rosterDebug.formalityIntent || {})
+    console.log(`  - Register target:`, rosterDebug.registerTarget || 'none', {
+      enforced: rosterDebug.registerTargetEnforcedGroups || [],
+      gaps: rosterDebug.registerTargetCoverageGaps || []
+    })
 
     const activityFactLine = (() => {
       const enforced = rosterDebug.activityTagEnforcedGroups || []
@@ -2811,6 +2842,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         },
         shownPieceCount,
         suppressedCount: suppressedPieces.length,
+        suppressedReasonCounts,
+        weatherProfile,
         aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
         locallyGeneratedCount: localBackfillOutfits.length,
         finalReturnedCount: structuredOutfits.length,
@@ -2838,6 +2871,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         activityCoverageGaps: rosterDebug.activityCoverageGaps || [],
         activityTagEnforcedGroups: rosterDebug.activityTagEnforcedGroups || [],
         registerCeiling: rosterDebug.registerCeiling,
+        registerTarget: rosterDebug.registerTarget,
+        registerTargetCoverageGaps: rosterDebug.registerTargetCoverageGaps || [],
+        registerTargetEnforcedGroups: rosterDebug.registerTargetEnforcedGroups || [],
         formalityIntent: rosterDebug.formalityIntent,
         postGatePoolSize: rosterDebug.postGatePoolSize,
         capApplied: rosterDebug.capApplied,
@@ -3402,6 +3438,18 @@ router.post('/compare-outfits', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+// 2026-07-10: server-side default, deliberately not left to the model to infer (see the timezone-as-
+// location bug this replaced). Only used as a fallback when the conversation hasn't already
+// established a real place — an explicitly named destination always takes priority.
+function getHomeLocation() {
+  try {
+    const row = db.prepare("SELECT value FROM app_meta WHERE key = 'home_location'").get()
+    return row?.value || ''
+  } catch {
+    return ''
+  }
+}
+
 router.post('/ask', async (req, res) => {
   try {
     const extractedWeather = req.body.weather || extractWeatherContext([
@@ -3427,7 +3475,10 @@ router.post('/ask', async (req, res) => {
       mission: req.body.mission || 'mix',
       activity: activePrecompose?.activity || req.body.activity || '',
       question: req.body.question || '',
-      location: req.body.location || '',
+      // 2026-07-10: home location is a pure fallback — an explicitly named place from this turn's
+      // question (extracted by the model as search_wardrobe's own `location` arg) or an already-
+      // established req.body.location both still take priority over it, per tools.js's merge order.
+      location: req.body.location || getHomeLocation(),
       currentDate: req.body.currentDate || ''
     }
     const payload = await buildStylistConversationPayload({
@@ -3480,7 +3531,8 @@ router.post('/ask', async (req, res) => {
     })
   } catch (err) {
     console.error('AI error:', err)
-    res.status(500).json({ error: 'Something went wrong — try again' })
+    const { status, message } = describeAiError(err)
+    res.status(status).json({ error: message })
   }
 })
 

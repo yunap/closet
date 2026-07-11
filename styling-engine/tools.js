@@ -7,6 +7,18 @@ import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
+import { bottomKind } from './attributes.js'
+
+// 2026-07-10: mechanical backstop, not just a prompt fix — confirmed live that the model kept passing
+// the app's hardcoded "Time zone: America/Los_Angeles" context string as search_wardrobe's `location`
+// arg even after STYLIST_SYSTEM was told explicitly not to, and because an explicit tool argument
+// always wins over toolContext's server-injected home location, this actively overrode the correct
+// value once one was configured. IANA timezone identifiers have a distinctive, mechanically-checkable
+// shape (Continent/City_With_Underscores) that no real place name a user or model would supply looks
+// like — same "don't trust the model's self-report, verify mechanically" lesson as specs 3/7/11.
+export function looksLikeTimezoneIdentifier(value = '') {
+  return /^[A-Za-z]+\/[A-Za-z_]+$/.test(String(value || '').trim())
+}
 
 const SEARCH_WARDROBE_VISUAL_CAP = 16
 const OCCASION_VALUE_SET = new Set(OCCASION_VALUES)
@@ -103,7 +115,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       outfitProseWithoutToolCall: 0,
       zeroResultContradictionBlocks: 0,
       destinationClarificationRetries: 0,
-      showRequestRetries: 0,
+      tripScopeClarificationRetries: 0,
       weatherSource: ''
     }
   }
@@ -120,10 +132,95 @@ export function setFreeformWeatherSource(toolContext, source) {
 
 export const OUTFIT_ROLES = ['primary_top', 'layer_top', 'primary_bottom', 'layer_bottom', 'dress', 'shoes', 'outerwear', 'accessory']
 
+function requestExclusionReasonsForPiece(piece = {}, requestText = '') {
+  const text = String(requestText || '').toLowerCase()
+  const reasons = []
+  const saysNoShorts = /\b(?:no|without|avoid|skip|exclude)\s+(?:any\s+)?(?:shorts?|skorts?)\b/.test(text) || // ratchet-allow: user request exclusion parsing, not garment matching
+    /\b(?:do\s+not|don't)\s+(?:use|include|suggest|show|give me)\s+(?:any\s+)?(?:shorts?|skorts?)\b/.test(text) || // ratchet-allow: user request exclusion parsing, not garment matching
+    /\b(?:shorts?|skorts?)\s+(?:are|is)\s+(?:out|off[- ]?limits|not ok|not okay)\b/.test(text) // ratchet-allow: user request exclusion parsing, not garment matching
+  if (saysNoShorts && bottomKind(piece) === 'shorts') {
+    reasons.push('user request excludes shorts')
+  }
+  return reasons
+}
+
+function freeformOutfitDebugTrace({ resolvedOccasion = '', resolvedActivity = '', requestText = '', mood = '' } = {}) {
+  const occasionProfile = resolveOccasionProfile(resolvedOccasion, '')
+  const activityProfile = resolveActivityProfile({
+    activity: resolvedActivity,
+    occasion: resolvedOccasion,
+    mood,
+    request: requestText
+  })
+  const registerCeiling = resolveRegisterCeiling({
+    occasion: resolvedOccasion,
+    activity: resolvedActivity,
+    mood,
+    request: requestText,
+    question: requestText,
+    occasionProfile,
+    activityProfile
+  })
+  return {
+    resolvedActivity: activityProfile?.id || resolvedActivity || 'none',
+    activitySource: resolvedActivity ? 'tool_context' : (activityProfile?.id ? 'request' : 'none'),
+    walkable: activityProfile?.id === 'walking' || activityProfile?.id === 'hiking',
+    registerCeiling: registerCeiling?.ceiling || registerCeiling || 'none'
+  }
+}
+
+function layerIntentText(piece = {}) {
+  const styleProfile = piece.style_profile_json && typeof piece.style_profile_json === 'object'
+    ? JSON.stringify(piece.style_profile_json)
+    : piece.style_profile_json
+  return [
+    piece.name,
+    piece.category,
+    piece.reads_as,
+    piece.garment_type,
+    piece.silhouette,
+    piece.notes,
+    piece.engine_notes,
+    styleProfile
+  ].filter(Boolean).join(' ').toLowerCase()
+}
+
+function hasExplicitTopLayerEvidence(text) {
+  return /\b(cardigan|jacket|overshirt|button[- ]?(up|down)|shirt[- ]?jacket|vest|kimono|wrap|coat|blazer)\b/.test(text) || // ratchet-allow: role-intent evidence for layer validation, not garment recommendation matching
+    /\b(layering|layer|top layer|overlayer|overlay|over-piece|over piece)\b/.test(text) || // ratchet-allow: role-intent evidence for layer validation, not garment recommendation matching
+    /\b(worn|wear)\s+(open|over)\b/.test(text) || // ratchet-allow: role-intent evidence for layer validation, not garment recommendation matching
+    /\b(over|on top of)\s+(a\s+)?(tee|t-shirt|t shirt|tank|camisole|base)\b/.test(text) // ratchet-allow: role-intent evidence for layer validation, not garment recommendation matching
+}
+
+function isStandaloneBaseTopAsLayer(piece) {
+  if (piece.role !== 'layer_top') return false
+  const text = layerIntentText(piece)
+  const readsLikeBaseTop = /\b(tee|t-shirt|t shirt|crew tee|graphic tee|tank|camisole|cami|shell)\b/.test(text) // ratchet-allow: role-structure validation for tops assigned as layers, not garment recommendation matching
+  return readsLikeBaseTop && !hasExplicitTopLayerEvidence(text)
+}
+
+function roleCategoryIssue(piece = {}) {
+  const role = String(piece.role || '').trim()
+  const category = String(piece.category || '').toLowerCase().trim()
+  if (!role || !category) return ''
+  const expected = {
+    primary_top: ['top'],
+    layer_top: ['top', 'outerwear'],
+    primary_bottom: ['bottom'],
+    layer_bottom: ['bottom'],
+    dress: ['dress'],
+    shoes: ['shoes'],
+    outerwear: ['outerwear'],
+    accessory: ['accessory']
+  }[role]
+  if (!expected || expected.includes(category)) return ''
+  return `${piece.name || `piece ${piece.id}`} is category "${piece.category}" but was assigned role "${role}"`
+}
+
 // Validate an outfit's role structure (roles only, no layerOf). Returns a list of human-readable
 // issues; empty means valid. Represents intentional layering as valid (primary_top + layer_top) while
 // catching unresolved slot collisions (two primary_top) — the malformed-vs-intentional distinction.
-export function validateOutfitRoles(pieces = []) {
+export function validateOutfitRoles(pieces = [], missingGaps = []) {
   const issues = []
   const counts = Object.fromEntries(OUTFIT_ROLES.map(r => [r, 0]))
   for (const p of pieces) {
@@ -137,6 +234,14 @@ export function validateOutfitRoles(pieces = []) {
   if (counts.primary_bottom > 1) issues.push('two primary_bottom pieces — unresolved bottom slot (use layer_bottom for intentional layering)')
   if (counts.dress > 1) issues.push('two dress pieces — unresolved dress slot')
   if (counts.shoes > 1) issues.push('more than one shoes — unresolved shoes slot')
+  // 2026-07-10: this was the one structural gap the whole-wardrobe visual composer's prompt already
+  // closed ("EXACTLY one pair of shoes... never omit the slot silently") but freeform chat's
+  // propose_outfit never mechanically enforced at all — a zero-shoes outfit passed validation cleanly
+  // and rendered as a normal, unflagged card. A missing_gaps note may explain the wardrobe gap, but it
+  // must not make an incomplete outfit render as a finished outfit card.
+  if (counts.shoes < 1) {
+    issues.push('outfit is missing shoes — every proposed outfit card needs actual footwear; missing_gaps may explain the wardrobe gap but cannot satisfy the shoes slot')
+  }
 
   // Core coverage: separates (top+bottom) OR a single dress, and the two are mutually exclusive.
   const hasSeparatesCore = counts.primary_top >= 1 && counts.primary_bottom >= 1
@@ -148,6 +253,13 @@ export function validateOutfitRoles(pieces = []) {
   // A layer must have a primary (or dress) to layer with — distinguishes intentional layering from a stray second piece.
   if (counts.layer_top >= 1 && counts.primary_top < 1 && counts.dress < 1) issues.push('layer_top has no primary_top or dress to layer with')
   if (counts.layer_bottom >= 1 && counts.primary_bottom < 1 && counts.dress < 1) issues.push('layer_bottom has no primary_bottom or dress to layer with')
+  for (const p of pieces) {
+    const categoryIssue = roleCategoryIssue(p)
+    if (categoryIssue) issues.push(categoryIssue)
+    if (isStandaloneBaseTopAsLayer(p)) {
+      issues.push(`${p.name || `piece ${p.id}`} is assigned as layer_top but reads as a standalone top, not a layer`)
+    }
+  }
   return issues
 }
 
@@ -262,7 +374,8 @@ export const STYLIST_TOOLS = [
         why_it_works: { type: "string", description: "Brief styling rationale." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
-        season: { type: "string", description: "Season/weather context. Optional." }
+        season: { type: "string", description: "Season/weather context. Optional." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the established activity." }
       },
       required: ["pieces"]
     }
@@ -348,6 +461,7 @@ export async function executeTool(name, args, toolContext = {}) {
 
         let excludedCount = 0
         let gateExcludedCount = 0
+        let requestExcludedCount = 0
         if (toolContext && toolContext.allowedPieceIds) {
           const allowedSet = toolContext.allowedPieceIds instanceof Set 
             ? toolContext.allowedPieceIds 
@@ -362,12 +476,22 @@ export async function executeTool(name, args, toolContext = {}) {
         // Spec 4: live weather when a real location is known (this call's arg or carried over on
         // toolContext from earlier in the turn); resilient fallback to the text heuristic otherwise —
         // profileRuleFit/weatherFitForPiece consume the same {isHot, isCold} shape either way.
+        // The model's own `location` arg is discarded if it's timezone-shaped rather than a real
+        // place — see looksLikeTimezoneIdentifier above — falling back to the server-injected home
+        // location (toolContext.location) instead, which is never timezone-shaped itself.
+        const safeModelLocation = looksLikeTimezoneIdentifier(location) ? '' : (location || '')
         const resolvedWeather = await getCurrentWeatherProfile({
           date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
-          location: location || toolContext.location || '',
+          location: safeModelLocation || toolContext.location || '',
           mood: toolContext.mood || '',
           season: weatherText || toolContext.weather || toolContext.season || ''
         })
+        if (toolContext) {
+          toolContext.weatherProfile = resolvedWeather
+          if (weatherText) {
+            toolContext.weather = String(weatherText)
+          }
+        }
         setFreeformWeatherSource(toolContext, resolvedWeather.weatherSource)
         if (resolvedWeather.isHot || resolvedWeather.isCold) {
           results = results
@@ -382,6 +506,22 @@ export async function executeTool(name, args, toolContext = {}) {
         const resolvedActivity = activity !== undefined && activity !== null && activity !== ''
           ? normalizeActivity(activity)
           : (toolContext.activity || '')
+        if (toolContext) {
+          if (resolvedOccasion) toolContext.occasion = resolvedOccasion
+          if (resolvedActivity) toolContext.activity = resolvedActivity
+        }
+        const requestText = [
+          toolContext.request,
+          toolContext.question,
+          toolContext.mission,
+          query,
+          toolContext.mood
+        ].filter(Boolean).join(' ')
+        if (requestText) {
+          const beforeRequestExclusions = results.length
+          results = results.filter(p => requestExclusionReasonsForPiece(p, requestText).length === 0)
+          requestExcludedCount = beforeRequestExclusions - results.length
+        }
         const occasionProfile = resolveOccasionProfile(resolvedOccasion, '')
         const activityProfile = resolveActivityProfile({ activity: resolvedActivity })
         if (occasionProfile || activityProfile) {
@@ -393,8 +533,8 @@ export async function executeTool(name, args, toolContext = {}) {
             occasion: resolvedOccasion,
             activity: resolvedActivity,
             mood: toolContext.mood || '',
-            request: toolContext.request || toolContext.mission || '',
-            question: query || '',
+            request: toolContext.request || toolContext.question || toolContext.mission || '',
+            question: query || toolContext.question || '',
             occasionProfile,
             activityProfile
           })
@@ -478,8 +618,15 @@ export async function executeTool(name, args, toolContext = {}) {
           })
         }
 
+        if (requestExcludedCount > 0) {
+          resultList.push({
+            note: `(${requestExcludedCount} piece(s) hidden because they conflict with the user's stated request)`
+          })
+        }
+
         bumpFreeformDiagnostic(toolContext, 'searchCalls')
         if (gateExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', gateExcludedCount)
+        if (requestExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', requestExcludedCount)
 
         // Spec 3 Part 0b: a free-text named-garment query that returned nothing is a known-false claim
         // waiting to happen — track it so the final answer can be checked for describing it as real.
@@ -491,7 +638,7 @@ export async function executeTool(name, args, toolContext = {}) {
         return resultList
       }
       case 'propose_outfit': {
-        const { pieces = [], label = '', occasion_context = '', why_it_works = '', missing_gaps = [], occasion, season } = args
+        const { pieces = [], label = '', occasion_context = '', why_it_works = '', missing_gaps = [], occasion, season, activity } = args
         const rawPieces = Array.isArray(pieces) ? pieces : []
         if (!rawPieces.length) {
           return { status: "validation_error", message: "propose_outfit needs at least one piece, each with an id and a role.", issues: ["no pieces provided"] }
@@ -517,8 +664,25 @@ export async function executeTool(name, args, toolContext = {}) {
           }
         }
 
+        const resolvedOccasion = occasion ? normalizeOccasion(occasion) : (toolContext.occasion || 'casual')
+        const resolvedSeason = season || toolContext.weather || toolContext.season || 'current season'
+        const resolvedActivity = activity !== undefined && activity !== null && activity !== ''
+          ? normalizeActivity(activity)
+          : (toolContext.activity || '')
+        const requestTextForProposal = [
+          toolContext.request,
+          toolContext.question,
+          occasion_context
+        ].filter(Boolean).join(' ')
+        const outfitDebug = freeformOutfitDebugTrace({
+          resolvedOccasion,
+          resolvedActivity,
+          requestText: requestTextForProposal,
+          mood: toolContext.mood || occasion_context || ''
+        })
+
         // Validate role/slot structure (mechanically enforced — replaces the prompt's layering rules).
-        const issues = validateOutfitRoles(resolved)
+        const issues = validateOutfitRoles(resolved, missing_gaps)
         if (issues.length) {
           // Spec 3 Part 1: a failed validation must be visible, not silently dropped/retried — push a
           // broken diagnostic card (same "needs review" treatment as the composer's rejected proposals)
@@ -529,6 +693,14 @@ export async function executeTool(name, args, toolContext = {}) {
             rejectionReason: issues.join('; '),
             pieceIds: resolved.map(p => Number(p.id)),
             pieces: resolved,
+            occasion: resolvedOccasion,
+            season: resolvedSeason,
+            occasionContext: occasion_context || '',
+            why: why_it_works || '',
+            reason: why_it_works || '',
+            source: 'proposed',
+            activity: resolvedActivity,
+            debug: outfitDebug,
             previewOnly: true
           }
           const existingBroken = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
@@ -541,11 +713,59 @@ export async function executeTool(name, args, toolContext = {}) {
           }
         }
 
-        const resolvedOccasion = occasion ? normalizeOccasion(occasion) : (toolContext.occasion || 'casual')
-        const resolvedSeason = season || toolContext.season || 'current season'
+        const resolvedWeather = toolContext.weatherProfile || await getCurrentWeatherProfile({
+          date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
+          location: toolContext.location || '',
+          mood: toolContext.mood || '',
+          season: toolContext.weather || resolvedSeason || ''
+        })
+        const hardGateIssues = resolved.flatMap(piece => {
+          const requestIssues = requestExclusionReasonsForPiece(piece, [
+            toolContext.request,
+            toolContext.question,
+            occasion_context
+          ].filter(Boolean).join(' '))
+          if (requestIssues.length) return [`${piece.name}: ${requestIssues.join(', ')}`]
+          const decision = wholeWardrobePieceTrustDecision(piece, {
+            occasion: resolvedOccasion,
+            mood: toolContext.mood || occasion_context || '',
+            activity: resolvedActivity,
+            request: toolContext.request || toolContext.question || occasion_context || '',
+            question: toolContext.question || '',
+            weatherProfile: resolvedWeather
+          })
+          return decision.allowed ? [] : [`${piece.name}: ${decision.reasons.join(', ')}`]
+        })
+        if (hardGateIssues.length) {
+          const brokenOutfit = {
+            label: label || 'Outfit',
+            broken: true,
+            rejectionReason: hardGateIssues.join('; '),
+            pieceIds: resolved.map(p => Number(p.id)),
+            pieces: resolved,
+            occasion: resolvedOccasion,
+            season: resolvedSeason,
+            occasionContext: occasion_context || '',
+            why: why_it_works || '',
+            reason: why_it_works || '',
+            source: 'proposed',
+            activity: resolvedActivity,
+            debug: outfitDebug,
+            previewOnly: true
+          }
+          const existingBroken = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
+          toolContext.generatedOutfits = [...existingBroken, brokenOutfit]
+          bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
+          return {
+            status: "validation_error",
+            message: `The proposed outfit includes piece(s) that fail the current occasion/activity/weather gates: ${hardGateIssues.join('; ')}. Search again with the same occasion, activity, and weather, then call propose_outfit with replacements.`,
+            issues: hardGateIssues
+          }
+        }
         toolContext.source = 'proposed_outfit'
         toolContext.occasion = resolvedOccasion
         toolContext.season = resolvedSeason
+        toolContext.activity = resolvedActivity
         const proposedOutfit = {
           label: label || 'Outfit',
           occasion: resolvedOccasion,
@@ -557,6 +777,8 @@ export async function executeTool(name, args, toolContext = {}) {
           pieces: resolved,
           missingPieces: Array.isArray(missing_gaps) ? missing_gaps.filter(Boolean).map(String) : [],
           source: 'proposed',
+          activity: resolvedActivity,
+          debug: outfitDebug,
           previewOnly: true
         }
         const existingOutfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []

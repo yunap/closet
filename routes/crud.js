@@ -921,4 +921,30 @@ router.delete('/chat-threads/:id', (req, res) => {
   }
 })
 
+// ── Settings (app_meta key-value) ───────────────────────────────────────────
+// 2026-07-10: the app previously had no configured home location at all — freeform chat's model was
+// found silently mistreating the app's hardcoded timezone string as a location for plain local asks.
+// This is the real fix: a real, structured home location the server injects itself (routes/ai.js's
+// /ask handler), never inferred by the model.
+router.get('/settings/home-location', (req, res) => {
+  try {
+    const row = db.prepare("SELECT value FROM app_meta WHERE key = 'home_location'").get()
+    res.json({ homeLocation: row?.value || '' })
+  } catch (err) {
+    console.error('Error reading home location:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.put('/settings/home-location', (req, res) => {
+  try {
+    const homeLocation = String(req.body?.homeLocation || '').trim()
+    db.prepare("INSERT INTO app_meta (key, value) VALUES ('home_location', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(homeLocation)
+    res.json({ homeLocation })
+  } catch (err) {
+    console.error('Error saving home location:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router

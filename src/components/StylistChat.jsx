@@ -281,6 +281,10 @@ export default function StylistChat({
   const [wardrobeOutfitActivity, setWardrobeOutfitActivity] = useState('none')
   const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
   const [recentMemoryResetting, setRecentMemoryResetting] = useState(false)
+  const [homeLocation, setHomeLocation] = useState('')
+  const [homeLocationInput, setHomeLocationInput] = useState('')
+  const [homeLocationOpen, setHomeLocationOpen] = useState(false)
+  const [homeLocationSaving, setHomeLocationSaving] = useState(false)
   const [savedIndices, setSavedIndices] = useState(new Set())
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
   const [feedbackIdsByKey, setFeedbackIdsByKey] = useState({})
@@ -989,6 +993,13 @@ export default function StylistChat({
         }
       })
       .catch(err => console.error('Failed to fetch saved boards:', err))
+    fetch('/api/settings/home-location')
+      .then(r => r.json())
+      .then(data => {
+        setHomeLocation(data.homeLocation || '')
+        setHomeLocationInput(data.homeLocation || '')
+      })
+      .catch(err => console.error('Failed to fetch home location:', err))
   }, [])
 
   useEffect(() => {
@@ -1960,7 +1971,11 @@ export default function StylistChat({
           const hasRendered = Boolean(boardResults[boardKey]?.length)
           const isRendering = boardLoadingIndex === boardKey
           const isEvaluating = boardLoadingIndex === `evaluate:${boardKey}`
-          const showSilhouette = isPreview && !isTextOnly
+          // previewOnly is shared with the unrelated single-piece "ideal directions" feature
+          // (editorial-directions-preview), the only flow that anchors a card to one piece via
+          // outfit.pieceId — the Color balance bar belongs only to that flow, not to any other
+          // previewOnly card (e.g. a propose_outfit tool-call result also marked previewOnly).
+          const showSilhouette = isPreview && !isTextOnly && Boolean(outfit.pieceId)
           const isTripCard = outfit.source === 'trip_precompose'
           const isBrokenCard = Boolean(outfit.broken || outfit.diagnosticOnly)
           const brokenReasonRows = Array.isArray(outfit.brokenPieces)
@@ -2014,7 +2029,7 @@ export default function StylistChat({
                   </div>
                 )}
                 {isBrokenCard && (() => {
-                  const trace = message?.debug?.visualCritic || message?.debug
+                  const trace = outfit.debug || message?.debug?.visualCritic || message?.debug
                   if (!trace) return null
                   const resolvedAct = trace.resolvedActivity || 'none'
                   const actSrc = trace.activitySource || 'none'
@@ -2205,7 +2220,7 @@ export default function StylistChat({
                       </div>
                     )}
                     {(() => {
-                      const trace = message?.debug?.visualCritic || message?.debug
+                      const trace = outfit.debug || message?.debug?.visualCritic || message?.debug
                       if (!trace) return null
                       const resolvedAct = trace.resolvedActivity || 'none'
                       const actSrc = trace.activitySource || 'none'
@@ -3155,6 +3170,26 @@ export default function StylistChat({
     }
   }
 
+  const saveHomeLocation = async () => {
+    if (homeLocationSaving) return
+    setHomeLocationSaving(true)
+    try {
+      const res = await fetch('/api/settings/home-location', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ homeLocation: homeLocationInput.trim() })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Could not save home location')
+      setHomeLocation(data.homeLocation || '')
+      setHomeLocationOpen(false)
+    } catch (err) {
+      triggerToast(`Could not save home location: ${err.message}`)
+    } finally {
+      setHomeLocationSaving(false)
+    }
+  }
+
   const send = async (overrides = {}) => {
     const q = (overrides.input ?? input).trim()
     const outfitToSend = overrides.outfit ?? pendingOutfit
@@ -3956,11 +3991,41 @@ export default function StylistChat({
                   Learning{learningRows.length ? ` · ${learningRows.length}` : ''}
                 </button>
               )}
+              <button
+                className="chip"
+                style={{ marginTop: 4 }}
+                onClick={() => { setHomeLocationInput(homeLocation); setHomeLocationOpen(v => !v) }}
+                title="Used as the default location for weather when you don't name a place"
+              >
+                📍 {homeLocation || 'Set location'}
+              </button>
             </div>
           </div>
           {recentMemoryStatus && (
             <div style={{ marginTop: 6, fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
               {recentMemoryStatus}
+            </div>
+          )}
+          {homeLocationOpen && (
+            <div style={{ marginTop: 8, padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', flex: '1 1 220px' }}>
+                Home location — used for weather when you ask something like "what should I wear today" without naming a place. Leave blank to fall back to a rough date-based guess instead of live weather.
+              </div>
+              <input
+                type="text"
+                value={homeLocationInput}
+                onChange={e => setHomeLocationInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveHomeLocation() }}
+                placeholder="e.g. Seattle"
+                style={{ fontSize: 13, padding: '7px 10px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', minWidth: 160 }}
+              />
+              <button
+                onClick={saveHomeLocation}
+                disabled={homeLocationSaving}
+                style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: homeLocationSaving ? 'default' : 'pointer', opacity: homeLocationSaving ? 0.65 : 1 }}
+              >
+                {homeLocationSaving ? 'Saving...' : 'Save'}
+              </button>
             </div>
           )}
         </div>
@@ -4072,7 +4137,7 @@ export default function StylistChat({
       )}
 
       {/* Chat thread */}
-      <div style={{ flex: pending ? '0 0 auto' : 1, overflowY: pending ? 'visible' : 'auto', padding: '16px 16px 8px' }}>
+      <div className="stylist-chat-scroll">
         {messages.length === 1 && (
           <div style={{ marginBottom: 16 }}>
             {!pending && (
@@ -4283,8 +4348,7 @@ export default function StylistChat({
                         (m.debug.proposeValidationFails || 0) > 0 ||
                         (m.debug.outfitProseWithoutToolCall || 0) > 0 ||
                         (m.debug.zeroResultContradictionBlocks || 0) > 0 ||
-                        (m.debug.destinationClarificationRetries || 0) > 0 ||
-                        (m.debug.showRequestRetries || 0) > 0
+                        (m.debug.destinationClarificationRetries || 0) > 0
                       )) && (
                         <details className="telemetry-details" style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
                           <summary>ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Search &amp; validation details</span></summary>
@@ -4293,10 +4357,9 @@ export default function StylistChat({
                             {m.debug.gateExcludedTotal > 0 && <div>Pieces filtered out as prohibited: {m.debug.gateExcludedTotal}</div>}
                             {m.debug.proposeCalls > 0 && <div>Outfits proposed: {m.debug.proposeCalls}</div>}
                             {m.debug.proposeValidationFails > 0 && <div>Proposals rejected for invalid structure: {m.debug.proposeValidationFails}</div>}
-                            {m.debug.outfitProseWithoutToolCall > 0 && <div>⚠ This reply describes an outfit but wasn't proposed as a verified card — treat named pieces as unconfirmed.</div>}
+                            {m.debug.outfitProseWithoutToolCall > 0 && <div>⚠ An earlier draft of this reply described an outfit in text instead of proposing it as a verified card; it was auto-corrected before sending.</div>}
                             {m.debug.zeroResultContradictionBlocks > 0 && <div>⚠ An earlier draft of this reply described a piece that a search found 0 results for; it was auto-corrected before sending.</div>}
                             {m.debug.destinationClarificationRetries > 0 && <div>⚠ An earlier draft asked about destination/weather without searching the wardrobe first; it was auto-corrected before sending.</div>}
-                            {m.debug.showRequestRetries > 0 && <div>⚠ You asked to show/render an outfit and an earlier draft replied in text only; it was auto-corrected to propose the outfit as a card.</div>}
                           </div>
                         </details>
                       )}
@@ -4935,7 +4998,7 @@ export default function StylistChat({
         </div>
       )}
 
-      <div style={{ padding: '8px 16px 16px' }}>
+      <div className="stylist-input-shell">
         <div className="ai-input-row">
           <label className={`ai-upload-btn ${imagePrev ? 'has-image' : ''}`} title="Attach photo">
             <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />

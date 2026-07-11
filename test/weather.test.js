@@ -58,6 +58,27 @@ test('getCurrentWeatherProfile falls back to the heuristic when geocoding finds 
   assert.equal(profile.isCold, true)
 })
 
+// 2026-07-10: confirmed live against the real Open-Meteo API that "Walnut Creek, CA" (a completely
+// natural way to type a US home location) returns zero geocode results, while "Walnut Creek" alone
+// resolves correctly — this silently fell back to the heuristic guess with no error surfaced. Mock
+// here reproduces that exact shape: the full "city, state" query fails, the city-only retry succeeds.
+test('getCurrentWeatherProfile retries geocoding with just the city when a "City, ST" query returns nothing', async () => {
+  let calls = 0
+  const fetchImpl = async (url) => {
+    calls += 1
+    if (url.includes('geocoding-api')) {
+      if (url.includes('walnut%20creek%2C%20ca')) return { ok: true, json: async () => ({ results: [] }) }
+      if (url.includes('walnut%20creek')) return { ok: true, json: async () => ({ results: [{ latitude: 37.9, longitude: -122.06 }] }) }
+      return { ok: true, json: async () => ({ results: [] }) }
+    }
+    return { ok: true, json: async () => ({ daily: { temperature_2m_max: [88], temperature_2m_min: [60] } }) }
+  }
+  const profile = await getCurrentWeatherProfile({ date: new Date('2026-07-15'), location: 'Walnut Creek, CA', fetchImpl })
+  assert.equal(profile.weatherSource, 'live', 'should resolve live weather via the city-only retry, not fall back to the heuristic')
+  assert.equal(profile.isHot, true)
+  assert.equal(calls, 3, 'two geocode attempts (full string, then city-only) plus one forecast call')
+})
+
 test('getCurrentWeatherProfile falls back to the heuristic when the fetch throws, without throwing', async () => {
   const fetchImpl = async () => { throw new Error('network down') }
   const profile = await getCurrentWeatherProfile({ season: 'hot', location: 'Portland, OR', fetchImpl })

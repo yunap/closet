@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { STYLIST_SYSTEM } from './prompts.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic } from './tools.js'
+import { tripRequestNeedsScopeClarification } from './stylingIntent.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
 // waiting. If the model's final answer then describes that exact query text as a real, ownable
@@ -21,12 +22,60 @@ export function findZeroResultContradiction(answerText = '', toolContext = {}) {
 
 // Spec 3 Part 0a: outfit-shaped prose (a title followed by labeled slot lines) with zero
 // propose_outfit calls this turn — the model wrote what looks like a proposal without going through
-// the tool, so the pieces it named are unverified. Soft signal (flagged, not blocked) since the
-// severe case (0b) is the one with proof of a false claim.
+// the tool, so the pieces it named are unverified. Originally a soft signal only (flagged, not
+// blocked); hardened into a retry-triggering hard block on 2026-07-10 (see the note on
+// extractPieceIdsFromProse below).
+// 2026-07-10 follow-up: the category-label pattern ("Top: ...", "Shoes: ...") missed a second, equally
+// common shape the model uses — a numbered list of bold garment names ("**1. Mustard Knit Sweater (ID
+// 84)**") with no category words at all. Rather than chase every future prose template individually,
+// the numbered-list branch checks for a format-independent signal instead: citing 2+ real piece IDs is
+// strong evidence of describing specific wardrobe items outside the tool, regardless of which prose
+// shape is used around them.
 export function looksLikeUnproposedOutfitProse(answerText = '') {
-  const labelMatches = String(answerText || '').match(/^\s*(?:[-*]\s*)?\*{0,2}(top|bottom|dress|shoes|outerwear|accessory)\*{0,2}\s*:/gim) || []
+  const text = String(answerText || '')
+  const labelMatches = text.match(/^\s*(?:[-*]\s*)?\*{0,2}(top|bottom|dress|shoes|outerwear|accessory)\*{0,2}\s*:/gim) || []
   const distinctLabels = new Set(labelMatches.map(m => m.toLowerCase().replace(/[^a-z]/g, '')))
-  return distinctLabels.size >= 2
+  if (distinctLabels.size >= 2) return true
+
+  const numberedLines = (text.match(/^\s*\*{0,2}\d+\.\s+\S/gim) || []).length // ratchet-allow: model's own reply prose, not garment matching
+  if (numberedLines >= 2 && extractPieceIdsFromProse(text).length >= 2) return true
+
+  return false
+}
+
+// 2026-07-10, second follow-up: live-testing kept finding new prose shapes that escaped
+// looksLikeUnproposedOutfitProse — a third one turned up (bulleted sentences, no category labels, no
+// cited IDs) within minutes of fixing the second. Chasing the model's answer-formatting choices one at
+// a time doesn't converge. This is a format-independent alternative: check what the USER asked instead
+// of what the model wrote. If the question itself is clearly an outfit request, propose_outfit should
+// have been called regardless of how the (missing) proposal would have been phrased — covers every
+// current and future prose shape with one check instead of one regex per format.
+export function looksLikeOutfitRequest(questionText = '') {
+  const text = String(questionText || '').trim()
+  return /\b(what should i wear|what (?:should i|to) wear|what should i pack|help me pack|outfit ideas?|style ideas?|styling advice|styling help|dress me)\b|\bideas\s*\?\s*$/i.test(text) || // ratchet-allow: user intent routing text, not garment matching
+    /\b(?:can we|could we|let'?s|try|please|help me)\s+(?:try\s+)?(?:style|layer|layering)\b/i.test(text) || // ratchet-allow: user intent routing text, not garment matching
+    /\bas (?:a |the )?(?:top layer|layer_top|outer layer|overlay)\b/i.test(text) // ratchet-allow: user's own request text, not garment matching
+}
+
+export function extractRequestedOutfitCount(questionText = '') {
+  const text = String(questionText || '').toLowerCase()
+  const wordNumbers = new Map([
+    ['one', 1],
+    ['two', 2],
+    ['three', 3],
+    ['four', 4],
+    ['five', 5]
+  ])
+  const descriptor = '(?:[a-z]+\\s+){0,4}'
+  const explicitDigit = text.match(new RegExp(`\\b(?:give me|show me|suggest|create|make|generate|can you give me|can i get|need|want)\\s+(\\d+)\\s+${descriptor}(?:outfit|look|idea)s?\\b`))
+  if (explicitDigit) return Math.max(1, Math.min(5, Number(explicitDigit[1]) || 0))
+  const explicitWord = text.match(new RegExp(`\\b(?:give me|show me|suggest|create|make|generate|can you give me|can i get|need|want)\\s+(one|two|three|four|five)\\s+${descriptor}(?:outfit|look|idea)s?\\b`))
+  if (explicitWord) return wordNumbers.get(explicitWord[1]) || null
+  const bareDigit = text.match(new RegExp(`\\b(\\d+)\\s+${descriptor}(?:outfit|look|idea)s?\\b`))
+  if (bareDigit) return Math.max(1, Math.min(5, Number(bareDigit[1]) || 0))
+  const bareWord = text.match(new RegExp(`\\b(one|two|three|four|five)\\s+${descriptor}(?:outfit|look|idea)s?\\b`))
+  if (bareWord) return wordNumbers.get(bareWord[1]) || null
+  return null
 }
 
 // Spec 7 Part 2: the model asking a destination/weather clarifying question without ever calling
@@ -36,18 +85,27 @@ export function looksLikeUnproposedOutfitProse(answerText = '') {
 export function looksLikeDestinationOrWeatherQuestion(answerText = '') {
   const text = String(answerText || '')
   if (!text.includes('?')) return false // ratchet-allow: model's own reply prose, not garment matching
-  return /\b(what weather|what'?s the weather|what destination|where are you (going|headed)|where'?re you (going|headed|traveling)|what city|which city|what location)\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
+  return /\b(what weather|what'?s (?:the |expected )?(?:weather|forecast)|expected weather forecast|what destination|where are you (going|headed)|where'?re you (going|headed|traveling)|what city|which city|what location)\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
 }
 
-// Spec 11: Yuna's own framing — she doesn't mind the app answering some questions in plain prose
-// without going through the model's tools, but explicitly minds an ignored "show" request. Unlike
-// looksLikeUnproposedOutfitProse (which reads the model's ANSWER and only soft-flags), this reads the
-// USER's question — the explicit "show/render this" signal STYLIST_SYSTEM's own "Showing /
-// Re-rendering an Outfit" rule already tells the model to act on via propose_outfit. Confirmed live
-// (2026-07-10): the model doesn't reliably follow that rule on its own, same lesson as spec 3/7 —
-// prompt guidance alone isn't enough, this needs a mechanical backstop too.
-export function looksLikeShowOrRenderRequest(questionText = '') {
-  return /\b(show|render|visuali[sz]e)\b/i.test(String(questionText || '')) // ratchet-allow: user's own request text, not garment matching
+// Spec 11, revised (2026-07-10): the original version of this fix only forced a retry when the user
+// explicitly asked to "show"/"render", by asking the model to reconstruct an outfit it had already
+// described in prose. Live testing found that reconstruction step itself was the problem — the model
+// sometimes substituted a different-but-plausible piece for one it wasn't anchored to, instead of a
+// true re-render. Root cause traced further: the legacy client-side prose parser
+// (parseStructuredOutfitsFromAssistantText in StylistChat.jsx) that used to build cards locally from
+// plain-text outfit descriptions only matches the old pre-propose_outfit "### Outfit N" + "**Pieces**:
+// A + B + C" format — STYLIST_SYSTEM has explicitly told the model NOT to write that format since the
+// propose_outfit migration, so that fallback silently never fires against current prose. There is no
+// reliable local reconstruction path anymore. The actual fix is upstream: make the model call
+// propose_outfit on the FIRST turn, every time it's describing an outfit, so there's nothing to
+// reconstruct later. This hardens the existing looksLikeUnproposedOutfitProse signal (previously a
+// spec-3 soft flag only) into a hard block — same "don't trust the model's self-report, verify
+// mechanically" pattern as every other check in this file.
+export function extractPieceIdsFromProse(answerText = '') {
+  const matches = [...String(answerText || '').matchAll(/\bID\s*:?\s*(\d+)\b/gi)] // ratchet-allow: model's own reply prose, not garment matching
+  const ids = matches.map(m => Number(m[1])).filter(Number.isFinite)
+  return [...new Set(ids)]
 }
 
 // After the model produces a tool-call-free final answer, apply spec 3 Part 0's checks plus spec 7
@@ -55,7 +113,7 @@ export function looksLikeShowOrRenderRequest(questionText = '') {
 // { block: false } after recording any soft flag (0a) as a diagnostic for the client's collapsed
 // details affordance. Retry flags are passed in per-kind so exhausting one retry budget doesn't
 // consume the other.
-function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrectionRetried = false, destinationClarificationRetried = false, showRequestRetried = false } = {}) {
+export function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrectionRetried = false, destinationClarificationRetried = false, outfitProseRetried = false, tripScopeClarificationRetried = false, outfitCountRetried = false } = {}) {
   const contradiction = !zeroResultCorrectionRetried && findZeroResultContradiction(answerText, toolContext)
   if (contradiction) {
     bumpFreeformDiagnostic(toolContext, 'zeroResultContradictionBlocks')
@@ -65,8 +123,36 @@ function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrecti
       correctionMessage: `You searched for "${contradiction}" and found nothing — do not describe this as a piece Yuna owns. Either offer a real alternative via search_wardrobe or say plainly that she doesn't have this piece.`
     }
   }
-  if ((toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 && looksLikeUnproposedOutfitProse(answerText)) {
-    bumpFreeformDiagnostic(toolContext, 'outfitProseWithoutToolCall')
+  // 2026-07-10: the STYLIST_SYSTEM prompt bullet asking the model to confirm trip scope before
+  // composing (see prompts.js "Trip Scope Clarification") wasn't reliable on its own — live-tested and
+  // the model composed straight away instead of asking, the same lesson every other check in this file
+  // already learned the hard way. Mechanically verify: if this is a multi-day trip without enough
+  // activity/use-case scope and the model already searched or proposed outfits, force it to stop and ask.
+  if (!tripScopeClarificationRetried && tripRequestNeedsScopeClarification(toolContext?.question) &&
+      ((toolContext?.freeformDiagnostics?.searchCalls || 0) > 0 || (toolContext?.freeformDiagnostics?.proposeCalls || 0) > 0)) {
+    bumpFreeformDiagnostic(toolContext, 'tripScopeClarificationRetries')
+    return {
+      block: true,
+      blockType: 'tripScopeClarification',
+      correctionMessage: "This is a multi-day trip without enough activity/use-case scope, but you already searched or composed outfits before confirming what the trip needs to cover. Stop composing. Ask directly what activities or use cases to plan for — for example city walking, casual daytime, dinners, hiking/outdoors, anything dressier — before proposing garments this turn."
+    }
+  }
+  const requestedOutfitCount = extractRequestedOutfitCount(toolContext?.question)
+  if (!outfitCountRetried && requestedOutfitCount && looksLikeOutfitRequest(toolContext?.question)) {
+    const readyCards = Array.isArray(toolContext?.generatedOutfits)
+      ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
+      : 0
+    if (readyCards > 0 && readyCards < requestedOutfitCount) {
+      const alreadySearched = (toolContext?.freeformDiagnostics?.searchCalls || 0) > 0
+      const missingCount = requestedOutfitCount - readyCards
+      return {
+        block: true,
+        blockType: 'outfitCount',
+        correctionMessage: alreadySearched
+          ? `The user requested ${requestedOutfitCount} outfit ideas, but only ${readyCards} verified outfit card${readyCards === 1 ? '' : 's'} exist. You already searched the wardrobe for this request. Do not call search_wardrobe again as your next step. Call propose_outfit now for ${missingCount} additional complete valid outfit card${missingCount === 1 ? '' : 's'} using pieces from the existing search results, with the same constraints.`
+          : `The user requested ${requestedOutfitCount} outfit ideas, but only ${readyCards} verified outfit card${readyCards === 1 ? '' : 's'} exist. Continue the same turn: search_wardrobe with the same constraints, then call propose_outfit for ${missingCount} additional complete valid outfit card${missingCount === 1 ? '' : 's'}. Do not finish with fewer than requested unless you have made a real additional attempt and must explain the wardrobe gap.`
+      }
+    }
   }
   if (!destinationClarificationRetried && (toolContext?.freeformDiagnostics?.searchCalls || 0) === 0 && looksLikeDestinationOrWeatherQuestion(answerText)) {
     bumpFreeformDiagnostic(toolContext, 'destinationClarificationRetries')
@@ -76,15 +162,68 @@ function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrecti
       correctionMessage: "You asked about weather or destination without calling search_wardrobe first. If this message names any real place or specific occasion (even one word — a city, region, venue, or event), call search_wardrobe with that as `location` and proceed to propose an outfit. Only ask again if you genuinely cannot identify any destination or occasion in the request."
     }
   }
-  if (!showRequestRetried && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 && looksLikeShowOrRenderRequest(toolContext?.question)) {
-    bumpFreeformDiagnostic(toolContext, 'showRequestRetries')
+  // A trip-precompose plan seeds toolContext.generatedOutfits with real, verified cards before the
+  // tool loop even starts — proposeCalls stays 0 (propose_outfit hasn't run THIS turn) even though a
+  // rendered card already exists. Without this guard, the model narrating one of those cards back in
+  // its own prose (e.g. "Here's a verified hiking outfit...") reads as unproposed outfit prose and
+  // forces a redundant propose_outfit call, producing a near-duplicate card with mismatched UI
+  // (previewOnly reused from the unrelated single-piece "ideal directions" feature).
+  const hasPreseededOutfitCard = Array.isArray(toolContext?.generatedOutfits) && toolContext.generatedOutfits.length > 0
+  if (!outfitProseRetried && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
+      (looksLikeUnproposedOutfitProse(answerText) || looksLikeOutfitRequest(toolContext?.question))) {
+    bumpFreeformDiagnostic(toolContext, 'outfitProseWithoutToolCall')
+    const priorIds = extractPieceIdsFromProse(answerText)
+    const idHint = priorIds.length
+      ? ` You already referenced these exact piece IDs: ${priorIds.join(', ')} — reuse exactly these IDs and roles, do not substitute or invent different pieces.`
+      : ''
     return {
       block: true,
-      blockType: 'showRequest',
-      correctionMessage: "You were asked to show or render an outfit but did not call propose_outfit. If an outfit or outfit set has already been discussed in this conversation, call propose_outfit now with the same verified piece IDs so it renders as a card. If nothing has been discussed yet to show, say so plainly instead of describing an outfit in prose."
+      blockType: 'outfitProse',
+      correctionMessage: `This looked like a request for an outfit, but propose_outfit was never called this turn — the pieces must go through the tool call to render as a verified card, not a hand-written list. Call propose_outfit now with the outfit you'd suggest.${idHint}`
     }
   }
   return { block: false }
+}
+
+export function freeformToolLoopFallbackAnswer(toolContext = {}) {
+  const outfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
+  if (!outfits.length) return 'Tool calling loop reached max iterations.'
+
+  const requestedOutfitCount = extractRequestedOutfitCount(toolContext.question)
+  const readyCount = outfits.filter(outfit => !outfit?.broken).length
+  const brokenCount = outfits.length - readyCount
+  if (requestedOutfitCount && readyCount < requestedOutfitCount) {
+    return [
+      `I found ${readyCount} verified outfit card${readyCount === 1 ? '' : 's'} for this request.`,
+      brokenCount > 0
+        ? `${brokenCount} additional proposal${brokenCount === 1 ? ' was' : 's were'} rejected and shown as a diagnostic card.`
+        : '',
+      `I couldn't complete all ${requestedOutfitCount} requested looks before the tool loop stopped.`
+    ].filter(Boolean).join(' ')
+  }
+  return readyCount === 1 ? "Here's the outfit." : `Here are ${readyCount} outfit ideas.`
+}
+
+// 2026-07-10: /ask's catch block was the one place in this codebase that suppressed the real error
+// behind a hardcoded "Something went wrong — try again" — every other AI-backed route already surfaces
+// err.message directly. That alone would have shown OpenAI's actual quota-exceeded text, but a raw SDK
+// error message ("You exceeded your current quota, please check your plan and billing details...")
+// still reads as a stack-trace-adjacent dump, not a clear signal that this is a billing/plan issue and
+// not an app bug. Detects rate-limit/quota errors specifically (status 429, provider-specific error
+// codes, or message text) across both providers and gives a short, actionable message instead.
+export function describeAiError(err) {
+  const status = Number(err?.status) || null
+  const code = String(err?.code || err?.error?.code || err?.type || '').toLowerCase()
+  const message = String(err?.message || '').toLowerCase()
+  const isQuota = code.includes('insufficient_quota') || message.includes('quota') || message.includes('billing')
+  const isRateLimit = status === 429 || code.includes('rate_limit') || message.includes('rate limit') || message.includes('overloaded')
+  if (isQuota) {
+    return { status: 429, message: 'The AI provider is reporting an exhausted usage quota — check your API billing/plan before trying again. This is not an app bug.' }
+  }
+  if (isRateLimit) {
+    return { status: 429, message: 'The AI provider is rate-limiting requests right now. Wait a moment and try again.' }
+  }
+  return { status: 500, message: err?.message || 'Something went wrong — try again' }
 }
 
 export const AI_PROVIDER = (process.env.AI_PROVIDER || 'anthropic').toLowerCase()
@@ -375,9 +514,11 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   const savedCorrections = []
   let zeroResultCorrectionRetried = false
   let destinationClarificationRetried = false
-  let showRequestRetried = false
+  let outfitProseRetried = false
+  let tripScopeClarificationRetried = false
+  let outfitCountRetried = false
 
-  for (let iter = 0; iter < 5; iter++) {
+  for (let iter = 0; iter < 7; iter++) {
     if (AI_PROVIDER === 'openai') {
       const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
       const response = await client.chat.completions.create({
@@ -457,10 +598,12 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = message.content || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, showRequestRetried })
+        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, outfitProseRetried, tripScopeClarificationRetried, outfitCountRetried })
         if (check.block) {
           if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
-          else if (check.blockType === 'showRequest') showRequestRetried = true
+          else if (check.blockType === 'outfitProse') outfitProseRetried = true
+          else if (check.blockType === 'tripScopeClarification') tripScopeClarificationRetried = true
+          else if (check.blockType === 'outfitCount') outfitCountRetried = true
           else zeroResultCorrectionRetried = true
           currentMessages.push({ role: 'assistant', content: finalText })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
@@ -535,10 +678,12 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = response.content?.[0]?.text || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, showRequestRetried })
+        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, outfitProseRetried, tripScopeClarificationRetried, outfitCountRetried })
         if (check.block) {
           if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
-          else if (check.blockType === 'showRequest') showRequestRetried = true
+          else if (check.blockType === 'outfitProse') outfitProseRetried = true
+          else if (check.blockType === 'tripScopeClarification') tripScopeClarificationRetried = true
+          else if (check.blockType === 'outfitCount') outfitCountRetried = true
           else zeroResultCorrectionRetried = true
           currentMessages.push({ role: 'assistant', content: response.content })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
@@ -549,5 +694,12 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     }
   }
 
-  return { answer: 'Tool calling loop reached max iterations.', savedCorrections }
+  // 2026-07-10: live testing found this generic fallback shown to Yuna even when a real outfit had
+  // already been proposed this turn (propose_outfit succeeded, toolContext.generatedOutfits is
+  // non-empty) — the card rendered fine independent of this return value, but the visible answer text
+  // read like an internal error alongside it. If there's real content, say so plainly instead.
+  if (Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.length) {
+    return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
+  }
+  return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
 }

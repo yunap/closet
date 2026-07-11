@@ -31,7 +31,7 @@ import {
   AI_PROVIDER,
   ACTIVE_STYLIST_MODEL
 } from './provider.js'
-import { isTravelOrPackingRequest } from './stylingIntent.js'
+import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 import { extractWeatherContext } from './stylingIntent.js'
@@ -295,7 +295,7 @@ export function buildOutfitAuthorityNote(outfit, linkedPieces = [], likelyPieces
   return lines.join('\n')
 }
 
-export function getConfirmedOutfitMemory(limit = 8) {
+export function getConfirmedOutfitMemory(limit = 8, { allowedPieceIds = null } = {}) {
   const outfits = db.prepare(`
     SELECT * FROM outfits
     WHERE status = 'confirmed' OR favorite = 1
@@ -303,7 +303,15 @@ export function getConfirmedOutfitMemory(limit = 8) {
     LIMIT ?
   `).all(limit)
 
-  return outfits.map(o => buildOutfitText(o, getLinkedPiecesForOutfit(o.id))).join('\n\n')
+  const allowedSet = Array.isArray(allowedPieceIds)
+    ? new Set(allowedPieceIds.map(Number).filter(Number.isFinite))
+    : null
+
+  return outfits.map(o => {
+    const linkedPieces = getLinkedPiecesForOutfit(o.id)
+    if (allowedSet && linkedPieces.some(piece => !allowedSet.has(Number(piece.id)))) return ''
+    return buildOutfitText(o, linkedPieces)
+  }).filter(Boolean).join('\n\n')
 }
 
 export function findLikelyPiecesForOutfit(outfit, limit = 12) {
@@ -3471,11 +3479,13 @@ export async function buildStylistConversationPayload(body) {
     mood || ''
   ].join('\n'))
   const travelOrPackingRequest = isTravelOrPackingRequest(question, occasion)
-  const missingTravelWeather = travelOrPackingRequest && !extractedWeather
+  const canResolveTravelWeatherLive = travelRequestCanResolveWeatherLive(question, occasion)
+  const missingTravelWeather = travelOrPackingRequest && !extractedWeather && !canResolveTravelWeatherLive
   const establishedStylingContextParts = [
     occasion ? `occasion=${occasion}` : '',
     activity ? `activity=${activity}` : '',
     extractedWeather ? `weather=${extractedWeather}` : '',
+    canResolveTravelWeatherLive ? 'weather=resolve live from named destination' : '',
     season ? `season=${season}` : '',
     mood ? `mood=${mood}` : '',
     mission ? `mission=${mission}` : '',
@@ -3785,4 +3795,3 @@ export function storeUserCorrection(note, contextType = 'general', contextId = n
     console.error('storeUserCorrection error:', err)
   }
 }
-

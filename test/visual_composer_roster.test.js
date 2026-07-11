@@ -58,6 +58,8 @@ test('Visual Composer Roster - Cold weather filter ladder', () => {
   const pieces = [
     // Shorts
     { id: 1, name: 'Linen Shorts', category: 'bottom', photo: 'img.jpg', fabric_weight: 'light', style_profile_json: { bottom_kind: 'shorts' } },
+    // Lightweight linen pants
+    { id: 4, name: 'Linen Wide Pants', category: 'bottom', photo: 'img.jpg', fabric_category: 'linen', fabric_weight: 'light', fiber_content: ['linen'], style_profile_json: { bottom_kind: 'pants' } },
     // Heavy coat
     { id: 2, name: 'Heavy Coat', category: 'outerwear', photo: 'img.jpg', fabric_weight: 'heavy' },
     // Pants
@@ -74,13 +76,17 @@ test('Visual Composer Roster - Cold weather filter ladder', () => {
 
   // 1. Assert shorts (ID 1) is excluded
   assert.ok(!rosterIds.includes(1), 'Shorts (ID 1) must be excluded in cold weather')
-  // 2. Heavy coat (ID 2) must remain
+  // 2. Lightweight linen pants (ID 4) must be excluded
+  assert.ok(!rosterIds.includes(4), 'Lightweight linen pants (ID 4) must be excluded in cold weather')
+  // 3. Heavy coat (ID 2) must remain
   assert.ok(rosterIds.includes(2), 'Heavy Coat (ID 2) must remain in cold weather')
-  // 3. Pants (ID 3) must remain
+  // 4. Medium pants (ID 3) must remain
   assert.ok(rosterIds.includes(3), 'Pants (ID 3) must remain')
 
   const exp1 = excluded.find(e => e.pieceId === 1)
   assert.equal(exp1.reason, 'cold weather: shorts')
+  const exp4 = excluded.find(e => e.pieceId === 4)
+  assert.equal(exp4.reason, 'cold weather: lightweight linen bottom')
 })
 
 test('Visual Composer Roster - No weather no-op check', () => {
@@ -396,6 +402,68 @@ test('Visual Composer Roster - formality score orders same-register survivors at
   assert.equal(excluded.find(item => item.pieceId === 2)?.reason, 'roster cap: category limit')
   assert.ok(debug.relevanceAdjustments[1].some(reason => reason.includes('matches request')))
   assert.ok(debug.relevanceAdjustments[2].some(reason => reason.includes('near everyday')))
+})
+
+test('Visual Composer Roster - outdoor daytime social enforces elevated target when slot coverage is sufficient', () => {
+  const pieces = [
+    { id: 991401, name: 'Everyday Graphic Tee', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 991402, name: 'Elevated Linen Blouse A', category: 'top', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991403, name: 'Elevated Linen Blouse B', category: 'top', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991404, name: 'Elevated Linen Blouse C', category: 'top', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991405, name: 'Elevated Linen Blouse D', category: 'top', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991406, name: 'Everyday Cotton Shorts', category: 'bottom', photo: 'img.jpg', formality: 'everyday' },
+    { id: 991407, name: 'Elevated Skirt A', category: 'bottom', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991408, name: 'Elevated Skirt B', category: 'bottom', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991409, name: 'Elevated Shorts C', category: 'bottom', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991410, name: 'Everyday Walking Loafers', category: 'shoes', photo: 'img.jpg', formality: 'everyday', heel_height: 'flat', walk_support: 'high' },
+    { id: 991411, name: 'Elevated Loafer A', category: 'shoes', photo: 'img.jpg', formality: 'elevated', heel_height: 'flat', walk_support: 'high' },
+    { id: 991412, name: 'Elevated Flat B', category: 'shoes', photo: 'img.jpg', formality: 'elevated', heel_height: 'flat', walk_support: 'high' },
+    { id: 991413, name: 'Lounge Errand Sneaker', category: 'shoes', photo: 'img.jpg', formality: 'lounge', heel_height: 'flat', walk_support: 'high' },
+    { id: 991414, name: 'Mesh Athletic Sneakers', category: 'shoes', photo: 'img.jpg', formality: 'everyday', heel_height: 'flat', walk_support: 'high', reads_as: 'athletic walking sneakers' }
+  ]
+
+  const { roster, excluded, debug } = buildVisualComposerRoster(pieces, {
+    occasion: 'outdoor_daytime_social',
+    activity: 'walking',
+    maxImages: 90
+  })
+
+  assert.equal(debug.registerTarget, 'elevated')
+  assert.deepEqual(debug.registerTargetCoverageGaps, [])
+  assert.deepEqual(debug.registerTargetEnforcedGroups.sort(), ['bottom', 'shoes', 'top'])
+  assert.ok(!roster.some(piece => piece.id === 991401), 'everyday top should not reach the model when elevated top coverage exists')
+  assert.ok(!roster.some(piece => piece.id === 991406), 'everyday bottom should not reach the model when elevated bottom coverage exists')
+  assert.ok(roster.some(piece => piece.id === 991410), 'everyday walking shoes should remain available when walking is selected')
+  assert.ok(!roster.some(piece => piece.id === 991413), 'lounge shoes should not reach the model for elevated walking occasions')
+  assert.ok(!roster.some(piece => piece.id === 991414), 'athletic sneakers should not reach the model for polished outdoor daytime social walking')
+  assert.equal(excluded.find(item => item.pieceId === 991401)?.reason, 'register: everyday below elevated target')
+  assert.equal(excluded.find(item => item.pieceId === 991406)?.reason, 'register: everyday below elevated target')
+  assert.equal(excluded.find(item => item.pieceId === 991413)?.reason, 'register: lounge below polished walking target')
+  assert.equal(excluded.find(item => item.pieceId === 991414)?.reason, 'footwear: athletic unsuitable for polished walking target')
+})
+
+test('Visual Composer Roster - outdoor daytime social target degrades when elevated slot coverage is thin', () => {
+  const pieces = [
+    { id: 991421, name: 'Everyday Graphic Tee', category: 'top', photo: 'img.jpg', formality: 'everyday' },
+    { id: 991422, name: 'Elevated Linen Blouse A', category: 'top', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991423, name: 'Everyday Cotton Shorts', category: 'bottom', photo: 'img.jpg', formality: 'everyday' },
+    { id: 991424, name: 'Elevated Skirt A', category: 'bottom', photo: 'img.jpg', formality: 'elevated' },
+    { id: 991425, name: 'Everyday Strap Sandals', category: 'shoes', photo: 'img.jpg', formality: 'everyday', heel_height: 'flat', walk_support: 'medium' },
+    { id: 991426, name: 'Elevated Loafer A', category: 'shoes', photo: 'img.jpg', formality: 'elevated', heel_height: 'flat', walk_support: 'high' }
+  ]
+
+  const { roster, debug } = buildVisualComposerRoster(pieces, {
+    occasion: 'outdoor_daytime_social',
+    activity: 'walking',
+    maxImages: 90
+  })
+
+  assert.equal(debug.registerTarget, 'elevated')
+  assert.deepEqual(debug.registerTargetCoverageGaps.sort(), ['bottom', 'top'])
+  assert.deepEqual(debug.registerTargetEnforcedGroups, ['shoes'])
+  assert.ok(roster.some(piece => piece.id === 991421), 'everyday top should remain available when elevated top coverage is thin')
+  assert.ok(roster.some(piece => piece.id === 991423), 'everyday bottom should remain available when elevated bottom coverage is thin')
+  assert.ok(roster.some(piece => piece.id === 991425), 'everyday shoe should remain available when elevated shoe coverage is thin')
 })
 
 test('Visual Composer Roster - walking activity excludes low-support flat sandals', () => {

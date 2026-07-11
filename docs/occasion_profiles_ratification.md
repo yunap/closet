@@ -108,6 +108,12 @@ Register values: `lounge < everyday < elevated < dressy`.
 Notes:
 - `casual -> everyday` is the largest behavior change. It would make park-friend,
   coffee, errands, and low-key social rosters reject `elevated` and `dressy` pieces.
+- Outdoor daytime social has an `elevated` roster target in addition to its ceiling. When
+  enough elevated top/bottom/shoe coverage exists, lower-register pieces stay out of the
+  visual composer roster before the model sees images; if coverage is thin, the gate degrades
+  by slot rather than starving the model.
+- For outdoor daytime social + walking, footwear uses a polished-walking target: everyday
+  walkable shoes may remain available, while lounge or athletic/gym/running shoes stay out.
 - Walking as an **activity** gates footwear only. It does not lower register. City + walking
   should still allow elevated clothing on walkable soles.
 - Hiking as an activity may carry `register_ceiling: everyday` because trail context

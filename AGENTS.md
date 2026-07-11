@@ -74,6 +74,11 @@ grounding, generic safe solutions.
 
 ## Operational Rules
 
+- **Consult before behavior fixes.** When debugging a user-reported styling or product behavior,
+  diagnose first and report the suspected root cause before changing code. Do not rush into
+  speculative fixes, especially changes to ratified styling/register/weather/activity behavior, without
+  confirming the intended behavior with Yuna. If a live repro appears to contradict a prior
+  ratification, ask before changing the ratified rule.
 - Run `npm test` before every commit. It includes the text-matching ratchet
   (`scratch/check_text_matching_ratchet.js`); the baseline only tightens. Never weaken or skip
   a test to make a change pass — a failing acceptance test is a finding, not an obstacle.
@@ -101,4 +106,3 @@ grounding, generic safe solutions.
   3. The `setForm` callback handlers that merge incoming AI tagging API responses.
   4. The DOM elements rendering the toggles/chips.
 - **Mandatory E2E Handoff Verification**: Before declaring a UI or form state change complete, the agent must perform a manual E2E check: load an existing item, verify pre-populated toggles, trigger AI Retag to verify real-time visual updates, click Save, and query the local SQLite database to confirm the changes and overrides are persisted cleanly.
-

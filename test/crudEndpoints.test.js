@@ -445,7 +445,12 @@ test('Payload fields round-trip survival test for /api/chat-threads', async () =
   })
 })
 
-test('POST /api/ai/ask error boundary returns generic error message', async () => {
+test('POST /api/ai/ask error boundary surfaces the real error message, not a suppressed generic one', async () => {
+  // 2026-07-10: this used to assert the OLD behavior (a hardcoded "Something went wrong — try again"
+  // that suppressed the real error) — /ask was the one AI-backed route in this codebase that did this;
+  // every other route already surfaces err.message. Found live via a real OpenAI 429 quota error that
+  // got reduced to the useless generic string. describeAiError now passes real, non-rate-limit errors
+  // through directly (and gives rate-limit/quota errors a clearer, dedicated message instead).
   const res = await fetch(`${baseUrl}/api/ai/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -454,10 +459,10 @@ test('POST /api/ai/ask error boundary returns generic error message', async () =
       history: 'malformed_non_array_triggering_type_error'
     })
   })
-  
+
   assert.equal(res.status, 500)
   const data = await res.json()
-  assert.equal(data.error, 'Something went wrong — try again')
+  assert.match(data.error, /map is not a function/)
 })
 
 test('GET /api/pieces search by ID matches correctly', async () => {
@@ -486,6 +491,42 @@ test('GET /api/pieces search by ID matches correctly', async () => {
   // Clean up
   await fetch(`${baseUrl}/api/pieces/${piece1.id}`, { method: 'DELETE' })
   await fetch(`${baseUrl}/api/pieces/${piece2.id}`, { method: 'DELETE' })
+})
+
+// 2026-07-10: real, structured home location replacing the model's prior (wrong) habit of inferring
+// one from the app's hardcoded timezone string. Server-injected default for /ask's toolContext, never
+// left to the model — see routes/ai.js's getHomeLocation().
+test('GET /api/settings/home-location returns empty string when unset', async () => {
+  const res = await fetch(`${baseUrl}/api/settings/home-location`)
+  assert.equal(res.status, 200)
+  const data = await res.json()
+  assert.equal(data.homeLocation, '')
+})
+
+test('PUT /api/settings/home-location saves and GET reflects the new value', async () => {
+  const putRes = await fetch(`${baseUrl}/api/settings/home-location`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ homeLocation: 'Seattle' })
+  })
+  assert.equal(putRes.status, 200)
+  const putData = await putRes.json()
+  assert.equal(putData.homeLocation, 'Seattle')
+
+  const getRes = await fetch(`${baseUrl}/api/settings/home-location`)
+  const getData = await getRes.json()
+  assert.equal(getData.homeLocation, 'Seattle')
+})
+
+test('PUT /api/settings/home-location can be updated to a new value and trims whitespace', async () => {
+  await fetch(`${baseUrl}/api/settings/home-location`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ homeLocation: '  Portland  ' })
+  })
+  const getRes = await fetch(`${baseUrl}/api/settings/home-location`)
+  const getData = await getRes.json()
+  assert.equal(getData.homeLocation, 'Portland')
 })
 
 

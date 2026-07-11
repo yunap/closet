@@ -123,10 +123,11 @@ export function missingGateFields(piece = {}) {
   return missing
 }
 
+// Deliberately does not read style_profile_json.bareness: bareness/coverage as their own authored
+// judgment call were never reliably tagged (audit showed "unknown" confidence wardrobe-wide). These
+// are derived only from sleeve_type and length_hits_at — concrete, independently-tagged, visually
+// checkable fields — per the gate-hardening spec that dropped the vaguer standalone category.
 export function pieceBareness(p) {
-  if (p?.style_profile_json?.bareness) {
-    return String(p.style_profile_json.bareness).toLowerCase().trim()
-  }
   if (p?.sleeve_type && /\b(sleeveless|tank|strapless|halter|camisole)\b/i.test(p.sleeve_type)) {
     return 'high'
   }
@@ -137,9 +138,6 @@ export function pieceBareness(p) {
 }
 
 export function pieceCoverage(p) {
-  if (p?.style_profile_json?.coverage) {
-    return String(p.style_profile_json.coverage).toLowerCase().trim()
-  }
   if (p?.sleeve_type && /\b(long)\b/i.test(p.sleeve_type)) {
     return 'full-insulating'
   }

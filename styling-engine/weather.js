@@ -33,18 +33,33 @@ function dateKey(date) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
 }
 
-async function resolveLocationToCoords(location, fetchImpl) {
-  const key = String(location || '').trim().toLowerCase()
-  if (!key) return null
-  const cached = geocodeCache.get(key)
-  if (cached && cached.expiresAt > Date.now()) return cached.coords
-  const url = `${GEOCODE_URL}?name=${encodeURIComponent(key)}&count=1&language=en&format=json`
+async function geocodeQuery(query, fetchImpl) {
+  const url = `${GEOCODE_URL}?name=${encodeURIComponent(query)}&count=1&language=en&format=json`
   const res = await withTimeout(fetchImpl(url), FETCH_TIMEOUT_MS)
   if (!res?.ok) return null
   const data = await res.json()
   const first = data?.results?.[0]
   if (!first || typeof first.latitude !== 'number' || typeof first.longitude !== 'number') return null
-  const coords = { lat: first.latitude, lon: first.longitude }
+  return { lat: first.latitude, lon: first.longitude }
+}
+
+async function resolveLocationToCoords(location, fetchImpl) {
+  const key = String(location || '').trim().toLowerCase()
+  if (!key) return null
+  const cached = geocodeCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.coords
+  let coords = await geocodeQuery(key, fetchImpl)
+  if (!coords) {
+    // "City, ST" / "City, State" is an extremely common way to type a US location, but Open-Meteo's
+    // geocoder returns zero results for the combined string (confirmed live, 2026-07-10 — "Walnut
+    // Creek, CA" silently failed and fell back to the heuristic weather guess with no error surfaced,
+    // even though "Walnut Creek" alone resolves correctly). Retry with just the part before the comma.
+    const cityOnly = key.split(',')[0].trim()
+    if (cityOnly && cityOnly !== key) {
+      coords = await geocodeQuery(cityOnly, fetchImpl)
+    }
+  }
+  if (!coords) return null
   geocodeCache.set(key, { coords, expiresAt: Date.now() + CACHE_TTL_MS })
   return coords
 }

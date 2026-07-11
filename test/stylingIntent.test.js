@@ -14,7 +14,9 @@ import {
   extractWeatherContext,
   normalizeMission,
   normalizeOccasion,
-  normalizeStylingIntent
+  normalizeStylingIntent,
+  tripRequestNeedsScopeClarification,
+  travelRequestCanResolveWeatherLive
 } from '../styling-engine/stylingIntent.js'
 
 function extractOptionValues(content, constName) {
@@ -127,6 +129,8 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('compose fresh outfits around the anchor'))
   assert.ok(STYLIST_SYSTEM.includes('Do not merely substitute the anchor into prior outfits'))
   assert.ok(STYLIST_SYSTEM.includes('For shoe anchors, rebuild the outfit color story, formality, and occasion around the shoes'))
+  assert.ok(STYLIST_SYSTEM.includes('Top-Layer Anchor Requests'))
+  assert.ok(STYLIST_SYSTEM.includes('keep that exact garment locked as `layer_top`'))
   assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
   assert.ok(STYLIST_SYSTEM.includes('as the canonical packing/styling plan for the thread'))
   assert.ok(STYLIST_SYSTEM.includes("one 'propose_outfit' card per entry (verified piece IDs + roles)"))
@@ -173,6 +177,22 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('Example 1c'))
   assert.ok(STYLIST_SYSTEM.includes("I'm going to Napa on Saturday. What should I wear to a winery lunch?"))
   assert.ok(STYLIST_SYSTEM.includes('a winery lunch is a specific named occasion'))
+  // 2026-07-10: found live that the model was treating "Time zone: America/Los_Angeles" (embedded in
+  // every turn's context purely for date/day-of-week math) as a proxy for Yuna's actual home
+  // location, silently passing location: "Los_Angeles" to search_wardrobe on plain local asks with
+  // no place named. Confirmed with Yuna: that IS her timezone but NOT her location — the resolved
+  // weather was wrong. There is no configured home location anywhere in this app (see spec 4); the
+  // fix is telling the model explicitly not to infer one from the timezone string.
+  assert.ok(STYLIST_SYSTEM.includes('There is no configured home location anywhere in this system'))
+  assert.ok(STYLIST_SYSTEM.includes('it is NOT a city and must never be treated as one'))
+  assert.ok(STYLIST_SYSTEM.includes('do NOT invent or guess a city'))
+  assert.ok(STYLIST_SYSTEM.includes('leave `location` unset on \'search_wardrobe\''))
+  // 2026-07-10: found live that a freeform chat outfit card ("Relaxed Comfort Look" — top + bottom +
+  // cardigan) rendered with zero shoes and no warning at all — freeform chat's prompt only mentioned
+  // shoes as one item in a buried list, nowhere near the composer's explicit hard rule. Regression
+  // test for the new explicit rule, mirroring WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM's language.
+  assert.ok(STYLIST_SYSTEM.includes('Every outfit MUST include a shoes-role piece'))
+  assert.ok(STYLIST_SYSTEM.includes('do not call \'propose_outfit\' for an incomplete outfit using missing_gaps as a shoe substitute'))
 })
 
 test('StylistChat carries generated styling context into ask requests', () => {
@@ -183,4 +203,57 @@ test('StylistChat carries generated styling context into ask requests', () => {
   assert.ok((content.match(/stylingContext:\s*\{/g) || []).length >= 3, 'generated outfit thread memory should store stylingContext')
   assert.ok((content.match(/\.\.\.stylingContextFromMemory\(threadMemory/g) || []).length >= 3, 'ask requests should include carried styling context')
   assert.ok(!content.includes('activity: activeContext?.type === \'piece\' ? generateActivity : wardrobeOutfitActivity'), 'general ask body should reconcile activity through stylingContext')
+})
+
+// 2026-07-10: a multi-day trip needs activities/use cases before the system can safely compose
+// outfits or a packing set. Destination and weather resolve climate, not itinerary scope.
+test('tripRequestNeedsScopeClarification flags multi-day trips with missing or thin activity scope', () => {
+  assert.equal(
+    tripRequestNeedsScopeClarification('Going to Fairfax, CA for a few days'),
+    true
+  )
+  assert.equal(
+    tripRequestNeedsScopeClarification('Going to Fairfax, CA for a few days, what should I pack?'),
+    true
+  )
+  assert.equal(
+    tripRequestNeedsScopeClarification("I'm going to Bodega Bay this weekend for hiking, it'll be cold, what should I pack?"),
+    true
+  )
+  assert.equal(
+    tripRequestNeedsScopeClarification("I'm going hiking in Tahoe this weekend, it'll be cold, what should I pack?"),
+    true
+  )
+})
+
+test('tripRequestNeedsScopeClarification does not flag trips that already state multiple use cases', () => {
+  assert.equal(
+    tripRequestNeedsScopeClarification('Hiking this weekend, also want a nice dinner outfit for one night'),
+    false
+  )
+  assert.equal(
+    tripRequestNeedsScopeClarification("Hi! In a few days I'm going to Portland, OR for 4-5 days. Mainly city exploring, walking, a few museums, and also a few nice restaurants and one day at a winery. What should I pack?"),
+    false
+  )
+})
+
+test('tripRequestNeedsScopeClarification does not flag single-day or non-activity requests', () => {
+  assert.equal(tripRequestNeedsScopeClarification('Going hiking on Saturday, what should I wear?'), false)
+  assert.equal(tripRequestNeedsScopeClarification('What should I wear today, nothing special?'), false)
+  assert.equal(tripRequestNeedsScopeClarification(''), false)
+})
+
+test('travelRequestCanResolveWeatherLive allows named-place single-occasion trips to use live weather', () => {
+  assert.equal(
+    travelRequestCanResolveWeatherLive('A hiking day trip to Fairfax tomorrow, what should I wear?'),
+    true
+  )
+  assert.equal(
+    travelRequestCanResolveWeatherLive("I'm going to Napa on Saturday. What should I wear to a winery lunch?"),
+    true
+  )
+  assert.equal(
+    travelRequestCanResolveWeatherLive('suggest packing outfits for Portland'),
+    false
+  )
 })

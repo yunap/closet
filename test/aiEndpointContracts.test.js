@@ -841,6 +841,55 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   assert.equal(json.debug.brokenCardCount, 1)
 })
 
+test('visual wardrobe composer derives hot weather from styling request text before building roster', async () => {
+  aiCalls = []
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'spring',
+    request: 'not too dressy, hot weather',
+    limit: 2,
+  })
+
+  assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
+  assert.equal(json.debug.weatherProfile.isHot, true)
+  assert.ok(json.debug.suppressedCount >= 1, 'hot weather request should suppress at least one hot-weather-invalid piece')
+  assert.ok(json.debug.suppressedReasonCounts['hot weather: insulating fiber'] >= 1)
+
+  const generationRun = db.prepare('SELECT * FROM generation_runs WHERE flow = ? ORDER BY id DESC LIMIT 1').get('whole_wardrobe_visual')
+  assert.ok(generationRun)
+  assert.equal(JSON.parse(generationRun.weather).isHot, true)
+
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.ok(visualComposerCalls.length >= 1)
+  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  assert.ok(contentText.includes('Styling request: not too dressy, hot weather'))
+  assert.ok(contentText.includes('Off-season pieces have been deprioritized or removed; everything shown is weather-optimized.'))
+  assert.doesNotMatch(contentText, /plum wool dress/i, 'hot-weather-invalid wool dress should not be shown to the visual composer')
+})
+
+test('visual wardrobe composer excludes lightweight linen bottoms for cold request weather', async () => {
+  aiCalls = []
+
+  const json = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'spring',
+    request: 'not too dressy, cold weather',
+    activity: 'walking',
+    limit: 2,
+  })
+
+  assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
+  assert.equal(json.debug.weatherProfile.isCold, true)
+  assert.ok(json.debug.suppressedReasonCounts['cold weather: lightweight linen bottom'] >= 1)
+
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.ok(visualComposerCalls.length >= 1)
+  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  assert.ok(contentText.includes('Styling request: not too dressy, cold weather'))
+  assert.doesNotMatch(contentText, /light beige linen wide-leg pants/i, 'lightweight linen pants should not be shown to the visual composer for cold weather')
+})
+
 test('visual wardrobe composer shows rejected model cards as broken diagnostics', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
@@ -1551,6 +1600,54 @@ test('freeform ask broad request triggers clarifying question instruction', asyn
   assert.match(lastCall.system, /weather\/forecast context is missing/)
 })
 
+test('freeform ask does not precompose destination-only multi-day trips before activity scope is confirmed', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'Going to Fairfax, CA for a few days',
+    weather: 'warm',
+    pieces: [],
+    history: [],
+    conversationMode: 'new_request',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  assert.deepEqual(json.structuredOutfits, [])
+  const lastCall = aiCalls.at(-1)
+  assert.match(lastCall.system, /Trip Scope Clarification/)
+  assert.match(lastCall.system, /What kinds of activities should I cover/)
+})
+
+test('freeform ask named-place day trip with activity resolves weather live instead of asking forecast', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: 'A hiking day trip to Fairfax tomorrow, what should I wear?',
+    pieces: [],
+    history: [],
+    conversationMode: 'new_request',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  const lastCall = aiCalls.at(-1)
+  assert.doesNotMatch(lastCall.system, /TRAVEL WEATHER BLOCKER/)
+  assert.match(lastCall.system, /weather=resolve live from named destination/)
+  assert.match(lastCall.system, /Pass the city\/place as `location` on 'search_wardrobe'/)
+})
+
+test('freeform ask ordinary what-should-I-wear request does not become trip precompose', async () => {
+  const json = await postJson('/api/ai/ask', {
+    question: "It's hot and I'll be walking around the city all day, but I don't want to look too casual. What should I wear?",
+    pieces: [],
+    history: [],
+    conversationMode: 'new_request',
+  })
+
+  assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
+  assert.deepEqual(json.structuredOutfits, [])
+  assert.ok(!aiCalls.some(call => /FREEFORM_STYLIST_USE_CASE_PLANNER/.test(call.system || '')), 'ordinary outfit advice should not invoke trip planner precompose')
+  const lastCall = aiCalls.at(-1)
+  assert.doesNotMatch(lastCall.system, /Trip outfits built from saved wardrobe pieces/)
+  assert.doesNotMatch(lastCall.system, /Trip plan/)
+  assert.match(lastCall.system, /Proposing Outfits/)
+})
+
 test('freeform ask extracts travel weather and surfaces it to tools', async () => {
   insertPiece({
     name: 'paisley sleeveless blouse',
@@ -1606,9 +1703,10 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
     photo: seeded.photos.bottom,
     reads_as: 'graphic geometric midi skirt',
     pattern_complexity: 'loud',
-    fabric_weight: 'medium',
-    fiber_content: ['polyester'],
-    style_profile_json: { bottom_kind: 'skirt-midi', coverage: 'full-insulating', bareness: 'normal' },
+    fabric_weight: 'heavy',
+    fabric_category: 'wool',
+    fiber_content: ['wool'],
+    style_profile_json: { bottom_kind: 'skirt-midi' },
   })
   insertPiece({
     name: 'black satin evening blouse',
@@ -1660,9 +1758,9 @@ test('freeform ask extracts travel weather and surfaces it to tools', async () =
     occasions: ['city', 'casual'],
     photo: seeded.photos.bottom,
     reads_as: 'soft crochet knit midi skirt',
-    fabric_weight: 'medium',
+    fabric_weight: 'heavy',
     fiber_content: ['cotton'],
-    style_profile_json: { bottom_kind: 'skirt-midi', coverage: 'full-insulating', bareness: 'normal' },
+    style_profile_json: { bottom_kind: 'skirt-midi' },
   })
   insertPiece({
     name: 'striped knit cardigan',

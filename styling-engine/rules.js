@@ -50,25 +50,33 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
     return { isHot: false, isCold: false }
   }
   const text = `${mood} ${season}`.toLowerCase()
+  const fahrenheitValues = [...text.matchAll(/\b(\d{2,3})\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
+    .map(match => Number(match[1]))
+    .filter(n => Number.isFinite(n))
+  const hasHotTemperature = fahrenheitValues.some(n => n >= 80)
+  const hasColdTemperature = fahrenheitValues.some(n => n <= 45)
+  const explicitHot = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text)
+    || /\bsummer\b/.test(text)
+    || hasHotTemperature
+  const explicitCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
+    || hasColdTemperature
+
+  // An explicit weather word/temperature always wins over the "current season" calendar guess below —
+  // otherwise a stated "it'll be cold" during a warm month cancels itself out against the calendar
+  // heuristic (isHot && isCold both true) and the mutual-exclusion collapses both flags to false,
+  // silently disabling weather gating entirely. Only fall back to the calendar guess when the user
+  // (or context) gave no explicit signal at all.
+  if (explicitHot || explicitCold) {
+    return { isHot: explicitHot && !explicitCold, isCold: explicitCold && !explicitHot }
+  }
+
   const month = currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
     ? currentDate.getMonth()
     : null
   const currentSeasonRequested = /\b(current season|current weather|right now|today|this month)\b/.test(text) // ratchet-allow: date-context parsing, not garment text matching
   const currentSeasonHot = currentSeasonRequested && month !== null && month >= 5 && month <= 7
   const currentSeasonCold = currentSeasonRequested && month !== null && (month === 11 || month <= 1)
-  const fahrenheitValues = [...text.matchAll(/\b(\d{2,3})\s*(?:-|–|to)?\s*(?:\d{2,3})?\s*(?:f|°f|degrees?)?\b/g)]
-    .map(match => Number(match[1]))
-    .filter(n => Number.isFinite(n))
-  const hasHotTemperature = fahrenheitValues.some(n => n >= 80)
-  const hasColdTemperature = fahrenheitValues.some(n => n <= 45)
-  const isHot = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text)
-    || /\bsummer\b/.test(text)
-    || hasHotTemperature
-    || currentSeasonHot
-  const isCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
-    || hasColdTemperature
-    || currentSeasonCold
-  return { isHot: isHot && !isCold, isCold: isCold && !isHot }
+  return { isHot: currentSeasonHot, isCold: currentSeasonCold }
 }
 
 export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js'
@@ -99,6 +107,12 @@ export function weatherFitForPiece(piece = {}, weatherProfile = {}) {
     label: adjustments[0]?.label || 'neutral',
     adjustments
   }
+}
+
+function isLightweightLinenBottom(piece = {}) {
+  if (wardrobeCategoryGroup(piece) !== 'bottom') return false
+  if (pieceFabricWeight(piece) !== 'light') return false
+  return /\b(linen|linen blend|gauze|gauzy)\b/i.test(pieceTextBlob(piece))
 }
 
 export function resolveFormalityIntent(options = {}) {
@@ -1869,7 +1883,10 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
       (hasWarmNeckline && isMediumOrHeavy) ||
       (hasWarmSleeves && isMediumOrHeavy)
     )
-    const isInsulatingBottom = wardrobeCategoryGroup(piece) === 'bottom' && hasInsulatingCoverage && isMediumOrHeavy
+    // Pants are inherently full-leg coverage regardless of length_hits_at tagging (pants rarely carry
+    // that field the way skirts/dresses do) — bottomKind is a concrete authored field, so treat any
+    // medium/heavy-fabric pants as insulating here even without a derived pieceCoverage() reading.
+    const isInsulatingBottom = wardrobeCategoryGroup(piece) === 'bottom' && (hasInsulatingCoverage || bottomKind(piece) === 'pants') && isMediumOrHeavy
 
     if (hasHotInsulatingFiber) {
       reasons.push('hot weather: insulating fiber')
@@ -1881,6 +1898,12 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
   if (weatherProfile.isCold) {
     if (bottomKind(piece) === 'shorts') {
       reasons.push('cold weather: shorts')
+    } else if (isLightweightLinenBottom(piece)) {
+      reasons.push('cold weather: lightweight linen bottom')
+    }
+    const isBareBodyPiece = ['top', 'dress', 'bottom', 'outerwear'].includes(wardrobeCategoryGroup(piece))
+    if (isBareBodyPiece && pieceBareness(piece) === 'high') {
+      reasons.push('cold weather: bare/sleeveless')
     }
   }
 
@@ -2018,6 +2041,9 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     slotCoverage: { top: 0, bottom: 0, dress: 0, shoes: 0, outerwear: 0, accessory: 0 },
     activityCoverageGaps: [],
     activityTagEnforcedGroups: [],
+    registerTarget: null,
+    registerTargetCoverageGaps: [],
+    registerTargetEnforcedGroups: [],
     registerCeiling,
     formalityIntent: {
       target: formalityIntent.target,
@@ -2066,8 +2092,13 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     if (isAccessory(piece) || group === 'shoes') return null
     const needsFabricWeight = group === 'top' || group === 'outerwear' || group === 'dress' || group === 'bottom'
     if (needsFabricWeight && pieceFabricWeight(piece) === null) return 'fabric_weight'
-    const needsCoverage = group === 'bottom' && (pieceFabricWeight(piece) === 'medium' || pieceFabricWeight(piece) === 'heavy')
-    if (needsCoverage && pieceCoverage(piece) === null) return 'style_profile_json.coverage'
+    // "Is this bottom warm enough" is a cold-weather-only question — hot weather doesn't care whether
+    // a medium/heavy-fabric short or skirt has full leg coverage. Pants are inherently full-leg
+    // coverage regardless of length_hits_at tagging (that field is for hemlines like skirts/dresses,
+    // not pant length) — bottomKind already distinguishes pants from shorts/skirts from a concrete
+    // authored field, so only ambiguous/skirt bottoms need the pieceCoverage() derivation.
+    const needsCoverage = isCold && group === 'bottom' && bottomKind(piece) !== 'pants' && (pieceFabricWeight(piece) === 'medium' || pieceFabricWeight(piece) === 'heavy')
+    if (needsCoverage && pieceCoverage(piece) === null) return 'length_hits_at'
     const fibers = Array.isArray(piece?.fiber_content) ? piece.fiber_content : []
     const fabricCategory = String(piece?.fabric_category || '').toLowerCase().trim()
     const insulatingCategories = new Set(['wool', 'cashmere', 'fleece', 'down', 'mohair', 'alpaca'])
@@ -2080,6 +2111,70 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     if (rv.verdict === 'unknown') return 'metadata missing: formality (register gate active)'
     if (rv.verdict === 'exclude') return `register: ${rv.formality} exceeds ${registerCeiling} ceiling`
     return null
+  }
+  const explicitTargetRank = formalityIntent.targetRank
+  const profileTarget = resolvedOccasionProfile?.register_target || ''
+  const profileTargetRank = formalityRank(profileTarget)
+  const registerTarget = explicitTargetRank !== null
+    ? formalityIntent.target
+    : (profileTargetRank !== null ? profileTarget : null)
+  const registerTargetRank = formalityRank(registerTarget)
+  debug.registerTarget = registerTarget
+  const registerTargetGroup = piece => {
+    const group = wardrobeCategoryGroup(piece)
+    if (group === 'top' || group === 'dress') return 'top'
+    if (group === 'bottom') return 'bottom'
+    if (group === 'shoes') return 'shoes'
+    return null
+  }
+  const pieceMeetsRegisterTarget = piece => {
+    const rank = formalityRank(pieceFormality(piece))
+    if (rank === null || registerTargetRank === null) return false
+    if (resolvedActivityProfile?.id === 'walking' && registerTargetGroup(piece) === 'shoes') {
+      return rank >= formalityRank('everyday')
+    }
+    return rank >= registerTargetRank
+  }
+  const registerTargetReason = piece => {
+    if (!registerTarget || registerTargetRank === null) return null
+    const group = registerTargetGroup(piece)
+    if (!group || !debug.registerTargetEnforcedGroups.includes(group)) return null
+    const formality = pieceFormality(piece)
+    const rank = formalityRank(formality)
+    if (rank === null) return 'metadata missing: formality (register target active)'
+    if (resolvedActivityProfile?.id === 'walking' && group === 'shoes') {
+      if (rank < formalityRank('everyday')) return `register: ${formality} below polished walking target`
+      const discouragedFootwear = resolvedOccasionProfile?.rules?.discouraged_footwear || []
+      const discouragedMatch = discouragedFootwear.find(term => pieceMatchesFootwear(piece, term))
+      if (discouragedMatch) return `footwear: ${discouragedMatch} unsuitable for polished walking target`
+      return null
+    }
+    if (rank < registerTargetRank) return `register: ${formality} below ${registerTarget} target`
+    return null
+  }
+  const applyRegisterTargetGate = pieces => {
+    if (!registerTarget || registerTargetRank === null) return pieces
+    const minimums = { top: 4, bottom: 3, shoes: 2 }
+    const counts = { top: 0, bottom: 0, shoes: 0 }
+    for (const piece of pieces) {
+      if (isSelected(piece) || isAccessory(piece)) continue
+      const group = registerTargetGroup(piece)
+      if (!group) continue
+      if (pieceMeetsRegisterTarget(piece)) counts[group] += 1
+    }
+    debug.registerTargetCoverageGaps = Object.keys(minimums).filter(group => counts[group] < minimums[group])
+    debug.registerTargetEnforcedGroups = Object.keys(minimums).filter(group => counts[group] >= minimums[group])
+    const filtered = []
+    for (const piece of pieces) {
+      const reason = registerTargetReason(piece)
+      if (reason) {
+        exclude(piece, reason)
+        if (reason.startsWith('metadata missing: formality')) ensureMetadataTodo(piece, 'formality', 'register')
+      } else {
+        filtered.push(piece)
+      }
+    }
+    return filtered
   }
 
   const footwearGateReason = (piece) => {
@@ -2289,6 +2384,10 @@ export function buildVisualComposerRoster(allowedPieces = [], {
         ensureMetadataTodo(p, missingField)
       } else if (bottomKind(p) === 'shorts') {
         exclude(p, 'cold weather: shorts')
+      } else if (isLightweightLinenBottom(p)) {
+        exclude(p, 'cold weather: lightweight linen bottom')
+      } else if (['top', 'dress', 'bottom', 'outerwear'].includes(wardrobeCategoryGroup(p)) && pieceBareness(p) === 'high') {
+        exclude(p, 'cold weather: bare/sleeveless')
       } else {
         afterStep3.push(p)
       }
@@ -2310,7 +2409,8 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       }
     }
   }
-  const afterActivityGate = applyActivityTagGate(afterStep3)
+  const afterRegisterTargetGate = applyRegisterTargetGate(afterStep3)
+  const afterActivityGate = applyActivityTagGate(afterRegisterTargetGate)
   debug.postGatePoolSize = afterActivityGate.length
   debug.capApplied = afterActivityGate.length > maxImages
 
