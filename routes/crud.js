@@ -286,15 +286,17 @@ router.get('/outfits', (req, res) => {
 })
 
 router.post('/outfits', upload.single('photo'), (req, res) => {
-  const { name, occasion, season, notes, status, pieceIds } = req.body
+  const { name, occasion, season, notes, status, pieceIds, mainPieceId } = req.body
   const photo = req.file?.filename || null
+  const linkedIds = pieceIds ? JSON.parse(pieceIds).map(Number).filter(Boolean) : []
+  const mainId = Number(mainPieceId) && linkedIds.includes(Number(mainPieceId)) ? Number(mainPieceId) : null
   const r = db.prepare(`
-    INSERT INTO outfits (name, occasion, season, notes, status, photo) VALUES (?, ?, ?, ?, ?, ?)
-  `).run(name, occasion||'casual', season||'year-round', notes||'', status||'confirmed', photo)
+    INSERT INTO outfits (name, occasion, season, notes, status, photo, main_piece_id) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(name, occasion||'casual', season||'year-round', notes||'', status||'confirmed', photo, mainId)
   const outfitId = r.lastInsertRowid
-  if (pieceIds) {
+  if (linkedIds.length) {
     const insLink = db.prepare('INSERT OR IGNORE INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)')
-    JSON.parse(pieceIds).forEach(pid => insLink.run(outfitId, pid))
+    linkedIds.forEach(pid => insLink.run(outfitId, pid))
   }
   const o = db.prepare('SELECT * FROM outfits WHERE id = ?').get(outfitId)
   res.json({ ...o, favorite: Boolean(o.favorite), pieces: [] })
@@ -303,15 +305,17 @@ router.post('/outfits', upload.single('photo'), (req, res) => {
 router.put('/outfits/:id', upload.single('photo'), (req, res) => {
   const existing = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
   if (!existing) return res.status(404).json({ error: 'Not found' })
-  const { name, occasion, season, notes, status, favorite, pieceIds } = req.body
+  const { name, occasion, season, notes, status, favorite, pieceIds, mainPieceId } = req.body
   const photo = req.file?.filename || existing.photo
+  const linkedIds = pieceIds ? JSON.parse(pieceIds).map(Number).filter(Boolean) : null
+  const mainId = Number(mainPieceId) && (!linkedIds || linkedIds.includes(Number(mainPieceId))) ? Number(mainPieceId) : null
   db.prepare(`
-    UPDATE outfits SET name=?,occasion=?,season=?,notes=?,status=?,favorite=?,photo=? WHERE id=?
-  `).run(name, occasion||'casual', season||'year-round', notes||'', status||'confirmed', favorite==='true'?1:0, photo, req.params.id)
-  if (pieceIds) {
+    UPDATE outfits SET name=?,occasion=?,season=?,notes=?,status=?,favorite=?,photo=?,main_piece_id=? WHERE id=?
+  `).run(name, occasion||'casual', season||'year-round', notes||'', status||'confirmed', favorite==='true'?1:0, photo, mainId, req.params.id)
+  if (linkedIds) {
     db.prepare('DELETE FROM outfit_pieces WHERE outfit_id = ?').run(req.params.id)
     const insLink = db.prepare('INSERT OR IGNORE INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)')
-    JSON.parse(pieceIds).forEach(pid => insLink.run(req.params.id, pid))
+    linkedIds.forEach(pid => insLink.run(req.params.id, pid))
   }
   const o = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
   const pieces = db.prepare(`SELECT p.* FROM pieces p JOIN outfit_pieces op ON p.id = op.piece_id WHERE op.outfit_id = ?`).all(req.params.id).map(parsePiece)
@@ -345,11 +349,14 @@ router.get('/pieces/:id/outfits', (req, res) => {
 })
 
 router.put('/outfits/:id/pieces', (req, res) => {
-  const { pieceIds } = req.body
+  const { pieceIds, mainPieceId } = req.body
+  const linkedIds = (pieceIds || []).map(Number).filter(Boolean)
+  const mainId = Number(mainPieceId) && linkedIds.includes(Number(mainPieceId)) ? Number(mainPieceId) : null
   db.prepare('DELETE FROM outfit_pieces WHERE outfit_id = ?').run(req.params.id)
   const ins = db.prepare('INSERT OR IGNORE INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)')
-  ;(pieceIds || []).forEach(pid => ins.run(req.params.id, pid))
-  res.json({ success: true })
+  linkedIds.forEach(pid => ins.run(req.params.id, pid))
+  db.prepare('UPDATE outfits SET main_piece_id = ? WHERE id = ?').run(mainId, req.params.id)
+  res.json({ success: true, main_piece_id: mainId })
 })
 
 router.patch('/pieces/:id/append-note', (req, res) => {

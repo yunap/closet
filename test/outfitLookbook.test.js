@@ -24,9 +24,17 @@ test('OutfitForm edit mode prepopulates fields and submits PUT to the outfit end
 
 test('OutfitDetail opens the shared form for editing', () => {
   assert.match(source, /function OutfitDetail\(\{ outfit, onClose, onEdit, onDelete/)
-  assert.match(source, /<button className="btn-secondary" onClick=\{\(\) => onEdit\(\{ \.\.\.outfit, pieces \}\)\}>Edit<\/button>/)
+  assert.match(source, /<button className="btn-secondary" onClick=\{\(\) => onEdit\(\{ \.\.\.outfit, pieces, main_piece_id: mainPieceId \}\)\}>Edit<\/button>/)
   assert.match(source, /onEdit=\{outfit => \{ setDetail\(null\); setEditOutfit\(outfit\); setShowForm\(true\) \}\}/)
   assert.match(source, /<OutfitForm outfit=\{editOutfit\}/)
+})
+
+test('Piece selector supports marking a linked outfit piece as Main', () => {
+  assert.match(source, /function PieceSelector\(\{ outfitId, linkedPieceIds, mainPieceId = null/)
+  assert.match(source, /body: JSON\.stringify\(\{ pieceIds: selectedIds, mainPieceId: nextMainId \}\)/)
+  assert.match(source, /setMainId\(isMain \? null : piece\.id\)/)
+  assert.match(source, />\s*Main\s*<\/button>/)
+  assert.match(source, /main_piece_id: mainPieceId/)
 })
 
 test('indoor season matches warm, cool, and year-round browsing but can be filtered directly', () => {

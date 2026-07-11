@@ -3114,9 +3114,14 @@ router.post('/generate-ideal-additions-preview-sheet', async (req, res) => {
 })
 
 router.post('/generate-saved-outfit-image', async (req, res) => {
-  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', variantMode = 'similar' } = req.body || {}
+  const { outfit = {}, pieceIds = [], mainPieceId = null, occasion = 'casual', season = 'current season', variantMode = 'similar' } = req.body || {}
   try {
     const mode = variantMode === 'creative' ? 'creative' : 'similar'
+    let savedOutfit = outfit
+    if (outfit.id) {
+      const row = db.prepare('SELECT * FROM outfits WHERE id = ?').get(outfit.id)
+      if (row) savedOutfit = { ...row, ...outfit }
+    }
     let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
       .map(Number)
       .filter(Boolean))]
@@ -3126,15 +3131,16 @@ router.post('/generate-saved-outfit-image', async (req, res) => {
       const rows = db.prepare(`SELECT * FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(parsePiece)
       const byId = new Map(rows.map(piece => [Number(piece.id), piece]))
       pieces = ids.map(id => byId.get(id)).filter(Boolean)
-    } else if (outfit.id) {
-      pieces = getLinkedPiecesForOutfit(outfit.id).slice(0, 6)
+    } else if (savedOutfit.id) {
+      pieces = getLinkedPiecesForOutfit(savedOutfit.id).slice(0, 6)
       ids = pieces.map(piece => Number(piece.id)).filter(Boolean)
     }
     if (!ids.length) return res.status(400).json({ error: 'No linked wardrobe pieces were found for this outfit' })
 
     if (pieces.length < 2) return res.status(400).json({ error: 'At least two linked wardrobe pieces are required' })
 
-    const rendered = await createSavedOutfitImage({ outfit, pieces, occasion, season, index: 1, variantMode: mode })
+    const selectedMainPieceId = Number(mainPieceId || savedOutfit.mainPieceId || savedOutfit.main_piece_id || outfit.mainPieceId || outfit.main_piece_id) || null
+    const rendered = await createSavedOutfitImage({ outfit: { ...savedOutfit, mainPieceId: selectedMainPieceId }, pieces, occasion, season, index: 1, variantMode: mode })
     const boards = [{
       label: mode === 'creative' ? 'Creative outfit alternatives' : 'Similar outfit variants',
       reason: mode === 'creative'
@@ -3148,7 +3154,8 @@ router.post('/generate-saved-outfit-image', async (req, res) => {
       debug: { timings: rendered.timings, renderer: rendered.renderer },
       savedOutfit: true,
       variant: true,
-      variantMode: mode
+      variantMode: mode,
+      mainPieceId: selectedMainPieceId
     }]
     res.json({
       boards,

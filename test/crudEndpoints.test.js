@@ -107,10 +107,12 @@ test('POST /api/outfits and GET /api/outfits', async () => {
   fdOutfit.append('name', 'test outfit')
   fdOutfit.append('occasion', 'casual')
   fdOutfit.append('pieceIds', JSON.stringify([piece.id]))
+  fdOutfit.append('mainPieceId', String(piece.id))
   const resOutfit = await fetch(`${baseUrl}/api/outfits`, { method: 'POST', body: fdOutfit })
   const outfit = await resOutfit.json()
   assert.equal(outfit.name, 'test outfit')
   assert.ok(outfit.id)
+  assert.equal(outfit.main_piece_id, piece.id)
 
   const getOutfits = await fetch(`${baseUrl}/api/outfits`)
   const outfits = await getOutfits.json()
@@ -127,6 +129,7 @@ test('POST /api/outfits and GET /api/outfits', async () => {
   fdUpdate.append('status', 'confirmed')
   fdUpdate.append('favorite', 'false')
   fdUpdate.append('pieceIds', JSON.stringify([piece2.id]))
+  fdUpdate.append('mainPieceId', String(piece2.id))
   const putRes = await fetch(`${baseUrl}/api/outfits/${outfit.id}`, { method: 'PUT', body: fdUpdate })
   assert.equal(putRes.status, 200)
   const updated = await putRes.json()
@@ -134,6 +137,7 @@ test('POST /api/outfits and GET /api/outfits', async () => {
   assert.equal(updated.occasion, 'evening')
   assert.equal(updated.season, 'indoor')
   assert.equal(updated.notes, 'weather does not apply')
+  assert.equal(updated.main_piece_id, piece2.id)
   assert.deepEqual(updated.pieces.map(p => p.id), [piece2.id])
 
   const indoorFilterRes = await fetch(`${baseUrl}/api/outfits?season=indoor`)
@@ -528,7 +532,6 @@ test('PUT /api/settings/home-location can be updated to a new value and trims wh
   const getData = await getRes.json()
   assert.equal(getData.homeLocation, 'Portland')
 })
-
 
 
 
