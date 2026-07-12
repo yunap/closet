@@ -6,9 +6,11 @@ is pinned into every outfit, the candidate pool is pre-narrowed to its best
 supporting pieces, and the flow branches on whether you want wardrobe-only
 outfits or "ideal" ideas that may reach beyond what you own.
 
-Color legend is the same as the rest of the atlas (see
-[use-my-wardrobe.md](use-my-wardrobe.md)): indigo = app/ui, purple = wardrobe
-rules, teal = model call, amber = validation/fallback.
+Same reading convention as the rest of the atlas (see
+[use-my-wardrobe.md](use-my-wardrobe.md)): **rectangles are the app's own code,
+hexagons labelled `LLM ·` are calls to the AI model, diamonds are decisions.**
+Note this flow can hit the model *twice* (ideal mode: vision critic, then text
+composer).
 
 ## Overview (PM altitude)
 
@@ -18,8 +20,8 @@ flowchart TD
     B --> C["Rank supporting candidates<br/>score to ~32 best supports"]
     C --> D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
     D --> M{"Which mode?"}
-    M -->|wardrobe outfits| E["Visual composer<br/>anchor pinned, one model call"]
-    M -->|ideal ideas| V["Vision critic ranks candidates"] --> E2["Text composer<br/>may add missing-piece ideas"]
+    M -->|wardrobe outfits| E{{"LLM · visual composer<br/>anchor pinned, from photos"}}
+    M -->|ideal ideas| V{{"LLM · vision critic<br/>ranks candidates"}} --> E2{{"LLM · text composer<br/>may add missing pieces"}}
     E --> F{"Any outfits<br/>returned?"}
     E2 --> F
     F -->|yes| R["Comfort-footwear repair<br/>then show outfit cards"]
@@ -27,7 +29,7 @@ flowchart TD
 
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
-    classDef model fill:#e1f5ee,stroke:#1d9e75,color:#08413a;
+    classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
     class A,B,R app;
     class C,D rules;
