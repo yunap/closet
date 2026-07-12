@@ -155,8 +155,14 @@ stateDiagram-v2
 
 # Proposed architecture — from router to stylist
 
-> **Status: proposal (2026-07). Nothing below is shipped.** The sections above
-> describe what exists; this section describes where the chat should go and why.
+> **Status: in progress (2026-07).** Migration steps shipped so far: **1** —
+> wardrobe manifest + structured thread state (#37); **3** — retrieval rule:
+> pieces must be verified this turn, layers visually seen (#38); **4** —
+> model-declared intent via a `declare_intent` tool, with the guards' phrasing
+> regexes demoted to undeclared-turn fallbacks. Step 2 (query/visual primitives
+> + opacity tag field) is deliberately postponed; steps 5–6 remain. The
+> "current implementation" sections above predate the migration — cross-check
+> against the code as steps land.
 
 ## The problem
 

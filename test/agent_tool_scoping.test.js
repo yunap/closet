@@ -62,7 +62,7 @@ test('agent_tool_scoping: generate_outfits tool executes and populates toolConte
   }
 
   try {
-    const toolContext = { generatedOutfits: [] }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [] }
     const resWhole = await executeTool('generate_outfits', {
       occasion: 'casual',
       season: 'warm',
@@ -75,7 +75,7 @@ test('agent_tool_scoping: generate_outfits tool executes and populates toolConte
     assert.ok(Array.isArray(toolContext.generatedOutfits))
     assert.ok(toolContext.generatedOutfits.length > 0)
 
-    const toolContextPiece = { generatedOutfits: [] }
+    const toolContextPiece = { declaredIntent: { want: 'cards' }, generatedOutfits: [] }
     const resPiece = await executeTool('generate_outfits', {
       occasion: 'casual',
       season: 'warm',
@@ -88,7 +88,7 @@ test('agent_tool_scoping: generate_outfits tool executes and populates toolConte
     assert.ok(Array.isArray(toolContextPiece.generatedOutfits))
     assert.ok(toolContextPiece.generatedOutfits.length > 0)
 
-    const hikingContext = { generatedOutfits: [] }
+    const hikingContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [] }
     const resHiking = await executeTool('generate_outfits', {
       occasion: 'casual',
       season: 'warm',
@@ -98,7 +98,7 @@ test('agent_tool_scoping: generate_outfits tool executes and populates toolConte
     assert.equal(resHiking.status, 'success')
     assert.equal(hikingContext.activity, 'hiking')
 
-    const carriedContext = { generatedOutfits: [], activity: 'walking' }
+    const carriedContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], activity: 'walking' }
     const resCarried = await executeTool('generate_outfits', {
       occasion: 'casual',
       season: 'warm',
@@ -107,7 +107,7 @@ test('agent_tool_scoping: generate_outfits tool executes and populates toolConte
     assert.equal(resCarried.status, 'success')
     assert.equal(carriedContext.activity, 'walking')
 
-    const clearedContext = { generatedOutfits: [], activity: 'walking' }
+    const clearedContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], activity: 'walking' }
     const resCleared = await executeTool('generate_outfits', {
       occasion: 'casual',
       season: 'warm',

@@ -76,7 +76,7 @@ test('executeTool propose_outfit success increments proposeCalls', async () => {
     VALUES ('obs shoes', 'shoes', '[]', '["casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
   `).run().lastInsertRowid
   try {
-    const toolContext = { generatedOutfits: [], activity: 'walking', retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], activity: 'walking', retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
     const result = await executeTool('propose_outfit', {
       label: 'Obs outfit',
       pieces: [{ id: topId, role: 'primary_top' }, { id: bottomId, role: 'primary_bottom' }, { id: shoesId, role: 'shoes' }]
@@ -104,7 +104,7 @@ test('executeTool propose_outfit inherits hot-weather card context from prior se
   `).run().lastInsertRowid
 
   try {
-    const toolContext = { generatedOutfits: [], season: 'current season' }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], season: 'current season' }
     await executeTool('search_wardrobe', { occasion: 'city', activity: 'walking', weather: 'hot weather', visual: true }, toolContext)
     assert.equal(toolContext.weatherProfile?.isHot, true)
     assert.equal(toolContext.weather, 'hot weather')
@@ -152,6 +152,7 @@ test('executeTool honors explicit no-shorts request in search and proposal valid
 
   try {
     const toolContext = {
+      declaredIntent: { want: 'cards' },
       generatedOutfits: [],
       question: "It's hot and I'll be walking around the city all day. Give me polished outfit ideas, no shorts.",
       retrievedPieceIds: new Set([topId, shortsId, shoesId])
@@ -193,7 +194,7 @@ test('executeTool propose_outfit validation failure pushes a visible broken diag
     VALUES ('obs top 3', 'top', '[]', '["casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
   `).run().lastInsertRowid
   try {
-    const toolContext = { generatedOutfits: [], retrievedPieceIds: new Set([topId, topId2]) }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], retrievedPieceIds: new Set([topId, topId2]) }
     const result = await executeTool('propose_outfit', {
       label: 'Collision outfit',
       pieces: [{ id: topId, role: 'primary_top' }, { id: topId2, role: 'primary_top' }]
@@ -230,7 +231,7 @@ test('executeTool propose_outfit rejects category-role mismatch as a broken diag
   `).run().lastInsertRowid
 
   try {
-    const toolContext = { generatedOutfits: [], retrievedPieceIds: new Set([topId, topAsBottomId, shoesId]) }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], retrievedPieceIds: new Set([topId, topAsBottomId, shoesId]) }
     const result = await executeTool('propose_outfit', {
       label: 'Sleek City Moves',
       pieces: [
@@ -267,7 +268,7 @@ test('executeTool propose_outfit with zero shoes and no missing_gaps pushes a vi
     VALUES ('obs bottom 2', 'bottom', '[]', '["casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
   `).run().lastInsertRowid
   try {
-    const toolContext = { generatedOutfits: [], retrievedPieceIds: new Set([topId, bottomId]) }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], retrievedPieceIds: new Set([topId, bottomId]) }
     const result = await executeTool('propose_outfit', {
       label: 'Relaxed Comfort Look',
       pieces: [{ id: topId, role: 'primary_top' }, { id: bottomId, role: 'primary_bottom' }]
@@ -299,7 +300,7 @@ test('executeTool propose_outfit rejects shoe missing_gaps as a substitute for a
   `).run().lastInsertRowid
 
   try {
-    const toolContext = { generatedOutfits: [], activity: 'hiking', retrievedPieceIds: new Set([bottomId, topId, topId2]) }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], activity: 'hiking', retrievedPieceIds: new Set([bottomId, topId, topId2]) }
     const result = await executeTool('propose_outfit', {
       label: 'Light and Airy Hike',
       pieces: [
@@ -569,7 +570,7 @@ test('executeTool propose_outfit rejects hot-weather gated pieces using weather 
   `).run().lastInsertRowid
 
   try {
-    const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season' }
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city', season: 'current season' }
     await executeTool('search_wardrobe', { occasion: 'city', activity: 'walking', weather: 'hot' }, toolContext)
     assert.equal(toolContext.weatherProfile?.isHot, true)
     assert.equal(toolContext.activity, 'walking')
