@@ -535,3 +535,25 @@ test('PUT /api/settings/home-location can be updated to a new value and trims wh
 
 
 
+
+test('opacity truth field round-trips through piece create and update', async () => {
+  const fd = new FormData()
+  fd.append('name', 'sheer test blouse')
+  fd.append('category', 'top')
+  fd.append('opacity', 'sheer')
+  const createRes = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd })
+  assert.equal(createRes.status, 200)
+  const created = await createRes.json()
+  assert.equal(created.opacity, 'sheer')
+
+  const updateFd = new FormData()
+  updateFd.append('name', 'sheer test blouse')
+  updateFd.append('category', 'top')
+  updateFd.append('opacity', 'open_weave')
+  const updateRes = await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: updateFd })
+  assert.equal(updateRes.status, 200)
+  const updated = await updateRes.json()
+  assert.equal(updated.opacity, 'open_weave')
+
+  await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
+})
