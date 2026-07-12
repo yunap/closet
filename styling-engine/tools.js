@@ -413,7 +413,8 @@ export const STYLIST_TOOLS = [
             type: "object",
             properties: {
               id: { type: "integer", description: "Wardrobe piece ID from search_wardrobe." },
-              role: { type: "string", enum: OUTFIT_ROLES, description: "Structural role. Core = primary_top + primary_bottom, OR a single dress. Use layer_top/layer_bottom for INTENTIONAL layering (e.g. a base layer under a sheer top, shorts under a skirt) — not a second competing top/bottom. outerwear/accessory are add-ons. Exactly one shoes, at most one of each primary slot." }
+              role: { type: "string", enum: OUTFIT_ROLES, description: "Structural role. Core = primary_top + primary_bottom, OR a single dress. Use layer_top/layer_bottom for INTENTIONAL layering (e.g. a base layer under a sheer top, shorts under a skirt) — not a second competing top/bottom. outerwear/accessory are add-ons. Exactly one shoes, at most one of each primary slot." },
+              anchor: { type: "boolean", description: "Set true ONLY when the user explicitly asked to style/wear THIS piece this turn. An anchor is the outfit's premise: it bypasses auto-use trust/weather/register gating (the user's request overrides suitability rules). Supporting pieces stay fully gated. Never mark a piece the user did not ask about." }
             },
             required: ["id", "role"]
           }
@@ -765,7 +766,7 @@ export async function executeTool(name, args, toolContext = {}) {
           if (!Number.isFinite(id)) { unresolvedIds.push(entry?.id ?? null); continue }
           const row = db.prepare("SELECT * FROM pieces WHERE id = ? AND status = 'active'").get(id)
           if (!row) { unresolvedIds.push(id); continue }
-          resolved.push({ ...parsePiece(row), role })
+          resolved.push({ ...parsePiece(row), role, anchor: entry?.anchor === true })
         }
         if (unresolvedIds.length) {
           return {
@@ -877,6 +878,11 @@ export async function executeTool(name, args, toolContext = {}) {
           season: toolContext.weather || resolvedSeason || ''
         })
         const hardGateIssues = resolved.flatMap(piece => {
+          // A user-requested anchor is the outfit's premise (same rule as the
+          // composers' selected-piece bypass): the user asking to wear it
+          // overrides auto-use suitability gates. Verification (retrieval +
+          // layer photos) still applies above.
+          if (piece.anchor) return []
           const requestIssues = requestExclusionReasonsForPiece(piece, [
             toolContext.request,
             toolContext.question,
@@ -923,8 +929,10 @@ export async function executeTool(name, args, toolContext = {}) {
         toolContext.occasion = resolvedOccasion
         toolContext.season = resolvedSeason
         toolContext.activity = resolvedActivity
+        const anchorPieceIds = resolved.filter(p => p.anchor).map(p => Number(p.id))
         const proposedOutfit = {
           label: label || 'Outfit',
+          ...(anchorPieceIds.length ? { anchorPieceIds } : {}),
           occasion: resolvedOccasion,
           season: resolvedSeason,
           occasionContext: occasion_context || '',
@@ -1235,10 +1243,20 @@ export function getCurrentImageInventory(state) {
 
 export function storeUserCorrection(note, contextType = 'general', contextId = null) {
   try {
+    const trimmed = String(note || '').trim()
+    if (!trimmed) return
+    // Dedupe: an identical live note must not stack — repeated turns were
+    // multiplying the same text into the high-authority memory section.
+    const existing = db.prepare(`
+      SELECT id FROM stylist_feedback
+      WHERE note = ? AND COALESCE(archived, 0) = 0
+      LIMIT 1
+    `).get(trimmed)
+    if (existing) return
     db.prepare(`
       INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note)
       VALUES ('preference_reaction', 'message', ?, ?, ?)
-    `).run(contextType, contextId, note)
+    `).run(contextType, contextId, trimmed)
   } catch (err) {
     console.error('storeUserCorrection error:', err)
   }
