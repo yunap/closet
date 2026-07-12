@@ -3817,6 +3817,9 @@ export default function StylistChat({
         replyText = data.answer || data.error || 'Something went wrong.'
         replyDebug = data.debug || null
         replyStructuredOutfits = data.structuredOutfits || null
+        if (Array.isArray(data.renderedBoards) && data.renderedBoards.length) {
+          generatedBoards = data.renderedBoards
+        }
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
           triggerToast(`Saved styling preference: "${lastCorrection.note}"`)

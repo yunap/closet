@@ -24,6 +24,7 @@ export const CONFIDENCE_FIELDS = [
   'hem_finish',
   'fabric_category',
   'fabric_weight',
+  'opacity',
   'fiber_content',
   'formality',
   'heel_height',

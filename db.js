@@ -202,6 +202,7 @@ const NEW_COLUMNS = [
   'reads_as TEXT', 'hem_finish TEXT',
   'neckline TEXT', 'sleeve_type TEXT', 'length_hits_at TEXT',
   'silhouette TEXT', 'fabric_category TEXT', 'fabric_weight TEXT',
+  'opacity TEXT',
   'fiber_content TEXT DEFAULT "[]"',
   'formality TEXT',
   'heel_height TEXT',

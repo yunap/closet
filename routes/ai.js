@@ -1875,6 +1875,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
       "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|cashmere|viscose|denim|twill|canvas|corduroy|tweed|velvet|leather|suede|ponte|synthetic|fleece|other",
       "fabric_weight": "ultralight|light|medium|heavy",
+      "opacity": "opaque|semi_sheer|sheer|open_weave",
       "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. Use 'unknown' if not determinable."],
       "formality": "lounge|everyday|elevated|dressy",
       "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
@@ -3715,6 +3716,7 @@ router.post('/ask', async (req, res) => {
     res.json({
       answer,
       savedCorrections: allSaved,
+      renderedBoards: Array.isArray(toolContext.renderedBoards) ? toolContext.renderedBoards : [],
       provider: AI_PROVIDER,
       structuredOutfits: toolContext.generatedOutfits,
       structuredOutfitsSource: toolContext.source,

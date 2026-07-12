@@ -3207,8 +3207,8 @@ test('declare_intent records the turn contract and acks the capability gap for i
   const image = await executeTool('declare_intent', { want: 'image' }, toolContext)
   assert.equal(image.status, 'success')
   assert.equal(toolContext.declaredIntent.want, 'image', 're-declaring updates the turn intent')
-  assert.match(image.message, /not available/)
-  assert.match(image.message, /Generate outfit image/)
+  assert.match(image.message, /render_preview/)
+  assert.match(image.message, /outfit_index/)
 
   const invalid = await executeTool('declare_intent', { want: 'song' }, toolContext)
   assert.equal(invalid.status, 'validation_error')
@@ -3308,6 +3308,106 @@ test('turn contract keeps clarification precedence over delivery', () => {
   const check = applyFreeformOutputChecks('Here is a starting look for the trip.', ctx)
   assert.equal(check.block, true)
   assert.equal(check.blockType, 'tripScopeClarification', 'stop-and-ask beats deliver-more')
+})
+
+test('view_pieces returns truth lines with thumbnails and satisfies the verification gates', async () => {
+  const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season', declaredIntent: { want: 'cards', outfitCount: null, turnMode: null } }
+
+  const viewed = await executeTool('view_pieces', { ids: [seeded.top, seeded.bottom, seeded.shoe, 999999999] }, toolContext)
+  const byId = new Map(viewed.map(item => [item.id, item]))
+  assert.match(byId.get(seeded.top).truth, new RegExp(`^#${seeded.top} `), 'truth line uses the manifest format')
+  assert.ok(byId.get(seeded.top).image, 'thumbnail attached for pieces with photos')
+  assert.match(byId.get(999999999).note, /no active piece/)
+  assert.ok(toolContext.retrievedPieceIds.has(seeded.top), 'viewing records retrieval')
+  assert.ok(toolContext.visuallySeenPieceIds.has(seeded.top), 'viewing records visual verification')
+
+  // One view_pieces call satisfies both the retrieval gate AND the layer visual gate.
+  const layerTopId = insertPiece({
+    name: 'open weave overshirt cardigan',
+    category: 'top',
+    colors: ['cream'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'airy top layer worn open over a base',
+    fabric_weight: 'light',
+    opacity: 'open_weave',
+  })
+  await executeTool('view_pieces', { ids: [layerTopId], size: 'large' }, toolContext)
+  const proposed = await executeTool('propose_outfit', {
+    label: 'Viewed layered look',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: layerTopId, role: 'layer_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }, toolContext)
+  assert.equal(proposed.status, 'success')
+})
+
+test('render_preview renders a card from this turn and attaches the board for the chat', async () => {
+  const toolContext = {
+    occasion: 'city',
+    season: 'current season',
+    generatedOutfits: [{
+      label: 'Render me',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      pieces: [],
+      previewOnly: true
+    }]
+  }
+  const rendered = await executeTool('render_preview', { outfit_index: 1 }, toolContext)
+  assert.equal(rendered.status, 'success')
+  assert.ok(rendered.imageUrl, 'render returns an image url')
+  assert.equal(toolContext.renderedBoards.length, 1)
+  assert.equal(toolContext.renderedBoards[0].label, 'Render me')
+  assert.ok(toolContext.renderedBoards[0].imageUrl)
+  assert.equal(toolContext.freeformDiagnostics.renderCalls, 1)
+})
+
+test('render_preview refuses unverified piece_ids and bad indexes', async () => {
+  const toolContext = { generatedOutfits: [] }
+  const unverified = await executeTool('render_preview', { piece_ids: [seeded.top, seeded.bottom] }, toolContext)
+  assert.equal(unverified.status, 'validation_error')
+  assert.match(unverified.message, /verified this turn/)
+
+  const nothing = await executeTool('render_preview', {}, toolContext)
+  assert.equal(nothing.status, 'validation_error')
+
+  // Verified ids (e.g. from view_pieces) render fine.
+  await executeTool('view_pieces', { ids: [seeded.top, seeded.bottom] }, toolContext)
+  const ok = await executeTool('render_preview', { piece_ids: [seeded.top, seeded.bottom], label: 'Verified pair' }, toolContext)
+  assert.equal(ok.status, 'success')
+})
+
+test('turn contract blocks a declared image turn that never rendered', () => {
+  const ctx = {
+    question: 'can you generate a rough preview using those choices?',
+    declaredIntent: { want: 'image', outfitCount: null, turnMode: null },
+    generatedOutfits: [{ label: 'Card', pieceIds: [seeded.top] }],
+    freeformDiagnostics: { searchCalls: 1, proposeCalls: 1 }
+  }
+  const blocked = applyFreeformOutputChecks('Here are two directions I like for the layering.', ctx)
+  assert.equal(blocked.block, true)
+  assert.equal(blocked.blockType, 'imageNotDelivered')
+  assert.match(blocked.correctionMessage, /render_preview/)
+
+  const rendered = applyFreeformOutputChecks('Here is the render.', {
+    ...ctx,
+    freeformDiagnostics: { ...ctx.freeformDiagnostics, renderCalls: 1 }
+  })
+  assert.equal(rendered.block, false)
+})
+
+test('wardrobe_coverage returns exact grouped counts', async () => {
+  const toolContext = {}
+  const byCategory = await executeTool('wardrobe_coverage', {}, toolContext)
+  assert.equal(byCategory.group_by, 'category')
+  assert.ok(byCategory.counts.top >= 1)
+  assert.ok(byCategory.total_pieces >= 4)
+
+  const shoesOnly = await executeTool('wardrobe_coverage', { group_by: 'formality', category: 'shoes' }, toolContext)
+  assert.equal(shoesOnly.total_pieces, Object.values(shoesOnly.counts).reduce((a, b) => a + b, 0))
 })
 
 test('freeform ask retries the model once when prose cites unverified ids', async () => {

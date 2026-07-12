@@ -8,6 +8,7 @@ import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind } from './attributes.js'
+import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 
 // 2026-07-10: mechanical backstop, not just a prompt fix — confirmed live that the model kept passing
 // the app's hardcoded "Time zone: America/Los_Angeles" context string as search_wardrobe's `location`
@@ -301,6 +302,41 @@ export const STYLIST_TOOLS = [
     }
   },
   {
+    name: "view_pieces",
+    description: "Look at specific wardrobe pieces by ID: returns each piece's photo thumbnail plus a compact truth line. This is the cheap, preferred way to satisfy the verification contract — it verifies (and visually verifies) the exact IDs you intend to recommend, including layer/base pieces. Use search_wardrobe when you don't know which IDs you want yet; use get_garment_details only when you need deep styling rules and fit-caution text.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs to view (max 12 per call)." },
+        size: { type: "string", enum: ["thumb", "large"], description: "thumb (default): quick fit/color/texture read. large: construction detail — weave, lining, sheerness — for layer/base decisions." }
+      },
+      required: ["ids"]
+    }
+  },
+  {
+    name: "render_preview",
+    description: "Render an outfit image in the chat (a rough visual preview). Renders a card produced this turn by index, or explicit piece_ids taken from a verified card (e.g. THREAD STATE's current outfit set). Rendering is slow (up to a minute) — settle the outfit first and call this at most once or twice per turn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        outfit_index: { type: "integer", description: "1-based index into the outfit cards produced this turn." },
+        piece_ids: { type: "array", items: { type: "integer" }, description: "Alternative to outfit_index: explicit wardrobe piece IDs (must be verified this turn or belong to a verified card)." },
+        label: { type: "string", description: "Optional title for the rendered image." }
+      }
+    }
+  },
+  {
+    name: "wardrobe_coverage",
+    description: "Exact counts over the active wardrobe grouped by an attribute — for coverage and gap questions ('how many dressy shoes do I own?'). The manifest lists every piece; this gives exact numbers instead of hand-counting.",
+    input_schema: {
+      type: "object",
+      properties: {
+        group_by: { type: "string", enum: ["category", "formality", "fabric_weight", "fabric_category", "silhouette", "season", "occasions", "opacity"], description: "Attribute to group counts by. Default: category." },
+        category: { type: "string", description: "Optional: restrict counts to one category (e.g. shoes)." }
+      }
+    }
+  },
+  {
     name: "get_garment_details",
     description: "Retrieve full detailed styling rules, fit cautions, and AI garment intelligence for specific garment IDs.",
     input_schema: {
@@ -446,13 +482,13 @@ export async function executeTool(name, args, toolContext = {}) {
         if (want === 'cards') {
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. Contract: every card goes through propose_outfit with piece IDs verified this turn (search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. Contract: every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
           return {
             status: "success",
-            message: "Intent recorded: image. In-chat image rendering is not available — say so plainly, produce the best card/text alternative (declare again with want:'cards' if you compose), and point to the 'Generate outfit image' button on an outfit card for renders."
+            message: "Intent recorded: image. Call render_preview({ outfit_index }) for a card produced this turn, or render_preview({ piece_ids }) with IDs from a verified card (e.g. THREAD STATE's current outfit set). Settle which outfit to render first; rendering is slow, so call it once."
           }
         }
         return { status: "success", message: "Intent recorded: text. Answer conversationally; cite any wardrobe pieces as (ID <n>) and verify them this turn before recommending." }
@@ -661,6 +697,7 @@ export async function executeTool(name, args, toolContext = {}) {
             silhouette: p.silhouette,
             fabric_category: p.fabric_category,
             fabric_weight: p.fabric_weight,
+            opacity: p.opacity,
             neckline: p.neckline,
             sleeve_type: p.sleeve_type,
             length_hits_at: p.length_hits_at,
@@ -762,7 +799,7 @@ export async function executeTool(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnverifiedPieceBlocks')
           return {
             status: "validation_error",
-            message: `These pieces were not verified this turn: ${unverifiedPieces.map(p => `#${p.id} ${p.name}`).join(', ')}. The wardrobe manifest is an index, not garment truth — call get_garment_details (it returns photos) or search_wardrobe for them first, then call propose_outfit again with the same IDs.`,
+            message: `These pieces were not verified this turn: ${unverifiedPieces.map(p => `#${p.id} ${p.name}`).join(', ')}. The wardrobe manifest is an index, not garment truth — call view_pieces with these IDs (photos + truth lines) first, then call propose_outfit again with the same IDs.`,
             unverifiedIds: unverifiedPieces.map(p => Number(p.id))
           }
         }
@@ -779,7 +816,7 @@ export async function executeTool(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnseenLayerBlocks')
           return {
             status: "validation_error",
-            message: `Layer pieces must be visually verified this turn — construction risks (lining, sheerness, texture) are not in the tags. Call get_garment_details for ${unseenLayerPieces.map(p => `#${p.id} ${p.name}`).join(', ')} to see the photo${unseenLayerPieces.length === 1 ? '' : 's'}, confirm each works as a layer, then call propose_outfit again.`,
+            message: `Layer pieces must be visually verified this turn — construction risks (lining, sheerness, texture) are not in the tags. Call view_pieces (size:'large') for ${unseenLayerPieces.map(p => `#${p.id} ${p.name}`).join(', ')} to see the photo${unseenLayerPieces.length === 1 ? '' : 's'}, confirm each works as a layer, then call propose_outfit again.`,
             unseenLayerIds: unseenLayerPieces.map(p => Number(p.id))
           }
         }
@@ -909,6 +946,124 @@ export async function executeTool(name, args, toolContext = {}) {
           message: `Proposed "${label || 'Outfit'}" as a card with ${resolved.length} pieces${proposedOutfit.missingPieces.length ? ` and ${proposedOutfit.missingPieces.length} wardrobe gap(s)` : ''}.`,
           pieceNames: resolved.map(p => p.name)
         }
+      }
+      case 'view_pieces': {
+        const ids = (Array.isArray(args?.ids) ? args.ids : []).map(Number).filter(Number.isFinite).slice(0, 12)
+        if (!ids.length) {
+          return { status: "validation_error", message: "view_pieces needs ids: [<wardrobe piece ids>]." }
+        }
+        const maxPx = args?.size === 'large' ? 896 : 448
+        const allowedSet = toolContext && toolContext.allowedPieceIds
+          ? (toolContext.allowedPieceIds instanceof Set
+            ? toolContext.allowedPieceIds
+            : new Set(Array.isArray(toolContext.allowedPieceIds) ? toolContext.allowedPieceIds.map(Number) : []))
+          : null
+        const viewed = []
+        for (const id of ids) {
+          if (allowedSet && !allowedSet.has(id)) {
+            viewed.push({ id, note: `piece ${id} is not available for the current request` })
+            continue
+          }
+          const row = db.prepare("SELECT * FROM pieces WHERE id = ? AND status = 'active'").get(id)
+          if (!row) {
+            viewed.push({ id, note: `no active piece with id ${id}` })
+            continue
+          }
+          const parsed = parsePiece(row)
+          let image = null
+          const photoFile = parsed.worn_photo || parsed.photo || ''
+          if (photoFile) {
+            const filePath = path.join(uploadsDir, photoFile)
+            if (fs.existsSync(filePath)) {
+              try {
+                const thumb = await prepareWardrobeThumb(filePath, `${parsed.id}:${photoFile}`, { maxPx })
+                image = { mime: thumb.media_type, base64: thumb.data }
+              } catch (err) {
+                console.error(`Error loading view_pieces thumbnail for piece ${parsed.id}:`, err)
+              }
+            }
+          }
+          viewed.push({
+            id: parsed.id,
+            name: parsed.name,
+            truth: buildWardrobeManifestLine(parsed),
+            ...(image ? { image } : { note: 'no photo on file — tags are the only truth for this piece' })
+          })
+        }
+        recordRetrievedPieces(toolContext, viewed.filter(item => item.name).map(item => item.id))
+        recordRetrievedPieces(toolContext, viewed.filter(item => item.image).map(item => item.id), { seen: true })
+        bumpFreeformDiagnostic(toolContext, 'viewCalls')
+        return viewed
+      }
+      case 'render_preview': {
+        const cards = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
+        const index = Number(args?.outfit_index)
+        let label = String(args?.label || '').trim()
+        let renderPieceIds = []
+        if (Number.isInteger(index) && index >= 1 && index <= cards.length) {
+          const target = cards[index - 1]
+          renderPieceIds = (Array.isArray(target?.pieceIds) && target.pieceIds.length
+            ? target.pieceIds
+            : (Array.isArray(target?.pieces) ? target.pieces.map(piece => piece?.id) : [])
+          ).map(Number).filter(Boolean)
+          label = label || target?.label || `Outfit ${index}`
+        } else if (Array.isArray(args?.piece_ids) && args.piece_ids.length) {
+          renderPieceIds = args.piece_ids.map(Number).filter(Number.isFinite)
+          const { retrieved: renderRetrieved, known: renderKnown } = verifiedPieceIdSets(toolContext)
+          const unverifiedRender = renderPieceIds.filter(id => !renderRetrieved.has(id) && !renderKnown.has(id))
+          if (unverifiedRender.length) {
+            return {
+              status: "validation_error",
+              message: `render_preview piece_ids must be verified this turn or belong to a verified card. Unverified: ${unverifiedRender.join(', ')}. Call view_pieces for them first.`
+            }
+          }
+          label = label || 'Outfit preview'
+        } else {
+          return { status: "validation_error", message: "render_preview needs outfit_index (a card produced this turn) or piece_ids (from a verified card, e.g. THREAD STATE's current outfit set)." }
+        }
+        const renderRows = renderPieceIds
+          .map(id => db.prepare("SELECT * FROM pieces WHERE id = ? AND status = 'active'").get(id))
+          .filter(Boolean)
+          .map(parsePiece)
+          .slice(0, 6)
+        if (renderRows.length < 2) {
+          return { status: "validation_error", message: "render_preview needs at least two active wardrobe pieces." }
+        }
+        const { createWholeWardrobeOutfitImage } = await import('./core.js')
+        const rendered = await createWholeWardrobeOutfitImage({
+          outfit: { label },
+          pieces: renderRows,
+          occasion: toolContext.occasion || 'casual',
+          season: toolContext.season || 'current season',
+          index: 1
+        })
+        const renderedBoard = {
+          label,
+          reason: 'Rendered in chat via render_preview.',
+          pieces: renderRows.map(piece => ({ id: piece.id, name: piece.name, category: piece.category })),
+          imageUrl: rendered.imageUrl,
+          debug: { renderer: rendered.renderer, timings: rendered.timings }
+        }
+        toolContext.renderedBoards = [...(Array.isArray(toolContext.renderedBoards) ? toolContext.renderedBoards : []), renderedBoard]
+        bumpFreeformDiagnostic(toolContext, 'renderCalls')
+        return { status: "success", message: `Rendered "${label}" (${rendered.renderer}). The image will appear in the chat with your answer.`, imageUrl: rendered.imageUrl }
+      }
+      case 'wardrobe_coverage': {
+        const groupOptions = ['category', 'formality', 'fabric_weight', 'fabric_category', 'silhouette', 'season', 'occasions', 'opacity']
+        const groupField = groupOptions.indexOf(String(args?.group_by || '')) !== -1 ? String(args.group_by) : 'category'
+        const activeRows = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+        const scoped = args?.category
+          ? activeRows.filter(piece => String(piece.category || '') === String(args.category))
+          : activeRows
+        const counts = {}
+        for (const piece of scoped) {
+          const values = groupField === 'occasions'
+            ? (Array.isArray(piece.occasions) && piece.occasions.length ? piece.occasions : ['untagged'])
+            : [piece[groupField] || 'untagged']
+          for (const value of values) counts[value] = (counts[value] || 0) + 1
+        }
+        bumpFreeformDiagnostic(toolContext, 'coverageCalls')
+        return { group_by: groupField, total_pieces: scoped.length, counts }
       }
       case 'get_garment_details': {
         const { ids } = args
