@@ -11,11 +11,16 @@ Reading convention (see [use-my-wardrobe.md](use-my-wardrobe.md)): rectangles ar
 the app's own code, `LLM ·` hexagons are the text model, `Image ·` hexagons are
 the image model (GPT-4o), diamonds are decisions.
 
+> **Routing note.** The piece panel's **"Explore additions"** toggle (submit
+> button: **"Suggest ideal additions"**) lands *here* — not in the
+> [selected-piece composer](selected-piece-composer.md)'s ideal branch, which is
+> reachable only via free-typed wording. See the routing note there.
+
 ## Overview (PM altitude)
 
 ```mermaid
 flowchart TD
-    A["Piece in 'ideal / new pieces' mode<br/>(or a board → ideal additions)"] --> P{{"LLM · editorial directions<br/>up to 3 ideal new-piece ideas"}}
+    A["Piece → ask stylist → 'Explore additions'<br/>→ 'Suggest ideal additions'"] --> P{{"LLM · editorial directions<br/>up to 3 ideal new-piece ideas"}}
     P --> D["Show direction cards<br/>title · missing pieces · why · watch-for"]
     D --> R{"Render the directions?"}
     R -->|"keep as text"| T["Directions stay as cards"]
@@ -56,7 +61,7 @@ Three takeaways for a PM:
 
 | Stage | What happens | Where |
 | --- | --- | --- |
-| A | Piece in "ideal / new pieces" mode, or a board → ideal additions | `StylistChat.jsx:3256` (`shouldGenerateEditorialVisuals`), `:3021` |
+| A | Select a piece → ask stylist → **"Explore additions"** toggle → **"Suggest ideal additions"** (`StylistChat.jsx:4697`/`:4977`); also a board → "Explore ideal additions", or free-typed editorial phrasing | `StylistChat.jsx:3256` (`shouldGenerateEditorialVisuals`), `:3021` |
 | P | Generate up to 3 directions | `routes/ai.js:3256` → `askStylist(EDITORIAL_NEW_PIECES_SYSTEM)` |
 | D | Render direction cards | frontend |
 | E | Render one direction | `routes/ai.js:3353` → `createEditorialConceptImage` (`core.js:3224`) |

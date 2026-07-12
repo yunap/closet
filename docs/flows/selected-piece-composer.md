@@ -2,15 +2,22 @@
 
 You open one garment and ask the stylist to build outfits around it. Unlike
 [Use my wardrobe](use-my-wardrobe.md), the selected piece is the **anchor**: it
-is pinned into every outfit, the candidate pool is pre-narrowed to its best
-supporting pieces, and the flow branches on whether you want wardrobe-only
-outfits or "ideal" ideas that may reach beyond what you own.
+is pinned into every outfit and the candidate pool is pre-narrowed to its best
+supporting pieces. The main path composes **wardrobe** outfits; a secondary
+`idealMode` path re-ranks candidates and may suggest pieces you don't own.
 
 Same reading convention as the rest of the atlas (see
 [use-my-wardrobe.md](use-my-wardrobe.md)): **rectangles are the app's own code,
 hexagons labelled `LLM ·` are calls to the AI model, diamonds are decisions.**
-Note this flow can hit the model *twice* (ideal mode: vision critic, then text
-composer).
+
+> **Routing note.** The piece "ask stylist" panel has two toggles:
+> **"Use my wardrobe"** → this flow's wardrobe path; **"Explore additions"** →
+> a *different* flow, [editorial ideal additions](editorial-ideal-additions.md)
+> (family C), **not** the ideal branch below. This flow's `idealMode` branch is
+> reached only when a free-typed question trips the server-side `ideal/missing`
+> regex *without* matching the frontend's editorial regex — an edge path, not a
+> button. (The `idealMode` here can still hit the model twice: vision critic,
+> then text composer.)
 
 ## Overview (PM altitude)
 
@@ -19,9 +26,9 @@ flowchart TD
     A["You open a piece<br/>+ occasion, mood, mode"] --> B["Load anchor + active wardrobe"]
     B --> C["Rank supporting candidates<br/>score to ~32 best supports"]
     C --> D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
-    D --> M{"Which mode?"}
-    M -->|wardrobe outfits| E{{"LLM · visual composer<br/>anchor pinned, from photos"}}
-    M -->|ideal ideas| V{{"LLM · vision critic<br/>ranks candidates"}} --> E2{{"LLM · text composer<br/>may add missing pieces"}}
+    D --> M{"idealMode?<br/>set by free-text regex"}
+    M -->|"no — default (wardrobe)"| E{{"LLM · visual composer<br/>anchor pinned, from photos"}}
+    M -->|"yes — free-typed 'ideal/missing'"| V{{"LLM · vision critic<br/>ranks candidates"}} --> E2{{"LLM · text composer<br/>may add missing pieces"}}
     E --> F{"Any outfits<br/>returned?"}
     E2 --> F
     F -->|yes| R["Comfort-footwear repair<br/>then show outfit cards"]
@@ -42,9 +49,12 @@ Three things a PM should take away:
 - **The anchor is non-negotiable.** The selected garment is pinned into every
   proposed outfit (it bypasses every roster gate), and the composer is told "the
   selected garment is the premise, not one option among many."
-- **Two model paths, chosen by mode.** Wardrobe mode is a single vision call that
-  composes from photos. "Ideal" mode first runs a vision *critic* to re-rank
-  candidates, then a text composer that may suggest pieces you don't own yet.
+- **Two model paths.** The default is a single vision call that composes wardrobe
+  outfits from photos. A secondary `idealMode` path (free-text only, see the
+  routing note) first runs a vision *critic* to re-rank candidates, then a text
+  composer that may suggest pieces you don't own. The **"Explore additions"
+  button does not use this path** — it routes to
+  [editorial ideal additions](editorial-ideal-additions.md).
 - **This flow always returns something** — and unlike advisor mode, it *does*
   repair (see below).
 
@@ -76,9 +86,15 @@ Same roster builder (`buildVisualComposerRoster`), different framing:
 
 Engineer notes:
 
-- **Mode detection** (`ai.js:2114`) is flag- *and* text-driven: `idealMode` /
-  `idealOnlyMode` come from the request booleans or regexes on the question
-  ("ideal", "missing", "not in my wardrobe", …). This picks the branch at `M`.
+- **Mode detection** (`ai.js:2114`): `idealMode` / `idealOnlyMode` come from the
+  request booleans *or* a regex on the question ("ideal", "missing", "not in my
+  wardrobe", …). In practice the booleans are unreachable from the UI — the only
+  toggle that sets them ("Explore additions") *also* sets `editorialVisualMode`,
+  which routes to `/editorial-directions-preview` instead
+  ([editorial-ideal-additions.md](editorial-ideal-additions.md)) and never calls
+  this endpoint. So the ideal branch here is effectively **text-driven only**, and
+  its regex differs from the frontend's editorial regex (`StylistChat.jsx:3254`) —
+  routing can hinge on exact wording.
 - **Wardrobe path** (`composeSelectedPieceVisualWardrobeOutfits`): builds the
   roster from `[anchor, ...supports]`, shows the anchor photo at `high` detail
   and supports at adaptive detail, and calls the model once with the

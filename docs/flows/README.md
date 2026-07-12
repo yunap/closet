@@ -36,7 +36,7 @@ All three intake flows are in [piece-intake-and-tagging.md](piece-intake-and-tag
 
 | Flow                          | Entry point                   | Endpoint                                  | Status |
 | ----------------------------- | ----------------------------- | ----------------------------------------- | ------ |
-| [Ideal styling directions](editorial-ideal-additions.md) | Piece → "ideal / new pieces" | `/editorial-directions-preview` | **done** |
+| [Ideal styling directions](editorial-ideal-additions.md) | Piece → "Explore additions" → "Suggest ideal additions" | `/editorial-directions-preview` | **done** |
 | [Render one editorial look](editorial-ideal-additions.md) | A direction card → render | `/editorial-render-one` | **done** |
 | [Ideal additions ("shop gap")](editorial-ideal-additions.md) | Directions → sheet | `/generate-ideal-additions-preview-sheet` | **done** |
 
