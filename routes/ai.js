@@ -3684,6 +3684,7 @@ router.post('/ask', async (req, res) => {
     })
     // Pieces already inside verified cards — this turn's precompose and the
     // thread's current outfit set — count as verified for citation purposes.
+    toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
     toolContext.knownOutfitPieceIds = [...new Set([
       ...generatedOutfitsForTurn.flatMap(outfit => Array.isArray(outfit?.pieceIds) ? outfit.pieceIds : []),
       ...((payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : []))
