@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { STYLIST_SYSTEM } from './prompts.js'
-import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic } from './tools.js'
+import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
 import { tripRequestNeedsScopeClarification } from './stylingIntent.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
@@ -113,7 +113,7 @@ export function extractPieceIdsFromProse(answerText = '') {
 // { block: false } after recording any soft flag (0a) as a diagnostic for the client's collapsed
 // details affordance. Retry flags are passed in per-kind so exhausting one retry budget doesn't
 // consume the other.
-export function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrectionRetried = false, destinationClarificationRetried = false, outfitProseRetried = false, tripScopeClarificationRetried = false, outfitCountRetried = false } = {}) {
+export function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrectionRetried = false, destinationClarificationRetried = false, outfitProseRetried = false, tripScopeClarificationRetried = false, outfitCountRetried = false, unverifiedCitationRetried = false } = {}) {
   const contradiction = !zeroResultCorrectionRetried && findZeroResultContradiction(answerText, toolContext)
   if (contradiction) {
     bumpFreeformDiagnostic(toolContext, 'zeroResultContradictionBlocks')
@@ -121,6 +121,26 @@ export function applyFreeformOutputChecks(answerText, toolContext, { zeroResultC
       block: true,
       blockType: 'zeroResultContradiction',
       correctionMessage: `You searched for "${contradiction}" and found nothing — do not describe this as a piece Yuna owns. Either offer a real alternative via search_wardrobe or say plainly that she doesn't have this piece.`
+    }
+  }
+  // Retrieval rule (step 3): a piece ID cited in prose must have been verified this
+  // turn — retrieved via search/details, or part of a verified card (this turn's
+  // generated outfits or the thread's current outfit set). With the wardrobe
+  // manifest now in the prompt, the model can name real IDs it has never actually
+  // checked; the manifest is an index, not garment truth.
+  if (!unverifiedCitationRetried) {
+    const citedIds = extractPieceIdsFromProse(answerText)
+    if (citedIds.length) {
+      const { retrieved, known } = verifiedPieceIdSets(toolContext)
+      const unverifiedCited = citedIds.filter(id => !retrieved.has(id) && !known.has(id))
+      if (unverifiedCited.length) {
+        bumpFreeformDiagnostic(toolContext, 'unverifiedCitationBlocks')
+        return {
+          block: true,
+          blockType: 'unverifiedCitation',
+          correctionMessage: `You cited piece ID(s) ${unverifiedCited.join(', ')} without verifying them this turn — the wardrobe manifest is an index, not garment truth. Call get_garment_details for ${unverifiedCited.map(id => `ID ${id}`).join(', ')} to confirm construction and see the photos, then answer again (or drop the unverified references).`
+        }
+      }
     }
   }
   // 2026-07-10: the STYLIST_SYSTEM prompt bullet asking the model to confirm trip scope before
@@ -504,7 +524,29 @@ export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, m
 export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
   const testResponse = takeTestAiResponse({ system, messages, maxTokens })
   if (testResponse != null) {
-    const answerStr = typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
+    // Mirror the real loop's output checks and one-retry-per-guard semantics so
+    // contract tests can exercise guard behavior end-to-end (previously this
+    // short-circuit skipped the checks entirely, making every guard untestable
+    // through /ask).
+    let answerStr = typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
+    const retriedFlags = {}
+    for (let i = 0; i < 6; i++) {
+      const check = applyFreeformOutputChecks(answerStr, toolContext, retriedFlags)
+      if (!check.block) break
+      if (check.blockType === 'destinationClarification') retriedFlags.destinationClarificationRetried = true
+      else if (check.blockType === 'outfitProse') retriedFlags.outfitProseRetried = true
+      else if (check.blockType === 'tripScopeClarification') retriedFlags.tripScopeClarificationRetried = true
+      else if (check.blockType === 'outfitCount') retriedFlags.outfitCountRetried = true
+      else if (check.blockType === 'unverifiedCitation') retriedFlags.unverifiedCitationRetried = true
+      else retriedFlags.zeroResultCorrectionRetried = true
+      const retryResponse = takeTestAiResponse({
+        system,
+        messages: [...messages, { role: 'assistant', content: answerStr }, { role: 'user', content: check.correctionMessage }],
+        maxTokens
+      })
+      if (retryResponse == null) break
+      answerStr = typeof retryResponse === 'string' ? retryResponse : JSON.stringify(retryResponse)
+    }
     return { answer: answerStr, savedCorrections: [] }
   }
 
@@ -517,6 +559,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   let outfitProseRetried = false
   let tripScopeClarificationRetried = false
   let outfitCountRetried = false
+  let unverifiedCitationRetried = false
 
   for (let iter = 0; iter < 7; iter++) {
     if (AI_PROVIDER === 'openai') {
@@ -598,12 +641,13 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = message.content || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, outfitProseRetried, tripScopeClarificationRetried, outfitCountRetried })
+        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, outfitProseRetried, tripScopeClarificationRetried, outfitCountRetried, unverifiedCitationRetried })
         if (check.block) {
           if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
           else if (check.blockType === 'outfitProse') outfitProseRetried = true
           else if (check.blockType === 'tripScopeClarification') tripScopeClarificationRetried = true
           else if (check.blockType === 'outfitCount') outfitCountRetried = true
+          else if (check.blockType === 'unverifiedCitation') unverifiedCitationRetried = true
           else zeroResultCorrectionRetried = true
           currentMessages.push({ role: 'assistant', content: finalText })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
@@ -678,12 +722,13 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = response.content?.[0]?.text || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, outfitProseRetried, tripScopeClarificationRetried, outfitCountRetried })
+        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, outfitProseRetried, tripScopeClarificationRetried, outfitCountRetried, unverifiedCitationRetried })
         if (check.block) {
           if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
           else if (check.blockType === 'outfitProse') outfitProseRetried = true
           else if (check.blockType === 'tripScopeClarification') tripScopeClarificationRetried = true
           else if (check.blockType === 'outfitCount') outfitCountRetried = true
+          else if (check.blockType === 'unverifiedCitation') unverifiedCitationRetried = true
           else zeroResultCorrectionRetried = true
           currentMessages.push({ role: 'assistant', content: response.content })
           currentMessages.push({ role: 'user', content: check.correctionMessage })

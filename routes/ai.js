@@ -3663,7 +3663,12 @@ router.post('/ask', async (req, res) => {
       // question (extracted by the model as search_wardrobe's own `location` arg) or an already-
       // established req.body.location both still take priority over it, per tools.js's merge order.
       location: req.body.location || getHomeLocation(),
-      currentDate: req.body.currentDate || ''
+      currentDate: req.body.currentDate || '',
+      // Step 3 (retrieval rule): per-turn tracking of which piece ids the model
+      // retrieved / actually saw — enforced by propose_outfit and the prose
+      // citation check in applyFreeformOutputChecks.
+      retrievedPieceIds: new Set(),
+      visuallySeenPieceIds: new Set()
     }
     const payload = await buildStylistConversationPayload({
       ...req.body,
@@ -3673,6 +3678,12 @@ router.post('/ask', async (req, res) => {
       season: activePrecompose?.season || req.body.season,
       activity: activePrecompose?.activity || req.body.activity
     })
+    // Pieces already inside verified cards — this turn's precompose and the
+    // thread's current outfit set — count as verified for citation purposes.
+    toolContext.knownOutfitPieceIds = [...new Set([
+      ...generatedOutfitsForTurn.flatMap(outfit => Array.isArray(outfit?.pieceIds) ? outfit.pieceIds : []),
+      ...((payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : []))
+    ].map(Number).filter(Boolean))]
     const { answer, savedCorrections } = await askStylistWithTools({
       ...payload,
       toolContext

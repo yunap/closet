@@ -382,6 +382,34 @@ export const STYLIST_TOOLS = [
   }
 ]
 
+// Per-turn retrieval tracking (step 3 of the freeform "router → stylist" migration):
+// tools record which piece ids the model has retrieved this turn, and which of
+// those it has actually SEEN (photo attached). propose_outfit and the prose
+// citation check enforce against these sets — the wardrobe manifest is an index,
+// not garment truth.
+export function recordRetrievedPieces(toolContext = {}, ids = [], { seen = false } = {}) {
+  if (!toolContext || typeof toolContext !== 'object') return
+  if (!(toolContext.retrievedPieceIds instanceof Set)) toolContext.retrievedPieceIds = new Set()
+  if (!(toolContext.visuallySeenPieceIds instanceof Set)) toolContext.visuallySeenPieceIds = new Set()
+  for (const raw of ids) {
+    const id = Number(raw)
+    if (!Number.isFinite(id) || id <= 0) continue
+    toolContext.retrievedPieceIds.add(id)
+    if (seen) toolContext.visuallySeenPieceIds.add(id)
+  }
+}
+
+export function verifiedPieceIdSets(toolContext = {}) {
+  const retrieved = toolContext?.retrievedPieceIds instanceof Set ? toolContext.retrievedPieceIds : new Set()
+  const seen = toolContext?.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+  const known = new Set([
+    ...(Array.isArray(toolContext?.generatedOutfits) ? toolContext.generatedOutfits : [])
+      .flatMap(outfit => Array.isArray(outfit?.pieceIds) ? outfit.pieceIds : []),
+    ...(Array.isArray(toolContext?.knownOutfitPieceIds) ? toolContext.knownOutfitPieceIds : []),
+  ].map(Number).filter(Number.isFinite))
+  return { retrieved, seen, known }
+}
+
 export async function executeTool(name, args, toolContext = {}) {
   console.log(`\n🤖 [Agent Tool Call] ${name} (${JSON.stringify(args)})`)
   try {
@@ -628,6 +656,9 @@ export async function executeTool(name, args, toolContext = {}) {
         if (gateExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', gateExcludedCount)
         if (requestExcludedCount > 0) bumpFreeformDiagnostic(toolContext, 'gateExcludedTotal', requestExcludedCount)
 
+        recordRetrievedPieces(toolContext, resultList.filter(item => item.id).map(item => item.id))
+        recordRetrievedPieces(toolContext, resultList.filter(item => item.image).map(item => item.id), { seen: true })
+
         // Spec 3 Part 0b: a free-text named-garment query that returned nothing is a known-false claim
         // waiting to happen — track it so the final answer can be checked for describing it as real.
         if (query && !results.length && toolContext) {
@@ -661,6 +692,41 @@ export async function executeTool(name, args, toolContext = {}) {
             status: "error",
             message: "One or more piece IDs did not resolve to an active wardrobe item. Re-check via search_wardrobe before proposing.",
             unresolvedIds
+          }
+        }
+
+        // Retrieval rule (step 3): every proposed piece must have been verified THIS
+        // turn — retrieved via search/details, or already part of a verified card
+        // (this turn's generated outfits or the thread's current outfit set). The
+        // manifest alone is an index, not verification. No broken diagnostic card
+        // here: this is a recoverable workflow error (fetch, then re-propose), not
+        // a bad outfit.
+        const { retrieved: retrievedIdsThisTurn, seen: seenIdsThisTurn, known: knownCardIds } = verifiedPieceIdSets(toolContext)
+        const unverifiedPieces = resolved.filter(p =>
+          !retrievedIdsThisTurn.has(Number(p.id)) && !knownCardIds.has(Number(p.id)))
+        if (unverifiedPieces.length) {
+          bumpFreeformDiagnostic(toolContext, 'proposeUnverifiedPieceBlocks')
+          return {
+            status: "validation_error",
+            message: `These pieces were not verified this turn: ${unverifiedPieces.map(p => `#${p.id} ${p.name}`).join(', ')}. The wardrobe manifest is an index, not garment truth — call get_garment_details (it returns photos) or search_wardrobe for them first, then call propose_outfit again with the same IDs.`,
+            unverifiedIds: unverifiedPieces.map(p => Number(p.id))
+          }
+        }
+
+        // Layered/base pieces carry construction risks the tags cannot capture
+        // (lining, sheerness, true texture) — the model must have SEEN the photo
+        // this turn before proposing them as a layer. Pieces with no photo at all
+        // are exempt (there is nothing to look at; tags are the only truth).
+        const unseenLayerPieces = resolved.filter(p =>
+          (p.role === 'layer_top' || p.role === 'layer_bottom') &&
+          (p.photo || p.worn_photo) &&
+          !seenIdsThisTurn.has(Number(p.id)))
+        if (unseenLayerPieces.length) {
+          bumpFreeformDiagnostic(toolContext, 'proposeUnseenLayerBlocks')
+          return {
+            status: "validation_error",
+            message: `Layer pieces must be visually verified this turn — construction risks (lining, sheerness, texture) are not in the tags. Call get_garment_details for ${unseenLayerPieces.map(p => `#${p.id} ${p.name}`).join(', ')} to see the photo${unseenLayerPieces.length === 1 ? '' : 's'}, confirm each works as a layer, then call propose_outfit again.`,
+            unseenLayerIds: unseenLayerPieces.map(p => Number(p.id))
           }
         }
 
@@ -839,6 +905,8 @@ export async function executeTool(name, args, toolContext = {}) {
             image: imageData
           })
         }
+        recordRetrievedPieces(toolContext, details.filter(d => d.name).map(d => d.id))
+        recordRetrievedPieces(toolContext, details.filter(d => d.image).map(d => d.id), { seen: true })
         return details
       }
       case 'get_last_outfit_evaluation': {
