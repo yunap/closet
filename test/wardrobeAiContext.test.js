@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import {
   autoStylingTrustDecision,
   buildWardrobePieceTruthText,
+  buildWardrobeManifest,
+  buildWardrobeManifestLine,
 } from '../src/utils/wardrobeAiContext.js'
 
 test('piece truth text preserves bottom construction facts for AI prompts', () => {
@@ -115,4 +117,68 @@ test('auto styling trust does not treat bohemian or folk/artisan as inherently b
 
   assert.equal(decision.allowed, true)
   assert.deepEqual(decision.reasons, [])
+})
+
+test('manifest line is compact, carries attributes, trust flags, and low-confidence markers', () => {
+  const line = buildWardrobeManifestLine({
+    id: 132,
+    name: 'cream textured knit top',
+    category: 'top',
+    reads_as: 'soft cream texture',
+    fabric_category: 'knit',
+    fabric_weight: 'medium',
+    silhouette: 'relaxed',
+    length_hits_at: 'hip',
+    formality: 'everyday',
+    occasions: ['casual', 'city'],
+    season: 'warm',
+    recommendation_status: 'needs_fit_review',
+    fit_confidence: 'low',
+    role_permission: 'support_only',
+    style_profile_json: {
+      _confidence: { silhouette: 'low', fabric_category: 'high' },
+    },
+  })
+
+  assert.match(line, /^#132 cream textured knit top — /)
+  assert.match(line, /fabric knit\/medium/)
+  assert.match(line, /silhouette relaxed\?/, 'low-confidence field carries a ? marker')
+  assert.match(line, /hits hip/)
+  assert.match(line, /formality everyday/)
+  assert.match(line, /occ casual\+city/)
+  assert.match(line, /season warm/)
+  assert.match(line, /\[trust:needs_fit_review fit:low role:support_only\]/)
+  assert.equal(line.includes('\n'), false, 'manifest line stays a single line')
+})
+
+test('manifest line omits noise for a fully trusted solid piece', () => {
+  const line = buildWardrobeManifestLine({
+    id: 7,
+    name: 'black straight trousers',
+    category: 'bottom',
+    reads_as: 'quiet dark column',
+    pattern_complexity: 'solid',
+    fabric_category: 'twill',
+    fit_confidence: 'high',
+    recommendation_status: 'trusted',
+    role_permission: 'auto',
+    season: 'year-round',
+  })
+
+  assert.match(line, /^#7 black straight trousers — quiet dark column; fabric twill$/)
+})
+
+test('manifest groups by category with counts in deterministic id order', () => {
+  const manifest = buildWardrobeManifest([
+    { id: 9, name: 'blue tee', category: 'top' },
+    { id: 3, name: 'white shirt', category: 'top' },
+    { id: 5, name: 'black loafers', category: 'shoes' },
+  ], { groupFor: piece => piece.category })
+
+  const topSection = manifest.split('\n\n').find(section => section.startsWith('TOPS (2):'))
+  assert.ok(topSection, 'top group carries its count')
+  assert.ok(manifest.includes('SHOES (1):'))
+  const shirtIndex = topSection.indexOf('#3 white shirt')
+  const teeIndex = topSection.indexOf('#9 blue tee')
+  assert.ok(shirtIndex !== -1 && teeIndex !== -1 && shirtIndex < teeIndex, 'pieces sorted by id within group')
 })

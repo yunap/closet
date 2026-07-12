@@ -235,3 +235,82 @@ export function buildWardrobePieceTruthText(piece = {}) {
 
   return text
 }
+
+// ── Wardrobe manifest (compact whole-closet index for the stylist prompt) ─────
+// One deterministic line per piece: decision-relevant attributes only, with a
+// "?" suffix on low-confidence tag values and [flags] for trust limits. Kept
+// byte-stable for a given wardrobe so the prompt prefix stays cache-friendly.
+
+const MANIFEST_LOW_CONFIDENCE_SUFFIX = '?'
+
+function manifestValue(piece, field, value) {
+  if (!value) return ''
+  return getFieldConfidence(piece, field) === 'low'
+    ? `${value}${MANIFEST_LOW_CONFIDENCE_SUFFIX}`
+    : String(value)
+}
+
+export function buildWardrobeManifestLine(piece = {}) {
+  const colors = Array.isArray(piece.colors) ? piece.colors.filter(Boolean) : []
+  const color = piece.reads_as || piece.background_color || colors.join('/')
+  const fabric = piece.fabric_category
+    ? `${manifestValue(piece, 'fabric_category', piece.fabric_category)}${piece.fabric_weight ? `/${manifestValue(piece, 'fabric_weight', piece.fabric_weight)}` : ''}`
+    : ''
+  const pattern = piece.pattern_complexity && piece.pattern_complexity !== 'solid'
+    ? [piece.pattern_type, piece.pattern_scale].filter(Boolean).join('/')
+    : ''
+  const occasions = Array.isArray(piece.occasions) ? piece.occasions.filter(Boolean) : []
+
+  const attrs = [
+    color,
+    fabric ? `fabric ${fabric}` : '',
+    piece.silhouette ? `silhouette ${manifestValue(piece, 'silhouette', piece.silhouette)}` : '',
+    piece.length_hits_at ? `hits ${manifestValue(piece, 'length_hits_at', piece.length_hits_at)}` : '',
+    pattern ? `pattern ${pattern}` : '',
+    piece.formality ? `formality ${manifestValue(piece, 'formality', piece.formality)}` : '',
+    piece.heel_height ? `heel ${manifestValue(piece, 'heel_height', piece.heel_height)}` : '',
+    occasions.length ? `occ ${occasions.join('+')}` : '',
+    piece.season && piece.season !== 'year-round' ? `season ${piece.season}` : '',
+  ].filter(Boolean).join('; ')
+
+  const fitConfidence = String(piece.fit_confidence || '')
+  const flags = [
+    piece.recommendation_status && piece.recommendation_status !== 'trusted' ? `trust:${piece.recommendation_status}` : '',
+    fitConfidence && fitConfidence !== 'unknown' && fitConfidence !== 'high' && fitConfidence !== 'trusted' ? `fit:${fitConfidence}` : '',
+    piece.role_permission && piece.role_permission !== 'auto' ? `role:${piece.role_permission}` : '',
+    piece.tag_state === 'provisional' ? 'tags:provisional' : '',
+  ].filter(Boolean)
+
+  return `#${piece.id} ${piece.name || 'unnamed piece'} — ${attrs}${flags.length ? ` [${flags.join(' ')}]` : ''}`
+}
+
+const MANIFEST_GROUP_ORDER = ['top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory', 'other']
+const MANIFEST_GROUP_LABELS = {
+  top: 'TOPS',
+  bottom: 'BOTTOMS',
+  dress: 'DRESSES',
+  shoes: 'SHOES',
+  outerwear: 'OUTERWEAR',
+  accessory: 'ACCESSORIES',
+  other: 'OTHER',
+}
+
+export function buildWardrobeManifest(pieces = [], { groupFor } = {}) {
+  const resolveGroup = typeof groupFor === 'function'
+    ? (piece) => String(groupFor(piece) || 'other').toLowerCase()
+    : (piece) => String(piece?.category || 'other').toLowerCase()
+  const grouped = new Map(MANIFEST_GROUP_ORDER.map(group => [group, []]))
+  for (const piece of pieces) {
+    const group = resolveGroup(piece)
+    if (!grouped.has(group)) grouped.set(group, [])
+    grouped.get(group).push(piece)
+  }
+  const sections = []
+  for (const [group, groupPieces] of grouped) {
+    if (!groupPieces.length) continue
+    const sorted = [...groupPieces].sort((a, b) => Number(a.id) - Number(b.id))
+    const label = MANIFEST_GROUP_LABELS[group] || group.toUpperCase()
+    sections.push(`${label} (${sorted.length}):\n${sorted.map(buildWardrobeManifestLine).join('\n')}`)
+  }
+  return sections.join('\n\n')
+}

@@ -1718,8 +1718,13 @@ test('freeform ask surfaces established styling context for follow-up generation
   assert.equal(json.structuredOutfitsActivity, 'walking')
 
   const lastCall = aiCalls.at(-1)
-  assert.match(lastCall.system, /Established styling context in this thread: occasion=evening; activity=walking; season=current season; mood=moody polish; mission=wildcard/)
-  assert.match(lastCall.system, /Reuse these for any follow-up outfit generation unless the user's message changes them/)
+  assert.match(lastCall.system, /THREAD STATE \(STRUCTURED\):/)
+  assert.ok(lastCall.system.includes('"occasion": "evening"'))
+  assert.ok(lastCall.system.includes('"activity": "walking"'))
+  assert.ok(lastCall.system.includes('"season": "current season"'))
+  assert.ok(lastCall.system.includes('"mood": "moody polish"'))
+  assert.ok(lastCall.system.includes('"mission": "wildcard"'))
+  assert.match(lastCall.system, /Reuse its values for follow-ups unless the user changes them/)
 })
 
 test('freeform ask outfit follow-up does not repeat full critique template', async () => {
@@ -1817,7 +1822,7 @@ test('freeform ask named-place day trip with activity resolves weather live inst
   assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
   const lastCall = aiCalls.at(-1)
   assert.doesNotMatch(lastCall.system, /TRAVEL WEATHER BLOCKER/)
-  assert.match(lastCall.system, /weather=resolve live from named destination/)
+  assert.ok(lastCall.system.includes('"weather_resolution": "resolve live from named destination"'))
   assert.match(lastCall.system, /Pass the city\/place as `location` on 'search_wardrobe'/)
 })
 
@@ -3030,4 +3035,78 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   assert.equal(ampleCoverageJson.debug.profileCoverage.tops >= 5, true, 'Should now have >= 5 trail-ready tops')
   assert.equal(ampleCoverageJson.debug.profileCoverage.shoes >= 3, true, 'Should now have >= 3 trail-ready shoes')
   assert.ok(!ampleCoverageJson.feedback.includes('limited trail-ready'), 'Feedback must not contain limited coverage note with ample coverage')
+})
+
+test('freeform ask injects the wardrobe manifest and structured thread state', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    return 'Manifest-aware stylist answer.'
+  }
+
+  const json = await postJson('/api/ai/ask', {
+    question: 'Which of my pieces would suit a gallery evening?',
+    sessionId: 'manifest-contract',
+    occasion: 'city',
+    season: 'warm',
+  })
+  assert.ok(json.answer)
+
+  const stylistCall = aiCalls.find(call => String(call.system).includes('WARDROBE MANIFEST'))
+  assert.ok(stylistCall, 'stylist system prompt must include the wardrobe manifest')
+  assert.match(stylistCall.system, /TOPS \(\d+\):/, 'manifest groups pieces with counts')
+  assert.ok(stylistCall.system.includes(`#${seeded.top} `), 'manifest lists seeded pieces by exact id')
+  assert.ok(
+    !stylistCall.system.includes('The full wardrobe list is omitted'),
+    'legacy omission notice is replaced by the manifest'
+  )
+  assert.ok(stylistCall.system.includes('THREAD STATE (STRUCTURED):'), 'thread state block present')
+  assert.ok(stylistCall.system.includes('"occasion": "city"'), 'established context is structured JSON')
+  assert.ok(stylistCall.system.includes('"season": "warm"'))
+})
+
+test('freeform ask restores established context and outfit set on follow-up turns', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    return 'Stateful stylist answer.'
+  }
+
+  await postJson('/api/ai/ask', {
+    question: 'Dressing for the gallery tonight.',
+    sessionId: 'state-restore-contract',
+    occasion: 'gallery / art event',
+    weather: 'hot, highs 85F',
+    season: 'warm',
+    generatedOutfits: [
+      {
+        label: 'Look one',
+        pieceIds: [seeded.top, seeded.shoe],
+        pieces: [{ id: seeded.top, name: 'seeded top' }, { id: seeded.shoe, name: 'seeded shoe' }],
+      },
+      {
+        label: 'Look two',
+        pieceIds: [seeded.jacket],
+        pieces: [{ id: seeded.jacket, name: 'seeded jacket' }],
+      },
+    ],
+  })
+
+  aiCalls = []
+  await postJson('/api/ai/ask', {
+    question: 'and what about the second one?',
+    sessionId: 'state-restore-contract',
+    conversationMode: 'followup',
+  })
+
+  const followupCall = aiCalls.find(call => String(call.system).includes('THREAD STATE (STRUCTURED):'))
+  assert.ok(followupCall, 'follow-up turn still carries structured thread state')
+  assert.ok(
+    followupCall.system.includes('"occasion": "gallery / art event"'),
+    'occasion restored from server-side thread state even though the follow-up body omitted it'
+  )
+  assert.ok(
+    followupCall.system.includes('hot, highs 85F'),
+    'weather restored from server-side thread state'
+  )
+  assert.ok(followupCall.system.includes('Look two'), 'current outfit set restored server-side')
+  assert.ok(followupCall.system.includes('"turn_mode": "followup"'))
 })
