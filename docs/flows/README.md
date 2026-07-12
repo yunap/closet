@@ -28,7 +28,7 @@ Status: `done` · `next` · `todo`
 | --------------------------------- | ------------------------- | --------------------------------- | ------ |
 | [**Use my wardrobe**](use-my-wardrobe.md) | Visual Composer       | `/generate-wardrobe-outfits-visual` | **done** |
 | [Outfits for a selected piece](selected-piece-composer.md) | Piece → "style this" | `/generate-outfits-for-piece` | **done** |
-| Visual boards for a piece concept | Piece result → boards     | `/generate-outfit-boards`         | next   |
+| [Visual boards for a piece concept](piece-concept-boards.md) | Piece result → boards | `/generate-outfit-boards` | **done** |
 
 ## C. Ideal / beyond-wardrobe styling  (editorial)
 
