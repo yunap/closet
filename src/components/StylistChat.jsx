@@ -113,6 +113,37 @@ const renderCost = (timings) => {
   return ` · Measured cost: $${cost.toFixed(3)}`
 }
 
+const MessageTelemetryDisclosure = ({ message }) => {
+  const composerUsage = message?.debug?.composerUsage
+  const showTiming = (message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings
+  if (!composerUsage && !showTiming) return null
+
+  const rows = []
+  if (composerUsage) {
+    rows.push(['Composer', composerUsageSummary(composerUsage)])
+  }
+  if (showTiming) {
+    rows.push(['Timing', `${timingSummary(message.debug.timings)}${renderCost(message.debug.timings)}`])
+  }
+
+  return (
+    <details className="telemetry-details message-telemetry">
+      <summary title="Click for generation telemetry">
+        <span className="message-telemetry-label">Telemetry</span>
+        <span className="message-telemetry-count">{rows.length}</span>
+      </summary>
+      <div className="message-telemetry-panel">
+        {rows.map(([label, value]) => (
+          <div className="message-telemetry-row" key={label}>
+            <span>{label}</span>
+            <span>{value}</span>
+          </div>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 const resolveUploadImageSrc = (photo) => {
   const value = String(photo || '').trim()
   if (!value) return null
@@ -1172,9 +1203,7 @@ export default function StylistChat({
 
   const getCompactOutfitIntro = (message, hasBoards = false) => {
     if (message?.wholeWardrobe) {
-      const hasTripCards = message?.structuredOutfits?.some(outfit => outfit?.source === 'trip_precompose')
-      if (hasTripCards) return 'Trip outfits built from saved wardrobe pieces. Garment photos are shown below; image generation is optional.'
-      return 'Outfits built from saved wardrobe pieces. Garment photos are shown below; image generation is optional.'
+      return ''
     }
     const text = String(message?.text || '')
     const titleMatch = text.match(/Generated outfit ideas for:\*\*\s*([^\n]+)/i)
@@ -1762,16 +1791,7 @@ export default function StylistChat({
 
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-        {message?.debug?.composerUsage && (
-          <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
-            Composer: {composerUsageSummary(message.debug.composerUsage)}
-          </div>
-        )}
-        {(message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings && (
-          <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
-            Timing: {timingSummary(message.debug.timings)}{renderCost(message.debug.timings)}
-          </div>
-        )}
+        <MessageTelemetryDisclosure message={message} />
         {canExploreAdjacent && (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
@@ -2164,85 +2184,67 @@ export default function StylistChat({
                           )}
                         </button>
                         <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
-                        {piece?.id && !piece?.unresolved && (message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const key = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`
-                                toggleStylistFeedback({
-                                  key,
-                                  feedbackType: 'wrong_item_read',
-                                  targetType: 'whole_wardrobe_outfit',
-                                  label: `Bad piece: ${piece?.name || 'Garment'}`,
-                                  note: `${piece?.name || 'This piece'} was the bad piece choice in ${outfit.label || `outfit ${idx + 1}`}.`,
-                                  payload: {
-                                    outfit,
-                                    messageIndex,
-                                    outfitIndex: idx,
-                                    pieceId: piece?.id || null,
-                                    pieceName: piece?.name || '',
-                                    pieceCategory: piece?.category || '',
-                                    pieceIds: outfit.pieceIds || [],
-                                    pieces: outfit.pieces || [],
-                                    formulaFamily: outfit.formulaFamily || '',
-                                    archetypeId: outfit.archetypeId || '',
-                                    occasion: wardrobeOutfitOccasion,
-                                    season: wardrobeOutfitSeason,
-                                    mood: wardrobeOutfitMood,
-                                  },
-                                  contextOverride: activeContext?.type === 'piece' ? activeContext : { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
-                                })
-                              }}
-                              style={{
-                                fontSize: 8.5,
-                                lineHeight: 1.25,
-                                width: '100%',
-                                boxSizing: 'border-box',
-                                color: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--danger)' : 'var(--text-light)',
-                                padding: '3px 4px',
-                                borderRadius: 8,
-                                border: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '1px solid rgba(168,64,64,0.3)' : '1px solid var(--border)',
-                                background: feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? 'var(--danger-bg)' : 'var(--surface-2)',
-                                cursor: 'pointer'
-                              }}
-                              title="Replace just this piece next time — the rest of the outfit stays, and the piece stays in your wardrobe."
-                            >
-                              {feedbackSaved.has(`whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`) ? '✓ Swapped out' : 'Swap this out'}
-                            </button>
-                            {(() => {
-                              const msgOccasion = outfit.occasion || outfit.bestFor || message.queryOptions?.occasion || wardrobeOutfitOccasion || 'casual'
-                              const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
-                              const exclusions = (piece?.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
-                              const isExcluded = exclusions.includes(normMsgOccasion)
-                              const exclusionDisplaySource = isTripCard
-                                ? (outfit.label || outfit.title || outfit.bestFor || msgOccasion)
-                                : msgOccasion
-                              const displayOccasionName = String(exclusionDisplaySource || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => toggleOccasionExclusion(piece.id, msgOccasion, isExcluded)}
-                                  style={{
-                                    fontSize: 8.5,
-                                    lineHeight: 1.25,
-                                    width: '100%',
-                                    boxSizing: 'border-box',
-                                    color: isExcluded ? 'var(--danger)' : 'var(--text-light)',
-                                    padding: '3px 4px',
-                                    borderRadius: 8,
-                                    border: isExcluded ? '1px solid rgba(168,64,64,0.3)' : '1px solid var(--border)',
-                                    background: isExcluded ? 'var(--danger-bg)' : 'var(--surface-2)',
-                                    cursor: 'pointer'
-                                  }}
-                                  title={`Exclude from ${displayOccasionName}`}
-                                >
-                                  {isExcluded ? `✓ Wrong for ${displayOccasionName}` : `Wrong for ${displayOccasionName}`}
-                                </button>
-                              )
-                            })()}
-                          </div>
-                        )}
+                        {piece?.id && !piece?.unresolved && (message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (() => {
+                            const swapKey = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`
+                            const isSwapped = feedbackSaved.has(swapKey)
+                            const msgOccasion = outfit.occasion || outfit.bestFor || message.queryOptions?.occasion || wardrobeOutfitOccasion || 'casual'
+                            const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+                            const exclusions = (piece?.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
+                            const isExcluded = exclusions.includes(normMsgOccasion)
+                            const exclusionDisplaySource = isTripCard
+                              ? (outfit.label || outfit.title || outfit.bestFor || msgOccasion)
+                              : msgOccasion
+                            const displayOccasionName = String(exclusionDisplaySource || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                            return (
+                              <details className="piece-action-menu">
+                                <summary title={`Actions for ${piece?.name || 'this piece'}`} aria-label={`Actions for ${piece?.name || 'this piece'}`}>
+                                  ...
+                                </summary>
+                                <div className="piece-action-menu-panel">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      toggleStylistFeedback({
+                                        key: swapKey,
+                                        feedbackType: 'wrong_item_read',
+                                        targetType: 'whole_wardrobe_outfit',
+                                        label: `Bad piece: ${piece?.name || 'Garment'}`,
+                                        note: `${piece?.name || 'This piece'} was the bad piece choice in ${outfit.label || `outfit ${idx + 1}`}.`,
+                                        payload: {
+                                          outfit,
+                                          messageIndex,
+                                          outfitIndex: idx,
+                                          pieceId: piece?.id || null,
+                                          pieceName: piece?.name || '',
+                                          pieceCategory: piece?.category || '',
+                                          pieceIds: outfit.pieceIds || [],
+                                          pieces: outfit.pieces || [],
+                                          formulaFamily: outfit.formulaFamily || '',
+                                          archetypeId: outfit.archetypeId || '',
+                                          occasion: wardrobeOutfitOccasion,
+                                          season: wardrobeOutfitSeason,
+                                          mood: wardrobeOutfitMood,
+                                        },
+                                        contextOverride: activeContext?.type === 'piece' ? activeContext : { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                                      })
+                                    }}
+                                    className={isSwapped ? 'piece-action-menu-item active' : 'piece-action-menu-item'}
+                                    title="Replace just this piece next time - the rest of the outfit stays, and the piece stays in your wardrobe."
+                                  >
+                                    {isSwapped ? '✓ Swapped out' : 'Swap this out'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleOccasionExclusion(piece.id, msgOccasion, isExcluded)}
+                                    className={isExcluded ? 'piece-action-menu-item active' : 'piece-action-menu-item'}
+                                    title={`Exclude from ${displayOccasionName}`}
+                                  >
+                                    {isExcluded ? `✓ Wrong for ${displayOccasionName}` : `Wrong for ${displayOccasionName}`}
+                                  </button>
+                                </div>
+                              </details>
+                            )
+                        })()}
                       </div>
                     )
                   })}
@@ -3098,7 +3100,7 @@ export default function StylistChat({
     
     const initialPayload = {
       messages: [
-        { role: 'user', text: userText, contextName: 'Use my wardrobe' }
+        { role: 'user', text: userText }
       ],
       chatHistory: [
         { role: 'user', content: userText }
@@ -4403,13 +4405,14 @@ export default function StylistChat({
                 if (m.role === 'assistant' && multi) {
                   const hasStructuredIdeas = Array.isArray(m.structuredOutfits) && m.structuredOutfits.length > 0
                   const isPreviewResponse = hasStructuredIdeas && m.structuredOutfits[0]?.previewOnly
+                  const compactIntro = getCompactOutfitIntro(m, hasBoards)
                   return (
                     <div className={`ai-message ${m.role}`} style={{ padding: '12px 14px' }}>
                       {isPreviewResponse ? (
                         <MarkdownMessage text={m.text} />
-                      ) : (
-                        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.45 }}>{getCompactOutfitIntro(m, hasBoards)}</p>
-                      )}
+                      ) : compactIntro ? (
+                        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.45 }}>{compactIntro}</p>
+                      ) : null}
                       {m.queryOptions && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0 12px' }}>
                           {m.queryOptions.occasion && (
