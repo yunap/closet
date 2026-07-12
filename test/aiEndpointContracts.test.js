@@ -3178,21 +3178,21 @@ test('propose_outfit requires layer pieces to be visually seen this turn', async
 test('prose citations of unverified piece ids force one corrective retry', () => {
   const answer = `Try layering the cream textured knit top (ID ${seeded.top}) under the blouse.`
 
-  const blocked = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set() }, {})
+  const blocked = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set() })
   assert.equal(blocked.block, true)
   assert.equal(blocked.blockType, 'unverifiedCitation')
   assert.match(blocked.correctionMessage, new RegExp(`ID ${seeded.top}`))
 
-  const retrievedOk = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set([seeded.top]) }, {})
+  const retrievedOk = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set([seeded.top]) })
   assert.equal(retrievedOk.block, false)
 
   const cardOk = applyFreeformOutputChecks(answer, {
     retrievedPieceIds: new Set(),
     generatedOutfits: [{ pieceIds: [seeded.top] }]
-  }, {})
+  })
   assert.equal(cardOk.block, false)
 
-  const retryExhausted = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set() }, { unverifiedCitationRetried: true })
+  const retryExhausted = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set() }, new Set(['unverifiedCitation']))
   assert.equal(retryExhausted.block, false, 'only one retry per turn — the loop must not spin')
 })
 
@@ -3251,7 +3251,7 @@ test('output guards consume declared intent instead of phrasing regexes', () => 
     generatedOutfits: [{ label: 'Only card', pieceIds: [seeded.top] }],
     freeformDiagnostics: { proposeCalls: 1, searchCalls: 1 }
   }
-  const countCheck = applyFreeformOutputChecks('Here is one look to start.', countContext, {})
+  const countCheck = applyFreeformOutputChecks('Here is one look to start.', countContext)
   assert.equal(countCheck.block, true)
   assert.equal(countCheck.blockType, 'outfitCount')
   assert.match(countCheck.correctionMessage, /requested 3 outfit ideas/)
@@ -3263,8 +3263,51 @@ test('output guards consume declared intent instead of phrasing regexes', () => 
     generatedOutfits: [],
     freeformDiagnostics: { proposeCalls: 0, searchCalls: 1 }
   }
-  const textCheck = applyFreeformOutputChecks('Start from texture: pair rough with smooth.', textContext, {})
+  const textCheck = applyFreeformOutputChecks('Start from texture: pair rough with smooth.', textContext)
   assert.equal(textCheck.block, false, 'declaration wins over the phrasing regex')
+})
+
+test('turn contract blocks a declared cards turn that delivered zero cards', () => {
+  const ctx = {
+    question: 'sort me out for tomorrow',
+    declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
+    generatedOutfits: [],
+    freeformDiagnostics: { searchCalls: 1, proposeCalls: 0 }
+  }
+
+  const blocked = applyFreeformOutputChecks('The gallery look should lean structured.', ctx)
+  assert.equal(blocked.block, true)
+  assert.equal(blocked.blockType, 'cardsNotDelivered')
+  assert.match(blocked.correctionMessage, /declare_intent\(\{ want: 'text' \}\)/)
+
+  // Asking the user something is the model's own clarification judgment — passes.
+  const asking = applyFreeformOutputChecks('Before I compose — is this an indoor gallery or an outdoor event?', ctx)
+  assert.equal(asking.block, false)
+
+  // One retry per clause: the same kind never blocks twice.
+  const retried = applyFreeformOutputChecks('The gallery look should lean structured.', ctx, new Set(['cardsNotDelivered']))
+  assert.equal(retried.block, false)
+
+  // A delivered card satisfies the contract.
+  const delivered = applyFreeformOutputChecks('Here you go.', {
+    ...ctx,
+    generatedOutfits: [{ label: 'Card', pieceIds: [seeded.top] }]
+  })
+  assert.equal(delivered.block, false)
+})
+
+test('turn contract keeps clarification precedence over delivery', () => {
+  // Underscoped multi-day trip where the model already composed: the context
+  // clause must fire before the count clause demands more cards.
+  const ctx = {
+    question: 'Going to Fairfax, CA for a few days',
+    declaredIntent: { want: 'cards', outfitCount: 3, turnMode: null },
+    generatedOutfits: [{ label: 'One card', pieceIds: [seeded.top] }],
+    freeformDiagnostics: { searchCalls: 1, proposeCalls: 1 }
+  }
+  const check = applyFreeformOutputChecks('Here is a starting look for the trip.', ctx)
+  assert.equal(check.block, true)
+  assert.equal(check.blockType, 'tripScopeClarification', 'stop-and-ask beats deliver-more')
 })
 
 test('freeform ask retries the model once when prose cites unverified ids', async () => {
