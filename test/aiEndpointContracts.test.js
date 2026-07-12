@@ -2119,7 +2119,12 @@ test('freeform ask non-visual follow-up prunes base64 images to save tokens', as
   assert.doesNotMatch(latestUserMessage.content, /Attached: images/)
 })
 
-test('freeform ask correction saves preference reaction to database', async () => {
+test('freeform ask correction turns do NOT auto-store the raw question as a preference', async () => {
+  // 2026-07-12: the pre-model auto-save was removed after live data showed it
+  // filing plain requests as high-authority preferences (seven duplicates of
+  // "give me 3 polished outfit ideas…" steering every later turn). Deliberate
+  // saves happen through the model's store_user_correction tool instead.
+  const before = db.prepare("SELECT COUNT(*) AS n FROM stylist_feedback").get().n
   const json = await postJson('/api/ai/ask', {
     question: 'I do not wear flats',
     pieces: [],
@@ -2128,17 +2133,14 @@ test('freeform ask correction saves preference reaction to database', async () =
     outfit: { id: seeded.outfitId, label: 'Active outfit' },
     pieceIds: [seeded.top, seeded.bottom],
   })
-
   assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
-  
-  const row = db.prepare(`
-    SELECT * FROM stylist_feedback 
-    WHERE feedback_type = 'preference_reaction' 
-    ORDER BY id DESC LIMIT 1
-  `).get()
-  
+  const after = db.prepare("SELECT COUNT(*) AS n FROM stylist_feedback").get().n
+  assert.equal(after, before, 'no auto-stored feedback row from the turn classifier')
+
+  // The deliberate path still works (and is the only save path).
+  await executeTool('store_user_correction', { note: 'I do not wear flats', context_type: 'outfit', context_id: seeded.outfitId }, {})
+  const row = db.prepare("SELECT * FROM stylist_feedback WHERE note = 'I do not wear flats'").get()
   assert.ok(row)
-  assert.equal(row.note, 'I do not wear flats')
   assert.equal(row.context_type, 'outfit')
   assert.equal(Number(row.context_id), seeded.outfitId)
 })
@@ -3452,6 +3454,51 @@ test('wardrobe_coverage returns exact grouped counts', async () => {
 
   const shoesOnly = await executeTool('wardrobe_coverage', { group_by: 'formality', category: 'shoes' }, toolContext)
   assert.equal(shoesOnly.total_pieces, Object.values(shoesOnly.counts).reduce((a, b) => a + b, 0))
+})
+
+test('anchor pieces bypass suitability gates while supports stay gated', async () => {
+  const experimentalId = insertPiece({
+    name: 'experimental fringe vest',
+    category: 'top',
+    colors: ['tan'],
+    occasions: ['casual'],
+    photo: seeded.photos.top,
+    reads_as: 'statement fringe layer',
+    recommendation_status: 'experimental',
+    fabric_weight: 'light',
+  })
+  const baseContext = () => ({
+    generatedOutfits: [],
+    occasion: 'casual',
+    season: 'current season',
+    declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
+    retrievedPieceIds: new Set([experimentalId, seeded.bottom, seeded.shoe]),
+  })
+  const outfitPieces = (asAnchor) => ([
+    { id: experimentalId, role: 'primary_top', ...(asAnchor ? { anchor: true } : {}) },
+    { id: seeded.bottom, role: 'primary_bottom' },
+    { id: seeded.shoe, role: 'shoes' }
+  ])
+
+  // Unanchored: the experimental piece is rejected by the trust gate.
+  const rejected = await executeTool('propose_outfit', { label: 'No anchor', pieces: outfitPieces(false) }, baseContext())
+  assert.equal(rejected.status, 'validation_error')
+  assert.match(rejected.issues.join(' '), /experimental/)
+
+  // Anchored (user asked to style this piece): the same outfit passes.
+  const ctx = baseContext()
+  const accepted = await executeTool('propose_outfit', { label: 'Anchored', pieces: outfitPieces(true) }, ctx)
+  assert.equal(accepted.status, 'success')
+  const card = ctx.generatedOutfits.at(-1)
+  assert.deepEqual(card.anchorPieceIds, [experimentalId], 'card records which piece was the user-requested anchor')
+})
+
+test('store_user_correction dedupes identical notes', async () => {
+  const note = 'I never wear ankle boots in summer.'
+  await executeTool('store_user_correction', { note, context_type: 'general' }, {})
+  await executeTool('store_user_correction', { note, context_type: 'general' }, {})
+  const rows = db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback WHERE note = ?').get(note)
+  assert.equal(rows.n, 1, 'the same live note must not stack in feedback memory')
 })
 
 test('freeform ask retries the model once when prose cites unverified ids', async () => {

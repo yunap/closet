@@ -3693,15 +3693,15 @@ export async function buildStylistConversationPayload(body) {
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
   }, sessionId)
 
-  let automaticallySavedCorrection = null
-  if (conversationMode === 'correction' || conversationMode === 'preference_reaction') {
-    storeUserCorrection(question, activeOutfit ? 'outfit' : 'general', activeOutfit ? activeOutfit.id : null)
-    automaticallySavedCorrection = {
-      note: question,
-      context_type: activeOutfit ? 'outfit' : 'general',
-      context_id: activeOutfit ? activeOutfit.id : null
-    }
-  }
+  // 2026-07-12: the pre-model auto-save that stored the RAW question whenever the
+  // keyword classifier called a turn correction/preference_reaction is gone. Live
+  // data showed it filing plain requests ("give me 3 polished outfit ideas…")
+  // as high-authority preferences — seven duplicates — which then steered every
+  // later turn toward "polished" regardless of the actual ask. Corrections are
+  // saved deliberately by the model via the store_user_correction tool (the
+  // CRITICAL instruction in the wardrobe guidance), which distills the note
+  // instead of quoting the question.
+  const automaticallySavedCorrection = null
 
   const conversationDirective = buildStylistConversationDirective(conversationMode)
   const generatedSetCoverageAudit = Boolean(generatedOutfitContextText && isGeneratedSetCoverageAudit(question))
@@ -3733,6 +3733,7 @@ export async function buildStylistConversationPayload(body) {
       '- VERIFICATION CONTRACT (mechanically enforced): any specific piece you recommend or place in an outfit card must be verified THIS turn — `view_pieces` (cheap: photo thumbnails + truth lines for exact IDs) is the preferred way; `search_wardrobe` and `get_garment_details` also count. The manifest alone is not verification — its tags cannot show construction risks (lining, sheerness, true texture). Unverified piece IDs in your answer or in propose_outfit will be rejected and you will be asked to redo the work.',
       '- Layer/base pieces (layer_top / layer_bottom roles — anything worn under another garment or against skin) additionally require having SEEN the photo this turn: `view_pieces` (size:\'large\' for construction detail) is the cheap way; `search_wardrobe` visual:true and `get_garment_details` also attach photos. Check the `opacity` tag (sheer / open_weave pieces cannot be standalone base layers).',
       '- When recommending a specific piece in prose, cite it as (ID <number>) so the recommendation is verifiable.',
+      '- ANCHOR RULE: when the user explicitly asks to style/wear a specific piece, that piece is the premise — verify it (view_pieces), then pass it to propose_outfit with anchor:true so suitability gates do not reject the very piece the user asked about. Be honest in prose about any tradeoffs (weather, formality) instead of refusing the piece.',
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
       'CRITICAL: If the user states a new style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "I dislike cargo pants", "prefer dark jeans"), you MUST proactively call the `store_user_correction` tool to save this rule/preference immediately. Do not wait for the user to ask you to save it; save it automatically using the tool.'
@@ -3819,6 +3820,7 @@ export async function buildStylistConversationPayload(body) {
     `Current turn mode: ${conversationMode}.`,
     `Mode instructions: ${modeDirectiveText}`,
     `Turn directive: ${conversationDirective}`,
+    'FIT CONCERNS: when the user states a fit problem (baggy, loose waist, clingy, riding up), address it head-on in prose FIRST — belting, tucking, proportion balancing, silhouette pairing — then compose cards that implement the advice. Do not ignore the stated concern and just assemble an outfit.',
     'INTENT DECLARATION (mechanically enforced): before composing or answering substantively, call declare_intent with what this turn should produce — want:"text" (advice/critique prose), "cards" (composed outfit cards), or "image" (a rendered outfit image), plus outfit_count when the user asked for a specific number. propose_outfit and generate_outfits are blocked until cards intent is declared. If the user wants a rendered image, declare want:"image" and call render_preview (outfit_index for a card produced this turn, or piece_ids from a verified card such as THREAD STATE\'s current outfit set).',
     extractedWeather ? `Established weather context for this turn: ${extractedWeather}. Pass this weather to search_wardrobe and apply weatherFit/ruleFit before suggesting garments.` : '',
     missingTravelWeather ? 'TRAVEL WEATHER BLOCKER: The user gave a travel/packing request without weather or forecast context. Do not call search_wardrobe, do not recommend garments, and do not suggest outfits. Ask one friendly clarification for the expected weather/forecast first.' : '',
@@ -3930,10 +3932,20 @@ export function saveStylistConversationState(state, sessionId = 'default') {
 
 export function storeUserCorrection(note, contextType = 'general', contextId = null) {
   try {
+    const trimmed = String(note || '').trim()
+    if (!trimmed) return
+    // Dedupe: an identical live note must not stack — repeated turns were
+    // multiplying the same text into the high-authority memory section.
+    const existing = db.prepare(`
+      SELECT id FROM stylist_feedback
+      WHERE note = ? AND COALESCE(archived, 0) = 0
+      LIMIT 1
+    `).get(trimmed)
+    if (existing) return
     db.prepare(`
       INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note)
       VALUES ('preference_reaction', 'message', ?, ?, ?)
-    `).run(contextType, contextId, note)
+    `).run(contextType, contextId, trimmed)
   } catch (err) {
     console.error('storeUserCorrection error:', err)
   }
