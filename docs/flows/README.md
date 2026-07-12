@@ -18,9 +18,11 @@ Status: `done` · `next` · `todo`
 
 | Flow                          | Entry point                    | Endpoint                    | Status |
 | ----------------------------- | ------------------------------ | --------------------------- | ------ |
-| Extract pieces from a photo   | Batch add / lookbook scan      | `/extract-pieces`           | todo   |
-| Auto-tag a garment            | Piece form, batch add          | `/tag-piece` `/tag-piece-existing` | todo |
-| Evaluate a single piece       | Stylist hand-off from a piece  | `/evaluate-piece`           | todo   |
+| [Extract pieces from a photo](piece-intake-and-tagging.md) | Batch add / lookbook scan | `/extract-pieces` | **done** |
+| [Auto-tag a garment](piece-intake-and-tagging.md) | Piece form, batch add | `/tag-piece` `/tag-piece-existing` | **done** |
+| [Evaluate a single piece](piece-intake-and-tagging.md) | Stylist hand-off from a piece | `/evaluate-piece` | **done** |
+
+All three intake flows are in [piece-intake-and-tagging.md](piece-intake-and-tagging.md).
 
 ## B. Outfit generation from the wardrobe  (compose)
 
@@ -72,8 +74,5 @@ overview, per-layer trigger tables, and a conversation-mode state diagram.
 
 ### Progress
 
-Done: **B**, **C** (editorial/ideal), **D** (all image renders), **E**
-(all evaluation), **F** (chat brain).
-
-Remaining: **Family A** (intake/tagging ×3) — the vision-tagging flows that turn
-photos into structured pieces.
+**Atlas complete — all 16 model-facing flows across families A–F are mapped.**
+Every flow that talks to a model now has a diagram here.
