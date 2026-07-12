@@ -921,7 +921,7 @@ export async function executeTool(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
           return {
             status: "validation_error",
-            message: `The proposed outfit includes piece(s) that fail the current occasion/activity/weather gates: ${hardGateIssues.join('; ')}. Search again with the same occasion, activity, and weather, then call propose_outfit with replacements.`,
+            message: `The proposed outfit includes piece(s) that fail the current occasion/activity/weather gates: ${hardGateIssues.join('; ')}. Search again with the same occasion, activity, and weather, then call propose_outfit with replacements. If the user explicitly asked to style/wear one of the rejected pieces, re-propose with anchor:true on that piece instead — the user's request overrides suitability gating.`,
             issues: hardGateIssues
           }
         }
