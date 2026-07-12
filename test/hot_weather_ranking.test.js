@@ -306,6 +306,33 @@ test('filterWholeWardrobePiecesForGeneration and wholeWardrobePieceTrustDecision
   assert.ok(suppressedShorts.reasons.includes('cold weather: shorts'), 'Should have cold weather reason')
 })
 
+test('hot weather does not block normal medium-weight summer pants (composer parity)', () => {
+  const hot = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false } }
+
+  // The live false positive: medium cotton cropped cargo pants are summer clothing.
+  const cottonCargos = {
+    id: 9101, name: 'blue cargo cropped pants', category: 'bottom',
+    fabric_weight: 'medium', fabric_category: 'cotton', fiber_content: ['cotton'],
+    style_profile_json: { coverage: 'normal' }
+  }
+  const resCargos = wholeWardrobePieceTrustDecision(cottonCargos, hot)
+  assert.equal(resCargos.reasons.includes('hot weather: insulating piece'), false,
+    'medium cotton pants must not be called insulating in hot weather')
+
+  // Genuinely warm bottoms stay blocked.
+  const heavyPants = { id: 9102, name: 'heavy canvas work pants', category: 'bottom', fabric_weight: 'heavy', style_profile_json: { coverage: 'normal' } }
+  assert.ok(wholeWardrobePieceTrustDecision(heavyPants, hot).reasons.includes('hot weather: insulating piece'),
+    'heavy pants remain blocked via the heavy-weight check')
+
+  const woolTrousers = { id: 9103, name: 'wool trousers', category: 'bottom', fabric_weight: 'medium', fabric_category: 'wool', fiber_content: ['wool'], style_profile_json: { coverage: 'normal' } }
+  assert.ok(wholeWardrobePieceTrustDecision(woolTrousers, hot).reasons.includes('hot weather: insulating fiber'),
+    'warm-fiber pants remain blocked via the fiber check')
+
+  const insulatedLeggings = { id: 9104, name: 'fleece-lined leggings', category: 'bottom', fabric_weight: 'medium', length_hits_at: 'full-length' }
+  assert.ok(wholeWardrobePieceTrustDecision(insulatedLeggings, hot).reasons.includes('hot weather: insulating piece'),
+    'full-coverage medium bottoms (derived full-insulating) remain blocked')
+})
+
 test('Visual Composer Roster weather-aware ranking and tiebreaker rotation', () => {
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   
@@ -431,11 +458,19 @@ test('outdoor_active rules resolved via activity and discourages day dresses, da
   const scoreSandal = scoreWholeWardrobeCandidate([leatherSandals], options)
   assert.equal(scoreSandal.reasons.includes('activity profile: discouraged footwear (sandal)'), false, 'Should not report activity footwear phrase scoring')
 
-  // 5. Medium/heavy full-insulating bottoms (like jeans) should be prohibited in hot weather (hard weather filter)
-  const whiteJeans = { id: 9914, name: 'white slim crop jeans', category: 'bottom', fabric_weight: 'medium', reads_as: 'slim cropped jeans', style_profile_json: { coverage: 'full-insulating' } }
+  // 5. Medium/heavy FULL-COVERAGE bottoms should be prohibited in hot weather (hard weather filter).
+  // 2026-07-12: previously this piece was "slim crop jeans" with a style_profile coverage field that
+  // pieceCoverage() never reads — it only passed because ANY medium pants were hot-blocked, the same
+  // overreach that rejected the user's cropped cotton cargos live. Owner ruling: cropped/medium summer
+  // pants pass; full-length medium bottoms (derived full-insulating coverage) stay blocked.
+  const whiteJeans = { id: 9914, name: 'white slim jeans', category: 'bottom', fabric_weight: 'medium', reads_as: 'slim full-length jeans', length_hits_at: 'full-length' }
   const resJeans = wholeWardrobePieceTrustDecision(whiteJeans, { ...options, weatherProfile: { isHot: true, isCold: false } })
-  assert.equal(resJeans.allowed, false, 'Slim crop jeans should be prohibited in hot weather')
+  assert.equal(resJeans.allowed, false, 'Full-length medium jeans should be prohibited in hot weather')
   assert.ok(resJeans.reasons.includes('hot weather: insulating piece'), 'Should report hot weather: insulating piece')
+
+  const cropJeans = { id: 9915, name: 'white slim crop jeans', category: 'bottom', fabric_weight: 'medium', reads_as: 'slim cropped jeans', length_hits_at: 'midi' }
+  const resCrop = wholeWardrobePieceTrustDecision(cropJeans, { ...options, weatherProfile: { isHot: true, isCold: false } })
+  assert.equal(resCrop.allowed, true, 'Cropped medium jeans are normal summer wear and must pass the hot gate')
 })
 
 test('Trail active outdoor profile additional constraints and repair tests', () => {

@@ -1886,10 +1886,14 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
       (hasWarmNeckline && isMediumOrHeavy) ||
       (hasWarmSleeves && isMediumOrHeavy)
     )
-    // Pants are inherently full-leg coverage regardless of length_hits_at tagging (pants rarely carry
-    // that field the way skirts/dresses do) — bottomKind is a concrete authored field, so treat any
-    // medium/heavy-fabric pants as insulating here even without a derived pieceCoverage() reading.
-    const isInsulatingBottom = wardrobeCategoryGroup(piece) === 'bottom' && (hasInsulatingCoverage || bottomKind(piece) === 'pants') && isMediumOrHeavy
+    // 2026-07-12: corrected to composer parity. The previous version also treated ANY
+    // medium-weight pants as insulating (bottomKind === 'pants'), which false-positived
+    // normal summer clothing — medium cotton/linen cargos, chinos, and cropped pants —
+    // and made freeform reject the very pants the user asked to style. The composer
+    // reference blocks bottoms only on authored full-insulating coverage; genuinely warm
+    // pants are still caught by the heavy-weight check (isHeavy) and the insulating-fiber
+    // check (wool/fleece etc.) above.
+    const isInsulatingBottom = wardrobeCategoryGroup(piece) === 'bottom' && hasInsulatingCoverage && isMediumOrHeavy
 
     if (hasHotInsulatingFiber) {
       reasons.push('hot weather: insulating fiber')

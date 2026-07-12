@@ -125,6 +125,7 @@ async function seedWardrobe() {
     photo: photos.jeans,
     reads_as: 'quiet dark neutral',
     bottom_shape: 'bootcut',
+    length_hits_at: 'full-length',
     fabric_category: 'denim',
     fabric_weight: 'medium',
     fiber_content: ['denim'],
