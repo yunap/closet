@@ -3,6 +3,7 @@ import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, uploadsDir, safeJsonParse } from '../db.js'
+import { buildWardrobeManifest } from '../src/utils/wardrobeAiContext.js'
 
 import {
   OUTFIT_COMPOSER_SYSTEM,
@@ -3492,43 +3493,58 @@ export async function buildStylistConversationPayload(body) {
 
   let activeOutfit = outfit
   let activePieceIds = pieceIds
-  
-  if (requestedConversationMode === 'new_request') {
-    if (!activeOutfit) {
-      saveStylistConversationState({}, sessionId)
-    }
-  } else {
-    const state = getStylistConversationState(sessionId)
-    if (!activeOutfit && state.active_outfit) {
-      activeOutfit = state.active_outfit
-      activePieceIds = state.active_piece_ids
+
+  // Structured thread state: on follow-up turns, restore established context and
+  // the current outfit set from the server-side session state so the thread
+  // survives the client omitting fields. Body values always win; state fills gaps.
+  let restoredState = {}
+  if (requestedConversationMode !== 'new_request') {
+    restoredState = getStylistConversationState(sessionId) || {}
+    if (!activeOutfit && restoredState.active_outfit) {
+      activeOutfit = restoredState.active_outfit
+      activePieceIds = restoredState.active_piece_ids
     }
   }
+  const restoredEstablished = restoredState.established && typeof restoredState.established === 'object'
+    ? restoredState.established
+    : {}
+  const effectiveOccasion = occasion || restoredEstablished.occasion || ''
+  const effectiveActivity = activity || restoredEstablished.activity || ''
+  const effectiveSeason = season || restoredEstablished.season || ''
+  const effectiveMood = mood || restoredEstablished.mood || ''
+  const effectiveMission = mission || restoredEstablished.mission || ''
+  const effectiveLocation = body.location || restoredEstablished.location || ''
 
   const confirmedOutfitsText = getConfirmedOutfitMemory()
   const generatedOutfitContextText = String(generatedContext || '').trim()
   const threadContextText = String(threadContext || '').trim()
-  const extractedWeather = weather || extractWeatherContext([
+  // Weather precedence: explicit body value, then this turn's text, then the
+  // established value from thread state, then (last resort) a coarse guess from
+  // season/mood words — so a restored "hot, highs 85F" beats a "warm"-season guess.
+  const turnWeather = weather || extractWeatherContext([
     question || '',
     threadContextText,
-    generatedOutfitContextText,
-    season || '',
-    mood || ''
+    generatedOutfitContextText
   ].join('\n'))
-  const travelOrPackingRequest = isTravelOrPackingRequest(question, occasion)
-  const canResolveTravelWeatherLive = travelRequestCanResolveWeatherLive(question, occasion)
+  const extractedWeather = turnWeather
+    || restoredEstablished.weather
+    || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
+    || ''
+  const travelOrPackingRequest = isTravelOrPackingRequest(question, effectiveOccasion)
+  const canResolveTravelWeatherLive = travelRequestCanResolveWeatherLive(question, effectiveOccasion)
   const missingTravelWeather = travelOrPackingRequest && !extractedWeather && !canResolveTravelWeatherLive
-  const establishedStylingContextParts = [
-    occasion ? `occasion=${occasion}` : '',
-    activity ? `activity=${activity}` : '',
-    extractedWeather ? `weather=${extractedWeather}` : '',
-    canResolveTravelWeatherLive ? 'weather=resolve live from named destination' : '',
-    season ? `season=${season}` : '',
-    mood ? `mood=${mood}` : '',
-    mission ? `mission=${mission}` : '',
-  ].filter(Boolean)
-  const establishedStylingContextText = establishedStylingContextParts.length
-    ? `Established styling context in this thread: ${establishedStylingContextParts.join('; ')}. Reuse these for any follow-up outfit generation unless the user's message changes them.`
+  const establishedStylingContext = {
+    ...(effectiveOccasion ? { occasion: effectiveOccasion } : {}),
+    ...(effectiveActivity ? { activity: effectiveActivity } : {}),
+    ...(extractedWeather ? { weather: extractedWeather } : {}),
+    ...(canResolveTravelWeatherLive ? { weather_resolution: 'resolve live from named destination' } : {}),
+    ...(effectiveSeason ? { season: effectiveSeason } : {}),
+    ...(effectiveMood ? { mood: effectiveMood } : {}),
+    ...(effectiveMission ? { mission: effectiveMission } : {}),
+    ...(effectiveLocation ? { location: effectiveLocation } : {}),
+  }
+  const establishedStylingContextText = Object.keys(establishedStylingContext).length
+    ? 'established styling context present'
     : ''
 
   const now = currentDate ? new Date(currentDate) : new Date()
@@ -3619,13 +3635,62 @@ export async function buildStylistConversationPayload(body) {
     ? await makeGeneratedOutfitReferenceSheet(generatedOutfits, pieces || [])
     : null
 
-  if (activeOutfit) {
-    saveStylistConversationState({
+  // Assemble the structured thread state for this turn. The current outfit set
+  // comes from the body when present; otherwise (follow-ups) it is restored from
+  // the persisted session state so "the second one" keeps meaning across turns.
+  const outfitSetFromBody = (Array.isArray(generatedOutfits) ? generatedOutfits : []).slice(0, 8).map((o, index) => ({
+    index: index + 1,
+    label: o?.label || o?.title || `Outfit ${index + 1}`,
+    ...(o?.occasion ? { occasion: o.occasion } : {}),
+    ...(o?.activity ? { activity: o.activity } : {}),
+    piece_ids: (Array.isArray(o?.pieceIds) && o.pieceIds.length
+      ? o.pieceIds
+      : (Array.isArray(o?.pieces) ? o.pieces.map(piece => piece?.id) : [])
+    ).map(Number).filter(Boolean),
+    pieces: (Array.isArray(o?.pieces) ? o.pieces : []).map(piece => piece?.name).filter(Boolean),
+  }))
+  const currentOutfitSet = outfitSetFromBody.length
+    ? outfitSetFromBody
+    : (requestedConversationMode !== 'new_request' && Array.isArray(restoredState.current_outfit_set)
+      ? restoredState.current_outfit_set
+      : [])
+
+  const threadState = {
+    turn_mode: conversationMode,
+    established: establishedStylingContext,
+    ...(travelOrPackingRequest ? {
+      travel: {
+        missing_weather: missingTravelWeather,
+        live_weather_resolvable: canResolveTravelWeatherLive,
+      }
+    } : {}),
+    ...(activeContext?.type ? {
+      active_context: {
+        type: activeContext.type,
+        ...(activeContext.id ? { id: activeContext.id } : {}),
+        ...(activeContext.name ? { name: activeContext.name } : {}),
+      }
+    } : {}),
+    ...(activeOutfit ? {
+      active_outfit: {
+        ...(activeOutfit.id ? { id: activeOutfit.id } : {}),
+        label: activeOutfit.label || activeOutfit.title || activeOutfit.name || 'current outfit',
+      }
+    } : {}),
+    ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
+  }
+
+  // Persist the full turn state (overwrites the previous turn: body values won,
+  // restored values already merged into `established` above).
+  saveStylistConversationState({
+    ...(activeOutfit ? {
       active_outfit: activeOutfit,
       active_piece_ids: activePieceIds,
-      visible_image_inventory: attachedImageInventory
-    }, sessionId)
-  }
+      visible_image_inventory: attachedImageInventory,
+    } : {}),
+    established: establishedStylingContext,
+    ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
+  }, sessionId)
 
   let automaticallySavedCorrection = null
   if (conversationMode === 'correction' || conversationMode === 'preference_reaction') {
@@ -3640,17 +3705,46 @@ export async function buildStylistConversationPayload(body) {
   const conversationDirective = buildStylistConversationDirective(conversationMode)
   const generatedSetCoverageAudit = Boolean(generatedOutfitContextText && isGeneratedSetCoverageAudit(question))
 
-  const activeWardrobeText = [
-    'The full wardrobe list is omitted from the prompt to save context tokens.',
-    'You MUST use the database search tools to look up or search for pieces in the closet:',
-    '- Use `search_wardrobe` to search or filter active garments by query, category, color, or occasion.',
-    '- Use `get_garment_details` to inspect detailed notes, fit warnings, styling rules, and intelligence for specific garment IDs.',
-    '- Use `get_last_outfit_evaluation` to check past critiques.',
-    '- Use `get_current_image_inventory` to inspect attached images.',
-    '- Use `store_user_correction` to save user corrections/preferences.',
-    'Never guess or assume a piece exists without querying the database via tools first.',
-    'CRITICAL: If the user states a new style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "I dislike cargo pants", "prefer dark jeans"), you MUST proactively call the `store_user_correction` tool to save this rule/preference immediately. Do not wait for the user to ask you to save it; save it automatically using the tool.'
-  ].join('\n')
+  // The whole-closet manifest: the stylist "knows the wardrobe" by reading it.
+  // Deterministic ordering (group, then id) keeps the prompt prefix stable for
+  // caching. Falls back to the legacy tools-only guidance if the wardrobe ever
+  // outgrows the manifest budget.
+  const manifestPieceCap = Number(process.env.WARDROBE_MANIFEST_MAX_PIECES || 400)
+  let activeManifestPieces = []
+  try {
+    activeManifestPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY id").all().map(parsePiece)
+  } catch (err) {
+    console.error('Wardrobe manifest query failed:', err)
+  }
+  const wardrobeManifestText = activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
+    ? buildWardrobeManifest(activeManifestPieces, { groupFor: wardrobeCategoryGroup })
+    : ''
+
+  const activeWardrobeText = wardrobeManifestText
+    ? [
+      `WARDROBE MANIFEST — all ${activeManifestPieces.length} active pieces, grouped by category. A "?" suffix marks a low-confidence tag value; [flags] mark trust limits (do not auto-style flagged pieces without checking).`,
+      '',
+      wardrobeManifestText,
+      '',
+      'How to use the manifest:',
+      '- It is the authoritative index of what exists. Only reference wardrobe pieces by the exact IDs above; never invent pieces.',
+      '- Reason directly from it for coverage, gap, and "what do I own" questions — no search needed for that.',
+      '- Before finalizing a specific recommendation, verify construction and styling details with `get_garment_details`, and look at actual photos via `search_wardrobe` with visual:true — especially for base layers, layering, and fit-sensitive calls.',
+      '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
+      '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
+      'CRITICAL: If the user states a new style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "I dislike cargo pants", "prefer dark jeans"), you MUST proactively call the `store_user_correction` tool to save this rule/preference immediately. Do not wait for the user to ask you to save it; save it automatically using the tool.'
+    ].join('\n')
+    : [
+      'The full wardrobe list is omitted from the prompt to save context tokens.',
+      'You MUST use the database search tools to look up or search for pieces in the closet:',
+      '- Use `search_wardrobe` to search or filter active garments by query, category, color, or occasion.',
+      '- Use `get_garment_details` to inspect detailed notes, fit warnings, styling rules, and intelligence for specific garment IDs.',
+      '- Use `get_last_outfit_evaluation` to check past critiques.',
+      '- Use `get_current_image_inventory` to inspect attached images.',
+      '- Use `store_user_correction` to save user corrections/preferences.',
+      'Never guess or assume a piece exists without querying the database via tools first.',
+      'CRITICAL: If the user states a new style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "I dislike cargo pants", "prefer dark jeans"), you MUST proactively call the `store_user_correction` tool to save this rule/preference immediately. Do not wait for the user to ask you to save it; save it automatically using the tool.'
+    ].join('\n')
 
   let modeDirectiveText = ''
   switch (conversationMode) {
@@ -3726,7 +3820,9 @@ export async function buildStylistConversationPayload(body) {
     'In correction mode, keep the reply to 1–3 short sentences or one compact paragraph unless the user asks for a new complete answer.',
     'Only use the full structured outfit-evaluation template when the user explicitly asks to evaluate or critique an outfit. For ordinary chat follow-ups, answer conversationally.',
     '',
-    establishedStylingContextText,
+    'THREAD STATE (STRUCTURED):',
+    JSON.stringify(threadState, null, 1),
+    'THREAD STATE is the single source of truth for established styling context and the current outfit set. Reuse its values for follow-ups unless the user changes them; when it conflicts with older prose context, THREAD STATE wins. When the user references outfits by position ("the first one", "#2"), resolve against current_outfit_set.',
     '',
     threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',
     '',
@@ -3791,7 +3887,8 @@ export async function buildStylistConversationPayload(body) {
       { role: 'user', content: userContent }
     ],
     maxTokens: 1500,
-    automaticallySavedCorrection
+    automaticallySavedCorrection,
+    threadState
   }
 }
 
