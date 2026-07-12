@@ -1,9 +1,12 @@
 # Closet — model-facing flow atlas
 
 Every user flow that talks to a model, mapped as a diagram a PM can read. Each
-flow gets its own file; this page is the index. See any flow file for the
-color/altitude conventions ([use-my-wardrobe.md](use-my-wardrobe.md) is the
-reference).
+flow gets its own file; this page is the index.
+
+**Reading the diagrams:** shape tells you who does the work — **rectangles are
+the app's own code, hexagons labelled `LLM ·` are calls to the AI model,
+diamonds are decisions.** The model is only touched at the hexagons. Full
+convention in [use-my-wardrobe.md](use-my-wardrobe.md) (the reference flow).
 
 **Model usage:** text, vision, and composition flows call Claude
 (`askStylist*`). Image-rendering flows call a separate image model
