@@ -3527,6 +3527,53 @@ test('search_wardrobe normalizes plural category filters instead of returning si
   assert.match(unknown[0].note, /Valid categories/, 'unknown category is corrected, not silently empty')
 })
 
+test('light summer maxi dresses pass the hot-weather gate; heavy ones stay blocked', async () => {
+  const { wholeWardrobePieceTrustDecision } = await import('../styling-engine/rules.js')
+  const hot = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false } }
+
+  const silkMaxi = { id: 9201, name: 'botanical print maxi dress', category: 'dress', fabric_weight: 'light', fabric_category: 'silk', length_hits_at: 'maxi' }
+  assert.equal(wholeWardrobePieceTrustDecision(silkMaxi, hot).reasons.includes('hot weather: insulating piece'), false,
+    'a light silk summer maxi is not insulating')
+
+  const velvetMaxi = { id: 9202, name: 'heavy velvet maxi dress', category: 'dress', fabric_weight: 'heavy', fabric_category: 'velvet', length_hits_at: 'maxi' }
+  assert.ok(wholeWardrobePieceTrustDecision(velvetMaxi, hot).reasons.includes('hot weather: insulating piece'),
+    'heavy full-length dresses remain blocked')
+})
+
+test('render_preview resolves outfit_index against the thread outfit set on a fresh turn', async () => {
+  const toolContext = {
+    occasion: 'casual',
+    season: 'current season',
+    generatedOutfits: [],
+    currentOutfitSet: [
+      { index: 1, label: 'Look one', piece_ids: [seeded.top, seeded.shoe] },
+      { index: 2, label: 'Look two', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }
+    ],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe]
+  }
+  const rendered = await executeTool('render_preview', { outfit_index: 2 }, toolContext)
+  assert.equal(rendered.status, 'success')
+  assert.equal(toolContext.renderedBoards[0].label, 'Look two')
+})
+
+test('structure rejection teaches completion instead of a bare retry', async () => {
+  const toolContext = {
+    generatedOutfits: [],
+    declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
+    retrievedPieceIds: new Set([seeded.top, seeded.jacket])
+  }
+  const rejected = await executeTool('propose_outfit', {
+    label: 'Pair only',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.jacket, role: 'outerwear' }
+    ]
+  }, toolContext)
+  assert.equal(rejected.status, 'validation_error')
+  assert.match(rejected.message, /COMPLETE the outfit instead of resending it/)
+  assert.match(rejected.message, /answer that part in prose citing verified IDs/)
+})
+
 test('freeform ask retries the model once when prose cites unverified ids', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })

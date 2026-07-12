@@ -1881,8 +1881,14 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     const isMediumOrHeavy = weight === 'medium' || weight === 'heavy'
     const hasHotInsulatingFiber = pieceHasInsulatingFiber(piece) && weight !== 'light'
 
+    // 2026-07-12: coverage alone (no weight qualifier) flagged a LIGHT silk summer
+    // maxi dress as insulating purely because length 'maxi' derives full-insulating
+    // coverage. Weight-qualified now: light full-length pieces are summer clothing.
+    // (Composer reference never blocks dresses via this branch at all; the remaining
+    // medium-coverage and warm-sleeve clauses are pending an owner ruling — see the
+    // hot-weather layering question from live testing.)
     const isInsulatingTopOrDress = isUpperBodyPiece && (
-      hasInsulatingCoverage || 
+      (hasInsulatingCoverage && isMediumOrHeavy) ||
       (hasWarmNeckline && isMediumOrHeavy) ||
       (hasWarmSleeves && isMediumOrHeavy)
     )

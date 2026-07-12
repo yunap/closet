@@ -890,7 +890,7 @@ export async function executeTool(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeValidationFails')
           return {
             status: "validation_error",
-            message: `The proposed outfit has an unresolved structure: ${issues.join('; ')}. Fix the roles and call propose_outfit again.`,
+            message: `The proposed outfit has an unresolved structure: ${issues.join('; ')}. COMPLETE the outfit instead of resending it: every card needs shoes plus a primary_top + primary_bottom (or a dress); a layer_top needs its base garment included too. Keep the pieces you chose, add the missing slots (search or view candidates if needed), then call propose_outfit again. If the user's question was really about a pairing or slot (e.g. what goes under X), you may answer that part in prose citing verified IDs — but any CARD must be a complete outfit.`,
             issues
           }
         }
@@ -1028,15 +1028,25 @@ export async function executeTool(name, args, toolContext = {}) {
         return viewed
       }
       case 'render_preview': {
+        // "The second one" means what the USER sees: this turn's cards first, then
+        // the thread's current outfit set (live-tested 2026-07-12: a render ask on a
+        // fresh turn found toolContext.generatedOutfits empty and errored, and the
+        // model bailed to prose instead of rendering).
         const cards = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
+        const threadSet = Array.isArray(toolContext.currentOutfitSet) ? toolContext.currentOutfitSet : []
         const index = Number(args?.outfit_index)
         let label = String(args?.label || '').trim()
         let renderPieceIds = []
-        if (Number.isInteger(index) && index >= 1 && index <= cards.length) {
-          const target = cards[index - 1]
+        const indexTarget = Number.isInteger(index) && index >= 1
+          ? (index <= cards.length ? cards[index - 1] : (index <= threadSet.length ? threadSet[index - 1] : null))
+          : null
+        if (indexTarget) {
+          const target = indexTarget
           renderPieceIds = (Array.isArray(target?.pieceIds) && target.pieceIds.length
             ? target.pieceIds
-            : (Array.isArray(target?.pieces) ? target.pieces.map(piece => piece?.id) : [])
+            : (Array.isArray(target?.piece_ids) && target.piece_ids.length
+              ? target.piece_ids
+              : (Array.isArray(target?.pieces) ? target.pieces.map(piece => piece?.id) : []))
           ).map(Number).filter(Boolean)
           label = label || target?.label || `Outfit ${index}`
         } else if (Array.isArray(args?.piece_ids) && args.piece_ids.length) {
