@@ -157,8 +157,13 @@ export function applyFreeformOutputChecks(answerText, toolContext, { zeroResultC
       correctionMessage: "This is a multi-day trip without enough activity/use-case scope, but you already searched or composed outfits before confirming what the trip needs to cover. Stop composing. Ask directly what activities or use cases to plan for — for example city walking, casual daytime, dinners, hiking/outdoors, anything dressier — before proposing garments this turn."
     }
   }
-  const requestedOutfitCount = extractRequestedOutfitCount(toolContext?.question)
-  if (!outfitCountRetried && requestedOutfitCount && looksLikeOutfitRequest(toolContext?.question)) {
+  // Step 4 (model-declared intent): when the model declared this turn's intent,
+  // the declaration is authoritative — the phrasing regexes below only apply on
+  // undeclared turns, as a fallback vocabulary.
+  const declaredIntent = toolContext?.declaredIntent || null
+  const turnWantsCards = declaredIntent ? declaredIntent.want === 'cards' : looksLikeOutfitRequest(toolContext?.question)
+  const requestedOutfitCount = declaredIntent?.outfitCount || extractRequestedOutfitCount(toolContext?.question)
+  if (!outfitCountRetried && requestedOutfitCount && turnWantsCards) {
     const readyCards = Array.isArray(toolContext?.generatedOutfits)
       ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
       : 0
@@ -190,7 +195,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, { zeroResultC
   // (previewOnly reused from the unrelated single-piece "ideal directions" feature).
   const hasPreseededOutfitCard = Array.isArray(toolContext?.generatedOutfits) && toolContext.generatedOutfits.length > 0
   if (!outfitProseRetried && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
-      (looksLikeUnproposedOutfitProse(answerText) || looksLikeOutfitRequest(toolContext?.question))) {
+      (looksLikeUnproposedOutfitProse(answerText) || turnWantsCards)) {
     bumpFreeformDiagnostic(toolContext, 'outfitProseWithoutToolCall')
     const priorIds = extractPieceIdsFromProse(answerText)
     const idHint = priorIds.length

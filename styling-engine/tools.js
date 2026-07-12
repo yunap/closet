@@ -265,6 +265,19 @@ export function validateOutfitRoles(pieces = [], missingGaps = []) {
 
 export const STYLIST_TOOLS = [
   {
+    name: "declare_intent",
+    description: "Declare what this turn should produce, BEFORE composing or answering substantively. Call it first each turn (re-call to update if the goal changes mid-turn). propose_outfit and generate_outfits are blocked until the turn's intent is declared as want:'cards'. The declaration is consumed mechanically: it sets the turn's output contract (e.g. how many cards are owed) instead of keyword-guessing from the user's phrasing.",
+    input_schema: {
+      type: "object",
+      properties: {
+        want: { type: "string", enum: ["text", "cards", "image"], description: "What the user's message asks this turn to produce: 'text' = advice/answers/critique in prose; 'cards' = composed outfit cards (via propose_outfit / generate_outfits); 'image' = a rendered outfit image (not available in chat — declare it anyway so the gap is handled honestly)." },
+        outfit_count: { type: "integer", minimum: 1, maximum: 5, description: "When want='cards' and the user asked for a specific number of outfits/looks/ideas, that number. Omit if unspecified." },
+        turn_mode: { type: "string", enum: ["new_request", "followup", "correction", "explanation", "preference_reaction"], description: "Optional: your read of the conversational turn type, recorded for diagnostics." }
+      },
+      required: ["want"]
+    }
+  },
+  {
     name: "search_wardrobe",
     description: "Search the wardrobe database for matching active garments. Returns a list of pieces with their ID, name, category, reads_as, visual parameters (pattern, silhouette, fabric, neckline, sleeves, length, hem), and simple notes.",
     input_schema: {
@@ -414,6 +427,36 @@ export async function executeTool(name, args, toolContext = {}) {
   console.log(`\n🤖 [Agent Tool Call] ${name} (${JSON.stringify(args)})`)
   try {
     switch (name) {
+      case 'declare_intent': {
+        // Step 4 (model-declared intent): the model states what this turn should
+        // produce; guards and composing tools consume this instead of keyword-
+        // guessing from the user's phrasing. Executed locally — no model cost.
+        // Re-declaring mid-turn is allowed; the last declaration wins.
+        const want = ['text', 'cards', 'image'].includes(args?.want) ? args.want : null
+        if (!want) {
+          return { status: "validation_error", message: "declare_intent needs want: 'text', 'cards', or 'image'." }
+        }
+        const rawCount = Number(args?.outfit_count)
+        const outfitCount = Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= 5 ? rawCount : null
+        const turnMode = ['new_request', 'followup', 'correction', 'explanation', 'preference_reaction'].includes(args?.turn_mode)
+          ? args.turn_mode
+          : null
+        toolContext.declaredIntent = { want, outfitCount, turnMode }
+        bumpFreeformDiagnostic(toolContext, 'intentDeclared')
+        if (want === 'cards') {
+          return {
+            status: "success",
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. Contract: every card goes through propose_outfit with piece IDs verified this turn (search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+          }
+        }
+        if (want === 'image') {
+          return {
+            status: "success",
+            message: "Intent recorded: image. In-chat image rendering is not available — say so plainly, produce the best card/text alternative (declare again with want:'cards' if you compose), and point to the 'Generate outfit image' button on an outfit card for renders."
+          }
+        }
+        return { status: "success", message: "Intent recorded: text. Answer conversationally; cite any wardrobe pieces as (ID <n>) and verify them this turn before recommending." }
+      }
       case 'search_wardrobe': {
         const { query, category, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
         let sql = "SELECT * FROM pieces WHERE status = 'active'"
@@ -695,6 +738,17 @@ export async function executeTool(name, args, toolContext = {}) {
           }
         }
 
+        // Declared-intent gate (step 4): composing requires an explicit cards
+        // declaration so the turn's output contract (count, verification) is set
+        // before any card exists. Recoverable — declare, then re-propose.
+        if (toolContext.declaredIntent?.want !== 'cards') {
+          bumpFreeformDiagnostic(toolContext, 'composeWithoutDeclaredIntent')
+          return {
+            status: "validation_error",
+            message: "No cards intent declared for this turn. Call declare_intent({ want: 'cards', outfit_count: <n if the user asked for a number> }) first, then call propose_outfit again with the same pieces."
+          }
+        }
+
         // Retrieval rule (step 3): every proposed piece must have been verified THIS
         // turn — retrieved via search/details, or already part of a verified card
         // (this turn's generated outfits or the thread's current outfit set). The
@@ -923,6 +977,14 @@ export async function executeTool(name, args, toolContext = {}) {
         return { status: "success", message: "Correction stored successfully." }
       }
       case 'generate_outfits': {
+        // Declared-intent gate (step 4): same contract as propose_outfit.
+        if (toolContext.declaredIntent?.want !== 'cards') {
+          bumpFreeformDiagnostic(toolContext, 'composeWithoutDeclaredIntent')
+          return {
+            status: "validation_error",
+            message: "No cards intent declared for this turn. Call declare_intent({ want: 'cards', outfit_count: <n if the user asked for a number> }) first, then call generate_outfits again."
+          }
+        }
         const { occasion, season, mood, mission, limit, piece_id, activity } = args
         const { generateOutfitsForPieceInternal, generateWholeWardrobeOutfitsVisualInternal } = await import('../routes/ai.js')
         const intent = normalizeStylingIntent({ occasion, season, mood, mission })

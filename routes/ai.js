@@ -3668,7 +3668,10 @@ router.post('/ask', async (req, res) => {
       // retrieved / actually saw — enforced by propose_outfit and the prose
       // citation check in applyFreeformOutputChecks.
       retrievedPieceIds: new Set(),
-      visuallySeenPieceIds: new Set()
+      visuallySeenPieceIds: new Set(),
+      // Step 4 (model-declared intent): set by the declare_intent tool; guards
+      // and composing tools consume it instead of keyword-guessing.
+      declaredIntent: null
     }
     const payload = await buildStylistConversationPayload({
       ...req.body,

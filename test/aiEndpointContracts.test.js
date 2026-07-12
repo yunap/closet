@@ -2596,6 +2596,7 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
   const toolContext = {
     occasion: 'city',
     season: 'current season',
+    declaredIntent: { want: 'cards' },
     retrievedPieceIds: new Set([seeded.top, seeded.bottom]),
     generatedOutfits: [{
       label: 'Existing card',
@@ -2648,7 +2649,7 @@ test('executeTool propose_outfit errors on an unresolved ID and does not append'
 })
 
 test('executeTool propose_outfit rejects an unresolved role collision (two primary_top) and surfaces it as a visible broken card, not a silent drop', async () => {
-  const vContext = { generatedOutfits: [], retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]) }
+  const vContext = { generatedOutfits: [], declaredIntent: { want: 'cards' }, retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]) }
   const invalid = await executeTool('propose_outfit', {
     label: 'Slot collision',
     pieces: [
@@ -3113,7 +3114,7 @@ test('freeform ask restores established context and outfit set on follow-up turn
 })
 
 test('propose_outfit rejects pieces not verified this turn, then accepts after retrieval', async () => {
-  const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season' }
+  const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' } }
   const outfitArgs = {
     label: 'Verification test',
     pieces: [
@@ -3150,6 +3151,7 @@ test('propose_outfit requires layer pieces to be visually seen this turn', async
     generatedOutfits: [],
     occasion: 'city',
     season: 'current season',
+    declaredIntent: { want: 'cards' },
     retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe, layerTopId])
   }
   const outfitArgs = {
@@ -3192,6 +3194,77 @@ test('prose citations of unverified piece ids force one corrective retry', () =>
 
   const retryExhausted = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set() }, { unverifiedCitationRetried: true })
   assert.equal(retryExhausted.block, false, 'only one retry per turn — the loop must not spin')
+})
+
+test('declare_intent records the turn contract and acks the capability gap for images', async () => {
+  const toolContext = {}
+  const cards = await executeTool('declare_intent', { want: 'cards', outfit_count: 3 }, toolContext)
+  assert.equal(cards.status, 'success')
+  assert.deepEqual(toolContext.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: null })
+  assert.match(cards.message, /3 outfits owed/)
+  assert.match(cards.message, /verified this turn/)
+
+  const image = await executeTool('declare_intent', { want: 'image' }, toolContext)
+  assert.equal(image.status, 'success')
+  assert.equal(toolContext.declaredIntent.want, 'image', 're-declaring updates the turn intent')
+  assert.match(image.message, /not available/)
+  assert.match(image.message, /Generate outfit image/)
+
+  const invalid = await executeTool('declare_intent', { want: 'song' }, toolContext)
+  assert.equal(invalid.status, 'validation_error')
+})
+
+test('composing tools are blocked until cards intent is declared', async () => {
+  const toolContext = {
+    generatedOutfits: [],
+    occasion: 'city',
+    season: 'current season',
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe])
+  }
+  const outfitArgs = {
+    label: 'Intent gate test',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }
+
+  const blockedPropose = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(blockedPropose.status, 'validation_error')
+  assert.match(blockedPropose.message, /declare_intent/)
+
+  const blockedGenerate = await executeTool('generate_outfits', { occasion: 'city' }, toolContext)
+  assert.equal(blockedGenerate.status, 'validation_error')
+  assert.match(blockedGenerate.message, /declare_intent/)
+
+  await executeTool('declare_intent', { want: 'cards' }, toolContext)
+  const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(accepted.status, 'success')
+})
+
+test('output guards consume declared intent instead of phrasing regexes', () => {
+  // Declared count drives the outfitCount guard with phrasing no regex would catch.
+  const countContext = {
+    question: 'you know what I need for the gallery',
+    declaredIntent: { want: 'cards', outfitCount: 3, turnMode: null },
+    generatedOutfits: [{ label: 'Only card', pieceIds: [seeded.top] }],
+    freeformDiagnostics: { proposeCalls: 1, searchCalls: 1 }
+  }
+  const countCheck = applyFreeformOutputChecks('Here is one look to start.', countContext, {})
+  assert.equal(countCheck.block, true)
+  assert.equal(countCheck.blockType, 'outfitCount')
+  assert.match(countCheck.correctionMessage, /requested 3 outfit ideas/)
+
+  // A declared text turn suppresses the outfit-request phrasing fallback.
+  const textContext = {
+    question: 'outfit ideas?',
+    declaredIntent: { want: 'text', outfitCount: null, turnMode: null },
+    generatedOutfits: [],
+    freeformDiagnostics: { proposeCalls: 0, searchCalls: 1 }
+  }
+  const textCheck = applyFreeformOutputChecks('Start from texture: pair rough with smooth.', textContext, {})
+  assert.equal(textCheck.block, false, 'declaration wins over the phrasing regex')
 })
 
 test('freeform ask retries the model once when prose cites unverified ids', async () => {
