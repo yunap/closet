@@ -2261,7 +2261,8 @@ test('StylistChat surfaces visual composer usage cost in outfit cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /const composerUsageSummary/)
   assert.match(src, /message\?\.debug\?\.composerUsage/)
-  assert.match(src, /Composer: \{composerUsageSummary\(message\.debug\.composerUsage\)\}/)
+  assert.match(src, /MessageTelemetryDisclosure/)
+  assert.match(src, /rows\.push\(\['Composer', composerUsageSummary\(composerUsage\)\]\)/)
   assert.match(src, /replyDebug = data\.debug \|\| null/)
 })
 
