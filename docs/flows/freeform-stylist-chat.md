@@ -159,10 +159,15 @@ stateDiagram-v2
 > wardrobe manifest + structured thread state (#37); **3** — retrieval rule:
 > pieces must be verified this turn, layers visually seen (#38); **4** —
 > model-declared intent via a `declare_intent` tool, with the guards' phrasing
-> regexes demoted to undeclared-turn fallbacks. Step 2 (query/visual primitives
-> + opacity tag field) is deliberately postponed; steps 5–6 remain. The
-> "current implementation" sections above predate the migration — cross-check
-> against the code as steps land.
+> regexes demoted to undeclared-turn fallbacks (#39); **5** — the guards
+> collapsed into one turn-contract validator with three clauses (truth /
+> context / delivery) and a single per-clause retry budget; delivery is checked
+> against the declared want (`cardsNotDelivered`), and the legacy travel
+> clarification clauses are kept as explicit retire-candidates pending live
+> evidence. Step 2 (query/visual primitives + opacity tag field) is
+> deliberately postponed; step 6 (demote precompose) remains. The "current
+> implementation" sections above predate the migration — cross-check against
+> the code as steps land.
 
 ## The problem
 

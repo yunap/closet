@@ -471,7 +471,7 @@ test('applyFreeformOutputChecks retries when concrete requested outfit count is 
   assert.match(check.correctionMessage, /Do not call search_wardrobe again/)
   assert.match(check.correctionMessage, /Call propose_outfit now/)
 
-  const alreadyRetried = applyFreeformOutputChecks("Here's one outfit.", toolContext, { outfitCountRetried: true })
+  const alreadyRetried = applyFreeformOutputChecks("Here's one outfit.", toolContext, new Set(['outfitCount']))
   assert.equal(alreadyRetried.block, false)
 })
 

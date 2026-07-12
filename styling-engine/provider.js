@@ -108,104 +108,104 @@ export function extractPieceIdsFromProse(answerText = '') {
   return [...new Set(ids)]
 }
 
-// After the model produces a tool-call-free final answer, apply spec 3 Part 0's checks plus spec 7
-// Part 2's. Returns { block: true, correctionMessage } to force a retry (0b or spec 7), or
-// { block: false } after recording any soft flag (0a) as a diagnostic for the client's collapsed
-// details affordance. Retry flags are passed in per-kind so exhausting one retry budget doesn't
-// consume the other.
-export function applyFreeformOutputChecks(answerText, toolContext, { zeroResultCorrectionRetried = false, destinationClarificationRetried = false, outfitProseRetried = false, tripScopeClarificationRetried = false, outfitCountRetried = false, unverifiedCitationRetried = false } = {}) {
-  const contradiction = !zeroResultCorrectionRetried && findZeroResultContradiction(answerText, toolContext)
-  if (contradiction) {
-    bumpFreeformDiagnostic(toolContext, 'zeroResultContradictionBlocks')
-    return {
-      block: true,
-      blockType: 'zeroResultContradiction',
-      correctionMessage: `You searched for "${contradiction}" and found nothing — do not describe this as a piece Yuna owns. Either offer a real alternative via search_wardrobe or say plainly that she doesn't have this piece.`
+// THE TURN CONTRACT (step 5 of the "router → stylist" migration): one validator
+// over the model's tool-call-free final answer, three clauses, one retry per
+// blockType — the caller passes the Set of blockTypes already retried this turn,
+// so exhausting one clause's budget doesn't consume another's.
+//
+//   truth    — claims must match what was verified this turn (step 3's rule)
+//   context  — legacy clarification checks; kept before delivery so
+//              "stop and ask" beats "deliver more"
+//   delivery — the declared want must be satisfied (step 4's declaration)
+//
+// want:'image' has no delivery clause on purpose: in-chat rendering does not
+// exist yet (step 2 postponed) and declare_intent's ack already instructs the
+// honest capability-gap answer.
+export function applyFreeformOutputChecks(answerText, toolContext, retried = new Set()) {
+  const fail = (blockType, diagnostic, correctionMessage) => {
+    bumpFreeformDiagnostic(toolContext, diagnostic)
+    return { block: true, blockType, correctionMessage }
+  }
+
+  // ── truth ───────────────────────────────────────────────────────────────
+  if (!retried.has('zeroResultContradiction')) {
+    const contradiction = findZeroResultContradiction(answerText, toolContext)
+    if (contradiction) {
+      return fail('zeroResultContradiction', 'zeroResultContradictionBlocks',
+        `You searched for "${contradiction}" and found nothing — do not describe this as a piece Yuna owns. Either offer a real alternative via search_wardrobe or say plainly that she doesn't have this piece.`)
     }
   }
-  // Retrieval rule (step 3): a piece ID cited in prose must have been verified this
-  // turn — retrieved via search/details, or part of a verified card (this turn's
-  // generated outfits or the thread's current outfit set). With the wardrobe
-  // manifest now in the prompt, the model can name real IDs it has never actually
-  // checked; the manifest is an index, not garment truth.
-  if (!unverifiedCitationRetried) {
+  // A piece ID cited in prose must have been verified this turn — retrieved via
+  // search/details, or part of a verified card (this turn's generated outfits or
+  // the thread's current outfit set). With the wardrobe manifest in the prompt,
+  // the model can name real IDs it has never actually checked; the manifest is
+  // an index, not garment truth.
+  if (!retried.has('unverifiedCitation')) {
     const citedIds = extractPieceIdsFromProse(answerText)
     if (citedIds.length) {
       const { retrieved, known } = verifiedPieceIdSets(toolContext)
       const unverifiedCited = citedIds.filter(id => !retrieved.has(id) && !known.has(id))
       if (unverifiedCited.length) {
-        bumpFreeformDiagnostic(toolContext, 'unverifiedCitationBlocks')
-        return {
-          block: true,
-          blockType: 'unverifiedCitation',
-          correctionMessage: `You cited piece ID(s) ${unverifiedCited.join(', ')} without verifying them this turn — the wardrobe manifest is an index, not garment truth. Call get_garment_details for ${unverifiedCited.map(id => `ID ${id}`).join(', ')} to confirm construction and see the photos, then answer again (or drop the unverified references).`
-        }
+        return fail('unverifiedCitation', 'unverifiedCitationBlocks',
+          `You cited piece ID(s) ${unverifiedCited.join(', ')} without verifying them this turn — the wardrobe manifest is an index, not garment truth. Call get_garment_details for ${unverifiedCited.map(id => `ID ${id}`).join(', ')} to confirm construction and see the photos, then answer again (or drop the unverified references).`)
       }
     }
   }
-  // 2026-07-10: the STYLIST_SYSTEM prompt bullet asking the model to confirm trip scope before
-  // composing (see prompts.js "Trip Scope Clarification") wasn't reliable on its own — live-tested and
-  // the model composed straight away instead of asking, the same lesson every other check in this file
-  // already learned the hard way. Mechanically verify: if this is a multi-day trip without enough
-  // activity/use-case scope and the model already searched or proposed outfits, force it to stop and ask.
-  if (!tripScopeClarificationRetried && tripRequestNeedsScopeClarification(toolContext?.question) &&
+
+  // ── context (legacy clarification clauses — retire candidates) ──────────
+  // Per the proposed architecture these should become the model's own judgment
+  // informed by THREAD STATE. Kept mechanical until live evidence shows the
+  // prompt-level judgment holds — the history here is explicit that prompt
+  // guidance alone failed before (2026-07-10 trip-scope live test).
+  if (!retried.has('tripScopeClarification') && tripRequestNeedsScopeClarification(toolContext?.question) &&
       ((toolContext?.freeformDiagnostics?.searchCalls || 0) > 0 || (toolContext?.freeformDiagnostics?.proposeCalls || 0) > 0)) {
-    bumpFreeformDiagnostic(toolContext, 'tripScopeClarificationRetries')
-    return {
-      block: true,
-      blockType: 'tripScopeClarification',
-      correctionMessage: "This is a multi-day trip without enough activity/use-case scope, but you already searched or composed outfits before confirming what the trip needs to cover. Stop composing. Ask directly what activities or use cases to plan for — for example city walking, casual daytime, dinners, hiking/outdoors, anything dressier — before proposing garments this turn."
-    }
+    return fail('tripScopeClarification', 'tripScopeClarificationRetries',
+      "This is a multi-day trip without enough activity/use-case scope, but you already searched or composed outfits before confirming what the trip needs to cover. Stop composing. Ask directly what activities or use cases to plan for — for example city walking, casual daytime, dinners, hiking/outdoors, anything dressier — before proposing garments this turn.")
   }
-  // Step 4 (model-declared intent): when the model declared this turn's intent,
-  // the declaration is authoritative — the phrasing regexes below only apply on
+  if (!retried.has('destinationClarification') && (toolContext?.freeformDiagnostics?.searchCalls || 0) === 0 && looksLikeDestinationOrWeatherQuestion(answerText)) {
+    return fail('destinationClarification', 'destinationClarificationRetries',
+      "You asked about weather or destination without calling search_wardrobe first. If this message names any real place or specific occasion (even one word — a city, region, venue, or event), call search_wardrobe with that as `location` and proceed to propose an outfit. Only ask again if you genuinely cannot identify any destination or occasion in the request.")
+  }
+
+  // ── delivery ────────────────────────────────────────────────────────────
+  // The declaration is authoritative; the phrasing regexes apply only on
   // undeclared turns, as a fallback vocabulary.
   const declaredIntent = toolContext?.declaredIntent || null
   const turnWantsCards = declaredIntent ? declaredIntent.want === 'cards' : looksLikeOutfitRequest(toolContext?.question)
   const requestedOutfitCount = declaredIntent?.outfitCount || extractRequestedOutfitCount(toolContext?.question)
-  if (!outfitCountRetried && requestedOutfitCount && turnWantsCards) {
-    const readyCards = Array.isArray(toolContext?.generatedOutfits)
-      ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
-      : 0
-    if (readyCards > 0 && readyCards < requestedOutfitCount) {
-      const alreadySearched = (toolContext?.freeformDiagnostics?.searchCalls || 0) > 0
-      const missingCount = requestedOutfitCount - readyCards
-      return {
-        block: true,
-        blockType: 'outfitCount',
-        correctionMessage: alreadySearched
-          ? `The user requested ${requestedOutfitCount} outfit ideas, but only ${readyCards} verified outfit card${readyCards === 1 ? '' : 's'} exist. You already searched the wardrobe for this request. Do not call search_wardrobe again as your next step. Call propose_outfit now for ${missingCount} additional complete valid outfit card${missingCount === 1 ? '' : 's'} using pieces from the existing search results, with the same constraints.`
-          : `The user requested ${requestedOutfitCount} outfit ideas, but only ${readyCards} verified outfit card${readyCards === 1 ? '' : 's'} exist. Continue the same turn: search_wardrobe with the same constraints, then call propose_outfit for ${missingCount} additional complete valid outfit card${missingCount === 1 ? '' : 's'}. Do not finish with fewer than requested unless you have made a real additional attempt and must explain the wardrobe gap.`
-      }
-    }
+  const readyCards = Array.isArray(toolContext?.generatedOutfits)
+    ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
+    : 0
+  // Declared cards, delivered none, and didn't ask the user anything: the
+  // turn's contract is unmet. An answer containing a question is treated as the
+  // model's own clarification judgment and passes.
+  const askedAQuestion = String(answerText || '').includes('?')
+  if (!retried.has('cardsNotDelivered') && declaredIntent?.want === 'cards' && readyCards === 0 && !askedAQuestion) {
+    return fail('cardsNotDelivered', 'cardsNotDeliveredBlocks',
+      "You declared want:'cards' but finished the turn with zero verified outfit cards and no clarifying question. Either compose now — search_wardrobe, then propose_outfit — or, if the wardrobe genuinely cannot satisfy the request, call declare_intent({ want: 'text' }) and explain the gap plainly.")
   }
-  if (!destinationClarificationRetried && (toolContext?.freeformDiagnostics?.searchCalls || 0) === 0 && looksLikeDestinationOrWeatherQuestion(answerText)) {
-    bumpFreeformDiagnostic(toolContext, 'destinationClarificationRetries')
-    return {
-      block: true,
-      blockType: 'destinationClarification',
-      correctionMessage: "You asked about weather or destination without calling search_wardrobe first. If this message names any real place or specific occasion (even one word — a city, region, venue, or event), call search_wardrobe with that as `location` and proceed to propose an outfit. Only ask again if you genuinely cannot identify any destination or occasion in the request."
-    }
+  if (!retried.has('outfitCount') && requestedOutfitCount && turnWantsCards && readyCards > 0 && readyCards < requestedOutfitCount) {
+    const alreadySearched = (toolContext?.freeformDiagnostics?.searchCalls || 0) > 0
+    const missingCount = requestedOutfitCount - readyCards
+    return fail('outfitCount', 'outfitCountBlocks', alreadySearched
+      ? `The user requested ${requestedOutfitCount} outfit ideas, but only ${readyCards} verified outfit card${readyCards === 1 ? '' : 's'} exist. You already searched the wardrobe for this request. Do not call search_wardrobe again as your next step. Call propose_outfit now for ${missingCount} additional complete valid outfit card${missingCount === 1 ? '' : 's'} using pieces from the existing search results, with the same constraints.`
+      : `The user requested ${requestedOutfitCount} outfit ideas, but only ${readyCards} verified outfit card${readyCards === 1 ? '' : 's'} exist. Continue the same turn: search_wardrobe with the same constraints, then call propose_outfit for ${missingCount} additional complete valid outfit card${missingCount === 1 ? '' : 's'}. Do not finish with fewer than requested unless you have made a real additional attempt and must explain the wardrobe gap.`)
   }
-  // A trip-precompose plan seeds toolContext.generatedOutfits with real, verified cards before the
-  // tool loop even starts — proposeCalls stays 0 (propose_outfit hasn't run THIS turn) even though a
-  // rendered card already exists. Without this guard, the model narrating one of those cards back in
-  // its own prose (e.g. "Here's a verified hiking outfit...") reads as unproposed outfit prose and
-  // forces a redundant propose_outfit call, producing a near-duplicate card with mismatched UI
-  // (previewOnly reused from the unrelated single-piece "ideal directions" feature).
+  // Outfit-shaped prose backstop: pieces must travel through propose_outfit.
+  // With a declaration present the zero-cards case is handled by
+  // cardsNotDelivered above; this leg remains for prose-shaped piece lists and
+  // for undeclared outfit-request turns. (A trip-precompose plan seeds verified
+  // cards before the loop starts — narrating those back is fine, hence the
+  // preseeded exemption.)
   const hasPreseededOutfitCard = Array.isArray(toolContext?.generatedOutfits) && toolContext.generatedOutfits.length > 0
-  if (!outfitProseRetried && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
-      (looksLikeUnproposedOutfitProse(answerText) || turnWantsCards)) {
-    bumpFreeformDiagnostic(toolContext, 'outfitProseWithoutToolCall')
+  if (!retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
+      (looksLikeUnproposedOutfitProse(answerText) || (!declaredIntent && looksLikeOutfitRequest(toolContext?.question)))) {
     const priorIds = extractPieceIdsFromProse(answerText)
     const idHint = priorIds.length
       ? ` You already referenced these exact piece IDs: ${priorIds.join(', ')} — reuse exactly these IDs and roles, do not substitute or invent different pieces.`
       : ''
-    return {
-      block: true,
-      blockType: 'outfitProse',
-      correctionMessage: `This looked like a request for an outfit, but propose_outfit was never called this turn — the pieces must go through the tool call to render as a verified card, not a hand-written list. Call propose_outfit now with the outfit you'd suggest.${idHint}`
-    }
+    return fail('outfitProse', 'outfitProseWithoutToolCall',
+      `This looked like a request for an outfit, but propose_outfit was never called this turn — the pieces must go through the tool call to render as a verified card, not a hand-written list. Call propose_outfit now with the outfit you'd suggest.${idHint}`)
   }
   return { block: false }
 }
@@ -214,7 +214,7 @@ export function freeformToolLoopFallbackAnswer(toolContext = {}) {
   const outfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
   if (!outfits.length) return 'Tool calling loop reached max iterations.'
 
-  const requestedOutfitCount = extractRequestedOutfitCount(toolContext.question)
+  const requestedOutfitCount = toolContext.declaredIntent?.outfitCount || extractRequestedOutfitCount(toolContext.question)
   const readyCount = outfits.filter(outfit => !outfit?.broken).length
   const brokenCount = outfits.length - readyCount
   if (requestedOutfitCount && readyCount < requestedOutfitCount) {
@@ -534,16 +534,11 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     // short-circuit skipped the checks entirely, making every guard untestable
     // through /ask).
     let answerStr = typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
-    const retriedFlags = {}
+    const retriedChecks = new Set()
     for (let i = 0; i < 6; i++) {
-      const check = applyFreeformOutputChecks(answerStr, toolContext, retriedFlags)
+      const check = applyFreeformOutputChecks(answerStr, toolContext, retriedChecks)
       if (!check.block) break
-      if (check.blockType === 'destinationClarification') retriedFlags.destinationClarificationRetried = true
-      else if (check.blockType === 'outfitProse') retriedFlags.outfitProseRetried = true
-      else if (check.blockType === 'tripScopeClarification') retriedFlags.tripScopeClarificationRetried = true
-      else if (check.blockType === 'outfitCount') retriedFlags.outfitCountRetried = true
-      else if (check.blockType === 'unverifiedCitation') retriedFlags.unverifiedCitationRetried = true
-      else retriedFlags.zeroResultCorrectionRetried = true
+      retriedChecks.add(check.blockType)
       const retryResponse = takeTestAiResponse({
         system,
         messages: [...messages, { role: 'assistant', content: answerStr }, { role: 'user', content: check.correctionMessage }],
@@ -559,12 +554,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
 
   let currentMessages = [...messages]
   const savedCorrections = []
-  let zeroResultCorrectionRetried = false
-  let destinationClarificationRetried = false
-  let outfitProseRetried = false
-  let tripScopeClarificationRetried = false
-  let outfitCountRetried = false
-  let unverifiedCitationRetried = false
+  const retriedChecks = new Set()
 
   for (let iter = 0; iter < 7; iter++) {
     if (AI_PROVIDER === 'openai') {
@@ -646,14 +636,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = message.content || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, outfitProseRetried, tripScopeClarificationRetried, outfitCountRetried, unverifiedCitationRetried })
+        const check = applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
-          if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
-          else if (check.blockType === 'outfitProse') outfitProseRetried = true
-          else if (check.blockType === 'tripScopeClarification') tripScopeClarificationRetried = true
-          else if (check.blockType === 'outfitCount') outfitCountRetried = true
-          else if (check.blockType === 'unverifiedCitation') unverifiedCitationRetried = true
-          else zeroResultCorrectionRetried = true
+          retriedChecks.add(check.blockType)
           currentMessages.push({ role: 'assistant', content: finalText })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
@@ -727,14 +712,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = response.content?.[0]?.text || ''
-        const check = applyFreeformOutputChecks(finalText, toolContext, { zeroResultCorrectionRetried, destinationClarificationRetried, outfitProseRetried, tripScopeClarificationRetried, outfitCountRetried, unverifiedCitationRetried })
+        const check = applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
-          if (check.blockType === 'destinationClarification') destinationClarificationRetried = true
-          else if (check.blockType === 'outfitProse') outfitProseRetried = true
-          else if (check.blockType === 'tripScopeClarification') tripScopeClarificationRetried = true
-          else if (check.blockType === 'outfitCount') outfitCountRetried = true
-          else if (check.blockType === 'unverifiedCitation') unverifiedCitationRetried = true
-          else zeroResultCorrectionRetried = true
+          retriedChecks.add(check.blockType)
           currentMessages.push({ role: 'assistant', content: response.content })
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
