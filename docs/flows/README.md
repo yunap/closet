@@ -4,9 +4,9 @@ Every user flow that talks to a model, mapped as a diagram a PM can read. Each
 flow gets its own file; this page is the index.
 
 **Reading the diagrams:** shape tells you who does the work — **rectangles are
-the app's own code, hexagons labelled `LLM ·` are calls to the AI model,
-diamonds are decisions.** The model is only touched at the hexagons. Full
-convention in [use-my-wardrobe.md](use-my-wardrobe.md) (the reference flow).
+the app's own code, hexagons are model calls (`LLM ·` = text model, `Image ·` =
+image model), diamonds are decisions.** A model is only touched at the hexagons.
+Full convention in [use-my-wardrobe.md](use-my-wardrobe.md) (the reference flow).
 
 **Model usage:** text, vision, and composition flows call Claude
 (`askStylist*`). Image-rendering flows call a separate image model
@@ -44,7 +44,7 @@ Status: `done` · `next` · `todo`
 | ----------------------------- | ------------------------------ | ------------------------------------------- | ------ |
 | Render a wardrobe outfit image | Outfit card → "see it"        | `/generate-wardrobe-outfit-image`           | todo   |
 | Outfit comparison sheet        | Multiple cards → compare image | `/generate-wardrobe-outfit-comparison-sheet` | todo  |
-| Saved-outfit variant images    | Saved outfit → variants        | `/generate-saved-outfit-image`              | todo   |
+| [Saved-outfit variants (Similar / Creative)](saved-outfit-variants.md) | Lookbook card → Similar / Creative | `/generate-saved-outfit-image` | **done** |
 
 ## E. Evaluation & feedback
 

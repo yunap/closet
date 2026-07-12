@@ -8,7 +8,7 @@ composes outfits from photos, and the results are validated before display.
 
 ```mermaid
 flowchart LR
-    A["app code"]:::app ~~~ R["wardrobe rules"]:::rules ~~~ M{{"LLM · model call"}}:::model ~~~ D{"decision"}:::check
+    A["app code"]:::app ~~~ R["wardrobe rules"]:::rules ~~~ M{{"LLM · text model"}}:::model ~~~ I{{"Image · image model"}}:::model ~~~ D{"decision"}:::check
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
     classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
@@ -16,10 +16,10 @@ flowchart LR
 ```
 
 - **Rectangles** — the app's own code (indigo = plumbing & ui, purple = product / wardrobe rules).
-- **Hexagons labelled `LLM ·`** — the only places the AI model is called.
+- **Hexagons** — a call to a model: `LLM ·` = the text model (Claude), `Image ·` = the image model (GPT-4o). The only places a model is involved.
 - **Diamonds** — decisions; the amber fill also marks validation & fallback steps.
 
-The one thing to remember: **the model is called only at the hexagons.**
+The one thing to remember: **a model is called only at the hexagons.**
 Everything else — filtering, gating, backfill, rendering — is the app's code.
 
 ## Overview (PM altitude)
