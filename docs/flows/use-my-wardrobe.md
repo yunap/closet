@@ -4,14 +4,23 @@ How the "Use my wardrobe" outfit generator works, end to end. This is the
 model-facing flow: you give a brief, the app filters your closet, one model call
 composes outfits from photos, and the results are validated before display.
 
-**How to read the diagrams:** color = who is acting.
+**How to read the diagrams — shape and color tell you who does the work:**
 
-| Color  | Actor           | Meaning                                  |
-| ------ | --------------- | ---------------------------------------- |
-| Indigo | app & ui        | frontend / plumbing, no product judgment |
-| Purple | wardrobe rules  | product logic that hides or ranks pieces |
-| Teal   | model call      | the single LLM call                      |
-| Amber  | validation      | structural gating and fallbacks          |
+```mermaid
+flowchart LR
+    A["app code"]:::app ~~~ R["wardrobe rules"]:::rules ~~~ M{{"LLM · model call"}}:::model ~~~ D{"decision"}:::check
+    classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
+    classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
+    classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
+    classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
+```
+
+- **Rectangles** — the app's own code (indigo = plumbing & ui, purple = product / wardrobe rules).
+- **Hexagons labelled `LLM ·`** — the only places the AI model is called.
+- **Diamonds** — decisions; the amber fill also marks validation & fallback steps.
+
+The one thing to remember: **the model is called only at the hexagons.**
+Everything else — filtering, gating, backfill, rendering — is the app's code.
 
 ## Overview (PM altitude)
 
@@ -20,7 +29,7 @@ flowchart TD
     A["You set the brief<br/>occasion, season, mood, request"] --> B["Gather your wardrobe<br/>all active closet pieces"]
     B --> C["Filter to a roster<br/>hide unsuitable, cap photos"]
     C --> D["Assemble AI context<br/>weather, feedback, favorites"]
-    D --> E["Model composes outfits<br/>sees every piece's photo"]
+    D --> E{{"LLM · composes outfits<br/>sees every piece's photo"}}
     E --> F{"Structurally valid<br/>outfits?"}
     F -->|enough| I["Show outfit cards<br/>in a new thread"]
     F -->|none valid| G["Backfill locally<br/>real wearable outfits"] --> I
@@ -28,7 +37,7 @@ flowchart TD
 
     classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
     classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
-    classDef model fill:#e1f5ee,stroke:#1d9e75,color:#08413a;
+    classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
     classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
     class A,B,I app;
     class C,D rules;
