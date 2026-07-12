@@ -770,6 +770,7 @@ Evaluate the garment's visual structure and weight along these two axes:
   * Knit dresses are not inherently dressy; judge by sheen, cut, and construction, not category.
   * "dressy": reserved for going-out signals: sheen, sequins, lace as a primary element, formal tailoring, cocktail/evening cuts.
   For shoes: "heel_height" is physical heel lift (flat, low, mid, high). "walk_support" is stability/support for lots of walking (high, medium, low); a flat ballet shoe can still be low-support.
+  For "opacity": judge construction transparency for wearability. "opaque": solid or lined. "semi_sheer": skin/light hints through. "sheer": clearly see-through (chiffon, mesh, unlined lace). "open_weave": visible holes in the knit/weave (crochet, open knit, fishnet) — such a piece cannot work alone against skin as a base layer.
 
 - Occasion Suitability — describe, do not stylize. Rate each occasion on the garment's
   OBJECTIVE construction, not on a texture-to-occasion shortcut:
@@ -866,6 +867,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
   "fabric_weight": "ultralight|light|medium|heavy",
+  "opacity": "opaque|semi_sheer|sheer|open_weave",
   "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. You MUST align this list with your fabric_category (e.g. if fabric_category is silk, fiber_content must include silk; if fabric_category is linen, fiber_content must include linen). Use 'unknown' if not determinable."],
   "formality": "lounge|everyday|elevated|dressy",
   "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",

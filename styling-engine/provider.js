@@ -147,7 +147,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
       const unverifiedCited = citedIds.filter(id => !retrieved.has(id) && !known.has(id))
       if (unverifiedCited.length) {
         return fail('unverifiedCitation', 'unverifiedCitationBlocks',
-          `You cited piece ID(s) ${unverifiedCited.join(', ')} without verifying them this turn — the wardrobe manifest is an index, not garment truth. Call get_garment_details for ${unverifiedCited.map(id => `ID ${id}`).join(', ')} to confirm construction and see the photos, then answer again (or drop the unverified references).`)
+          `You cited piece ID(s) ${unverifiedCited.join(', ')} without verifying them this turn — the wardrobe manifest is an index, not garment truth. Call view_pieces for ${unverifiedCited.map(id => `ID ${id}`).join(', ')} to confirm each piece (photo + truth line), then answer again (or drop the unverified references).`)
       }
     }
   }
@@ -183,6 +183,14 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   if (!retried.has('cardsNotDelivered') && declaredIntent?.want === 'cards' && readyCards === 0 && !askedAQuestion) {
     return fail('cardsNotDelivered', 'cardsNotDeliveredBlocks',
       "You declared want:'cards' but finished the turn with zero verified outfit cards and no clarifying question. Either compose now — search_wardrobe, then propose_outfit — or, if the wardrobe genuinely cannot satisfy the request, call declare_intent({ want: 'text' }) and explain the gap plainly.")
+  }
+  // Declared image, never rendered, and didn't ask anything: same shape as
+  // cardsNotDelivered — render_preview exists precisely so this want is
+  // satisfiable in chat.
+  if (!retried.has('imageNotDelivered') && declaredIntent?.want === 'image' &&
+      (toolContext?.freeformDiagnostics?.renderCalls || 0) === 0 && !askedAQuestion) {
+    return fail('imageNotDelivered', 'imageNotDeliveredBlocks',
+      "You declared want:'image' but never called render_preview. Call render_preview({ outfit_index }) for a card produced this turn, or render_preview({ piece_ids }) with IDs from a verified card — or ask the user which look to render.")
   }
   if (!retried.has('outfitCount') && requestedOutfitCount && turnWantsCards && readyCards > 0 && readyCards < requestedOutfitCount) {
     const alreadySearched = (toolContext?.freeformDiagnostics?.searchCalls || 0) > 0

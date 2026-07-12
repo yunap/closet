@@ -168,6 +168,22 @@ test('manifest line omits noise for a fully trusted solid piece', () => {
   assert.match(line, /^#7 black straight trousers — quiet dark column; fabric twill$/)
 })
 
+test('manifest line surfaces non-opaque opacity with confidence marker', () => {
+  const line = buildWardrobeManifestLine({
+    id: 200,
+    name: 'cream crochet top',
+    category: 'top',
+    reads_as: 'open airy texture',
+    fabric_category: 'crochet',
+    opacity: 'open_weave',
+    style_profile_json: { _confidence: { opacity: 'low' } },
+  })
+  assert.match(line, /opacity open_weave\?/, 'low-confidence opacity carries the ? marker')
+
+  const opaque = buildWardrobeManifestLine({ id: 201, name: 'solid tee', category: 'top', opacity: 'opaque' })
+  assert.equal(opaque.includes('opacity'), false, 'opaque is the default and stays silent')
+})
+
 test('manifest groups by category with counts in deterministic id order', () => {
   const manifest = buildWardrobeManifest([
     { id: 9, name: 'blue tee', category: 'top' },
