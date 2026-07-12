@@ -1087,7 +1087,7 @@ export default function StylistChat({
   useEffect(() => {
     if (!pendingPiece && !pendingOutfit) return
     const t = setTimeout(() => {
-      pendingActionRef.current?.scrollIntoView({ behavior: 'auto', block: 'center' })
+      pendingActionRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' })
     }, 0)
     return () => clearTimeout(t)
   }, [pendingPiece, pendingOutfit])
@@ -4245,7 +4245,7 @@ export default function StylistChat({
       )}
 
       {/* Chat thread */}
-      <div className="stylist-chat-scroll">
+      <div className={`stylist-chat-scroll ${pending ? 'has-pending-action' : ''}`}>
         {messages.length === 1 && (
           <div style={{ marginBottom: 16 }}>
             {!pending && (
@@ -5107,14 +5107,18 @@ export default function StylistChat({
         </div>
       )}
 
-      <div className="stylist-input-shell">
-        <div className="ai-input-row">
-          <label className={`ai-upload-btn ${imagePrev ? 'has-image' : ''}`} title="Attach photo">
-            <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
-            📷
-          </label>
-          <textarea ref={textRef} className="ai-input" placeholder={pending ? `Ask a custom question about ${pending.name}...` : 'Ask about your wardrobe...'} value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
-          <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
+      <div className={`stylist-input-shell ${pending ? 'is-hidden-for-pending-action' : ''}`}>
+        <div className="ai-input-row" aria-hidden={pending ? 'true' : undefined}>
+          {!pending && (
+            <>
+              <label className={`ai-upload-btn ${imagePrev ? 'has-image' : ''}`} title="Attach photo">
+                <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
+                📷
+              </label>
+              <textarea ref={textRef} className="ai-input" placeholder="Ask about your wardrobe..." value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
+              <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
+            </>
+          )}
         </div>
       </div>
       {previewImage && (
