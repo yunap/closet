@@ -1758,6 +1758,7 @@ export default function StylistChat({
     // We explicitly check previewOnly && pieceId to target only the text-only editorial direction cards.
     const isIdealAdditions = outfits.length >= 2 &&
       outfits.some(outfit => outfit.previewOnly && outfit.pieceId)
+    const canExploreAdjacent = message?.savedOutfitVariantMode === 'formula' && message?.variantSourceOutfit
 
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
@@ -1769,6 +1770,22 @@ export default function StylistChat({
         {(message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings && (
           <div style={{ fontSize: 10, color: 'var(--text-light)', padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)' }}>
             Timing: {timingSummary(message.debug.timings)}{renderCost(message.debug.timings)}
+          </div>
+        )}
+        {canExploreAdjacent && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={() => send({
+                outfit: { ...message.variantSourceOutfit, imageGenerationMode: true, variantMode: 'adjacent' },
+                input: 'Explore adjacent outfits from this saved look using only my wardrobe.',
+                compareOutfitId: '',
+                continueThread: true,
+              })}
+              style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: 'pointer' }}
+            >
+              Explore adjacent outfits
+            </button>
           </div>
         )}
         {canGenerateComparison && (
@@ -2811,7 +2828,8 @@ export default function StylistChat({
           outfit,
           pieceIds: ids,
           occasion: options.occasion || wardrobeOutfitOccasion,
-          season: options.season || wardrobeOutfitSeason
+          season: options.season || wardrobeOutfitSeason,
+          renderMode: options.renderMode || 'ai'
         })
       })
       const contentType = res.headers.get('content-type') || ''
@@ -3276,7 +3294,7 @@ export default function StylistChat({
 
     let targetThreadId = currentThreadId
     let isTransitioningNew = currentThreadId === 'new_chat'
-    const forceNewFromExisting = currentThreadId !== 'new_chat' && (outfitToSend || pieceToSend)
+    const forceNewFromExisting = currentThreadId !== 'new_chat' && (outfitToSend || pieceToSend) && !overrides.continueThread
 
     if (forceNewFromExisting) {
       isTransitioningNew = true
@@ -3404,6 +3422,8 @@ export default function StylistChat({
       let replyMode = null
       let replyWholeWardrobe = false
       let replyQueryOptions = null
+      let replySavedOutfitVariantMode = null
+      let replyVariantSourceOutfit = null
       let replyConversationMode = 'new_request'
       let nextThreadMemory = threadMemory
       let generatedBoards = null
@@ -3414,11 +3434,17 @@ export default function StylistChat({
         replyText = data.feedback || data.error || 'Something went wrong.'
 
       } else if (outfitToSend?.imageGenerationMode) {
-        const savedOutfitVariantMode = outfitToSend.variantMode === 'creative' ? 'creative' : 'similar'
+        const savedOutfitVariantMode = outfitToSend.variantMode === 'creative'
+          ? 'creative'
+          : (outfitToSend.variantMode === 'adjacent' ? 'adjacent' : 'formula')
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
           ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
-          : []
-        const res = await fetch('/api/ai/generate-saved-outfit-image', {
+          : (Array.isArray(outfitToSend.pieceIds) ? outfitToSend.pieceIds.filter(Boolean) : [])
+        const mainPieceId = outfitToSend.mainPieceId || outfitToSend.main_piece_id || outfitToSend.anchorPieceId || null
+        const endpoint = savedOutfitVariantMode === 'creative'
+          ? '/api/ai/generate-saved-outfit-image'
+          : '/api/ai/generate-saved-outfit-variants'
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3430,29 +3456,62 @@ export default function StylistChat({
               bestFor: outfitToSend.occasion || '',
               pieces: outfitToSend.pieces || [],
               pieceIds: outfitPieceIds,
-              mainPieceId: outfitToSend.mainPieceId || outfitToSend.main_piece_id || outfitToSend.anchorPieceId || null,
+              mainPieceId,
               reason: outfitToSend.notes || '',
             },
             pieceIds: outfitPieceIds,
-            mainPieceId: outfitToSend.mainPieceId || outfitToSend.main_piece_id || outfitToSend.anchorPieceId || null,
+            mainPieceId,
             occasion: outfitToSend.occasion || effectiveGenerateOccasion,
             season: outfitToSend.season || effectiveGenerateSeason,
             variantMode: savedOutfitVariantMode,
+            mode: savedOutfitVariantMode,
+            activity: effectiveGenerateActivity,
           })
         })
         const contentType = res.headers.get('content-type') || ''
         if (!contentType.includes('application/json')) {
           const text = await res.text()
           throw new Error(text.startsWith('<!DOCTYPE')
-            ? 'Image route returned HTML instead of JSON. Restart the backend/dev server so the new /api/ai/generate-saved-outfit-image route is loaded.'
-            : `Image route returned ${contentType || 'non-JSON'} response.`)
+            ? `Variant route returned HTML instead of JSON. Restart the backend/dev server so ${endpoint} is loaded.`
+            : `Variant route returned ${contentType || 'non-JSON'} response.`)
         }
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not generate outfit variants')
-        replyText = data.feedback || (savedOutfitVariantMode === 'creative'
-          ? 'Generated creative outfit alternatives from the saved outfit photo and linked garment references.'
-          : 'Generated similar outfit variants from the saved outfit photo and linked garment references.')
-        generatedBoards = data.boards || [data.board || data]
+        if (savedOutfitVariantMode === 'creative') {
+          replyText = data.feedback || 'Generated creative outfit alternatives from the saved outfit photo and linked garment references.'
+          generatedBoards = data.boards || [data.board || data]
+        } else {
+          replyText = data.feedback || (savedOutfitVariantMode === 'adjacent'
+            ? 'Here are adjacent outfits using your wardrobe pieces.'
+            : 'Here are formula-similar outfits using your wardrobe pieces.')
+          replyStructuredOutfits = Array.isArray(data.structuredOutfits)
+            ? data.structuredOutfits.map(outfit => ({ ...outfit, textOnly: true, wholeWardrobe: true }))
+            : []
+          replyWholeWardrobe = true
+          replyMode = data.mode || `generate_saved_outfit_${savedOutfitVariantMode}_variants`
+          replyDebug = data.debug || null
+          replySavedOutfitVariantMode = savedOutfitVariantMode
+          replyVariantSourceOutfit = data.sourceOutfit || {
+            ...outfitToSend,
+            pieceIds: outfitPieceIds,
+            mainPieceId
+          }
+          replyQueryOptions = {
+            occasion: outfitToSend.occasion || effectiveGenerateOccasion,
+            season: outfitToSend.season || effectiveGenerateSeason,
+            mood: effectiveGenerateMood,
+            mission: effectiveGenerateMission,
+            activity: effectiveGenerateActivity,
+          }
+          nextThreadMemory = {
+            type: 'generated_outfits',
+            source: `saved_outfit_${savedOutfitVariantMode}`,
+            latestContextText: compactGeneratedOutfitContext(replyStructuredOutfits, { source: `saved_outfit_${savedOutfitVariantMode}` }),
+            latestOutfits: replyStructuredOutfits,
+            stylingContext: replyQueryOptions,
+          }
+          setThreadMemory(nextThreadMemory)
+        }
 
       } else if (outfitToSend) {
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
@@ -3825,6 +3884,8 @@ export default function StylistChat({
         outfitName: replyOutfitName,
         debug: replyDebug,
         mode: replyMode,
+        savedOutfitVariantMode: replySavedOutfitVariantMode,
+        variantSourceOutfit: replyVariantSourceOutfit,
         queryOptions: replyQueryOptions || (shouldGenerateOutfits || shouldGenerateEditorialVisuals || shouldGenerateActiveEditorialVisuals ? {
           occasion: effectiveGenerateOccasion,
           season: effectiveGenerateSeason,
@@ -5006,7 +5067,7 @@ export default function StylistChat({
                     Critique outfit
                   </button>
                   <button
-                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'similar' }, input: 'Generate similar variants from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
+                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'formula' }, input: 'Create formula-similar outfits from my wardrobe based on this saved look.', compareOutfitId: '' })}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
                   >
                     Similar variants
