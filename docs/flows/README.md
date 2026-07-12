@@ -58,12 +58,11 @@ Status: `done` · `next` · `todo`
 
 | Flow                | Entry point         | Endpoint | Status |
 | ------------------- | ------------------- | -------- | ------ |
-| Stylist chat        | Free-form chat box  | `/ask`   | todo   |
+| [Stylist chat](freeform-stylist-chat.md) | Free-form chat box | `/ask` | **done** |
 
-`/ask` is the tool-using conversational brain — intent routing, advisor mode,
-and tool calls (`propose_outfit`, `search_wardrobe`, weather, …). It is the most
-complex flow and effectively dispatches into several of the flows above; worth
-doing last, once its sub-flows are mapped.
+`/ask` is the tool-using conversational brain — a 4-layer router (classify turn →
+app pre-route → model tool loop → output guards), documented with a pipeline
+overview, per-layer trigger tables, and a conversation-mode state diagram.
 
 ---
 
