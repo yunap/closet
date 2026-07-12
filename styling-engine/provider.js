@@ -477,7 +477,7 @@ export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, ma
   const response = await client.messages.create({
     model: ANTHROPIC_MODEL,
     max_tokens: maxTokens,
-    system,
+    system: systemToAnthropicBlocks(system),
     messages
   })
   return {
@@ -498,13 +498,38 @@ export function takeTestAiResponse({ system = '', messages = [], maxTokens = 120
   return null
 }
 
+// Prompt-cache breakpoint: buildStylistConversationPayload places this marker
+// between the stable prompt prefix (style constitution, occasion profiles,
+// wardrobe manifest) and the volatile per-turn blocks (date, turn mode, thread
+// state, feedback). The Anthropic path splits here into two system blocks with
+// cache_control on the stable one — the manifest then only costs full price
+// when the wardrobe actually changes (and across tool-loop iterations within a
+// turn). Other paths (OpenAI, test mode) just strip the marker.
+export const PROMPT_CACHE_BREAKPOINT = '[[PROMPT_CACHE_BREAKPOINT]]'
+
+export function systemToAnthropicBlocks(system) {
+  const text = String(system || '')
+  const markerAt = text.indexOf(PROMPT_CACHE_BREAKPOINT)
+  if (markerAt === -1) return text
+  const stable = text.slice(0, markerAt)
+  const volatileTail = text.slice(markerAt + PROMPT_CACHE_BREAKPOINT.length)
+  const blocks = [{ type: 'text', text: stable, cache_control: { type: 'ephemeral' } }]
+  if (volatileTail.trim()) blocks.push({ type: 'text', text: volatileTail })
+  return blocks
+}
+
+export function systemToPlainText(system) {
+  return String(system || '').split(PROMPT_CACHE_BREAKPOINT).join('')
+}
+
 export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
   const { text } = await askStylistWithUsage({ system, messages, maxTokens })
   return text
 }
 
 export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
-  const testResponse = takeTestAiResponse({ system, messages, maxTokens })
+  const plainSystem = systemToPlainText(system)
+  const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
     return {
       text: typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse),
@@ -520,7 +545,7 @@ export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, m
       model: OPENAI_MODEL,
       max_tokens: maxTokens,
       messages: [
-        { role: 'system', content: system },
+        { role: 'system', content: plainSystem },
         ...messages.map(m => ({ role: m.role, content: contentToOpenAI(m.content) }))
       ]
     })
@@ -535,7 +560,8 @@ export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, m
 
 
 export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
-  const testResponse = takeTestAiResponse({ system, messages, maxTokens })
+  const plainSystem = systemToPlainText(system)
+  const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
     // Mirror the real loop's output checks and one-retry-per-guard semantics so
     // contract tests can exercise guard behavior end-to-end (previously this
@@ -548,7 +574,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       if (!check.block) break
       retriedChecks.add(check.blockType)
       const retryResponse = takeTestAiResponse({
-        system,
+        system: plainSystem,
         messages: [...messages, { role: 'assistant', content: answerStr }, { role: 'user', content: check.correctionMessage }],
         maxTokens
       })
@@ -571,7 +597,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         model: OPENAI_MODEL,
         max_tokens: maxTokens,
         messages: [
-          { role: 'system', content: system },
+          { role: 'system', content: plainSystem },
           ...currentMessages.map(m => {
             const mapped = { role: m.role }
             if (m.content) {
@@ -663,7 +689,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       const response = await client.messages.create({
         model: ANTHROPIC_MODEL,
         max_tokens: maxTokens,
-        system,
+        system: systemToAnthropicBlocks(system),
         messages: formattedMessages,
         tools: STYLIST_TOOLS
       })
