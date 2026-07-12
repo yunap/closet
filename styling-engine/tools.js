@@ -285,7 +285,7 @@ export const STYLIST_TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "Search query matching against name or notes" },
-        category: { type: "string", description: "Filter by category (e.g. top, bottom, shoes, outerwear, dress, accessory)" },
+        category: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear", "accessory"], description: "Filter by category. Use the exact singular values shown (the manifest's group headers are plural display labels; the data values are these)." },
         color: { type: "string", description: "Filter by color description or reads_as tag" },
         occasion: { type: "string", description: "Filter by occasion (e.g. city, casual, evening)" },
         pattern_type: { type: "string", description: "Filter by pattern type, e.g. solid, floral, stripe, botanical, geometric, abstract, animal, graphic, plaid, other" },
@@ -432,6 +432,26 @@ export const STYLIST_TOOLS = [
   }
 ]
 
+// Category values in the db are singular ('top', not 'tops'). Models naturally
+// write plurals; an exact-match SQL filter then silently returns zero rows and
+// the model reports a fake wardrobe gap (live-tested 2026-07-12: category
+// "tops" → 0 items while "top" → 45). Normalize the common shapes.
+const CATEGORY_ALIASES = {
+  top: 'top', tops: 'top',
+  bottom: 'bottom', bottoms: 'bottom', pants: 'bottom',
+  dress: 'dress', dresses: 'dress',
+  shoes: 'shoes', shoe: 'shoes',
+  outerwear: 'outerwear', jackets: 'outerwear', jacket: 'outerwear',
+  accessory: 'accessory', accessories: 'accessory',
+}
+
+export function normalizeCategoryFilter(value) {
+  const key = String(value || '').toLowerCase().trim()
+  if (!key) return { category: null, unknown: false }
+  const canonical = CATEGORY_ALIASES[key]
+  return canonical ? { category: canonical, unknown: false } : { category: key, unknown: true }
+}
+
 // Per-turn retrieval tracking (step 3 of the freeform "router → stylist" migration):
 // tools record which piece ids the model has retrieved this turn, and which of
 // those it has actually SEEN (photo attached). propose_outfit and the prose
@@ -495,7 +515,11 @@ export async function executeTool(name, args, toolContext = {}) {
         return { status: "success", message: "Intent recorded: text. Answer conversationally; cite any wardrobe pieces as (ID <n>) and verify them this turn before recommending." }
       }
       case 'search_wardrobe': {
-        const { query, category, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
+        const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
+        const { category, unknown: unknownCategory } = normalizeCategoryFilter(args.category)
+        if (unknownCategory) {
+          return [{ note: `Unknown category "${args.category}" — no filter applied would lie about the wardrobe. Valid categories: top, bottom, dress, shoes, outerwear, accessory. Re-run the search with one of these.` }]
+        }
         let sql = "SELECT * FROM pieces WHERE status = 'active'"
         const params = []
         if (category) {
@@ -1060,8 +1084,9 @@ export async function executeTool(name, args, toolContext = {}) {
         const groupOptions = ['category', 'formality', 'fabric_weight', 'fabric_category', 'silhouette', 'season', 'occasions', 'opacity']
         const groupField = groupOptions.indexOf(String(args?.group_by || '')) !== -1 ? String(args.group_by) : 'category'
         const activeRows = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-        const scoped = args?.category
-          ? activeRows.filter(piece => String(piece.category || '') === String(args.category))
+        const { category: coverageCategory } = normalizeCategoryFilter(args?.category)
+        const scoped = coverageCategory
+          ? activeRows.filter(piece => String(piece.category || '') === coverageCategory)
           : activeRows
         const counts = {}
         for (const piece of scoped) {

@@ -4465,7 +4465,7 @@ export default function StylistChat({
                             {m.debug.searchCalls > 0 && <div>Wardrobe searches this turn: {m.debug.searchCalls}</div>}
                             {m.debug.gateExcludedTotal > 0 && <div>Pieces filtered out as prohibited: {m.debug.gateExcludedTotal}</div>}
                             {m.debug.proposeCalls > 0 && <div>Outfits proposed: {m.debug.proposeCalls}</div>}
-                            {m.debug.proposeValidationFails > 0 && <div>Proposals rejected for invalid structure: {m.debug.proposeValidationFails}</div>}
+                            {m.debug.proposeValidationFails > 0 && <div>Proposals rejected by validation (structure or occasion/weather gates): {m.debug.proposeValidationFails}</div>}
                             {m.debug.outfitProseWithoutToolCall > 0 && <div>⚠ An earlier draft of this reply described an outfit in text instead of proposing it as a verified card; it was auto-corrected before sending.</div>}
                             {m.debug.zeroResultContradictionBlocks > 0 && <div>⚠ An earlier draft of this reply described a piece that a search found 0 results for; it was auto-corrected before sending.</div>}
                             {m.debug.destinationClarificationRetries > 0 && <div>⚠ An earlier draft asked about destination/weather without searching the wardrobe first; it was auto-corrected before sending.</div>}
