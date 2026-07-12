@@ -30,7 +30,8 @@ import {
   askStylistWithTools,
   prepareImageForClaude,
   AI_PROVIDER,
-  ACTIVE_STYLIST_MODEL
+  ACTIVE_STYLIST_MODEL,
+  PROMPT_CACHE_BREAKPOINT,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 
@@ -3796,15 +3797,23 @@ export async function buildStylistConversationPayload(body) {
       ].join('\n')
     : ''
 
+  // Prompt-cache layout: stable blocks first (constitution, profiles, wardrobe
+  // manifest), then the cache breakpoint, then the volatile per-turn blocks.
+  // Keep the stable prefix byte-stable — it is what makes the manifest cheap.
   const system = STYLIST_SYSTEM + [
-    '',
-    'CURRENT DATE / SEASON:',
-    `Today is ${resolvedCurrentDateLabel}. Time zone: ${timezone || 'America/Los_Angeles'}.`,
-    'Use this date for relative phrases like today, next week, in a few weeks, current season, or upcoming travel. Do not say you cannot determine today’s date.',
     '',
     'OCCASION & CLIMATE PROFILES (RULES-AS-DATA):',
     'Classify the user\'s event/activity and weather description into one of the profiles below. You MUST strictly apply that profile\'s prohibited_materials, prohibited_footwear, and preferred style vibe rules to recommended outfits or pieces. NEVER suggest heavy zip ankle boots in summer months (June, July, August) even on cooler/windy days, unless explicitly requested or for rain/mud.',
     JSON.stringify(OCCASION_PROFILES, null, 2),
+    '',
+    'CURRENT WARDROBE TRUTH:',
+    activeWardrobeText,
+    '',
+    PROMPT_CACHE_BREAKPOINT,
+    '',
+    'CURRENT DATE / SEASON:',
+    `Today is ${resolvedCurrentDateLabel}. Time zone: ${timezone || 'America/Los_Angeles'}.`,
+    'Use this date for relative phrases like today, next week, in a few weeks, current season, or upcoming travel. Do not say you cannot determine today’s date.',
     '',
     'CONVERSATION CONTROLLER:',
     `Current turn mode: ${conversationMode}.`,
@@ -3835,9 +3844,6 @@ export async function buildStylistConversationPayload(body) {
       ? `CURRENT ATTACHED IMAGE INVENTORY:\n${attachedImageInventory.map(item => `- ${item}`).join('\n')}`
       : '',
     savedFeedbackSection,
-    '',
-    'CURRENT WARDROBE TRUTH:',
-    activeWardrobeText,
     '',
     confirmedOutfitsText ? `CONFIRMED / FAVORITE OUTFIT MEMORY:\n${confirmedOutfitsText}` : '',
     generatedOutfitContextText ? [

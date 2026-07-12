@@ -18,7 +18,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
-const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks } = await import('../styling-engine/provider.js')
+const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, systemToAnthropicBlocks, systemToPlainText, PROMPT_CACHE_BREAKPOINT } = await import('../styling-engine/provider.js')
 
 let server
 let baseUrl
@@ -3037,6 +3037,50 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
   assert.equal(ampleCoverageJson.debug.profileCoverage.tops >= 5, true, 'Should now have >= 5 trail-ready tops')
   assert.equal(ampleCoverageJson.debug.profileCoverage.shoes >= 3, true, 'Should now have >= 3 trail-ready shoes')
   assert.ok(!ampleCoverageJson.feedback.includes('limited trail-ready'), 'Feedback must not contain limited coverage note with ample coverage')
+})
+
+test('prompt cache breakpoint splits the system into stable + volatile blocks', () => {
+  const system = `STABLE PREFIX with the manifest\n${PROMPT_CACHE_BREAKPOINT}\nVOLATILE turn state`
+  const blocks = systemToAnthropicBlocks(system)
+  assert.equal(Array.isArray(blocks), true)
+  assert.equal(blocks.length, 2)
+  assert.match(blocks[0].text, /STABLE PREFIX/)
+  assert.deepEqual(blocks[0].cache_control, { type: 'ephemeral' })
+  assert.match(blocks[1].text, /VOLATILE turn state/)
+  assert.equal(blocks[1].cache_control, undefined)
+
+  const plain = systemToPlainText(system)
+  assert.equal(plain.includes(PROMPT_CACHE_BREAKPOINT), false)
+  assert.match(plain, /STABLE PREFIX[\s\S]*VOLATILE turn state/)
+
+  // No marker → passthrough, unchanged shape.
+  assert.equal(systemToAnthropicBlocks('plain system'), 'plain system')
+  assert.equal(systemToPlainText('plain system'), 'plain system')
+})
+
+test('stylist system prompt orders stable blocks before the cache breakpoint and volatile after', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    return 'Cache-layout answer.'
+  }
+  await postJson('/api/ai/ask', {
+    question: 'Which of my pieces suit a rainy commute?',
+    sessionId: 'cache-layout-contract',
+    occasion: 'city',
+  })
+  const call = aiCalls.find(c => String(c.system).includes('WARDROBE MANIFEST'))
+  assert.ok(call)
+  const sys = String(call.system)
+  assert.equal(sys.includes(PROMPT_CACHE_BREAKPOINT), false, 'test path sees the marker-stripped prompt')
+  const manifestAt = sys.indexOf('CURRENT WARDROBE TRUTH:')
+  const profilesAt = sys.indexOf('OCCASION & CLIMATE PROFILES')
+  const dateAt = sys.indexOf('CURRENT DATE / SEASON:')
+  const controllerAt = sys.indexOf('CONVERSATION CONTROLLER:')
+  const threadStateAt = sys.indexOf('THREAD STATE (STRUCTURED):')
+  assert.ok(profilesAt !== -1 && manifestAt !== -1 && dateAt !== -1 && controllerAt !== -1 && threadStateAt !== -1)
+  assert.ok(profilesAt < manifestAt, 'profiles precede the manifest in the stable prefix')
+  assert.ok(manifestAt < dateAt, 'stable manifest precedes the volatile date block')
+  assert.ok(dateAt < controllerAt && controllerAt < threadStateAt, 'volatile blocks follow in order')
 })
 
 test('freeform ask injects the wardrobe manifest and structured thread state', async () => {
