@@ -3513,6 +3513,20 @@ test('store_user_correction dedupes identical notes', async () => {
   assert.equal(rows.n, 1, 'the same live note must not stack in feedback memory')
 })
 
+test('search_wardrobe normalizes plural category filters instead of returning silent zeros', async () => {
+  const toolContext = {}
+  const plural = await executeTool('search_wardrobe', { category: 'tops' }, toolContext)
+  const singular = await executeTool('search_wardrobe', { category: 'top' }, toolContext)
+  const pluralIds = plural.filter(item => item.id).map(item => item.id).sort()
+  const singularIds = singular.filter(item => item.id).map(item => item.id).sort()
+  assert.ok(singularIds.length > 0, 'seeded wardrobe has tops')
+  assert.deepEqual(pluralIds, singularIds, '"tops" must return the same pieces as "top"')
+
+  const unknown = await executeTool('search_wardrobe', { category: 'blousewear' }, toolContext)
+  assert.equal(unknown.length, 1)
+  assert.match(unknown[0].note, /Valid categories/, 'unknown category is corrected, not silently empty')
+})
+
 test('freeform ask retries the model once when prose cites unverified ids', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
