@@ -1065,6 +1065,10 @@ img { display: block; max-width: 100%; }
   padding: 16px 16px 8px;
   overscroll-behavior: contain;
 }
+.stylist-chat-scroll.has-pending-action {
+  flex: 0 1 auto;
+  max-height: min(260px, 34vh);
+}
 
 .generated-visual-grid {
   display: grid;
@@ -1113,6 +1117,9 @@ img { display: block; max-width: 100%; }
   position: sticky;
   bottom: 0;
   z-index: 4;
+}
+.stylist-input-shell.is-hidden-for-pending-action {
+  display: none;
 }
 .ai-input {
   flex: 1;

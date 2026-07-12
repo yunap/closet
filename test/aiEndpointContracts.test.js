@@ -2290,6 +2290,16 @@ test('StylistChat preserves generated board image urls for critique previews', (
   assert.doesNotMatch(src, /src=\{`\\\/uploads\\\/\$\{pendingPhoto\}`\}/)
 })
 
+test('StylistChat pending garment action hides the generic chat input', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  const css = fs.readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
+  assert.match(src, /stylist-chat-scroll \$\{pending \? 'has-pending-action' : ''\}/)
+  assert.match(src, /stylist-input-shell \$\{pending \? 'is-hidden-for-pending-action' : ''\}/)
+  assert.match(src, /\{!pending && \(/)
+  assert.match(css, /\.stylist-chat-scroll\.has-pending-action/)
+  assert.match(css, /\.stylist-input-shell\.is-hidden-for-pending-action/)
+})
+
 test('StylistChat renders wardrobe evaluation replies in the chat thread', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.doesNotMatch(src, /if \(m\.wardrobeEvaluation \|\| m\.contextName === 'Whole wardrobe evaluation'\) \{\s*return null\s*\}/)

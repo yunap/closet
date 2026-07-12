@@ -144,7 +144,7 @@ export default function PieceInventory({ onSendToStylist }) {
       <div className="view-header">
         <div className="view-header-top">
           <div>
-            <div className="view-title">My Wardrobe</div>
+            <div className="view-title">The Wardrobe Room</div>
             <div className="view-subtitle">{pieces.length} pieces{favOnly ? ' · favorites' : ''}</div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
