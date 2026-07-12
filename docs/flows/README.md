@@ -34,9 +34,11 @@ Status: `done` · `next` · `todo`
 
 | Flow                          | Entry point                   | Endpoint                                  | Status |
 | ----------------------------- | ----------------------------- | ----------------------------------------- | ------ |
-| Ideal styling directions      | Piece → "ideal" mode          | `/editorial-directions-preview`           | todo   |
-| Render one editorial look     | A direction card → render     | `/editorial-render-one`                   | todo   |
-| Ideal additions ("shop gap")  | Board → ideal additions       | `/generate-ideal-additions-preview-sheet` | todo   |
+| [Ideal styling directions](editorial-ideal-additions.md) | Piece → "ideal / new pieces" | `/editorial-directions-preview` | **done** |
+| [Render one editorial look](editorial-ideal-additions.md) | A direction card → render | `/editorial-render-one` | **done** |
+| [Ideal additions ("shop gap")](editorial-ideal-additions.md) | Directions → sheet | `/generate-ideal-additions-preview-sheet` | **done** |
+
+All three are one preview→render pipeline — see [editorial-ideal-additions.md](editorial-ideal-additions.md).
 
 ## D. Outfit image rendering  (image model)
 
@@ -66,12 +68,15 @@ overview, per-layer trigger tables, and a conversation-mode state diagram.
 
 ---
 
-### Suggested order
+### Progress
 
-1. Finish **family B** (selected-piece composer, then boards) — closest siblings
-   to the one that's done; high reuse of the roster/gating concepts.
-2. **Family C** (editorial / ideal) — shares the preview→render two-step.
-3. **Family A** (intake/tagging) — simpler, single vision calls.
-4. **Family D** (image rendering) — mostly prompt + image model, thin logic.
-5. **Family E** (evaluation) — small.
-6. **Family F** (`/ask`) — last; it references the others.
+Done: all of **B**, **F** (chat brain), **C** (editorial/ideal), and **D →
+saved-outfit variants**.
+
+Remaining:
+- **Family A** (intake/tagging ×3) — single vision calls.
+- **Family D** — wardrobe outfit image, comparison sheet (image renders).
+- **Family E** (evaluation ×3) — incl. the "Critique" card button.
+
+Planned grouping: remaining **D + E** together (the post-outfit card actions),
+then **A**.
