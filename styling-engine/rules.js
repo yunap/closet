@@ -55,7 +55,10 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
     .filter(n => Number.isFinite(n))
   const hasHotTemperature = fahrenheitValues.some(n => n >= 80)
   const hasColdTemperature = fahrenheitValues.some(n => n <= 45)
+  const explicitWarmWeather = String(season || '').trim().toLowerCase() === 'warm'
+    || /\bwarm(?:\s+(?:weather|climate|day|daytime|trip|season|current-season|current season))\b/.test(text)
   const explicitHot = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text)
+    || explicitWarmWeather
     || /\bsummer\b/.test(text)
     || hasHotTemperature
   const explicitCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
@@ -3486,9 +3489,32 @@ export function wholeWardrobeCandidateText(candidates = []) {
   ].filter(Boolean).join('\n')).join('\n\n')
 }
 
+function isWholeWardrobeLayerableTop(piece = {}) {
+  if (wardrobeCategoryGroup(piece) !== 'top') return false
+  const text = [
+    piece.name,
+    piece.notes,
+    piece.engine_notes,
+    piece.reads_as,
+    piece.silhouette,
+    garmentProfileText(piece),
+    String(piece.role_permission || '')
+  ].filter(Boolean).join(' ').toLowerCase()
+  return /\b(button[- ]?(up|down)|overshirt|shirt[- ]?jacket|cardigan|kimono|wrap|vest)\b/.test(text)
+    || /\b(layer_top|top layer|overlayer|overlay|worn open|wear open|worn over|wear over)\b/.test(text)
+}
+
 export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
   const moodProfile = wholeWardrobeMoodProfile(options.mood)
   const activeMissions = options.activeMissions || ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing']
+  const requiredPieceId = Number(options.requiredPieceId || options.mainPieceId) || null
+  const requiredPiece = requiredPieceId
+    ? allPieces.find(piece => Number(piece.id) === requiredPieceId)
+    : null
+  const requiredGroup = requiredPiece ? wardrobeCategoryGroup(requiredPiece) : ''
+  const requiredIsAddOn = ['outerwear', 'accessory'].includes(requiredGroup)
+  const preserveLayeredTop = Boolean(options.preserveLayeredTop || options.sourceHasLayeredTopFormula)
+  const requiredIsLayerableTop = preserveLayeredTop && requiredGroup === 'top' && isWholeWardrobeLayerableTop(requiredPiece)
   
   const requestedCandidateLimit = Math.max(0, Number(options.candidateLimit) || 0)
   const requestedBucketLimit = Math.max(0, Number(options.candidateBucketLimit) || 0)
@@ -3519,18 +3545,39 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
     
     const sliceForTest = (items, productionLimit) => items.slice(0, effectiveCandidateLimit ? Math.min(items.length, requestedBucketLimit || 3) : productionLimit)
     
-    const shoes = bucket.shoes.length ? sliceForTest(bucket.shoes, 10) : [null]
-    const tops = sliceForTest(bucket.top, 16)
-    const bottoms = sliceForTest(bucket.bottom, 14)
-    const dresses = sliceForTest(bucket.dress, 10)
-    const outerwear = sliceForTest(bucket.outerwear, 6)
-    const accessories = sliceForTest(bucket.accessory, 6)
+    const includeRequiredFirst = (items, group) => {
+      if (!requiredPiece || requiredGroup !== group) return items
+      const withoutRequired = items.filter(piece => Number(piece.id) !== requiredPieceId)
+      return [requiredPiece, ...withoutRequired]
+    }
+    const shoes = requiredGroup === 'shoes'
+      ? [requiredPiece]
+      : (bucket.shoes.length ? sliceForTest(includeRequiredFirst(bucket.shoes, 'shoes'), 10) : [null])
+    const tops = requiredGroup === 'top'
+      ? [requiredPiece]
+      : sliceForTest(includeRequiredFirst(bucket.top, 'top'), 16)
+    const baseTopsForRequiredLayer = requiredIsLayerableTop
+      ? sliceForTest(bucket.top.filter(piece => Number(piece.id) !== requiredPieceId), 10)
+      : []
+    const bottoms = requiredGroup === 'bottom'
+      ? [requiredPiece]
+      : sliceForTest(includeRequiredFirst(bucket.bottom, 'bottom'), 14)
+    const dresses = requiredGroup === 'dress'
+      ? [requiredPiece]
+      : sliceForTest(includeRequiredFirst(bucket.dress, 'dress'), 10)
+    const outerwear = requiredGroup === 'outerwear'
+      ? includeRequiredFirst(bucket.outerwear, 'outerwear').slice(0, effectiveCandidateLimit ? 1 : 6)
+      : sliceForTest(includeRequiredFirst(bucket.outerwear, 'outerwear'), 6)
+    const accessories = requiredGroup === 'accessory'
+      ? includeRequiredFirst(bucket.accessory, 'accessory').slice(0, effectiveCandidateLimit ? 1 : 6)
+      : sliceForTest(includeRequiredFirst(bucket.accessory, 'accessory'), 6)
     
     const missionCandidates = []
     
-    const addCandidate = (pieces) => {
+    const addCandidate = (pieces, { allowMissingRequired = false } = {}) => {
       if (missionCandidates.length >= maxInitialCandidates) return
       const clean = pieces.filter(Boolean)
+      if (requiredPieceId && !allowMissingRequired && !clean.some(piece => Number(piece.id) === requiredPieceId)) return
       if (moodProfile?.id === 'modern_bohemian_restraint' && wholeWardrobeBohoSignalScore(clean) < 2) return
       if (!qualifiesWholeWardrobeMission(clean, missionId)) return
       if (explicitFormalityAvoidanceIssue(clean, options)) return
@@ -3546,21 +3593,72 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
       if (scored.score < -18) return
       missionCandidates.push({ key, pieces: clean, score: scored.score, missionId })
     }
+    const addStructuralCandidate = (pieces) => {
+      const clean = pieces.filter(Boolean)
+      if (!clean.length) return
+      if (requiredPieceId && !clean.some(piece => Number(piece.id) === requiredPieceId)) return
+      if (explicitFormalityAvoidanceIssue(clean, options)) return
+      const key = clean.map(p => p.id).sort((a,b) => a-b).join('|')
+      if (!key || missionCandidates.some(candidate => candidate.key === key)) return
+      const scored = scoreWholeWardrobeCandidate(clean, { ...options, activeMissionId: missionId })
+      missionCandidates.push({ key, pieces: clean, score: scored.score, missionId })
+    }
+    const hasRequiredCandidate = () => !requiredPieceId || missionCandidates.some(candidate => candidate.pieces.some(piece => Number(piece.id) === requiredPieceId))
     
-    separateCandidates:
-    for (const top of tops) {
-      for (const bottom of bottoms) {
-        for (const shoe of shoes) {
-          addCandidate([top, bottom, shoe])
-          if (missionCandidates.length >= maxSeparateCandidates) break separateCandidates
+    if (requiredGroup !== 'dress') {
+      separateCandidates:
+      for (const top of tops) {
+        for (const bottom of bottoms) {
+          for (const shoe of shoes) {
+            addCandidate(requiredIsAddOn ? [top, bottom, shoe, requiredPiece] : [top, bottom, shoe])
+            if (missionCandidates.length >= maxSeparateCandidates) break separateCandidates
+          }
+        }
+      }
+      if (requiredIsLayerableTop) {
+        layeredTopCandidates:
+        for (const baseTop of baseTopsForRequiredLayer) {
+          for (const bottom of bottoms) {
+            for (const shoe of shoes) {
+              addCandidate([baseTop, bottom, shoe, requiredPiece])
+              if (missionCandidates.length >= maxSeparateCandidates) break layeredTopCandidates
+            }
+          }
         }
       }
     }
-    dressCandidates:
-    for (const dress of dresses) {
-      for (const shoe of shoes) {
-        addCandidate([dress, shoe])
-        if (missionCandidates.length >= maxInitialCandidates) break dressCandidates
+    if (!['top', 'bottom'].includes(requiredGroup)) {
+      dressCandidates:
+      for (const dress of dresses) {
+        for (const shoe of shoes) {
+          addCandidate(requiredIsAddOn ? [dress, shoe, requiredPiece] : [dress, shoe])
+          if (requiredGroup === 'dress') {
+            for (const top of tops.slice(0, effectiveCandidateLimit ? 2 : 6)) {
+              if (Number(top?.id) !== requiredPieceId) addCandidate([dress, top, shoe])
+            }
+          }
+          if (missionCandidates.length >= maxInitialCandidates) break dressCandidates
+        }
+      }
+    }
+    if (requiredIsAddOn && !hasRequiredCandidate()) {
+      structuralSeparate:
+      for (const top of tops) {
+        for (const bottom of bottoms) {
+          for (const shoe of shoes) {
+            addStructuralCandidate([top, bottom, shoe, requiredPiece])
+            if (hasRequiredCandidate()) break structuralSeparate
+          }
+        }
+      }
+      if (!hasRequiredCandidate()) {
+        structuralDress:
+        for (const dress of dresses) {
+          for (const shoe of shoes) {
+            addStructuralCandidate([dress, shoe, requiredPiece])
+            if (hasRequiredCandidate()) break structuralDress
+          }
+        }
       }
     }
     
@@ -3577,7 +3675,9 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
       for (const accessory of accessories.slice(0, accessoryLimit)) addCandidate([...candidate.pieces, accessory])
     }
     
-    const sortedMissionCandidates = missionCandidates.sort((a, b) => b.score - a.score)
+    const sortedMissionCandidates = missionCandidates
+      .filter(cand => !requiredPieceId || cand.pieces.some(piece => Number(piece.id) === requiredPieceId))
+      .sort((a, b) => b.score - a.score)
     const topLimit = effectiveCandidateLimit ? Math.max(4, Math.round(effectiveCandidateLimit / 4)) : 50
     for (const cand of sortedMissionCandidates.slice(0, topLimit)) {
       const globalKey = `${cand.key}-${missionId}`

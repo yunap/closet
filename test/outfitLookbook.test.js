@@ -32,9 +32,18 @@ test('OutfitDetail opens the shared form for editing', () => {
 test('Piece selector supports marking a linked outfit piece as Main', () => {
   assert.match(source, /function PieceSelector\(\{ outfitId, linkedPieceIds, mainPieceId = null/)
   assert.match(source, /body: JSON\.stringify\(\{ pieceIds: selectedIds, mainPieceId: nextMainId \}\)/)
-  assert.match(source, /setMainId\(isMain \? null : piece\.id\)/)
+  assert.match(source, /e\.preventDefault\(\)/)
+  assert.match(source, /e\.stopPropagation\(\)/)
+  assert.match(source, /setMainId\(isMain \? null : pieceId\)/)
+  assert.match(source, /const isMain = mainId === pieceId/)
   assert.match(source, />\s*Main\s*<\/button>/)
   assert.match(source, /main_piece_id: mainPieceId/)
+})
+
+test('Similar outfit actions request wardrobe formula variants', () => {
+  assert.match(source, /variantMode: 'formula'/)
+  assert.match(source, /Create formula-similar outfits from my wardrobe based on this saved look\./)
+  assert.doesNotMatch(source, /variantMode: 'similar'/)
 })
 
 test('indoor season matches warm, cool, and year-round browsing but can be filtered directly', () => {

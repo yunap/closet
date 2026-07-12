@@ -2196,7 +2196,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
   }
 }
 
-export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index = 1 }) {
+export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index = 1, forceAi = false }) {
   const startedAt = Date.now()
   const timings = {}
   const filename = `generated-boards/whole-wardrobe-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
@@ -2208,7 +2208,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     reason: outfit.reason || '',
   }
 
-  if (photoPreservingVisualsEnabled() || !process.env.OPENAI_API_KEY) {
+  if ((!forceAi && photoPreservingVisualsEnabled()) || !process.env.OPENAI_API_KEY) {
     const collageStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,

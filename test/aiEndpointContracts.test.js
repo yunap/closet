@@ -1092,6 +1092,18 @@ test('whole-wardrobe image endpoint returns one generated board artifact', async
   assert.ok(json.debug.renderer)
 })
 
+test('whole-wardrobe outfit image button requests AI render instead of preview collage', () => {
+  const chatSrc = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const coreSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/core.js'), 'utf8')
+
+  assert.match(chatSrc, /renderMode: options\.renderMode \|\| 'ai'/)
+  assert.match(routeSrc, /renderMode = ''/)
+  assert.match(routeSrc, /forceAi: renderMode === 'ai'/)
+  assert.match(coreSrc, /forceAi = false/)
+  assert.match(coreSrc, /\(\(!forceAi && photoPreservingVisualsEnabled\(\)\) \|\| !process\.env\.OPENAI_API_KEY\)/)
+})
+
 test('whole-wardrobe comparison sheet endpoint returns a preview board artifact', async () => {
   const first = generatedCard()
   const second = {
@@ -1148,6 +1160,166 @@ test('saved outfit variants endpoint supports creative boards from linked pieces
   assert.equal(json.boards[0].variantMode, 'creative')
   assert.equal(json.boards[0].mainPieceId, seeded.shoe)
   assert.ok(json.boards[0].imageUrl.startsWith('/uploads/generated-boards/'))
+})
+
+test('saved outfit formula variants use gated wardrobe cards and preserve Main piece', async () => {
+  db.prepare('UPDATE outfits SET main_piece_id = ? WHERE id = ?').run(seeded.shoe, seeded.outfitId)
+  const json = await postJson('/api/ai/generate-saved-outfit-variants', {
+    outfit: { id: seeded.outfitId, name: 'Vest top + white blouse', photo: `/uploads/${seeded.photos.outfit}` },
+    occasion: 'city',
+    season: 'warm',
+    mode: 'formula',
+  })
+
+  assert.equal(json.mode, 'generate_saved_outfit_formula_variants')
+  assert.equal(json.pipeline, 'saved_outfit_wardrobe_variant_composer')
+  assert.equal(json.savedOutfitVariantMode, 'formula')
+  assert.ok(Array.isArray(json.structuredOutfits))
+  assert.ok(json.structuredOutfits.length >= 1)
+  assert.ok(json.structuredOutfits.filter(outfit => !outfit.broken).every(outfit => outfit.pieceIds.includes(seeded.shoe)))
+  assert.equal(json.debug.mainPieceId, seeded.shoe)
+  assert.equal(json.debug.weatherProfile.isHot, true)
+  assert.equal(typeof json.debug.finalSelection.modelMissingMainRejected, 'number')
+  assert.equal(typeof json.debug.finalSelection.localBackfillMissingMainRejected, 'number')
+  assert.equal(typeof json.debug.finalSelection.diagnosticBackfillMissingMainRejected, 'number')
+  assert.equal(typeof json.debug.finalSelection.missingMainRejected, 'number')
+  const composerCall = aiCalls.find(call => String(call.system || '').includes('SAVED OUTFIT VARIANT CONTRACT'))
+  assert.ok(composerCall)
+  assert.match(composerCall.system, /Formula-similar mode: use only shown wardrobe pieces/)
+  assert.match(composerCall.system, new RegExp(`MUST include Main piece ID ${seeded.shoe}`))
+})
+
+test('saved outfit formula variants pin Main even when warm weather suppresses it', async () => {
+  db.prepare('INSERT INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)').run(seeded.outfitId, seeded.dress)
+  db.prepare('UPDATE outfits SET main_piece_id = ?, occasion = ? WHERE id = ?').run(seeded.dress, 'smart-casual', seeded.outfitId)
+  const json = await postJson('/api/ai/generate-saved-outfit-variants', {
+    outfit: { id: seeded.outfitId, name: 'Wool dress saved look', photo: `/uploads/${seeded.photos.outfit}` },
+    occasion: 'smart-casual',
+    season: 'warm',
+    mode: 'formula',
+  })
+
+  assert.equal(json.debug.mainPieceId, seeded.dress)
+  assert.equal(json.debug.weatherProfile.isHot, true)
+  assert.equal(json.debug.savedMainBypassedSuppression, true)
+  assert.ok(json.debug.savedMainSuppressionReasons.length >= 1)
+  assert.ok(json.structuredOutfits.filter(outfit => !outfit.broken).every(outfit => outfit.pieceIds.includes(seeded.dress)))
+})
+
+test('saved outfit formula variants reject collapsed model cards for two-top source looks', async () => {
+  const buttonDownPhoto = await makeImage('olive-button-down.png', '#70815a')
+  const buttonDown = insertPiece({
+    name: 'olive button-down shirt',
+    category: 'top',
+    colors: ['olive'],
+    occasions: ['city', 'casual'],
+    photo: buttonDownPhoto,
+    notes: 'button-down worn open as a top layer',
+    reads_as: 'olive button-down overshirt top layer',
+    fabric_weight: 'light',
+    formality: 'everyday',
+  })
+  db.prepare('INSERT INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)').run(seeded.outfitId, buttonDown)
+  db.prepare('UPDATE outfits SET main_piece_id = ?, occasion = ? WHERE id = ?').run(buttonDown, 'city', seeded.outfitId)
+
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    if (String(system || '').includes("You are Yuna's personal stylist. You are looking at photos")) {
+      return {
+        outfits: [{
+          label: 'Collapsed button-down city column',
+          strength: 'signature',
+          dominantDirection: 'single top over relaxed pants',
+          silhouette: 'button-down top + wide pants',
+          bestFor: 'city',
+          pieceIds: [buttonDown, seeded.bottom, seeded.shoe],
+          reason: 'The button-down is used as the only top.',
+          watchFor: 'Collapsed source formula.',
+        }, {
+          label: 'Collapsed button-down with boot',
+          strength: 'strong',
+          dominantDirection: 'single top with grounded boot',
+          silhouette: 'button-down top + wide pants',
+          bestFor: 'city',
+          pieceIds: [buttonDown, seeded.bottom, seeded.boot],
+          reason: 'The button-down is again used as the only top.',
+          watchFor: 'Collapsed source formula.',
+        }, {
+          label: 'Collapsed button-down denim',
+          strength: 'usable',
+          dominantDirection: 'single top with dark jeans',
+          silhouette: 'button-down top + jeans',
+          bestFor: 'city',
+          pieceIds: [buttonDown, seeded.jeans, seeded.shoe],
+          reason: 'The button-down is still the only top.',
+          watchFor: 'Collapsed source formula.',
+        }],
+        rejected: [],
+        skip: '',
+        saveableLearning: 'mock collapsed two-top source look',
+      }
+    }
+    return mockAiHandler({ system, messages })
+  }
+
+  const json = await postJson('/api/ai/generate-saved-outfit-variants', {
+    outfit: { id: seeded.outfitId, name: 'Olive button-down and beige pants', photo: `/uploads/${seeded.photos.outfit}` },
+    occasion: 'city',
+    season: 'warm',
+    mode: 'formula',
+  })
+
+  assert.equal(json.debug.savedSourceHasLayeredTopFormula, true)
+  assert.ok(json.debug.finalSelection.modelLayeredTopFormulaRejected >= 2)
+  assert.equal(json.debug.finalSelection.aiStructurallyValid, 0)
+  assert.ok(json.debug.finalSelection.localFillAdded >= 1)
+  const ready = json.structuredOutfits.filter(outfit => !outfit.broken)
+  assert.ok(ready.length >= 1)
+  assert.ok(ready.every(outfit => outfit.pieceIds.includes(buttonDown)))
+  assert.ok(ready.every(outfit => outfit.pieces.filter(piece => piece.category === 'top').length >= 2))
+  const composerCall = aiCalls.find(call => String(call.system || '').includes('SAVED OUTFIT VARIANT CONTRACT'))
+  assert.ok(composerCall)
+  assert.match(composerCall.system, /Formula-similar results MUST preserve that layered-top structure/)
+})
+
+test('saved outfit adjacent variants loosen the formula while staying wardrobe-only', async () => {
+  db.prepare('UPDATE outfits SET main_piece_id = ? WHERE id = ?').run(seeded.shoe, seeded.outfitId)
+  const json = await postJson('/api/ai/generate-saved-outfit-variants', {
+    outfit: { id: seeded.outfitId, name: 'Vest top + white blouse', photo: `/uploads/${seeded.photos.outfit}` },
+    occasion: 'city',
+    season: 'current season',
+    mode: 'adjacent',
+  })
+
+  assert.equal(json.mode, 'generate_saved_outfit_adjacent_variants')
+  assert.equal(json.savedOutfitVariantMode, 'adjacent')
+  assert.ok(json.structuredOutfits.filter(outfit => !outfit.broken).every(outfit => outfit.pieceIds.includes(seeded.shoe)))
+  const composerCall = aiCalls.find(call => String(call.system || '').includes('Adjacent mode: use only shown wardrobe pieces'))
+  assert.ok(composerCall)
+  assert.match(composerCall.system, /allow a nearby formula, silhouette, or grounding strategy/)
+})
+
+test('saved outfit adjacent variants locally backfill complete outfits around jacket Main', async () => {
+  db.prepare('INSERT INTO outfit_pieces (outfit_id, piece_id) VALUES (?, ?)').run(seeded.outfitId, seeded.jacket)
+  db.prepare('UPDATE outfits SET main_piece_id = ?, occasion = ? WHERE id = ?').run(seeded.jacket, 'smart-casual', seeded.outfitId)
+  const json = await postJson('/api/ai/generate-saved-outfit-variants', {
+    outfit: { id: seeded.outfitId, name: 'Jacket-led saved look', photo: `/uploads/${seeded.photos.outfit}` },
+    occasion: 'smart-casual',
+    season: 'warm',
+    mode: 'adjacent',
+  })
+
+  assert.equal(json.mode, 'generate_saved_outfit_adjacent_variants')
+  assert.equal(json.savedOutfitVariantMode, 'adjacent')
+  assert.equal(json.debug.mainPieceId, seeded.jacket)
+  assert.ok(json.debug.finalSelection.localFillAdded >= 1)
+  assert.equal(json.debug.finalSelection.localFillGateRejectedReasons['not a complete wardrobe outfit'] || 0, 0)
+  const ready = json.structuredOutfits.filter(outfit => !outfit.broken)
+  assert.ok(ready.length >= 1)
+  assert.ok(ready.every(outfit => outfit.pieceIds.includes(seeded.jacket)))
+  assert.ok(ready.every(outfit => outfit.pieces.some(piece => piece.category === 'top')))
+  assert.ok(ready.every(outfit => outfit.pieces.some(piece => piece.category === 'bottom')))
+  assert.ok(ready.every(outfit => outfit.pieces.some(piece => piece.category === 'shoes')))
 })
 
 test('saved outfit variants prompt treats current season in June as warm-weather context', () => {
@@ -2068,6 +2240,16 @@ test('StylistChat uses outfit sketch instead of color balance on ideal direction
   assert.doesNotMatch(src, /renderColorBalanceBar/)
 })
 
+test('StylistChat routes Similar to wardrobe formula cards and offers adjacent follow-up', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /'\/api\/ai\/generate-saved-outfit-variants'/)
+  assert.match(src, /savedOutfitVariantMode === 'creative'/)
+  assert.match(src, /outfitToSend\.variantMode === 'adjacent' \? 'adjacent' : 'formula'/)
+  assert.match(src, /Explore adjacent outfits/)
+  assert.match(src, /continueThread: true/)
+  assert.match(src, /variantMode: 'formula'/)
+})
+
 test('StylistChat surfaces visual composer usage cost in outfit cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /const composerUsageSummary/)
@@ -2666,7 +2848,7 @@ test('getCalibrationReferenceImagesForGeneration priority-starred random rotatio
 })
 
 test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit Missions', async () => {
-  const { buildWholeWardrobeCandidateOutfits } = await import('../styling-engine/rules.js')
+  const { buildWholeWardrobeCandidateOutfits, isOutfitStructurallyValid, weatherProfileFromContext } = await import('../styling-engine/rules.js')
 
   const allPieces = [
     { id: 1, name: 'Floral Print Top', category: 'top', pattern_type: 'floral', status: 'active', colors: ['white', 'blue'], styling_rules_learned: [], occasions: ['casual'], notes: 'floral prints' },
@@ -2697,6 +2879,66 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
     const hasBlackOrDenim = archCand.pieces.some(p => p.name.includes('Black') || p.name.includes('Denim'))
     assert.ok(!hasBlackOrDenim, 'Soft Architecture candidate should contain no black or denim')
   }
+
+  const requiredShoeCandidates = buildWholeWardrobeCandidateOutfits(allPieces, {
+    occasion: 'casual',
+    activeMissions: ['controlled_print', 'structured_soft'],
+    requiredPieceId: 3
+  })
+  assert.ok(requiredShoeCandidates.length > 0, 'required Main piece should still produce local candidates')
+  assert.ok(requiredShoeCandidates.every(candidate => candidate.pieceIds.includes(3)), 'local candidates must include required Main piece')
+  const requiredDressCandidates = buildWholeWardrobeCandidateOutfits([
+    ...allPieces,
+    { id: 7, name: 'Plum Wool Dress', category: 'dress', status: 'active', notes: 'simple wool column dress', colors: ['plum'], styling_rules_learned: [], occasions: ['casual'] },
+  ], {
+    occasion: 'casual',
+    activeMissions: ['structured_soft', 'color_anchor'],
+    requiredPieceId: 7
+  })
+  assert.ok(requiredDressCandidates.length > 0, 'dress Main should produce local candidates')
+  assert.ok(requiredDressCandidates.every(candidate => candidate.pieceIds.includes(7)), 'dress Main candidates must include the required dress')
+  assert.ok(requiredDressCandidates.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'dress Main candidates must be complete outfits')
+  assert.ok(requiredDressCandidates.every(candidate => !candidate.pieces.some(piece => piece.category === 'bottom')), 'dress Main candidates must not include bottoms')
+  const requiredJacketCandidates = buildWholeWardrobeCandidateOutfits([
+    ...allPieces,
+    { id: 8, name: 'Gray Cropped Jacket', category: 'outerwear', status: 'active', notes: 'structured lightweight jacket', colors: ['gray'], styling_rules_learned: [], occasions: ['casual'] },
+  ], {
+    occasion: 'casual',
+    activeMissions: ['structured_soft', 'controlled_print'],
+    requiredPieceId: 8
+  })
+  assert.ok(requiredJacketCandidates.length > 0, 'jacket Main should produce local candidates')
+  assert.ok(requiredJacketCandidates.every(candidate => candidate.pieceIds.includes(8)), 'jacket Main candidates must include the required jacket')
+  assert.ok(requiredJacketCandidates.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'jacket Main candidates must be complete outfits')
+  assert.ok(requiredJacketCandidates.every(candidate => candidate.pieces.some(piece => piece.category === 'top')), 'jacket Main candidates still need a real top')
+  assert.ok(requiredJacketCandidates.every(candidate => candidate.pieces.some(piece => piece.category === 'bottom')), 'jacket Main candidates still need a real bottom')
+  const requiredJacketStructuralFallback = buildWholeWardrobeCandidateOutfits([
+    { id: 9, name: 'Plain Black Top', category: 'top', status: 'active', notes: 'plain cotton top', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 10, name: 'Plain Gray Trousers', category: 'bottom', status: 'active', notes: 'plain trouser', colors: ['gray'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 11, name: 'Plain Black Flats', category: 'shoes', status: 'active', notes: 'plain flat shoe', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 12, name: 'Plain Gray Jacket', category: 'outerwear', status: 'active', notes: 'plain jacket', colors: ['gray'], styling_rules_learned: [], occasions: ['casual'] },
+  ], {
+    occasion: 'casual',
+    activeMissions: ['color_anchor'],
+    requiredPieceId: 12
+  })
+  assert.ok(requiredJacketStructuralFallback.length > 0, 'jacket Main should fall back to structural candidates when missions do not match')
+  assert.ok(requiredJacketStructuralFallback.every(candidate => candidate.pieceIds.includes(12)), 'structural fallback must still include jacket Main')
+  assert.ok(requiredJacketStructuralFallback.every(candidate => isOutfitStructurallyValid(candidate.pieces, { requireShoes: true })), 'structural fallback candidates must be complete outfits')
+  assert.equal(weatherProfileFromContext({ season: 'warm' }).isHot, true)
+  const layeredTopMainCandidates = buildWholeWardrobeCandidateOutfits([
+    { id: 13, name: 'Fitted Black Tank', category: 'top', status: 'active', notes: 'fitted knit base tank', colors: ['black'], styling_rules_learned: [], occasions: ['city'] },
+    { id: 14, name: 'Olive Button-Down Shirt', category: 'top', status: 'active', notes: 'olive button-down worn open as a top layer', colors: ['olive'], styling_rules_learned: [], occasions: ['city'] },
+    { id: 15, name: 'Light Beige Linen Pants', category: 'bottom', status: 'active', notes: 'structured wide-leg linen trouser', colors: ['beige'], styling_rules_learned: [], occasions: ['city'] },
+    { id: 16, name: 'Brown Leather Sandals', category: 'shoes', status: 'active', notes: 'brown leather strap sandal', colors: ['brown'], styling_rules_learned: [], occasions: ['city'] },
+  ], {
+    occasion: 'city',
+    activeMissions: ['color_anchor'],
+    requiredPieceId: 14,
+    preserveLayeredTop: true,
+    candidateLimit: 12
+  })
+  assert.ok(layeredTopMainCandidates.some(candidate => candidate.pieceIds.includes(14) && candidate.pieces.filter(piece => piece.category === 'top').length >= 2), 'layer-capable top Main should be able to preserve a two-top saved formula without being recategorized as outerwear')
 })
 
 test('Visual composer occasion profile prompt block and wardrobe coverage contract tests', async () => {

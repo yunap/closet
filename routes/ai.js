@@ -2297,7 +2297,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
   explorationMode = 'moderate',
   question = '',
   request = '',
-  activity = ''
+  activity = '',
+  savedOutfitSeed = null
 } = {}) {
     const routeStartedAt = Date.now()
     const requestedLimit = Math.max(1, Math.min(5, Number(limit) || 5))
@@ -2385,10 +2386,51 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         : walkingGuidance
     }
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+    const savedVariantMode = savedOutfitSeed?.mode === 'adjacent' ? 'adjacent' : (savedOutfitSeed ? 'formula' : null)
+    const savedSeedIds = [...new Set((savedOutfitSeed?.pieceIds || savedOutfitSeed?.pieces?.map(piece => piece?.id) || [])
+      .map(Number)
+      .filter(Boolean))]
+    const savedSeedPieces = savedSeedIds
+      .map(id => allPieces.find(piece => Number(piece.id) === id))
+      .filter(Boolean)
+    const savedMainPieceId = Number(savedOutfitSeed?.mainPieceId || savedOutfitSeed?.main_piece_id) || null
+    const savedMainPiece = savedMainPieceId
+      ? savedSeedPieces.find(piece => Number(piece.id) === savedMainPieceId)
+        || allPieces.find(piece => Number(piece.id) === savedMainPieceId)
+      : null
+    const savedSeedOutfit = { pieces: savedSeedPieces, pieceIds: savedSeedPieces.map(piece => Number(piece.id)) }
+    const savedSeedFormula = savedSeedPieces.length
+      ? wholeWardrobeFormulaFamily(savedSeedOutfit, savedSeedPieces, occasion)
+      : ''
+    const savedSeedSilhouette = savedSeedPieces.length ? wholeWardrobeSilhouetteFromPieces(savedSeedOutfit) : ''
+    const savedSeedGrounding = savedSeedPieces.length ? wholeWardrobeGroundingStrategy(savedSeedOutfit) : ''
+    const savedSourceHasLayeredTopFormula = savedSeedPieces.filter(piece => wardrobeCategoryGroup(piece) === 'top').length >= 2
+    const savedFormulaRequiresLayeredTop = savedVariantMode === 'formula' && savedSourceHasLayeredTopFormula
+    const savedVariantGuidance = savedOutfitSeed ? [
+      'SAVED OUTFIT VARIANT CONTRACT:',
+      `Source outfit: ${savedOutfitSeed.name || savedOutfitSeed.label || savedOutfitSeed.title || 'saved outfit'}.`,
+      savedSeedPieces.length ? `Linked source pieces:\n${savedSeedPieces.map(buildPieceText).join('\n')}` : '',
+      savedSeedFormula ? `Inferred source formula family: ${savedSeedFormula}.` : '',
+      savedSeedSilhouette ? `Inferred source silhouette: ${savedSeedSilhouette}.` : '',
+      savedSeedGrounding ? `Inferred source grounding strategy: ${savedSeedGrounding}.` : '',
+      savedFormulaRequiresLayeredTop ? 'The source outfit includes two top-category garments. Formula-similar results MUST preserve that layered-top structure: include one primary top plus one top-layer/overshirt/button-down. The top-layer garment may still be category top; do not collapse the formula into a single top + bottom + shoes outfit.' : '',
+      savedSourceHasLayeredTopFormula && savedVariantMode === 'adjacent' ? 'The source outfit includes two top-category garments. Adjacent results may simplify the layer if the neighboring idea is stronger, but layered-top options are preferred when they work.' : '',
+      savedMainPiece ? `Every proposed outfit MUST include Main piece ID ${savedMainPiece.id}: ${savedMainPiece.name}.` : '',
+      savedVariantMode === 'adjacent'
+        ? 'Adjacent mode: use only shown wardrobe pieces. Preserve the source outfit\'s mood, occasion, and personal style lane, but allow a nearby formula, silhouette, or grounding strategy. Return meaningfully different neighboring ideas.'
+        : 'Formula-similar mode: use only shown wardrobe pieces. Preserve the source outfit formula and its focal/support relationship while substituting owned pieces. Do not simply repeat the exact saved outfit; each result must be a useful alternate realization of the same formula.',
+    ].filter(Boolean).join('\n') : ''
 
     // Reuse existing suppression filter (hard filter here — suppressed pieces are simply not shown)
-    const { allowedPieces, suppressedPieces } =
+    let { allowedPieces, suppressedPieces } =
       filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode, weatherProfile, mood, activity })
+    const savedMainSuppression = savedMainPiece
+      ? suppressedPieces.find(piece => Number(piece.id) === savedMainPieceId)
+      : null
+    const savedMainBypassedSuppression = Boolean(savedMainSuppression)
+    if (savedMainPiece && savedMainBypassedSuppression && !allowedPieces.some(piece => Number(piece.id) === savedMainPieceId)) {
+      allowedPieces = [savedMainPiece, ...allowedPieces]
+    }
     const suppressedReasonCounts = suppressedPieces.reduce((acc, piece) => {
       for (const reason of (piece.reasons || [])) {
         acc[reason] = (acc[reason] || 0) + 1
@@ -2412,7 +2454,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     })
 
     // Compute weather profile and filter the visual composer roster
-    const { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(allowedPieces, {
+    let { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(allowedPieces, {
       occasion,
       weatherProfile,
       sessionInfluence,
@@ -2424,6 +2466,15 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       occasionProfile,
       activityProfile
     })
+    if (savedMainPiece) {
+      const allowedMain = allowedPieces.find(piece => Number(piece.id) === savedMainPieceId)
+      if (!allowedMain) {
+        throw new Error(`The selected Main piece is unavailable because it is no longer active. Choose another Main piece.`)
+      }
+      if (!roster.some(piece => Number(piece.id) === savedMainPieceId)) {
+        roster = [allowedMain, ...roster.filter(piece => Number(piece.id) !== savedMainPieceId)].slice(0, 90)
+      }
+    }
 
     console.log(`\n[Visual Composer Roster] Filtering active pieces for mood: "${mood}", season: "${season}"`)
     console.log(`  - Weather profile:`, weatherProfile)
@@ -2471,12 +2522,22 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       occasionProfileGuidance ? `Occasion guidance:\n${occasionProfileGuidance}` : '',
       isWeatherFiltered ? "Off-season pieces have been deprioritized or removed; everything shown is weather-optimized." : '',
       `Compose ${requestedLimit} outfits.`,
+      savedVariantGuidance,
       rotationWarningsText,
       wholeWardrobeFeedbackText ? `Feedback memory (rejected pairings are settled — do not repeat them):\n${wholeWardrobeFeedbackText}` : '',
       confirmedOutfitsText ? `Confirmed favorite outfits:\n${confirmedOutfitsText}` : '',
       '',
       'Below are photos of every available piece, grouped by category. Reference pieces by exact ID.'
     ].filter(Boolean).join('\n') })
+
+    const savedOutfitPhotoPath = savedOutfitSeed?.photo
+      ? uploadedOrSavedOutfitPhotoPath(savedOutfitSeed.photo)
+      : ''
+    if (savedOutfitPhotoPath && fs.existsSync(savedOutfitPhotoPath)) {
+      const { base64, mime } = await prepareImageForClaude(savedOutfitPhotoPath)
+      content.push({ type: 'text', text: 'Saved outfit source photo. Use it to read the original formula, proportions, and focal hierarchy; do not copy it exactly.' })
+      content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
+    }
 
     let shownPieceCount = 0
     const shownPieces = []
@@ -2506,7 +2567,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const composerStartedAt = Date.now()
     try {
       const composerResult = await withTimeout(askStylistWithUsage({
-        system: WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
+        system: savedVariantGuidance
+          ? `${WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\n${savedVariantGuidance}`
+          : WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
         maxTokens: 2200,
         messages: [{ role: 'user', content }]
       }), 90000, 'Visual wardrobe composer')
@@ -2572,17 +2635,32 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const structurallyRejectedModelOutfits = normalizedModelOutfits
       .filter(o => !isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
       .map(outfit => ({ outfit, reason: structuralRejectionReason(outfit) }))
+    const includesSavedMain = outfit => !savedMainPieceId
+      || (outfit.pieceIds || outfit.pieces?.map(piece => piece?.id) || []).map(Number).includes(savedMainPieceId)
+    const hasLayeredTopFormula = outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').length >= 2
+    const modelMissingMainRejectedCount = savedMainPieceId
+      ? normalizedModelOutfits.filter(outfit => !includesSavedMain(outfit)).length
+      : 0
+    const modelLayeredTopFormulaRejectedCount = savedFormulaRequiresLayeredTop
+      ? normalizedModelOutfits.filter(outfit => includesSavedMain(outfit) && isOutfitStructurallyValid(outfit.pieces, { requireShoes: true }) && !hasLayeredTopFormula(outfit)).length
+      : 0
     let modelOutfits = normalizedModelOutfits
+      .filter(includesSavedMain)
       .filter(o => isOutfitStructurallyValid(o.pieces, { requireShoes: true }))
+      .filter(o => !savedFormulaRequiresLayeredTop || hasLayeredTopFormula(o))
       .map(outfit => ({
         ...outfit,
+        savedOutfitVariantMode: savedVariantMode,
+        sourceFormulaFamily: savedSeedFormula,
         systemSuggestion: comfortFootwearSuggestionForOutfit(outfit, allowedPieces, comfortConstraint, { weatherProfile, occasion, mood, activity })
       }))
 
     let localBackfillOutfits = []
     let localBackfillCandidateCount = 0
+    let localBackfillMissingMainRejectedCount = 0
     let diagnosticBackfillOutfits = []
     let diagnosticBackfillCandidateCount = 0
+    let diagnosticBackfillMissingMainRejectedCount = 0
     const rosterIds = new Set(roster.map(piece => Number(piece.id)))
     const excludedById = new Map(excluded.map(item => [Number(item.pieceId), item.reason]))
     const outfitKey = outfit => {
@@ -2641,16 +2719,25 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       const candidates = buildWholeWardrobeCandidateOutfits(roster, {
         occasion,
         season,
+        weatherProfile,
         mood,
         activity,
         sessionInfluence,
         candidateLimit: 42,
         candidateBucketLimit: 8,
+        requiredPieceId: savedMainPieceId,
+        preserveLayeredTop: savedSourceHasLayeredTopFormula,
         request: stylingRequest,
         question
       })
       localBackfillCandidateCount = candidates.length
-      localBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, roster, { occasion, mood, season, weatherProfile, activity, sessionInfluence })
+      const candidateOutfits = wholeWardrobeOutfitsFromCandidates(candidates, roster, { occasion, mood, season, weatherProfile, activity, sessionInfluence })
+      localBackfillMissingMainRejectedCount = savedMainPieceId
+        ? candidateOutfits.filter(outfit => !includesSavedMain(outfit)).length
+        : 0
+      localBackfillOutfits = candidateOutfits
+        .filter(includesSavedMain)
+        .filter(outfit => !savedFormulaRequiresLayeredTop || hasLayeredTopFormula(outfit))
         .map(outfit => withLocalFillSource(outfit))
       return localBackfillOutfits
     }
@@ -2659,16 +2746,25 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
         occasion,
         season,
+        weatherProfile,
         mood,
         activity,
         sessionInfluence,
         candidateLimit: 42,
         candidateBucketLimit: 8,
+        requiredPieceId: savedMainPieceId,
+        preserveLayeredTop: savedSourceHasLayeredTopFormula,
         request: stylingRequest,
         question
       })
       diagnosticBackfillCandidateCount = candidates.length
-      diagnosticBackfillOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, { occasion, mood, season, weatherProfile, activity, sessionInfluence })
+      const candidateOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, { occasion, mood, season, weatherProfile, activity, sessionInfluence })
+      diagnosticBackfillMissingMainRejectedCount = savedMainPieceId
+        ? candidateOutfits.filter(outfit => !includesSavedMain(outfit)).length
+        : 0
+      diagnosticBackfillOutfits = candidateOutfits
+        .filter(includesSavedMain)
+        .filter(outfit => !savedFormulaRequiresLayeredTop || hasLayeredTopFormula(outfit))
       return diagnosticBackfillOutfits
     }
 
@@ -2696,8 +2792,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let diagnosticBrokenCount = 0
     let gatedLocal = { outfits: [], rejected: [] }
     if (structuredOutfits.length < requestedLimit) {
-      if (!modelOutfits.length) {
-        console.log(`    - Visual Composer AI returned 0 structurally valid outfits. Filling from local candidate generation.`)
+      if (!modelOutfits.length || savedFormulaRequiresLayeredTop) {
+        if (!modelOutfits.length) console.log(`    - Visual Composer AI returned 0 structurally valid outfits. Filling from local candidate generation.`)
         gatedLocal = locallyGateWholeWardrobeOutfits(
           buildVisualLocalBackfill(),
           requestedLimit,
@@ -2756,8 +2852,13 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     }
     visualDebugLog.localBackfillCandidates = localBackfillCandidateCount
     visualDebugLog.localBackfillOutfits = localBackfillOutfits.length
+    visualDebugLog.localBackfillMissingMainRejected = localBackfillMissingMainRejectedCount
     visualDebugLog.diagnosticBackfillCandidates = diagnosticBackfillCandidateCount
     visualDebugLog.diagnosticBackfillOutfits = diagnosticBackfillOutfits.length
+    visualDebugLog.diagnosticBackfillMissingMainRejected = diagnosticBackfillMissingMainRejectedCount
+    visualDebugLog.modelMissingMainRejected = modelMissingMainRejectedCount
+    visualDebugLog.modelLayeredTopFormulaRejected = modelLayeredTopFormulaRejectedCount
+    visualDebugLog.missingMainRejected = modelMissingMainRejectedCount + localBackfillMissingMainRejectedCount + diagnosticBackfillMissingMainRejectedCount
     visualDebugLog.modelGateOutfits = gatedModel.outfits.length
     visualDebugLog.modelGateRejected = gatedModel.rejected.length
     visualDebugLog.modelGateRejectedReasons = rejectionSummary(gatedModel.rejected)
@@ -2806,6 +2907,12 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       skip: parsed.skip || '',
       saveableLearning: parsed.saveableLearning || ''
     })
+    if (savedVariantMode) {
+      const intro = savedVariantMode === 'adjacent'
+        ? 'Here are adjacent outfits from your wardrobe: the same style neighborhood, with more freedom in formula and silhouette.'
+        : 'Here are formula-similar outfits from your wardrobe: alternate owned-piece versions of the saved look\'s underlying structure.'
+      feedback = `${intro}\n\n${feedback}`
+    }
 
     const coverageNote = formatCoverageNote(topCoverage, shoeCoverage, { occasion, occasionProfile, activityProfile })
     const deliveredCount = structuredOutfits.filter(outfit => !outfit.broken).length
@@ -2832,8 +2939,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       feedback,
       structuredOutfits,
       provider: AI_PROVIDER,
-      mode: 'generate_wardrobe_outfits_visual',
-      pipeline: 'full_wardrobe_visual_composer',
+      mode: savedVariantMode ? `generate_saved_outfit_${savedVariantMode}_variants` : 'generate_wardrobe_outfits_visual',
+      pipeline: savedVariantMode ? 'saved_outfit_wardrobe_variant_composer' : 'full_wardrobe_visual_composer',
+      savedOutfitVariantMode: savedVariantMode,
+      sourceOutfit: savedOutfitSeed || null,
       coverageNote: responseCoverageNote,
       debug: {
         profileCoverage: {
@@ -2844,6 +2953,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         suppressedCount: suppressedPieces.length,
         suppressedReasonCounts,
         weatherProfile,
+        savedMainBypassedSuppression,
+        savedMainSuppressionReasons: savedMainSuppression?.reasons || [],
+        savedSourceHasLayeredTopFormula,
         aiReturnedCount: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
         locallyGeneratedCount: localBackfillOutfits.length,
         finalReturnedCount: structuredOutfits.length,
@@ -2987,8 +3099,73 @@ router.post('/generate-outfit-boards', async (req, res) => {
   }
 })
 
+router.post('/generate-saved-outfit-variants', async (req, res) => {
+  const { outfit = {}, pieceIds = [], mainPieceId = null, occasion = 'casual', season = 'current season', mode = 'formula', activity = '' } = req.body || {}
+  try {
+    const savedRow = outfit.id ? db.prepare('SELECT * FROM outfits WHERE id = ?').get(outfit.id) : null
+    const savedOutfit = savedRow ? { ...savedRow, ...outfit } : outfit
+    let ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : savedOutfit.pieceIds || [])
+      .map(Number)
+      .filter(Boolean))]
+      .slice(0, 8)
+    if (!ids.length && savedOutfit.id) {
+      ids = getLinkedPiecesForOutfit(savedOutfit.id).map(piece => Number(piece.id)).filter(Boolean).slice(0, 8)
+    }
+    if (ids.length < 2) return res.status(400).json({ error: 'At least two linked wardrobe pieces are required to infer a saved outfit formula' })
+
+    const selectedMainPieceId = Number(mainPieceId || savedOutfit.mainPieceId || savedOutfit.main_piece_id) || null
+    if (selectedMainPieceId && !ids.includes(selectedMainPieceId)) {
+      return res.status(400).json({ error: 'The selected Main piece is no longer linked to this outfit' })
+    }
+    const variantMode = mode === 'adjacent' ? 'adjacent' : 'formula'
+    const requestedSeason = String(season || '').trim()
+    const sourceSeason = requestedSeason && requestedSeason !== 'current season'
+      ? requestedSeason
+      : (savedOutfit.season || requestedSeason || 'current season')
+    const sourceOutfit = {
+      id: savedOutfit.id || null,
+      name: savedOutfit.name || savedOutfit.label || savedOutfit.title || 'Saved outfit',
+      label: savedOutfit.label || savedOutfit.name || savedOutfit.title || 'Saved outfit',
+      photo: savedOutfit.photo || '',
+      occasion: savedOutfit.occasion || occasion,
+      season: sourceSeason,
+      notes: savedOutfit.notes || savedOutfit.reason || '',
+      pieceIds: ids,
+      mainPieceId: selectedMainPieceId,
+      mode: variantMode
+    }
+    const result = await generateWholeWardrobeOutfitsVisualInternal({
+      occasion: sourceOutfit.occasion,
+      season: sourceOutfit.season,
+      limit: 3,
+      explorationMode: variantMode === 'adjacent' ? 'adventurous' : 'moderate',
+      question: variantMode === 'adjacent'
+        ? 'Explore adjacent outfits from this saved look using only my wardrobe.'
+        : 'Create formula-similar versions of this saved look using only my wardrobe.',
+      request: variantMode === 'adjacent'
+        ? 'Preserve the style neighborhood and Main piece while exploring adjacent formulas.'
+        : 'Preserve the saved outfit formula and Main piece while substituting owned wardrobe pieces.',
+      activity,
+      savedOutfitSeed: sourceOutfit
+    })
+    res.json({
+      ...result,
+      sourceOutfit,
+      debug: {
+        ...result.debug,
+        savedOutfitVariantMode: variantMode,
+        sourcePieceIds: ids,
+        mainPieceId: selectedMainPieceId
+      }
+    })
+  } catch (err) {
+    console.error('Generate saved outfit wardrobe variants error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.post('/generate-wardrobe-outfit-image', async (req, res) => {
-  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season' } = req.body || {}
+  const { outfit = {}, pieceIds = [], occasion = 'casual', season = 'current season', renderMode = '' } = req.body || {}
   try {
     const ids = [...new Set((Array.isArray(pieceIds) && pieceIds.length ? pieceIds : outfit.pieceIds || [])
       .map(Number)
@@ -3001,7 +3178,7 @@ router.post('/generate-wardrobe-outfit-image', async (req, res) => {
     const pieces = ids.map(id => byId.get(id)).filter(Boolean)
     if (pieces.length < 2) return res.status(400).json({ error: 'At least two saved wardrobe pieces are required' })
 
-    const rendered = await createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index: 1 })
+    const rendered = await createWholeWardrobeOutfitImage({ outfit, pieces, occasion, season, index: 1, forceAi: renderMode === 'ai' })
     const board = {
       label: outfit.label || 'Whole wardrobe generated outfit',
       reason: outfit.reason || '',

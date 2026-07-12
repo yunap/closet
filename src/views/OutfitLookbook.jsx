@@ -263,11 +263,12 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
               <div className="piece-grid" style={{ gap: 12, padding: 0 }}>
                 {linkedPieces.map(piece => {
                   const bg = getSwatchBg(piece)
-                  const isMain = mainId === piece.id
+                  const pieceId = Number(piece.id)
+                  const isMain = mainId === pieceId
                   return (
                     <div
                       key={piece.id}
-                      onClick={() => toggle(piece.id)}
+                      onClick={() => toggle(pieceId)}
                       className="piece-card"
                       style={{
                         position: 'relative',
@@ -303,37 +304,35 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
                       }}>
                         ✕
                       </div>
-                      {!singleSelect && (
-                        <button
-                          type="button"
-                          onClick={e => {
-                            e.stopPropagation()
-                            setMainId(isMain ? null : piece.id)
-                          }}
-                          style={{
-                            position: 'absolute',
-                            top: 7,
-                            left: 7,
-                            padding: '3px 8px',
-                            borderRadius: 999,
-                            border: `1px solid ${isMain ? 'var(--accent)' : 'rgba(255,255,255,0.75)'}`,
-                            background: isMain ? 'var(--accent)' : 'rgba(255,255,255,0.88)',
-                            color: isMain ? '#fff' : 'var(--accent)',
-                            fontSize: 10,
-                            fontWeight: 700,
-                            lineHeight: 1,
-                            boxShadow: '0 2px 5px rgba(0,0,0,0.12)',
-                            cursor: 'pointer'
-                          }}
-                          title={isMain ? 'Main piece for variants' : 'Use as main piece for variants'}
-                        >
-                          Main
-                        </button>
-                      )}
 
                       <div className="piece-card-body" style={{ padding: '8px 8px 10px' }}>
                         <div className="piece-card-name" style={{ fontSize: 11, margin: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{piece.name}</div>
                         <div className="piece-card-meta" style={{ fontSize: 10, marginTop: 2 }}>{piece.category}</div>
+                        {!singleSelect && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setMainId(isMain ? null : pieceId)
+                            }}
+                            style={{
+                              marginTop: 6,
+                              padding: '3px 8px',
+                              borderRadius: 999,
+                              border: `1px solid ${isMain ? 'var(--accent)' : 'var(--border)'}`,
+                              background: isMain ? 'var(--accent)' : 'var(--surface)',
+                              color: isMain ? '#fff' : 'var(--accent)',
+                              fontSize: 10,
+                              fontWeight: 700,
+                              lineHeight: 1,
+                              cursor: 'pointer'
+                            }}
+                            title={isMain ? 'Main piece for variants' : 'Use as main piece for variants'}
+                          >
+                            Main
+                          </button>
+                        )}
                       </div>
                     </div>
                   )
@@ -1093,8 +1092,8 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
                 main_piece_id: mainPieceId,
                 autoSend: true,
                 imageGenerationMode: true,
-                variantMode: 'similar',
-                stylistPrompt: 'Generate similar variants from this saved outfit photo and linked garment references.'
+                variantMode: 'formula',
+                stylistPrompt: 'Create formula-similar outfits from my wardrobe based on this saved look.'
               })} style={{
                 padding: '12px', background: 'var(--surface)', color: 'var(--accent)',
                 border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
@@ -1793,8 +1792,8 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                       ...o,
                       autoSend: true,
                       imageGenerationMode: true,
-                      variantMode: 'similar',
-                      stylistPrompt: 'Generate similar variants from this saved outfit photo and linked garment references.'
+                      variantMode: 'formula',
+                      stylistPrompt: 'Create formula-similar outfits from my wardrobe based on this saved look.'
                     })
                   }}
                 >
