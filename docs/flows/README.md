@@ -44,17 +44,19 @@ All three are one preview→render pipeline — see [editorial-ideal-additions.m
 
 | Flow                          | Entry point                    | Endpoint                                    | Status |
 | ----------------------------- | ------------------------------ | ------------------------------------------- | ------ |
-| Render a wardrobe outfit image | Outfit card → "see it"        | `/generate-wardrobe-outfit-image`           | todo   |
-| Outfit comparison sheet        | Multiple cards → compare image | `/generate-wardrobe-outfit-comparison-sheet` | todo  |
+| [Render a wardrobe outfit image](outfit-image-renders.md) | Card → "Generate outfit image" | `/generate-wardrobe-outfit-image` | **done** |
+| [Outfit comparison sheet](outfit-image-renders.md) | Set of cards → "Comparison sheet" | `/generate-wardrobe-outfit-comparison-sheet` | **done** |
 | [Saved-outfit variants (Similar / Creative)](saved-outfit-variants.md) | Lookbook card → Similar / Creative | `/generate-saved-outfit-image` | **done** |
 
 ## E. Evaluation & feedback
 
 | Flow                       | Entry point                 | Endpoint                  | Status |
 | -------------------------- | --------------------------- | ------------------------- | ------ |
-| Evaluate a wardrobe outfit | Outfit → "evaluate"         | `/evaluate-wardrobe-outfit` | todo |
-| Outfit feedback (photo)    | Upload a worn-outfit photo  | `/outfit-feedback`        | todo   |
-| Compare two outfits        | Outfit → "compare with…"    | `/compare-outfits`        | todo   |
+| [Evaluate a wardrobe outfit](outfit-evaluation.md) | Card "Evaluate" / Lookbook "Critique" | `/evaluate-wardrobe-outfit` | **done** |
+| [Outfit feedback (photo)](outfit-evaluation.md) | Upload a worn-outfit photo | `/outfit-feedback` | **done** |
+| [Compare two outfits](outfit-evaluation.md) | Outfit → "compare with…" | `/compare-outfits` | **done** |
+
+Evaluate / feedback / compare are all text critiques — see [outfit-evaluation.md](outfit-evaluation.md).
 
 ## F. The stylist chat brain
 
@@ -70,13 +72,8 @@ overview, per-layer trigger tables, and a conversation-mode state diagram.
 
 ### Progress
 
-Done: all of **B**, **F** (chat brain), **C** (editorial/ideal), and **D →
-saved-outfit variants**.
+Done: **B**, **C** (editorial/ideal), **D** (all image renders), **E**
+(all evaluation), **F** (chat brain).
 
-Remaining:
-- **Family A** (intake/tagging ×3) — single vision calls.
-- **Family D** — wardrobe outfit image, comparison sheet (image renders).
-- **Family E** (evaluation ×3) — incl. the "Critique" card button.
-
-Planned grouping: remaining **D + E** together (the post-outfit card actions),
-then **A**.
+Remaining: **Family A** (intake/tagging ×3) — the vision-tagging flows that turn
+photos into structured pieces.
