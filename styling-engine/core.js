@@ -3729,7 +3729,9 @@ export async function buildStylistConversationPayload(body) {
       'How to use the manifest:',
       '- It is the authoritative index of what exists. Only reference wardrobe pieces by the exact IDs above; never invent pieces.',
       '- Reason directly from it for coverage, gap, and "what do I own" questions — no search needed for that.',
-      '- Before finalizing a specific recommendation, verify construction and styling details with `get_garment_details`, and look at actual photos via `search_wardrobe` with visual:true — especially for base layers, layering, and fit-sensitive calls.',
+      '- VERIFICATION CONTRACT (mechanically enforced): any specific piece you recommend or place in an outfit card must be verified THIS turn via `get_garment_details` or `search_wardrobe`. The manifest alone is not verification — its tags cannot show construction risks (lining, sheerness, true texture). Unverified piece IDs in your answer or in propose_outfit will be rejected and you will be asked to redo the work.',
+      '- Layer/base pieces (layer_top / layer_bottom roles — anything worn under another garment or against skin) additionally require having SEEN the photo this turn: `get_garment_details` returns photos; `search_wardrobe` with visual:true attaches thumbnails.',
+      '- When recommending a specific piece in prose, cite it as (ID <number>) so the recommendation is verifiable.',
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
       'CRITICAL: If the user states a new style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "I dislike cargo pants", "prefer dark jeans"), you MUST proactively call the `store_user_correction` tool to save this rule/preference immediately. Do not wait for the user to ask you to save it; save it automatically using the tool.'

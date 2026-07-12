@@ -18,7 +18,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
-const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost } = await import('../styling-engine/provider.js')
+const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks } = await import('../styling-engine/provider.js')
 
 let server
 let baseUrl
@@ -2596,6 +2596,7 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
   const toolContext = {
     occasion: 'city',
     season: 'current season',
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom]),
     generatedOutfits: [{
       label: 'Existing card',
       occasion: 'city',
@@ -2647,7 +2648,7 @@ test('executeTool propose_outfit errors on an unresolved ID and does not append'
 })
 
 test('executeTool propose_outfit rejects an unresolved role collision (two primary_top) and surfaces it as a visible broken card, not a silent drop', async () => {
-  const vContext = { generatedOutfits: [] }
+  const vContext = { generatedOutfits: [], retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]) }
   const invalid = await executeTool('propose_outfit', {
     label: 'Slot collision',
     pieces: [
@@ -3109,4 +3110,107 @@ test('freeform ask restores established context and outfit set on follow-up turn
   )
   assert.ok(followupCall.system.includes('Look two'), 'current outfit set restored server-side')
   assert.ok(followupCall.system.includes('"turn_mode": "followup"'))
+})
+
+test('propose_outfit rejects pieces not verified this turn, then accepts after retrieval', async () => {
+  const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season' }
+  const outfitArgs = {
+    label: 'Verification test',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }
+
+  const blocked = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /not verified this turn/)
+  assert.deepEqual(blocked.unverifiedIds, [seeded.top, seeded.bottom, seeded.shoe])
+  assert.equal(toolContext.generatedOutfits.length, 0, 'no broken card for a recoverable workflow error')
+
+  await executeTool('get_garment_details', { ids: [seeded.top, seeded.bottom, seeded.shoe] }, toolContext)
+  const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(accepted.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+})
+
+test('propose_outfit requires layer pieces to be visually seen this turn', async () => {
+  const layerTopId = insertPiece({
+    name: 'sheer open knit cardigan',
+    category: 'top',
+    colors: ['cream'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'open airy top layer worn over a base',
+    fabric_weight: 'light',
+  })
+  // Retrieved (text-level) but never SEEN: search without visual attaches no photos.
+  const toolContext = {
+    generatedOutfits: [],
+    occasion: 'city',
+    season: 'current season',
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe, layerTopId])
+  }
+  const outfitArgs = {
+    label: 'Layered look',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: layerTopId, role: 'layer_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }
+
+  const blocked = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /visually verified this turn/)
+  assert.deepEqual(blocked.unseenLayerIds, [layerTopId])
+
+  // get_garment_details attaches the photo → the layer piece is now seen.
+  await executeTool('get_garment_details', { ids: [layerTopId] }, toolContext)
+  const accepted = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(accepted.status, 'success')
+})
+
+test('prose citations of unverified piece ids force one corrective retry', () => {
+  const answer = `Try layering the cream textured knit top (ID ${seeded.top}) under the blouse.`
+
+  const blocked = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set() }, {})
+  assert.equal(blocked.block, true)
+  assert.equal(blocked.blockType, 'unverifiedCitation')
+  assert.match(blocked.correctionMessage, new RegExp(`ID ${seeded.top}`))
+
+  const retrievedOk = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set([seeded.top]) }, {})
+  assert.equal(retrievedOk.block, false)
+
+  const cardOk = applyFreeformOutputChecks(answer, {
+    retrievedPieceIds: new Set(),
+    generatedOutfits: [{ pieceIds: [seeded.top] }]
+  }, {})
+  assert.equal(cardOk.block, false)
+
+  const retryExhausted = applyFreeformOutputChecks(answer, { retrievedPieceIds: new Set() }, { unverifiedCitationRetried: true })
+  assert.equal(retryExhausted.block, false, 'only one retry per turn — the loop must not spin')
+})
+
+test('freeform ask retries the model once when prose cites unverified ids', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    aiCalls.push({ system, messages })
+    return `Your black button detail top (ID ${seeded.top}) would work well here.`
+  }
+
+  const json = await postJson('/api/ai/ask', {
+    question: 'What do you think about that top?',
+    sessionId: 'citation-retry-contract',
+  })
+
+  assert.ok(json.answer.includes(`ID ${seeded.top}`))
+  const stylistCalls = aiCalls.filter(call => String(call.system).includes('WARDROBE MANIFEST'))
+  assert.equal(stylistCalls.length, 2, 'blocked once for the unverified citation, then answered on the retry')
+  const correction = stylistCalls[1].messages.at(-1)
+  const correctionText = Array.isArray(correction?.content)
+    ? correction.content.map(part => part?.text || '').join('\n')
+    : String(correction?.content || '')
+  assert.match(correctionText, /without verifying them this turn/)
 })

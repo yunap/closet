@@ -76,7 +76,7 @@ test('executeTool propose_outfit success increments proposeCalls', async () => {
     VALUES ('obs shoes', 'shoes', '[]', '["casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
   `).run().lastInsertRowid
   try {
-    const toolContext = { generatedOutfits: [], activity: 'walking' }
+    const toolContext = { generatedOutfits: [], activity: 'walking', retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
     const result = await executeTool('propose_outfit', {
       label: 'Obs outfit',
       pieces: [{ id: topId, role: 'primary_top' }, { id: bottomId, role: 'primary_bottom' }, { id: shoesId, role: 'shoes' }]
@@ -153,7 +153,8 @@ test('executeTool honors explicit no-shorts request in search and proposal valid
   try {
     const toolContext = {
       generatedOutfits: [],
-      question: "It's hot and I'll be walking around the city all day. Give me polished outfit ideas, no shorts."
+      question: "It's hot and I'll be walking around the city all day. Give me polished outfit ideas, no shorts.",
+      retrievedPieceIds: new Set([topId, shortsId, shoesId])
     }
     const results = await executeTool('search_wardrobe', { category: 'bottom', occasion: 'city', activity: 'walking', weather: 'hot' }, toolContext)
     const resultIds = results.filter(item => item && item.id).map(item => Number(item.id))
@@ -192,7 +193,7 @@ test('executeTool propose_outfit validation failure pushes a visible broken diag
     VALUES ('obs top 3', 'top', '[]', '["casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
   `).run().lastInsertRowid
   try {
-    const toolContext = { generatedOutfits: [] }
+    const toolContext = { generatedOutfits: [], retrievedPieceIds: new Set([topId, topId2]) }
     const result = await executeTool('propose_outfit', {
       label: 'Collision outfit',
       pieces: [{ id: topId, role: 'primary_top' }, { id: topId2, role: 'primary_top' }]
@@ -229,7 +230,7 @@ test('executeTool propose_outfit rejects category-role mismatch as a broken diag
   `).run().lastInsertRowid
 
   try {
-    const toolContext = { generatedOutfits: [] }
+    const toolContext = { generatedOutfits: [], retrievedPieceIds: new Set([topId, topAsBottomId, shoesId]) }
     const result = await executeTool('propose_outfit', {
       label: 'Sleek City Moves',
       pieces: [
@@ -266,7 +267,7 @@ test('executeTool propose_outfit with zero shoes and no missing_gaps pushes a vi
     VALUES ('obs bottom 2', 'bottom', '[]', '["casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
   `).run().lastInsertRowid
   try {
-    const toolContext = { generatedOutfits: [] }
+    const toolContext = { generatedOutfits: [], retrievedPieceIds: new Set([topId, bottomId]) }
     const result = await executeTool('propose_outfit', {
       label: 'Relaxed Comfort Look',
       pieces: [{ id: topId, role: 'primary_top' }, { id: bottomId, role: 'primary_bottom' }]
@@ -298,7 +299,7 @@ test('executeTool propose_outfit rejects shoe missing_gaps as a substitute for a
   `).run().lastInsertRowid
 
   try {
-    const toolContext = { generatedOutfits: [], activity: 'hiking' }
+    const toolContext = { generatedOutfits: [], activity: 'hiking', retrievedPieceIds: new Set([bottomId, topId, topId2]) }
     const result = await executeTool('propose_outfit', {
       label: 'Light and Airy Hike',
       pieces: [
