@@ -4,14 +4,20 @@ How the "Use my wardrobe" outfit generator works, end to end. This is the
 model-facing flow: you give a brief, the app filters your closet, one model call
 composes outfits from photos, and the results are validated before display.
 
-**How to read the diagrams — shape tells you who does the work:**
+**How to read the diagrams — shape and color tell you who does the work:**
 
-| Shape | Meaning |
-| ----- | ------- |
-| **Rectangle** | the app's own code — no model involved. (Indigo = plumbing & ui; purple = product/wardrobe rules.) |
-| **Hexagon, labelled `LLM ·`** | a call to the AI model. This is the *only* place the model is involved. |
-| **Diamond** | a decision / branch. |
-| Amber fill | validation & fallback steps. |
+```mermaid
+flowchart LR
+    A["app code"]:::app ~~~ R["wardrobe rules"]:::rules ~~~ M{{"LLM · model call"}}:::model ~~~ D{"decision"}:::check
+    classDef app fill:#eef2ff,stroke:#6366a0,color:#1e2140;
+    classDef rules fill:#f3edfe,stroke:#7c6bd6,color:#2f2557;
+    classDef model fill:#c9efe0,stroke:#0f8f68,color:#06382b;
+    classDef check fill:#faeeda,stroke:#ba7517,color:#4a2f06;
+```
+
+- **Rectangles** — the app's own code (indigo = plumbing & ui, purple = product / wardrobe rules).
+- **Hexagons labelled `LLM ·`** — the only places the AI model is called.
+- **Diamonds** — decisions; the amber fill also marks validation & fallback steps.
 
 The one thing to remember: **the model is called only at the hexagons.**
 Everything else — filtering, gating, backfill, rendering — is the app's code.
