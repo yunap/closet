@@ -2134,6 +2134,132 @@ img { display: block; max-width: 100%; }
   align-items: center;
   gap: 2px;
 }
+.message-telemetry {
+  justify-self: start;
+  color: var(--text-light);
+  font-size: 10px;
+}
+.message-telemetry summary {
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.message-telemetry[open] summary {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--surface);
+}
+.message-telemetry-label {
+  font-weight: 650;
+}
+.message-telemetry-count {
+  min-width: 15px;
+  height: 15px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1;
+}
+.message-telemetry-panel {
+  margin-top: 6px;
+  display: grid;
+  gap: 5px;
+  min-width: min(100%, 420px);
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.message-telemetry-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+.message-telemetry-row span:first-child {
+  color: var(--text-muted);
+  font-weight: 650;
+}
+.message-telemetry-row span:last-child {
+  overflow-wrap: anywhere;
+}
+.piece-action-menu {
+  margin-top: 4px;
+  display: flex;
+  justify-content: center;
+  position: relative;
+}
+.piece-action-menu summary::-webkit-details-marker {
+  display: none;
+}
+.piece-action-menu summary {
+  width: 26px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-light);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+.piece-action-menu[open] summary {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: var(--surface);
+}
+.piece-action-menu-panel {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  min-width: 132px;
+  max-width: 180px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 22px rgba(70, 55, 40, 0.16);
+}
+.piece-action-menu-item {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: left;
+}
+.piece-action-menu-item:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.piece-action-menu-item.active {
+  color: var(--danger);
+  border-color: rgba(168,64,64,0.28);
+  background: var(--danger-bg);
+}
 .rationale-details summary {
   list-style: none;
   display: block;
