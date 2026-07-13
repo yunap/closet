@@ -42,9 +42,14 @@ not keyword-guessed.
   `weather` wins over the forecast; a live forecast is authoritative in
   `tripSlotFitScore` (an inherited hot season text can't re-inject heat into a
   cool coast slot — the #56 microclimate fix); plan lines carry a
-  `Weather used: <slot> — <label>` line. Remaining: the reuse dial +
-  per-category repeat rules, objective-driven plan reports, prompt
-  decomposition guidance, parallel-path diagnostics, keyword pre-route
+  `Weather used: <slot> — <label>` line. Build step 4 SHIPPED: shared
+  `constraints` on the tool — a signed `reuse` dial (`maximize`/`diversify`/
+  `none`), per-category `no_repeat`/`allow_repeat` (mapped to category groups,
+  allow_repeat wins conflicts), and `shared_anchor_ids` (hard-pinned into
+  candidate generation via `requiredPieceId`, soft-pinned in selection, and
+  exempt from `no_repeat`); `normalizePlanConstraints` parses them. Remaining:
+  objective-driven plan reports (repeat schedule / piece roster / budget),
+  prompt decomposition guidance, parallel-path diagnostics, keyword pre-route
   retirement (evidence-gated).
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed

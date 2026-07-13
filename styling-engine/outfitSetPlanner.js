@@ -14,8 +14,12 @@
 // forecast from slot.location + slot.date (or the plan date_range) via
 // getWeatherProfileForPlan, so a 60°F coast day on an otherwise-hot inland trip
 // composes for the coast. User-stated per-slot weather still wins over the
-// forecast. Still to come per the documented build order: the signed reuse dial
-// + per-category repeat rules, and objective-driven plan reports.
+// forecast. The signed reuse dial + per-category repeat rules + the anchor
+// exemption are wired too (build step 4): constraints.reuse
+// ('maximize'|'diversify'|'none'), constraints.no_repeat / allow_repeat (per
+// category group), and constraints.shared_anchor_ids (soft-pinned across slots
+// and exempt from no_repeat). Still to come per the documented build order:
+// objective-driven plan reports (repeat schedule / piece roster / budget).
 
 import { getWeatherProfileForPlan } from './weather.js'
 import {
@@ -678,11 +682,105 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
   return { profile, label: isGenericSeason(slot.season) ? descriptor : slot.season }
 }
 
-export async function composeOutfitSet({ slots = [], question = '', mood = '', allPieces = [], seedOutfits = [], source = 'trip_precompose', dateRange = {}, fetchImpl } = {}) {
+const REUSE_MODES = new Set(['maximize', 'diversify', 'none'])
+const REPEAT_CATEGORY_GROUPS = new Set(['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory'])
+
+// Map the model's per-category repeat words onto the engine's category groups.
+// wardrobeCategoryGroup already folds plurals ('tops' -> 'top', 'shoes' -> 'shoes')
+// and most garment nouns; 'layers' is the one planning word it doesn't cover.
+function normalizeRepeatCategory(value = '') {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return ''
+  if (/^layers?$/.test(raw)) return 'outerwear'
+  const group = wardrobeCategoryGroup(raw)
+  return REPEAT_CATEGORY_GROUPS.has(group) ? group : ''
+}
+
+function toCategorySet(list = []) {
+  const set = new Set()
+  for (const value of Array.isArray(list) ? list : []) {
+    const group = normalizeRepeatCategory(value)
+    if (group) set.add(group)
+  }
+  return set
+}
+
+// Shared-constraint parsing (build step 4). The signed reuse dial + per-category
+// repeat rules + the anchor exemption — the dimensions the multi-scenario shape
+// validation surfaced (packing wants maximum reuse; a work week wants tops
+// diversified but shoes may repeat; a pinned new piece must be exempt from
+// no_repeat or the two constraints contradict).
+export function normalizePlanConstraints(raw = {}) {
+  const reuseRaw = String(raw?.reuse || '').trim().toLowerCase()
+  const reuse = REUSE_MODES.has(reuseRaw) ? reuseRaw : ''
+  const noRepeat = toCategorySet(raw?.no_repeat)
+  const allowRepeat = toCategorySet(raw?.allow_repeat)
+  // A category listed in both is a contradiction; explicit permission wins.
+  for (const category of allowRepeat) noRepeat.delete(category)
+  const anchorIds = new Set(
+    (Array.isArray(raw?.shared_anchor_ids) ? raw.shared_anchor_ids : [])
+      .map(id => Number(id))
+      .filter(Boolean)
+  )
+  return { reuse, noRepeat, allowRepeat, anchorIds }
+}
+
+function outfitCategoryPairs(outfit = {}) {
+  return (Array.isArray(outfit.pieces) ? outfit.pieces : [])
+    .map(piece => ({ id: Number(piece?.id), group: wardrobeCategoryGroup(piece) }))
+    .filter(pair => pair.id)
+}
+
+export async function composeOutfitSet({ slots = [], question = '', mood = '', allPieces = [], seedOutfits = [], source = 'trip_precompose', dateRange = {}, constraints = {}, fetchImpl } = {}) {
   const picked = []
   const seeded = seedTripUsedSets(seedOutfits)
   const usedKeys = seeded.usedKeys
   const usedTopBottom = seeded.usedTopBottom
+  const { reuse: reuseMode, noRepeat: noRepeatCats, anchorIds } = normalizePlanConstraints(constraints)
+  // Set-scoped piece bookkeeping for the reuse dial + no_repeat. usedPieceIds
+  // seeds from any prior set (a replan) so novelty is measured against what the
+  // user already has; the per-category map only accumulates within this
+  // composition (seed outfits don't reliably carry category), which is enough —
+  // no_repeat is a within-set guarantee.
+  const usedPieceIds = new Set()
+  const usedPieceIdsByCategory = new Map()
+  for (const outfit of Array.isArray(seedOutfits) ? seedOutfits : []) {
+    const ids = outfit?.pieceIds || (outfit?.pieces || []).map(piece => piece?.id)
+    for (const id of ids || []) {
+      const numeric = Number(id)
+      if (numeric) usedPieceIds.add(numeric)
+    }
+  }
+  const violatesNoRepeat = outfit => {
+    if (!noRepeatCats.size) return false
+    for (const { id, group } of outfitCategoryPairs(outfit)) {
+      if (!noRepeatCats.has(group) || anchorIds.has(id)) continue
+      if (usedPieceIdsByCategory.get(group)?.has(id)) return true
+    }
+    return false
+  }
+  const overlapCount = outfit => {
+    let count = 0
+    for (const { id } of outfitCategoryPairs(outfit)) {
+      if (!anchorIds.has(id) && usedPieceIds.has(id)) count += 1
+    }
+    return count
+  }
+  const anchorPresence = outfit => {
+    if (!anchorIds.size) return 0
+    let count = 0
+    for (const { id } of outfitCategoryPairs(outfit)) {
+      if (anchorIds.has(id)) count += 1
+    }
+    return count
+  }
+  const recordOutfitUse = outfit => {
+    for (const { id, group } of outfitCategoryPairs(outfit)) {
+      usedPieceIds.add(id)
+      if (!usedPieceIdsByCategory.has(group)) usedPieceIdsByCategory.set(group, new Set())
+      usedPieceIdsByCategory.get(group).add(id)
+    }
+  }
   const slotWeather = []
   for (const slot of slots) {
     const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question, dateRange, fetchImpl })
@@ -701,27 +799,39 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       request: question,
       activity: slot.activity
     }))
-    const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
-      occasion: slot.occasion,
-      season: slot.season,
-      mood: mood || question,
-      explorationMode: 'moderate',
-      activeMissions: ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing'],
-      comfortConstraint,
-      candidateLimit: 42,
-      candidateBucketLimit: 8,
-      request: question,
-      question
-    })
-    const localOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, {
-      occasion: slot.occasion,
-      mood: mood || question,
-      season: slot.season,
-      weatherProfile,
-      activity: slot.activity,
-      request: question,
-      question
-    }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
+    // Hard-pin a shared anchor by forcing it into candidate generation
+    // (soft-pinning can't surface a piece the composer never pairs). Only one
+    // piece can be forced per slot, so we pin the first anchor; the rest keep
+    // the exemption + soft-pin. If forcing yields nothing for this slot (the
+    // anchor is gated out or won't complete a valid outfit here), fall back to
+    // composing the slot without it — "recurs in every slot it fits".
+    const anchorPieceId = anchorIds.size ? [...anchorIds][0] : null
+    const buildSlotLocalOutfits = requiredPieceId => {
+      const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
+        occasion: slot.occasion,
+        season: slot.season,
+        mood: mood || question,
+        explorationMode: 'moderate',
+        activeMissions: ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing'],
+        comfortConstraint,
+        candidateLimit: 42,
+        candidateBucketLimit: 8,
+        request: question,
+        question,
+        ...(requiredPieceId ? { requiredPieceId } : {})
+      })
+      return wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, {
+        occasion: slot.occasion,
+        mood: mood || question,
+        season: slot.season,
+        weatherProfile,
+        activity: slot.activity,
+        request: question,
+        question
+      }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
+    }
+    let localOutfits = buildSlotLocalOutfits(anchorPieceId)
+    if (anchorPieceId && !localOutfits.length) localOutfits = buildSlotLocalOutfits(null)
     const ranked = locallyGateWholeWardrobeOutfits(localOutfits, Math.max(3, slots.length), {
       mode: 'advisor', // spec 9 — matches the 2026-06-25 advisor-mode decision, closes the "missing
       // outfit count" gap that only the primary visual composer had been fixed for; applyDiversity
@@ -760,30 +870,56 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
     const slotChoices = []
     const slotUsedBottomSilhouettes = new Set()
     const targetOutfits = Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1))
-    const chooseScoredOutfit = (items, { avoidUsedFormula = true, preferUnusedBottomSilhouette = false } = {}) => {
+    const chooseScoredOutfit = (items, { avoidUsedFormula = true, enforceNoRepeat = true, preferUnusedBottomSilhouette = false } = {}) => {
       const available = items.filter(({ outfit }) => {
         const key = tripOutfitKey(outfit)
         if (!key || usedKeys.has(key)) return false
         const formulaKey = tripOutfitFormulaKey(outfit)
-        return !avoidUsedFormula || !formulaKey || !usedTopBottom.has(formulaKey)
+        if (avoidUsedFormula && formulaKey && usedTopBottom.has(formulaKey)) return false
+        if (enforceNoRepeat && violatesNoRepeat(outfit)) return false
+        return true
       })
-      const best = available[0]
-      if (!best) return null
+      if (!available.length) return null
+      // 1) Soft-pin shared anchors across the WHOLE available set (not just the
+      // fit-tolerance window) so a pinned piece recurs in every slot it can fit —
+      // "one piece styled several ways" is the whole point of an anchor.
+      let anchored = available
+      if (anchorIds.size) {
+        const maxAnchors = Math.max(...available.map(item => anchorPresence(item.outfit)))
+        if (maxAnchors > 0) anchored = available.filter(item => anchorPresence(item.outfit) === maxAnchors)
+      }
+      const best = anchored[0]
+      // Re-rank only within a fit tolerance of the best so the constraint dials
+      // never override a clearly-better-fitting outfit for a marginal one.
+      let pool = anchored.filter(item => item.fit.score >= best.fit.score - 36)
+      if (!pool.length) pool = [best]
+      // 2) Signed reuse dial within that pool.
+      if (reuseMode === 'maximize') {
+        return [...pool].sort((a, b) => overlapCount(b.outfit) - overlapCount(a.outfit) || b.fit.score - a.fit.score)[0]
+      }
+      if (reuseMode === 'diversify') {
+        return [...pool].sort((a, b) => overlapCount(a.outfit) - overlapCount(b.outfit) || b.fit.score - a.fit.score)[0]
+      }
+      // 3) No dial: keep the existing bottom-silhouette variety nudge.
       if (preferUnusedBottomSilhouette && slotUsedBottomSilhouettes.size) {
-        const varied = available.find(item => {
+        const varied = pool.find(item => {
           const silhouetteKey = tripBottomSilhouetteKey(item.outfit)
-          return silhouetteKey && !slotUsedBottomSilhouettes.has(silhouetteKey) && item.fit.score >= best.fit.score - 36
+          return silhouetteKey && !slotUsedBottomSilhouettes.has(silhouetteKey)
         })
         if (varied) return varied
       }
-      return best
+      return pool[0]
     }
     for (let pass = 0; pass < targetOutfits; pass += 1) {
-      const preferUnusedBottomSilhouette = pass > 0
-      const choice = chooseScoredOutfit(scoredOutfits, { avoidUsedFormula: true, preferUnusedBottomSilhouette })?.outfit ||
-        chooseScoredOutfit(scoredOutfits, { avoidUsedFormula: true })?.outfit ||
-        chooseScoredOutfit(scoredOutfits, { avoidUsedFormula: false, preferUnusedBottomSilhouette })?.outfit ||
-        chooseScoredOutfit(scoredOutfits, { avoidUsedFormula: false })?.outfit
+      // Maximizing reuse and varying the bottom silhouette pull in opposite
+      // directions, so the silhouette nudge only applies when we aren't packing.
+      const preferUnusedBottomSilhouette = pass > 0 && reuseMode !== 'maximize'
+      // Relaxation order keeps no_repeat (the user's explicit rule) as the last
+      // thing to give, ahead of formula variety (a nice-to-have).
+      const choice = chooseScoredOutfit(scoredOutfits, { avoidUsedFormula: true, enforceNoRepeat: true, preferUnusedBottomSilhouette })?.outfit ||
+        chooseScoredOutfit(scoredOutfits, { avoidUsedFormula: false, enforceNoRepeat: true, preferUnusedBottomSilhouette })?.outfit ||
+        chooseScoredOutfit(scoredOutfits, { avoidUsedFormula: true, enforceNoRepeat: false, preferUnusedBottomSilhouette })?.outfit ||
+        chooseScoredOutfit(scoredOutfits, { avoidUsedFormula: false, enforceNoRepeat: false })?.outfit
       if (!choice) break
       const key = tripOutfitKey(choice)
       const formulaKey = tripOutfitFormulaKey(choice)
@@ -791,6 +927,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       usedKeys.add(key)
       if (formulaKey) usedTopBottom.add(formulaKey)
       if (bottomSilhouetteKey) slotUsedBottomSilhouettes.add(bottomSilhouetteKey)
+      recordOutfitUse(choice)
       slotChoices.push(choice)
     }
     slotChoices.forEach((choice, slotIndex) => {

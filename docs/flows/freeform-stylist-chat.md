@@ -413,7 +413,12 @@ presentation), (3) wire per-slot weather via `getWeatherProfileForPlan` —
 `tripSlotFitScore` so a slot's inherited hot season text can't re-inject heat
 into a cool coast slot; plan lines now carry a `Weather used: <slot> — <label>`
 line so the user can correct it conversationally), (4) implement the reuse dial +
-per-category repeat rules with the anchor exemption, (5) objective-driven
+per-category repeat rules with the anchor exemption — **SHIPPED 2026-07-13**
+(`constraints` on the tool: signed `reuse` dial `maximize`/`diversify`/`none`,
+per-category `no_repeat`/`allow_repeat` mapped to category groups, and
+`shared_anchor_ids` hard-pinned via `buildWholeWardrobeCandidateOutfits`'s
+`requiredPieceId` and exempt from `no_repeat`; `normalizePlanConstraints`
+parses them), (5) objective-driven
 plan report (reuse report / repeat schedule / piece roster), (6) prompt:
 multi-context requests decompose into slots with locations and dates,
 (7) run both paths in parallel with diagnostics, (8) retire the keyword
