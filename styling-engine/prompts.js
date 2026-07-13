@@ -866,7 +866,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
-  "fabric_weight": "ultralight|light|medium|heavy",
+  "fabric_weight": "ultralight|light|medium|heavy — for SHOES use the shoe scale instead: delicate|slim|medium|chunky (a substantial shoe is chunky, not heavy)",
   "opacity": "opaque|semi_sheer|sheer|open_weave",
   "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. You MUST align this list with your fabric_category (e.g. if fabric_category is silk, fiber_content must include silk; if fabric_category is linen, fiber_content must include linen). Use 'unknown' if not determinable."],
   "formality": "lounge|everyday|elevated|dressy",

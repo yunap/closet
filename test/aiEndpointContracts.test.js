@@ -3184,7 +3184,8 @@ test('propose_outfit rejects pieces not verified this turn, then accepts after r
 
   const blocked = await executeTool('propose_outfit', outfitArgs, toolContext)
   assert.equal(blocked.status, 'validation_error')
-  assert.match(blocked.message, /not verified this turn/)
+  assert.match(blocked.message, /verify these pieces/)
+  assert.match(blocked.message, /fix ALL of the following in one pass/, 'contract issues arrive merged, one bounce')
   assert.deepEqual(blocked.unverifiedIds, [seeded.top, seeded.bottom, seeded.shoe])
   assert.equal(toolContext.generatedOutfits.length, 0, 'no broken card for a recoverable workflow error')
 
