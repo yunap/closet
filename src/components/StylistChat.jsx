@@ -3429,6 +3429,7 @@ export default function StylistChat({
       let replyConversationMode = 'new_request'
       let nextThreadMemory = threadMemory
       let generatedBoards = null
+      let replyRenderedBoards = null
 
       if (outfitToSend && compareId) {
         const res = await fetch('/api/ai/compare-outfits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitAId: outfitToSend.id, outfitBId: compareId, question: q || 'Which outfit works better for me?', history: historySnapshot }) })
@@ -3820,7 +3821,7 @@ export default function StylistChat({
         replyDebug = data.debug || null
         replyStructuredOutfits = data.structuredOutfits || null
         if (Array.isArray(data.renderedBoards) && data.renderedBoards.length) {
-          generatedBoards = data.renderedBoards
+          replyRenderedBoards = data.renderedBoards
         }
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
@@ -3882,6 +3883,7 @@ export default function StylistChat({
       const assistantMsg = {
         role: 'assistant',
         text: replyText,
+        renderedBoards: replyRenderedBoards,
         structuredOutfits: replyStructuredOutfits,
         wholeWardrobe: replyWholeWardrobe,
         wardrobeEvaluation: replyWardrobeEvaluation,
@@ -4483,6 +4485,19 @@ export default function StylistChat({
                   </div>
                 )
               })()}
+
+              {m.role === 'assistant' && Array.isArray(m.renderedBoards) && m.renderedBoards.length > 0 && (
+                <div className="generated-visual-grid" style={{ marginTop: 10 }}>
+                  {m.renderedBoards.map((board, boardIdx) => (
+                    <div key={boardIdx} className="generated-visual-card" style={{ position: 'relative' }}>
+                      <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Outfit preview', meta: board.reason || '' })} aria-label="Open outfit preview">
+                        <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Outfit preview'} className="generated-visual-image" />
+                      </button>
+                      <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {m.role === 'assistant' && !m.isError && i > 0 && activeContext && i === latestAssistantIndex && (
                 <div style={{ marginTop: 4, marginBottom: 8 }}>

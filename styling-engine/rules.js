@@ -1884,10 +1884,16 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     // 2026-07-12: coverage alone (no weight qualifier) flagged a LIGHT silk summer
     // maxi dress as insulating purely because length 'maxi' derives full-insulating
     // coverage. Weight-qualified now: light full-length pieces are summer clothing.
-    // (Composer reference never blocks dresses via this branch at all; the remaining
-    // medium-coverage and warm-sleeve clauses are pending an owner ruling — see the
-    // hot-weather layering question from live testing.)
-    const isInsulatingTopOrDress = isUpperBodyPiece && (
+    // Open-front layer pieces (cardigans, kimonos, overshirts — detected by
+    // isWholeWardrobeLayerableTop) are exempt from the sleeve/coverage clauses:
+    // ratified by Yuna 2026-07-12 after summer layering requests kept dying on
+    // knit cardigans. They remain subject to the heavy-weight and insulating-fiber
+    // checks. Shoes and accessories are never "insulating pieces" (composer parity —
+    // a shoe's fabric_weight describes the shoe's substance, not body insulation;
+    // live-tested: 'sleek black cutout flats: hot weather: insulating piece').
+    const isOpenFrontLayer = isWholeWardrobeLayerableTop(piece)
+    const isShoeOrAccessoryPiece = wardrobeCategoryGroup(piece) === 'shoes' || isAccessory(piece)
+    const isInsulatingTopOrDress = isUpperBodyPiece && !isOpenFrontLayer && (
       (hasInsulatingCoverage && isMediumOrHeavy) ||
       (hasWarmNeckline && isMediumOrHeavy) ||
       (hasWarmSleeves && isMediumOrHeavy)
@@ -1903,7 +1909,7 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
 
     if (hasHotInsulatingFiber) {
       reasons.push('hot weather: insulating fiber')
-    } else if (isHeavy || isInsulatingTopOrDress || isInsulatingBottom) {
+    } else if ((isHeavy && !isShoeOrAccessoryPiece) || isInsulatingTopOrDress || isInsulatingBottom) {
       reasons.push('hot weather: insulating piece')
     }
   }
