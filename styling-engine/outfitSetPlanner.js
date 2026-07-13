@@ -18,8 +18,10 @@
 // exemption are wired too (build step 4): constraints.reuse
 // ('maximize'|'diversify'|'none'), constraints.no_repeat / allow_repeat (per
 // category group), and constraints.shared_anchor_ids (soft-pinned across slots
-// and exempt from no_repeat). Still to come per the documented build order:
-// objective-driven plan reports (repeat schedule / piece roster / budget).
+// and exempt from no_repeat). The plan report is objective-driven too (build
+// step 5): a piece_budget leads with the roster + combination count, a
+// diversified / no_repeat plan leads with the repeat schedule, everything else
+// keeps the packing-reuse headline (see buildPlanReport).
 
 import { getWeatherProfileForPlan } from './weather.js'
 import {
@@ -110,6 +112,51 @@ function describeTripPieceReuse(outfits = []) {
   }
 }
 
+function collectPieceRoster(outfits = []) {
+  const seen = new Set()
+  const names = []
+  for (const outfit of outfits || []) {
+    for (const piece of outfit?.pieces || []) {
+      const key = Number(piece?.id) || normalizeTripPieceName(piece?.name || '')
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      names.push(piece?.name || 'Garment')
+    }
+  }
+  return names
+}
+
+// Objective-driven plan report (build step 5). The report sections are chosen
+// by what the set is FOR, not hardcoded to packing: a capsule (piece_budget)
+// leads with the roster + how many outfits it yields; a diversified plan or one
+// with a no_repeat rule leads with the repeat schedule (its success is "nothing
+// repeats"); everything else keeps the packing-reuse headline. Returns the
+// report lines to append to the shared plan lines.
+function buildPlanReport(pieceReuse, tripOutfits = [], { reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0 } = {}) {
+  const outfitCount = tripOutfits.length
+  const lines = []
+  if (pieceBudget > 0) {
+    const roster = collectPieceRoster(tripOutfits)
+    const shown = roster.slice(0, 12).join(', ')
+    lines.push(`Piece roster (${pieceReuse.distinctPieces}): ${shown}${roster.length > 12 ? ', …' : ''}`)
+    lines.push(`${pieceReuse.distinctPieces} pieces → ${outfitCount} ${outfitCount === 1 ? 'outfit' : 'outfits'}`)
+    lines.push(pieceReuse.distinctPieces <= pieceBudget
+      ? `Within the ${pieceBudget}-piece budget.`
+      : `Over the ${pieceBudget}-piece budget by ${pieceReuse.distinctPieces - pieceBudget} — tighten a slot or allow more repeats.`)
+    return lines
+  }
+  if (reuseMode === 'diversify' || noRepeatCats.size) {
+    if (!pieceReuse.repeated.length) {
+      lines.push(`Every look is distinct — no piece repeats across the ${outfitCount} ${outfitCount === 1 ? 'outfit' : 'outfits'}.`)
+    } else {
+      lines.push(`Repeat schedule: ${pieceReuse.repeated.slice(0, 4).map(entry => `${entry.name} (${entry.where})`).join('; ')}`)
+    }
+    return lines
+  }
+  if (pieceReuse.summary) lines.push(`Packing reuse: ${pieceReuse.summary}`)
+  return lines
+}
+
 function buildWeatherLine(slotWeather = []) {
   const parts = (Array.isArray(slotWeather) ? slotWeather : [])
     .filter(entry => entry?.label && entry?.weather)
@@ -117,10 +164,11 @@ function buildWeatherLine(slotWeather = []) {
   return parts.length ? `Weather used: ${parts.join('; ')}` : ''
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slotWeather = [] } = {}) {
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0 } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const pieceReuse = describeTripPieceReuse(tripOutfits)
+  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget })
   const weatherLine = buildWeatherLine(slotWeather)
   const bySlot = new Map()
   for (const outfit of tripOutfits) {
@@ -147,7 +195,7 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slot
         outfit.tripSummary?.dayBreakdown ? `Coverage: ${outfit.tripSummary.dayBreakdown}` : '',
         coverageBySlot.get(key) || '',
         weatherLine,
-        pieceReuse.summary ? `Packing reuse: ${pieceReuse.summary}` : ''
+        ...reportLines
       ].filter(Boolean)
     }
   })
@@ -722,7 +770,9 @@ export function normalizePlanConstraints(raw = {}) {
       .map(id => Number(id))
       .filter(Boolean)
   )
-  return { reuse, noRepeat, allowRepeat, anchorIds }
+  const budgetRaw = Number.parseInt(raw?.piece_budget, 10)
+  const pieceBudget = Number.isFinite(budgetRaw) && budgetRaw > 0 ? budgetRaw : 0
+  return { reuse, noRepeat, allowRepeat, anchorIds, pieceBudget }
 }
 
 function outfitCategoryPairs(outfit = {}) {
@@ -736,7 +786,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
   const seeded = seedTripUsedSets(seedOutfits)
   const usedKeys = seeded.usedKeys
   const usedTopBottom = seeded.usedTopBottom
-  const { reuse: reuseMode, noRepeat: noRepeatCats, anchorIds } = normalizePlanConstraints(constraints)
+  const { reuse: reuseMode, noRepeat: noRepeatCats, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   // Set-scoped piece bookkeeping for the reuse dial + no_repeat. usedPieceIds
   // seeds from any prior set (a replan) so novelty is measured against what the
   // user already has; the per-category map only accumulates within this
@@ -939,7 +989,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       }))
     })
   }
-  return attachTripPlanMetadata(picked, { source, slotWeather })
+  return attachTripPlanMetadata(picked, { source, slotWeather, reuseMode, noRepeatCats, pieceBudget })
 }
 
 // Tool-argument slots (plan_outfit_set) -> engine slots. Mirrors the pre-route

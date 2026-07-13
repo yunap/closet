@@ -47,10 +47,16 @@ not keyword-guessed.
   `none`), per-category `no_repeat`/`allow_repeat` (mapped to category groups,
   allow_repeat wins conflicts), and `shared_anchor_ids` (hard-pinned into
   candidate generation via `requiredPieceId`, soft-pinned in selection, and
-  exempt from `no_repeat`); `normalizePlanConstraints` parses them. Remaining:
-  objective-driven plan reports (repeat schedule / piece roster / budget),
-  prompt decomposition guidance, parallel-path diagnostics, keyword pre-route
-  retirement (evidence-gated).
+  exempt from `no_repeat`); `normalizePlanConstraints` parses them. Build step 5
+  SHIPPED: the plan report is objective-driven (`buildPlanReport`) — a
+  `piece_budget` (new constraint) leads with the piece roster + combination
+  count and flags over/under budget (capsule); a `diversify`/`no_repeat` plan
+  leads with the repeat schedule ("every look is distinct" is the win);
+  everything else keeps the packing-reuse headline. Remaining: prompt
+  decomposition guidance, parallel-path diagnostics, keyword pre-route
+  retirement (evidence-gated). NB: `piece_budget` drives the REPORT, not hard
+  composition enforcement — the `maximize` dial is what actually shrinks the
+  roster; hard-cap enforcement is a possible follow-up.
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone

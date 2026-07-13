@@ -419,7 +419,11 @@ per-category `no_repeat`/`allow_repeat` mapped to category groups, and
 `shared_anchor_ids` hard-pinned via `buildWholeWardrobeCandidateOutfits`'s
 `requiredPieceId` and exempt from `no_repeat`; `normalizePlanConstraints`
 parses them), (5) objective-driven
-plan report (reuse report / repeat schedule / piece roster), (6) prompt:
+plan report — **SHIPPED 2026-07-13** (`buildPlanReport` picks the report by
+objective: a `piece_budget` leads with the piece roster + combination count and
+flags over/under budget; a `diversify`/`no_repeat` plan leads with the repeat
+schedule ("every look is distinct" being the win); everything else keeps the
+packing-reuse headline), (6) prompt:
 multi-context requests decompose into slots with locations and dates,
 (7) run both paths in parallel with diagnostics, (8) retire the keyword
 pre-route.
