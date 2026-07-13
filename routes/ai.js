@@ -187,6 +187,25 @@ function isBroadOutfitPlanningText(text = '') {
     /\b(suggest|recommend|what should|help|plan|pack|wear|put together|create|build)\b/.test(q) // ratchet-allow: user intent routing words, not garment matching
 }
 
+// Step 8 (keyword pre-route retirement): the broad-planning pre-route is retired
+// by default — a non-travel planning turn (work week, capsule, event weekend)
+// now reaches the model + plan_outfit_set, which applies the constraints,
+// per-slot weather, and objective reports the keyword precompose could not (live
+// evidence: those turns self-route to plan_outfit_set with planPathOutcome
+// 'model_only'; when the pre-route intercepted them it produced weaker,
+// unconstrained sets — the capsule lost its budget/roster entirely). The TRAVEL
+// pre-route stays until trip turns show the same self-routing. Set
+// WARDROBE_BROAD_PLAN_PREROUTE=on to restore the legacy broad-planning precompose
+// as a reversible fallback.
+const BROAD_PLAN_PREROUTE_ENABLED = process.env.WARDROBE_BROAD_PLAN_PREROUTE === 'on'
+
+export function shouldEngageAskPrecompose(question = '', occasion = '', { broadPlanEnabled = BROAD_PLAN_PREROUTE_ENABLED } = {}) {
+  const isTravelPlanning = isTravelOrPackingRequest(question, occasion)
+  if (!isBroadOutfitPlanningText(question) && !isTravelPlanning) return false
+  if (!isTravelPlanning && !broadPlanEnabled) return false // broad-planning retired → model owns it
+  return true
+}
+
 function structuredOutfitContextText(outfits = [], { source = 'whole_wardrobe', reason = '' } = {}) {
   if (!Array.isArray(outfits) || !outfits.length) return ''
   const cards = outfits.slice(0, 8).map((outfit, index) => {
@@ -505,7 +524,9 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
   if (Array.isArray(body.generatedOutfits) && body.generatedOutfits.length) return null
   if (body.outfit || body.pieceId || body.piece || body.activeContext?.type === 'piece' || body.activeContext?.type === 'outfit') return null
   const isTravelPlanning = isTravelOrPackingRequest(question, body.occasion)
-  if (!isBroadOutfitPlanningText(question) && !isTravelPlanning) return null
+  // Step 8: the broad-planning (non-travel) pre-route is retired by default —
+  // those turns fall through to the model + plan_outfit_set.
+  if (!shouldEngageAskPrecompose(question, body.occasion)) return null
   if (isTravelPlanning && !extractedWeather) return null
   // A multi-day trip without enough stated activities/use cases shouldn't silently precompose thin
   // coverage — skip precomposing so the model's own turn can ask what the packing plan should cover,

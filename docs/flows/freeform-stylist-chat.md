@@ -438,4 +438,10 @@ question, so the planning instinct beats the weather-clarification reflex),
 — `both` / `model_only` / `preroute_only` / `planning_uncomposed` /
 `not_planning` — into the debug block; a steady stream of `model_only` on
 turns the regex missed is the evidence step 8 needs), (8) retire the keyword
-pre-route.
+pre-route — **SHIPPED 2026-07-13** (the broad-planning, non-travel pre-route is
+retired by default via `shouldEngageAskPrecompose`: work-week / capsule / event
+turns now fall through to the model + `plan_outfit_set`; live evidence showed
+those turns self-route `model_only` and the pre-route only produced weaker,
+unconstrained sets — the capsule lost its budget/roster entirely. The TRAVEL
+pre-route stays until trip turns show the same; `WARDROBE_BROAD_PLAN_PREROUTE=on`
+restores the legacy path as a reversible fallback).

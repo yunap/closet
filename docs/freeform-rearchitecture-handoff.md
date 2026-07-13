@@ -81,7 +81,16 @@ not keyword-guessed.
   (the evening scorer credits any dark layer as "elevated" and never penalizes
   denim). The prompt teaches the model to escalate (rehearsal `dressy`, ceremony
   `formal`, brunch `elevated`) and to not `no_repeat` the category the marquee
-  slot needs. Remaining: keyword pre-route retirement (step 8, evidence-gated). NB: `piece_budget` drives the REPORT, not
+  slot needs. Build step 8 SHIPPED: the broad-planning (non-travel) keyword
+  pre-route is retired by default — `shouldEngageAskPrecompose` (routes/ai.js)
+  lets work-week / capsule / event turns fall through to the model +
+  `plan_outfit_set` instead of precomposing an unconstrained set (live evidence:
+  those turns self-route `model_only`; the pre-route had been intercepting the
+  capsule and dropping its budget/roster entirely). The TRAVEL pre-route
+  (`isTravelOrPackingRequest`) stays until trip turns show the same self-routing;
+  `WARDROBE_BROAD_PLAN_PREROUTE=on` restores the legacy broad-planning precompose
+  as a reversible fallback. Remaining: retire the travel pre-route once trip
+  turns show `model_only`; retire the context clauses (below). NB: `piece_budget` drives the REPORT, not
   hard composition
   enforcement — the `maximize` dial is what actually shrinks the roster;
   hard-cap enforcement is a possible follow-up.
