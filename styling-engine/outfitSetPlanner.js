@@ -10,10 +10,14 @@
 // coverage lines + a packing-reuse report) that the client renders as the
 // trip-plan block.
 //
-// Still to come per the documented build order: per-slot live weather
-// (getWeatherProfileForPlan), the signed reuse dial + per-category repeat
-// rules, and objective-driven plan reports.
+// Per-slot live weather is now wired (build step 3): each slot resolves its own
+// forecast from slot.location + slot.date (or the plan date_range) via
+// getWeatherProfileForPlan, so a 60°F coast day on an otherwise-hot inland trip
+// composes for the coast. User-stated per-slot weather still wins over the
+// forecast. Still to come per the documented build order: the signed reuse dial
+// + per-category repeat rules, and objective-driven plan reports.
 
+import { getWeatherProfileForPlan } from './weather.js'
 import {
   filterWholeWardrobePiecesForGeneration,
   buildWholeWardrobeCandidateOutfits,
@@ -32,7 +36,7 @@ export function normalizeTripPieceName(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
-function annotateTripOutfit(outfit, slot, index = 0, { slotIndex = 0, slotTotal = 1, source = 'trip_precompose' } = {}) {
+function annotateTripOutfit(outfit, slot, index = 0, { slotIndex = 0, slotTotal = 1, source = 'trip_precompose', weatherLabel = '' } = {}) {
   if (!outfit || !slot) return outfit
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const pieceIds = pieces.map(piece => Number(piece.id)).filter(Boolean)
@@ -53,6 +57,7 @@ function annotateTripOutfit(outfit, slot, index = 0, { slotIndex = 0, slotTotal 
     targetOutfits: slot.targetOutfits || 1,
     tripSummary: slot.tripSummary || null,
     coveragePosition: `${slot.label} · ${slotIndex + 1} of ${slotTotal}`,
+    slotWeather: weatherLabel,
     source,
     strength: '',
     mission: '',
@@ -101,10 +106,18 @@ function describeTripPieceReuse(outfits = []) {
   }
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose' } = {}) {
+function buildWeatherLine(slotWeather = []) {
+  const parts = (Array.isArray(slotWeather) ? slotWeather : [])
+    .filter(entry => entry?.label && entry?.weather)
+    .map(entry => `${entry.label} — ${entry.weather}`)
+  return parts.length ? `Weather used: ${parts.join('; ')}` : ''
+}
+
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slotWeather = [] } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const pieceReuse = describeTripPieceReuse(tripOutfits)
+  const weatherLine = buildWeatherLine(slotWeather)
   const bySlot = new Map()
   for (const outfit of tripOutfits) {
     const key = outfit.tripSlot || outfit.label || outfit.bestFor
@@ -129,6 +142,7 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose' } = {
         outfit.tripSummary?.durationText ? `Trip length: ${outfit.tripSummary.durationText}` : '',
         outfit.tripSummary?.dayBreakdown ? `Coverage: ${outfit.tripSummary.dayBreakdown}` : '',
         coverageBySlot.get(key) || '',
+        weatherLine,
         pieceReuse.summary ? `Packing reuse: ${pieceReuse.summary}` : ''
       ].filter(Boolean)
     }
@@ -458,9 +472,15 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) 
   const isDinner = isTripDinnerSlot(slot)
   const isWinery = slot.occasion === 'outdoor_daytime_social'
   const isDayWalking = isWalking && !isDinner
-  const isHotDay = Boolean(weatherProfile?.isHot || /\b(hot|80|90|summer)\b/i.test(`${slot.season || ''} ${slot.bestFor || ''}`))
+  // When the forecast is live, it is authoritative — the slot.season text may
+  // still carry the trip-level weather (e.g. an inland "hot, 90F") that must NOT
+  // re-inject heat into a slot whose own forecast came back cool (the coastal
+  // microclimate miss, #56). The season-text regex stays a fallback only when
+  // the profile is heuristic.
+  const liveWeather = weatherProfile?.weatherSource === 'live'
+  const isHotDay = Boolean(weatherProfile?.isHot) || (!liveWeather && /\b(hot|80|90|summer)\b/i.test(`${slot.season || ''} ${slot.bestFor || ''}`))
   const isHotNonDinner = isHotDay && !isDinner
-  const isColdDay = Boolean(weatherProfile?.isCold || /\b(cold|freezing|winter|chilly)\b/i.test(`${slot.season || ''} ${slot.bestFor || ''}`))
+  const isColdDay = Boolean(weatherProfile?.isCold) || (!liveWeather && /\b(cold|freezing|winter|chilly)\b/i.test(`${slot.season || ''} ${slot.bestFor || ''}`))
   const hardRejects = []
   let score = 0
 
@@ -607,13 +627,66 @@ function seedTripUsedSets(outfits = []) {
   return { usedKeys, usedTopBottom }
 }
 
-export function composeOutfitSet({ slots = [], question = '', mood = '', allPieces = [], seedOutfits = [], source = 'trip_precompose' } = {}) {
+function describeWeatherProfile(profile = {}) {
+  if (profile.isHot && profile.isCold) return 'hot days, cold nights'
+  if (profile.isHot) return 'hot'
+  if (profile.isCold) return 'cold'
+  return 'mild'
+}
+
+function isGenericSeason(season = '') {
+  const value = String(season || '').trim().toLowerCase()
+  return !value || value === 'current season' || value === 'current' || value === 'year-round'
+}
+
+// Per-slot weather resolution (build step 3). Precedence: user-stated per-slot
+// weather wins outright (the model set slot.weather because it knows something
+// the forecast can't — e.g. an indoor event); otherwise the slot's own live
+// forecast is fetched from slot.location + slot.date (or the plan date_range),
+// which is what catches microclimates like a cool coast day on a hot inland
+// trip; and getWeatherProfileForPlan itself falls back to the heuristic when no
+// location/date is available or the fetch fails. The returned `label` is what
+// the plan lines state back to the user so they can correct it conversationally.
+async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, fetchImpl } = {}) {
+  const moodText = mood || question
+  if (slot.statedWeather) {
+    return {
+      profile: { ...weatherProfileFromContext({ mood: moodText, season: slot.statedWeather }), weatherSource: 'stated' },
+      label: slot.statedWeather
+    }
+  }
+  // Fall back to `undefined` (not '') when no date is known: getWeatherProfileForPlan
+  // threads the start date into the heuristic as currentDate, and only `undefined`
+  // lets weatherProfileFromContext default to today for its "current season"
+  // calendar guess — an empty string reads as a provided-but-invalid Date and
+  // silently disables it, which would regress the keyword pre-route's weather.
+  const day = slot.date || undefined
+  const profile = await getWeatherProfileForPlan({
+    dateRange: { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined },
+    location: slot.location || '',
+    season: slot.season,
+    mood: moodText,
+    ...(fetchImpl ? { fetchImpl } : {})
+  })
+  const descriptor = describeWeatherProfile(profile)
+  if (profile.weatherSource === 'live') {
+    const where = slot.location ? `, ${slot.location}` : ''
+    return { profile, label: `${descriptor} (live forecast${where})` }
+  }
+  // Heuristic: prefer the user's own weather phrasing when they gave one, since
+  // it is more informative than the coarse hot/cold/mild descriptor.
+  return { profile, label: isGenericSeason(slot.season) ? descriptor : slot.season }
+}
+
+export async function composeOutfitSet({ slots = [], question = '', mood = '', allPieces = [], seedOutfits = [], source = 'trip_precompose', dateRange = {}, fetchImpl } = {}) {
   const picked = []
   const seeded = seedTripUsedSets(seedOutfits)
   const usedKeys = seeded.usedKeys
   const usedTopBottom = seeded.usedTopBottom
+  const slotWeather = []
   for (const slot of slots) {
-    const weatherProfile = weatherProfileFromContext({ mood: mood || question, season: slot.season })
+    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question, dateRange, fetchImpl })
+    slotWeather.push({ label: slot.label, weather: weatherLabel })
     const { allowedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, {
       occasion: slot.occasion,
       explorationMode: 'moderate',
@@ -724,11 +797,12 @@ export function composeOutfitSet({ slots = [], question = '', mood = '', allPiec
       picked.push(annotateTripOutfit(choice, slot, picked.length, {
         slotIndex,
         slotTotal: slotChoices.length,
-        source
+        source,
+        weatherLabel
       }))
     })
   }
-  return attachTripPlanMetadata(picked, { source })
+  return attachTripPlanMetadata(picked, { source, slotWeather })
 }
 
 // Tool-argument slots (plan_outfit_set) -> engine slots. Mirrors the pre-route
@@ -740,6 +814,7 @@ export function normalizePlanSlots(rawSlots = [], {
   fallbackWeather = '',
   fallbackOccasion = 'city',
   fallbackActivity = 'none',
+  fallbackLocation = '',
   maxSlots = 6,
   tripSummary = null
 } = {}) {
@@ -750,12 +825,20 @@ export function normalizePlanSlots(rawSlots = [], {
       const activity = normalizeActivity(String(slot?.activity || fallbackActivity || 'none'))
       const label = String(slot?.label || '').trim()
       const bestFor = String(slot?.best_for || slot?.bestFor || label).trim()
+      // statedWeather is ONLY the model's explicit per-slot weather — it wins
+      // over the live forecast. The trip-level fallbackWeather is not "stated"
+      // for this purpose: it feeds season/heuristic but must let a slot's own
+      // forecast override it (that is the coastal-microclimate case).
+      const statedWeather = String(slot?.weather || slot?.stated_weather || '').trim()
       return {
         id: label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `slot_${index + 1}`,
         label,
         occasion,
         activity,
-        season: String(slot?.weather || slot?.season || fallbackWeather || 'current season').trim(),
+        season: String(statedWeather || slot?.season || fallbackWeather || 'current season').trim(),
+        statedWeather,
+        location: String(slot?.location || fallbackLocation || '').trim(),
+        date: String(slot?.date || '').trim(),
         bestFor,
         coverage: String(slot?.coverage || bestFor || label).trim(),
         targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),
