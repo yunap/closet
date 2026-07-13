@@ -563,6 +563,57 @@ function isOfficeStructuredDress(piece = {}) {
   ])
 }
 
+// Slot-level register escalation (the step-6 contract's `slot.register`): an
+// event weekend wants the marquee slot dressiest — rehearsal 'dressy', ceremony
+// 'formal', brunch 'elevated'. Without it the wedding ceremony composed in denim
+// flares + a leather zip jacket (the evening scorer credits any dark layer as
+// "elevated" and never penalizes denim). Only escalates at dressy+ so everyday /
+// elevated slots keep the existing occasion scorers untouched.
+const REGISTER_LEVELS = { everyday: 0, elevated: 1, dressy: 2, formal: 3 }
+
+function normalizeRegisterLevel(value = '') {
+  const normalized = String(value || '').toLowerCase().trim()
+  return normalized in REGISTER_LEVELS ? normalized : ''
+}
+
+function tripOutfitRegisterEscalationScore(outfit = {}, slot = {}) {
+  const target = REGISTER_LEVELS[slot.register]
+  if (!(target >= 2)) return { score: 0, hardRejects: [] }
+  const formal = target >= 3
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  const shoe = pieces.find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  const hardRejects = []
+  let score = 0
+
+  for (const piece of pieces) {
+    const group = wardrobeCategoryGroup(piece)
+    if (group === 'bottom' && tripPieceHasStructuredValue(piece, ['denim', 'jean', 'jeans', 'cargo', 'jogger', 'drawstring'])) {
+      score -= formal ? 60 : 34
+      if (formal) hardRejects.push('denim/casual bottom too informal for a formal slot')
+    }
+    if (group === 'outerwear' && tripPieceHasStructuredValue(piece, ['moto', 'zip', 'leather', 'fleece', 'denim', 'utility', 'bomber', 'anorak', 'puffer', 'hoodie'])) {
+      score -= formal ? 44 : 24
+      if (formal) hardRejects.push('casual jacket too informal for a formal slot')
+    }
+    if (group === 'top' && ['tee', 'tank', 'sweatshirt', 'hoodie'].includes(garmentKind(piece))) {
+      score -= formal ? 26 : 14
+    }
+    if (group === 'shoes' && tripShoeMatchesAny(piece, ['sneaker', 'sneakers', 'canvas', 'espadrille', 'flip', 'flip-flop', 'slide', 'slides', 'sport'])) {
+      score -= formal ? 50 : 28
+      if (formal) hardRejects.push('casual shoes too informal for a formal slot')
+    }
+  }
+
+  // Reward the genuinely dressy anchors a formal slot wants.
+  if (dress) score += 16
+  if (shoe && tripShoeMatchesAny(shoe, ['heel', 'heels', 'pump', 'pumps', 'dress flat', 'dress flats', 'mule', 'mules'])) score += 12
+  if (pieces.some(piece => tripPieceHasStructuredValue(piece, ['silk', 'satin', 'lace', 'chiffon', 'velvet', 'crepe', 'tailored', 'structured', 'sequin', 'beaded']))) score += formal ? 16 : 10
+  if (pieces.some(piece => piece?.formality === 'dressy' || piece?.formality === 'elevated')) score += 8
+
+  return { score, hardRejects }
+}
+
 function tripOutfitOfficeRegisterScore(outfit = {}, slot = {}) {
   if (!isOfficePlanSlot(slot)) return { score: 0, hardRejects: [] }
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
@@ -718,6 +769,9 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) 
   const officeFit = tripOutfitOfficeRegisterScore(outfit, slot)
   score += officeFit.score
   hardRejects.push(...officeFit.hardRejects)
+  const registerFit = tripOutfitRegisterEscalationScore(outfit, slot)
+  score += registerFit.score
+  hardRejects.push(...registerFit.hardRejects)
   score += tripOutfitAestheticGravityScore(outfit)
 
   return {
@@ -1151,6 +1205,7 @@ export function normalizePlanSlots(rawSlots = [], {
         bestFor,
         coverage: String(slot?.coverage || bestFor || label).trim(),
         targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),
+        register: normalizeRegisterLevel(slot?.register),
         tripSummary,
         planNote: String(slot?.plan_note || slot?.planNote || '').trim()
       }

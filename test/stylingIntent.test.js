@@ -151,6 +151,11 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('INDOOR slots are climate-controlled'))
   assert.ok(STYLIST_SYSTEM.includes("pass \`weather:'indoor'\` so the slot is NOT composed for outdoor heat or cold"))
   assert.ok(STYLIST_SYSTEM.includes('Reserve the live per-slot forecast for slots actually spent OUTDOORS'))
+  // Register escalation for event weekends (live finding: the wedding ceremony
+  // came out in denim + a leather zip, not the dressiest slot).
+  assert.ok(STYLIST_SYSTEM.includes("set each slot's \`register\` so the peak reads dressiest"))
+  assert.ok(STYLIST_SYSTEM.includes("wedding ceremony \`register:'formal'\`"))
+  assert.ok(STYLIST_SYSTEM.includes("don't \`no_repeat\` the very category (usually dresses) the marquee slot needs"))
   assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
   assert.ok(STYLIST_SYSTEM.includes('as the canonical packing/styling plan for the thread'))
   assert.ok(STYLIST_SYSTEM.includes("one 'propose_outfit' card per entry (verified piece IDs + roles)"))
