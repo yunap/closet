@@ -428,7 +428,10 @@ Coordinated Multi-Outfit Set" bullet in `STYLIST_SYSTEM`: on the initial
 planning turn the model calls `plan_outfit_set` instead of hand-composing, YOU
 decompose into slots, set per-slot `location`/`date` for microclimates and
 specific days, and choose `constraints` from the objective; the returned cards
-become the Current outfit set that `propose_outfit` then revises),
+become the Current outfit set that `propose_outfit` then revises; reinforced
+2026-07-13 after a live miss — an at-home multi-day plan with no place named
+must route to `plan_outfit_set` on the calendar season, NOT stall on a weather
+question, so the planning instinct beats the weather-clarification reflex),
 (7) run both paths in parallel with diagnostics — **SHIPPED 2026-07-13**
 (`recordPlanPathDiagnostics` writes per-turn `planKeywordMatched` /
 `planPrerouteComposed` / `planModelCalled` and a single `planPathOutcome`

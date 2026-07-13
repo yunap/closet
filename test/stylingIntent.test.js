@@ -138,6 +138,13 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('so each slot resolves its OWN live forecast'))
   assert.ok(STYLIST_SYSTEM.includes("\`reuse:'diversify'\` with \`no_repeat:['tops']\`"))
   assert.ok(STYLIST_SYSTEM.includes("'plan_outfit_set' for the initial multi-slot plan, 'propose_outfit' for one specific outfit"))
+  // Reinforcement: an at-home multi-day plan must route to the tool on the
+  // calendar season, not stall on a weather question (live finding: the model
+  // asked for weather instead of composing).
+  assert.ok(STYLIST_SYSTEM.includes('Do NOT stall a multi-day plan with a weather question when no place is named'))
+  assert.ok(STYLIST_SYSTEM.includes("call 'plan_outfit_set' NOW, proceeding on the calendar season inferred from today's date"))
+  assert.ok(STYLIST_SYSTEM.includes('you have everything you need — decompose and call \'plan_outfit_set\' rather than asking a clarifying question first'))
+  assert.ok(!STYLIST_SYSTEM.includes('únicamente'))
   assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
   assert.ok(STYLIST_SYSTEM.includes('as the canonical packing/styling plan for the thread'))
   assert.ok(STYLIST_SYSTEM.includes("one 'propose_outfit' card per entry (verified piece IDs + roles)"))
