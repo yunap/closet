@@ -119,10 +119,42 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       zeroResultContradictionBlocks: 0,
       destinationClarificationRetries: 0,
       tripScopeClarificationRetries: 0,
+      // Step 6 build 7 — parallel-path signals (set once per turn by
+      // recordPlanPathDiagnostics; see classifyPlanPath for planPathOutcome).
+      planKeywordMatched: 0,
+      planPrerouteComposed: 0,
+      planModelCalled: 0,
+      planPathOutcome: '',
       weatherSource: ''
     }
   }
   toolContext.freeformDiagnostics[field] = (toolContext.freeformDiagnostics[field] || 0) + amount
+}
+
+// Step 6 build 7 — parallel-path diagnostics. On a planning-eligible turn the
+// keyword pre-route (isTravelOrPackingRequest / isBroadOutfitPlanningText) and
+// the model's own plan_outfit_set call are two paths to the same coordinated
+// set. This records, per turn, which fired, so the step-8 keyword-pre-route
+// retirement is evidence-gated rather than a guess: a steady stream of
+// 'model_only' (the model self-routed on a turn the pre-route did NOT compose)
+// is the generalization proof that the regex fast-path can go.
+export function classifyPlanPath({ keywordMatched = false, prerouteComposed = false, modelCalled = false } = {}) {
+  if (modelCalled && prerouteComposed) return 'both'
+  if (modelCalled) return 'model_only'
+  if (prerouteComposed) return 'preroute_only'
+  if (keywordMatched) return 'planning_uncomposed' // keywords read planning, but neither path produced a set
+  return 'not_planning'
+}
+
+export function recordPlanPathDiagnostics(toolContext, { keywordMatched = false, prerouteComposed = false } = {}) {
+  if (!toolContext) return
+  bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls', 0) // ensure the diagnostics object exists
+  const diagnostics = toolContext.freeformDiagnostics
+  const modelCalled = (diagnostics.planOutfitSetCalls || 0) > 0
+  diagnostics.planKeywordMatched = keywordMatched ? 1 : 0
+  diagnostics.planPrerouteComposed = prerouteComposed ? 1 : 0
+  diagnostics.planModelCalled = modelCalled ? 1 : 0
+  diagnostics.planPathOutcome = classifyPlanPath({ keywordMatched, prerouteComposed, modelCalled })
 }
 
 // Spec 4: records whether weather resolved live or fell back to the text heuristic, for spec 3's

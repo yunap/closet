@@ -60,10 +60,18 @@ not keyword-guessed.
   `constraints` from the objective; the returned cards become the Current
   outfit set that `propose_outfit` revises. (Until this, the tool was live but
   unreachable — nothing in the prompt named it, which also blocked the step-8
-  retirement evidence.) Remaining: parallel-path diagnostics (step 7), keyword
-  pre-route retirement (step 8, evidence-gated). NB: `piece_budget` drives the
-  REPORT, not hard composition enforcement — the `maximize` dial is what
-  actually shrinks the roster; hard-cap enforcement is a possible follow-up.
+  retirement evidence.) Build step 7 SHIPPED: parallel-path diagnostics —
+  `recordPlanPathDiagnostics` (tools.js), called per /ask turn in routes/ai.js,
+  records `planKeywordMatched` (regex fired), `planPrerouteComposed` (the
+  pre-route actually seeded a set), `planModelCalled` (the model called
+  `plan_outfit_set`), and a single `planPathOutcome`
+  (`both`/`model_only`/`preroute_only`/`planning_uncomposed`/`not_planning`)
+  into the debug block. Watch `planPathOutcome` in "Search & validation
+  details": a steady stream of `model_only` on planning turns the regex missed
+  is the retirement evidence. Remaining: keyword pre-route retirement (step 8,
+  evidence-gated). NB: `piece_budget` drives the REPORT, not hard composition
+  enforcement — the `maximize` dial is what actually shrinks the roster;
+  hard-cap enforcement is a possible follow-up.
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone
@@ -118,11 +126,17 @@ freeformDiagnostics counters (`intentDeclared`, `viewCalls`, `renderCalls`,
 7. **Memory hygiene:** state a real preference ("no ankle boots in summer") →
    ONE deduped store_user_correction save; a later turn respects it; no raw
    questions accumulating in stylist_feedback.
+8. **Model-initiated planning (step 6–7 evidence):** a planning turn the keyword
+   pre-route MISSES — e.g. "outfits for my work week, Thursday is client-facing"
+   (no travel words) → the model should call `plan_outfit_set` itself, decompose
+   into day slots, and set `constraints` (diversify + no_repeat tops). Check the
+   debug block: `planPathOutcome: model_only` is the win. A steady stream of it
+   across planning turns is the evidence to retire the keyword pre-route (step 8).
 
 Interpretation: blocks-counters firing occasionally = rails working; firing on
 every turn = rails too expensive or prompt unclear (find which counter).
 Scenarios 3–5 passing is the generalization proof; 1–2 are regressions of known
-bugs and must pass.
+bugs and must pass; 8 accumulates the retirement evidence for the keyword pre-route.
 
 ## Gotchas for the next assistant
 

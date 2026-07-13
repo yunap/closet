@@ -429,5 +429,10 @@ planning turn the model calls `plan_outfit_set` instead of hand-composing, YOU
 decompose into slots, set per-slot `location`/`date` for microclimates and
 specific days, and choose `constraints` from the objective; the returned cards
 become the Current outfit set that `propose_outfit` then revises),
-(7) run both paths in parallel with diagnostics, (8) retire the keyword
+(7) run both paths in parallel with diagnostics — **SHIPPED 2026-07-13**
+(`recordPlanPathDiagnostics` writes per-turn `planKeywordMatched` /
+`planPrerouteComposed` / `planModelCalled` and a single `planPathOutcome`
+— `both` / `model_only` / `preroute_only` / `planning_uncomposed` /
+`not_planning` — into the debug block; a steady stream of `model_only` on
+turns the regex missed is the evidence step 8 needs), (8) retire the keyword
 pre-route.
