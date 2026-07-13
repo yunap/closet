@@ -95,6 +95,19 @@ not keyword-guessed.
 4. Casual cargo pants styled "polished"/elevated → memory pollution (see #44).
 5. "Style these pants" → zero ideas → gates rejected the asked-about piece →
    anchor rule (#44) + hot-weather overblock fix (#47).
+6. Step-6 live test, two turns: (a) "Put together outfits for my work week…" hit
+   the keyword pre-route (`isBroadOutfitPlanningText` matches `outfits` +
+   `put together`) → `preroute_only`, and the pre-route composes via
+   `composeOutfitSet` with NO constraints → an unconstrained, register-off set
+   (shorts-for-office, two maxi dresses, a flagged sandal repeat). (b) A
+   regex-dodging rephrase ("get dressed for five days at the office…") stayed off
+   the pre-route but the model asked for WEATHER instead of calling
+   `plan_outfit_set` → `not_planning`. Fix: prompt reinforcement — an at-home
+   multi-day plan with no place named routes to `plan_outfit_set` on the calendar
+   season, never a weather question (the planning instinct must beat the
+   weather-clarification reflex). Consequence for step 8: the pre-route can't be
+   retired until the model reliably composes here (else these turns regress from
+   "a flawed set" to "a clarifying question").
 
 ## High-leverage test scenarios (run in this order)
 
