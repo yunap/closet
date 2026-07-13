@@ -1874,7 +1874,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
       "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
       "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|cashmere|viscose|denim|twill|canvas|corduroy|tweed|velvet|leather|suede|ponte|synthetic|fleece|other",
-      "fabric_weight": "ultralight|light|medium|heavy",
+      "fabric_weight": "ultralight|light|medium|heavy — for SHOES use the shoe scale instead: delicate|slim|medium|chunky (a substantial shoe is chunky, not heavy)",
       "opacity": "opaque|semi_sheer|sheer|open_weave",
       "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. Use 'unknown' if not determinable."],
       "formality": "lounge|everyday|elevated|dressy",

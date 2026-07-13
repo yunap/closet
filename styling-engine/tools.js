@@ -800,49 +800,40 @@ export async function executeTool(name, args, toolContext = {}) {
           }
         }
 
-        // Declared-intent gate (step 4): composing requires an explicit cards
-        // declaration so the turn's output contract (count, verification) is set
-        // before any card exists. Recoverable — declare, then re-propose.
+        // Contract gates (steps 3+4), checked TOGETHER so the model learns every
+        // blocker in ONE bounce — live-tested 2026-07-12: sequential early returns
+        // burned three loop iterations (intent, then retrieval, then gate) and the
+        // turn died at the iteration cap with zero cards.
+        const contractIssues = []
         if (toolContext.declaredIntent?.want !== 'cards') {
           bumpFreeformDiagnostic(toolContext, 'composeWithoutDeclaredIntent')
-          return {
-            status: "validation_error",
-            message: "No cards intent declared for this turn. Call declare_intent({ want: 'cards', outfit_count: <n if the user asked for a number> }) first, then call propose_outfit again with the same pieces."
-          }
+          contractIssues.push("declare intent first: call declare_intent({ want: 'cards', outfit_count: <n if the user asked for a number> })")
         }
-
-        // Retrieval rule (step 3): every proposed piece must have been verified THIS
-        // turn — retrieved via search/details, or already part of a verified card
-        // (this turn's generated outfits or the thread's current outfit set). The
-        // manifest alone is an index, not verification. No broken diagnostic card
-        // here: this is a recoverable workflow error (fetch, then re-propose), not
-        // a bad outfit.
         const { retrieved: retrievedIdsThisTurn, seen: seenIdsThisTurn, known: knownCardIds } = verifiedPieceIdSets(toolContext)
         const unverifiedPieces = resolved.filter(p =>
           !retrievedIdsThisTurn.has(Number(p.id)) && !knownCardIds.has(Number(p.id)))
         if (unverifiedPieces.length) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnverifiedPieceBlocks')
-          return {
-            status: "validation_error",
-            message: `These pieces were not verified this turn: ${unverifiedPieces.map(p => `#${p.id} ${p.name}`).join(', ')}. The wardrobe manifest is an index, not garment truth — call view_pieces with these IDs (photos + truth lines) first, then call propose_outfit again with the same IDs.`,
-            unverifiedIds: unverifiedPieces.map(p => Number(p.id))
-          }
+          contractIssues.push(`verify these pieces (the manifest is an index, not garment truth): call view_pieces with ids [${unverifiedPieces.map(p => Number(p.id)).join(', ')}]`)
         }
-
         // Layered/base pieces carry construction risks the tags cannot capture
         // (lining, sheerness, true texture) — the model must have SEEN the photo
-        // this turn before proposing them as a layer. Pieces with no photo at all
-        // are exempt (there is nothing to look at; tags are the only truth).
+        // this turn. Pieces with no photo at all are exempt.
         const unseenLayerPieces = resolved.filter(p =>
           (p.role === 'layer_top' || p.role === 'layer_bottom') &&
           (p.photo || p.worn_photo) &&
-          !seenIdsThisTurn.has(Number(p.id)))
+          !seenIdsThisTurn.has(Number(p.id)) &&
+          !unverifiedPieces.some(u => Number(u.id) === Number(p.id)))
         if (unseenLayerPieces.length) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnseenLayerBlocks')
+          contractIssues.push(`layer pieces must be visually verified this turn: call view_pieces (size:'large') for [${unseenLayerPieces.map(p => Number(p.id)).join(', ')}] and confirm each works as a layer`)
+        }
+        if (contractIssues.length) {
           return {
             status: "validation_error",
-            message: `Layer pieces must be visually verified this turn — construction risks (lining, sheerness, texture) are not in the tags. Call view_pieces (size:'large') for ${unseenLayerPieces.map(p => `#${p.id} ${p.name}`).join(', ')} to see the photo${unseenLayerPieces.length === 1 ? '' : 's'}, confirm each works as a layer, then call propose_outfit again.`,
-            unseenLayerIds: unseenLayerPieces.map(p => Number(p.id))
+            message: `Before this outfit can render, fix ALL of the following in one pass, then call propose_outfit again with the same pieces: ${contractIssues.map((issue, i) => `(${i + 1}) ${issue}`).join('; ')}. Reminder: if the user explicitly asked to style/wear a piece, set anchor:true on it.`,
+            ...(unverifiedPieces.length ? { unverifiedIds: unverifiedPieces.map(p => Number(p.id)) } : {}),
+            ...(unseenLayerPieces.length ? { unseenLayerIds: unseenLayerPieces.map(p => Number(p.id)) } : {})
           }
         }
 

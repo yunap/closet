@@ -220,7 +220,9 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
 
 export function freeformToolLoopFallbackAnswer(toolContext = {}) {
   const outfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
-  if (!outfits.length) return 'Tool calling loop reached max iterations.'
+  if (!outfits.length) {
+    return 'I ran out of steps before I could finish this one — my outfit proposals kept getting rejected by validation before a card could land. Ask me to try again: I will verify the exact pieces first and keep the piece you asked about pinned as the anchor.'
+  }
 
   const requestedOutfitCount = toolContext.declaredIntent?.outfitCount || extractRequestedOutfitCount(toolContext.question)
   const readyCount = outfits.filter(outfit => !outfit?.broken).length
@@ -590,7 +592,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   const savedCorrections = []
   const retriedChecks = new Set()
 
-  for (let iter = 0; iter < 7; iter++) {
+  // 10 iterations: the disciplined flow (declare, search, view supports, view
+  // layers, propose xN) legitimately needs 6-8; the old cap of 7 left no margin
+  // for a single corrective bounce and live turns died with zero cards.
+  for (let iter = 0; iter < 10; iter++) {
     if (AI_PROVIDER === 'openai') {
       const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
       const response = await client.chat.completions.create({
