@@ -2275,12 +2275,55 @@ router.post('/generate-outfits-for-piece', async (req, res) => {
   }
 })
 
+function wholeWardrobeSessionMemorySummary({ daysCutoff = 6 } = {}) {
+  const cutoff = Math.floor(Date.now() / 1000) - Number(daysCutoff || 6) * 86400
+  const rows = db.prepare(`
+    SELECT piece_ids, formula_families
+    FROM whole_wardrobe_sessions
+    WHERE created_at > ?
+    ORDER BY created_at DESC
+    LIMIT 6
+  `).all(cutoff)
+  const pieceIds = new Set()
+  const formulaFamilies = new Set()
+  for (const row of rows) {
+    const ids = safeJsonParse(row.piece_ids, [])
+    if (Array.isArray(ids)) {
+      ids.map(Number).filter(Boolean).forEach(id => pieceIds.add(id))
+    }
+    const families = safeJsonParse(row.formula_families, [])
+    if (Array.isArray(families)) {
+      families.filter(Boolean).forEach(family => formulaFamilies.add(family))
+    }
+  }
+  return {
+    success: true,
+    daysCutoff,
+    recentSessionCount: rows.length,
+    itemCount: pieceIds.size,
+    formulaCount: formulaFamilies.size,
+    mode: 'whole_wardrobe_session_memory_summary'
+  }
+}
+
+router.get('/whole-wardrobe-session-memory', (req, res) => {
+  try {
+    res.json(wholeWardrobeSessionMemorySummary())
+  } catch (err) {
+    console.error('Get whole-wardrobe session memory error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.delete('/whole-wardrobe-session-memory', (req, res) => {
   try {
     const result = db.prepare('DELETE FROM whole_wardrobe_sessions').run()
     res.json({
       success: true,
       clearedCount: result.changes || 0,
+      recentSessionCount: 0,
+      itemCount: 0,
+      formulaCount: 0,
       mode: 'reset_whole_wardrobe_session_memory'
     })
   } catch (err) {

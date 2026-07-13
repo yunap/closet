@@ -29,6 +29,7 @@ All three intake flows are in [piece-intake-and-tagging.md](piece-intake-and-tag
 | Flow                              | Entry point               | Endpoint                          | Status |
 | --------------------------------- | ------------------------- | --------------------------------- | ------ |
 | [**Use my wardrobe**](use-my-wardrobe.md) | Visual Composer       | `/generate-wardrobe-outfits-visual` | **done** |
+| [Visual Composer recent memory](whole-wardrobe-session-memory.md) | Visual Composer "Reset recent memory" | `/whole-wardrobe-session-memory` | **done** |
 | [Outfits for a selected piece](selected-piece-composer.md) | Piece → "style this" | `/generate-outfits-for-piece` | **done** |
 | [Visual boards for a piece concept](piece-concept-boards.md) | Piece result → boards | `/generate-outfit-boards` | **done** |
 
