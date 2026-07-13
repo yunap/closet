@@ -681,3 +681,17 @@ test('a formal-register slot pushes denim and sneakers out of the composed set',
   assert.ok(!names.some(name => name.includes('jean') || name.includes('denim')), `a formal slot should avoid denim, got ${names}`)
   assert.ok(!names.some(name => name.includes('sneaker')), `a formal slot should avoid sneakers, got ${names}`)
 })
+
+test('a formal/dressy register slot demotes beachy botanical/resort pieces for a structured one', async () => {
+  // A solid structured dress and a beachy botanical maxi, both evening-eligible.
+  insertPiece({ category: 'dress', name: 'navy solid sheath dress', colors: ['navy'], occasions: ['city', 'evening'], reads_as: 'structured column sheath', silhouette: 'sheath', fabric_category: 'crepe', length_hits_at: 'knee' })
+  insertPiece({ category: 'dress', name: 'coral botanical maxi dress', colors: ['coral'], occasions: ['city', 'evening'], reads_as: 'resort botanical', silhouette: 'flowing', fabric_category: 'gauze', length_hits_at: 'maxi', pattern_type: 'botanical' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Wedding Ceremony', occasion: 'evening', count: 1, register: 'formal', weather: 'indoor' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: 'wedding ceremony', allPieces, source: 'plan_outfit_set' })
+  assert.ok(outfits.length >= 1)
+  const names = outfits.flatMap(outfit => (outfit.pieces || []).map(piece => String(piece.name || '').toLowerCase()))
+  assert.ok(!names.some(name => name.includes('botanical')), `a formal slot should demote the beachy botanical maxi, got ${names}`)
+})
