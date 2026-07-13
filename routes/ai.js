@@ -3653,6 +3653,11 @@ router.post('/ask', async (req, res) => {
     const toolContext = {
       generatedOutfits: generatedOutfitsForTurn,
       source: activePrecompose ? 'whole_wardrobe' : 'whole_wardrobe',
+      // When precompose seeded this turn's cards, later propose_outfit calls must
+      // not clobber the source flag — the client keys its whole-wardrobe/trip
+      // presentation off it (live bug: header showed "Outfit ideas for <first
+      // piece of the first trip card>").
+      sourceLocked: Boolean(activePrecompose),
       occasion: activePrecompose?.occasion || req.body.occasion || 'casual',
       season: activePrecompose?.season || req.body.season || 'current season',
       weather: extractedWeather,
