@@ -20,9 +20,13 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { executeTool } = await import('../styling-engine/tools.js')
-const { composeOutfitSet, normalizePlanSlots, PLAN_TOTAL_OUTFIT_CAP } = await import('../styling-engine/outfitSetPlanner.js')
+const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, PLAN_TOTAL_OUTFIT_CAP } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
+const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
+
+const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
+const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
 
 // A fetchImpl (injected the same way weather.test.js does) that returns a hot
 // inland forecast for everything EXCEPT a coastal town, which comes back mild —
@@ -286,4 +290,82 @@ test('a slot with stated weather uses it verbatim and never calls the forecast',
   assert.equal(fetchImpl.callCount(), 0, 'stated per-slot weather must short-circuit before any forecast fetch')
   const card = outfits.find(outfit => outfit.label === 'Gallery Opening')
   assert.equal(card.slotWeather, 'chilly, around 50F')
+})
+
+// --- Build step 4: reuse dial + per-category repeat rules + anchor exemption --
+
+test('normalizePlanConstraints parses the reuse dial, maps category words, and applies the anchor / allow_repeat rules', () => {
+  const c = normalizePlanConstraints({
+    reuse: 'DIVERSIFY',
+    no_repeat: ['tops', 'layers', 'shoes'],
+    allow_repeat: ['shoes'],
+    shared_anchor_ids: ['5', 5, 0, null, 12],
+  })
+  assert.equal(c.reuse, 'diversify')
+  // tops -> top, layers -> outerwear, shoes dropped because allow_repeat wins.
+  assert.deepEqual([...c.noRepeat].sort(), ['outerwear', 'top'])
+  assert.deepEqual([...c.allowRepeat], ['shoes'])
+  assert.deepEqual([...c.anchorIds].sort((a, b) => a - b), [5, 12])
+
+  assert.equal(normalizePlanConstraints({ reuse: 'wild' }).reuse, '', 'an unknown reuse mode is ignored')
+  assert.equal(normalizePlanConstraints({}).reuse, '')
+  assert.equal(normalizePlanConstraints({}).noRepeat.size, 0)
+})
+
+test('no_repeat forbids a category from repeating across the set (a work week never wears a top twice)', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Work Week', occasion: 'city', activity: 'none', count: 3 },
+  ], { fallbackWeather: 'mild' })
+
+  const outfits = await composeOutfitSet({
+    slots,
+    question: 'outfits for my work week',
+    allPieces,
+    source: 'plan_outfit_set',
+    constraints: { reuse: 'diversify', no_repeat: ['tops'] },
+  })
+
+  assert.ok(outfits.length >= 2, 'a 3-count slot should yield multiple looks')
+  const topIds = topIdsOf(outfits)
+  assert.equal(new Set(topIds).size, topIds.length, `no top may repeat across the set, got ${topIds}`)
+})
+
+test('the reuse dial is signed: maximize uses no more distinct pieces than diversify', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Day 1', occasion: 'city', activity: 'walking', count: 2 },
+    { label: 'Day 2', occasion: 'city', activity: 'walking', count: 2 },
+  ], { fallbackWeather: 'warm' })
+
+  const maximize = await composeOutfitSet({ slots, question: 'trip', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize' } })
+  const diversify = await composeOutfitSet({ slots, question: 'trip', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'diversify' } })
+
+  assert.ok(maximize.length >= 2 && diversify.length >= 2)
+  assert.ok(
+    distinctPieceCount(maximize) <= distinctPieceCount(diversify),
+    `maximize (${distinctPieceCount(maximize)} distinct) should pack no looser than diversify (${distinctPieceCount(diversify)} distinct)`
+  )
+})
+
+test('shared_anchor_ids pins a piece across the set and exempts it from no_repeat', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const anchorId = Number(allPieces.find(piece => wardrobeCategoryGroup(piece) === 'top').id)
+  const slots = normalizePlanSlots([
+    { label: 'Around the New Top', occasion: 'city', activity: 'none', count: 3 },
+  ], { fallbackWeather: 'mild' })
+
+  const outfits = await composeOutfitSet({
+    slots,
+    question: 'build outfits around this top',
+    allPieces,
+    source: 'plan_outfit_set',
+    // no_repeat on tops would normally forbid wearing the same top twice — the
+    // anchor exemption is what lets the pinned top recur.
+    constraints: { no_repeat: ['tops'], shared_anchor_ids: [anchorId] },
+  })
+
+  assert.ok(outfits.length >= 2)
+  const withAnchor = outfits.filter(outfit => (outfit.pieceIds || []).includes(anchorId))
+  assert.ok(withAnchor.length >= 2, `the anchor top should recur across the set despite no_repeat, appeared in ${withAnchor.length}`)
 })
