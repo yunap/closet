@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import PieceInventory from './views/PieceInventory'
 import OutfitLookbook from './views/OutfitLookbook'
 import AskClaude from './views/AskClaude'
@@ -14,7 +14,9 @@ const TABS = [
 
 export default function App() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [pendingTodoCount, setPendingTodoCount] = useState(0)
+  const isStylistRoute = location.pathname === '/stylist' || location.pathname.startsWith('/stylist/')
 
   const fetchPendingCount = useCallback(async () => {
     try {
@@ -49,7 +51,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <main className="app-main">
+      <main className={`app-main${isStylistRoute ? ' stylist-app-main' : ''}`}>
         <Routes>
           <Route path="/" element={<Navigate to="/wardrobe" replace />} />
           <Route path="/wardrobe"   element={<PieceInventory onSendToStylist={sendPieceToStylist} />} />
