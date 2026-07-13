@@ -2371,7 +2371,8 @@ test('StylistChat shows trip explanation before cards, not inside trip cards', (
 })
 
 test('freeform trip precompose keeps accessories in cards while visual budget may prioritize garments', () => {
-  const src = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  // Step 6 moved the trip-slot engine into styling-engine/outfitSetPlanner.js.
+  const src = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
   assert.match(src, /function annotateTripOutfit/)
   assert.doesNotMatch(src, /outfit\.pieces\.filter\(piece => wardrobeCategoryGroup\(piece\) !== 'accessory'\)/)
   assert.doesNotMatch(src, /function tripPieceHasAny/)

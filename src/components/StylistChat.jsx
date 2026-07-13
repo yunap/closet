@@ -1217,8 +1217,13 @@ export default function StylistChat({
     return notes.filter(note => { const k = note.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true }).slice(0, 5)
   }
 
+  // Planned-set cards: the pre-route's trip precompose and the model-initiated
+  // plan_outfit_set tool produce the same card shape (slot labels, coverage
+  // lines, tripPlanLines) and share the trip-plan presentation.
+  const isPlannedSetSource = (source) => source === 'trip_precompose' || source === 'plan_outfit_set'
+
   const getCompactOutfitIntro = (message, hasBoards = false) => {
-    if (message?.wholeWardrobe || message?.structuredOutfits?.some(outfit => outfit?.source === 'trip_precompose')) {
+    if (message?.wholeWardrobe || message?.structuredOutfits?.some(outfit => isPlannedSetSource(outfit?.source))) {
       return ''
     }
     const text = String(message?.text || '')
@@ -1233,7 +1238,7 @@ export default function StylistChat({
   }
 
   const getTripPlanNotes = (outfits = []) => {
-    const tripCards = Array.isArray(outfits) ? outfits.filter(outfit => outfit?.source === 'trip_precompose') : []
+    const tripCards = Array.isArray(outfits) ? outfits.filter(outfit => isPlannedSetSource(outfit?.source)) : []
     if (!tripCards.length) return []
     const first = tripCards[0] || {}
     const computedLines = Array.isArray(first.tripPlanLines) ? first.tripPlanLines : []
@@ -2069,7 +2074,7 @@ export default function StylistChat({
           // outfit.pieceId. The outfit sketch belongs only to that flow, not to any other
           // previewOnly card (e.g. a propose_outfit tool-call result also marked previewOnly).
           const showOutfitSketch = isPreview && !isTextOnly && Boolean(outfit.pieceId)
-          const isTripCard = outfit.source === 'trip_precompose'
+          const isTripCard = isPlannedSetSource(outfit.source)
           const isBrokenCard = Boolean(outfit.broken || outfit.diagnosticOnly)
           const brokenReasonRows = Array.isArray(outfit.brokenPieces)
             ? outfit.brokenPieces.filter(piece => piece?.name && piece?.reason)

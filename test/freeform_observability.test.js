@@ -18,6 +18,7 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     gateExcludedTotal: 3,
     proposeCalls: 0,
     proposeValidationFails: 0,
+    planOutfitSetCalls: 0,
     outfitProseWithoutToolCall: 0,
     zeroResultContradictionBlocks: 0,
     destinationClarificationRetries: 0,
@@ -333,6 +334,7 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
       gateExcludedTotal: 1,
       proposeCalls: 1,
       proposeValidationFails: 1,
+      planOutfitSetCalls: 0,
       outfitProseWithoutToolCall: 1,
       zeroResultContradictionBlocks: 1,
       destinationClarificationRetries: 1

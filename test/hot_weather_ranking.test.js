@@ -503,7 +503,7 @@ test('Trail active outdoor profile additional constraints and repair tests', () 
   // Test 3: Taupe suede ankle boots piece ID 200 is absent from the hiking pre-roster pool AND
   // the hiking visual roster (spec 8, 2026-07-09: filterWholeWardrobePiecesForGeneration is now a
   // real gate everywhere, not a broad diagnostic-only pool — closes the gap where
-  // buildLocalTripSlotOutfits/the `/ask` fallback tier had no downstream re-gate to catch what this
+  // composeOutfitSet (styling-engine/outfitSetPlanner.js, née buildLocalTripSlotOutfits)/the `/ask` fallback tier had no downstream re-gate to catch what this
   // pre-filter let through unfiltered).
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const allowedRes = filterWholeWardrobePiecesForGeneration(allPieces, { occasion: 'casual', request: 'hiking' })

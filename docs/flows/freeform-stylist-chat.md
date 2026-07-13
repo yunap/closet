@@ -399,11 +399,17 @@ at the wedding" — feedback memory and conversation handle it today),
 wear-count budgets with laundry resets, slotless optimization.
 
 Build order when picked up: (1) extract `composeOutfitSet` from the trip-slot
-builder, (2) expose the tool + record cards with slot labels/coverage lines,
-(3) wire per-slot weather via `getWeatherProfileForPlan` (slot.location +
-slot.date or the plan date_range → geocode → forecast; text-stated weather
-takes precedence), (4) implement the reuse dial + per-category repeat rules
-with the anchor exemption, (5) objective-driven plan report (reuse report /
-repeat schedule / piece roster), (6) prompt: multi-context requests decompose
-into slots with locations and dates, (7) run both paths in parallel with
-diagnostics, (8) retire the keyword pre-route.
+builder — **SHIPPED 2026-07-13** (`styling-engine/outfitSetPlanner.js`; both
+pre-route call sites now import it), (2) expose the tool + record cards with
+slot labels/coverage lines — **SHIPPED 2026-07-13** (`plan_outfit_set` in
+tools.js: declared-intent gate, cards recorded with source `plan_outfit_set`
++ source lock, plan lines returned to the model, `planOutfitSetCalls`
+diagnostic; the client renders both planned-set sources through the trip
+presentation), (3) wire per-slot weather via `getWeatherProfileForPlan`
+(slot.location + slot.date or the plan date_range → geocode → forecast;
+text-stated weather takes precedence), (4) implement the reuse dial +
+per-category repeat rules with the anchor exemption, (5) objective-driven
+plan report (reuse report / repeat schedule / piece roster), (6) prompt:
+multi-context requests decompose into slots with locations and dates,
+(7) run both paths in parallel with diagnostics, (8) retire the keyword
+pre-route.

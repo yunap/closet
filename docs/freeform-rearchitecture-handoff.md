@@ -29,9 +29,16 @@ not keyword-guessed.
 
 ## Remaining work
 
-- **Step 6 — demote precompose** to an optimization. Precondition (in the doc):
-  model-initiated `generate_outfits` proves equivalent on planning cases via
-  live evidence. Do not start without that evidence.
+- **Step 6 — the planning engine** (resolved by design, PR #54/#56/#57; see the
+  flow doc's "Step 6 resolution"): precompose's trip planner generalizes into a
+  model-called `plan_outfit_set` tool instead of being demoted wholesale.
+  Build steps 1–2 SHIPPED: the trip-slot engine lives in
+  `styling-engine/outfitSetPlanner.js` (`composeOutfitSet`) and the
+  `plan_outfit_set` tool composes multi-slot sets (source `plan_outfit_set`,
+  source-locked, plan lines). Remaining: per-slot live weather, the reuse
+  dial + per-category repeat rules, objective-driven plan reports, prompt
+  decomposition guidance, parallel-path diagnostics, keyword pre-route
+  retirement (evidence-gated).
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone
