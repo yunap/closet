@@ -423,7 +423,11 @@ plan report — **SHIPPED 2026-07-13** (`buildPlanReport` picks the report by
 objective: a `piece_budget` leads with the piece roster + combination count and
 flags over/under budget; a `diversify`/`no_repeat` plan leads with the repeat
 schedule ("every look is distinct" being the win); everything else keeps the
-packing-reuse headline), (6) prompt:
-multi-context requests decompose into slots with locations and dates,
+packing-reuse headline), (6) prompt — **SHIPPED 2026-07-13** (a "Planning a
+Coordinated Multi-Outfit Set" bullet in `STYLIST_SYSTEM`: on the initial
+planning turn the model calls `plan_outfit_set` instead of hand-composing, YOU
+decompose into slots, set per-slot `location`/`date` for microclimates and
+specific days, and choose `constraints` from the objective; the returned cards
+become the Current outfit set that `propose_outfit` then revises),
 (7) run both paths in parallel with diagnostics, (8) retire the keyword
 pre-route.
