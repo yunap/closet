@@ -44,6 +44,7 @@ import {
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
 import { composeOutfitSet, normalizeTripPieceName } from '../styling-engine/outfitSetPlanner.js'
+import { recordPlanPathDiagnostics } from '../styling-engine/tools.js'
 import {
   pieceMatchesMaterial,
   pieceMatchesFootwear
@@ -3049,6 +3050,15 @@ router.post('/ask', async (req, res) => {
     if (isTravel && titledOutfits.length) {
       suggestedTitle = deriveTripTitle(req.body.question || '', extractedWeather, titledOutfits)
     }
+
+    // Step 6 build 7 — record the parallel plan paths for this turn: did the
+    // keyword pre-route match / actually compose a set, and did the model call
+    // plan_outfit_set itself. This accumulates the evidence the step-8 pre-route
+    // retirement is gated on (surfaced in the debug block below).
+    recordPlanPathDiagnostics(toolContext, {
+      keywordMatched: isTravel || isBroadOutfitPlanningText(req.body.question || ''),
+      prerouteComposed: Boolean(precomposed?.structuredOutfits?.length)
+    })
 
     // Spec 3: log this turn's freeform diagnostics (gate exclusions, propose_outfit validation
     // pass/fail) and surface a summary in the response so a proposal's "what got filtered/rejected"

@@ -19,7 +19,7 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { executeTool } = await import('../styling-engine/tools.js')
+const { executeTool, classifyPlanPath, recordPlanPathDiagnostics } = await import('../styling-engine/tools.js')
 const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, PLAN_TOTAL_OUTFIT_CAP } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
@@ -420,4 +420,41 @@ test('the default (no objective constraints) keeps the packing-reuse headline', 
 
   const outfits = await composeOutfitSet({ slots, question: 'trip', allPieces, source: 'plan_outfit_set' })
   assert.ok(planLinesOf(outfits).some(line => /^Packing reuse:/.test(line)), 'default report should be the packing headline')
+})
+
+// --- Build step 7: parallel-path diagnostics ---------------------------------
+
+test('classifyPlanPath maps the keyword-preroute / model-call signals to one outcome', () => {
+  assert.equal(classifyPlanPath({ modelCalled: true, prerouteComposed: true }), 'both')
+  assert.equal(classifyPlanPath({ modelCalled: true, prerouteComposed: false }), 'model_only')
+  assert.equal(classifyPlanPath({ modelCalled: false, prerouteComposed: true }), 'preroute_only')
+  assert.equal(classifyPlanPath({ modelCalled: false, prerouteComposed: false, keywordMatched: true }), 'planning_uncomposed')
+  assert.equal(classifyPlanPath({}), 'not_planning')
+})
+
+test('recordPlanPathDiagnostics writes the per-turn signals, initializing diagnostics if needed', () => {
+  // No diagnostics object yet and no model call: pre-route-only turn.
+  const preroute = {}
+  recordPlanPathDiagnostics(preroute, { keywordMatched: true, prerouteComposed: true })
+  assert.equal(preroute.freeformDiagnostics.planKeywordMatched, 1)
+  assert.equal(preroute.freeformDiagnostics.planPrerouteComposed, 1)
+  assert.equal(preroute.freeformDiagnostics.planModelCalled, 0)
+  assert.equal(preroute.freeformDiagnostics.planPathOutcome, 'preroute_only')
+
+  // The model called plan_outfit_set and the regex did NOT compose — the
+  // generalization win the step-8 retirement is gated on.
+  const modelOnly = { freeformDiagnostics: { planOutfitSetCalls: 1 } }
+  recordPlanPathDiagnostics(modelOnly, { keywordMatched: false, prerouteComposed: false })
+  assert.equal(modelOnly.freeformDiagnostics.planModelCalled, 1)
+  assert.equal(modelOnly.freeformDiagnostics.planPathOutcome, 'model_only')
+})
+
+test('a real plan_outfit_set tool call surfaces as model_only when no pre-route composed', async () => {
+  const toolContext = { declaredIntent: { want: 'cards' }, question: 'outfits for my work week, Thursday is client-facing' }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Work Days', occasion: 'city', activity: 'none', count: 2 }],
+  }, toolContext)
+  assert.equal(result.status, 'success')
+  recordPlanPathDiagnostics(toolContext, { keywordMatched: false, prerouteComposed: false })
+  assert.equal(toolContext.freeformDiagnostics.planPathOutcome, 'model_only')
 })

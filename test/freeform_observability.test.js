@@ -23,6 +23,10 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     zeroResultContradictionBlocks: 0,
     destinationClarificationRetries: 0,
     tripScopeClarificationRetries: 0,
+    planKeywordMatched: 0,
+    planPrerouteComposed: 0,
+    planModelCalled: 0,
+    planPathOutcome: '',
     weatherSource: ''
   })
 })
