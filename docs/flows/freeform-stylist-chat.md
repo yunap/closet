@@ -338,7 +338,8 @@ That capability generalizes:
 
 ```
 plan_outfit_set({
-  slots: [ { label, occasion, activity, count, register? } ],
+  slots: [ { label, occasion, activity, count, register?, location? } ],
+  date_range: { start?, end? },
   constraints: { maximize_reuse, piece_budget, no_repeat: [category], shared_anchor_ids }
 })
 ```
@@ -352,6 +353,17 @@ plan_outfit_set({
   optimization (`buildLocalTripSlotOutfits` generalized into
   `composeOutfitSet`), returning cards *plus plan lines* (coverage, reuse
   report) in the shape the client already renders for trip cards.
+- **Per-slot live weather** (added 2026-07-12 after the coastal-microclimate
+  miss: a 60°F coast day was composed for inland Paso Robles heat): each slot
+  resolves its own weather via the currently ORPHANED
+  `getWeatherProfileForPlan({ dateRange, location })` in
+  `styling-engine/weather.js` — Open-Meteo, geocoded free-text locations,
+  cached, multi-day aggregation that already supports hot-days/cool-nights
+  swings, and to date called only by its own tests. Slot location defaults to
+  the trip destination; the model supplies overrides ("drive to the Coast" →
+  a coastal town). User-stated weather still wins when given for a slot; the
+  forecast fills the gaps and catches microclimates. The plan lines should
+  state the per-slot weather used, so the user can correct it conversationally.
 - **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
   `isBroadOutfitPlanningText` become a legacy fast path, removed once
   diagnostics show the model calls `plan_outfit_set` reliably on planning
@@ -359,5 +371,8 @@ plan_outfit_set({
 
 Build order when picked up: (1) extract `composeOutfitSet` from the trip-slot
 builder, (2) expose the tool + record cards with slot labels/coverage lines,
-(3) prompt: multi-context requests decompose into slots, (4) run both paths in
-parallel with diagnostics, (5) retire the keyword pre-route.
+(3) wire per-slot weather via `getWeatherProfileForPlan` (slot.location →
+geocode → forecast for the date range; text-stated weather takes precedence),
+(4) prompt: multi-context requests decompose into slots with locations,
+(5) run both paths in parallel with diagnostics, (6) retire the keyword
+pre-route.
