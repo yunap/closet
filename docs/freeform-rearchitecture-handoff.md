@@ -107,7 +107,20 @@ not keyword-guessed.
    season, never a weather question (the planning instinct must beat the
    weather-clarification reflex). Consequence for step 8: the pre-route can't be
    retired until the model reliably composes here (else these turns regress from
-   "a flawed set" to "a clarifying question").
+   "a flawed set" to "a clarifying question"). Re-test AFTER the fix: routing
+   worked (model self-routed → `plan_outfit_set` with diversify + allow_repeat
+   shoes, `model_only`), BUT the office looks read beachy — the office slots were
+   composed off the OUTDOOR home forecast (Walnut Creek, hot) → sleeveless/breezy
+   dresses. Root cause: an office is indoor/climate-controlled, and `'city'` /
+   `'smart casual'` both resolve to the SAME `city_smart_casual` "elevated"
+   profile (no distinct office register), so the hot outdoor forecast drove the
+   register. Fix (same PR): prompt teaches the model to pass `weather:'indoor'`
+   for indoor slots (office/work day, indoor event, restaurant) — the existing
+   `weatherProfileFromContext('indoor')` short-circuit neutralizes hot/cold — and
+   to reserve the live forecast for slots actually spent outdoors. (If loud
+   botanical prints still read wrong for office after this, that's a separate
+   register decision, deferred — the owner's steer was "it's an office, why
+   hot-weather workwear", i.e. the weather was the bug, not the wardrobe.)
 
 ## High-leverage test scenarios (run in this order)
 
