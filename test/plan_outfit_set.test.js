@@ -369,3 +369,55 @@ test('shared_anchor_ids pins a piece across the set and exempts it from no_repea
   const withAnchor = outfits.filter(outfit => (outfit.pieceIds || []).includes(anchorId))
   assert.ok(withAnchor.length >= 2, `the anchor top should recur across the set despite no_repeat, appeared in ${withAnchor.length}`)
 })
+
+// --- Build step 5: objective-driven plan report ------------------------------
+
+const planLinesOf = outfits => outfits[0]?.tripPlanLines || []
+
+test('normalizePlanConstraints parses a positive piece_budget and ignores junk', () => {
+  assert.equal(normalizePlanConstraints({ piece_budget: 10 }).pieceBudget, 10)
+  assert.equal(normalizePlanConstraints({ piece_budget: '12' }).pieceBudget, 12)
+  assert.equal(normalizePlanConstraints({ piece_budget: 0 }).pieceBudget, 0)
+  assert.equal(normalizePlanConstraints({ piece_budget: -3 }).pieceBudget, 0)
+  assert.equal(normalizePlanConstraints({}).pieceBudget, 0)
+})
+
+test('a piece_budget makes the report lead with the roster + combination count (capsule)', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Capsule', occasion: 'city', activity: 'none', count: 3 },
+  ], { fallbackWeather: 'warm' })
+
+  const withinBudget = await composeOutfitSet({ slots, question: '10-piece summer capsule', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize', piece_budget: 20 } })
+  const lines = planLinesOf(withinBudget)
+  assert.ok(lines.some(line => /^Piece roster \(\d+\):/.test(line)), `roster headline expected, got ${JSON.stringify(lines)}`)
+  assert.ok(lines.some(line => /\d+ pieces → \d+ outfits?/.test(line)), 'combination count expected')
+  assert.ok(lines.some(line => /Within the 20-piece budget\./.test(line)), 'budget status expected')
+  assert.ok(!lines.some(line => /Packing reuse/.test(line)), 'roster mode must replace the packing headline')
+
+  // A tiny budget flags the overage instead.
+  const overBudget = await composeOutfitSet({ slots, question: 'capsule', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize', piece_budget: 2 } })
+  assert.ok(planLinesOf(overBudget).some(line => /Over the 2-piece budget by \d+/.test(line)), 'over-budget flag expected')
+})
+
+test('a diversify / no_repeat plan reports the repeat schedule instead of packing reuse', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Work Week', occasion: 'city', activity: 'none', count: 3 },
+  ], { fallbackWeather: 'mild' })
+
+  const outfits = await composeOutfitSet({ slots, question: 'work week', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'diversify', no_repeat: ['tops'] } })
+  const lines = planLinesOf(outfits)
+  assert.ok(lines.some(line => /Every look is distinct|Repeat schedule:/.test(line)), `schedule-mode line expected, got ${JSON.stringify(lines)}`)
+  assert.ok(!lines.some(line => /Packing reuse/.test(line)), 'diversify must not use the packing headline')
+})
+
+test('the default (no objective constraints) keeps the packing-reuse headline', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Days', occasion: 'city', activity: 'walking', count: 2 },
+  ], { fallbackWeather: 'warm' })
+
+  const outfits = await composeOutfitSet({ slots, question: 'trip', allPieces, source: 'plan_outfit_set' })
+  assert.ok(planLinesOf(outfits).some(line => /^Packing reuse:/.test(line)), 'default report should be the packing headline')
+})
