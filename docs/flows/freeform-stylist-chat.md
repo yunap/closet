@@ -405,9 +405,14 @@ slot labels/coverage lines — **SHIPPED 2026-07-13** (`plan_outfit_set` in
 tools.js: declared-intent gate, cards recorded with source `plan_outfit_set`
 + source lock, plan lines returned to the model, `planOutfitSetCalls`
 diagnostic; the client renders both planned-set sources through the trip
-presentation), (3) wire per-slot weather via `getWeatherProfileForPlan`
-(slot.location + slot.date or the plan date_range → geocode → forecast;
-text-stated weather takes precedence), (4) implement the reuse dial +
+presentation), (3) wire per-slot weather via `getWeatherProfileForPlan` —
+**SHIPPED 2026-07-13** (each slot resolves its own forecast from `slot.location`
++ `slot.date` or the plan `date_range`; the tool schema gained per-slot
+`location`/`date` and plan-level `location`/`date_range`; user-stated per-slot
+`weather` wins over the forecast; a live forecast is authoritative in
+`tripSlotFitScore` so a slot's inherited hot season text can't re-inject heat
+into a cool coast slot; plan lines now carry a `Weather used: <slot> — <label>`
+line so the user can correct it conversationally), (4) implement the reuse dial +
 per-category repeat rules with the anchor exemption, (5) objective-driven
 plan report (reuse report / repeat schedule / piece roster), (6) prompt:
 multi-context requests decompose into slots with locations and dates,

@@ -21,6 +21,30 @@ process.env.ANTHROPIC_API_KEY = ''
 const { db } = await import('../db.js')
 const { executeTool } = await import('../styling-engine/tools.js')
 const { composeOutfitSet, normalizePlanSlots, PLAN_TOTAL_OUTFIT_CAP } = await import('../styling-engine/outfitSetPlanner.js')
+const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
+const { parsePiece } = await import('../styling-engine/rules.js')
+
+// A fetchImpl (injected the same way weather.test.js does) that returns a hot
+// inland forecast for everything EXCEPT a coastal town, which comes back mild —
+// the Paso-Robles-coast microclimate the per-slot weather work exists to catch.
+function makePlanFetch() {
+  let calls = 0
+  const fetchImpl = async (url) => {
+    calls += 1
+    if (url.includes('geocoding-api')) {
+      const isCoast = /cambria/.test(url)
+      const coords = isCoast ? { latitude: 35.56, longitude: -121.08 } : { latitude: 35.63, longitude: -120.69 }
+      return { ok: true, json: async () => ({ results: [coords] }) }
+    }
+    const isCoast = /latitude=35\.56/.test(url)
+    const daily = isCoast
+      ? { temperature_2m_max: [62], temperature_2m_min: [52] } // mild coast
+      : { temperature_2m_max: [94], temperature_2m_min: [66] } // hot inland
+    return { ok: true, json: async () => ({ daily }) }
+  }
+  fetchImpl.callCount = () => calls
+  return fetchImpl
+}
 
 after(() => {
   db.close()
@@ -186,13 +210,80 @@ test('composeOutfitSet never repeats an exact outfit within a set and honors see
     { label: 'Day Two', occasion: 'city', activity: 'walking', count: 2 },
   ], { fallbackWeather: 'warm' })
 
-  const outfits = composeOutfitSet({ slots, question: 'city trip', allPieces, source: 'plan_outfit_set' })
+  const outfits = await composeOutfitSet({ slots, question: 'city trip', allPieces, source: 'plan_outfit_set' })
   assert.ok(outfits.length >= 2, 'two identical slots should still yield multiple outfits')
   const keys = outfits.map(outfit => (outfit.pieceIds || []).slice().sort((a, b) => a - b).join('|'))
   assert.equal(new Set(keys).size, keys.length, 'no two outfits in a set may share the exact same pieces')
 
   // Seeding with the first result must keep that exact combination out of a replan.
-  const replanned = composeOutfitSet({ slots, question: 'city trip', allPieces, seedOutfits: [outfits[0]], source: 'plan_outfit_set' })
+  const replanned = await composeOutfitSet({ slots, question: 'city trip', allPieces, seedOutfits: [outfits[0]], source: 'plan_outfit_set' })
   const replanKeys = replanned.map(outfit => (outfit.pieceIds || []).slice().sort((a, b) => a - b).join('|'))
   assert.ok(!replanKeys.includes(keys[0]), 'seeded outfit combination must not be re-served')
+})
+
+// --- Build step 3: per-slot live weather -----------------------------------
+
+test('normalizePlanSlots carries location, date, and stated weather, inheriting the plan location', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Client Day', occasion: 'work', date: '2026-07-23', weather: 'cool AM, warm PM' },
+    { label: 'Coast Escape', occasion: 'casual', location: 'Cambria, CA' },
+  ], { fallbackLocation: 'Portland, OR' })
+
+  assert.equal(slots[0].date, '2026-07-23')
+  assert.equal(slots[0].statedWeather, 'cool AM, warm PM')
+  assert.equal(slots[0].season, 'cool AM, warm PM', 'stated weather also seeds the season text')
+  assert.equal(slots[0].location, 'Portland, OR', 'a slot without a location inherits the plan location')
+  assert.equal(slots[1].location, 'Cambria, CA', 'a slot location overrides the plan location')
+  assert.equal(slots[1].statedWeather, '', 'no stated weather when none is given')
+})
+
+test('composeOutfitSet resolves each slot\'s own live forecast and states it per slot in the plan lines', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  _clearWeatherCachesForTests()
+  const fetchImpl = makePlanFetch()
+  const slots = normalizePlanSlots([
+    { label: 'Winery Days', occasion: 'city', activity: 'walking', count: 1 },
+    { label: 'Coastal Day', occasion: 'city', activity: 'walking', count: 1, location: 'Cambria, CA' },
+  ], { fallbackWeather: 'hot, highs 92F', fallbackLocation: 'Paso Robles, CA' })
+
+  const outfits = await composeOutfitSet({
+    slots,
+    question: '5 days in Paso Robles',
+    allPieces,
+    source: 'plan_outfit_set',
+    dateRange: { start: '2026-07-20', end: '2026-07-24' },
+    fetchImpl,
+  })
+
+  const weatherLine = (outfits[0].tripPlanLines || []).find(line => line.startsWith('Weather used:'))
+  assert.ok(weatherLine, 'the plan lines carry a per-slot weather line')
+  assert.match(weatherLine, /Winery Days — hot \(live forecast, Paso Robles, CA\)/)
+  // The whole point: the coast slot's own mild forecast overrides the trip's
+  // inherited "hot, highs 92F" season text — the microclimate the miss was about.
+  assert.match(weatherLine, /Coastal Day — mild \(live forecast, Cambria, CA\)/)
+
+  const coastCard = outfits.find(outfit => outfit.label === 'Coastal Day')
+  assert.equal(coastCard.slotWeather, 'mild (live forecast, Cambria, CA)')
+})
+
+test('a slot with stated weather uses it verbatim and never calls the forecast', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  _clearWeatherCachesForTests()
+  const fetchImpl = makePlanFetch()
+  const slots = normalizePlanSlots([
+    { label: 'Gallery Opening', occasion: 'evening', count: 1, weather: 'chilly, around 50F', location: 'Cambria, CA' },
+  ], { fallbackLocation: 'Paso Robles, CA' })
+
+  const outfits = await composeOutfitSet({
+    slots,
+    question: 'gallery night out',
+    allPieces,
+    source: 'plan_outfit_set',
+    dateRange: { start: '2026-07-20' },
+    fetchImpl,
+  })
+
+  assert.equal(fetchImpl.callCount(), 0, 'stated per-slot weather must short-circuit before any forecast fetch')
+  const card = outfits.find(outfit => outfit.label === 'Gallery Opening')
+  assert.equal(card.slotWeather, 'chilly, around 50F')
 })

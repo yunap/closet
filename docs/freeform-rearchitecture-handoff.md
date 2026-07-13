@@ -32,11 +32,18 @@ not keyword-guessed.
 - **Step 6 — the planning engine** (resolved by design, PR #54/#56/#57; see the
   flow doc's "Step 6 resolution"): precompose's trip planner generalizes into a
   model-called `plan_outfit_set` tool instead of being demoted wholesale.
-  Build steps 1–2 SHIPPED: the trip-slot engine lives in
-  `styling-engine/outfitSetPlanner.js` (`composeOutfitSet`) and the
+  Build steps 1–3 SHIPPED: the trip-slot engine lives in
+  `styling-engine/outfitSetPlanner.js` (`composeOutfitSet`, now async), the
   `plan_outfit_set` tool composes multi-slot sets (source `plan_outfit_set`,
-  source-locked, plan lines). Remaining: per-slot live weather, the reuse
-  dial + per-category repeat rules, objective-driven plan reports, prompt
+  source-locked, plan lines), and per-slot live weather is wired — each slot
+  resolves its own forecast via `getWeatherProfileForPlan` from `slot.location`
+  + `slot.date` or the plan `date_range` (tool schema gained per-slot
+  `location`/`date` and plan-level `location`/`date_range`); user-stated per-slot
+  `weather` wins over the forecast; a live forecast is authoritative in
+  `tripSlotFitScore` (an inherited hot season text can't re-inject heat into a
+  cool coast slot — the #56 microclimate fix); plan lines carry a
+  `Weather used: <slot> — <label>` line. Remaining: the reuse dial +
+  per-category repeat rules, objective-driven plan reports, prompt
   decomposition guidance, parallel-path diagnostics, keyword pre-route
   retirement (evidence-gated).
 - **Retire the context clauses** (tripScope/destination in

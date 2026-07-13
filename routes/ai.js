@@ -537,7 +537,7 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
   let structuredOutfits = Array.isArray(result?.structuredOutfits) ? result.structuredOutfits : []
   if (plannedSlots.length) {
     const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const tripOutfits = composeOutfitSet({
+    const tripOutfits = await composeOutfitSet({
       slots: plannedSlots,
       question,
       mood: body.mood || question,
@@ -632,7 +632,7 @@ async function maybePrecomposeStructuredFollowupForAsk(body = {}, extractedWeath
     maxSlots: 5
   })
   if (!slots.length) return null
-  const structuredOutfits = composeOutfitSet({
+  const structuredOutfits = await composeOutfitSet({
     slots,
     question,
     mood: body.mood || question,

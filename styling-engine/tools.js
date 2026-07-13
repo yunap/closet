@@ -418,11 +418,22 @@ export const STYLIST_TOOLS = [
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. Map dinner/evening-restaurant/night-out use cases to 'evening'." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
-              weather: { type: "string", description: "This slot's expected weather ONLY if it differs from the established conditions (e.g. a cooler coastal day on an otherwise hot trip). Omit to inherit the trip weather." },
+              weather: { type: "string", description: "This slot's weather ONLY when you already KNOW it and it should override the forecast (e.g. an indoor black-tie event, or the user explicitly stated it). For a slot at a different place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
+              location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
+              date: { type: "string", description: "This slot's specific date as YYYY-MM-DD, when it maps to one day (e.g. the Thursday of a work week), so its own forecast is used rather than the range average. Omit to inherit the plan date_range." },
               best_for: { type: "string", description: "The specific use case this slot covers (defaults to the label)." },
               plan_note: { type: "string", description: "Optional one-sentence composer guidance for this slot." }
             },
             required: ["label", "occasion"]
+          }
+        },
+        location: { type: "string", description: "The plan's overall location/destination (e.g. 'Paso Robles, CA'), geocoded for the per-slot live forecast. Slots inherit it unless they set their own `location`. Omit for at-home plans with no travel." },
+        date_range: {
+          type: "object",
+          description: "The plan's date window, so each slot's forecast is fetched for the right days. Provide when the dates are known (a trip, a specific work week).",
+          properties: {
+            start: { type: "string", description: "First day, YYYY-MM-DD." },
+            end: { type: "string", description: "Last day, YYYY-MM-DD (defaults to start for a single day)." }
           }
         },
         duration_text: { type: "string", description: "Stated or inferred plan duration (e.g. '5 days'), when known — shown as the plan's 'Trip length' line." },
@@ -1213,10 +1224,15 @@ export async function executeTool(name, args, toolContext = {}) {
               dayBreakdown: String(args?.day_breakdown || '').trim()
             }
           : null
+        const planDateRange = {
+          start: String(args?.date_range?.start || '').trim(),
+          end: String(args?.date_range?.end || '').trim()
+        }
         const planSlots = normalizePlanSlots(args?.slots, {
           fallbackWeather: toolContext.weather || '',
           fallbackOccasion: toolContext.occasion || 'city',
           fallbackActivity: toolContext.activity || 'none',
+          fallbackLocation: String(args?.location || toolContext.location || '').trim(),
           tripSummary
         })
         if (!planSlots.length) {
@@ -1232,13 +1248,14 @@ export async function executeTool(name, args, toolContext = {}) {
         // pieceIds/pieces.)
         const planSeeds = (Array.isArray(toolContext.currentOutfitSet) ? toolContext.currentOutfitSet : [])
           .map(outfit => ({ ...outfit, pieceIds: outfit?.pieceIds || outfit?.piece_ids || [] }))
-        const planOutfits = composeOutfitSet({
+        const planOutfits = await composeOutfitSet({
           slots: planSlots,
           question: toolContext.question || '',
           mood: toolContext.mood || '',
           allPieces: planPieces,
           seedOutfits: planSeeds,
-          source: 'plan_outfit_set'
+          source: 'plan_outfit_set',
+          dateRange: planDateRange
         })
         if (!planOutfits.length) {
           return {
@@ -1260,6 +1277,7 @@ export async function executeTool(name, args, toolContext = {}) {
           outfit_summaries: planOutfits.map(outfit => ({
             slot: outfit.label,
             coverage: outfit.coveragePosition,
+            weather: outfit.slotWeather || '',
             pieceNames: (outfit.pieces || []).map(piece => piece.name)
           }))
         }
