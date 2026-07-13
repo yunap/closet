@@ -578,7 +578,8 @@ function normalizeRegisterLevel(value = '') {
 
 function tripOutfitRegisterEscalationScore(outfit = {}, slot = {}) {
   const target = REGISTER_LEVELS[slot.register]
-  if (!(target >= 2)) return { score: 0, hardRejects: [] }
+  if (!(target >= 1)) return { score: 0, hardRejects: [] }
+  const dressy = target >= 2
   const formal = target >= 3
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
@@ -588,6 +589,23 @@ function tripOutfitRegisterEscalationScore(outfit = {}, slot = {}) {
 
   for (const piece of pieces) {
     const group = wardrobeCategoryGroup(piece)
+    // Judge formality by the piece's OWN register and FABRIC — never by print or
+    // hemline. A silk botanical maxi is a dressy dress; demoting it for the words
+    // "botanical"/"maxi" was wrong (owner ruling). Casual signals: a piece the
+    // wardrobe itself tags everyday/casual, a casual fabric, or a casual shoe
+    // type. Applies from 'elevated' up, scaled by how dressy.
+    if (['everyday', 'casual'].includes(String(piece?.formality || '').toLowerCase())) {
+      score -= formal ? 22 : dressy ? 14 : 7
+    }
+    if (tripPieceHasStructuredValue(piece, ['jersey', 'terry', 'fleece', 'canvas'])) {
+      score -= formal ? 26 : dressy ? 16 : 8
+    }
+    if (group === 'shoes' && tripShoeMatchesAny(piece, ['espadrille', 'wedge', 'wedges', 'cork', 'flip', 'flip-flop', 'slide', 'slides'])) {
+      score -= formal ? 40 : dressy ? 24 : 12
+    }
+    // The rest only kick in at 'dressy'+ — dark structured denim can still read
+    // elevated-casual, so it isn't penalized at the 'elevated' rung.
+    if (!dressy) continue
     if (group === 'bottom' && tripPieceHasStructuredValue(piece, ['denim', 'jean', 'jeans', 'cargo', 'jogger', 'drawstring'])) {
       score -= formal ? 60 : 34
       if (formal) hardRejects.push('denim/casual bottom too informal for a formal slot')
@@ -599,16 +617,17 @@ function tripOutfitRegisterEscalationScore(outfit = {}, slot = {}) {
     if (group === 'top' && ['tee', 'tank', 'sweatshirt', 'hoodie'].includes(garmentKind(piece))) {
       score -= formal ? 26 : 14
     }
-    if (group === 'shoes' && tripShoeMatchesAny(piece, ['sneaker', 'sneakers', 'canvas', 'espadrille', 'flip', 'flip-flop', 'slide', 'slides', 'sport'])) {
+    if (group === 'shoes' && tripShoeMatchesAny(piece, ['sneaker', 'sneakers', 'canvas', 'sport'])) {
       score -= formal ? 50 : 28
       if (formal) hardRejects.push('casual shoes too informal for a formal slot')
     }
   }
 
-  // Reward the genuinely dressy anchors a formal slot wants.
-  if (dress) score += 16
+  // Reward the genuinely dressy anchors a formal slot wants — solid/structured
+  // over resort, a dress or refined material, dress heels.
+  if (dress) score += 12
   if (shoe && tripShoeMatchesAny(shoe, ['heel', 'heels', 'pump', 'pumps', 'dress flat', 'dress flats', 'mule', 'mules'])) score += 12
-  if (pieces.some(piece => tripPieceHasStructuredValue(piece, ['silk', 'satin', 'lace', 'chiffon', 'velvet', 'crepe', 'tailored', 'structured', 'sequin', 'beaded']))) score += formal ? 16 : 10
+  if (pieces.some(piece => tripPieceHasStructuredValue(piece, ['silk', 'satin', 'lace', 'chiffon', 'velvet', 'crepe', 'tailored', 'structured', 'sheath', 'column', 'sequin', 'beaded']))) score += formal ? 16 : 10
   if (pieces.some(piece => piece?.formality === 'dressy' || piece?.formality === 'elevated')) score += 8
 
   return { score, hardRejects }
@@ -1114,9 +1133,15 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
         if (maxAnchors > 0) anchored = available.filter(item => anchorPresence(item.outfit) === maxAnchors)
       }
       const best = anchored[0]
+      // Never let the variety / reuse re-rank swap an accepted outfit for a
+      // hard-rejected one (e.g. denim at a formal slot, shorts at a client
+      // meeting) just because it adds a new silhouette: hold the pool at the
+      // best's acceptance tier. anchored is already sorted accepted-first, so
+      // best.fit.accepted tells us whether any acceptable outfit exists.
+      const tier = best.fit.accepted ? anchored.filter(item => item.fit.accepted) : anchored
       // Re-rank only within a fit tolerance of the best so the constraint dials
       // never override a clearly-better-fitting outfit for a marginal one.
-      let pool = anchored.filter(item => item.fit.score >= best.fit.score - 36)
+      let pool = tier.filter(item => item.fit.score >= best.fit.score - 36)
       if (!pool.length) pool = [best]
       // 2) Signed reuse dial within that pool.
       if (reuseMode === 'maximize') {
