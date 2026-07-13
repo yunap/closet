@@ -3574,6 +3574,31 @@ test('structure rejection teaches completion instead of a bare retry', async () 
   assert.match(rejected.message, /answer that part in prose citing verified IDs/)
 })
 
+test('shoes and open-front layers are not hot-weather insulating pieces (round-3 rulings)', async () => {
+  const { wholeWardrobePieceTrustDecision } = await import('../styling-engine/rules.js')
+  const hot = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false } }
+
+  // Live false positive: heavy-substance flats are shoes, not body insulation.
+  const flats = { id: 9301, name: 'sleek black cutout flats', category: 'shoes', fabric_weight: 'heavy', fabric_category: 'synthetic' }
+  assert.equal(wholeWardrobePieceTrustDecision(flats, hot).reasons.includes('hot weather: insulating piece'), false,
+    'shoe fabric_weight describes the shoe, not warmth')
+
+  // Owner ruling 2026-07-12: open-front cardigans are exempt as layers.
+  const cardigan = { id: 9302, name: 'dark grey knit draped cardigan', category: 'top', fabric_weight: 'medium', sleeve_type: 'long', reads_as: 'open draped cardigan layer' }
+  assert.equal(wholeWardrobePieceTrustDecision(cardigan, hot).reasons.includes('hot weather: insulating piece'), false,
+    'open-front cardigans pass the hot gate')
+
+  // Floors stay: heavy tops and warm fibers still block.
+  const heavyTop = { id: 9303, name: 'chunky heavy knit sweater', category: 'top', fabric_weight: 'heavy' }
+  assert.ok(wholeWardrobePieceTrustDecision(heavyTop, hot).reasons.includes('hot weather: insulating piece'))
+  const woolCardigan = { id: 9304, name: 'wool wrap cardigan', category: 'top', fabric_weight: 'medium', fabric_category: 'wool', fiber_content: ['wool'], reads_as: 'cozy wool cardigan' }
+  assert.ok(wholeWardrobePieceTrustDecision(woolCardigan, hot).reasons.includes('hot weather: insulating fiber'))
+
+  // A closed medium long-sleeve top (not a layer piece) remains blocked — pending any broader ruling.
+  const longSleeve = { id: 9305, name: 'white ruffled long sleeve top', category: 'top', fabric_weight: 'medium', sleeve_type: 'long' }
+  assert.ok(wholeWardrobePieceTrustDecision(longSleeve, hot).reasons.includes('hot weather: insulating piece'))
+})
+
 test('freeform ask retries the model once when prose cites unverified ids', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
