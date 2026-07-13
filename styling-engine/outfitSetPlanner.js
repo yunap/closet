@@ -589,11 +589,16 @@ function tripOutfitRegisterEscalationScore(outfit = {}, slot = {}) {
 
   for (const piece of pieces) {
     const group = wardrobeCategoryGroup(piece)
-    // Beachy / resort / garden-party reads wrong the moment you dress up — this
-    // is what kept surfacing a botanical maxi at a rehearsal dinner and a beach
-    // dress at a wedding brunch. Applies from 'elevated' up, scaled by how dressy.
-    if (tripPieceHasStructuredValue(piece, ['botanical', 'floral', 'tropical', 'beach', 'resort', 'gauze', 'gauzy', 'raffia'])) {
-      score -= formal ? 44 : dressy ? 30 : 16
+    // Judge formality by the piece's OWN register and FABRIC — never by print or
+    // hemline. A silk botanical maxi is a dressy dress; demoting it for the words
+    // "botanical"/"maxi" was wrong (owner ruling). Casual signals: a piece the
+    // wardrobe itself tags everyday/casual, a casual fabric, or a casual shoe
+    // type. Applies from 'elevated' up, scaled by how dressy.
+    if (['everyday', 'casual'].includes(String(piece?.formality || '').toLowerCase())) {
+      score -= formal ? 22 : dressy ? 14 : 7
+    }
+    if (tripPieceHasStructuredValue(piece, ['jersey', 'terry', 'fleece', 'canvas'])) {
+      score -= formal ? 26 : dressy ? 16 : 8
     }
     if (group === 'shoes' && tripShoeMatchesAny(piece, ['espadrille', 'wedge', 'wedges', 'cork', 'flip', 'flip-flop', 'slide', 'slides'])) {
       score -= formal ? 40 : dressy ? 24 : 12
@@ -601,7 +606,6 @@ function tripOutfitRegisterEscalationScore(outfit = {}, slot = {}) {
     // The rest only kick in at 'dressy'+ — dark structured denim can still read
     // elevated-casual, so it isn't penalized at the 'elevated' rung.
     if (!dressy) continue
-    if (tripPieceHasStructuredValue(piece, ['maxi', 'flowing', 'flowy', 'full_skirt'])) score -= 16
     if (group === 'bottom' && tripPieceHasStructuredValue(piece, ['denim', 'jean', 'jeans', 'cargo', 'jogger', 'drawstring'])) {
       score -= formal ? 60 : 34
       if (formal) hardRejects.push('denim/casual bottom too informal for a formal slot')

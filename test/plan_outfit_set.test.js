@@ -682,10 +682,12 @@ test('a formal-register slot pushes denim and sneakers out of the composed set',
   assert.ok(!names.some(name => name.includes('sneaker')), `a formal slot should avoid sneakers, got ${names}`)
 })
 
-test('a formal/dressy register slot demotes beachy botanical/resort pieces for a structured one', async () => {
-  // A solid structured dress and a beachy botanical maxi, both evening-eligible.
-  insertPiece({ category: 'dress', name: 'navy solid sheath dress', colors: ['navy'], occasions: ['city', 'evening'], reads_as: 'structured column sheath', silhouette: 'sheath', fabric_category: 'crepe', length_hits_at: 'knee' })
-  insertPiece({ category: 'dress', name: 'coral botanical maxi dress', colors: ['coral'], occasions: ['city', 'evening'], reads_as: 'resort botanical', silhouette: 'flowing', fabric_category: 'gauze', length_hits_at: 'maxi', pattern_type: 'botanical' })
+test('a formal slot judges a dress by fabric/formality, not print — a silk botanical maxi is kept, a jersey one demoted', async () => {
+  // Print and hemline are NOT formality (owner ruling): a silk botanical maxi is
+  // a dressy dress and must not be demoted for the words "botanical"/"maxi"; a
+  // casual jersey dress is demoted by its fabric and everyday register.
+  insertPiece({ category: 'dress', name: 'silk botanical maxi dress', colors: ['coral'], occasions: ['city', 'evening'], reads_as: 'dressy silk column', silhouette: 'column', fabric_category: 'silk', fabric_weight: 'light', formality: 'dressy', length_hits_at: 'maxi', pattern_type: 'botanical' })
+  insertPiece({ category: 'dress', name: 'grey jersey tank dress', colors: ['grey'], occasions: ['city', 'evening'], reads_as: 'casual jersey', fabric_category: 'jersey', formality: 'everyday', length_hits_at: 'knee' })
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([
     { label: 'Wedding Ceremony', occasion: 'evening', count: 1, register: 'formal', weather: 'indoor' },
@@ -693,5 +695,6 @@ test('a formal/dressy register slot demotes beachy botanical/resort pieces for a
   const outfits = await composeOutfitSet({ slots, question: 'wedding ceremony', allPieces, source: 'plan_outfit_set' })
   assert.ok(outfits.length >= 1)
   const names = outfits.flatMap(outfit => (outfit.pieces || []).map(piece => String(piece.name || '').toLowerCase()))
-  assert.ok(!names.some(name => name.includes('botanical')), `a formal slot should demote the beachy botanical maxi, got ${names}`)
+  assert.ok(names.some(name => name.includes('silk botanical maxi')), `the silk botanical maxi is dressy — print/length must not demote it, got ${names}`)
+  assert.ok(!names.some(name => name.includes('jersey')), `the casual jersey dress should be demoted by fabric/formality, got ${names}`)
 })
