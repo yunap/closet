@@ -52,11 +52,18 @@ not keyword-guessed.
   `piece_budget` (new constraint) leads with the piece roster + combination
   count and flags over/under budget (capsule); a `diversify`/`no_repeat` plan
   leads with the repeat schedule ("every look is distinct" is the win);
-  everything else keeps the packing-reuse headline. Remaining: prompt
-  decomposition guidance, parallel-path diagnostics, keyword pre-route
-  retirement (evidence-gated). NB: `piece_budget` drives the REPORT, not hard
-  composition enforcement — the `maximize` dial is what actually shrinks the
-  roster; hard-cap enforcement is a possible follow-up.
+  everything else keeps the packing-reuse headline. Build step 6 SHIPPED: the
+  prompt now teaches the tool — a "Planning a Coordinated Multi-Outfit Set"
+  bullet in `STYLIST_SYSTEM` tells the model to call `plan_outfit_set` on the
+  initial planning turn (trip/work-week/event/capsule/around-a-piece),
+  decompose into slots itself, set per-slot `location`/`date`, and choose
+  `constraints` from the objective; the returned cards become the Current
+  outfit set that `propose_outfit` revises. (Until this, the tool was live but
+  unreachable — nothing in the prompt named it, which also blocked the step-8
+  retirement evidence.) Remaining: parallel-path diagnostics (step 7), keyword
+  pre-route retirement (step 8, evidence-gated). NB: `piece_budget` drives the
+  REPORT, not hard composition enforcement — the `maximize` dial is what
+  actually shrinks the roster; hard-cap enforcement is a possible follow-up.
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone

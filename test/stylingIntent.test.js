@@ -131,6 +131,13 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('For shoe anchors, rebuild the outfit color story, formality, and occasion around the shoes'))
   assert.ok(STYLIST_SYSTEM.includes('Top-Layer Anchor Requests'))
   assert.ok(STYLIST_SYSTEM.includes('keep that exact garment locked as `layer_top`'))
+  // Step 6 build 6 — plan_outfit_set decomposition guidance.
+  assert.ok(STYLIST_SYSTEM.includes('Planning a Coordinated Multi-Outfit Set'))
+  assert.ok(STYLIST_SYSTEM.includes("compose the whole set in a single 'plan_outfit_set' call on the initial planning turn"))
+  assert.ok(STYLIST_SYSTEM.includes('YOU decompose the request into slots'))
+  assert.ok(STYLIST_SYSTEM.includes('so each slot resolves its OWN live forecast'))
+  assert.ok(STYLIST_SYSTEM.includes("\`reuse:'diversify'\` with \`no_repeat:['tops']\`"))
+  assert.ok(STYLIST_SYSTEM.includes("'plan_outfit_set' for the initial multi-slot plan, 'propose_outfit' for one specific outfit"))
   assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
   assert.ok(STYLIST_SYSTEM.includes('as the canonical packing/styling plan for the thread'))
   assert.ok(STYLIST_SYSTEM.includes("one 'propose_outfit' card per entry (verified piece IDs + roles)"))
