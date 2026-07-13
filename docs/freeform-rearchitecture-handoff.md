@@ -1,7 +1,8 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
-For any assistant (or human) continuing this effort. Written 2026-07-12, mid-way
-through live testing. The architecture rationale and migration plan live in
+For any assistant (or human) continuing this effort. Written 2026-07-12
+mid-way through live testing; updated 2026-07-13 after six live-test rounds
+and the start of the step-6 build. The architecture rationale and migration plan live in
 [docs/flows/freeform-stylist-chat.md](flows/freeform-stylist-chat.md) (the
 "Proposed architecture" section); this file is the operational state.
 
@@ -26,6 +27,13 @@ not keyword-guessed.
 | #43 | opacity was dropped by the piece form — form state, both retag paths, edit-card chip row, BatchAdd. See the "new tag field checklist" below |
 | #44 | Memory pollution fix — the pre-model auto-save (stored raw questions as absolute-precedence preferences; 11 dupes of "…polished outfit ideas…" steered styling) REMOVED; `store_user_correction` tool is the only save path, deduped. Anchor bypass: `propose_outfit` pieces accept `anchor:true` for user-requested pieces (skips suitability gates; supports stay gated). Live db junk archived (reversible), crochet note refiled piece-scoped (piece 132) |
 | #47 | Hot-weather gate false positive — ANY medium pants counted "insulating"; now composer parity (full-insulating coverage only). Gate rejection message teaches the `anchor:true` recovery |
+| #49 | `search_wardrobe category:'tops'` (plural) exact-matched the singular db value → silent 0 rows → the model reported a fake wardrobe gap. Category enum + `CATEGORY_ALIASES` normalization + corrective note |
+| #50 | Light silk maxi rejected as "insulating" (the coverage clause had NO weight qualifier); `render_preview outfit_index` falls back to the THREAD outfit set; structure rejections coach completion instead of re-bouncing; ANCHOR RULE broadened to "compose from what we just discussed" |
+| #51 | Owner rulings applied: open-front layers (`isWholeWardrobeLayerableTop`) exempt from hot sleeve/coverage clauses; shoes/accessories are NEVER "insulating pieces". Rendered previews attach to the assistant message (were invisible outside piece/outfit context) |
+| #52 | Loop economy — propose contract gates report MERGED in one validation_error (+anchor reminder), iteration cap 7→10, humane zero-cards fallback (was dying at max-iterations on sequential bounces) |
+| #53 | Trip-scenario fixes — `sourceLocked` (propose can't clobber the trip presentation), declare-ack announces pre-seeded cards (anti-double-compose), Save button on rendered boards, `store_user_correction` forbids situational facts (durable prefs only), activity omit-unless-changed |
+| #54 #56 #57 | Step-6 DESIGN (docs): `plan_outfit_set` contract, per-slot live weather, and the multi-scenario shape validation (contract v1.1: `slot.date`, signed reuse dial, per-category repeats, anchor exemption, objective-driven reports). NOTE: #57 merged into #56's branch, not main — its content reached main via #58 |
+| #58 | Step-6 BUILD 1–2 — engine extracted to `styling-engine/outfitSetPlanner.js` (`composeOutfitSet`), `plan_outfit_set` tool live (declared-intent gate, source `plan_outfit_set` + lock, plan lines, `planOutfitSetCalls` diagnostic), client renders both planned-set sources |
 
 ## Remaining work
 
@@ -62,6 +70,15 @@ not keyword-guessed.
 4. Casual cargo pants styled "polished"/elevated → memory pollution (see #44).
 5. "Style these pants" → zero ideas → gates rejected the asked-about piece →
    anchor rule (#44) + hot-weather overblock fix (#47).
+6. "48 tops" reported as a wardrobe gap → plural category filter, 0 rows (#49).
+7. A light silk maxi and a light open cardigan blocked in heat → unqualified
+   coverage clause (#50) + owner rulings on open-front layers and shoes (#51).
+8. "Style the cream crochet top" died at max iterations with a raw fallback
+   string → sequential contract bounces ate the budget → merged bounces (#52).
+9. Trip header corrupted after an extra propose; Portland heat stored as a
+   durable preference; explicit `activity:'none'` lost the walking need (#53).
+10. Paso Robles trip = clean pass BUT the Coastal Day slot was composed for
+    inland heat (coast ≈60°F) → per-slot live weather is build step 3 (#56).
 
 ## High-leverage test scenarios (run in this order)
 
@@ -94,10 +111,19 @@ freeformDiagnostics counters (`intentDeclared`, `viewCalls`, `renderCalls`,
    ONE deduped store_user_correction save; a later turn respects it; no raw
    questions accumulating in stylist_feedback.
 
+8. **Model-initiated planning (step 6, NEW):** a multi-context trip ask
+   ("5 days in Paso Robles — wineries, one nice dinner, a hike, maybe the
+   coast") → today the keyword pre-route precomposes first (`trip_precompose`);
+   the step-7 evidence question is whether the model calls `plan_outfit_set`
+   itself on planning turns the regexes miss (e.g. "outfits for my work week,
+   Thursday is client-facing" — no travel keywords). Watch `planOutfitSetCalls`
+   and the card source in the debug block.
+
 Interpretation: blocks-counters firing occasionally = rails working; firing on
 every turn = rails too expensive or prompt unclear (find which counter).
 Scenarios 3–5 passing is the generalization proof; 1–2 are regressions of known
-bugs and must pass.
+bugs and must pass; 8 accumulates the retirement evidence for the keyword
+pre-routes.
 
 ## Gotchas for the next assistant
 
@@ -117,5 +143,20 @@ bugs and must pass.
 - **Gate history:** before calling any missing/loose gate a bug, check whether
   it was a deliberate decision (the app has a long hard-gate-vs-LLM-judgment
   history). The owner's live ruling wins (e.g. #47).
+- **Stacked PRs:** if a PR is based on another PR's branch, merge bottom-up
+  and CHECK the top PR retargeted to main before merging it — #57 merged into
+  its already-merged base branch 16s after #56 and never reached main (rescued
+  via #58).
+- **Source-scan tests assert code locations** (spec9 advisor-mode, the
+  contracts trip-accessories scan, the observability registry shape, the
+  StylistChat scans). Moving code means pointing them at the new file — do not
+  weaken the behavioral assertions while relocating them.
+- **Shoes use a different `fabric_weight` vocabulary** in the form
+  (delicate/slim/medium/chunky); the tagger may write garment-scale values —
+  inert, since shoes are weather-exempt. Owner ruling on file: she eventually
+  wants shoe *seasonality* (no suede/winter shoes in summer) as its own
+  material-based signal, NOT via fabric_weight. Parked, do not improvise.
+- **Open owner ruling parked:** closed medium long-sleeve tops in hot weather
+  are still deliberately blocked — don't loosen without a ruling.
 - **`docs/flows/`** is the model-facing flow atlas (all 16 flows diagrammed);
   keep the freeform doc's status note current as steps land.
