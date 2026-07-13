@@ -312,6 +312,7 @@ export default function StylistChat({
   const [wardrobeOutfitActivity, setWardrobeOutfitActivity] = useState('none')
   const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
   const [recentMemoryResetting, setRecentMemoryResetting] = useState(false)
+  const [recentMemoryItemCount, setRecentMemoryItemCount] = useState(0)
   const [homeLocation, setHomeLocation] = useState('')
   const [homeLocationInput, setHomeLocationInput] = useState('')
   const [homeLocationOpen, setHomeLocationOpen] = useState(false)
@@ -1006,6 +1007,21 @@ export default function StylistChat({
   }
 
   useEffect(() => () => clearLoadingTimers(), [])
+
+  const refreshWholeWardrobeSessionMemory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ai/whole-wardrobe-session-memory')
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Could not load recent outfit memory')
+      setRecentMemoryItemCount(Number(data.itemCount || 0))
+    } catch (err) {
+      console.error('Failed to refresh recent outfit memory:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshWholeWardrobeSessionMemory()
+  }, [refreshWholeWardrobeSessionMemory])
 
   useEffect(() => {
     clearLoadingTimers()
@@ -3198,6 +3214,7 @@ export default function StylistChat({
         latestOutfits: replyStructuredOutfits,
         stylingContext: { occasion, season, mood, request, mission: mission || 'mix', activity },
       })
+      refreshWholeWardrobeSessionMemory()
       addToHistory('assistant', replyText)
     } catch (err) {
       const errText = `Error: ${err.message}`
@@ -3220,6 +3237,7 @@ export default function StylistChat({
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Could not reset recent outfit memory')
       const clearedCount = Number(data.clearedCount || 0)
+      setRecentMemoryItemCount(Number(data.itemCount || 0))
       setRecentMemoryStatus(clearedCount
         ? `Cleared ${clearedCount} recent result ${clearedCount === 1 ? 'set' : 'sets'}.`
         : 'Recent outfit memory is already clear.')
@@ -3903,6 +3921,9 @@ export default function StylistChat({
           activity: effectiveGenerateActivity,
         } : null)
       }
+      if (replyWholeWardrobe) {
+        refreshWholeWardrobeSessionMemory()
+      }
 
       const updatedMessages = [...nextMessages, assistantMsg]
       const updatedChatHistory = [...nextChatHistory, { role: 'assistant', content: replyText }]
@@ -4002,6 +4023,31 @@ export default function StylistChat({
   const pendingConfidence = pendingOutfit ? getOutfitConfidenceMode(pendingOutfit) : null
   const compareOutfit = compareOutfitId ? outfits.find(o => String(o.id) === String(compareOutfitId)) : null
   const compareConfidenceText = pendingOutfit && compareOutfit ? getCompareConfidenceText(pendingOutfit, compareOutfit) : ''
+
+  const recentMemoryLabel = recentMemoryItemCount
+    ? `${recentMemoryItemCount} ${recentMemoryItemCount === 1 ? 'item' : 'items'} resting`
+    : 'No items resting'
+  const recentMemoryTitle = recentMemoryItemCount
+    ? `${recentMemoryItemCount} recently shown wardrobe ${recentMemoryItemCount === 1 ? 'item is' : 'items are'} temporarily de-prioritized so new generated outfits do not repeat them too soon. Reset recent memory to put them back into normal rotation.`
+    : 'No recently shown wardrobe items are being de-prioritized right now.'
+  const RecentMemoryControls = () => (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+      <button
+        onClick={resetWholeWardrobeSessionMemory}
+        disabled={recentMemoryResetting || loading}
+        title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
+        style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
+      >
+        {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
+      </button>
+      <span
+        title={recentMemoryTitle}
+        style={{ fontSize: 11, color: recentMemoryItemCount ? 'var(--accent)' : 'var(--text-light)', whiteSpace: 'nowrap' }}
+      >
+        {recentMemoryLabel}
+      </span>
+    </div>
+  )
 
 
 
@@ -4149,14 +4195,7 @@ export default function StylistChat({
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
             </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              <button
-                onClick={resetWholeWardrobeSessionMemory}
-                disabled={recentMemoryResetting || loading}
-                title="Clears only recently shown Generate 5 outfit memory. Saved feedback and learning stay intact."
-                style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
-              >
-                {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
-              </button>
+              <RecentMemoryControls />
               <button
                 onClick={generateWholeWardrobeOutfits}
                 disabled={loading}
@@ -4266,14 +4305,7 @@ export default function StylistChat({
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <button
-                      onClick={resetWholeWardrobeSessionMemory}
-                      disabled={recentMemoryResetting || loading}
-                      title="Clears only recently shown Generate 5 outfit memory. Saved feedback and learning stay intact."
-                      style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
-                    >
-                      {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
-                    </button>
+                    <RecentMemoryControls />
                     <button
                       onClick={generateWholeWardrobeOutfits}
                       disabled={loading}

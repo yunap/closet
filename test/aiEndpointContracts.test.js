@@ -713,10 +713,19 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.equal(composerCalls.length, 1)
   assert.ok(!composerCalls[0].system.includes('personal visual stylist agent'))
 
+  const summaryResponse = await fetch(`${baseUrl}/api/ai/whole-wardrobe-session-memory`)
+  const summaryJson = await summaryResponse.json()
+  assert.equal(summaryResponse.status, 200)
+  assert.equal(summaryJson.mode, 'whole_wardrobe_session_memory_summary')
+  assert.equal(summaryJson.recentSessionCount, 1)
+  assert.ok(summaryJson.itemCount >= 1)
+  assert.ok(summaryJson.formulaCount >= 1)
+
   const response = await fetch(`${baseUrl}/api/ai/whole-wardrobe-session-memory`, { method: 'DELETE' })
   const resetJson = await response.json()
   assert.equal(response.status, 200)
   assert.equal(resetJson.mode, 'reset_whole_wardrobe_session_memory')
+  assert.equal(resetJson.itemCount, 0)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 0)
 })
 
