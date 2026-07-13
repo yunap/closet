@@ -311,3 +311,53 @@ What deliberately does **not** change: the composer engines and their gates, the
 no-repair-in-advisor-mode decision, `store_user_correction` and its recall, and
 the card contract (`propose_outfit` with verified IDs) — those are the parts the
 atlas showed to be working.
+
+## Step 6 resolution — the planning engine (designed 2026-07-12, not yet built)
+
+Live trip tests settled step 6 with evidence in both directions: the model CAN
+self-compose planning turns, but the trip precompose produces something the
+model cannot — the **plan**: slot coverage and cross-outfit piece-reuse
+analysis ("Packing reuse: 12 distinct pieces"). So precompose isn't demoted
+wholesale; its planning capability is generalized and moved behind the model.
+
+**What the trip planner actually is:** multi-outfit composition under *shared
+constraints* — outfits that aren't independent because they share an objective.
+That capability generalizes:
+
+| Scenario | Slots | Shared constraint |
+| --- | --- | --- |
+| Trip packing | day / evening / hike / coast | maximize piece reuse |
+| Capsule building | use-cases | hard piece budget |
+| Work week | days | no-repeat tops, per-slot register |
+| Event weekend | rehearsal / ceremony / brunch | escalating register, shared shoes |
+| Carry-on week | days | piece budget + laundry cycle |
+| New-piece integration | occasions | shared anchor across all outfits |
+| Versatility audit | — | pure reuse optimization |
+
+**The structure — planner as a tool, not a pre-route:**
+
+```
+plan_outfit_set({
+  slots: [ { label, occasion, activity, count, register? } ],
+  constraints: { maximize_reuse, piece_budget, no_repeat: [category], shared_anchor_ids }
+})
+```
+
+- **The model decomposes** the request into slots in the tool arguments — this
+  is judgment ("mainly wineries, hiking, *maybe* the coast" → 3 winery + 1
+  dinner + 1 hike + 1 optional coast), and doing it natively retires the
+  separate `planFreeformUseCases` LLM call and its fragile JSON scraping
+  (observed failing live: "Expected double-quoted property name").
+- **The engine composes**: the existing gated slot composition + reuse
+  optimization (`buildLocalTripSlotOutfits` generalized into
+  `composeOutfitSet`), returning cards *plus plan lines* (coverage, reuse
+  report) in the shape the client already renders for trip cards.
+- **The keyword pre-routes retire on evidence**: `isTravelOrPackingRequest` and
+  `isBroadOutfitPlanningText` become a legacy fast path, removed once
+  diagnostics show the model calls `plan_outfit_set` reliably on planning
+  turns — the same evidence-gated retirement rule as the context clauses.
+
+Build order when picked up: (1) extract `composeOutfitSet` from the trip-slot
+builder, (2) expose the tool + record cards with slot labels/coverage lines,
+(3) prompt: multi-context requests decompose into slots, (4) run both paths in
+parallel with diagnostics, (5) retire the keyword pre-route.
