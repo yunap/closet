@@ -145,6 +145,12 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes("call 'plan_outfit_set' NOW, proceeding on the calendar season inferred from today's date"))
   assert.ok(STYLIST_SYSTEM.includes('you have everything you need — decompose and call \'plan_outfit_set\' rather than asking a clarifying question first'))
   assert.ok(!STYLIST_SYSTEM.includes('únicamente'))
+  // Indoor slots are climate-controlled — the outdoor forecast must not drive an
+  // office day toward sleeveless/beachy pieces (live finding: office week
+  // composed for the outdoor Walnut Creek heat).
+  assert.ok(STYLIST_SYSTEM.includes('INDOOR slots are climate-controlled'))
+  assert.ok(STYLIST_SYSTEM.includes("pass \`weather:'indoor'\` so the slot is NOT composed for outdoor heat or cold"))
+  assert.ok(STYLIST_SYSTEM.includes('Reserve the live per-slot forecast for slots actually spent OUTDOORS'))
   assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
   assert.ok(STYLIST_SYSTEM.includes('as the canonical packing/styling plan for the thread'))
   assert.ok(STYLIST_SYSTEM.includes("one 'propose_outfit' card per entry (verified piece IDs + roles)"))
