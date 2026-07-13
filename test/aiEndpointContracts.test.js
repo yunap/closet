@@ -3600,6 +3600,31 @@ test('shoes and open-front layers are not hot-weather insulating pieces (round-3
   assert.ok(wholeWardrobePieceTrustDecision(longSleeve, hot).reasons.includes('hot weather: insulating piece'))
 })
 
+test('precompose-seeded turns keep their source flag and inform the declare ack', async () => {
+  const toolContext = {
+    generatedOutfits: [{ label: 'Trip look', pieceIds: [seeded.top, seeded.bottom, seeded.shoe], pieces: [], source: 'trip_precompose' }],
+    source: 'whole_wardrobe',
+    sourceLocked: true,
+    occasion: 'city',
+    season: 'current season',
+    declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe])
+  }
+  const ack = await executeTool('declare_intent', { want: 'cards' }, toolContext)
+  assert.match(ack.message, /ALREADY composed for this turn/, 'declare ack warns about pre-seeded cards')
+
+  const proposed = await executeTool('propose_outfit', {
+    label: 'Extra look',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }, toolContext)
+  assert.equal(proposed.status, 'success')
+  assert.equal(toolContext.source, 'whole_wardrobe', 'propose_outfit must not clobber a precompose-locked source')
+})
+
 test('freeform ask retries the model once when prose cites unverified ids', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })

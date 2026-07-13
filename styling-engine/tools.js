@@ -372,7 +372,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "store_user_correction",
-    description: "Store a taste preference or correction (e.g., 'I do not wear flats') into the database.",
+    description: "Store a DURABLE taste preference or correction the user themselves stated (e.g., 'I do not wear flats'). NEVER store situational or trip facts (this week's weather, a destination, what today's request needs) — those live in THREAD STATE and would wrongly bias every future conversation. If the user didn't say it as a lasting preference, don't store it.",
     input_schema: {
       type: "object",
       properties: {
@@ -390,7 +390,7 @@ export const STYLIST_TOOLS = [
       type: "object",
       properties: {
         occasion: { type: "string", enum: OCCASION_VALUES, description: "The occasion. Pick the closest allowed value; do not invent. casual/gallery/concert/travel are intentionally permissive." },
-        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis, orthogonal to occasion. Set ONLY when the request implies physical demand (lots of walking, hiking). Omit it to carry forward any activity already established in the conversation." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis, orthogonal to occasion. Set ONLY when the user changed the physical demand THIS turn. NEVER pass 'none' explicitly to a conversation that established walking/hiking — omit the field and the established activity (see THREAD STATE) carries forward, keeping footwear walkable." },
         season: { type: "string", description: "Season/weather context (e.g. warm, cool, year-round). Infer from the date when not stated." },
         mood: { type: "string", description: "Optional vibe/aesthetic direction only (e.g. artistic minimal, earthy structure). Do NOT put activity here; use the activity parameter." },
         mission: { type: "string", enum: MISSION_VALUES, description: "Styling mission. Default 'mix'." },
@@ -501,9 +501,10 @@ export async function executeTool(name, args, toolContext = {}) {
         toolContext.declaredIntent = { want, outfitCount, turnMode }
         bumpFreeformDiagnostic(toolContext, 'intentDeclared')
         if (want === 'cards') {
+          const seededCount = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits.filter(o => !o?.broken).length : 0
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. Contract: every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}Contract: every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
@@ -940,7 +941,7 @@ export async function executeTool(name, args, toolContext = {}) {
             issues: hardGateIssues
           }
         }
-        toolContext.source = 'proposed_outfit'
+        if (!toolContext.sourceLocked) toolContext.source = 'proposed_outfit'
         toolContext.occasion = resolvedOccasion
         toolContext.season = resolvedSeason
         toolContext.activity = resolvedActivity

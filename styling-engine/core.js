@@ -3737,7 +3737,7 @@ export async function buildStylistConversationPayload(body) {
       '- PAIRING/SLOT QUESTIONS ("what goes under X", "which shoes with Y"): answer in prose citing verified IDs. If you also propose a card, the card must be a COMPLETE outfit — shoes plus top+bottom or a dress — so finish the look around the pairing.',
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
-      'CRITICAL: If the user states a new style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "I dislike cargo pants", "prefer dark jeans"), you MUST proactively call the `store_user_correction` tool to save this rule/preference immediately. Do not wait for the user to ask you to save it; save it automatically using the tool.'
+      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "prefer dark jeans"), you MUST proactively call `store_user_correction` immediately. But NEVER store situational facts — trip weather, a destination, what this request needs — those live in THREAD STATE; storing them would wrongly bias every future conversation.'
     ].join('\n')
     : [
       'The full wardrobe list is omitted from the prompt to save context tokens.',
@@ -3748,7 +3748,7 @@ export async function buildStylistConversationPayload(body) {
       '- Use `get_current_image_inventory` to inspect attached images.',
       '- Use `store_user_correction` to save user corrections/preferences.',
       'Never guess or assume a piece exists without querying the database via tools first.',
-      'CRITICAL: If the user states a new style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "I dislike cargo pants", "prefer dark jeans"), you MUST proactively call the `store_user_correction` tool to save this rule/preference immediately. Do not wait for the user to ask you to save it; save it automatically using the tool.'
+      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "prefer dark jeans"), you MUST proactively call `store_user_correction` immediately. But NEVER store situational facts — trip weather, a destination, what this request needs — those live in THREAD STATE; storing them would wrongly bias every future conversation.'
     ].join('\n')
 
   let modeDirectiveText = ''

@@ -1202,7 +1202,7 @@ export default function StylistChat({
   }
 
   const getCompactOutfitIntro = (message, hasBoards = false) => {
-    if (message?.wholeWardrobe) {
+    if (message?.wholeWardrobe || message?.structuredOutfits?.some(outfit => outfit?.source === 'trip_precompose')) {
       return ''
     }
     const text = String(message?.text || '')
@@ -4488,14 +4488,26 @@ export default function StylistChat({
 
               {m.role === 'assistant' && Array.isArray(m.renderedBoards) && m.renderedBoards.length > 0 && (
                 <div className="generated-visual-grid" style={{ marginTop: 10 }}>
-                  {m.renderedBoards.map((board, boardIdx) => (
-                    <div key={boardIdx} className="generated-visual-card" style={{ position: 'relative' }}>
-                      <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Outfit preview', meta: board.reason || '' })} aria-label="Open outfit preview">
-                        <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Outfit preview'} className="generated-visual-image" />
-                      </button>
-                      <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
-                    </div>
-                  ))}
+                  {m.renderedBoards.map((board, boardIdx) => {
+                    const renderSaveKey = `render-preview:${i}:${boardIdx}`
+                    const isRenderSaved = savedBoardKeys.has(renderSaveKey) || (board.imageUrl && savedBoardUrls.has(board.imageUrl))
+                    return (
+                      <div key={boardIdx} className="generated-visual-card" style={{ position: 'relative' }}>
+                        {isRenderSaved && (
+                          <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>✓ Saved board</div>
+                        )}
+                        <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Outfit preview', meta: board.reason || '' })} aria-label="Open outfit preview">
+                          <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Outfit preview'} className="generated-visual-image" />
+                        </button>
+                        <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
+                        {!isRenderSaved && (
+                          <div style={{ marginTop: 6 }}>
+                            <button onClick={() => saveGeneratedBoard({ key: renderSaveKey, board, boardType: 'render_preview', messageIndex: i, boardIndex: boardIdx })} style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}>Save board</button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 
