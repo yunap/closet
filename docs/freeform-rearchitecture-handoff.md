@@ -73,8 +73,15 @@ not keyword-guessed.
   framing instead of trip copy; office/work/client/restaurant slots default to
   indoor weather when the model omits weather; and office/client slots now get a
   narrow register scorer that reads piece names and demotes garden-party,
-  resort, lace, maxi/flowy, open-toe/wedge drift. Remaining: keyword pre-route
-  retirement (step 8, evidence-gated). NB: `piece_budget` drives the REPORT, not
+  resort, lace, maxi/flowy, open-toe/wedge drift. Slot-register escalation
+  SHIPPED (the contract's `slot.register`): a slot marked `dressy`/`formal`
+  (`tripOutfitRegisterEscalationScore`) pushes away denim, casual jackets, tees,
+  and sneakers and toward a dress/tailored separates + heels — the wedding-
+  ceremony miss where the marquee slot composed in denim flares + a leather zip
+  (the evening scorer credits any dark layer as "elevated" and never penalizes
+  denim). The prompt teaches the model to escalate (rehearsal `dressy`, ceremony
+  `formal`, brunch `elevated`) and to not `no_repeat` the category the marquee
+  slot needs. Remaining: keyword pre-route retirement (step 8, evidence-gated). NB: `piece_budget` drives the REPORT, not
   hard composition
   enforcement — the `maximize` dial is what actually shrinks the roster;
   hard-cap enforcement is a possible follow-up.

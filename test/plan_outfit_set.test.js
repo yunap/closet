@@ -654,3 +654,30 @@ test('a real plan_outfit_set tool call surfaces as model_only when no pre-route 
   recordPlanPathDiagnostics(toolContext, { keywordMatched: false, prerouteComposed: false })
   assert.equal(toolContext.freeformDiagnostics.planPathOutcome, 'model_only')
 })
+
+// --- Slot register escalation (event weekends) --------------------------------
+
+test('normalizePlanSlots normalizes the slot register and drops unknown values', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Ceremony', occasion: 'evening', register: 'FORMAL' },
+    { label: 'Rehearsal', occasion: 'evening', register: 'dressy' },
+    { label: 'Brunch', occasion: 'smart casual', register: 'fancy' },
+    { label: 'Hike', occasion: 'casual' },
+  ])
+  assert.equal(slots[0].register, 'formal')
+  assert.equal(slots[1].register, 'dressy')
+  assert.equal(slots[2].register, '', 'an unknown register value is dropped')
+  assert.equal(slots[3].register, '', 'an omitted register is empty')
+})
+
+test('a formal-register slot pushes denim and sneakers out of the composed set', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Wedding Ceremony', occasion: 'evening', count: 2, register: 'formal', weather: 'indoor' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: 'wedding ceremony', allPieces, source: 'plan_outfit_set' })
+  assert.ok(outfits.length >= 1, 'the formal slot should still compose')
+  const names = outfits.flatMap(outfit => (outfit.pieces || []).map(piece => String(piece.name || '').toLowerCase()))
+  assert.ok(!names.some(name => name.includes('jean') || name.includes('denim')), `a formal slot should avoid denim, got ${names}`)
+  assert.ok(!names.some(name => name.includes('sneaker')), `a formal slot should avoid sneakers, got ${names}`)
+})
