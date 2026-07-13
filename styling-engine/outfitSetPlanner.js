@@ -167,6 +167,7 @@ function buildWeatherLine(slotWeather = []) {
 function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0 } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
+  const durationLabel = source === 'plan_outfit_set' ? 'Plan length' : 'Trip length'
   const pieceReuse = describeTripPieceReuse(tripOutfits)
   const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget })
   const weatherLine = buildWeatherLine(slotWeather)
@@ -191,7 +192,7 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slot
       pieceReuse,
       coverageLine: coverageBySlot.get(key) || '',
       tripPlanLines: [
-        outfit.tripSummary?.durationText ? `Trip length: ${outfit.tripSummary.durationText}` : '',
+        outfit.tripSummary?.durationText ? `${durationLabel}: ${outfit.tripSummary.durationText}` : '',
         outfit.tripSummary?.dayBreakdown ? `Coverage: ${outfit.tripSummary.dayBreakdown}` : '',
         coverageBySlot.get(key) || '',
         weatherLine,
@@ -326,6 +327,7 @@ function tripStructuredValueSet(piece = {}) {
   }
   for (const color of Array.isArray(piece.colors) ? piece.colors : []) add(color)
   for (const field of [
+    'name',
     'category',
     'reads_as',
     'pattern_type',
@@ -513,6 +515,107 @@ function tripOutfitDinnerRegisterScore(outfit = {}, slot = {}) {
   return score
 }
 
+function isOfficePlanSlot(slot = {}) {
+  const text = [
+    slot?.label,
+    slot?.bestFor,
+    slot?.coverage,
+    slot?.planNote,
+    slot?.occasion
+  ].filter(Boolean).join(' ').toLowerCase()
+  if (!text || slot.activity === 'walking' || slot.activity === 'hiking') return false
+  return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting)\b/.test(text) // ratchet-allow: slot-register classifier, not garment matching
+}
+
+function isClientPlanSlot(slot = {}) {
+  const text = [
+    slot?.label,
+    slot?.bestFor,
+    slot?.coverage,
+    slot?.planNote
+  ].filter(Boolean).join(' ').toLowerCase()
+  return /\b(client|meeting|client[- ]?facing)\b/.test(text) // ratchet-allow: slot-register classifier, not garment matching
+}
+
+function pieceOfficePolishScore(piece = {}) {
+  if (!piece) return 0
+  let score = 0
+  if (piece.formality === 'elevated') score += 8
+  if (piece.formality === 'dressy') score += 4
+  if (tripPieceHasStructuredValue(piece, ['tailored', 'structured', 'polished', 'blouse', 'button', 'button_down', 'button-shirt', 'trouser', 'straight', 'pencil_skirt', 'knit', 'wool', 'stripe', 'striped'])) score += 12
+  if (tripPieceHasStructuredValue(piece, ['botanical', 'floral', 'tropical', 'beach', 'resort', 'gauze', 'gauzy', 'open_toe', 'open-toe', 'espadrille', 'raffia', 'cork'])) score -= 18
+  return score
+}
+
+function isOfficeStructuredDress(piece = {}) {
+  return tripPieceHasStructuredValue(piece, [
+    'tailored',
+    'structured',
+    'polished',
+    'knit',
+    'wool',
+    'stripe',
+    'striped',
+    'sheath',
+    'column',
+    'shirt_dress',
+    'shirtdress'
+  ])
+}
+
+function tripOutfitOfficeRegisterScore(outfit = {}, slot = {}) {
+  if (!isOfficePlanSlot(slot)) return { score: 0, hardRejects: [] }
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
+  const bottom = pieces.find(piece => wardrobeCategoryGroup(piece) === 'bottom')
+  const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  const shoe = pieces.find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  const client = isClientPlanSlot(slot)
+  const hardRejects = []
+  let score = 0
+
+  for (const piece of [top, bottom, dress, shoe, layer]) score += pieceOfficePolishScore(piece)
+
+  if (top) {
+    if (garmentKind(top) === 'button-shirt') score += 16
+    if (sleeveCoverage(top) === 'sleeveless' && client) score -= 10
+  }
+  if (bottom) {
+    const kind = bottomKind(bottom)
+    if (kind === 'pants' || kind === 'trouser') score += 16
+    if (kind === 'shorts') {
+      score -= client ? 80 : 42
+      if (client) hardRejects.push('shorts too casual for client meeting')
+    }
+    if (kind?.startsWith('skirt')) score += 8
+  }
+  if (dress) {
+    score += 8
+    const officeStructuredDress = isOfficeStructuredDress(dress)
+    if (officeStructuredDress) score += client ? 18 : 12
+    if (tripPieceHasStructuredValue(dress, ['maxi', 'flowing', 'full_skirt', 'a_line_skirt', 'botanical', 'floral', 'lace', 'black_lace', 'resort'])) score -= client ? 46 : 28
+    if (sleeveCoverage(dress) === 'sleeveless' && client && !layer) score -= 22
+    if (client && !layer && !officeStructuredDress) {
+      score -= 36
+      hardRejects.push('dress lacks enough office structure for client meeting')
+    }
+  }
+  if (shoe) {
+    if (tripShoeMatchesAny(shoe, ['loafer', 'loafers', 'flat', 'flats', 'ballet flat', 'ballet flats', 'pointed', 'block heel', 'block heels', 'pump', 'pumps'])) score += 18
+    if (tripShoeMatchesAny(shoe, ['sandal', 'sandals', 'open toe', 'open-toe', 'espadrille', 'wedge', 'wedges', 'cork'])) {
+      score -= client ? 46 : 26
+      if (client) hardRejects.push('open casual shoes too informal for client meeting')
+    }
+  }
+  if (client) {
+    score += 8
+    if (layer) score += 12
+    if (!top && !bottom && dress && !layer) score -= 8
+  }
+  return { score, hardRejects }
+}
+
 function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
@@ -612,6 +715,9 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) 
     }
   }
 
+  const officeFit = tripOutfitOfficeRegisterScore(outfit, slot)
+  score += officeFit.score
+  hardRejects.push(...officeFit.hardRejects)
   score += tripOutfitAestheticGravityScore(outfit)
 
   return {
@@ -689,6 +795,21 @@ function describeWeatherProfile(profile = {}) {
 function isGenericSeason(season = '') {
   const value = String(season || '').trim().toLowerCase()
   return !value || value === 'current season' || value === 'current' || value === 'year-round'
+}
+
+function isIndoorPlanSlot(slot = {}, { occasion = '', activity = '' } = {}) {
+  const text = [
+    slot?.label,
+    slot?.best_for,
+    slot?.bestFor,
+    slot?.coverage,
+    slot?.plan_note,
+    slot?.planNote,
+    occasion
+  ].filter(Boolean).join(' ').toLowerCase()
+  if (!text || activity === 'walking' || activity === 'hiking') return false
+  if (/\b(outdoor|outside|patio|garden|hike|hiking|walk|walking|sightseeing|winery|wineries|coast|beach)\b/.test(text)) return false // ratchet-allow: slot-place classifier, not garment matching
+  return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurant|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
 }
 
 // Per-slot weather resolution (build step 3). Precedence: user-stated per-slot
@@ -1016,7 +1137,8 @@ export function normalizePlanSlots(rawSlots = [], {
       // over the live forecast. The trip-level fallbackWeather is not "stated"
       // for this purpose: it feeds season/heuristic but must let a slot's own
       // forecast override it (that is the coastal-microclimate case).
-      const statedWeather = String(slot?.weather || slot?.stated_weather || '').trim()
+      const explicitWeather = String(slot?.weather || slot?.stated_weather || '').trim()
+      const statedWeather = explicitWeather || (isIndoorPlanSlot(slot, { occasion, activity }) ? 'indoor' : '')
       return {
         id: label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `slot_${index + 1}`,
         label,

@@ -2310,6 +2310,22 @@ test('StylistChat pending garment action hides the generic chat input', () => {
   assert.match(css, /\.stylist-input-shell\.is-hidden-for-pending-action/)
 })
 
+test('Stylist route disables page scroll so chat history owns its own scroll pane', () => {
+  const app = fs.readFileSync(path.join(process.cwd(), 'src/App.jsx'), 'utf8')
+  const askClaude = fs.readFileSync(path.join(process.cwd(), 'src/views/AskClaude.jsx'), 'utf8')
+  const css = fs.readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
+  assert.match(app, /useLocation/)
+  assert.match(app, /isStylistRoute/)
+  assert.match(app, /app-main\$\{isStylistRoute \? ' stylist-app-main' : ''\}/)
+  assert.match(askClaude, /minHeight:\s*0/)
+  assert.match(css, /\.app-main\.stylist-app-main\s*\{[\s\S]*overflow:\s*hidden/)
+  assert.match(css, /\.stylist-chat-scroll\s*\{[\s\S]*overflow-y:\s*auto/)
+  assert.match(css, /\.stylist-chat-main\s*\{[\s\S]*display:\s*grid/)
+  assert.match(css, /\.stylist-chat-scroll\s*\{[\s\S]*max-height:/)
+  assert.doesNotMatch(css, /\.stylist-chat-scroll\s*\{[^}]*flex:\s*1/)
+  assert.doesNotMatch(css, /\.stylist-input-shell\s*\{[^}]*position:\s*sticky/)
+})
+
 test('StylistChat renders wardrobe evaluation replies in the chat thread', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.doesNotMatch(src, /if \(m\.wardrobeEvaluation \|\| m\.contextName === 'Whole wardrobe evaluation'\) \{\s*return null\s*\}/)
@@ -2357,6 +2373,8 @@ test('StylistChat selected-piece season menu keeps spring and summer separate', 
 test('StylistChat shows trip explanation before cards, not inside trip cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /Trip plan/)
+  assert.match(src, /Outfit plan/)
+  assert.match(src, /getPlanNotesTitle/)
   assert.match(src, /getTripPlanNotes/)
   assert.match(src, /garment and layer photos are prioritized before accessories/)
   assert.doesNotMatch(src, /Accessories are left out of these cards/)

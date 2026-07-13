@@ -1219,7 +1219,7 @@ export default function StylistChat({
 
   // Planned-set cards: the pre-route's trip precompose and the model-initiated
   // plan_outfit_set tool produce the same card shape (slot labels, coverage
-  // lines, tripPlanLines) and share the trip-plan presentation.
+  // lines, tripPlanLines) and share one plan presentation.
   const isPlannedSetSource = (source) => source === 'trip_precompose' || source === 'plan_outfit_set'
 
   const getCompactOutfitIntro = (message, hasBoards = false) => {
@@ -1258,6 +1258,11 @@ export default function StylistChat({
       seen.add(key)
       return true
     }).slice(0, 7)
+  }
+
+  const getPlanNotesTitle = (outfits = []) => {
+    const plannedCards = Array.isArray(outfits) ? outfits.filter(outfit => isPlannedSetSource(outfit?.source)) : []
+    return plannedCards.some(outfit => outfit?.source === 'plan_outfit_set') ? 'Outfit plan' : 'Trip plan'
   }
 
   const hydrateDisplayPiece = (piece = {}) => {
@@ -2048,7 +2053,7 @@ export default function StylistChat({
           if (!tripNotes.length) return null
           return (
             <div style={{ padding: '10px 12px', border: '1px solid var(--border)', background: 'var(--surface-2)', borderRadius: 12, marginBottom: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 5 }}>Trip plan</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 5 }}>{getPlanNotesTitle(outfits)}</div>
               <div style={{ display: 'grid', gap: 3, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
                 {tripNotes.map((note, noteIdx) => <div key={noteIdx}>{note}</div>)}
               </div>

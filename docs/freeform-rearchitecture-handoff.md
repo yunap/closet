@@ -68,8 +68,14 @@ not keyword-guessed.
   (`both`/`model_only`/`preroute_only`/`planning_uncomposed`/`not_planning`)
   into the debug block. Watch `planPathOutcome` in "Search & validation
   details": a steady stream of `model_only` on planning turns the regex missed
-  is the retirement evidence. Remaining: keyword pre-route retirement (step 8,
-  evidence-gated). NB: `piece_budget` drives the REPORT, not hard composition
+  is the retirement evidence. Follow-up hardening after live office-week tests
+  also SHIPPED: model-called plans use generic `Outfit plan` / `Plan length`
+  framing instead of trip copy; office/work/client/restaurant slots default to
+  indoor weather when the model omits weather; and office/client slots now get a
+  narrow register scorer that reads piece names and demotes garden-party,
+  resort, lace, maxi/flowy, open-toe/wedge drift. Remaining: keyword pre-route
+  retirement (step 8, evidence-gated). NB: `piece_budget` drives the REPORT, not
+  hard composition
   enforcement — the `maximize` dial is what actually shrinks the roster;
   hard-cap enforcement is a possible follow-up.
 - **Retire the context clauses** (tripScope/destination in
@@ -111,16 +117,23 @@ not keyword-guessed.
    worked (model self-routed → `plan_outfit_set` with diversify + allow_repeat
    shoes, `model_only`), BUT the office looks read beachy — the office slots were
    composed off the OUTDOOR home forecast (Walnut Creek, hot) → sleeveless/breezy
-   dresses. Root cause: an office is indoor/climate-controlled, and `'city'` /
-   `'smart casual'` both resolve to the SAME `city_smart_casual` "elevated"
-   profile (no distinct office register), so the hot outdoor forecast drove the
-   register. Fix (same PR): prompt teaches the model to pass `weather:'indoor'`
-   for indoor slots (office/work day, indoor event, restaurant) — the existing
+   dresses. First fix: prompt teaches the model to pass `weather:'indoor'` for
+   indoor slots (office/work day, indoor event, restaurant) — the existing
    `weatherProfileFromContext('indoor')` short-circuit neutralizes hot/cold — and
-   to reserve the live forecast for slots actually spent outdoors. (If loud
-   botanical prints still read wrong for office after this, that's a separate
-   register decision, deferred — the owner's steer was "it's an office, why
-   hot-weather workwear", i.e. the weather was the bug, not the wardrobe.)
+   to reserve the live forecast for slots actually spent outdoors. Retest after
+   that: routing was good and the tool call carried `weather:'indoor'`, but
+   office/client output was still too general-smart-casual (garden-party dresses,
+   open-toe/wedge drift). Root cause: `'city'` / `'smart casual'` both resolve to
+   the SAME `city_smart_casual` "elevated" profile, and slot scoring did not read
+   piece names, so the planner had no narrow office/client register. Fix: slot
+   normalization deterministically defaults indoor office/client slots to
+   `indoor` when the model omits weather; `tripStructuredValueSet` now includes
+   piece names; office/client slot scoring rewards structured/office-coded pieces
+   and demotes botanical/floral/lace/resort/flowy/maxi and open-toe/wedge/cork
+   client-meeting drift. Related UX fix from the same live test: model-called
+   plans now display as `Outfit plan` / `Plan length`, and the stylist route gets
+   its own fixed-height app shell so chat history scrolls independently and the
+   composer no longer pins itself to the viewport floor on short threads.
 
 ## High-leverage test scenarios (run in this order)
 
@@ -152,12 +165,18 @@ freeformDiagnostics counters (`intentDeclared`, `viewCalls`, `renderCalls`,
 7. **Memory hygiene:** state a real preference ("no ankle boots in summer") →
    ONE deduped store_user_correction save; a later turn respects it; no raw
    questions accumulating in stylist_feedback.
-8. **Model-initiated planning (step 6–7 evidence):** a planning turn the keyword
-   pre-route MISSES — e.g. "outfits for my work week, Thursday is client-facing"
-   (no travel words) → the model should call `plan_outfit_set` itself, decompose
-   into day slots, and set `constraints` (diversify + no_repeat tops). Check the
-   debug block: `planPathOutcome: model_only` is the win. A steady stream of it
-   across planning turns is the evidence to retire the keyword pre-route (step 8).
+8. **Model-initiated planning (step 6–8 evidence):** a planning turn the keyword
+   pre-route MISSES — e.g. "I need to get dressed for five days at the office
+   next week, and one of those days I'm meeting a client." → the model should
+   call `plan_outfit_set` itself, decompose into office/client slots, set indoor
+   weather (or let normalization do so), and set `constraints` (diversify +
+   no_repeat tops, shoes repeat allowed when sensible). Check the debug block:
+   `planPathOutcome: model_only` is the routing win. Then inspect the actual
+   cards: the office set should read indoor/professional rather than
+   hot-weather/weekend, and the client slot should avoid garden-party, beachy,
+   or open-toe/wedge drift when structured options exist. A steady stream of
+   `model_only` plus acceptable cards across planning turns is the evidence to
+   retire the keyword pre-route (step 8).
 
 Interpretation: blocks-counters firing occasionally = rails working; firing on
 every turn = rails too expensive or prompt unclear (find which counter).

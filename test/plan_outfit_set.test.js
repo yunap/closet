@@ -202,7 +202,7 @@ test('plan_outfit_set composes a multi-slot set with plan lines, slot labels, an
     assert.ok(outfit.coveragePosition, 'each card carries its coverage position')
   }
   assert.ok(result.plan_lines.some(line => /Packing reuse/.test(line)), 'plan lines include the reuse report')
-  assert.ok(result.plan_lines.some(line => /Trip length: 4 days/.test(line)), 'plan lines include the stated duration')
+  assert.ok(result.plan_lines.some(line => /Plan length: 4 days/.test(line)), 'plan lines include the stated duration')
   assert.ok(result.outfit_summaries.every(summary => summary.slot && summary.pieceNames.length >= 3))
 })
 
@@ -239,6 +239,21 @@ test('normalizePlanSlots carries location, date, and stated weather, inheriting 
   assert.equal(slots[0].location, 'Portland, OR', 'a slot without a location inherits the plan location')
   assert.equal(slots[1].location, 'Cambria, CA', 'a slot location overrides the plan location')
   assert.equal(slots[1].statedWeather, '', 'no stated weather when none is given')
+})
+
+test('normalizePlanSlots treats office and client-meeting slots as indoor when the model omits weather', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Office Days', occasion: 'city', activity: 'none', count: 3 },
+    { label: 'Client Meeting', occasion: 'smart casual', activity: 'none', count: 1 },
+    { label: 'Outdoor Client Walk', occasion: 'city', activity: 'walking', count: 1 },
+  ], { fallbackWeather: 'hot', fallbackLocation: 'Walnut Creek, CA' })
+
+  assert.equal(slots[0].statedWeather, 'indoor')
+  assert.equal(slots[0].season, 'indoor')
+  assert.equal(slots[1].statedWeather, 'indoor')
+  assert.equal(slots[1].season, 'indoor')
+  assert.equal(slots[2].statedWeather, '', 'walking/outdoor slots should still use live weather')
+  assert.equal(slots[2].season, 'hot')
 })
 
 test('composeOutfitSet resolves each slot\'s own live forecast and states it per slot in the plan lines', async () => {
@@ -290,6 +305,187 @@ test('a slot with stated weather uses it verbatim and never calls the forecast',
   assert.equal(fetchImpl.callCount(), 0, 'stated per-slot weather must short-circuit before any forecast fetch')
   const card = outfits.find(outfit => outfit.label === 'Gallery Opening')
   assert.equal(card.slotWeather, 'chilly, around 50F')
+})
+
+test('plan_outfit_set office slots use indoor weather even when a hot live forecast is available', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    question: "I need to get dressed for five days at the office next week, and one of those days I'm meeting a client."
+  }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Office Days', occasion: 'city', activity: 'none', count: 2, best_for: 'everyday office wear' },
+      { label: 'Client Meeting', occasion: 'smart casual', activity: 'none', count: 1, best_for: 'professional meet with a client' },
+    ],
+    constraints: { reuse: 'diversify', allow_repeat: ['shoes'] },
+    location: 'Walnut Creek, CA',
+    date_range: { start: '2026-07-20', end: '2026-07-24' },
+    duration_text: '5 days',
+    day_breakdown: '5 workdays at the office + one client meeting.'
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.ok(result.plan_lines.some(line => /^Plan length: 5 days/.test(line)))
+  const weatherLine = result.plan_lines.find(line => line.startsWith('Weather used:'))
+  assert.match(weatherLine, /Office Days — indoor/)
+  assert.match(weatherLine, /Client Meeting — indoor/)
+  assert.doesNotMatch(weatherLine, /live forecast/)
+})
+
+test('client-meeting office plan prefers structured pieces over beachy dress and open-toe wedges', async () => {
+  insertPiece({
+    category: 'dress',
+    name: 'botanical resort maxi dress',
+    colors: ['green'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'botanical floral resort maxi sleeveless',
+    silhouette: 'flowing full skirt',
+    fabric_category: 'viscose',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'dress',
+    name: 'green button down midi dress',
+    colors: ['green'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'soft button down midi dress',
+    silhouette: 'a line',
+    fabric_category: 'viscose',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'dress',
+    name: 'black lace floral midi dress',
+    colors: ['black'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'lace floral midi dress',
+    silhouette: 'soft',
+    fabric_category: 'lace',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'shoes',
+    name: 'tan open toe cork wedge sandals',
+    colors: ['tan'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'open toe cork wedge sandals',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'top',
+    name: 'navy silk button shirt',
+    colors: ['navy'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'polished tailored button shirt',
+    silhouette: 'structured',
+    fabric_category: 'silk',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'bottom',
+    name: 'black tailored straight trousers',
+    colors: ['black'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'tailored office trouser',
+    bottom_shape: 'straight',
+    fabric_category: 'wool',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'shoes',
+    name: 'black pointed leather flats',
+    colors: ['black'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'pointed leather office flats',
+    formality: 'elevated'
+  })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    question: "I need to get dressed for five days at the office next week, and one of those days I'm meeting a client."
+  }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Client Meeting', occasion: 'smart casual', activity: 'none', count: 1, weather: 'indoor', best_for: 'client meeting' }],
+    constraints: { reuse: 'diversify', no_repeat: ['tops'] },
+    duration_text: '1 day',
+    day_breakdown: '1 client meeting'
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  const names = (toolContext.generatedOutfits[0]?.pieces || []).map(piece => piece.name)
+  assert.ok(names.includes('navy silk button shirt') || names.includes('black tailored straight trousers'), `expected a structured office piece, got ${names.join(', ')}`)
+  assert.ok(!names.includes('botanical resort maxi dress'), `beachy dress should not win client meeting: ${names.join(', ')}`)
+  assert.ok(!names.includes('green button down midi dress'), `soft midi dress should not win client meeting: ${names.join(', ')}`)
+  assert.ok(!names.includes('black lace floral midi dress'), `lace floral dress should not win client meeting: ${names.join(', ')}`)
+  assert.ok(!names.includes('tan open toe cork wedge sandals'), `open-toe wedges should not win client meeting: ${names.join(', ')}`)
+})
+
+test('routine office plan demotes botanical and lace dress formulas when structured options exist', async () => {
+  insertPiece({
+    category: 'dress',
+    name: 'colorful botanical print maxi dress',
+    colors: ['green'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'colorful botanical floral maxi dress',
+    silhouette: 'flowing full skirt',
+    fabric_category: 'viscose',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'dress',
+    name: 'black lace floral midi dress',
+    colors: ['black'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'black lace floral midi dress',
+    silhouette: 'soft',
+    fabric_category: 'lace',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'top',
+    name: 'navy silk button shirt',
+    colors: ['navy'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'polished tailored button shirt',
+    silhouette: 'structured',
+    fabric_category: 'silk',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'bottom',
+    name: 'black tailored straight trousers',
+    colors: ['black'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'tailored office trouser',
+    bottom_shape: 'straight',
+    fabric_category: 'wool',
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'shoes',
+    name: 'black pointed leather flats',
+    colors: ['black'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'pointed leather office flats',
+    formality: 'elevated'
+  })
+
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    question: 'I need work outfits for regular office days.'
+  }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Work Day', occasion: 'smart casual', activity: 'none', count: 1, weather: 'indoor', best_for: 'Regular Office Days' }],
+    constraints: { reuse: 'diversify', no_repeat: ['tops'] },
+    duration_text: '1 day',
+    day_breakdown: '1 regular office day'
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  const names = (toolContext.generatedOutfits[0]?.pieces || []).map(piece => piece.name)
+  assert.ok(names.includes('navy silk button shirt') || names.includes('black tailored straight trousers'), `expected a structured office piece, got ${names.join(', ')}`)
+  assert.ok(!names.includes('colorful botanical print maxi dress'), `botanical maxi should not win routine office: ${names.join(', ')}`)
+  assert.ok(!names.includes('black lace floral midi dress'), `lace floral dress should not win routine office: ${names.join(', ')}`)
 })
 
 // --- Build step 4: reuse dial + per-category repeat rules + anchor exemption --

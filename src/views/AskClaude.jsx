@@ -14,7 +14,7 @@ export default function AskClaude() {
   const [activeContext, setActiveContext] = useState(null)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <StylistChat
         initialOutfit={state?.outfit ?? null}
         initialPiece={state?.piece ?? null}

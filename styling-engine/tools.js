@@ -450,7 +450,7 @@ export const STYLIST_TOOLS = [
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. Map dinner/evening-restaurant/night-out use cases to 'evening'." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
-              weather: { type: "string", description: "This slot's weather ONLY when you already KNOW it and it should override the forecast (e.g. an indoor black-tie event, or the user explicitly stated it). For a slot at a different place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
+              weather: { type: "string", description: "This slot's known weather/context when it should override the outdoor forecast. Use `indoor` for climate-controlled slots such as office/work days, client meetings, indoor events, and restaurants, so outdoor heat/cold does not drive the outfit. For a slot at a different outdoor place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
               location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
               date: { type: "string", description: "This slot's specific date as YYYY-MM-DD, when it maps to one day (e.g. the Thursday of a work week), so its own forecast is used rather than the range average. Omit to inherit the plan date_range." },
               best_for: { type: "string", description: "The specific use case this slot covers (defaults to the label)." },
@@ -479,7 +479,7 @@ export const STYLIST_TOOLS = [
             end: { type: "string", description: "Last day, YYYY-MM-DD (defaults to start for a single day)." }
           }
         },
-        duration_text: { type: "string", description: "Stated or inferred plan duration (e.g. '5 days'), when known — shown as the plan's 'Trip length' line." },
+        duration_text: { type: "string", description: "Stated or inferred plan duration (e.g. '5 days'), when known — shown as the plan's duration line." },
         day_breakdown: { type: "string", description: "Short natural breakdown of recurring day/evening needs — shown as the plan's 'Coverage' line." }
       },
       required: ["slots"]
