@@ -338,10 +338,16 @@ That capability generalizes:
 
 ```
 plan_outfit_set({
-  slots: [ { label, occasion, activity, count, register?, location? } ],
-  date_range: { start?, end? },
-  constraints: { maximize_reuse, piece_budget, no_repeat: [category], shared_anchor_ids }
+  slots: [ { label, occasion, activity, count, register?, location?, date? } ],
+  date_range: { start?, end? },          // plan default; slot.date overrides per slot
+  constraints: {
+    reuse: 'maximize' | 'diversify' | 'none',   // signed dial — see shape validation below
+    no_repeat: [category], allow_repeat: [category],
+    piece_budget,
+    shared_anchor_ids                    // anchors are exempt from no_repeat
+  }
 })
+// slot array order is meaningful: it is the wearing sequence
 ```
 
 - **The model decomposes** the request into slots in the tool arguments — this
@@ -355,11 +361,14 @@ plan_outfit_set({
   report) in the shape the client already renders for trip cards.
 - **Per-slot live weather** (added 2026-07-12 after the coastal-microclimate
   miss: a 60°F coast day was composed for inland Paso Robles heat): each slot
-  resolves its own weather via the currently ORPHANED
-  `getWeatherProfileForPlan({ dateRange, location })` in
-  `styling-engine/weather.js` — Open-Meteo, geocoded free-text locations,
-  cached, multi-day aggregation that already supports hot-days/cool-nights
-  swings, and to date called only by its own tests. Slot location defaults to
+  resolves its own weather via `getWeatherProfileForPlan({ dateRange,
+  location })` in `styling-engine/weather.js` — Open-Meteo, geocoded free-text
+  locations, cached, multi-day aggregation that already supports
+  hot-days/cool-nights swings. Both weather functions were built in the spec-4
+  live-weather work (a33347d); `getCurrentWeatherProfile` got attached then
+  (search gating, propose gates) while the plan variant shipped with tests but
+  its product consumer never landed — this step is that consumer. Slot
+  location defaults to
   the trip destination; the model supplies overrides ("drive to the Coast" →
   a coastal town). User-stated weather still wins when given for a slot; the
   forecast fills the gaps and catches microclimates. The plan lines should
@@ -369,10 +378,38 @@ plan_outfit_set({
   diagnostics show the model calls `plan_outfit_set` reliably on planning
   turns — the same evidence-gated retirement rule as the context clauses.
 
+### Shape validation — the contract walked through more than one use case
+
+Done 2026-07-12 before building, so the schema isn't shaped around trips
+alone. Each scenario stress-tests a different dimension; four contract
+changes fell out (already folded into the block above).
+
+| Scenario | What it stress-tests | Verdict / change |
+| --- | --- | --- |
+| Trip packing ("5 days Paso Robles, wineries + hike") | fuzzy slots in a date range, per-slot location weather, reuse maximization | baseline — covered |
+| Work week ("outfits for Mon–Fri, Thursday client-facing") | slots that ARE dates; **reuse inverted** — at home, repeats are the failure, not the win; per-slot register | added `slot.date` (Monday's forecast ≠ Thursday's; a range average is wrong); `reuse` became a signed dial (`maximize` for packing, `diversify` for weeks) with per-category `no_repeat` / `allow_repeat` (tops shouldn't repeat, shoes may) |
+| Event weekend (rehearsal / ceremony / brunch) | mixed objective: suitcase reuse AND marquee distinctness; register escalation | per-category reuse covers it (repeat shoes and layers, never the ceremony dress); `slot.register` already carries the escalation |
+| Capsule building ("10-piece summer capsule") | objective inversion: piece budget is primary, outfits are the proof; no dates at all | `date_range` optional ✓, season-level weather; the plan report must lead with the piece roster + combination count → **report sections are objective-driven**, not hardcoded to "Packing reuse: N" |
+| New-piece integration ("4 outfits around the white pants") | one piece pinned everywhere while supports vary | `shared_anchor_ids` ✓ + explicit rule: anchors are exempt from `no_repeat` (otherwise the two constraints contradict) |
+| Carry-on / laundry cycle ("2 weeks, laundry mid-trip") | wear-count budgets and a reset point in the sequence | deferred to v2 — but "slot array order = wearing sequence" is declared now so a reset marker can slot in later without reshaping |
+| Versatility audit ("which 8 pieces work hardest?") | slotless pure optimization — no occasions to compose for | out of scope for `plan_outfit_set`; if it ever ships it's a `wardrobe_coverage` extension, not a planning call |
+
+**Deferred to v2 (recorded, not designed):** slot-level avoid-lists ("no white
+at the wedding" — feedback memory and conversation handle it today),
+wear-count budgets with laundry resets, slotless optimization.
+
 Build order when picked up: (1) extract `composeOutfitSet` from the trip-slot
-builder, (2) expose the tool + record cards with slot labels/coverage lines,
-(3) wire per-slot weather via `getWeatherProfileForPlan` (slot.location →
-geocode → forecast for the date range; text-stated weather takes precedence),
-(4) prompt: multi-context requests decompose into slots with locations,
-(5) run both paths in parallel with diagnostics, (6) retire the keyword
+builder — **SHIPPED 2026-07-13** (`styling-engine/outfitSetPlanner.js`; both
+pre-route call sites now import it), (2) expose the tool + record cards with
+slot labels/coverage lines — **SHIPPED 2026-07-13** (`plan_outfit_set` in
+tools.js: declared-intent gate, cards recorded with source `plan_outfit_set`
++ source lock, plan lines returned to the model, `planOutfitSetCalls`
+diagnostic; the client renders both planned-set sources through the trip
+presentation), (3) wire per-slot weather via `getWeatherProfileForPlan`
+(slot.location + slot.date or the plan date_range → geocode → forecast;
+text-stated weather takes precedence), (4) implement the reuse dial +
+per-category repeat rules with the anchor exemption, (5) objective-driven
+plan report (reuse report / repeat schedule / piece roster), (6) prompt:
+multi-context requests decompose into slots with locations and dates,
+(7) run both paths in parallel with diagnostics, (8) retire the keyword
 pre-route.

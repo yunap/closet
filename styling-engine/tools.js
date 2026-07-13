@@ -6,6 +6,7 @@ import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
+import { composeOutfitSet, normalizePlanSlots } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind } from './attributes.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -113,6 +114,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       gateExcludedTotal: 0,
       proposeCalls: 0,
       proposeValidationFails: 0,
+      planOutfitSetCalls: 0,
       outfitProseWithoutToolCall: 0,
       zeroResultContradictionBlocks: 0,
       destinationClarificationRetries: 0,
@@ -398,6 +400,35 @@ export const STYLIST_TOOLS = [
         piece_id: { type: "integer", description: "Optional database ID of a specific garment if styling outfits around that piece. If omitted, generates outfits from the whole wardrobe." }
       },
       required: ["occasion", "season"]
+    }
+  },
+  {
+    name: "plan_outfit_set",
+    description: "Compose a coordinated SET of outfits across multiple use-case slots under shared constraints — trip packing, multi-day plans, event weekends. YOU decompose the request into slots (that's judgment: 'mainly wineries, hiking, maybe the coast' → winery days + dinner + hike + optional coast day). The deterministic engine then composes gated outfits per slot, maximizes piece reuse across the whole set, and returns cards plus a plan summary (per-slot coverage lines + a packing-reuse report). Requires declare_intent want:'cards' first. Use this for multi-slot planning turns; use propose_outfit for one specific outfit and generate_outfits for a single-context batch.",
+    input_schema: {
+      type: "object",
+      properties: {
+        slots: {
+          type: "array",
+          description: "The plan's use-case slots, in wearing order. Estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination; one-off use cases usually get count 1. Keep the whole set to 8 or fewer outfits.",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "Short user-facing slot label (e.g. 'Winery Days', 'Dinner Out', 'Coastal Day')." },
+              occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. Map dinner/evening-restaurant/night-out use cases to 'evening'." },
+              activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
+              count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
+              weather: { type: "string", description: "This slot's expected weather ONLY if it differs from the established conditions (e.g. a cooler coastal day on an otherwise hot trip). Omit to inherit the trip weather." },
+              best_for: { type: "string", description: "The specific use case this slot covers (defaults to the label)." },
+              plan_note: { type: "string", description: "Optional one-sentence composer guidance for this slot." }
+            },
+            required: ["label", "occasion"]
+          }
+        },
+        duration_text: { type: "string", description: "Stated or inferred plan duration (e.g. '5 days'), when known — shown as the plan's 'Trip length' line." },
+        day_breakdown: { type: "string", description: "Short natural breakdown of recurring day/evening needs — shown as the plan's 'Coverage' line." }
+      },
+      required: ["slots"]
     }
   },
   {
@@ -1165,6 +1196,73 @@ export async function executeTool(name, args, toolContext = {}) {
         const { note, context_type, context_id } = args
         storeUserCorrection(note, context_type || 'general', context_id)
         return { status: "success", message: "Correction stored successfully." }
+      }
+      case 'plan_outfit_set': {
+        // Same declared-intent contract as the other composing tools (step 4).
+        if (toolContext.declaredIntent?.want !== 'cards') {
+          bumpFreeformDiagnostic(toolContext, 'composeWithoutDeclaredIntent')
+          return {
+            status: "validation_error",
+            message: "No cards intent declared for this turn. Call declare_intent({ want: 'cards' }) first, then call plan_outfit_set again."
+          }
+        }
+        bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls')
+        const tripSummary = (args?.duration_text || args?.day_breakdown)
+          ? {
+              durationText: String(args?.duration_text || '').trim(),
+              dayBreakdown: String(args?.day_breakdown || '').trim()
+            }
+          : null
+        const planSlots = normalizePlanSlots(args?.slots, {
+          fallbackWeather: toolContext.weather || '',
+          fallbackOccasion: toolContext.occasion || 'city',
+          fallbackActivity: toolContext.activity || 'none',
+          tripSummary
+        })
+        if (!planSlots.length) {
+          return {
+            status: "validation_error",
+            message: "plan_outfit_set needs at least one slot with a label. Decompose the request into use-case slots (label + occasion + activity + count) and call again."
+          }
+        }
+        const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+        // Seed with the thread's current outfit set so a replan varies from what
+        // the user already has instead of re-serving the same combinations.
+        // (Thread-state cards carry snake_case piece_ids; the engine's keys read
+        // pieceIds/pieces.)
+        const planSeeds = (Array.isArray(toolContext.currentOutfitSet) ? toolContext.currentOutfitSet : [])
+          .map(outfit => ({ ...outfit, pieceIds: outfit?.pieceIds || outfit?.piece_ids || [] }))
+        const planOutfits = composeOutfitSet({
+          slots: planSlots,
+          question: toolContext.question || '',
+          mood: toolContext.mood || '',
+          allPieces: planPieces,
+          seedOutfits: planSeeds,
+          source: 'plan_outfit_set'
+        })
+        if (!planOutfits.length) {
+          return {
+            status: "error",
+            message: "The engine could not compose a valid outfit set for these slots — the occasion/weather/activity gates may exclude too much. Adjust the slots (or their weather), or fall back to composing individual outfits with propose_outfit."
+          }
+        }
+        toolContext.generatedOutfits = planOutfits
+        if (!toolContext.sourceLocked) {
+          // The client keys its trip-plan presentation off the source flag; lock
+          // it so a later propose_outfit call can't clobber the set's framing.
+          toolContext.source = 'plan_outfit_set'
+          toolContext.sourceLocked = true
+        }
+        return {
+          status: "success",
+          message: `Composed ${planOutfits.length} outfit cards across ${planSlots.length} slots. The cards are already attached to this turn — present THIS set (walk through it per slot and include the plan lines); do not compose another set.`,
+          plan_lines: Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : [],
+          outfit_summaries: planOutfits.map(outfit => ({
+            slot: outfit.label,
+            coverage: outfit.coveragePosition,
+            pieceNames: (outfit.pieces || []).map(piece => piece.name)
+          }))
+        }
       }
       case 'generate_outfits': {
         // Declared-intent gate (step 4): same contract as propose_outfit.
