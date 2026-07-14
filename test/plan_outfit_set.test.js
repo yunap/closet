@@ -698,3 +698,43 @@ test('a formal slot judges a dress by fabric/formality, not print — a silk bot
   assert.ok(names.some(name => name.includes('silk botanical maxi')), `the silk botanical maxi is dressy — print/length must not demote it, got ${names}`)
   assert.ok(!names.some(name => name.includes('jersey')), `the casual jersey dress should be demoted by fabric/formality, got ${names}`)
 })
+
+// --- composeOutfitSet quality fixes (capsule live test) ----------------------
+
+test('a summer plan discourages wool/heavy fabrics on an indoor (weather-neutral) slot', async () => {
+  insertPiece({ category: 'dress', name: 'grey wool knit dress', colors: ['grey'], occasions: ['city', 'evening'], reads_as: 'warm wool knit', fabric_category: 'wool', fabric_weight: 'heavy', length_hits_at: 'knee' })
+  insertPiece({ category: 'dress', name: 'coral silk slip dress', colors: ['coral'], occasions: ['city', 'evening'], reads_as: 'light silk', fabric_category: 'silk', fabric_weight: 'light', length_hits_at: 'knee' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Smart-Casual Evenings', occasion: 'evening', count: 1, weather: 'indoor', best_for: 'summer evening out' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: '10-piece summer capsule', allPieces, source: 'plan_outfit_set' })
+  const names = outfits.flatMap(outfit => (outfit.pieces || []).map(piece => String(piece.name || '').toLowerCase()))
+  assert.ok(!names.some(name => name.includes('wool')), `a summer plan should avoid the wool dress even on an indoor slot, got ${names}`)
+})
+
+test('an outdoor-active slot avoids leather loafers/flats and prefers sneakers', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Outdoor Adventures', occasion: 'casual', activity: 'walking', count: 1, best_for: 'park or market visits, enjoy the outdoors' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: 'summer outings', allPieces, source: 'plan_outfit_set' })
+  const names = outfits.flatMap(outfit => (outfit.pieces || []).map(piece => String(piece.name || '').toLowerCase()))
+  assert.ok(names.some(name => name.includes('sneaker')), `outdoor-active should prefer sneakers, got ${names}`)
+  assert.ok(!names.some(name => name.includes('ballet') || name.includes('mule') || name.includes('loafer')), `outdoor-active should avoid dressy/city shoes, got ${names}`)
+})
+
+test('no outfit stacks an open-knit cardigan top under a cardigan layer (two cardigans)', async () => {
+  insertPiece({ category: 'top', name: 'oatmeal knit buttoned cardigan top', colors: ['cream'], occasions: ['casual', 'city', 'evening'], reads_as: 'open knit cardigan worn as top', fabric_category: 'knit' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Casual City Days', occasion: 'city', activity: 'walking', count: 3, weather: 'cool evening' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: 'city days', allPieces, source: 'plan_outfit_set' })
+  for (const outfit of outfits) {
+    const names = (outfit.pieces || []).map(piece => String(piece.name || '').toLowerCase())
+    const hasOpenKnitTop = names.some(name => name.includes('buttoned cardigan top'))
+    const hasCardiganLayer = names.some(name => name.includes('open cardigan'))
+    assert.ok(!(hasOpenKnitTop && hasCardiganLayer), `no outfit may stack two cardigans, got ${names}`)
+  }
+})
