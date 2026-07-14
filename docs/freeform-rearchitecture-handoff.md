@@ -151,12 +151,12 @@ not keyword-guessed.
   failed before — require evidence, not vibes.
 - **Volatile prompt tail** (~10.4k tokens: feedback memory, controller text) is
   a future cache/size optimization candidate.
-- Known pre-existing failure: `npm test`'s text-matching ratchet fails on two
-  inherited lines (core.js 61/60 from 247031c; rules.js from #36). A task chip
-  exists for annotate-vs-refactor. **Any new code must stay ratchet-net-zero**
-  (no new `.test(`/`.includes(` on the flagged variable names in
-  styling-engine/* or routes/*; `// ratchet-allow: <reason>` for legitimate
-  non-garment string uses).
+- ~~Known pre-existing failure: `npm test`'s text-matching ratchet fails on two
+  inherited lines~~ **REBASELINED (2026-07-14)** — see architecture review
+  finding #2 below for the resolution. `npm test` is green end-to-end again.
+  **Any new code must stay ratchet-net-zero** (no new `.test(`/`.includes(` on
+  the flagged variable names in styling-engine/* or routes/*;
+  `// ratchet-allow: <reason>` for legitimate non-garment string uses).
 
 ## Architecture review — 2026-07-13 (post step 8)
 
@@ -170,16 +170,30 @@ full v1.1 contract. `node --test`: 485/485 pass. Findings, ranked:
 
 1. **The follow-up replan pre-route was never retired** — promoted to the
    Remaining-work list above; the one meaningful architectural leftover.
-2. **`npm test` is permanently red**: the ratchet gate fails on the inherited
-   baseline overage (core.js 61 vs 60, rules.js 119 vs 116) BEFORE
-   `node --test` ever runs, so the suite result is invisible to anyone running
-   `npm test`. Verified 2026-07-13 that the overage is entirely pre-existing
-   (no unannotated `.test(`/`.includes(` added to either file since the
-   handoff commit — recent work stayed ratchet-net-zero). A permanently
-   failing gate protects nothing; do the annotate-vs-rebaseline task chip.
-3. **Dead ternary** in `/ask` (routes/ai.js ~3017):
+2. **`npm test` is permanently red — FIXED (2026-07-14, rebaselined).** The
+   ratchet gate was failing on the inherited baseline overage (core.js 61 vs
+   60, rules.js 119 vs 116) BEFORE `node --test` ever ran, so the suite result
+   was invisible to anyone running `npm test`. Re-verified before fixing:
+   `core.js`/`rules.js` have not been touched since PR #53 (well before this
+   whole re-architecture arc), so the overage was 100% stale, unchanging,
+   inherited debt — not a live annotate-vs-refactor decision, just a baseline
+   file that had drifted from reality. Individually annotating ~180 matched
+   lines with `// ratchet-allow:` across two files neither of us is actively
+   touching would have been high-effort and risky (misjudging even a few lines
+   as "not garment matching" would quietly defeat the gate's real purpose).
+   Chose **rebaseline**: `scratch/ratchet_baseline.json` regenerated from live
+   counts (61/119, `total` 234→238) via the script's own baseline-writer, diffed
+   against the old file to confirm ONLY those two numbers moved (nothing else
+   silently drifted). `npm test` now passes end-to-end (497/497, exit 0) for
+   the first time in this arc. The ratchet still fires on any FUTURE addition
+   beyond this floor — same protective behavior, just an honest baseline.
+3. **Dead ternary — FIXED (2026-07-14).** `/ask` (routes/ai.js ~3030) had
    `source: activePrecompose ? 'whole_wardrobe' : 'whole_wardrobe'` — both
-   branches identical, leftover from the source-lock work. Trivial cleanup.
+   branches identical. `git log -L` on the line traced it to a 2026-06-17
+   commit ("Improve freeform trip outfit planning") that replaced a plain
+   `source: 'whole_wardrobe'` with this ternary, apparently intending real
+   branching that never landed — genuinely dead code, not a deliberate no-op.
+   Simplified to `source: 'whole_wardrobe'`; zero behavior change.
 4. **Where the ongoing cost now lives**: the correctness burden moved from
    routing regexes to `composeOutfitSet`'s scorers — #66–#72 are all
    whack-a-mole in that engine (double cardigans, beachy office looks, denim
