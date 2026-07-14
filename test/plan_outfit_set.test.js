@@ -816,3 +816,15 @@ test('plan_outfit_set infers piece_budget from an "N-piece capsule" question whe
   // Inference fired → the objective-driven ROSTER report (not the packing headline).
   assert.ok(result.plan_lines.some(line => /Piece roster/.test(line)), `budget should be inferred → roster report, got ${JSON.stringify(result.plan_lines)}`)
 })
+
+test('selectCapsuleRoster de-duplicates near-identical pieces (not three black tees)', async () => {
+  // Three near-identical black solid crew tees + one distinct top.
+  for (const suffix of ['A', 'B', 'C']) {
+    insertPiece({ category: 'top', name: `black crew tee ${suffix}`, colors: ['black'], reads_as: 'plain black tee', fabric_category: 'cotton', pattern_type: 'solid', occasions: ['casual', 'city'] })
+  }
+  insertPiece({ category: 'top', name: 'cream linen button shirt', colors: ['cream'], reads_as: 'breezy button shirt', fabric_category: 'linen', pattern_type: 'solid', occasions: ['casual', 'city'] })
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const roster = selectCapsuleRoster(pool, { budget: 10, isSummer: true })
+  const blackTees = roster.filter(piece => String(piece.name || '').toLowerCase().includes('black crew tee'))
+  assert.ok(blackTees.length <= 1, `at most one near-identical black tee should make the roster, got ${blackTees.length}`)
+})

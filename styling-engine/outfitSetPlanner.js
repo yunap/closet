@@ -1099,6 +1099,17 @@ function capsuleQuotas(budget = 10) {
   return { top, bottom, dress, outerwear, shoes }
 }
 
+// A coarse "these two read as the same garment" signature for capsule
+// de-duplication: category + dominant color + garment kind + pattern. Two black
+// solid crew tees collapse to one key; a black tee and a white tee do not.
+function capsuleSimilarityKey(piece = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  const color = String((Array.isArray(piece.colors) ? piece.colors : [])[0] || '').toLowerCase()
+  const kind = group === 'bottom' ? bottomKind(piece) : garmentKind(piece)
+  const pattern = String(piece.pattern_type || '').toLowerCase()
+  return `${group}:${color}:${kind}:${pattern}`
+}
+
 export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false } = {}) {
   const quotas = capsuleQuotas(budget)
   const groups = { top: [], bottom: [], dress: [], outerwear: [], shoes: [] }
@@ -1118,7 +1129,18 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false }
   }
   const roster = []
   for (const [group, count] of Object.entries(quotas)) {
-    for (const piece of groups[group].slice(0, count)) roster.push(piece)
+    // Non-redundancy: fill each category with DISTINCT pieces first (a capsule
+    // of three near-identical black tees is dead weight), backfilling a
+    // near-duplicate only when the quota can't be met with distinct ones.
+    const seen = new Set()
+    const distinct = []
+    const backfill = []
+    for (const piece of groups[group]) {
+      const key = capsuleSimilarityKey(piece)
+      if (seen.has(key)) backfill.push(piece)
+      else { seen.add(key); distinct.push(piece) }
+    }
+    for (const piece of [...distinct, ...backfill].slice(0, count)) roster.push(piece)
   }
   return roster.slice(0, budget)
 }
