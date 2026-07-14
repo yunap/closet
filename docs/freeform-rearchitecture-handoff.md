@@ -216,6 +216,14 @@ selection is single-pass quota, no iterative optimization.
 - **BIGGER, evidence-gated** — true interconnection scoring / a
   combination-maximizing roster (Point 3): decide whether the MVP heuristic is
   enough before building the real subset optimizer.
+- **DEFERRED to the capsule pass (owner said postpone, 2026-07-14 live test)** —
+  shoes. A 14-piece capsule composed with a single pair (black suede lace-ups)
+  worn in every look, and it was SUEDE in a SUMMER capsule. Two issues: (a) no
+  shoe rotation — `reuse:'maximize'` reused one pair and nothing enforces shoe
+  variety across a capsule; the roster quota picks ~3 shoes but composition
+  collapsed to one. (b) Shoe SEASONALITY — this is the already-parked owner
+  ruling (no suede/winter shoes in summer, as a material-based signal, NOT via
+  `fabric_weight`; "do not improvise"). Fix both when we return to the capsule.
 
 ## Live-testing findings so far (why each fix exists)
 
