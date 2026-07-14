@@ -120,13 +120,31 @@ not keyword-guessed.
   cards, no precompose-loss regression. `followupPrerouteEnabled()` now
   defaults OFF; `WARDROBE_FOLLOWUP_PREROUTE=on` restores the legacy replan
   precompose as a reversible fallback (`aiEndpointContracts`'s follow-up
-  precompose test runs with the flag on to guard that path). **Known
-  follow-on bug surfaced by the same canary, NOT fixed here:** a followup that
-  states NEW weather ("add a rainy-day option" on an established hot/summer
-  thread) can still get rejected by the propose gate, which used the
-  thread's established weather instead of the follow-up's stated one —
-  the model recovered with an odd substitute (linen for rain). Orthogonal to
-  the pre-route retirement; queued as the next fix.
+  precompose test runs with the flag on to guard that path). **Follow-on
+  weather-context bug surfaced by the same canary — FIXED (2026-07-14):** a
+  followup stating NEW weather ("add a rainy-day option" on an established
+  hot/summer thread) still got rejected by the propose gate — the model
+  recovered with an odd substitute (linen for rain). Root cause was deeper
+  than "established weather wins": `getCurrentWeatherProfile` (weather.js)
+  ALWAYS attempts a live geocode+forecast lookup whenever a location is known,
+  regardless of any stated season/weather text — that text was only ever a
+  fallback for when live lookup is unavailable. So `search_wardrobe`'s own
+  `weather:"rainy weather"` arg was silently discarded in favor of LIVE
+  weather for the thread's home location (sunny/hot LA in July), and that
+  wrong profile got cached onto `toolContext.weatherProfile` for the rest of
+  the turn, including the `propose_outfit` call. Same failure class as the
+  #56 coastal-microclimate fix and outfitSetPlanner.js's `resolveSlotWeather`
+  precedent ("user-stated weather wins outright... otherwise live forecast"),
+  just never applied to `tools.js`'s two direct `getCurrentWeatherProfile`
+  call sites. Fix: new `resolveStatedOrLiveWeather` helper (tools.js) —
+  `search_wardrobe`'s own `weather` arg and `propose_outfit`'s own `season`
+  arg are each treated as a stated override that short-circuits BEFORE any
+  live lookup is attempted (`weatherSource: 'stated'`); `propose_outfit`'s own
+  stated season now also overrides a `toolContext.weatherProfile` cached by an
+  earlier call this turn, not just a fresh lookup. Established
+  `toolContext.weather`/ambient season text is unchanged (still only a
+  fallback) — this fix is scoped to THIS-CALL stated weather, the literal
+  "the model just told the gate what weather to expect" signal.
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone

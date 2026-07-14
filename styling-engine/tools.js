@@ -1,7 +1,7 @@
 import path from 'path'
 import fs from 'fs'
 import { db, uploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext } from './rules.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
@@ -186,6 +186,25 @@ export function setFreeformWeatherSource(toolContext, source) {
   if (!toolContext) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
   toolContext.freeformDiagnostics.weatherSource = source
+}
+
+// Stated weather (this tool call's own weather/season text) wins outright over a
+// live location lookup — mirrors outfitSetPlanner.js's resolveSlotWeather
+// precedent ("user-stated per-slot weather wins outright... otherwise the
+// slot's own live forecast"). Without this, a followup that states NEW weather
+// ("add a rainy-day option") on a thread whose home location resolves to
+// different live conditions gets silently overridden: live-tested 2026-07-14 —
+// search_wardrobe's own weather:"rainy weather" arg was discarded because
+// toolContext.location resolved live to sunny/hot LA, and the resulting cached
+// profile then made propose_outfit reject the correct rainy-day pieces as "hot
+// weather: insulating piece".
+export async function resolveStatedOrLiveWeather({ statedWeather = '', date = new Date(), location = '', mood = '', fallbackSeason = '', fetchImpl } = {}) {
+  if (statedWeather) {
+    // Short-circuits before any geocode/forecast attempt — a stated override must never be
+    // silently outvoted by a live lookup for the (possibly unrelated) established location.
+    return { ...weatherProfileFromContext({ mood, season: statedWeather }), weatherSource: 'stated' }
+  }
+  return getCurrentWeatherProfile({ date, location, mood, season: fallbackSeason, ...(fetchImpl ? { fetchImpl } : {}) })
 }
 
 export const OUTFIT_ROLES = ['primary_top', 'layer_top', 'primary_bottom', 'layer_bottom', 'dress', 'shoes', 'outerwear', 'accessory']
@@ -715,18 +734,21 @@ export async function executeTool(name, args, toolContext = {}) {
         }
         
         let results = filtered
-        // Spec 4: live weather when a real location is known (this call's arg or carried over on
-        // toolContext from earlier in the turn); resilient fallback to the text heuristic otherwise —
-        // profileRuleFit/weatherFitForPiece consume the same {isHot, isCold} shape either way.
-        // The model's own `location` arg is discarded if it's timezone-shaped rather than a real
-        // place — see looksLikeTimezoneIdentifier above — falling back to the server-injected home
-        // location (toolContext.location) instead, which is never timezone-shaped itself.
+        // Spec 4: THIS call's own `weather` arg is a stated override and wins outright (see
+        // resolveStatedOrLiveWeather above); otherwise live weather when a real location is known
+        // (this call's arg or carried over on toolContext from earlier in the turn), with a
+        // resilient fallback to the text heuristic — profileRuleFit/weatherFitForPiece consume the
+        // same {isHot, isCold} shape either way. The model's own `location` arg is discarded if
+        // it's timezone-shaped rather than a real place — see looksLikeTimezoneIdentifier above —
+        // falling back to the server-injected home location (toolContext.location) instead, which
+        // is never timezone-shaped itself.
         const safeModelLocation = looksLikeTimezoneIdentifier(location) ? '' : (location || '')
-        const resolvedWeather = await getCurrentWeatherProfile({
+        const resolvedWeather = await resolveStatedOrLiveWeather({
+          statedWeather: weatherText || '',
           date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
           location: safeModelLocation || toolContext.location || '',
           mood: toolContext.mood || '',
-          season: weatherText || toolContext.weather || toolContext.season || ''
+          fallbackSeason: toolContext.weather || toolContext.season || ''
         })
         if (toolContext) {
           toolContext.weatherProfile = resolvedWeather
@@ -996,12 +1018,20 @@ export async function executeTool(name, args, toolContext = {}) {
           }
         }
 
-        const resolvedWeather = toolContext.weatherProfile || await getCurrentWeatherProfile({
-          date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
-          location: toolContext.location || '',
-          mood: toolContext.mood || '',
-          season: toolContext.weather || resolvedSeason || ''
-        })
+        // THIS call's own `season` arg is a stated override and wins outright — even over a
+        // toolContext.weatherProfile cached from an earlier tool call this turn (2026-07-14 live
+        // bug: a followup re-proposing for stated new weather still inherited a stale cached
+        // profile and got rejected for pieces that were correct for the weather it just stated).
+        // Only when this call carries no season of its own do we fall back to the turn's cache,
+        // then live/heuristic resolution.
+        const resolvedWeather = season
+          ? await resolveStatedOrLiveWeather({ statedWeather: season, mood: toolContext.mood || '' })
+          : (toolContext.weatherProfile || await resolveStatedOrLiveWeather({
+              date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
+              location: toolContext.location || '',
+              mood: toolContext.mood || '',
+              fallbackSeason: toolContext.weather || resolvedSeason || ''
+            }))
         const hardGateIssues = resolved.flatMap(piece => {
           // A user-requested anchor is the outfit's premise (same rule as the
           // composers' selected-piece bypass): the user asking to wear it
