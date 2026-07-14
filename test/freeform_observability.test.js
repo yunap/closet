@@ -27,6 +27,9 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     planPrerouteComposed: 0,
     planModelCalled: 0,
     planPathOutcome: '',
+    followupEligible: 0,
+    followupPrerouteComposed: 0,
+    followupPathOutcome: '',
     weatherSource: ''
   })
 })
