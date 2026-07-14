@@ -159,7 +159,9 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   // Capsule decomposition (live finding: the model slotted a capsule by garment
   // category — Tops / Bottoms / Shoes — instead of use-case).
   assert.ok(STYLIST_SYSTEM.includes('For a CAPSULE, slot by USE-CASE, NEVER by garment category'))
-  assert.ok(STYLIST_SYSTEM.includes('"10-piece capsule" means ~10 distinct PIECES, not 10 outfits'))
+  assert.ok(STYLIST_SYSTEM.includes('"N-piece capsule" means ~N distinct PIECES, not N outfits'))
+  assert.ok(STYLIST_SYSTEM.includes('ALWAYS set `piece_budget` to the number in "N-piece capsule"'))
+  assert.ok(STYLIST_SYSTEM.includes('weighted toward SEPARATES that recombine'))
   assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
   assert.ok(STYLIST_SYSTEM.includes('as the canonical packing/styling plan for the thread'))
   assert.ok(STYLIST_SYSTEM.includes("one 'propose_outfit' card per entry (verified piece IDs + roles)"))

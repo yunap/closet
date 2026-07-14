@@ -802,3 +802,17 @@ test('a piece_budget capsule composes within budget (distinct pieces <= budget)'
   assert.ok(outfits.length >= 3, 'the capsule should still compose outfits')
   assert.ok(distinctPieceCount(outfits) <= 8, `the enforced capsule must stay within its 8-piece budget, got ${distinctPieceCount(outfits)}`)
 })
+
+test('plan_outfit_set infers piece_budget from an "N-piece capsule" question when the model omits it', async () => {
+  const toolContext = { declaredIntent: { want: 'cards' }, question: 'Help me build a 14-piece summer capsule from my wardrobe' }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Everyday', occasion: 'casual', activity: 'none', count: 2 },
+      { label: 'City Outing', occasion: 'city', activity: 'walking', count: 2 },
+    ],
+    constraints: { reuse: 'maximize' }, // NB: no piece_budget — the model forgot it
+  }, toolContext)
+  assert.equal(result.status, 'success')
+  // Inference fired → the objective-driven ROSTER report (not the packing headline).
+  assert.ok(result.plan_lines.some(line => /Piece roster/.test(line)), `budget should be inferred → roster report, got ${JSON.stringify(result.plan_lines)}`)
+})
