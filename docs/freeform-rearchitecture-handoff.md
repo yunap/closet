@@ -332,6 +332,34 @@ selection is single-pass quota, no iterative optimization.
     "fix looks right in the diff, does nothing at runtime" symptom shows up
     there, check for the same trimmed-pieces cause first.
 
+## Plan-level total-outfit cap trim notice (2026-07-14, PR #89)
+
+Found live-testing the shoe fixes above (PR #88): a 14-piece, 5-slot capsule
+request asked for 10 outfits total (3+2+2+2+1) and only 8 came back — with no
+error, no plan line, nothing telling the user or the model that 2 outfits were
+silently dropped. Root cause: `PLAN_TOTAL_OUTFIT_CAP = 8` in
+`normalizePlanSlots` trims slot `targetOutfits` values (from the back of the
+slots array forward) whenever the requested total exceeds it — this predates
+this session and is unrelated to the shoe fixes; it just happened to be what
+the live test's 10-outfit ask tripped over.
+
+This is a **different cause** from the per-slot coverage-gap lines (capsule
+review Point 2, PR #87): those fire when the WARDROBE can't fill the
+(already-trimmed) count; this fires when the PLAN itself asked for more than
+the cap allows, before the wardrobe was ever consulted. Both can legitimately
+fire for the same slot.
+
+Fix: `normalizePlanSlots` now records the pre-trim count on
+`slot.requestedOutfits` (only set on a slot the cap actually touched — its
+presence IS the trim signal), and `composeOutfitSet` emits a
+`[plan trimmed: "<label>" reduced from N to M looks — the plan asked for more
+outfits than the 8-outfit total across the set allows]` line via
+`describePlanCapTrim()`, using the same `tripPlanLines`/`coverageGaps`
+plumbing PR #87 already built. Verified against the exact live-test slot
+shapes: `Smart Casual Day` and `Beach Day` (both requested 2, cut to 1) now
+report the trim; `Everyday City Outing` and `Gallery Visit` (untouched by the
+cap) correctly report nothing.
+
 ## Live-testing findings so far (why each fix exists)
 
 1. Crochet top proposed as base layer → tags had no opacity; sight was optional

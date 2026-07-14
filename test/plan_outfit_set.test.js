@@ -1069,3 +1069,74 @@ test('season-appropriate shoes are chosen by the piece\'s own season tag, never 
   const coldShoe = (coldOutfits[0]?.pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'shoes')
   assert.equal(coldShoe?.name, 'canvas sneaker', `a cold day should favor the cool-tagged shoe regardless of material, picked ${coldShoe?.name}`)
 })
+
+// --- Plan-level total-outfit cap trim notice ---------------------------------
+
+// Live-test finding (2026-07-14): a 5-slot capsule plan asked for 10 outfits
+// total (3+2+2+2+1); PLAN_TOTAL_OUTFIT_CAP silently trimmed two slots down to
+// 1 look each before composeOutfitSet ever ran, and NOTHING told the user or
+// the model that 2 of the 10 requested outfits were dropped — not an error,
+// not a plan line, nothing. This is a different cause from the coverage-gap
+// lines (capsule review Point 2): those fire when the WARDROBE can't fill the
+// (already-trimmed) count; this fires when the PLAN itself asked for more
+// than the cap allows, regardless of what the wardrobe could have supplied.
+test('normalizePlanSlots records the original count on a slot the total-outfit cap trims', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Everyday City Outing', occasion: 'city', activity: 'walking', count: 3 },
+    { label: 'Casual Evening Out', occasion: 'evening', activity: 'none', count: 2 },
+    { label: 'Smart Casual Day', occasion: 'smart casual', activity: 'none', count: 2 },
+    { label: 'Beach Day', occasion: 'outdoor_daytime_social', activity: 'none', count: 2 },
+    { label: 'Gallery Visit', occasion: 'city', activity: 'walking', count: 1 },
+  ], { fallbackWeather: 'warm' })
+
+  const total = slots.reduce((sum, slot) => sum + slot.targetOutfits, 0)
+  assert.equal(total, PLAN_TOTAL_OUTFIT_CAP, `trimmed total should land exactly on the cap, got ${total}`)
+
+  const byLabel = Object.fromEntries(slots.map(slot => [slot.label, slot]))
+  assert.equal(byLabel['Smart Casual Day'].targetOutfits, 1)
+  assert.equal(byLabel['Smart Casual Day'].requestedOutfits, 2, 'the original ask must survive the trim for reporting')
+  assert.equal(byLabel['Beach Day'].targetOutfits, 1)
+  assert.equal(byLabel['Beach Day'].requestedOutfits, 2)
+  // Untouched slots must NOT carry a requestedOutfits value — that field is
+  // the trim signal itself; describePlanCapTrim treats its presence as "this
+  // slot was cut," so a slot the cap never touched must not set it.
+  assert.equal(byLabel['Everyday City Outing'].requestedOutfits, undefined)
+  assert.equal(byLabel['Gallery Visit'].requestedOutfits, undefined)
+})
+
+test('a plan that exceeds the total-outfit cap reports which slots were trimmed and by how much', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Everyday City Outing', occasion: 'city', activity: 'walking', count: 3, best_for: 'casual city exploration' },
+    { label: 'Casual Evening Out', occasion: 'evening', activity: 'none', count: 2, best_for: 'dinner or drinks outside' },
+    { label: 'Smart Casual Day', occasion: 'smart casual', activity: 'none', count: 2, best_for: 'smart-casual meetings or events' },
+    { label: 'Beach Day', occasion: 'outdoor_daytime_social', activity: 'none', count: 2, best_for: 'relaxed beach or poolside day' },
+    { label: 'Gallery Visit', occasion: 'city', activity: 'walking', count: 1, best_for: 'casual but elevated art event' },
+  ], { fallbackWeather: 'warm' })
+
+  const outfits = await composeOutfitSet({ slots, question: 'capsule', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize', piece_budget: 14 } })
+  const lines = outfits[0]?.tripPlanLines || []
+
+  const smartCasualLine = lines.find(line => line.startsWith('[plan trimmed:') && line.includes('Smart Casual Day'))
+  assert.ok(smartCasualLine, `expected a trim notice for Smart Casual Day, got ${JSON.stringify(lines)}`)
+  assert.match(smartCasualLine, /reduced from 2 to 1 look/)
+
+  const beachLine = lines.find(line => line.startsWith('[plan trimmed:') && line.includes('Beach Day'))
+  assert.ok(beachLine, `expected a trim notice for Beach Day, got ${JSON.stringify(lines)}`)
+  assert.match(beachLine, /reduced from 2 to 1 look/)
+
+  // The slots the cap never touched must not get a spurious trim notice.
+  assert.ok(!lines.some(line => line.startsWith('[plan trimmed:') && line.includes('Everyday City Outing')))
+  assert.ok(!lines.some(line => line.startsWith('[plan trimmed:') && line.includes('Gallery Visit')))
+})
+
+test('a plan within the total-outfit cap reports no trim notice', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Everyday Casual', occasion: 'casual', activity: 'none', count: 2 },
+  ], { fallbackWeather: 'warm' })
+
+  const outfits = await composeOutfitSet({ slots, question: 'a couple of looks', allPieces, source: 'plan_outfit_set' })
+  const lines = outfits[0]?.tripPlanLines || []
+  assert.ok(!lines.some(line => line.startsWith('[plan trimmed:')), `no slot was trimmed, expected no trim notice, got ${JSON.stringify(lines)}`)
+})
