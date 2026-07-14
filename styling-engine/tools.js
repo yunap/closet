@@ -1295,11 +1295,21 @@ export async function executeTool(name, args, toolContext = {}) {
           start: String(args?.date_range?.start || '').trim(),
           end: String(args?.date_range?.end || '').trim()
         }
-        const planSlots = normalizePlanSlots(args?.slots, {
+        // Reject a timezone identifier passed as a location (the model reads
+        // "Time zone: America/Los_Angeles" from context and sometimes hands it in
+        // as the plan/slot location — it's not a place, so geocoding fails and
+        // live weather silently falls back to the heuristic). Same guard
+        // search_wardrobe already applies.
+        const rawPlanLocation = String(args?.location || toolContext.location || '').trim()
+        const fallbackLocation = looksLikeTimezoneIdentifier(rawPlanLocation) ? '' : rawPlanLocation
+        const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
+          slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
+        )
+        const planSlots = normalizePlanSlots(sanitizedSlots, {
           fallbackWeather: toolContext.weather || '',
           fallbackOccasion: toolContext.occasion || 'city',
           fallbackActivity: toolContext.activity || 'none',
-          fallbackLocation: String(args?.location || toolContext.location || '').trim(),
+          fallbackLocation,
           tripSummary
         })
         if (!planSlots.length) {

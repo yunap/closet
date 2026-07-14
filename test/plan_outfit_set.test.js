@@ -856,3 +856,18 @@ test('recordPlanPathDiagnostics records the follow-up dimension', () => {
   assert.equal(preroute.freeformDiagnostics.followupPrerouteComposed, 1)
   assert.equal(preroute.freeformDiagnostics.followupPathOutcome, 'preroute')
 })
+
+test('plan_outfit_set rejects a timezone identifier passed as location (plan and slot)', async () => {
+  const toolContext = { declaredIntent: { want: 'cards' }, question: 'summer capsule' }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'City', occasion: 'city', activity: 'walking', count: 1, location: 'America/Los_Angeles' },
+      { label: 'Dinner', occasion: 'evening', count: 1 },
+    ],
+    location: 'America/Los_Angeles',
+  }, toolContext)
+  assert.equal(result.status, 'success')
+  // No slot should have geocoded a timezone → no "live forecast, America/…" label.
+  const weatherLine = (toolContext.generatedOutfits[0]?.tripPlanLines || []).find(line => line.startsWith('Weather used:')) || ''
+  assert.ok(!/america\/los_angeles/i.test(weatherLine), `a timezone must not become a plan location, got ${weatherLine}`)
+})
