@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db } from '../db.js'
-import { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier } from '../styling-engine/tools.js'
+import { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather } from '../styling-engine/tools.js'
 import { persistFreeformGenerationRun } from '../routes/ai.js'
 import { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, freeformToolLoopFallbackAnswer } from '../styling-engine/provider.js'
 
@@ -555,13 +555,103 @@ test('persistFreeformGenerationRun does not throw when diagnostics are missing',
   assert.doesNotThrow(() => persistFreeformGenerationRun({}))
 })
 
-// Spec 4: search_wardrobe records which weather source it resolved (live vs heuristic) for spec 3's
-// observability. Under NODE_ENV=test with no location, this is always 'heuristic' (see weather.test.js
-// for live-path coverage via a mocked fetchImpl) — this test only verifies the wiring, not live weather.
+// Spec 4: search_wardrobe records which weather source it resolved (stated vs live vs heuristic) for
+// spec 3's observability. This call's own `weather` arg is a stated override (resolveStatedOrLiveWeather)
+// and short-circuits straight to 'stated' without ever attempting live resolution — this test only
+// verifies the wiring, not live weather (see weather.test.js for live-path coverage via a mocked
+// fetchImpl).
 test('executeTool search_wardrobe records weatherSource onto toolContext.freeformDiagnostics', async () => {
   const toolContext = {}
   await executeTool('search_wardrobe', { occasion: 'city', weather: 'hot' }, toolContext)
+  assert.equal(toolContext.freeformDiagnostics.weatherSource, 'stated')
+})
+
+// With no weather arg of its own and no location, resolution falls all the way through to the text
+// heuristic (NODE_ENV=test with no location never hits the network).
+test('executeTool search_wardrobe falls back to the heuristic weatherSource without a stated weather arg', async () => {
+  const toolContext = {}
+  await executeTool('search_wardrobe', { occasion: 'city' }, toolContext)
   assert.equal(toolContext.freeformDiagnostics.weatherSource, 'heuristic')
+})
+
+// 2026-07-14 live bug: on a thread with an established hot/summer weather context, a followup
+// stating NEW weather ("add a rainy-day option") still resolved live weather for the home location
+// (sunny/hot LA) instead of honoring the stated text, so propose_outfit wrongly rejected
+// rainy-appropriate pieces (jeans, a cardigan) as "hot weather: insulating piece". This proves the
+// fix at the source: resolveStatedOrLiveWeather must short-circuit to the stated text and never even
+// attempt the live lookup — mirrors outfitSetPlanner.js's resolveSlotWeather precedent and the
+// weather.test.js mocked-fetchImpl convention.
+test('resolveStatedOrLiveWeather short-circuits to the stated text and never calls fetch, even with a location set', async () => {
+  let calls = 0
+  const fetchImpl = async (url) => {
+    calls += 1
+    // If this were ever reached, it would resolve a hot summer profile — the opposite of "rainy".
+    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 34.05, longitude: -118.24 }] }) }
+    return { ok: true, json: async () => ({ daily: { temperature_2m_max: [95], temperature_2m_min: [70] } }) }
+  }
+  const profile = await resolveStatedOrLiveWeather({
+    statedWeather: 'rainy weather',
+    location: 'Los Angeles',
+    fetchImpl
+  })
+  assert.equal(profile.weatherSource, 'stated')
+  assert.equal(profile.isHot, false, '"rainy weather" must not inherit the hot classification a live LA lookup would have returned')
+  assert.equal(calls, 0, 'a stated override must short-circuit before any geocode/forecast call')
+})
+
+test('resolveStatedOrLiveWeather falls through to live resolution when no weather is stated', async () => {
+  const fetchImpl = async (url) => {
+    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 34.05, longitude: -118.24 }] }) }
+    return { ok: true, json: async () => ({ daily: { temperature_2m_max: [95], temperature_2m_min: [70] } }) }
+  }
+  const profile = await resolveStatedOrLiveWeather({ location: 'Los Angeles', fetchImpl })
+  assert.equal(profile.weatherSource, 'live')
+  assert.equal(profile.isHot, true)
+})
+
+// End-to-end reproduction of the observable symptom: a stated followup weather, once cached onto
+// toolContext.weatherProfile by search_wardrobe, must let propose_outfit accept pieces that are
+// correct for THAT weather (not the piece that would only be safe in heat).
+test('executeTool propose_outfit accepts cold/rainy-appropriate pieces after a stated-weather search_wardrobe call', async () => {
+  const blousonTopId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs black blouson top', 'top', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'blouson top', '', 'cotton', 'medium', '["cotton"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const cardiganId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs grey knit draped cardigan', 'outerwear', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'knit cardigan', '', 'wool', 'medium', '["wool"]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const jeansId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs dark blue slim straight jeans', 'bottom', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'straight jeans', '', 'denim', 'medium', '["cotton"]', 'everyday', '', '{"bottom_kind":"pants"}')
+  `).run().lastInsertRowid
+  const loafersId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('obs black slip-on loafers 2', 'shoes', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'black slip-on loafers', '', 'leather', 'medium', '["leather"]', 'everyday', '', '{}', 'flat', 'medium')
+  `).run().lastInsertRowid
+
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], occasion: 'city', season: 'current season' }
+    // Simulates the model correctly stating the followup's new weather, as it did live.
+    await executeTool('search_wardrobe', { occasion: 'city', activity: 'none', weather: 'rainy weather' }, toolContext)
+    assert.equal(toolContext.weatherProfile?.isHot, false)
+
+    const result = await executeTool('propose_outfit', {
+      label: 'Urban Rainy Comfort',
+      pieces: [
+        { id: blousonTopId, role: 'primary_top' },
+        { id: cardiganId, role: 'outerwear' },
+        { id: jeansId, role: 'primary_bottom' },
+        { id: loafersId, role: 'shoes' }
+      ],
+      occasion_context: 'rainy city day',
+      why_it_works: 'A blouson top, cardigan, and jeans are appropriate for a rainy day, not a hot one.'
+    }, toolContext)
+
+    assert.equal(result.status, 'success', `expected the rainy-appropriate outfit to be accepted, got: ${JSON.stringify(result)}`)
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?, ?)').run(blousonTopId, cardiganId, jeansId, loafersId)
+  }
 })
 
 test('executeTool propose_outfit rejects hot-weather gated pieces using weather resolved by prior search', async () => {
