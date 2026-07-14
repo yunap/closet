@@ -150,6 +150,24 @@ not keyword-guessed.
    plans now display as `Outfit plan` / `Plan length`, and the stylist route gets
    its own fixed-height app shell so chat history scrolls independently and the
    composer no longer pins itself to the viewport floor on short threads.
+7. Wedding-weekend + capsule live tests (post step 8). Register escalation
+   (`slot.register`) fixed the ceremony (no more denim), but two follow-on
+   corrections fell out: (a) the escalation scorer had demoted a *silk dressy*
+   botanical maxi purely for the print words "botanical"/"maxi" — owner ruling:
+   print and hemline are NOT formality, so demotion now keys on the piece's own
+   `formality` + fabric (jersey/terry/fleece/canvas) + casual shoe TYPES, never
+   print/length (#68). (b) Step 8 verified: the capsule now routes to
+   `plan_outfit_set` with `piece_budget` and the roster/over-budget report — BUT
+   the model decomposed it by garment CATEGORY (Tops/Bottoms/Shoes slots) and ran
+   4 pieces over budget. Fix (prompt-only, owner's call): a capsule slots by
+   USE-CASE not category, "10-piece" = ~10 PIECES not 10 outfits, re-call tighter
+   if the report says over budget. NOTE: `piece_budget` is still a soft report,
+   not hard composition enforcement — engine-side roster capping was explicitly
+   deferred. Still-open follow-ups: the OFFICE scorer keeps the same
+   print-by-name demotion (#66) that #68 removed from the register scorer — same
+   flaw, deliberately left pending an owner ruling; and `indoor` neutralizes
+   weather so summer-inappropriate heavy fabrics (a wool dress) can appear in a
+   summer office slot (indoor could still respect season for fabric weight).
 
 ## High-leverage test scenarios (run in this order)
 
