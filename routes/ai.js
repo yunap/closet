@@ -3080,9 +3080,17 @@ router.post('/ask', async (req, res) => {
     // keyword pre-route match / actually compose a set, and did the model call
     // plan_outfit_set itself. This accumulates the evidence the step-8 pre-route
     // retirement is gated on (surfaced in the debug block below).
+    // followupEligible mirrors maybePrecomposeStructuredFollowupForAsk's guards:
+    // a non-new_request turn, no active piece/outfit, that already holds an
+    // outfit set — the exact turns the follow-up replan front-runs the model on.
+    const followupEligible = (req.body.conversationMode || 'new_request') !== 'new_request' &&
+      !(req.body.outfit || req.body.pieceId || req.body.piece || req.body.activeContext?.type === 'piece' || req.body.activeContext?.type === 'outfit') &&
+      Array.isArray(req.body.generatedOutfits) && req.body.generatedOutfits.length > 0
     recordPlanPathDiagnostics(toolContext, {
       keywordMatched: isTravel || isBroadOutfitPlanningText(req.body.question || ''),
-      prerouteComposed: Boolean(precomposed?.structuredOutfits?.length)
+      prerouteComposed: Boolean(precomposed?.structuredOutfits?.length),
+      followupEligible,
+      followupComposed: Boolean(followupPrecomposed?.structuredOutfits?.length)
     })
 
     // Spec 3: log this turn's freeform diagnostics (gate exclusions, propose_outfit validation

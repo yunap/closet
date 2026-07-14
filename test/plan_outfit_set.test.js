@@ -19,7 +19,7 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { executeTool, classifyPlanPath, recordPlanPathDiagnostics } = await import('../styling-engine/tools.js')
+const { executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics } = await import('../styling-engine/tools.js')
 const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, PLAN_TOTAL_OUTFIT_CAP } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
@@ -827,4 +827,32 @@ test('selectCapsuleRoster de-duplicates near-identical pieces (not three black t
   const roster = selectCapsuleRoster(pool, { budget: 10, isSummer: true })
   const blackTees = roster.filter(piece => String(piece.name || '').toLowerCase().includes('black crew tee'))
   assert.ok(blackTees.length <= 1, `at most one near-identical black tee should make the roster, got ${blackTees.length}`)
+})
+
+// --- Follow-up replan path diagnostics (step 8's second half) ----------------
+
+test('classifyFollowupPath distinguishes the pre-route front-run from model self-handling', () => {
+  assert.equal(classifyFollowupPath({ eligible: false }), '', 'non-followup turns are n/a')
+  assert.equal(classifyFollowupPath({ eligible: true, prerouteComposed: true }), 'preroute')
+  assert.equal(classifyFollowupPath({ eligible: true, modelPlanned: true }), 'model_plan')
+  assert.equal(classifyFollowupPath({ eligible: true, modelProposed: true }), 'model_propose')
+  assert.equal(classifyFollowupPath({ eligible: true }), 'model_prose')
+  // The pre-route front-running wins the label even if the model also acted.
+  assert.equal(classifyFollowupPath({ eligible: true, prerouteComposed: true, modelPlanned: true }), 'preroute')
+})
+
+test('recordPlanPathDiagnostics records the follow-up dimension', () => {
+  // Follow-up turn where the pre-route abstained and the model self-planned —
+  // the model_plan evidence the retirement is gated on.
+  const modelHandled = { freeformDiagnostics: { planOutfitSetCalls: 1 } }
+  recordPlanPathDiagnostics(modelHandled, { followupEligible: true, followupComposed: false })
+  assert.equal(modelHandled.freeformDiagnostics.followupEligible, 1)
+  assert.equal(modelHandled.freeformDiagnostics.followupPrerouteComposed, 0)
+  assert.equal(modelHandled.freeformDiagnostics.followupPathOutcome, 'model_plan')
+
+  // Follow-up turn where the pre-route front-ran the model.
+  const preroute = {}
+  recordPlanPathDiagnostics(preroute, { followupEligible: true, followupComposed: true })
+  assert.equal(preroute.freeformDiagnostics.followupPrerouteComposed, 1)
+  assert.equal(preroute.freeformDiagnostics.followupPathOutcome, 'preroute')
 })

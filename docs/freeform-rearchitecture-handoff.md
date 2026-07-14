@@ -124,7 +124,14 @@ not keyword-guessed.
   set specifically so replans vary. Recommended play: same as step 8 —
   parallel diagnostics → live evidence → retire behind the same flag. (No
   recorded decision says this branch was deliberately kept; if it was, record
-  that here instead.)
+  that here instead.) **Diagnostics SHIPPED (evidence phase, like step-8 build
+  7):** `recordPlanPathDiagnostics` now also records `followupEligible`,
+  `followupPrerouteComposed`, and a `followupPathOutcome` (`classifyFollowupPath`)
+  in the debug block — `preroute` (the replan front-ran the model) /
+  `model_plan` / `model_propose` / `model_prose` / `''` (not a followup turn).
+  Watch `followupPathOutcome` in "Search & validation details": a steady stream
+  of `model_plan` / `model_propose` on followup turns where the pre-route
+  abstained is the green light to retire it behind `WARDROBE_PLAN_PREROUTE`.
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone

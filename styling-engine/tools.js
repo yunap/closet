@@ -125,6 +125,11 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       planPrerouteComposed: 0,
       planModelCalled: 0,
       planPathOutcome: '',
+      // Follow-up replan path (step 8's still-live second half; see
+      // classifyFollowupPath).
+      followupEligible: 0,
+      followupPrerouteComposed: 0,
+      followupPathOutcome: '',
       weatherSource: ''
     }
   }
@@ -146,15 +151,33 @@ export function classifyPlanPath({ keywordMatched = false, prerouteComposed = fa
   return 'not_planning'
 }
 
-export function recordPlanPathDiagnostics(toolContext, { keywordMatched = false, prerouteComposed = false } = {}) {
+// The FOLLOW-UP replan path — step 8's still-live second half. On a followup
+// turn that already holds an outfit set, maybePrecomposeStructuredFollowupForAsk
+// front-runs the model with an UNCONSTRAINED composeOutfitSet replan (no flag,
+// no constraints). This classifies what actually happened so the retirement is
+// evidence-gated like the initial pre-route: a steady stream of 'model_plan' /
+// 'model_propose' on turns where the pre-route abstained is the green light.
+export function classifyFollowupPath({ eligible = false, prerouteComposed = false, modelPlanned = false, modelProposed = false } = {}) {
+  if (!eligible) return '' // not a followup-with-an-existing-set turn
+  if (prerouteComposed) return 'preroute' // the followup pre-route seeded a replan (front-ran the model)
+  if (modelPlanned) return 'model_plan' // model self-handled via plan_outfit_set (the retirement win)
+  if (modelProposed) return 'model_propose' // model self-handled via propose_outfit
+  return 'model_prose' // model answered without composing a set
+}
+
+export function recordPlanPathDiagnostics(toolContext, { keywordMatched = false, prerouteComposed = false, followupEligible = false, followupComposed = false } = {}) {
   if (!toolContext) return
   bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls', 0) // ensure the diagnostics object exists
   const diagnostics = toolContext.freeformDiagnostics
   const modelCalled = (diagnostics.planOutfitSetCalls || 0) > 0
+  const modelProposed = (diagnostics.proposeCalls || 0) > 0
   diagnostics.planKeywordMatched = keywordMatched ? 1 : 0
   diagnostics.planPrerouteComposed = prerouteComposed ? 1 : 0
   diagnostics.planModelCalled = modelCalled ? 1 : 0
   diagnostics.planPathOutcome = classifyPlanPath({ keywordMatched, prerouteComposed, modelCalled })
+  diagnostics.followupEligible = followupEligible ? 1 : 0
+  diagnostics.followupPrerouteComposed = followupComposed ? 1 : 0
+  diagnostics.followupPathOutcome = classifyFollowupPath({ eligible: followupEligible, prerouteComposed: followupComposed, modelPlanned: modelCalled, modelProposed })
 }
 
 // Spec 4: records whether weather resolved live or fell back to the text heuristic, for spec 3's
