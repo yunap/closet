@@ -686,7 +686,18 @@ function tripOutfitOfficeRegisterScore(outfit = {}, slot = {}) {
   return { score, hardRejects }
 }
 
-function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) {
+// An outdoor-ACTIVE slot (a hike, a park/market wander, "outdoor adventures") is
+// not a winery: it wants sneakers/practical shoes and rugged casual pieces, not
+// leather loafers and city-casual. outdoor_daytime_social alone can't tell a
+// winery from a hike, so read the slot's own words + a hiking activity.
+function isOutdoorActivePlanSlot(slot = {}) {
+  if (slot.activity === 'hiking') return true
+  const text = [slot?.label, slot?.bestFor, slot?.coverage, slot?.planNote].filter(Boolean).join(' ').toLowerCase()
+  if (/\b(winery|wineries|gallery|museum|dinner|restaurant|wedding|ceremony)\b/.test(text)) return false // ratchet-allow: slot-place classifier, not garment matching
+  return /\b(hike|hiking|trail|trek|park|nature|outdoor|outdoors|adventure|adventures|market|sightsee|sightseeing|walk in|hills?|trailhead)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
+}
+
+function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSummerContext = false } = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
   const bottom = pieces.find(piece => wardrobeCategoryGroup(piece) === 'bottom')
@@ -696,6 +707,7 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) 
   const isWalking = slot.activity === 'walking'
   const isDinner = isTripDinnerSlot(slot)
   const isWinery = slot.occasion === 'outdoor_daytime_social'
+  const isOutdoorActive = isOutdoorActivePlanSlot(slot)
   const isDayWalking = isWalking && !isDinner
   // When the forecast is live, it is authoritative — the slot.season text may
   // still carry the trip-level weather (e.g. an inland "hot, 90F") that must NOT
@@ -791,6 +803,51 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {} } = {}) 
   const registerFit = tripOutfitRegisterEscalationScore(outfit, slot)
   score += registerFit.score
   hardRejects.push(...registerFit.hardRejects)
+
+  // Summer keeps discouraging warm fabrics even when the slot's weather is
+  // neutral (an indoor summer evening still shouldn't be all wool): a live-hot
+  // slot already filters these, but an `indoor` slot in a summer plan does not.
+  if (isSummerContext) {
+    for (const piece of pieces) {
+      if (fabricWeight(piece) === 'heavy' || tripPieceHasStructuredValue(piece, ['wool', 'cashmere', 'fleece', 'corduroy', 'tweed', 'flannel', 'heavy_knit', 'chunky'])) {
+        score -= 22
+      }
+    }
+  }
+
+  // No double open-knit layer: an open/cardigan-style knit TOP under a cardigan
+  // outerwear reads as two cardigans (the live capsule bug). Woven button-ups
+  // and plain knit tanks under a cardigan are fine — this only fires when the
+  // top is itself an open KNIT layer.
+  if (layer && top) {
+    const layerIsOpenKnit = garmentKind(layer) === 'cardigan' || tripPieceHasStructuredValue(layer, ['cardigan', 'open_cardigan', 'duster', 'kimono', 'wrap'])
+    const topIsOpenKnit = tripPieceHasStructuredValue(top, ['knit', 'sweater']) &&
+      tripPieceHasStructuredValue(top, ['cardigan', 'open', 'open_front', 'buttoned', 'overshirt', 'kimono', 'wrap', 'duster'])
+    if (layerIsOpenKnit && topIsOpenKnit) {
+      score -= 30
+      hardRejects.push('two open cardigan/knit layers')
+    }
+  }
+
+  // Outdoor-active slots go rugged: sneakers/practical, never leather loafers or
+  // dressy city shoes; lean casual, not silk/dressy.
+  if (isOutdoorActive && shoe) {
+    if (tripShoeMatchesAny(shoe, ['loafer', 'loafers', 'slip-on', 'slip-ons', 'slip on', 'mule', 'mules', 'heel', 'heels', 'dress shoe', 'dress shoes', 'dress flat', 'dress flats', 'ballet flat', 'ballet flats'])) {
+      score -= 40
+      hardRejects.push('leather loafers/dress shoes too city-casual for an outdoor-active slot')
+    }
+    if (tripShoeMatchesAny(shoe, ['sneaker', 'sneakers', 'trainer', 'trainers', 'athletic', 'sport sandal', 'sport sandals', 'walking flat', 'walking flats', 'hiking', 'canvas'])) {
+      score += 22
+    }
+  }
+  if (isOutdoorActive) {
+    for (const piece of pieces) {
+      if (tripPieceHasStructuredValue(piece, ['silk', 'satin', 'lace', 'chiffon', 'sheer', 'delicate']) || piece?.formality === 'dressy') {
+        score -= 12
+      }
+    }
+  }
+
   score += tripOutfitAestheticGravityScore(outfit)
 
   return {
@@ -981,6 +1038,10 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
   const usedKeys = seeded.usedKeys
   const usedTopBottom = seeded.usedTopBottom
   const { reuse: reuseMode, noRepeat: noRepeatCats, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
+  // A summer plan keeps discouraging warm fabrics on indoor (weather-neutral)
+  // slots, where the forecast can't. Text-based so it only fires when the plan
+  // is explicitly summer — a trip's per-slot live weather handles its own slots.
+  const isSummerContext = /\bsummer\b/i.test(`${question} ${mood}`)
   // Set-scoped piece bookkeeping for the reuse dial + no_repeat. usedPieceIds
   // seeds from any prior set (a replan) so novelty is measured against what the
   // user already has; the per-category map only accumulates within this
@@ -1102,7 +1163,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
         const finalOutfit = withEveningLayerIfUseful(repaired, allPieces, slot)
         return {
           outfit: finalOutfit,
-          fit: tripSlotFitScore(finalOutfit, slot, { weatherProfile })
+          fit: tripSlotFitScore(finalOutfit, slot, { weatherProfile, isSummerContext })
         }
       })
       .filter(item => tripOutfitKey(item.outfit))
