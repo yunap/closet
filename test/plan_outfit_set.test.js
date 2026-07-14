@@ -488,6 +488,63 @@ test('routine office plan demotes botanical and lace dress formulas when structu
   assert.ok(!names.includes('black lace floral midi dress'), `lace floral dress should not win routine office: ${names.join(', ')}`)
 })
 
+// Same owner ruling as #68 (register-escalation scorer), applied to the OFFICE
+// scorer: print and hemline are NOT formality signals. The office scorer used
+// to demote any 'botanical'/'floral'/'lace'/'resort'/'maxi' dress by NAME —
+// wrongly penalizing a genuinely dressy, structured, silk piece for merely
+// having a floral print. Judges by the piece's OWN formality tag and fabric
+// instead: isolated dress-vs-dress so the result can't be explained away by
+// stronger competing separates (unlike the fixture above, which always had
+// strong separates available and would pass either way).
+test('a routine office slot judges a dress by fabric/formality, not print — an elevated silk botanical dress is kept, a casual jersey one is demoted', async () => {
+  insertPiece({
+    category: 'dress',
+    name: 'silk botanical sheath dress',
+    colors: ['navy'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'structured silk botanical sheath dress',
+    silhouette: 'sheath',
+    fabric_category: 'silk',
+    // 'elevated', not 'dressy' — city/smart-casual's register ceiling is
+    // 'elevated' (a separate, pre-existing gate, unrelated to this fix); a
+    // 'dressy'-tagged piece is excluded before it ever reaches the office
+    // scorer, which would silently pass this test for the wrong reason.
+    formality: 'elevated'
+  })
+  insertPiece({
+    category: 'dress',
+    name: 'grey jersey shift dress',
+    colors: ['grey'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'casual jersey shift dress',
+    silhouette: 'relaxed',
+    fabric_category: 'jersey',
+    formality: 'everyday'
+  })
+  insertPiece({
+    category: 'shoes',
+    name: 'black block heel pumps',
+    colors: ['black'],
+    occasions: ['city', 'smart-casual'],
+    reads_as: 'block heel office pumps',
+    formality: 'elevated'
+  })
+  // Clear the seeded separates (tops/bottoms) so the composer can't build a
+  // 4-piece top+bottom+shoes+layer outfit to sidestep the comparison this test
+  // is isolating — it must choose between the two dresses on their own merits.
+  db.prepare("DELETE FROM pieces WHERE category IN ('top', 'bottom')").run()
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Work Day', occasion: 'smart casual', activity: 'none', count: 1, weather: 'indoor', best_for: 'Regular Office Days' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: 'office days', allPieces, source: 'plan_outfit_set' })
+  assert.ok(outfits.length >= 1)
+  const names = outfits.flatMap(outfit => (outfit.pieces || []).map(piece => String(piece.name || '').toLowerCase()))
+  assert.ok(names.some(name => name.includes('silk botanical sheath')), `the elevated silk sheath dress must not be demoted for its botanical print, got ${names}`)
+  assert.ok(!names.some(name => name.includes('jersey shift')), `the casual jersey dress should still be demoted by fabric/formality, got ${names}`)
+})
+
 // --- Build step 4: reuse dial + per-category repeat rules + anchor exemption --
 
 test('normalizePlanConstraints parses the reuse dial, maps category words, and applies the anchor / allow_repeat rules', () => {
