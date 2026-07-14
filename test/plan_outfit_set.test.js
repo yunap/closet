@@ -999,3 +999,73 @@ test('a fully-covered slot reports no coverage gap', async () => {
   const gapLine = (toolContext.generatedOutfits[0]?.tripPlanLines || []).find(line => line.startsWith('[missing wardrobe gap:'))
   assert.equal(gapLine, undefined, `a fully-covered slot should not report a gap, got ${JSON.stringify(toolContext.generatedOutfits[0]?.tripPlanLines)}`)
 })
+
+// --- Shoe rotation + season-appropriate shoes (capsule deferred item) -------
+
+// Live-test finding (2026-07-14): a 14-piece capsule composed with a single
+// pair of shoes worn in every look. Root cause: reuse:'maximize' scored ANY
+// already-used piece as reuse "savings," so once a shoe was picked, reusing it
+// scored higher than any alternative shoe on every later pass and the roster's
+// other shoe options never got picked at all. Packing-light reuse still makes
+// sense for tops/bottoms/outerwear (fewer garments to carry); shoes aren't a
+// packing cost (you bring the pair regardless) and repeating one pair across a
+// whole capsule reads as an oversight. Fix: score 'maximize' reuse on non-shoe
+// pieces only, and break ties toward whichever roster shoe has been used least.
+test('reuse: maximize rotates through the roster\'s shoes instead of repeating one pair for the whole set', async () => {
+  // Controlled roster: one color_anchor-qualifying top+bottom combo (see the
+  // coverage-gap tests above for why an all-plain fixture would qualify for
+  // NONE of the whole-wardrobe composer's missions and yield zero candidates),
+  // paired with three equally valid, equally neutral shoes.
+  db.prepare("DELETE FROM pieces WHERE category IN ('top', 'bottom', 'shoes', 'outerwear')").run()
+  insertPiece({ category: 'top', name: 'olive tee', colors: ['olive'], reads_as: 'olive tee', fabric_category: 'cotton', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'plain black trousers', colors: ['black'], reads_as: 'plain black trousers', bottom_shape: 'straight', fabric_category: 'cotton', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'white sneakers', colors: ['white'], reads_as: 'white sneakers', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'tan flats', colors: ['tan'], reads_as: 'tan flats', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'black loafers', colors: ['black'], reads_as: 'black loafers', occasions: ['casual', 'city'] })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Days', occasion: 'city', activity: 'none', count: 3 },
+  ], { fallbackWeather: 'warm' })
+
+  const outfits = await composeOutfitSet({ slots, question: 'capsule', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize' } })
+  assert.equal(outfits.length, 3)
+  const shoeIds = outfits.map(outfit => (outfit.pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'shoes')?.id)
+  assert.equal(new Set(shoeIds).size, 3, `all 3 roster shoes should rotate across the set, got ${JSON.stringify(shoeIds)}`)
+})
+
+// Owner correction (2026-07-14): an earlier framing of this same live-test
+// finding assumed "suede" itself should be treated as a cold-weather signal.
+// That was wrong — suede pumps and suede hiking boots both exist, and a
+// material name alone says nothing about season. The wardrobe's own `season`
+// tag ('warm'/'cool'/'year-round', set per piece by the owner) is the actual
+// signal to use. Also proves the rehydration fix: candidate generation trims
+// outfit.pieces to {id, name, category, photo, worn_photo} before scoring, so
+// without rehydrating full pieces first, `shoe.season` would be undefined and
+// this scorer could never fire regardless of which piece is "more correct."
+test('season-appropriate shoes are chosen by the piece\'s own season tag, never by material name', async () => {
+  db.prepare("DELETE FROM pieces WHERE category IN ('top', 'bottom', 'shoes', 'outerwear')").run()
+  insertPiece({ category: 'top', name: 'olive tee', colors: ['olive'], reads_as: 'olive tee', fabric_category: 'cotton', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'plain black trousers', colors: ['black'], reads_as: 'plain black trousers', bottom_shape: 'straight', fabric_category: 'cotton', occasions: ['casual', 'city'] })
+  // A suede shoe explicitly tagged WARM (a suede pump can absolutely be a
+  // summer shoe) should win a hot day over a canvas shoe tagged COOL — the
+  // opposite of what a material-word rule ("suede = cold weather") would pick.
+  insertPiece({ category: 'shoes', name: 'suede pump', colors: ['tan'], reads_as: 'suede pump', fabric_category: 'suede', season: 'warm', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'canvas sneaker', colors: ['white'], reads_as: 'canvas sneaker', fabric_category: 'canvas', season: 'cool', occasions: ['casual', 'city'] })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+
+  const hotSlots = normalizePlanSlots([
+    { label: 'Hot Day', occasion: 'city', activity: 'none', count: 1, weather: 'hot, 95F' },
+  ], { fallbackWeather: 'warm' })
+  const hotOutfits = await composeOutfitSet({ slots: hotSlots, question: 'what to wear', allPieces, source: 'plan_outfit_set' })
+  const hotShoe = (hotOutfits[0]?.pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  assert.equal(hotShoe?.name, 'suede pump', `a hot day should favor the warm-tagged shoe regardless of material, picked ${hotShoe?.name}`)
+
+  const coldSlots = normalizePlanSlots([
+    { label: 'Cold Day', occasion: 'city', activity: 'none', count: 1, weather: 'cold, 30F' },
+  ], { fallbackWeather: 'cool' })
+  const coldOutfits = await composeOutfitSet({ slots: coldSlots, question: 'what to wear', allPieces, source: 'plan_outfit_set' })
+  const coldShoe = (coldOutfits[0]?.pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  assert.equal(coldShoe?.name, 'canvas sneaker', `a cold day should favor the cool-tagged shoe regardless of material, picked ${coldShoe?.name}`)
+})

@@ -280,19 +280,57 @@ selection is single-pass quota, no iterative optimization.
   PR #77.
 - ~~**NEXT** — per-slot coverage gaps (Point 2)~~ — **FIXED**, this PR (see
   full writeup above).
-- **NEXT** — shoe rotation + shoe seasonality (deferred pair below) — owner
-  confirmed 2026-07-14 to continue with capsule items next.
+- ~~**NEXT** — shoe rotation + shoe seasonality~~ — **FIXED** (2026-07-14,
+  same day, follow-up PR). See the DEFERRED entry below for the resolution —
+  including an owner correction to the original ruling made mid-implementation.
 - **BIGGER, evidence-gated** — true interconnection scoring / a
   combination-maximizing roster (Point 3): decide whether the MVP heuristic is
   enough before building the real subset optimizer. Not yet greenlit.
-- **DEFERRED to the capsule pass (owner said postpone, 2026-07-14 live test)** —
-  shoes. A 14-piece capsule composed with a single pair (black suede lace-ups)
-  worn in every look, and it was SUEDE in a SUMMER capsule. Two issues: (a) no
-  shoe rotation — `reuse:'maximize'` reused one pair and nothing enforces shoe
-  variety across a capsule; the roster quota picks ~3 shoes but composition
-  collapsed to one. (b) Shoe SEASONALITY — this is the already-parked owner
-  ruling (no suede/winter shoes in summer, as a material-based signal, NOT via
-  `fabric_weight`; "do not improvise"). Fix both when we return to the capsule.
+- ~~**DEFERRED to the capsule pass**~~ — **FIXED.** A 14-piece capsule composed
+  with a single pair (black suede lace-ups) worn in every look, and it was
+  SUEDE in a SUMMER capsule. Two issues, both now fixed in
+  `styling-engine/outfitSetPlanner.js`:
+  - **(a) No shoe rotation.** Root cause: `reuse:'maximize'`'s sort scored ANY
+    already-used piece as reuse "savings," so once a shoe was picked, reusing
+    it scored higher than any roster alternative on every later pass — the
+    roster's other 2-3 shoe options never got picked at all. Fix: `maximize`
+    now scores packing reuse on non-shoe pieces only (`nonShoeOverlapCount`)
+    and breaks ties toward whichever roster shoe has been used least so far
+    (`shoeUseCount`) — tops/bottoms still pack light, but shoes rotate.
+  - **(b) Shoe seasonality — owner correction mid-implementation.** The
+    original ruling recorded here ("no suede/winter shoes in summer, as a
+    material-based signal... do not improvise") was walked back by the owner
+    before it was ever built: *"I never meant for all suede shoes to be
+    banned in summer or for hiking. There are some suede hiking boots, and
+    there are some suede pumps. Let's just use season and occasion
+    appropriate shoes."* A material name says nothing about season on its
+    own. Fix: a new `tripShoeSeasonScore()` checks the piece's own `season`
+    tag (`warm`/`cool`/`year-round`, the field the owner already tags each
+    piece with in `PieceForm`) against the slot's hot/cold weather — never
+    the material/fabric words. No material-word matching of any kind.
+  - **Bonus find while wiring (b), bigger than either shoe issue:** proving
+    the season check required tracing why it silently had zero effect, which
+    surfaced that `outfit.pieces` throughout this whole scoring pipeline had
+    been trimmed to `{id, name, category, photo, worn_photo}` since
+    `candidateObjectFromPieces`/`normalizeWholeWardrobeOutfitObject` in
+    `rules.js` — *before* any of this file's scoring runs. Every structured
+    check downstream (`formality`, `fabric_category`, `colors`,
+    `pattern_type`, now `season`) had been silently seeing `undefined`.
+    Confirmed live with a temporary debug print: `pieceOfficePolishScore`'s
+    `formality` check (added in #86 specifically to stop judging register by
+    name/print) was `undefined` on every call, even inside #86's own test —
+    that test still passed only because the fixture dress's NAME happened to
+    contain the word "jersey," the exact print/name-matching pattern #86 was
+    meant to eliminate. Fixed with a `rehydrateOutfitPieces()` step that maps
+    `outfit.pieces` back to the full objects in the slot's `allowedPieces`
+    pool by id, run immediately before scoring in `composeOutfitSet`. Full
+    suite (503/503) stayed green after this change — no other test's
+    expected outcome depended on the dead checks staying dead. **Scope
+    boundary:** `buildWholeWardrobeCandidateOutfits`/`candidateObjectFromPieces`
+    is also called from 3 sites in `routes/ai.js` (outside `plan_outfit_set`)
+    — those were NOT touched or audited for the same bug; if a similar
+    "fix looks right in the diff, does nothing at runtime" symptom shows up
+    there, check for the same trimmed-pieces cause first.
 
 ## Live-testing findings so far (why each fix exists)
 

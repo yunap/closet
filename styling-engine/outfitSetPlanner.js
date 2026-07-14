@@ -469,6 +469,20 @@ function isDinnerShoeRegister(piece = {}) {
   return tripShoeMatchesAny(piece, ['mule', 'mules', 'heel', 'heels', 'sandal', 'sandals'])
 }
 
+// Season-appropriate shoes, by the piece's OWN season tag — never by material
+// name. A material like suede can be a summer pump or a winter boot; there is
+// no such thing as "suede is a cold-weather material" as a general rule
+// (owner correction, 2026-07-14, walking back an earlier material-based
+// framing of this same gap). The wardrobe's own `season` tag ('warm'/'cool'/
+// 'year-round') is the actual signal the owner tags each piece with, so use
+// that directly instead of guessing from fabric/construction words.
+function tripShoeSeasonScore(shoe = {}, { isHotDay = false, isColdDay = false } = {}) {
+  const season = String(shoe?.season || '').toLowerCase()
+  if (season === 'cool' && isHotDay) return -24
+  if (season === 'warm' && isColdDay) return -24
+  return 0
+}
+
 function tripPieceFabricBreathabilityScore(piece = {}, { isHotDay = false } = {}) {
   let score = 0
   const weight = fabricWeight(piece)
@@ -760,6 +774,7 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSumme
   let score = 0
 
   if (!shoe) hardRejects.push('missing shoes')
+  if (shoe) score += tripShoeSeasonScore(shoe, { isHotDay, isColdDay })
   if (isHotNonDinner && dress && fabricWeight(dress) === 'heavy') {
     score -= 90
     hardRejects.push('heavy dress too warm for hot daytime slot')
@@ -950,6 +965,24 @@ function chooseEveningLayerForOutfit(outfit, allPieces = [], slot = {}) {
     .filter(item => item.fit.accepted && item.fit.score >= baseScore + 6)
     .sort((a, b) => b.fit.score - a.fit.score)
   return options[0]?.candidate || outfit
+}
+
+// Candidate generation (buildWholeWardrobeCandidateOutfits -> candidateObjectFromPieces
+// in rules.js) trims outfit.pieces down to {id, name, category, photo, worn_photo} for
+// the eventual card shape. Every scorer below this point in the file reads structured
+// fields that only exist on the full DB row -- formality, fabric_category, colors,
+// season, pattern_type -- and against the trimmed shape those checks silently see
+// undefined and no-op. (Confirmed live: pieceOfficePolishScore's formality check, added
+// in #86 specifically to stop judging register by name/print, was never actually
+// firing -- its test still passed only because a fixture dress's NAME happened to
+// contain a fabric word ("jersey"), the exact print/name-matching pattern #86 was
+// meant to eliminate.) Rehydrate from the slot's own allowed-pieces pool (by id) before
+// any scoring runs, so register/office/season/etc. scorers see real data.
+function rehydrateOutfitPieces(outfit, pool = []) {
+  if (!outfit || !Array.isArray(outfit.pieces) || !outfit.pieces.length) return outfit
+  const byId = new Map(pool.map(piece => [Number(piece.id), piece]))
+  const pieces = outfit.pieces.map(piece => byId.get(Number(piece.id)) || piece)
+  return { ...outfit, pieces }
 }
 
 function withEveningLayerIfUseful(outfit, allPieces = [], slot = {}) {
@@ -1228,6 +1261,26 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
     }
     return count
   }
+  // 'maximize' packs light by rewarding reuse of ANY already-worn piece — but
+  // scored that way, shoes never rotate: once a pair is picked, reusing it adds
+  // MORE overlap than any alternative shoe, so it wins every subsequent pass and
+  // the whole capsule ends up in one pair. Shoes are the one category that isn't
+  // "packing" savings (you bring the pair either way) and where repetition
+  // across a multi-day capsule reads as an oversight rather than an intent.
+  // Score packing reuse on non-shoe pieces only, and break ties toward whichever
+  // roster shoe has been used LEAST so far.
+  const nonShoeOverlapCount = outfit => {
+    let count = 0
+    for (const { id, group } of outfitCategoryPairs(outfit)) {
+      if (group !== 'shoes' && !anchorIds.has(id) && usedPieceIds.has(id)) count += 1
+    }
+    return count
+  }
+  const shoeUseCounts = new Map()
+  const shoeUseCount = outfit => {
+    const shoeId = outfitCategoryPairs(outfit).find(({ group }) => group === 'shoes')?.id
+    return shoeId ? (shoeUseCounts.get(shoeId) || 0) : 0
+  }
   const anchorPresence = outfit => {
     if (!anchorIds.size) return 0
     let count = 0
@@ -1241,6 +1294,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       usedPieceIds.add(id)
       if (!usedPieceIdsByCategory.has(group)) usedPieceIdsByCategory.set(group, new Set())
       usedPieceIdsByCategory.get(group).add(id)
+      if (group === 'shoes') shoeUseCounts.set(id, (shoeUseCounts.get(id) || 0) + 1)
     }
   }
   const slotWeather = []
@@ -1312,7 +1366,8 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
     }).outfits
     const scoredOutfits = [...ranked, ...localOutfits]
       .map(outfit => {
-        const repaired = applyComfortFootwearRepair(outfit, allowedPieces, comfortConstraint, {
+        const hydrated = rehydrateOutfitPieces(outfit, allowedPieces)
+        const repaired = applyComfortFootwearRepair(hydrated, allowedPieces, comfortConstraint, {
           weatherProfile,
           occasion: slot.occasion,
           mood: mood || question,
@@ -1364,7 +1419,11 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       if (!pool.length) pool = [best]
       // 2) Signed reuse dial within that pool.
       if (reuseMode === 'maximize') {
-        return [...pool].sort((a, b) => overlapCount(b.outfit) - overlapCount(a.outfit) || b.fit.score - a.fit.score)[0]
+        return [...pool].sort((a, b) =>
+          nonShoeOverlapCount(b.outfit) - nonShoeOverlapCount(a.outfit) ||
+          shoeUseCount(a.outfit) - shoeUseCount(b.outfit) ||
+          b.fit.score - a.fit.score
+        )[0]
       }
       if (reuseMode === 'diversify') {
         return [...pool].sort((a, b) => overlapCount(a.outfit) - overlapCount(b.outfit) || b.fit.score - a.fit.score)[0]
