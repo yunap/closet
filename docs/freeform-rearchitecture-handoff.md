@@ -100,6 +100,25 @@ not keyword-guessed.
   hard composition
   enforcement — the `maximize` dial is what actually shrinks the roster;
   hard-cap enforcement is a possible follow-up.
+- **Retire the FOLLOW-UP replan pre-route — step 8's unfinished second half**
+  (found in the 2026-07-13 architecture review, below).
+  `maybePrecomposeStructuredFollowupForAsk` (routes/ai.js) runs
+  unconditionally — it does NOT check `shouldEngageAskPrecompose` or the
+  `WARDROBE_PLAN_PREROUTE` flag. On any turn the client classifies as
+  `followup`, on a thread that already holds an outfit set, the app still
+  front-runs the model: it calls `planFreeformUseCases` (the fragile
+  JSON-scraping LLM planner step 6 was meant to retire) and composes an
+  UNCONSTRAINED set via `composeOutfitSet` — no reuse dial, no constraints,
+  none of `plan_outfit_set`'s intelligence. Because `classifyChatTurn`
+  classifies nearly everything as `followup` once thread memory exists (the
+  spec-10 ruling, deliberate), this sits on the highest-traffic path of any
+  multi-turn conversation and can clobber a model-planned, constraint-carrying
+  set with a constraint-free replan. The model already has what it needs to
+  own these turns — `plan_outfit_set` seeds from the thread's current outfit
+  set specifically so replans vary. Recommended play: same as step 8 —
+  parallel diagnostics → live evidence → retire behind the same flag. (No
+  recorded decision says this branch was deliberately kept; if it was, record
+  that here instead.)
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone
@@ -112,6 +131,42 @@ not keyword-guessed.
   (no new `.test(`/`.includes(` on the flagged variable names in
   styling-engine/* or routes/*; `// ratchet-allow: <reason>` for legitimate
   non-garment string uses).
+
+## Architecture review — 2026-07-13 (post step 8)
+
+Full read-through of the shipped system against the plan, after the 8-step
+build completed. Verdict: **the architecture is the designed one and the
+inversion is real** — all five pillars verifiable in code, turn contract
+matches the step-5 design exactly (truth → context → delivery, Set-based
+per-clause retry budget, declaration authoritative), both keyword pre-routes
+retired by default behind the reversible flag, `plan_outfit_set` carries the
+full v1.1 contract. `node --test`: 485/485 pass. Findings, ranked:
+
+1. **The follow-up replan pre-route was never retired** — promoted to the
+   Remaining-work list above; the one meaningful architectural leftover.
+2. **`npm test` is permanently red**: the ratchet gate fails on the inherited
+   baseline overage (core.js 61 vs 60, rules.js 119 vs 116) BEFORE
+   `node --test` ever runs, so the suite result is invisible to anyone running
+   `npm test`. Verified 2026-07-13 that the overage is entirely pre-existing
+   (no unannotated `.test(`/`.includes(` added to either file since the
+   handoff commit — recent work stayed ratchet-net-zero). A permanently
+   failing gate protects nothing; do the annotate-vs-rebaseline task chip.
+3. **Dead ternary** in `/ask` (routes/ai.js ~3017):
+   `source: activePrecompose ? 'whole_wardrobe' : 'whole_wardrobe'` — both
+   branches identical, leftover from the source-lock work. Trivial cleanup.
+4. **Where the ongoing cost now lives**: the correctness burden moved from
+   routing regexes to `composeOutfitSet`'s scorers — #66–#72 are all
+   whack-a-mole in that engine (double cardigans, beachy office looks, denim
+   at ceremonies). Expected: it's now the only place deterministic code makes
+   taste judgments. If the scorer patch rate doesn't taper, the
+   evidence-gated future move is letting the model pick pieces per slot while
+   the engine enforces only constraints (reuse, budget, gates). Watch the
+   patch rate; don't act on vibes.
+5. **Deletion candidates once evidence accumulates**: the context clauses and
+   the flag-preserved legacy precompose machinery (`USE_CASE_PLANNER_SYSTEM`,
+   `planFreeformUseCases`, both `maybePrecompose*` functions). Carrying dead
+   layers indefinitely is where this codebase's orphan code came from (one
+   such layer was already deleted once, 2026-07-09 reachability audit).
 
 ## Live-testing findings so far (why each fix exists)
 
