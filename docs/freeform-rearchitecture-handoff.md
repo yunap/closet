@@ -90,10 +90,15 @@ not keyword-guessed.
   (`isTravelOrPackingRequest`) stays until trip turns show the same self-routing;
   `WARDROBE_BROAD_PLAN_PREROUTE=on` restores the legacy broad-planning precompose
   as a reversible fallback. Remaining: retire the travel pre-route once trip
-  turns show `model_only`; retire the context clauses (below). NB: `piece_budget` drives the REPORT, not
-  hard composition
-  enforcement — the `maximize` dial is what actually shrinks the roster;
-  hard-cap enforcement is a possible follow-up.
+  turns show `model_only`; retire the context clauses (below). Capsule builder
+  SHIPPED: `piece_budget` is now ENFORCED, not just reported — a budget ≥ 6
+  triggers `selectCapsuleRoster`, which curates ~budget versatile pieces with
+  category coverage (a summer capsule floats in shorts) and the slots compose
+  ONLY from that roster, so the distinct-piece count lands within budget. Below
+  the floor it stays a soft report (can't cover top+bottom+shoes). Paired with
+  per-slot scorer tweaks (casual register-down, athletic demote, summer
+  light-layer) from the same capsule live test. Model-decomposition guidance
+  (slot by use-case, not garment category) is prompt-side (#70).
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone

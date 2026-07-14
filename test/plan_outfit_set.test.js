@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { executeTool, classifyPlanPath, recordPlanPathDiagnostics } = await import('../styling-engine/tools.js')
-const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, PLAN_TOTAL_OUTFIT_CAP } = await import('../styling-engine/outfitSetPlanner.js')
+const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, PLAN_TOTAL_OUTFIT_CAP } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
@@ -773,4 +773,32 @@ test('a summer daytime slot does not add a superfluous layer', async () => {
   const outfits = await composeOutfitSet({ slots, question: '10-piece summer capsule', allPieces, source: 'plan_outfit_set' })
   const names = outfits.flatMap(outfit => (outfit.pieces || []).map(piece => String(piece.name || '').toLowerCase()))
   assert.ok(!names.some(name => name.includes('cardigan')), `a summer daytime slot should not stack a cardigan, got ${names}`)
+})
+
+// --- Path 1: real capsule builder (piece_budget enforcement) ----------------
+
+test('selectCapsuleRoster curates within budget, covers categories, and includes shorts for summer', async () => {
+  insertPiece({ category: 'bottom', name: 'beige cotton shorts', colors: ['beige'], occasions: ['casual', 'city'], fabric_category: 'cotton', fabric_weight: 'light', length_hits_at: 'above-knee' })
+  insertPiece({ category: 'top', name: 'heavy wool turtleneck', colors: ['grey'], occasions: ['casual', 'city'], fabric_category: 'wool', fabric_weight: 'heavy' })
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const roster = selectCapsuleRoster(pool, { budget: 10, isSummer: true })
+  assert.ok(roster.length <= 10, `roster must stay within budget, got ${roster.length}`)
+  const groups = new Set(roster.map(piece => wardrobeCategoryGroup(piece)))
+  assert.ok(groups.has('top') && groups.has('bottom') && groups.has('shoes'), `roster needs category coverage, got ${[...groups]}`)
+  const names = roster.map(piece => String(piece.name || '').toLowerCase())
+  assert.ok(names.some(name => name.includes('shorts')), `a summer capsule roster should include shorts, got ${names}`)
+  assert.ok(!names.some(name => name.includes('wool')), `a summer capsule roster should skip the wool turtleneck, got ${names}`)
+})
+
+test('a piece_budget capsule composes within budget (distinct pieces <= budget)', async () => {
+  insertPiece({ category: 'bottom', name: 'beige cotton shorts', colors: ['beige'], occasions: ['casual', 'city'], fabric_category: 'cotton', fabric_weight: 'light', length_hits_at: 'above-knee' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Everyday Casual', occasion: 'casual', activity: 'walking', count: 2, best_for: 'everyday' },
+    { label: 'City Outing', occasion: 'city', activity: 'walking', count: 2, best_for: 'city' },
+    { label: 'Casual Dinner', occasion: 'city', count: 2, best_for: 'relaxed dinner' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: '10-piece summer capsule', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize', piece_budget: 8 } })
+  assert.ok(outfits.length >= 3, 'the capsule should still compose outfits')
+  assert.ok(distinctPieceCount(outfits) <= 8, `the enforced capsule must stay within its 8-piece budget, got ${distinctPieceCount(outfits)}`)
 })
