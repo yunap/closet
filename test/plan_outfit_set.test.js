@@ -928,3 +928,74 @@ test('plan_outfit_set rejects a timezone identifier passed as location (plan and
   const weatherLine = (toolContext.generatedOutfits[0]?.tripPlanLines || []).find(line => line.startsWith('Weather used:')) || ''
   assert.ok(!/america\/los_angeles/i.test(weatherLine), `a timezone must not become a plan location, got ${weatherLine}`)
 })
+
+// --- Per-slot coverage gaps (capsule review Point 2) --------------------------
+
+// A slot the wardrobe can't fill used to just come back thin (fewer cards, no
+// explanation) or entirely absent, with no deterministic signal for the model
+// to notice or explain. These prove composeOutfitSet now surfaces an explicit
+// "[missing wardrobe gap: ...]" plan line (the model's existing, established
+// convention for gaps) for both the "not enough variety" and "nothing at all"
+// cases, and stays silent when a slot IS fully covered.
+
+test('a slot that needs more looks than the wardrobe supports reports a variety coverage gap', async () => {
+  // Exactly one valid top+bottom+shoes combo — no way to produce 3 distinct looks.
+  // The top needs a focal color (olive) to qualify for the whole-wardrobe composer's
+  // color_anchor mission — an all-plain/neutral combo qualifies for none of the 5
+  // curated missions and produces zero candidates, which would test total failure
+  // instead of the "not enough variety" case this test is after.
+  insertPiece({ category: 'top', name: 'olive tee', colors: ['olive'], reads_as: 'olive tee', fabric_category: 'cotton', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'plain black trousers', colors: ['black'], reads_as: 'plain black trousers', bottom_shape: 'straight', fabric_category: 'cotton', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'plain white sneakers', colors: ['white'], reads_as: 'plain white sneakers', occasions: ['casual', 'city'] })
+  db.prepare("DELETE FROM pieces WHERE category IN ('top', 'bottom', 'shoes') AND name NOT IN ('olive tee', 'plain black trousers', 'plain white sneakers')").run()
+
+  const toolContext = { declaredIntent: { want: 'cards' }, question: 'thin wardrobe test' }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Everyday Casual', occasion: 'casual', activity: 'none', count: 3, weather: 'indoor' }],
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  const gapLine = (toolContext.generatedOutfits[0]?.tripPlanLines || []).find(line => line.startsWith('[missing wardrobe gap:'))
+  assert.ok(gapLine, `expected a coverage gap line, got ${JSON.stringify(toolContext.generatedOutfits[0]?.tripPlanLines)}`)
+  assert.match(gapLine, /Everyday Casual/)
+  assert.match(gapLine, /needed 3 distinct looks but the wardrobe only supports/)
+})
+
+test('a slot the wardrobe cannot fill at all reports a "no candidate" coverage gap, without dropping OTHER slots that DID compose', async () => {
+  // City Days composes normally; Evening Formal has no piece that can clear the
+  // 'formal' register ceiling, so nothing can be assembled for it.
+  insertPiece({ category: 'top', name: 'plain blue shirt', colors: ['blue'], reads_as: 'plain blue shirt', fabric_category: 'cotton', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'plain grey trousers', colors: ['grey'], reads_as: 'plain grey trousers', bottom_shape: 'straight', fabric_category: 'cotton', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'plain grey sneakers', colors: ['grey'], reads_as: 'plain grey sneakers', occasions: ['casual', 'city'] })
+  // Remove ALL other seeded tops/bottoms/shoes/outerwear, not just shoes — leftover
+  // seeded pieces tagged occasions: ['city', 'evening'] (black silk blouse, flowy
+  // midi skirt) can still combine with the surviving neutral shoe to produce an
+  // evening outfit, since a piece's 'occasions' field isn't itself a hard shoe gate.
+  db.prepare("DELETE FROM pieces WHERE category IN ('top', 'bottom', 'shoes', 'outerwear') AND name NOT IN ('plain blue shirt', 'plain grey trousers', 'plain grey sneakers')").run()
+
+  const toolContext = { declaredIntent: { want: 'cards' }, question: 'partial wardrobe gap test' }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'City Days', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' },
+      { label: 'Evening Formal', occasion: 'evening', activity: 'none', count: 1, register: 'formal', weather: 'indoor' },
+    ],
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  const cityOutfit = toolContext.generatedOutfits.find(outfit => outfit.label === 'City Days')
+  assert.ok(cityOutfit, 'the fillable slot should still compose despite the other slot failing')
+  const gapLine = (toolContext.generatedOutfits[0]?.tripPlanLines || []).find(line => line.startsWith('[missing wardrobe gap:'))
+  assert.ok(gapLine, `expected a coverage gap line, got ${JSON.stringify(toolContext.generatedOutfits[0]?.tripPlanLines)}`)
+  assert.match(gapLine, /Evening Formal/)
+  assert.ok(!/City Days/.test(gapLine), 'the fillable slot must not also be reported as a gap')
+})
+
+test('a fully-covered slot reports no coverage gap', async () => {
+  const toolContext = { declaredIntent: { want: 'cards' }, question: 'well-stocked wardrobe test' }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Everyday Casual', occasion: 'casual', activity: 'none', count: 1, weather: 'indoor' }],
+  }, toolContext)
+  assert.equal(result.status, 'success')
+  const gapLine = (toolContext.generatedOutfits[0]?.tripPlanLines || []).find(line => line.startsWith('[missing wardrobe gap:'))
+  assert.equal(gapLine, undefined, `a fully-covered slot should not report a gap, got ${JSON.stringify(toolContext.generatedOutfits[0]?.tripPlanLines)}`)
+})

@@ -222,10 +222,44 @@ that translation, the four points map to our actual code as:
    / activity gates). Only `capsuleVersatilityScore` carries its own
    summer-fabric weighting, and it's a soft RANK, not a gate — worth watching,
    not the "two detectors disagree" bug class.
-2. **Per-occasion coverage with explicit gaps — PARTIAL.** Each slot IS a target
-   occasion and structural validity is reused (`isOutfitStructurallyValid`), but
-   we do NOT surface per-slot coverage gaps: a slot the roster can't fill just
-   goes thin, no `[missing wardrobe gap: elevated top]`. **Gap (medium).**
+2. **Per-occasion coverage with explicit gaps — FIXED (2026-07-14, this PR).**
+   `composeOutfitSet` (`styling-engine/outfitSetPlanner.js`) now tracks, per
+   slot, how many distinct outfits it managed to compose (`slotChoices.length`)
+   against how many were requested (`targetOutfits`) and how many candidates
+   even existed pre-selection (`scoredOutfits.length`), and emits a
+   `describeSlotCoverageGap()` line into that slot's `tripPlanLines` via the
+   existing `attachTripPlanMetadata` report-building path — the SAME
+   `[missing wardrobe gap: …]` bracket convention the model already uses in
+   prose (`styling-engine/prompts.js`), so this is the engine proactively
+   emitting it deterministically instead of leaving it to the model to notice.
+   Two distinct cases, deliberately NOT collapsed into one message: (a) some
+   candidates existed but not enough distinct ones cleared the gates → "needed
+   N distinct looks but the wardrobe only supports M"; (b) zero candidates at
+   all → "no candidate outfit could be assembled." A wrong specific guess at
+   WHICH category is missing (top vs shoes vs weather-appropriate anything)
+   would be worse than an honest general gap note, so the message names the
+   slot and points at "a category," not a specific piece type.
+   **Scope boundary, left as-is on purpose:** if EVERY slot in a multi-slot
+   plan fails outright, `attachTripPlanMetadata`'s early return
+   (`if (!tripOutfits.length) return outfits`) discards `coverageGaps` before
+   they're ever attached, since there's no outfit object left to hang the line
+   on — that total-failure case still falls back to `tools.js`'s existing
+   generic `plan_outfit_set` error message. Only worth revisiting if a
+   total-failure report becomes a real complaint; per-slot gaps (the actual
+   Point 2 ask — SOME slots come back thin while others are fine) are covered.
+   **Test-fixture gotcha found building this:** an all-plain/neutral minimal
+   wardrobe (e.g. one white tee + black trousers + white sneakers) qualifies
+   for NONE of the whole-wardrobe composer's 5 curated "missions"
+   (`qualifiesWholeWardrobeMission` in `rules.js`) and produces ZERO
+   candidates — not a bug, a pre-existing property of mission-gated candidate
+   generation. A minimal fixture needs at least one piece carrying a "focal
+   color" (olive, rust, terracotta, etc.) to qualify for `color_anchor`, the
+   cheapest mission to satisfy by hand. Separately, a piece's `occasions` tag
+   is NOT itself a hard per-shoe gate — leftover seeded pieces with
+   `occasions: ['city','evening']` can still combine with an unrelated neutral
+   shoe to accidentally compose an "evening" outfit; a fixture aiming for
+   "zero candidates for occasion X" needs ALL other tops/bottoms/shoes removed,
+   not just the ones in the target category.
 3. **Combinatorics: valid = structural AND coherent — DIVERGES.** Our builder
    does NOT count or maximize valid combinations; `selectCapsuleRoster` is
    top-N-by-per-piece-versatility + category quotas — a PROXY for "pairs with
@@ -242,14 +276,15 @@ The swap-and-optimize "dropped a load-bearing piece" warning is N/A — our
 selection is single-pass quota, no iterative optimization.
 
 **Plan (agreed with owner):**
-- **NOW** — non-redundancy in `selectCapsuleRoster` (Point 4): dedup
-  near-identical pieces (same category + dominant color + garment kind + pattern),
-  backfilling a near-dupe only when the quota can't be met with distinct pieces.
-- **NEXT** — per-slot coverage gaps (Point 2): surface `[missing wardrobe gap: …]`
-  when the roster can't cover a slot's occasion, instead of a thin slot.
+- ~~**NOW** — non-redundancy in `selectCapsuleRoster` (Point 4)~~ — **FIXED**,
+  PR #77.
+- ~~**NEXT** — per-slot coverage gaps (Point 2)~~ — **FIXED**, this PR (see
+  full writeup above).
+- **NEXT** — shoe rotation + shoe seasonality (deferred pair below) — owner
+  confirmed 2026-07-14 to continue with capsule items next.
 - **BIGGER, evidence-gated** — true interconnection scoring / a
   combination-maximizing roster (Point 3): decide whether the MVP heuristic is
-  enough before building the real subset optimizer.
+  enough before building the real subset optimizer. Not yet greenlit.
 - **DEFERRED to the capsule pass (owner said postpone, 2026-07-14 live test)** —
   shoes. A 14-piece capsule composed with a single pair (black suede lace-ups)
   worn in every look, and it was SUEDE in a SUMMER capsule. Two issues: (a) no
