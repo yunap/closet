@@ -183,6 +183,22 @@ function describeSlotCoverageGap(slot = {}, { requestedCount = 0, composedCount 
   return `[missing wardrobe gap: "${label}" needed ${requestedCount} distinct look${requestedCount === 1 ? '' : 's'} but the wardrobe only supports ${composedCount} — not enough variety for the full rotation]`
 }
 
+// Distinct from describeSlotCoverageGap: that one fires when the WARDROBE
+// can't fill a slot's requested count. This one fires when the PLAN itself
+// asked for more outfits than PLAN_TOTAL_OUTFIT_CAP allows across the whole
+// set, so normalizePlanSlots silently trimmed the slot's count before the
+// wardrobe was ever asked — a live capsule test asked for 10 outfits across 5
+// slots and got 8 with no signal anywhere that 2 were dropped. Both can fire
+// for the same slot (the cap trims it AND the wardrobe still can't fill the
+// reduced count) — they describe different causes and are both true.
+function describePlanCapTrim(slot = {}) {
+  const requested = Number(slot?.requestedOutfits) || 0
+  const actual = Number(slot?.targetOutfits) || 0
+  if (!requested || requested <= actual) return ''
+  const label = slot?.label || slot?.bestFor || 'this use case'
+  return `[plan trimmed: "${label}" reduced from ${requested} to ${actual} look${actual === 1 ? '' : 's'} — the plan asked for more outfits than the ${PLAN_TOTAL_OUTFIT_CAP}-outfit total across the set allows]`
+}
+
 function buildCoverageGapLines(coverageGaps = []) {
   return (Array.isArray(coverageGaps) ? coverageGaps : []).filter(Boolean)
 }
@@ -1464,6 +1480,8 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       candidateCount: scoredOutfits.length
     })
     if (gapMessage) coverageGaps.push(gapMessage)
+    const trimMessage = describePlanCapTrim(slot)
+    if (trimMessage) coverageGaps.push(trimMessage)
     slotChoices.forEach((choice, slotIndex) => {
       picked.push(annotateTripOutfit(choice, slot, picked.length, {
         slotIndex,
@@ -1525,6 +1543,13 @@ export function normalizePlanSlots(rawSlots = [], {
     const slot = normalized[index]
     const trim = Math.min(slot.targetOutfits - 1, total - PLAN_TOTAL_OUTFIT_CAP)
     if (trim > 0) {
+      // Record what was actually asked for before trimming — this cap runs
+      // silently (a live capsule test asked for 10 outfits across 5 slots and
+      // got 8, with zero signal anywhere that 2 were dropped). requestedOutfits
+      // only gets set on a slot that was actually trimmed, so composeOutfitSet
+      // can tell "the wardrobe couldn't fill this" (the coverage-gap case) apart
+      // from "the plan never even asked the wardrobe for the full count."
+      slot.requestedOutfits = slot.targetOutfits
       slot.targetOutfits -= trim
       total -= trim
     }
