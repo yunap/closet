@@ -17,7 +17,7 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
-const { shouldEngageAskPrecompose } = await import('../routes/ai.js')
+const { shouldEngageAskPrecompose, followupPrerouteEnabled } = await import('../routes/ai.js')
 
 test('broad-planning (non-travel) turns are retired from the pre-route by default', () => {
   // Capsule and work-week are broad-planning but not travel → the model owns them now.
@@ -48,4 +48,12 @@ test('the legacy pre-route (broad + travel) can be restored via the flag', () =>
     true,
     'with the flag on, travel precomposes again'
   )
+})
+
+test('the follow-up replan pre-route defaults ON and is a canary flag (off to gather evidence)', (t) => {
+  delete process.env.WARDROBE_FOLLOWUP_PREROUTE
+  assert.equal(followupPrerouteEnabled(), true, 'defaults ON — no behavior change')
+  process.env.WARDROBE_FOLLOWUP_PREROUTE = 'off'
+  t.after(() => { delete process.env.WARDROBE_FOLLOWUP_PREROUTE })
+  assert.equal(followupPrerouteEnabled(), false, 'flag off disables the follow-up pre-route for the canary')
 })
