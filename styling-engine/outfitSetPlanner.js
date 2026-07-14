@@ -164,13 +164,37 @@ function buildWeatherLine(slotWeather = []) {
   return parts.length ? `Weather used: ${parts.join('; ')}` : ''
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0 } = {}) {
+// Per-slot coverage gaps (capsule review Point 2): when the wardrobe can't
+// fill a slot's requested count, that used to just be a thin/missing card with
+// no explanation — the model had no deterministic signal to notice or explain
+// it. Uses data the composer already computed (how many distinct outfits
+// passed the gates vs how many candidates existed at all) rather than
+// guessing WHICH category is missing, matching the "flag, don't guess"
+// discipline: a wrong specific guess (e.g. "missing shoes" when the real
+// issue was weather) would be worse than an honest, general gap note.
+function describeSlotCoverageGap(slot = {}, { requestedCount = 0, composedCount = 0, candidateCount = 0 } = {}) {
+  if (composedCount >= requestedCount) return ''
+  const label = slot?.label || slot?.bestFor || 'this use case'
+  if (composedCount === 0) {
+    return candidateCount > 0
+      ? `[missing wardrobe gap: "${label}" — no outfit passed the ${slot.occasion || 'occasion'}/weather/register gates; the wardrobe may be missing a category (top, bottom, dress, or shoes) suited to this use case]`
+      : `[missing wardrobe gap: "${label}" — no candidate outfit could be assembled for ${slot.occasion || 'this occasion'}; the wardrobe may be missing a category (top, bottom, dress, or shoes) for this use case]`
+  }
+  return `[missing wardrobe gap: "${label}" needed ${requestedCount} distinct look${requestedCount === 1 ? '' : 's'} but the wardrobe only supports ${composedCount} — not enough variety for the full rotation]`
+}
+
+function buildCoverageGapLines(coverageGaps = []) {
+  return (Array.isArray(coverageGaps) ? coverageGaps : []).filter(Boolean)
+}
+
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, coverageGaps = [] } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const durationLabel = source === 'plan_outfit_set' ? 'Plan length' : 'Trip length'
   const pieceReuse = describeTripPieceReuse(tripOutfits)
   const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget })
   const weatherLine = buildWeatherLine(slotWeather)
+  const gapLines = buildCoverageGapLines(coverageGaps)
   const bySlot = new Map()
   for (const outfit of tripOutfits) {
     const key = outfit.tripSlot || outfit.label || outfit.bestFor
@@ -196,7 +220,8 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slot
         outfit.tripSummary?.dayBreakdown ? `Coverage: ${outfit.tripSummary.dayBreakdown}` : '',
         coverageBySlot.get(key) || '',
         weatherLine,
-        ...reportLines
+        ...reportLines,
+        ...gapLines
       ].filter(Boolean)
     }
   })
@@ -1219,6 +1244,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
     }
   }
   const slotWeather = []
+  const coverageGaps = []
   for (const slot of slots) {
     const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question, dateRange, fetchImpl })
     slotWeather.push({ label: slot.label, weather: weatherLabel })
@@ -1373,6 +1399,12 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       recordOutfitUse(choice)
       slotChoices.push(choice)
     }
+    const gapMessage = describeSlotCoverageGap(slot, {
+      requestedCount: targetOutfits,
+      composedCount: slotChoices.length,
+      candidateCount: scoredOutfits.length
+    })
+    if (gapMessage) coverageGaps.push(gapMessage)
     slotChoices.forEach((choice, slotIndex) => {
       picked.push(annotateTripOutfit(choice, slot, picked.length, {
         slotIndex,
@@ -1382,7 +1414,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       }))
     })
   }
-  return attachTripPlanMetadata(picked, { source, slotWeather, reuseMode, noRepeatCats, pieceBudget })
+  return attachTripPlanMetadata(picked, { source, slotWeather, reuseMode, noRepeatCats, pieceBudget, coverageGaps })
 }
 
 // Tool-argument slots (plan_outfit_set) -> engine slots. Mirrors the pre-route
