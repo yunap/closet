@@ -132,6 +132,17 @@ not keyword-guessed.
   Watch `followupPathOutcome` in "Search & validation details": a steady stream
   of `model_plan` / `model_propose` on followup turns where the pre-route
   abstained is the green light to retire it behind `WARDROBE_PLAN_PREROUTE`.
+  **First evidence (2026-07-14 multi-turn capsule) says NOT YET — verdict
+  flipped vs the initial pre-route:** on "one more dinner option" the follow-up
+  pre-route composed a valid `Dinner Option` (`preroute`, it earned its keep),
+  while the model's self-handling BROKE on roster edits ("pick other shoes",
+  "add tops") — it packed 5 shoes / 7 tops into one `propose_outfit` (a category
+  group, not an outfit), each rejected as a "Broken diagnostic card". So the
+  retirement is gated on the model's followup handling getting reliable first.
+  Two prompt fixes shipped as the prerequisite: `propose_outfit` is ONE coherent
+  outfit, never a same-role group; and a capsule roster EDIT re-runs
+  `plan_outfit_set` (or answers in prose), never a same-role propose card.
+  Re-gather `followupPathOutcome` after those before retiring.
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone

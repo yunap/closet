@@ -67,6 +67,8 @@ test('generate_outfits schema exposes styling intent enums', () => {
   assert.deepEqual(proposeTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
   assert.deepEqual(proposeTool.input_schema.required, ['pieces'])
   assert.ok(proposeTool.input_schema.properties.pieces.items.properties.role.enum.includes('primary_top'), 'propose_outfit pieces carry a role enum')
+  assert.match(proposeTool.description, /ONE (complete, )?coherent outfit/, 'propose_outfit is one outfit, not a roster group')
+  assert.match(proposeTool.description, /NEVER pass multiple pieces of the same role/, 'propose_outfit forbids same-role groups')
 })
 
 test('normalize styling intent defaults and preserves valid values', () => {
@@ -162,6 +164,10 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('"N-piece capsule" means ~N distinct PIECES, not N outfits'))
   assert.ok(STYLIST_SYSTEM.includes('ALWAYS set `piece_budget` to the number in "N-piece capsule"'))
   assert.ok(STYLIST_SYSTEM.includes('weighted toward SEPARATES that recombine'))
+  // A capsule roster EDIT is a re-plan, never a same-role propose_outfit card
+  // (live: the model proposed 5 shoes / 7 tops in one card → broken diagnostic).
+  assert.ok(STYLIST_SYSTEM.includes('A follow-up that EDITS the capsule roster'))
+  assert.ok(STYLIST_SYSTEM.includes('NEVER present a roster edit as a \'propose_outfit\' card full of same-role pieces'))
   assert.ok(STYLIST_SYSTEM.includes('Current Outfit Set for Trips and Multi-Outfit Plans'))
   assert.ok(STYLIST_SYSTEM.includes('as the canonical packing/styling plan for the thread'))
   assert.ok(STYLIST_SYSTEM.includes("one 'propose_outfit' card per entry (verified piece IDs + roles)"))
