@@ -511,7 +511,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "propose_outfit",
-    description: "Propose (or show/render) a structured outfit from verified wardrobe pieces, rendered as a card. Call 'search_wardrobe' first to get real piece IDs, then pass those IDs here — never names, never prose outfit sections. Call once per outfit; write conversational prose (intro, transitions, follow-up questions) around the call, but put the outfit's actual pieces in this tool, not in text.",
+    description: "Propose (or show/render) ONE complete, coherent outfit from verified wardrobe pieces, rendered as a card. Call 'search_wardrobe' first to get real piece IDs, then pass those IDs here — never names, never prose outfit sections. Call once per outfit; write conversational prose (intro, transitions, follow-up questions) around the call, but put the outfit's actual pieces in this tool, not in text. This is ONE wearable outfit — at most one primary_top (or one dress), one primary_bottom, and one shoes. NEVER pass multiple pieces of the same role to show a group of options or a capsule roster (e.g. five shoes, or seven tops, all in one call): that is not an outfit, it will be rejected. To present alternatives or a roster, describe them in prose, or re-run the set tool ('plan_outfit_set') — do not pile same-role pieces into one card.",
     input_schema: {
       type: "object",
       properties: {
