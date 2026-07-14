@@ -315,11 +315,31 @@ selection is single-pass quota, no iterative optimization.
    USE-CASE not category, "10-piece" = ~10 PIECES not 10 outfits, re-call tighter
    if the report says over budget. NOTE: `piece_budget` is still a soft report,
    not hard composition enforcement — engine-side roster capping was explicitly
-   deferred. Still-open follow-ups: the OFFICE scorer keeps the same
-   print-by-name demotion (#66) that #68 removed from the register scorer — same
-   flaw, deliberately left pending an owner ruling; and `indoor` neutralizes
-   weather so summer-inappropriate heavy fabrics (a wool dress) can appear in a
-   summer office slot (indoor could still respect season for fabric weight).
+   deferred. Still-open follow-up: `indoor` neutralizes weather so
+   summer-inappropriate heavy fabrics (a wool dress) can appear in a summer
+   office slot (indoor could still respect season for fabric weight).
+   **OFFICE scorer print-by-name demotion — FIXED (2026-07-15).** The OFFICE
+   scorer kept the same flaw #68 removed from the register scorer:
+   `pieceOfficePolishScore` demoted any piece matching
+   botanical/floral/tropical/beach/resort by NAME, and the dress-specific
+   penalty in `tripOutfitOfficeRegisterScore` did the same plus
+   maxi/flowing/full_skirt/a_line_skirt (silhouette) and — inconsistently with
+   #68's own reward list — 'lace' (a POSITIVE dressy-fabric signal
+   elsewhere in this file). Both replaced with the identical #68 pattern:
+   demote by the piece's own `formality` tag (everyday/casual) and casual
+   FABRIC (gauze/jersey/terry/fleece/canvas), never by print or hemline. Shoe
+   CONSTRUCTION-type demotion (open-toe/espadrille/cork) stayed but moved out
+   of the blindly-applied-to-every-role `pieceOfficePolishScore` into the
+   already-role-scoped shoe block (it was redundant and unsafely un-scoped
+   there — a latent bug independent of the print issue). New isolated test
+   (`composeOutfitSet` with the seeded wardrobe's separates cleared so the
+   comparison can't be sidestepped): an elevated silk botanical sheath dress
+   is kept, a casual jersey dress is demoted. One test-authoring gotcha this
+   surfaced: `city`/`smart casual`'s register CEILING is `elevated`, not
+   `dressy` — a `dressy`-tagged piece is excluded by that separate, unrelated,
+   pre-existing gate before it ever reaches the office scorer at all, so
+   fixture formality values must respect the occasion's ceiling or a test can
+   silently pass/fail for the wrong reason.
 
 ## High-leverage test scenarios (run in this order)
 

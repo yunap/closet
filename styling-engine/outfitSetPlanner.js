@@ -543,7 +543,14 @@ function pieceOfficePolishScore(piece = {}) {
   if (piece.formality === 'elevated') score += 8
   if (piece.formality === 'dressy') score += 4
   if (tripPieceHasStructuredValue(piece, ['tailored', 'structured', 'polished', 'blouse', 'button', 'button_down', 'button-shirt', 'trouser', 'straight', 'pencil_skirt', 'knit', 'wool', 'stripe', 'striped'])) score += 12
-  if (tripPieceHasStructuredValue(piece, ['botanical', 'floral', 'tropical', 'beach', 'resort', 'gauze', 'gauzy', 'open_toe', 'open-toe', 'espadrille', 'raffia', 'cork'])) score -= 18
+  // Judge casualness by the piece's OWN formality tag and FABRIC — never by
+  // print (owner ruling from #68: a silk botanical piece is not casual for
+  // having a print; print/hemline are not formality signals). Shoe
+  // CONSTRUCTION type (open-toe/espadrille/cork) is a legitimate signal but is
+  // handled role-scoped in the shoe block below, not blindly here across
+  // every role.
+  if (['everyday', 'casual'].includes(String(piece?.formality || '').toLowerCase())) score -= 14
+  if (tripPieceHasStructuredValue(piece, ['gauze', 'gauzy', 'jersey', 'terry', 'fleece', 'canvas'])) score -= 12
   return score
 }
 
@@ -664,7 +671,13 @@ function tripOutfitOfficeRegisterScore(outfit = {}, slot = {}) {
     score += 8
     const officeStructuredDress = isOfficeStructuredDress(dress)
     if (officeStructuredDress) score += client ? 18 : 12
-    if (tripPieceHasStructuredValue(dress, ['maxi', 'flowing', 'full_skirt', 'a_line_skirt', 'botanical', 'floral', 'lace', 'black_lace', 'resort'])) score -= client ? 46 : 28
+    // Judge by the dress's OWN formality tag and FABRIC — never by print or
+    // silhouette (owner ruling from #68: a silk botanical maxi is not casual
+    // for having a print; length/print say nothing about formality). 'lace'
+    // was dropped from the old list entirely — it's a POSITIVE dressy-fabric
+    // signal elsewhere in this file, so demoting it here was self-contradictory.
+    if (['everyday', 'casual'].includes(String(dress?.formality || '').toLowerCase())) score -= client ? 32 : 20
+    if (tripPieceHasStructuredValue(dress, ['gauze', 'gauzy', 'jersey', 'terry', 'fleece', 'canvas'])) score -= client ? 30 : 18
     if (sleeveCoverage(dress) === 'sleeveless' && client && !layer) score -= 22
     if (client && !layer && !officeStructuredDress) {
       score -= 36
