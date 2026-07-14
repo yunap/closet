@@ -55,6 +55,13 @@ CONTROLLER" directive in the system prompt.
 
 ## Layer 1 — App pre-routing
 
+> **Status 2026-07-13:** the first two rows (broad-planning and travel
+> precompose) are **retired by default** — `shouldEngageAskPrecompose`
+> returns false unless `WARDROBE_PLAN_PREROUTE=on`; those turns now route to
+> the model + `plan_outfit_set` (step 8 of the migration). The **follow-up
+> replan row is still live and unflagged** — see the caveat at the end of the
+> "Step 6 resolution" section.
+
 Deterministic, *before* the model. Decides whether to pre-build outfit cards for
 the turn (`maybePrecomposeStructuredOutfitsForAsk`, `routes/ai.js:1207`;
 `maybePrecomposeStructuredFollowupForAsk`, `routes/ai.js:1320`).
@@ -448,3 +455,17 @@ with its own hiking slot + per-slot coastal location, weather resolved live from
 `location`. `shouldEngageAskPrecompose` returns false for both branches by
 default; `WARDROBE_PLAN_PREROUTE=on` restores the whole legacy path as a
 reversible fallback. **The 8-step plan is complete.**).
+
+**Caveat (2026-07-13 architecture review): step 8 retired the NEW-REQUEST
+pre-routes only.** The follow-up replan path
+(`maybePrecomposeStructuredFollowupForAsk`) is not gated by
+`shouldEngageAskPrecompose` or the flag — on any `followup`-classified turn
+whose thread already holds an outfit set, it still front-runs the model via
+`planFreeformUseCases` + an unconstrained `composeOutfitSet` (no reuse dial,
+no constraints). Because `classifyChatTurn` labels nearly every post-first
+turn `followup` (the deliberate spec-10 ruling), this is the last
+keyword-era front-runner and it sits on the highest-traffic path; it can
+replace a model-planned, constraint-carrying set with a constraint-free one.
+Retiring it is the top item in
+[../freeform-rearchitecture-handoff.md](../freeform-rearchitecture-handoff.md)'s
+remaining work — same evidence-gated play as step 8.
