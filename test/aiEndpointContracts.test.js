@@ -1853,7 +1853,11 @@ test('freeform ask ordinary what-should-I-wear request does not become trip prec
   assert.match(lastCall.system, /Proposing Outfits/)
 })
 
-test('freeform ask extracts travel weather and surfaces it to tools', async () => {
+test('freeform ask extracts travel weather and surfaces it to tools', async (t) => {
+  // Step 8 retired the travel pre-route by default; this test guards the legacy
+  // precompose path, which stays available behind the flag as a fallback.
+  process.env.WARDROBE_PLAN_PREROUTE = 'on'
+  t.after(() => { delete process.env.WARDROBE_PLAN_PREROUTE })
   insertPiece({
     name: 'paisley sleeveless blouse',
     category: 'top',

@@ -187,23 +187,27 @@ function isBroadOutfitPlanningText(text = '') {
     /\b(suggest|recommend|what should|help|plan|pack|wear|put together|create|build)\b/.test(q) // ratchet-allow: user intent routing words, not garment matching
 }
 
-// Step 8 (keyword pre-route retirement): the broad-planning pre-route is retired
-// by default — a non-travel planning turn (work week, capsule, event weekend)
-// now reaches the model + plan_outfit_set, which applies the constraints,
-// per-slot weather, and objective reports the keyword precompose could not (live
-// evidence: those turns self-route to plan_outfit_set with planPathOutcome
-// 'model_only'; when the pre-route intercepted them it produced weaker,
-// unconstrained sets — the capsule lost its budget/roster entirely). The TRAVEL
-// pre-route stays until trip turns show the same self-routing. Set
-// WARDROBE_BROAD_PLAN_PREROUTE=on to restore the legacy broad-planning precompose
-// as a reversible fallback.
-const BROAD_PLAN_PREROUTE_ENABLED = process.env.WARDROBE_BROAD_PLAN_PREROUTE === 'on'
+// Step 8 (keyword pre-route retirement) — COMPLETE. Both the broad-planning and
+// the travel/packing pre-routes are retired by default: every planning turn now
+// reaches the model + plan_outfit_set, which applies the constraints, per-slot
+// live weather (resolved from location, so a stated forecast isn't needed), and
+// objective reports the keyword precompose could not. Live evidence: broad
+// planning (work week / capsule / event) AND a real trip ("5 days in Paso
+// Robles… wineries, a dinner, a hike, the coast") both self-route with
+// planPathOutcome 'model_only' and better decomposition than the pre-route ever
+// produced (the trip even made its own hiking slot and per-slot coastal
+// location). Set WARDROBE_PLAN_PREROUTE=on (or the legacy
+// WARDROBE_BROAD_PLAN_PREROUTE=on) to restore the whole legacy precompose as a
+// reversible fallback.
+// Read at call time (not module load) so the legacy path stays exercisable in
+// tests and can be flipped without a restart.
+function planPrerouteEnabled() {
+  return process.env.WARDROBE_PLAN_PREROUTE === 'on' || process.env.WARDROBE_BROAD_PLAN_PREROUTE === 'on'
+}
 
-export function shouldEngageAskPrecompose(question = '', occasion = '', { broadPlanEnabled = BROAD_PLAN_PREROUTE_ENABLED } = {}) {
-  const isTravelPlanning = isTravelOrPackingRequest(question, occasion)
-  if (!isBroadOutfitPlanningText(question) && !isTravelPlanning) return false
-  if (!isTravelPlanning && !broadPlanEnabled) return false // broad-planning retired → model owns it
-  return true
+export function shouldEngageAskPrecompose(question = '', occasion = '', { prerouteEnabled = planPrerouteEnabled() } = {}) {
+  if (!prerouteEnabled) return false // fully retired → the model owns every planning/travel turn
+  return isBroadOutfitPlanningText(question) || isTravelOrPackingRequest(question, occasion)
 }
 
 function structuredOutfitContextText(outfits = [], { source = 'whole_wardrobe', reason = '' } = {}) {

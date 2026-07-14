@@ -25,8 +25,11 @@ test('broad-planning (non-travel) turns are retired from the pre-route by defaul
   assert.equal(shouldEngageAskPrecompose('Put together outfits for my work week, Thursday is client-facing.'), false)
 })
 
-test('travel/packing turns still engage the pre-route', () => {
-  assert.equal(shouldEngageAskPrecompose('Help me pack for a 5-day trip to Lisbon.'), true)
+test('travel/packing turns are now retired too — the model owns trips', () => {
+  // Step 8 complete: a real trip self-routes to plan_outfit_set (model_only),
+  // resolving weather from location, so the travel pre-route is retired as well.
+  assert.equal(shouldEngageAskPrecompose('Help me pack for a 5-day trip to Lisbon.'), false)
+  assert.equal(shouldEngageAskPrecompose('5 days in Paso Robles — wineries, a dinner, a hike, the coast.'), false)
 })
 
 test('non-planning turns never engage the pre-route', () => {
@@ -34,10 +37,15 @@ test('non-planning turns never engage the pre-route', () => {
   assert.equal(shouldEngageAskPrecompose(''), false)
 })
 
-test('the legacy broad-planning pre-route can be restored via the flag', () => {
+test('the legacy pre-route (broad + travel) can be restored via the flag', () => {
   assert.equal(
-    shouldEngageAskPrecompose('Help me build a 10-piece summer capsule.', '', { broadPlanEnabled: true }),
+    shouldEngageAskPrecompose('Help me build a 10-piece summer capsule.', '', { prerouteEnabled: true }),
     true,
     'with the flag on, broad-planning precomposes again'
+  )
+  assert.equal(
+    shouldEngageAskPrecompose('Help me pack for a 5-day trip to Lisbon.', '', { prerouteEnabled: true }),
+    true,
+    'with the flag on, travel precomposes again'
   )
 })

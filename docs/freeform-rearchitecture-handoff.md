@@ -86,11 +86,17 @@ not keyword-guessed.
   lets work-week / capsule / event turns fall through to the model +
   `plan_outfit_set` instead of precomposing an unconstrained set (live evidence:
   those turns self-route `model_only`; the pre-route had been intercepting the
-  capsule and dropping its budget/roster entirely). The TRAVEL pre-route
-  (`isTravelOrPackingRequest`) stays until trip turns show the same self-routing;
-  `WARDROBE_BROAD_PLAN_PREROUTE=on` restores the legacy broad-planning precompose
-  as a reversible fallback. Remaining: retire the travel pre-route once trip
-  turns show `model_only`; retire the context clauses (below). NB: `piece_budget` drives the REPORT, not
+  capsule and dropping its budget/roster entirely). The TRAVEL pre-route is now
+  retired too — COMPLETE: a real trip ("5 days in Paso Robles… wineries, a
+  dinner, a hike, the coast") self-routed `model_only` with better decomposition
+  than the pre-route ever produced (it made its own hiking slot and set a
+  per-slot coastal location, resolving weather live from `location` so no stated
+  forecast was needed). `shouldEngageAskPrecompose` now returns false for BOTH
+  branches by default; `WARDROBE_PLAN_PREROUTE=on` (or legacy
+  `WARDROBE_BROAD_PLAN_PREROUTE=on`) restores the whole precompose as a
+  reversible fallback (the `aiEndpointContracts` trip-precompose test runs with
+  the flag on to guard that path). The 8-step plan is DONE. Remaining: retire the
+  context clauses (below). NB: `piece_budget` drives the REPORT, not
   hard composition
   enforcement — the `maximize` dial is what actually shrinks the roster;
   hard-cap enforcement is a possible follow-up.

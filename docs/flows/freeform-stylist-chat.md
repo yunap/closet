@@ -443,5 +443,8 @@ retired by default via `shouldEngageAskPrecompose`: work-week / capsule / event
 turns now fall through to the model + `plan_outfit_set`; live evidence showed
 those turns self-route `model_only` and the pre-route only produced weaker,
 unconstrained sets — the capsule lost its budget/roster entirely. The TRAVEL
-pre-route stays until trip turns show the same; `WARDROBE_BROAD_PLAN_PREROUTE=on`
-restores the legacy path as a reversible fallback).
+pre-route is now retired too: a real Paso Robles trip self-routed `model_only`
+with its own hiking slot + per-slot coastal location, weather resolved live from
+`location`. `shouldEngageAskPrecompose` returns false for both branches by
+default; `WARDROBE_PLAN_PREROUTE=on` restores the whole legacy path as a
+reversible fallback. **The 8-step plan is complete.**).
