@@ -1625,7 +1625,12 @@ test('freeform ask image follow-ups use current attachment wording', async () =>
   assert.match(lastCall.system, /Turn directive: The user is asking for explanation or rationale/)
 })
 
-test('freeform ask generated outfit follow-up stays conversational without reattaching cards', async () => {
+test('freeform ask generated outfit follow-up stays conversational without reattaching cards', async (t) => {
+  // The follow-up replan pre-route is retired by default (canary flipped); this
+  // test guards the legacy precompose path, which stays available behind the
+  // flag as a fallback.
+  process.env.WARDROBE_FOLLOWUP_PREROUTE = 'on'
+  t.after(() => { delete process.env.WARDROBE_FOLLOWUP_PREROUTE })
   const json = await postJson('/api/ai/ask', {
     question: 'So dinner out is 4 nights, same outfit? What if I spill some wine?',
     pieces: [],
