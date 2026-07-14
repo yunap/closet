@@ -50,10 +50,13 @@ test('the legacy pre-route (broad + travel) can be restored via the flag', () =>
   )
 })
 
-test('the follow-up replan pre-route defaults ON and is a canary flag (off to gather evidence)', (t) => {
+test('the follow-up replan pre-route is retired by default; the flag restores it as a fallback', (t) => {
+  // 2026-07-14 canary run: with the pre-route off, set-modification followups
+  // ("add a dinner option", "make it dressier", "add a rainy-day option") all
+  // self-routed to the model with valid cards — no regression. Retired by default.
   delete process.env.WARDROBE_FOLLOWUP_PREROUTE
-  assert.equal(followupPrerouteEnabled(), true, 'defaults ON — no behavior change')
-  process.env.WARDROBE_FOLLOWUP_PREROUTE = 'off'
+  assert.equal(followupPrerouteEnabled(), false, 'retired by default — the model owns follow-up replans')
+  process.env.WARDROBE_FOLLOWUP_PREROUTE = 'on'
   t.after(() => { delete process.env.WARDROBE_FOLLOWUP_PREROUTE })
-  assert.equal(followupPrerouteEnabled(), false, 'flag off disables the follow-up pre-route for the canary')
+  assert.equal(followupPrerouteEnabled(), true, 'flag on restores the legacy follow-up pre-route as a reversible fallback')
 })

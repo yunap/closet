@@ -106,52 +106,27 @@ not keyword-guessed.
   never reached main (same trap as #57→#58) — recovered by cherry-pick. Also a
   server-side safety net now infers `piece_budget` from an "N-piece capsule"
   question when the model omits it (it forgot on the 14-piece live test).
-- **Retire the FOLLOW-UP replan pre-route — step 8's unfinished second half**
-  (found in the 2026-07-13 architecture review, below).
-  `maybePrecomposeStructuredFollowupForAsk` (routes/ai.js) runs
-  unconditionally — it does NOT check `shouldEngageAskPrecompose` or the
-  `WARDROBE_PLAN_PREROUTE` flag. On any turn the client classifies as
-  `followup`, on a thread that already holds an outfit set, the app still
-  front-runs the model: it calls `planFreeformUseCases` (the fragile
-  JSON-scraping LLM planner step 6 was meant to retire) and composes an
-  UNCONSTRAINED set via `composeOutfitSet` — no reuse dial, no constraints,
-  none of `plan_outfit_set`'s intelligence. Because `classifyChatTurn`
-  classifies nearly everything as `followup` once thread memory exists (the
-  spec-10 ruling, deliberate), this sits on the highest-traffic path of any
-  multi-turn conversation and can clobber a model-planned, constraint-carrying
-  set with a constraint-free replan. The model already has what it needs to
-  own these turns — `plan_outfit_set` seeds from the thread's current outfit
-  set specifically so replans vary. Recommended play: same as step 8 —
-  parallel diagnostics → live evidence → retire behind the same flag. (No
-  recorded decision says this branch was deliberately kept; if it was, record
-  that here instead.) **Diagnostics SHIPPED (evidence phase, like step-8 build
-  7):** `recordPlanPathDiagnostics` now also records `followupEligible`,
-  `followupPrerouteComposed`, and a `followupPathOutcome` (`classifyFollowupPath`)
-  in the debug block — `preroute` (the replan front-ran the model) /
-  `model_plan` / `model_propose` / `model_prose` / `''` (not a followup turn).
-  Watch `followupPathOutcome` in "Search & validation details": a steady stream
-  of `model_plan` / `model_propose` on followup turns where the pre-route
-  abstained is the green light to retire it behind `WARDROBE_PLAN_PREROUTE`.
-  **First evidence (2026-07-14 multi-turn capsule) says NOT YET — verdict
-  flipped vs the initial pre-route:** on "one more dinner option" the follow-up
-  pre-route composed a valid `Dinner Option` (`preroute`, it earned its keep),
-  while the model's self-handling BROKE on roster edits ("pick other shoes",
-  "add tops") — it packed 5 shoes / 7 tops into one `propose_outfit` (a category
-  group, not an outfit), each rejected as a "Broken diagnostic card". So the
-  retirement is gated on the model's followup handling getting reliable first.
-  Two prompt fixes shipped as the prerequisite: `propose_outfit` is ONE coherent
-  outfit, never a same-role group; and a capsule roster EDIT re-runs
-  `plan_outfit_set` (or answers in prose), never a same-role propose card.
-  Re-test (2026-07-14, post-fix) confirmed those work: single-outfit edits ("swap
-  the shoes", "elevate them") now self-handle valid `model_propose`; the pre-route
-  still carried the set-modification turns ("add a dinner option", "make it less
-  dressy", valid `preroute`) — so the model is UNTESTED on those. **Canary
-  SHIPPED:** `followupPrerouteEnabled()` gates
-  `maybePrecomposeStructuredFollowupForAsk`, defaulting ON (no behavior change);
-  `WARDROBE_FOLLOWUP_PREROUTE=off` disables it for a session so those
-  set-modification followups fall through to the model. Run the canary, watch
-  `followupPathOutcome` go `model_plan`/`model_propose` with acceptable cards →
-  that's the green light to flip the default to retired.
+  **FOLLOW-UP replan pre-route RETIRED (2026-07-14) — step 8's second half,
+  now COMPLETE too:** `maybePrecomposeStructuredFollowupForAsk` used to run
+  unconditionally regardless of the `plan_outfit_set` flags — the one
+  meaningful gap the 2026-07-13 architecture review flagged. Path: diagnostics
+  (`followupPathOutcome`) → first canary run showed the model breaking on
+  roster edits (packing 5 shoes / 7 tops into one `propose_outfit`) → fixed via
+  two prompt clarifications (`propose_outfit` is ONE coherent outfit; a capsule
+  roster EDIT re-runs `plan_outfit_set`, never a same-role propose card) → a
+  second canary run (`WARDROBE_FOLLOWUP_PREROUTE=off`) showed EVERY
+  set-modification followup ("add a dinner option", "make it dressier", "add a
+  rainy-day option") self-routing to the model with valid `model_propose`
+  cards, no precompose-loss regression. `followupPrerouteEnabled()` now
+  defaults OFF; `WARDROBE_FOLLOWUP_PREROUTE=on` restores the legacy replan
+  precompose as a reversible fallback (`aiEndpointContracts`'s follow-up
+  precompose test runs with the flag on to guard that path). **Known
+  follow-on bug surfaced by the same canary, NOT fixed here:** a followup that
+  states NEW weather ("add a rainy-day option" on an established hot/summer
+  thread) can still get rejected by the propose gate, which used the
+  thread's established weather instead of the follow-up's stated one —
+  the model recovered with an odd substitute (linen for rain). Orthogonal to
+  the pre-route retirement; queued as the next fix.
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone
