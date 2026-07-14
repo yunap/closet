@@ -174,6 +174,49 @@ full v1.1 contract. `node --test`: 485/485 pass. Findings, ranked:
    layers indefinitely is where this codebase's orphan code came from (one
    such layer was already deleted once, 2026-07-09 reachability audit).
 
+## Capsule builder — external review + plan (2026-07-14)
+
+Sonnet (previous-arc author) sanity-checked the capsule against a four-point
+framework. His mental model is the PRE-inversion *monolithic generator* — a
+standalone optimizer that owns occasion decomposition and combination-counting.
+Post-inversion the job is split: the MODEL decomposes into use-case slots; the
+engine composes per slot from a curated roster (`selectCapsuleRoster`). With
+that translation, the four points map to our actual code as:
+
+1. **Reuse hard gates, don't reinvent — HELD.** Roster pieces still flow through
+   the per-slot `filterWholeWardrobePiecesForGeneration` (real weather / register
+   / activity gates). Only `capsuleVersatilityScore` carries its own
+   summer-fabric weighting, and it's a soft RANK, not a gate — worth watching,
+   not the "two detectors disagree" bug class.
+2. **Per-occasion coverage with explicit gaps — PARTIAL.** Each slot IS a target
+   occasion and structural validity is reused (`isOutfitStructurallyValid`), but
+   we do NOT surface per-slot coverage gaps: a slot the roster can't fill just
+   goes thin, no `[missing wardrobe gap: elevated top]`. **Gap (medium).**
+3. **Combinatorics: valid = structural AND coherent — DIVERGES.** Our builder
+   does NOT count or maximize valid combinations; `selectCapsuleRoster` is
+   top-N-by-per-piece-versatility + category quotas — a PROXY for "pairs with
+   many," not measured interconnection. His core insight (score a piece by how
+   it interconnects with the *rest of the subset*) is exactly what we don't do.
+   **Gap (biggest — the real "capsule-ness"). Matches review finding #4: watch
+   the scorer patch rate before investing.**
+4. **Selection: versatility / register-flex / NON-REDUNDANCY — DIRECT HIT.** We
+   have versatility + register-flex proxies but ZERO redundancy avoidance, so
+   naive top-N can pick three near-identical black tees. **Gap (quick, high
+   value).**
+
+The swap-and-optimize "dropped a load-bearing piece" warning is N/A — our
+selection is single-pass quota, no iterative optimization.
+
+**Plan (agreed with owner):**
+- **NOW** — non-redundancy in `selectCapsuleRoster` (Point 4): dedup
+  near-identical pieces (same category + dominant color + garment kind + pattern),
+  backfilling a near-dupe only when the quota can't be met with distinct pieces.
+- **NEXT** — per-slot coverage gaps (Point 2): surface `[missing wardrobe gap: …]`
+  when the roster can't cover a slot's occasion, instead of a thin slot.
+- **BIGGER, evidence-gated** — true interconnection scoring / a
+  combination-maximizing roster (Point 3): decide whether the MVP heuristic is
+  enough before building the real subset optimizer.
+
 ## Live-testing findings so far (why each fix exists)
 
 1. Crochet top proposed as base layer → tags had no opacity; sight was optional
