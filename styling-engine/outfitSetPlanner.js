@@ -1060,6 +1060,69 @@ function outfitCategoryPairs(outfit = {}) {
     .filter(pair => pair.id)
 }
 
+// Real capsule builder (path 1): when the plan carries a piece_budget, don't
+// just REPORT the roster — enforce it. Pre-select ~budget versatile pieces with
+// category coverage (a summer capsule must include shorts), then compose the
+// slots ONLY from those, so the distinct-piece count actually lands within the
+// budget. Below this floor a "capsule" can't cover top+bottom+shoes, so we keep
+// the soft-report behavior instead.
+const MIN_ENFORCED_CAPSULE_BUDGET = 6
+
+const CAPSULE_NEUTRAL_COLORS = ['black', 'white', 'ivory', 'cream', 'navy', 'blue', 'grey', 'gray', 'charcoal', 'beige', 'tan', 'khaki', 'stone', 'olive', 'denim', 'brown', 'camel']
+
+function capsuleVersatilityScore(piece = {}, { isSummer = false } = {}) {
+  let score = 0
+  const colors = (Array.isArray(piece.colors) ? piece.colors : []).map(color => String(color).toLowerCase())
+  if (colors.some(color => CAPSULE_NEUTRAL_COLORS.some(neutral => color.includes(neutral)))) score += 12
+  // A versatile capsule piece mixes across many occasions and reads as a solid.
+  score += Math.min(4, (Array.isArray(piece.occasions) ? piece.occasions : []).length) * 4
+  if (['solid', 'none', ''].includes(String(piece.pattern_type || '').toLowerCase())) score += 8
+  const weight = fabricWeight(piece)
+  if (isSummer) {
+    if (weight === 'light') score += 10
+    if (weight === 'heavy' || tripPieceHasStructuredValue(piece, ['wool', 'cashmere', 'fleece', 'corduroy', 'tweed', 'flannel'])) score -= 24
+    if (tripPieceHasStructuredValue(piece, ['linen', 'cotton', 'viscose', 'tencel', 'gauze'])) score += 6
+  }
+  if (piece.recommendation_status === 'trusted') score += 4
+  return score
+}
+
+// Category quotas for a ~budget-piece day capsule. Kept proportional so a bigger
+// budget widens tops/bottoms rather than piling on shoes.
+function capsuleQuotas(budget = 10) {
+  const shoes = Math.min(3, Math.max(2, Math.round(budget * 0.2)))
+  const outerwear = budget >= 8 ? 1 : 0
+  const dress = budget >= 6 ? 1 : 0
+  const remaining = Math.max(0, budget - shoes - outerwear - dress)
+  const bottom = Math.max(2, Math.round(remaining * 0.45))
+  const top = Math.max(2, remaining - bottom)
+  return { top, bottom, dress, outerwear, shoes }
+}
+
+export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false } = {}) {
+  const quotas = capsuleQuotas(budget)
+  const groups = { top: [], bottom: [], dress: [], outerwear: [], shoes: [] }
+  const scoreOf = new Map()
+  for (const piece of pool) {
+    const group = wardrobeCategoryGroup(piece)
+    if (!groups[group]) continue
+    scoreOf.set(piece, capsuleVersatilityScore(piece, { isSummer }))
+    groups[group].push(piece)
+  }
+  for (const group of Object.keys(groups)) groups[group].sort((a, b) => scoreOf.get(b) - scoreOf.get(a))
+  // A summer capsule should carry shorts: float the best pair to the front of
+  // the bottoms so the quota picks it up.
+  if (isSummer) {
+    const shortsIndex = groups.bottom.findIndex(piece => bottomKind(piece) === 'shorts' || tripPieceHasStructuredValue(piece, ['shorts']))
+    if (shortsIndex > 0) groups.bottom.unshift(...groups.bottom.splice(shortsIndex, 1))
+  }
+  const roster = []
+  for (const [group, count] of Object.entries(quotas)) {
+    for (const piece of groups[group].slice(0, count)) roster.push(piece)
+  }
+  return roster.slice(0, budget)
+}
+
 export async function composeOutfitSet({ slots = [], question = '', mood = '', allPieces = [], seedOutfits = [], source = 'trip_precompose', dateRange = {}, constraints = {}, fetchImpl } = {}) {
   const picked = []
   const seeded = seedTripUsedSets(seedOutfits)
@@ -1070,6 +1133,12 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
   // slots, where the forecast can't. Text-based so it only fires when the plan
   // is explicitly summer — a trip's per-slot live weather handles its own slots.
   const isSummerContext = /\bsummer\b/i.test(`${question} ${mood}`)
+  // Capsule enforcement: when a real budget is set, curate the roster up front
+  // and compose every slot ONLY from it, so the distinct-piece count lands
+  // within budget instead of being reported after the fact.
+  const composePool = pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
+    ? selectCapsuleRoster(allPieces, { budget: pieceBudget, isSummer: isSummerContext })
+    : allPieces
   // Set-scoped piece bookkeeping for the reuse dial + no_repeat. usedPieceIds
   // seeds from any prior set (a replan) so novelty is measured against what the
   // user already has; the per-category map only accumulates within this
@@ -1118,7 +1187,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
   for (const slot of slots) {
     const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question, dateRange, fetchImpl })
     slotWeather.push({ label: slot.label, weather: weatherLabel })
-    const { allowedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, {
+    const { allowedPieces } = filterWholeWardrobePiecesForGeneration(composePool, {
       occasion: slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,
@@ -1188,7 +1257,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
           mood: mood || question,
           activity: slot.activity
         })
-        const finalOutfit = withEveningLayerIfUseful(repaired, allPieces, slot)
+        const finalOutfit = withEveningLayerIfUseful(repaired, composePool, slot)
         return {
           outfit: finalOutfit,
           fit: tripSlotFitScore(finalOutfit, slot, { weatherProfile, isSummerContext })

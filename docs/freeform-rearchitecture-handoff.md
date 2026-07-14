@@ -95,11 +95,17 @@ not keyword-guessed.
   branches by default; `WARDROBE_PLAN_PREROUTE=on` (or legacy
   `WARDROBE_BROAD_PLAN_PREROUTE=on`) restores the whole precompose as a
   reversible fallback (the `aiEndpointContracts` trip-precompose test runs with
-  the flag on to guard that path). The 8-step plan is DONE. Remaining: retire the
-  context clauses (below). NB: `piece_budget` drives the REPORT, not
-  hard composition
-  enforcement — the `maximize` dial is what actually shrinks the roster;
-  hard-cap enforcement is a possible follow-up.
+  the flag on to guard that path). The 8-step plan is DONE. Capsule builder
+  SHIPPED: `piece_budget` is now ENFORCED, not just reported — a budget ≥ 6
+  triggers `selectCapsuleRoster`, which curates ~budget versatile pieces with
+  category coverage (separates-heavy: e.g. 5 tops + 4 bottoms + 1 dress for a
+  14-piece; a summer capsule floats in shorts) and the slots compose ONLY from
+  that roster, so the distinct-piece count lands within budget. Below the floor
+  it stays a soft report. **Gotcha rescued:** #73 (this builder) merged into its
+  stacked base `feat/casual-register-scorers` instead of retargeting to main and
+  never reached main (same trap as #57→#58) — recovered by cherry-pick. Also a
+  server-side safety net now infers `piece_budget` from an "N-piece capsule"
+  question when the model omits it (it forgot on the 14-piece live test).
 - **Retire the FOLLOW-UP replan pre-route — step 8's unfinished second half**
   (found in the 2026-07-13 architecture review, below).
   `maybePrecomposeStructuredFollowupForAsk` (routes/ai.js) runs

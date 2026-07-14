@@ -1292,6 +1292,18 @@ export async function executeTool(name, args, toolContext = {}) {
         // pieceIds/pieces.)
         const planSeeds = (Array.isArray(toolContext.currentOutfitSet) ? toolContext.currentOutfitSet : [])
           .map(outfit => ({ ...outfit, pieceIds: outfit?.pieceIds || outfit?.piece_ids || [] }))
+        // Capsule safety net: "N-piece capsule" states an explicit budget. The
+        // model routinely forgets to set piece_budget (live: a "14-piece capsule"
+        // came through with none, so the roster never enforced and 5 of 14 were
+        // one-piece dresses). Infer it from the question so the curation still
+        // fires; the model's own value always wins when present.
+        const planConstraints = { ...(args?.constraints || {}) }
+        if (!(Number(planConstraints.piece_budget) > 0)) {
+          const capsuleBudget = String(toolContext.question || '').match(/\b(\d{1,2})[-\s]?piece\b/i) // ratchet-allow: capsule budget extraction, not garment matching
+          if (capsuleBudget && /\bcapsule\b/i.test(String(toolContext.question || ''))) {
+            planConstraints.piece_budget = Number(capsuleBudget[1])
+          }
+        }
         const planOutfits = await composeOutfitSet({
           slots: planSlots,
           question: toolContext.question || '',
@@ -1300,7 +1312,7 @@ export async function executeTool(name, args, toolContext = {}) {
           seedOutfits: planSeeds,
           source: 'plan_outfit_set',
           dateRange: planDateRange,
-          constraints: args?.constraints || {}
+          constraints: planConstraints
         })
         if (!planOutfits.length) {
           return {
