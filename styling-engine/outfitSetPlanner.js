@@ -848,6 +848,34 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSumme
     }
   }
 
+  // Register DOWN for a casual/everyday day slot: the escalation scorer only
+  // pushes up for dressy/formal, so a casual "city outing" happily pulled a
+  // dressy silk maxi. A daytime casual/city slot that isn't explicitly dressed
+  // up should demote dressy-formality pieces and dressy shoes.
+  const isCasualDaySlot = !isDinner && !isWinery &&
+    (slot.register === 'everyday' || (!slot.register && (slot.occasion === 'casual' || slot.occasion === 'city')))
+  if (isCasualDaySlot) {
+    for (const piece of pieces) {
+      if (piece?.formality === 'dressy') score -= 16
+    }
+    if (shoe && tripShoeMatchesAny(shoe, ['heel', 'heels', 'pump', 'pumps', 'stiletto'])) score -= 10
+  }
+
+  // Athletic/sporty pieces belong on a hike, not an "everyday" or dinner slot —
+  // the athletic polyester dress that showed up for Everyday Casual.
+  if (!isOutdoorActive) {
+    for (const piece of pieces) {
+      if (tripPieceHasStructuredValue(piece, ['athletic', 'performance', 'activewear', 'sporty', 'gym', 'track', 'running', 'workout', 'sport'])) {
+        score -= 24
+      }
+    }
+  }
+
+  // Summer daytime rarely needs a layer: a cardigan at a summer festival (the
+  // Outdoor Event look) is superfluous. The forecast-hot path already discounts
+  // layers; this covers weather-neutral (indoor/warm-stated) summer daytime.
+  if (isSummerContext && layer && !isDinner && !isColdDay) score -= 18
+
   score += tripOutfitAestheticGravityScore(outfit)
 
   return {
