@@ -142,7 +142,16 @@ not keyword-guessed.
   Two prompt fixes shipped as the prerequisite: `propose_outfit` is ONE coherent
   outfit, never a same-role group; and a capsule roster EDIT re-runs
   `plan_outfit_set` (or answers in prose), never a same-role propose card.
-  Re-gather `followupPathOutcome` after those before retiring.
+  Re-test (2026-07-14, post-fix) confirmed those work: single-outfit edits ("swap
+  the shoes", "elevate them") now self-handle valid `model_propose`; the pre-route
+  still carried the set-modification turns ("add a dinner option", "make it less
+  dressy", valid `preroute`) — so the model is UNTESTED on those. **Canary
+  SHIPPED:** `followupPrerouteEnabled()` gates
+  `maybePrecomposeStructuredFollowupForAsk`, defaulting ON (no behavior change);
+  `WARDROBE_FOLLOWUP_PREROUTE=off` disables it for a session so those
+  set-modification followups fall through to the model. Run the canary, watch
+  `followupPathOutcome` go `model_plan`/`model_propose` with acceptable cards →
+  that's the green light to flip the default to retired.
 - **Retire the context clauses** (tripScope/destination in
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone

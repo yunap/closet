@@ -210,6 +210,17 @@ export function shouldEngageAskPrecompose(question = '', occasion = '', { prerou
   return isBroadOutfitPlanningText(question) || isTravelOrPackingRequest(question, occasion)
 }
 
+// Canary gate for the FOLLOW-UP replan pre-route (step 8's second half). Unlike
+// the initial/travel pre-routes it defaults ON — live evidence (2026-07-14)
+// showed it still does useful work on set-modification followups ("add a dinner
+// option", "make it less dressy") while the model self-handles single-outfit
+// edits. Set WARDROBE_FOLLOWUP_PREROUTE=off to disable it for a session and
+// watch `followupPathOutcome` go `model_plan`/`model_propose` — that evidence is
+// what gates flipping this default to retired. Read at call time.
+export function followupPrerouteEnabled() {
+  return process.env.WARDROBE_FOLLOWUP_PREROUTE !== 'off'
+}
+
 function structuredOutfitContextText(outfits = [], { source = 'whole_wardrobe', reason = '' } = {}) {
   if (!Array.isArray(outfits) || !outfits.length) return ''
   const cards = outfits.slice(0, 8).map((outfit, index) => {
@@ -637,6 +648,7 @@ async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeathe
 }
 
 async function maybePrecomposeStructuredFollowupForAsk(body = {}, extractedWeather = '') {
+  if (!followupPrerouteEnabled()) return null // canary off → the model owns followup replans
   const question = body.question || ''
   const requestedMode = body.conversationMode || 'new_request'
   if (requestedMode === 'new_request') return null
