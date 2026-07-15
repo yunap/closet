@@ -1193,6 +1193,12 @@ export async function executeTool(name, args, toolContext = {}) {
         return viewed
       }
       case 'render_preview': {
+        if (toolContext.declaredIntent?.want !== 'image') {
+          return {
+            status: "validation_error",
+            message: "render_preview is only allowed after declare_intent({ want: 'image' }). The current turn is not an image request; present the existing cards instead."
+          }
+        }
         // "The second one" means what the USER sees: this turn's cards first, then
         // the thread's current outfit set (live-tested 2026-07-12: a render ask on a
         // fresh turn found toolContext.generatedOutfits empty and errored, and the
