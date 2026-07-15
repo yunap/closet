@@ -618,6 +618,15 @@ function textLooksLikeBeachPlanSlot(text = '') {
   return /\b(beach(?:es)?|pool(?:side)?|swim(?:ming)?)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
 }
 
+function textLooksLikeCoastalPlanSlot(text = '') {
+  return /\b(beach(?:es)?|pool(?:side)?|swim(?:ming)?|coast(?:al)?|seaside|oceanfront|shore|sand)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function normalizePlanSlotEnvironment({ label = '', bestFor = '', coverage = '', planNote = '', location = '' } = {}) {
+  const text = [label, bestFor, coverage, planNote, location].filter(Boolean).join(' ')
+  return textLooksLikeCoastalPlanSlot(text) ? 'beach_coastal' : ''
+}
+
 function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '' } = {}) {
   const occasion = normalizeOccasion(rawOccasion)
   const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
@@ -828,6 +837,56 @@ function isOutdoorActivePlanSlot(slot = {}) {
   return /\b(hike|hiking|trail|trek|park|nature|outdoor|outdoors|adventure|adventures|market|sightsee|sightseeing|walk in|hills?|trailhead)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
 }
 
+function isBeachCoastalPlanSlot(slot = {}) {
+  return slot?.environment === 'beach_coastal'
+}
+
+function tripOutfitBeachCoastalScore(outfit = {}, slot = {}, { isHotDay = false, isColdDay = false } = {}) {
+  if (!isBeachCoastalPlanSlot(slot)) return { score: 0, hardRejects: [] }
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
+  const bottom = pieces.find(piece => wardrobeCategoryGroup(piece) === 'bottom')
+  const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  const shoe = pieces.find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  let score = 0
+
+  const washableEasySignals = ['technical', 'performance', 'nylon', 'polyester', 'cotton', 'linen', 'rayon', 'viscose', 'tencel', 'jersey', 'terry', 'canvas']
+  const fussySignals = ['silk', 'satin', 'suede', 'leather', 'lace', 'chiffon', 'sheer', 'velvet', 'beaded', 'sequin']
+
+  for (const piece of pieces) {
+    if (tripPieceHasStructuredValue(piece, washableEasySignals)) score += 8
+    if (fabricWeight(piece) === 'light') score += isHotDay ? 8 : 4
+    if (fabricWeight(piece) === 'heavy' && isHotDay) score -= 18
+    if (tripPieceHasStructuredValue(piece, fussySignals)) score -= 14
+    if (piece?.formality === 'dressy') score -= 16
+  }
+
+  if (dress) {
+    score += 12
+    if (tripPieceHasStructuredValue(dress, ['technical', 'performance', 'swim', 'cover_up', 'cover-up'])) score += 20
+    if (isHotDay && sleeveCoverage(dress) === 'sleeveless') score += 8
+  }
+  if (top && bottom) {
+    if (garmentKind(top) === 'tee' || garmentKind(top) === 'tank') score += 8
+    const kind = bottomKind(bottom)
+    if (kind === 'shorts') score += isHotDay ? 12 : 4
+    if ((kind === 'pants' || kind === 'trouser') && !isHotDay) score += 6
+  }
+  if (shoe) {
+    if (tripShoeMatchesAny(shoe, ['sneaker', 'sneakers', 'canvas', 'sport sandal', 'sport sandals', 'slide', 'slides', 'slip-on', 'slip-ons', 'slip on'])) score += 12
+    if (tripShoeMatchesAny(shoe, ['heel', 'heels', 'pump', 'pumps', 'mule', 'mules', 'wedge', 'wedges', 'ballet flat', 'ballet flats', 'dress flat', 'dress flats'])) score -= 24
+    if (tripPieceHasStructuredValue(shoe, ['suede', 'leather']) && isHotDay) score -= 10
+  }
+  if (isColdDay) {
+    if (layer) score += 14
+    else score -= 12
+  } else if (layer && isHotDay) {
+    score -= 12
+  }
+  return { score, hardRejects: [] }
+}
+
 function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSummerContext = false } = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
@@ -982,6 +1041,10 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSumme
       }
     }
   }
+
+  const beachCoastalFit = tripOutfitBeachCoastalScore(outfit, slot, { isHotDay, isColdDay })
+  score += beachCoastalFit.score
+  hardRejects.push(...beachCoastalFit.hardRejects)
 
   // Register DOWN for a casual/everyday day slot: the escalation scorer only
   // pushes up for dressy/formal, so a casual "city outing" happily pulled a
@@ -1874,7 +1937,9 @@ export function normalizePlanSlots(rawSlots = [], {
       const bestFor = String(slot?.best_for || slot?.bestFor || label).trim()
       const coverage = String(slot?.coverage || bestFor || label).trim()
       const planNote = String(slot?.plan_note || slot?.planNote || '').trim()
+      const location = String(slot?.location || fallbackLocation || '').trim()
       const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote })
+      const environment = normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
       // statedWeather is ONLY the model's explicit per-slot weather — it wins
       // over the live forecast. The trip-level fallbackWeather is not "stated"
       // for this purpose: it feeds season/heuristic but must let a slot's own
@@ -1888,7 +1953,8 @@ export function normalizePlanSlots(rawSlots = [], {
         activity,
         season: String(statedWeather || slot?.season || fallbackWeather || 'current season').trim(),
         statedWeather,
-        location: String(slot?.location || fallbackLocation || '').trim(),
+        location,
+        environment,
         date: String(slot?.date || '').trim(),
         bestFor,
         coverage,

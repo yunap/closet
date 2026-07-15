@@ -180,7 +180,9 @@ test('normalizePlanSlots corrects beach slots misclassified as outdoor daytime s
   ], { fallbackWeather: 'warm' })
 
   assert.equal(slots[0].occasion, 'casual')
+  assert.equal(slots[0].environment, 'beach_coastal')
   assert.equal(slots[1].occasion, 'outdoor_daytime_social')
+  assert.equal(slots[1].environment, '')
 })
 
 test('plan_outfit_set is blocked until cards intent is declared', async () => {
@@ -1106,6 +1108,45 @@ test('warm-weather capsule uses the warm roster path and fills repeated beach/ci
   assert.equal(beachLooks.length, 2)
   assert.equal(cityLooks.length, 2)
   assert.ok(!result.plan_lines.some(line => line.startsWith('[missing wardrobe gap:')), `warm-weather capsule should fill all requested slots, got ${JSON.stringify(result.plan_lines)}`)
+})
+
+test('beach coastal slot prefers a washable beach dress and easy shoe in warm weather', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  insertPiece({ category: 'dress', name: 'blue technical beach dress', colors: ['blue'], reads_as: 'swim cover up easy beach dress', silhouette: 'simple sleeveless shift', fabric_category: 'technical', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'], sleeve_type: 'sleeveless' })
+  insertPiece({ category: 'top', name: 'black silk blouse', colors: ['black'], reads_as: 'polished silk blouse', fabric_category: 'silk', fabric_weight: 'light', formality: 'elevated', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'beige tailored linen shorts', colors: ['beige'], reads_as: 'tailored linen shorts', bottom_shape: 'shorts', fabric_category: 'linen', fabric_weight: 'light', formality: 'elevated', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'navy canvas slip-on shoes', colors: ['navy'], reads_as: 'canvas slip on shoes', fabric_category: 'canvas', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'black open-toe wedge sandals', colors: ['black'], reads_as: 'open toe wedge sandals', fabric_category: 'leather', formality: 'elevated', occasions: ['casual', 'city'] })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Beach Day', occasion: 'casual', location: 'beach', count: 1, weather: 'warm' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: 'warm beach day', allPieces, source: 'plan_outfit_set' })
+  const names = (outfits[0]?.pieces || []).map(piece => piece.name)
+
+  assert.ok(names.includes('blue technical beach dress'), `warm beach slot should prefer the beach dress, got ${names.join(' + ')}`)
+  assert.ok(names.includes('navy canvas slip-on shoes'), `warm beach slot should prefer the easy canvas shoe, got ${names.join(' + ')}`)
+  assert.ok(!names.includes('black open-toe wedge sandals'), `warm beach slot should avoid fussy wedges, got ${names.join(' + ')}`)
+})
+
+test('cool coastal beach slot keeps weather authority with a practical layer', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  insertPiece({ category: 'dress', name: 'blue technical beach dress', colors: ['blue'], reads_as: 'swim cover up easy beach dress', silhouette: 'simple sleeveless shift', fabric_category: 'technical', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'], sleeve_type: 'sleeveless' })
+  insertPiece({ category: 'top', name: 'white cotton tee', colors: ['white'], reads_as: 'easy cotton tee', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'black cotton pants', colors: ['black'], reads_as: 'easy cotton pants', bottom_shape: 'straight', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'outerwear', name: 'cream wind layer', colors: ['cream'], reads_as: 'light coastal wind layer', fabric_category: 'cotton', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'navy canvas slip-on shoes', colors: ['navy'], reads_as: 'canvas slip on shoes', fabric_category: 'canvas', formality: 'everyday', occasions: ['casual', 'city'] })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Coastal Beach Day', occasion: 'casual', location: 'Ocean Beach, San Francisco', count: 1, weather: 'cold, windy, 55F' },
+  ])
+  const outfits = await composeOutfitSet({ slots, question: 'cool Bay Area beach day', allPieces, source: 'plan_outfit_set' })
+  const names = (outfits[0]?.pieces || []).map(piece => piece.name)
+
+  assert.ok(names.includes('cream wind layer'), `cool coastal slot should keep the weather layer, got ${names.join(' + ')}`)
+  assert.ok(names.includes('navy canvas slip-on shoes'), `cool coastal slot should keep practical shoes, got ${names.join(' + ')}`)
 })
 
 test('plan_outfit_set honors the larger card cap for 24-piece seasonal capsules', async () => {
