@@ -19,8 +19,8 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics } = await import('../styling-engine/tools.js')
-const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, PLAN_TOTAL_OUTFIT_CAP } = await import('../styling-engine/outfitSetPlanner.js')
+const { executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics, sanitizePlanConstraintsForQuestion } = await import('../styling-engine/tools.js')
+const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
@@ -161,6 +161,16 @@ test('normalizePlanSlots maps tool args to engine slots and caps the set size', 
 
   // Slots without a usable label are dropped.
   assert.equal(normalizePlanSlots([{ occasion: 'casual' }]).length, 0)
+})
+
+test('normalizePlanSlots corrects contradictory casual dinner slots to evening', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Casual Dinner', occasion: 'casual', activity: 'none', count: 2, best_for: 'relaxed dining out' },
+    { label: 'Everyday Casual', occasion: 'casual', activity: 'none', count: 1, best_for: 'comfortable everyday wear' },
+  ], { fallbackWeather: 'warm' })
+
+  assert.equal(slots[0].occasion, 'evening')
+  assert.equal(slots[1].occasion, 'casual')
 })
 
 test('plan_outfit_set is blocked until cards intent is declared', async () => {
@@ -330,6 +340,28 @@ test('plan_outfit_set office slots use indoor weather even when a hot live forec
   assert.match(weatherLine, /Office Days — indoor/)
   assert.match(weatherLine, /Client Meeting — indoor/)
   assert.doesNotMatch(weatherLine, /live forecast/)
+})
+
+test('plan_outfit_set uses top-level weather as the fallback for slots without their own weather', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    question: 'Build me a summer capsule wardrobe, warm summer weather.',
+    weather: 'hot weather from earlier thread'
+  }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Beach Day', occasion: 'casual', activity: 'none', count: 1 },
+      { label: 'Restaurant Dinner', occasion: 'evening', activity: 'none', count: 1, weather: 'indoor' },
+    ],
+    weather: 'warm summer weather',
+    constraints: { reuse: 'maximize', piece_budget: 10 },
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  const weatherLine = result.plan_lines.find(line => line.startsWith('Weather used:'))
+  assert.match(weatherLine, /Beach Day — warm summer weather/)
+  assert.match(weatherLine, /Restaurant Dinner — indoor/)
+  assert.doesNotMatch(weatherLine, /hot weather from earlier thread/)
 })
 
 test('client-meeting office plan prefers structured pieces over beachy dress and open-toe wedges', async () => {
@@ -635,6 +667,20 @@ test('normalizePlanConstraints parses a positive piece_budget and ignores junk',
   assert.equal(normalizePlanConstraints({}).pieceBudget, 0)
 })
 
+test('sanitizePlanConstraintsForQuestion strips model-invented no_repeat from reusable capsules', () => {
+  const invented = sanitizePlanConstraintsForQuestion(
+    { reuse: 'maximize', piece_budget: 24, no_repeat: ['tops'], allow_repeat: ['shoes'] },
+    'Build me a 24-piece summer capsule wardrobe: smart casual brunches, beach days, city outings, gallery visits, casual dinners, and outdoor markets.'
+  )
+  assert.deepEqual(invented, { reuse: 'maximize', piece_budget: 24, allow_repeat: ['shoes'] })
+
+  const explicit = sanitizePlanConstraintsForQuestion(
+    { reuse: 'maximize', piece_budget: 24, no_repeat: ['tops'], allow_repeat: ['shoes'] },
+    'Build me a 24-piece summer capsule wardrobe, but do not repeat tops.'
+  )
+  assert.deepEqual(explicit, { reuse: 'maximize', piece_budget: 24, no_repeat: ['tops'], allow_repeat: ['shoes'] })
+})
+
 test('a piece_budget makes the report lead with the roster + combination count (capsule)', async () => {
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([
@@ -886,6 +932,200 @@ test('selectCapsuleRoster de-duplicates near-identical pieces (not three black t
   assert.ok(blackTees.length <= 1, `at most one near-identical black tee should make the roster, got ${blackTees.length}`)
 })
 
+test('selectCapsuleRoster reserves multiple elevated shoes for roomier mixed-register capsules', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  for (const name of ['white cotton tee', 'olive cotton tank', 'graphic fruit stand tee', 'vibrant blue sleeveless top']) {
+    insertPiece({ category: 'top', name, colors: ['white'], reads_as: 'easy everyday warm top', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city', 'outdoor_daytime_social'] })
+  }
+  for (const name of ['black silk blouse', 'white tie front blouse', 'large flowers floral print tank']) {
+    insertPiece({ category: 'top', name, colors: ['black'], reads_as: 'polished elevated warm top', fabric_category: 'silk', fabric_weight: 'light', formality: 'elevated', occasions: ['city', 'smart casual', 'evening', 'gallery / art event'] })
+  }
+  for (const name of ['tan solid straight shorts', 'beige twill cargo capri pants', 'light beige linen wide-leg pants', 'Apple skirt']) {
+    insertPiece({ category: 'bottom', name, colors: ['tan'], reads_as: 'warm weather bottom', bottom_shape: name.includes('skirt') ? 'a_line_skirt' : 'straight', fabric_category: 'linen', fabric_weight: 'light', formality: name.includes('Apple') ? 'elevated' : 'everyday', occasions: ['casual', 'city', 'outdoor_daytime_social', 'evening', 'gallery / art event'] })
+  }
+  insertPiece({ category: 'dress', name: 'blue botanical sleeveless dress', colors: ['blue'], reads_as: 'easy warm dress', fabric_category: 'rayon', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'navy canvas slip shoes', colors: ['navy'], reads_as: 'canvas slip shoes', formality: 'everyday', occasions: ['casual', 'city', 'outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'taupe knit lace-up sneakers', colors: ['taupe'], reads_as: 'knit lace-up sneakers', formality: 'everyday', occasions: ['casual', 'city', 'outdoor_daytime_social'] })
+  insertPiece({ category: 'shoes', name: 'white leather sneakers', colors: ['white'], reads_as: 'clean leather sneakers', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'black suede lace-up shoes', colors: ['black'], reads_as: 'polished suede flats', formality: 'elevated', occasions: ['city', 'smart casual', 'evening', 'gallery / art event'] })
+  insertPiece({ category: 'shoes', name: 'cream leather mules', colors: ['cream'], reads_as: 'polished leather mules', formality: 'elevated', occasions: ['city', 'smart casual', 'evening', 'gallery / art event'] })
+  insertPiece({ category: 'shoes', name: 'navy low block heels', colors: ['navy'], reads_as: 'low block heels', formality: 'elevated', occasions: ['city', 'smart casual', 'evening', 'gallery / art event'] })
+
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const cap = planTotalOutfitCapForBudget(24)
+  const slots = normalizePlanSlots([
+    { label: 'Smart Casual Brunch', occasion: 'smart casual', count: 2, weather: 'warm' },
+    { label: 'Beach Day', occasion: 'casual', count: 1, weather: 'warm' },
+    { label: 'Everyday City Outing', occasion: 'city', activity: 'walking', count: 3, weather: 'warm' },
+    { label: 'Gallery Visit', occasion: 'gallery / art event', count: 1, weather: 'warm' },
+    { label: 'Casual Dinner', occasion: 'casual', count: 2, weather: 'warm' },
+    { label: 'Outdoor Market', occasion: 'outdoor_daytime_social', activity: 'walking', count: 2, weather: 'warm' },
+  ], { fallbackWeather: 'warm', maxSlots: cap, maxTotalOutfits: cap })
+  const roster = selectCapsuleRoster(pool, { budget: 24, isSummer: true, occasions: slots.map(slot => slot.occasion), slots })
+  const rosterShoes = roster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  const elevatedShoes = rosterShoes.filter(piece => piece.formality === 'elevated')
+
+  assert.equal(slots.find(slot => slot.label === 'Casual Dinner')?.occasion, 'evening')
+  assert.ok(rosterShoes.length >= 4, `24-piece capsules should have room for more shoe variety, got ${rosterShoes.map(piece => piece.name)}`)
+  assert.ok(elevatedShoes.length >= 3, `brunch/gallery/dinner demand should reserve multiple elevated shoes, got ${rosterShoes.map(piece => `${piece.name}:${piece.formality}`)}`)
+})
+
+test('selectCapsuleRoster reserves enough everyday-compatible pieces for repeated casual capsule demand', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  for (const name of ['ivory silk shell', 'navy silk blouse', 'cream satin camisole']) {
+    insertPiece({ category: 'top', name, colors: ['ivory'], reads_as: 'polished elevated top', fabric_category: 'silk', fabric_weight: 'light', formality: 'elevated', occasions: ['casual', 'city'] })
+  }
+  for (const name of ['olive cotton tee', 'rust cotton tee']) {
+    insertPiece({ category: 'top', name, colors: ['olive'], reads_as: 'easy everyday tee', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  }
+  for (const name of ['navy silk trousers', 'cream satin skirt', 'ivory draped pants']) {
+    insertPiece({ category: 'bottom', name, colors: ['navy'], reads_as: 'polished elevated bottom', bottom_shape: 'straight', fabric_category: 'silk', fabric_weight: 'light', formality: 'elevated', occasions: ['casual', 'city'] })
+  }
+  for (const name of ['black cotton pants', 'denim straight jeans']) {
+    insertPiece({ category: 'bottom', name, colors: ['black'], reads_as: 'easy everyday pants', bottom_shape: 'straight', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  }
+  insertPiece({ category: 'dress', name: 'olive cotton day dress', colors: ['olive'], reads_as: 'easy everyday dress', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'outerwear', name: 'navy technical hoodie', colors: ['navy'], reads_as: 'easy everyday hoodie', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'cream leather mules', colors: ['cream'], reads_as: 'polished mule', formality: 'elevated', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'navy low heels', colors: ['navy'], reads_as: 'polished low heel', formality: 'elevated', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'white canvas sneakers', colors: ['white'], reads_as: 'easy everyday sneakers', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'tan canvas slip-ons', colors: ['tan'], reads_as: 'easy everyday slip ons', formality: 'everyday', occasions: ['casual', 'city'] })
+
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Beach Day 1', occasion: 'casual', activity: 'none', count: 1 },
+    { label: 'Beach Day 2', occasion: 'casual', activity: 'none', count: 1 },
+    { label: 'City Outing 1', occasion: 'casual', activity: 'walking', count: 1 },
+    { label: 'City Outing 2', occasion: 'casual', activity: 'walking', count: 1 },
+  ])
+  const roster = selectCapsuleRoster(pool, { budget: 10, isSummer: true, occasions: slots.map(slot => slot.occasion), slots })
+  const everydayByGroup = group => roster.filter(piece => wardrobeCategoryGroup(piece) === group && piece.formality === 'everyday')
+
+  assert.ok(everydayByGroup('top').length >= 2, `repeated casual demand needs multiple everyday tops, got ${roster.map(piece => piece.name)}`)
+  assert.ok(everydayByGroup('bottom').length >= 2, `repeated casual demand needs multiple everyday bottoms, got ${roster.map(piece => piece.name)}`)
+  assert.ok(everydayByGroup('shoes').length >= 2, `repeated casual demand needs multiple everyday shoes, got ${roster.map(piece => piece.name)}`)
+  assert.ok(roster.length <= 10, `register reserves must stay inside the capsule budget, got ${roster.length}`)
+})
+
+test('a capsule with too few same-tier combinations reports exhausted compatible combinations, not generic gates', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  insertPiece({ category: 'top', name: 'olive cotton tee', colors: ['olive'], reads_as: 'easy everyday tee', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'black cotton pants', colors: ['black'], reads_as: 'easy everyday pants', bottom_shape: 'straight', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'white canvas sneakers', colors: ['white'], reads_as: 'easy everyday sneakers', formality: 'everyday', occasions: ['casual', 'city'] })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Beach Day', occasion: 'casual', activity: 'none', count: 1 },
+    { label: 'City Outing', occasion: 'casual', activity: 'none', count: 1 },
+    { label: 'Errands', occasion: 'casual', activity: 'none', count: 1 },
+  ], { fallbackWeather: 'warm' })
+  const outfits = await composeOutfitSet({ slots, question: '6-piece summer capsule', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize', piece_budget: 6 } })
+  assert.ok(outfits.length >= 1, 'the one supported combination should still compose')
+  const gapLine = (outfits[0]?.tripPlanLines || []).find(line => line.includes('not enough distinct everyday-compatible combinations'))
+  assert.ok(gapLine, `expected exhausted-combinations disclosure, got ${JSON.stringify(outfits[0]?.tripPlanLines)}`)
+  assert.doesNotMatch(gapLine, /no outfit passed/)
+})
+
+test('smart-casual slots require an elevated non-shoe anchor, not an everyday city dress plus nicer shoes', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  insertPiece({ category: 'dress', name: 'blue botanical sleeveless dress', colors: ['blue'], reads_as: 'easy warm day dress', fabric_category: 'rayon', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'top', name: 'white silk blouse', colors: ['white'], reads_as: 'polished silk blouse', fabric_category: 'silk', fabric_weight: 'light', formality: 'elevated', occasions: ['city', 'smart-casual'] })
+  insertPiece({ category: 'bottom', name: 'black tailored trousers', colors: ['black'], reads_as: 'tailored structured trousers', bottom_shape: 'straight', fabric_category: 'linen', fabric_weight: 'light', formality: 'elevated', occasions: ['city', 'smart-casual'] })
+  insertPiece({ category: 'shoes', name: 'black suede lace-up shoes', colors: ['black'], reads_as: 'polished suede flats', formality: 'elevated', occasions: ['city', 'smart-casual'] })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Smart Casual Look', occasion: 'smart casual', activity: 'none', count: 1 },
+  ], { fallbackWeather: 'warm' })
+  const outfits = await composeOutfitSet({ slots, question: 'smart casual summer look', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize', piece_budget: 8 } })
+  const names = (outfits[0]?.pieces || []).map(piece => piece.name)
+
+  assert.ok(!names.includes('blue botanical sleeveless dress'), `everyday city/casual dress should not satisfy smart casual, got ${names}`)
+  assert.ok(names.includes('white silk blouse'), `expected elevated blouse outfit, got ${names}`)
+  assert.ok(names.includes('black tailored trousers'), `expected elevated trouser outfit, got ${names}`)
+})
+
+test('capsule maximize reuse does not treat the same dress with different shoes as distinct looks across slots', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  insertPiece({ category: 'dress', name: 'blue botanical sleeveless dress', colors: ['blue'], reads_as: 'easy warm day dress', fabric_category: 'rayon', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'top', name: 'olive cotton tee', colors: ['olive'], reads_as: 'easy everyday tee', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'top', name: 'white scoop neck sleeveless top', colors: ['white'], reads_as: 'easy everyday sleeveless top', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'black cotton pants', colors: ['black'], reads_as: 'easy everyday pants', bottom_shape: 'straight', fabric_category: 'cotton', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'light beige linen wide-leg pants', colors: ['beige'], reads_as: 'easy linen pants', bottom_shape: 'wide_leg', fabric_category: 'linen', fabric_weight: 'light', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'black suede lace-up shoes', colors: ['black'], reads_as: 'walkable suede flats', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'navy canvas slip shoes', colors: ['navy'], reads_as: 'canvas slip shoes', formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'taupe knit lace-up sneakers', colors: ['taupe'], reads_as: 'knit lace-up sneakers', formality: 'everyday', occasions: ['casual', 'city'] })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Beach Day 1', occasion: 'casual', activity: 'none', count: 1 },
+    { label: 'Beach Day 2', occasion: 'casual', activity: 'none', count: 1 },
+    { label: 'City Outing', occasion: 'city', activity: 'none', count: 1 },
+  ], { fallbackWeather: 'warm' })
+  const outfits = await composeOutfitSet({ slots, question: '10-piece summer capsule', allPieces, source: 'plan_outfit_set', constraints: { reuse: 'maximize', piece_budget: 10 } })
+  const dressUses = outfits.filter(outfit => (outfit.pieces || []).some(piece => piece.name === 'blue botanical sleeveless dress'))
+
+  assert.ok(outfits.length >= 3, `fixture should still compose three outfits, got ${outfits.map(outfit => outfit.label)}`)
+  assert.ok(dressUses.length <= 1, `same dress should not repeat as separate capsule looks with shoe swaps, got ${outfits.map(outfit => `${outfit.label}: ${(outfit.pieces || []).map(piece => piece.name).join(' + ')}`).join(' | ')}`)
+})
+
+test('warm-weather capsule uses the warm roster path and fills repeated beach/city slots', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    question: 'Build me a 12-piece warm-weather capsule wardrobe: 1 Smart Casual brunch look, 2 Beach Day looks, 2 Everyday City Outing looks, 1 Gallery Visit look, 1 Casual Dinner look, 1 Outdoor Market look — 8 outfits total.',
+    weather: ''
+  }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Smart Casual Brunch', occasion: 'smart casual', count: 1 },
+      { label: 'Beach Day', occasion: 'casual', count: 2 },
+      { label: 'Everyday City Outing', occasion: 'city', count: 2 },
+      { label: 'Gallery Visit', occasion: 'gallery / art event', count: 1 },
+      { label: 'Casual Dinner', occasion: 'evening', count: 1 },
+      { label: 'Outdoor Market', occasion: 'outdoor_daytime_social', count: 1 },
+    ],
+    constraints: { reuse: 'maximize', piece_budget: 12 },
+    weather: 'warm',
+    duration_text: '8 outfits in a 12-piece set',
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 8)
+  const beachLooks = toolContext.generatedOutfits.filter(outfit => outfit.label === 'Beach Day')
+  const cityLooks = toolContext.generatedOutfits.filter(outfit => outfit.label === 'Everyday City Outing')
+  assert.equal(beachLooks.length, 2)
+  assert.equal(cityLooks.length, 2)
+  assert.ok(!result.plan_lines.some(line => line.startsWith('[missing wardrobe gap:')), `warm-weather capsule should fill all requested slots, got ${JSON.stringify(result.plan_lines)}`)
+})
+
+test('plan_outfit_set honors the larger card cap for 24-piece seasonal capsules', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    question: 'Build me a 24-piece summer capsule wardrobe: smart casual brunches, beach days, everyday city outings, gallery visits, casual dinners, and outdoor markets. Warm summer weather.',
+    weather: ''
+  }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Smart Casual Brunch', occasion: 'smart casual', count: 3, weather: 'indoor' },
+      { label: 'Beach Day', occasion: 'outdoor_daytime_social', count: 2, weather: 'warm weather', activity: 'none' },
+      { label: 'City Outings', occasion: 'city', count: 3, weather: 'warm weather', activity: 'walking' },
+      { label: 'Gallery Visits', occasion: 'gallery / art event', count: 2, weather: 'warm weather', activity: 'none' },
+      { label: 'Casual Dinners', occasion: 'casual', count: 2, weather: 'warm weather', activity: 'none' },
+      { label: 'Outdoor Markets', occasion: 'outdoor_daytime_social', count: 2, weather: 'warm weather', activity: 'none' },
+    ],
+    constraints: { reuse: 'maximize', piece_budget: 24 },
+    weather: 'warm summer weather',
+    duration_text: 'multi-week use',
+    day_breakdown: 'many casual daytime events, evenings at gallery or dinner',
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.ok(!result.plan_lines.some(line => line.startsWith('[plan trimmed:')), `24-piece capsule should not be forced through the compact 8-card cap, got ${JSON.stringify(result.plan_lines)}`)
+  const dinnerOutfits = toolContext.generatedOutfits.filter(outfit => outfit.label === 'Casual Dinners')
+  assert.ok(dinnerOutfits.length >= 1, 'misclassified casual dinner slot should still compose')
+  assert.ok(dinnerOutfits.every(outfit => outfit.occasion === 'evening'), `casual dinner slot should normalize to evening, got ${dinnerOutfits.map(outfit => outfit.occasion)}`)
+})
+
 // --- Follow-up replan path diagnostics (step 8's second half) ----------------
 
 test('classifyFollowupPath distinguishes the pre-route front-run from model self-handling', () => {
@@ -958,7 +1198,8 @@ test('a slot that needs more looks than the wardrobe supports reports a variety 
   const gapLine = (toolContext.generatedOutfits[0]?.tripPlanLines || []).find(line => line.startsWith('[missing wardrobe gap:'))
   assert.ok(gapLine, `expected a coverage gap line, got ${JSON.stringify(toolContext.generatedOutfits[0]?.tripPlanLines)}`)
   assert.match(gapLine, /Everyday Casual/)
-  assert.match(gapLine, /needed 3 distinct looks but the wardrobe only supports/)
+  assert.match(gapLine, /needed 3 distinct looks but the capsule roster only supports/)
+  assert.match(gapLine, /not enough distinct everyday-compatible combinations/)
 })
 
 test('a slot the wardrobe cannot fill at all reports a "no candidate" coverage gap, without dropping OTHER slots that DID compose', async () => {
@@ -1102,6 +1343,53 @@ test('normalizePlanSlots records the original count on a slot the total-outfit c
   // slot was cut," so a slot the cap never touched must not set it.
   assert.equal(byLabel['Everyday City Outing'].requestedOutfits, undefined)
   assert.equal(byLabel['Gallery Visit'].requestedOutfits, undefined)
+})
+
+test('normalizePlanSlots allows 8 one-look use cases and drops the 9th with disclosure metadata', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Smart Casual 1', occasion: 'smart casual', count: 1 },
+    { label: 'Smart Casual 2', occasion: 'smart casual', count: 1 },
+    { label: 'Beach Day 1', occasion: 'casual', count: 1 },
+    { label: 'Beach Day 2', occasion: 'casual', count: 1 },
+    { label: 'City Outing 1', occasion: 'city', count: 1 },
+    { label: 'City Outing 2', occasion: 'city', count: 1 },
+    { label: 'Gallery Visit', occasion: 'gallery / art event', count: 1 },
+    { label: 'Casual Dinner', occasion: 'evening', count: 1 },
+    { label: 'Extra Museum Stop', occasion: 'city', count: 1 },
+  ], { fallbackWeather: 'warm' })
+
+  assert.equal(slots.length, PLAN_TOTAL_OUTFIT_CAP, '8 one-look slots should be attempted')
+  assert.deepEqual(slots.map(slot => slot.label), [
+    'Smart Casual 1',
+    'Smart Casual 2',
+    'Beach Day 1',
+    'Beach Day 2',
+    'City Outing 1',
+    'City Outing 2',
+    'Gallery Visit',
+    'Casual Dinner',
+  ])
+  assert.deepEqual(slots.droppedSlotLabels, ['Extra Museum Stop'])
+})
+
+test('normalizePlanSlots lets larger seasonal capsules request more than 8 outfit cards', () => {
+  const cap = planTotalOutfitCapForBudget(24)
+  const slots = normalizePlanSlots([
+    { label: 'Smart Casual Brunch', occasion: 'smart casual', count: 3, weather: 'indoor' },
+    { label: 'Beach Day', occasion: 'outdoor_daytime_social', count: 2, weather: 'warm weather' },
+    { label: 'City Outings', occasion: 'city', activity: 'walking', count: 3, weather: 'warm weather' },
+    { label: 'Gallery Visits', occasion: 'gallery / art event', count: 2, weather: 'warm weather' },
+    { label: 'Casual Dinners', occasion: 'evening', count: 2, weather: 'warm weather' },
+    { label: 'Outdoor Markets', occasion: 'outdoor_daytime_social', count: 2, weather: 'warm weather' },
+  ], {
+    fallbackWeather: 'warm summer weather',
+    maxSlots: cap,
+    maxTotalOutfits: cap,
+  })
+
+  assert.equal(cap, 16)
+  assert.equal(slots.reduce((sum, slot) => sum + slot.targetOutfits, 0), 14)
+  assert.ok(slots.every(slot => !slot.requestedOutfits), `24-piece seasonal capsule should not hit the compact 8-card trim, got ${JSON.stringify(slots)}`)
 })
 
 test('a plan that exceeds the total-outfit cap reports which slots were trimmed and by how much', async () => {

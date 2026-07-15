@@ -6,7 +6,7 @@ import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
-import { composeOutfitSet, normalizePlanSlots } from './outfitSetPlanner.js'
+import { composeOutfitSet, normalizePlanSlots, planTotalOutfitCapForBudget } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind } from './attributes.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -20,6 +20,25 @@ import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 // like — same "don't trust the model's self-report, verify mechanically" lesson as specs 3/7/11.
 export function looksLikeTimezoneIdentifier(value = '') {
   return /^[A-Za-z]+\/[A-Za-z_]+$/.test(String(value || '').trim())
+}
+
+export function userExplicitlyRequestedNoRepeat(value = '') {
+  const text = String(value || '')
+  if (!text.trim()) return false
+  return /\b(no[-\s]?repeat|no repeated|not repeat|do not repeat|don't repeat|without repeating)\b/i.test(text) || // ratchet-allow: user constraint text, not garment matching
+    /\b(no|don't|do not|without|avoid)\s+(?:any\s+)?(?:repeating|repeated|reusing|reuse|same)\b/i.test(text) // ratchet-allow: user constraint text, not garment matching
+}
+
+export function sanitizePlanConstraintsForQuestion(rawConstraints = {}, question = '') {
+  const constraints = { ...(rawConstraints || {}) }
+  const pieceBudget = Number(constraints.piece_budget) || 0
+  const reuseMode = String(constraints.reuse || '').trim().toLowerCase()
+  if (pieceBudget > 0 && reuseMode === 'maximize' &&
+      Array.isArray(constraints.no_repeat) && constraints.no_repeat.length &&
+      !userExplicitlyRequestedNoRepeat(question)) {
+    delete constraints.no_repeat
+  }
+  return constraints
 }
 
 const SEARCH_WARDROBE_VISUAL_CAP = 16
@@ -484,7 +503,7 @@ export const STYLIST_TOOLS = [
       properties: {
         slots: {
           type: "array",
-          description: "The plan's use-case slots, in wearing order. Estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination; one-off use cases usually get count 1. Keep the whole set to 8 or fewer outfits.",
+          description: "The plan's use-case slots, in wearing order. Estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination; one-off use cases usually get count 1. For compact/travel capsules, keep the set tight (about 6-8 outfit cards). For larger seasonal capsules with piece_budget >= 18, request a representative rotation instead of one card per category: about 8-12 cards for an 18-piece capsule, 10-14 cards for a 24-piece capsule, and up to 16-20 cards for a 30-piece capsule.",
           items: {
             type: "object",
             properties: {
@@ -513,6 +532,7 @@ export const STYLIST_TOOLS = [
             piece_budget: { type: "integer", minimum: 1, description: "Max distinct pieces the whole set may draw on — the headline for a capsule ('10-piece capsule'). The plan report then leads with the piece roster and how many outfits it yields, and flags if the set went over budget." }
           }
         },
+        weather: { type: "string", description: "Plan-level known weather/context used as the fallback for slots that omit their own weather. Use this for user-stated conditions such as 'warm summer weather'. Slot-level weather still wins for indoor or special-case slots." },
         location: { type: "string", description: "The plan's overall location/destination (e.g. 'Paso Robles, CA'), geocoded for the per-slot live forecast. Slots inherit it unless they set their own `location`. Omit for at-home plans with no travel." },
         date_range: {
           type: "object",
@@ -1349,11 +1369,28 @@ export async function executeTool(name, args, toolContext = {}) {
         const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
         )
+        const planWeather = String(args?.weather || '').trim()
+        // Capsule safety net: "N-piece capsule" states an explicit budget. The
+        // model routinely forgets to set piece_budget (live: a "14-piece capsule"
+        // came through with none, so the roster never enforced and 5 of 14 were
+        // one-piece dresses). Infer it from the question so the curation still
+        // fires; the model's own value always wins when present.
+        let planConstraints = { ...(args?.constraints || {}) }
+        if (!(Number(planConstraints.piece_budget) > 0)) {
+          const capsuleBudget = String(toolContext.question || '').match(/\b(\d{1,2})[-\s]?piece\b/i) // ratchet-allow: capsule budget extraction, not garment matching
+          if (capsuleBudget && /\bcapsule\b/i.test(String(toolContext.question || ''))) {
+            planConstraints.piece_budget = Number(capsuleBudget[1])
+          }
+        }
+        planConstraints = sanitizePlanConstraintsForQuestion(planConstraints, toolContext.question || '')
+        const planTotalOutfitCap = planTotalOutfitCapForBudget(planConstraints.piece_budget)
         const planSlots = normalizePlanSlots(sanitizedSlots, {
-          fallbackWeather: toolContext.weather || '',
+          fallbackWeather: planWeather || toolContext.weather || '',
           fallbackOccasion: toolContext.occasion || 'city',
           fallbackActivity: toolContext.activity || 'none',
           fallbackLocation,
+          maxSlots: planTotalOutfitCap,
+          maxTotalOutfits: planTotalOutfitCap,
           tripSummary
         })
         if (!planSlots.length) {
@@ -1369,18 +1406,6 @@ export async function executeTool(name, args, toolContext = {}) {
         // pieceIds/pieces.)
         const planSeeds = (Array.isArray(toolContext.currentOutfitSet) ? toolContext.currentOutfitSet : [])
           .map(outfit => ({ ...outfit, pieceIds: outfit?.pieceIds || outfit?.piece_ids || [] }))
-        // Capsule safety net: "N-piece capsule" states an explicit budget. The
-        // model routinely forgets to set piece_budget (live: a "14-piece capsule"
-        // came through with none, so the roster never enforced and 5 of 14 were
-        // one-piece dresses). Infer it from the question so the curation still
-        // fires; the model's own value always wins when present.
-        const planConstraints = { ...(args?.constraints || {}) }
-        if (!(Number(planConstraints.piece_budget) > 0)) {
-          const capsuleBudget = String(toolContext.question || '').match(/\b(\d{1,2})[-\s]?piece\b/i) // ratchet-allow: capsule budget extraction, not garment matching
-          if (capsuleBudget && /\bcapsule\b/i.test(String(toolContext.question || ''))) {
-            planConstraints.piece_budget = Number(capsuleBudget[1])
-          }
-        }
         const planOutfits = await composeOutfitSet({
           slots: planSlots,
           question: toolContext.question || '',

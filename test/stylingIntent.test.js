@@ -52,6 +52,7 @@ test('generate_outfits schema exposes styling intent enums', () => {
   const generateTool = STYLIST_TOOLS.find(t => t.name === 'generate_outfits')
   const searchTool = STYLIST_TOOLS.find(t => t.name === 'search_wardrobe')
   const proposeTool = STYLIST_TOOLS.find(t => t.name === 'propose_outfit')
+  const planTool = STYLIST_TOOLS.find(t => t.name === 'plan_outfit_set')
   assert.ok(generateTool, 'generate_outfits tool must exist')
   assert.deepEqual(generateTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
   assert.deepEqual(generateTool.input_schema.properties.activity.enum, ACTIVITY_VALUES)
@@ -63,12 +64,14 @@ test('generate_outfits schema exposes styling intent enums', () => {
   assert.deepEqual(searchTool.input_schema.properties.activity.enum, ACTIVITY_VALUES)
   assert.ok(searchTool.input_schema.properties.visual, 'search_wardrobe should accept visual mode')
   assert.ok(proposeTool, 'propose_outfit tool must exist')
+  assert.ok(planTool, 'plan_outfit_set tool must exist')
   assert.ok(!STYLIST_TOOLS.some(t => t.name === 'render_outfit'), 'render_outfit must be retired')
   assert.deepEqual(proposeTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
   assert.deepEqual(proposeTool.input_schema.required, ['pieces'])
   assert.ok(proposeTool.input_schema.properties.pieces.items.properties.role.enum.includes('primary_top'), 'propose_outfit pieces carry a role enum')
   assert.match(proposeTool.description, /ONE (complete, )?coherent outfit/, 'propose_outfit is one outfit, not a roster group')
   assert.match(proposeTool.description, /NEVER pass multiple pieces of the same role/, 'propose_outfit forbids same-role groups')
+  assert.match(planTool.input_schema.properties.slots.description, /10-14 cards for a 24-piece capsule/, '24-piece seasonal capsules should request a representative outfit rotation')
 })
 
 test('normalize styling intent defaults and preserves valid values', () => {
@@ -162,6 +165,8 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   // category — Tops / Bottoms / Shoes — instead of use-case).
   assert.ok(STYLIST_SYSTEM.includes('For a CAPSULE, slot by USE-CASE, NEVER by garment category'))
   assert.ok(STYLIST_SYSTEM.includes('"N-piece capsule" means ~N distinct PIECES, not N outfits'))
+  assert.ok(STYLIST_SYSTEM.includes('larger seasonal capsules (18-24 pieces) should show a real rotation, usually 8-14 outfit cards'))
+  assert.ok(STYLIST_SYSTEM.includes('do NOT default every slot to count 1'))
   assert.ok(STYLIST_SYSTEM.includes('ALWAYS set `piece_budget` to the number in "N-piece capsule"'))
   assert.ok(STYLIST_SYSTEM.includes('weighted toward SEPARATES that recombine'))
   // A capsule roster EDIT is a re-plan, never a same-role propose_outfit card
