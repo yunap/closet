@@ -668,19 +668,71 @@ test('normalizePlanSlots treats environment enum in weather as a declared enviro
   assert.equal(diagnostics.planSlotEnvironmentInferred || 0, 0, 'weather enum should count as a declaration, not prose inference')
 })
 
+test('normalizePlanSlots keeps indoor weather when it was supplied as a weather enum', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Nice Restaurants', occasion: 'evening', activity: 'none', location: 'Paso Robles, CA', weather: 'indoor' },
+  ], { fallbackWeather: 'hot weather' })
+
+  assert.equal(slots[0].environment, 'indoor')
+  assert.equal(slots[0].statedWeather, 'indoor')
+  assert.equal(slots[0].season, 'indoor')
+})
+
+test('normalizePlanSlots lets explicit indoor environment imply indoor weather', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Smart Casual Brunch', occasion: 'smart casual', activity: 'none', environment: 'indoor', weather: 'indoor' },
+    { label: 'Gallery Visit', occasion: 'gallery / art event', activity: 'none', environment: 'indoor' },
+  ], { fallbackWeather: 'hot weather' })
+
+  assert.equal(slots[0].environment, 'indoor')
+  assert.equal(slots[0].statedWeather, 'indoor')
+  assert.equal(slots[0].season, 'indoor')
+  assert.equal(slots[1].environment, 'indoor')
+  assert.equal(slots[1].statedWeather, 'indoor')
+  assert.equal(slots[1].season, 'indoor')
+})
+
+test('normalizePlanSlots preserves beach-coastal contradiction handling for indoor weather', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Beach Day', occasion: 'casual', activity: 'none', environment: 'beach_coastal', weather: 'indoor' },
+    { label: 'Coastal Walk', occasion: 'casual', activity: 'none', location: 'Cambria, CA', weather: 'indoor' },
+  ], { fallbackWeather: 'warm' })
+
+  assert.equal(slots[0].environment, 'beach_coastal')
+  assert.equal(slots[0].statedWeather, '')
+  assert.equal(slots[1].environment, 'beach_coastal')
+  assert.equal(slots[1].statedWeather, '')
+})
+
+test('normalizePlanSlots lets explicit outdoor environment beat indoor text defaults', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Outdoor Office Picnic', occasion: 'city', activity: 'none', weather: 'outdoor' },
+  ], { fallbackWeather: 'mild' })
+
+  assert.equal(slots[0].environment, 'outdoor')
+  assert.equal(slots[0].statedWeather, '')
+  assert.equal(slots[0].season, 'mild')
+})
+
 test('normalizePlanSlots treats office and client-meeting slots as indoor when the model omits weather', () => {
   const slots = normalizePlanSlots([
     { label: 'Office Days', occasion: 'city', activity: 'none', count: 3 },
     { label: 'Client Meeting', occasion: 'smart casual', activity: 'none', count: 1 },
+    { label: 'Nice Restaurants', occasion: 'evening', activity: 'none', count: 1 },
     { label: 'Outdoor Client Walk', occasion: 'city', activity: 'walking', count: 1 },
+    { label: 'Winery Walk', occasion: 'outdoor_daytime_social', activity: 'walking', count: 1 },
   ], { fallbackWeather: 'hot', fallbackLocation: 'Walnut Creek, CA' })
 
   assert.equal(slots[0].statedWeather, 'indoor')
   assert.equal(slots[0].season, 'indoor')
   assert.equal(slots[1].statedWeather, 'indoor')
   assert.equal(slots[1].season, 'indoor')
-  assert.equal(slots[2].statedWeather, '', 'walking/outdoor slots should still use live weather')
-  assert.equal(slots[2].season, 'hot')
+  assert.equal(slots[2].statedWeather, 'indoor', 'plural restaurant labels should default indoor')
+  assert.equal(slots[2].season, 'indoor')
+  assert.equal(slots[3].statedWeather, '', 'walking/outdoor slots should still use live weather')
+  assert.equal(slots[3].season, 'hot')
+  assert.equal(slots[4].statedWeather, '', 'winery walking slots should still use live weather')
+  assert.equal(slots[4].season, 'hot')
 })
 
 test('composeOutfitSet resolves each slot\'s own live forecast and states it per slot in the plan lines', async () => {
