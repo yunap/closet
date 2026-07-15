@@ -32,10 +32,11 @@ import {
   isOutfitStructurallyValid,
   weatherProfileFromContext,
   outfitStylisticStrengthScore,
-  wardrobeCategoryGroup
+  wardrobeCategoryGroup,
+  footwearComfortVerdict
 } from './rules.js'
 import { bottomKind, fabricWeight, garmentKind, isDarkPiece, pieceMatchesFootwear, sleeveCoverage, formalityRank, pieceFormality } from './attributes.js'
-import { resolveComfortFootwearConstraint, applyComfortFootwearRepair } from './footwear-comfort.js'
+import { resolveActivityProfile, resolveComfortFootwearConstraint, applyComfortFootwearRepair } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
 import { resolveOccasionProfile } from './occasions.js'
 
@@ -1683,6 +1684,290 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
     roster.splice(0, roster.length, ...updated)
   }
   return roster.slice(0, budget)
+}
+
+function planWorkbenchPieceLine(piece = {}) {
+  const colors = Array.isArray(piece.colors) && piece.colors.length ? piece.colors.join('/') : ''
+  const occasions = Array.isArray(piece.occasions) && piece.occasions.length ? piece.occasions.slice(0, 4).join('/') : ''
+  const bits = [
+    `ID ${piece.id}`,
+    piece.name || 'Garment',
+    wardrobeCategoryGroup(piece) || piece.category || '',
+    colors ? `colors:${colors}` : '',
+    occasions ? `occasions:${occasions}` : '',
+    piece.formality ? `formality:${piece.formality}` : '',
+    piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
+    piece.heel_height ? `heel:${piece.heel_height}` : '',
+    piece.walk_support ? `support:${piece.walk_support}` : '',
+    piece.reads_as ? `reads:${String(piece.reads_as).slice(0, 80)}` : ''
+  ].filter(Boolean)
+  return bits.join(' | ')
+}
+
+function registerRankName(rank = null) {
+  return ['lounge', 'everyday', 'elevated', 'dressy', 'formal'][rank] || ''
+}
+
+function modelPlanPool({ allPieces = [], slots = [], constraints = {}, question = '', mood = '' } = {}) {
+  const { pieceBudget } = normalizePlanConstraints(constraints)
+  const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
+  const isSummerContext = /\b(summer|warm|hot|80|90|heat)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
+  return pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
+    ? selectCapsuleRoster(allPieces, { budget: pieceBudget, isSummer: isSummerContext, occasions: slots.map(slot => slot.occasion), slots })
+    : allPieces
+}
+
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', fetchImpl } = {}) {
+  const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
+  const composePool = modelPlanPool({ allPieces, slots, constraints, question, mood })
+  const slotWeather = []
+  const workbenchSlots = []
+  const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
+  const coverageGaps = []
+  if (droppedSlotLabels.length) {
+    coverageGaps.push(`[plan trimmed: ${droppedSlotLabels.length} use case${droppedSlotLabels.length === 1 ? '' : 's'} dropped — ${droppedSlotLabels.map(label => `"${label}"`).join(', ')} — a plan can only include up to ${slots.length} use-case slots at once; ask again with the dropped one${droppedSlotLabels.length === 1 ? '' : 's'} as a follow-up]`)
+  }
+  for (const [index, slot] of slots.entries()) {
+    const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
+    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl })
+    slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
+    const { allowedPieces, excluded } = filterWholeWardrobePiecesForGeneration(composePool, {
+      occasion: slot.occasion,
+      explorationMode: 'moderate',
+      weatherProfile,
+      mood: mood || slotRequestText,
+      activity: slot.activity,
+      request: slotRequestText
+    })
+    const shownPieces = allowedPieces.slice(0, 40)
+    const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
+    const floorRank = String(slot?.register || '').toLowerCase() === 'formal'
+      ? formalityRank('dressy')
+      : formalityRank(slot?.register)
+    workbenchSlots.push({
+      id: slot.id,
+      label: slot.label,
+      occasion: slot.occasion,
+      activity: slot.activity,
+      environment: slot.environment || '',
+      register: slot.register || '',
+      target_outfits: Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1)),
+      weather_used: weatherLabel,
+      register_ceiling: registerRankName(ceilingRank),
+      register_floor: registerRankName(floorRank),
+      allowed_pieces: shownPieces.map(planWorkbenchPieceLine),
+      suppressed_note: `${Array.isArray(excluded) ? excluded.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing first ${shownPieces.length} of ${allowedPieces.length} allowed pieces` : ''}`
+    })
+    slot._modelWorkbench = {
+      weatherProfile,
+      weatherLabel,
+      allowedPieces: shownPieces,
+      rosterIds: new Set(shownPieces.map(piece => Number(piece.id)).filter(Boolean)),
+      originalIndex: index,
+      slotRequestText
+    }
+  }
+  return {
+    status: 'slot_rosters',
+    instructions: 'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Pick only from each slot allowed piece IDs. If validation accepts some outfits and rejects others, resubmit only the failed slots.',
+    slots: workbenchSlots,
+    constraints: {
+      reuse: reuseMode,
+      no_repeat: [...noRepeatCats],
+      allow_repeat: [...allowRepeat],
+      shared_anchor_ids: [...anchorIds],
+      piece_budget: pieceBudget
+    },
+    pendingPlan: {
+      slots: slots.map((slot, index) => ({
+        ...slot,
+        originalIndex: index,
+        weatherProfile: slot._modelWorkbench?.weatherProfile || null,
+        weatherLabel: slot._modelWorkbench?.weatherLabel || '',
+        allowedPieces: slot._modelWorkbench?.allowedPieces || [],
+        rosterIds: slot._modelWorkbench?.rosterIds || new Set(),
+        slotRequestText: slot._modelWorkbench?.slotRequestText || ''
+      })),
+      constraints: { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget },
+      slotWeather,
+      coverageGaps,
+      heldOutfits: [],
+      resubmits: 0
+    }
+  }
+}
+
+export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherProfile = {} } = {}) {
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const reasons = []
+  const mainPieces = pieces.filter(piece => ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece)))
+  const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
+  const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  if (weatherProfile?.isCold) {
+    const hasWarmLayer = Boolean(layer) || (top && fabricWeight(top) === 'heavy') || (dress && fabricWeight(dress) === 'heavy')
+    if (!hasWarmLayer) reasons.push('no warm layer for cold weather')
+  }
+  if (weatherProfile?.isHot) {
+    for (const piece of mainPieces) {
+      if (fabricWeight(piece) === 'heavy') reasons.push(`${piece.name || piece.id} is a heavy main for hot weather`)
+    }
+  }
+  const floorRank = String(slot?.register || '').toLowerCase() === 'formal'
+    ? formalityRank('dressy')
+    : formalityRank(slot?.register)
+  if (floorRank !== null && floorRank >= formalityRank('dressy')) {
+    for (const piece of mainPieces) {
+      const rank = formalityRank(pieceFormality(piece))
+      if (rank !== null && rank < floorRank) reasons.push(`${piece.name || piece.id} is below the ${slot.register} register floor`)
+    }
+  }
+  const activityProfile = resolveActivityProfile({ activity: slot.activity, occasion: slot.occasion, request: slot.slotRequestText || slot.bestFor || slot.label || '' })
+  if (activityProfile) {
+    for (const piece of pieces.filter(piece => wardrobeCategoryGroup(piece) === 'shoes')) {
+      const verdict = footwearComfortVerdict(
+        piece,
+        activityProfile.rules?.excluded_heel_heights || [],
+        activityProfile.rules?.excluded_walk_support || []
+      )
+      if (verdict.verdict === 'exclude') {
+        const label = verdict.dimension === 'heel' ? `${verdict.value} heel unsuitable` : `${verdict.value} support unsuitable`
+        reasons.push(`${piece.name || piece.id}: ${label} for ${activityProfile.id}`)
+      }
+      if (verdict.verdict === 'unknown') reasons.push(`${piece.name || piece.id}: footwear comfort not tagged for ${activityProfile.id}`)
+    }
+  }
+  return reasons
+}
+
+function modelPlanNoRepeatViolation(outfit = {}, usedPieceIdsByCategory = new Map(), noRepeatCats = new Set(), anchorIds = new Set()) {
+  if (!noRepeatCats.size) return ''
+  for (const { id, group } of outfitCategoryPairs(outfit)) {
+    if (!noRepeatCats.has(group) || anchorIds.has(id)) continue
+    if (usedPieceIdsByCategory.get(group)?.has(id)) return `${group} piece ${id} repeats despite no_repeat`
+  }
+  return ''
+}
+
+function recordModelPlanUse(outfit = {}, usedPieceIds = new Set(), usedPieceIdsByCategory = new Map()) {
+  for (const { id, group } of outfitCategoryPairs(outfit)) {
+    usedPieceIds.add(id)
+    if (!usedPieceIdsByCategory.has(group)) usedPieceIdsByCategory.set(group, new Set())
+    usedPieceIdsByCategory.get(group).add(id)
+  }
+}
+
+export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = []) {
+  const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
+  const slotById = new Map(slots.map(slot => [slot.id, slot]))
+  const heldOutfits = Array.isArray(pendingPlan?.heldOutfits) ? pendingPlan.heldOutfits : []
+  const { noRepeat = new Set(), anchorIds = new Set(), pieceBudget = 0 } = pendingPlan?.constraints || {}
+  const usedKeys = new Set(heldOutfits.map(outfit => tripOutfitKey(outfit)).filter(Boolean))
+  const usedPieceIds = new Set()
+  const usedPieceIdsByCategory = new Map()
+  heldOutfits.forEach(outfit => recordModelPlanUse(outfit, usedPieceIds, usedPieceIdsByCategory))
+  const accepted = []
+  const failures = []
+  const submitted = Array.isArray(submissions) ? submissions : []
+  for (const [index, raw] of submitted.entries()) {
+    const slot = slotById.get(String(raw?.slot_id || ''))
+    const label = slot?.label || raw?.slot_id || `outfit ${index + 1}`
+    const reasons = []
+    if (!slot) {
+      failures.push({ slot_id: raw?.slot_id || '', label, reasons: [`unknown slot_id ${raw?.slot_id || '(missing)'}`] })
+      continue
+    }
+    const pieceIds = (Array.isArray(raw?.piece_ids) ? raw.piece_ids : []).map(id => Number(id)).filter(Boolean)
+    const seenIds = new Set()
+    const dedupedIds = pieceIds.filter(id => {
+      if (seenIds.has(id)) return false
+      seenIds.add(id)
+      return true
+    })
+    if (!dedupedIds.length) reasons.push('piece_ids is required')
+    const outsideRoster = dedupedIds.filter(id => !slot.rosterIds?.has(id))
+    if (outsideRoster.length) reasons.push(`piece ID(s) ${outsideRoster.join(', ')} are not in this slot roster`)
+    const byId = new Map((slot.allowedPieces || []).map(piece => [Number(piece.id), piece]))
+    const pieces = dedupedIds.map(id => byId.get(id)).filter(Boolean)
+    const outfit = {
+      title: String(raw?.title || slot.label || '').trim(),
+      reason: String(raw?.reason || '').trim(),
+      pieces,
+      pieceIds: dedupedIds,
+      source: 'plan_outfit_set'
+    }
+    if (!isOutfitStructurallyValid(pieces, { requireShoes: true })) reasons.push('outfit is structurally incomplete or has duplicate core roles')
+    reasons.push(...validateSlotOutfitConstraints(outfit, slot, { weatherProfile: slot.weatherProfile || {} }))
+    const key = tripOutfitKey(outfit)
+    if (key && usedKeys.has(key)) reasons.push('duplicate outfit already accepted in this plan')
+    const repeatReason = modelPlanNoRepeatViolation(outfit, usedPieceIdsByCategory, noRepeat, anchorIds)
+    if (repeatReason) reasons.push(repeatReason)
+    const nextDistinctPieceCount = new Set([...usedPieceIds, ...outfitCategoryPairs(outfit).map(pair => pair.id)]).size
+    if (pieceBudget > 0 && nextDistinctPieceCount > pieceBudget) reasons.push(`would exceed the ${pieceBudget}-piece budget`)
+    if (reasons.length) {
+      failures.push({ slot_id: slot.id, label, reasons })
+      continue
+    }
+    usedKeys.add(key)
+    recordModelPlanUse(outfit, usedPieceIds, usedPieceIdsByCategory)
+    accepted.push({ ...outfit, _slotId: slot.id })
+  }
+  const anchorAllowedSlots = anchorIds.size
+    ? slots.filter(slot => [...anchorIds].some(id => slot.rosterIds?.has(id))).map(slot => slot.label)
+    : []
+  const allAccepted = [...heldOutfits, ...accepted]
+  if (anchorIds.size && anchorAllowedSlots.length && !allAccepted.some(outfit => outfitCategoryPairs(outfit).some(({ id }) => anchorIds.has(id)))) {
+    failures.push({
+      slot_id: '',
+      label: 'Shared anchor',
+      reasons: [`include at least one shared anchor piece; it is allowed in: ${anchorAllowedSlots.join(', ')}`]
+    })
+  }
+  return { accepted, failures }
+}
+
+export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits = [], { source = 'plan_outfit_set' } = {}) {
+  const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
+  const slotById = new Map(slots.map(slot => [slot.id, slot]))
+  const groupedBySlot = new Map()
+  for (const outfit of acceptedOutfits || []) {
+    const slotId = outfit?._slotId || outfit?.slot_id || outfit?.tripSlot
+    if (!slotId) continue
+    if (!groupedBySlot.has(slotId)) groupedBySlot.set(slotId, [])
+    groupedBySlot.get(slotId).push(outfit)
+  }
+  const coverageGaps = [...(Array.isArray(pendingPlan?.coverageGaps) ? pendingPlan.coverageGaps : [])]
+  const picked = []
+  for (const slot of slots) {
+    const group = groupedBySlot.get(slot.id) || []
+    const target = Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1))
+    if (group.length < target) {
+      coverageGaps.push(describeSlotCoverageGap(slot, {
+        requestedCount: target,
+        composedCount: group.length,
+        candidateCount: slot.allowedPieces?.length || 0
+      }))
+    }
+    const trimMessage = describePlanCapTrim(slot)
+    if (trimMessage) coverageGaps.push(trimMessage)
+    group.forEach((outfit, slotIndex) => {
+      picked.push({
+        ...annotateTripOutfit(outfit, slot, picked.length, {
+          slotIndex,
+          slotTotal: group.length,
+          source,
+          weatherLabel: slot.weatherLabel || ''
+        }),
+        _planOrder: slot.originalIndex
+      })
+    })
+  }
+  const orderedPicked = picked
+    .sort((a, b) => (a._planOrder ?? 0) - (b._planOrder ?? 0) || (a.coveragePosition || '').localeCompare(b.coveragePosition || ''))
+    .map(({ _planOrder, _slotId, ...outfit }) => outfit)
+  const { reuse: reuseMode, noRepeat: noRepeatCats, pieceBudget } = pendingPlan?.constraints || {}
+  const orderedSlotWeather = [...(pendingPlan?.slotWeather || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+  return attachTripPlanMetadata(orderedPicked, { source, slotWeather: orderedSlotWeather, reuseMode, noRepeatCats, pieceBudget, coverageGaps })
 }
 
 export async function composeOutfitSet({ slots = [], question = '', mood = '', allPieces = [], seedOutfits = [], source = 'trip_precompose', dateRange = {}, constraints = {}, fetchImpl } = {}) {
