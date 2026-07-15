@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics, sanitizePlanConstraintsForQuestion } = await import('../styling-engine/tools.js')
-const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildPlanSlotWorkbench, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget } = await import('../styling-engine/outfitSetPlanner.js')
+const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
@@ -99,7 +99,9 @@ test('plan_outfit_set model mode returns slot rosters and submit_plan_outfits cr
     assert.equal(workbench.status, 'slot_rosters')
     assert.equal(toolContext.pendingPlan?.mode, 'model')
     assert.equal(toolContext.freeformDiagnostics.planComposeMode, 'model')
-    assert.ok(workbench.slots[0].allowed_pieces.some(line => /ID \d+/.test(line)))
+    assert.ok(workbench.piece_catalog.some(line => /ID \d+/.test(line)))
+    assert.ok(workbench.slots[0].allowed_piece_ids.length > 0)
+    assert.equal(workbench.slots[0].allowed_pieces, undefined)
 
     const ids = idsForSlot(toolContext.pendingPlan.slots[0])
     const submitted = await executeTool('submit_plan_outfits', {
@@ -117,6 +119,7 @@ test('plan_outfit_set model mode returns slot rosters and submit_plan_outfits cr
     assert.equal(toolContext.sourceLocked, true)
     assert.equal(toolContext.generatedOutfits.length, 1)
     assert.equal(toolContext.generatedOutfits[0].source, 'plan_outfit_set')
+    assert.equal(toolContext.generatedOutfits[0].composedBy, 'model')
     assert.equal(toolContext.generatedOutfits[0].label, 'City Day')
   } finally {
     if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
@@ -161,10 +164,121 @@ test('model plan slot workbench force-includes a shared anchor that would fall p
     constraints: { shared_anchor_ids: [anchorId] },
   })
 
-  assert.equal(workbench.slots[0].allowed_pieces.length, 40)
+  assert.equal(workbench.slots[0].allowed_piece_ids.length, 40)
   assert.ok(workbench.pendingPlan.slots[0].rosterIds.has(anchorId), 'late anchor must stay inside rosterIds despite the cap')
-  assert.ok(workbench.slots[0].allowed_pieces.some(line => line.includes(`ID ${anchorId}`)), 'late anchor must be visible to the model')
-  assert.ok(workbench.slots[0].allowed_pieces.some(line => line.includes('ordinary roster top 44')), 'the cap should not simply take the oldest first 40 pieces')
+  assert.ok(workbench.slots[0].allowed_piece_ids.includes(Number(anchorId)), 'late anchor must be visible to the model')
+  assert.ok(workbench.piece_catalog.some(line => line.includes(`ID ${anchorId}`)), 'late anchor details must be visible to the model')
+  assert.ok(workbench.piece_catalog.some(line => line.includes('ordinary roster top 44')), 'the cap should not simply take the oldest first 40 pieces')
+  assert.ok(workbench.pendingPlan.slots[0].gateAllowedIds.has(Number(anchorId)), 'anchor guarantee must use all gate-allowed IDs')
+})
+
+test('submit_plan_outfits accepts gate-allowed pieces that were not in the shown roster', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const bottomId = insertPiece({ category: 'bottom', name: 'hidden roster pants', occasions: ['city'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'hidden roster shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const topIds = []
+  for (let i = 0; i < 45; i += 1) {
+    topIds.push(insertPiece({ category: 'top', name: `hidden roster top ${i}`, occasions: ['city'], formality: 'everyday' }))
+  }
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city outfit' })
+  const hiddenTopId = Number(topIds[0])
+
+  assert.ok(workbench.pendingPlan.slots[0].gateAllowedIds.has(hiddenTopId))
+  assert.ok(!workbench.pendingPlan.slots[0].rosterIds.has(hiddenTopId), 'fixture needs an allowed top outside the shown roster')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    piece_ids: [hiddenTopId, Number(bottomId), Number(shoesId)],
+  }])
+
+  assert.equal(result.failures.length, 0)
+  assert.equal(result.accepted.length, 1)
+})
+
+test('submit_plan_outfits rejects gate-suppressed pieces with the gate reason', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'hot gate top', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'hot gate pants', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'hot gate shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const heavyLayerIds = []
+  for (let i = 0; i < 5; i += 1) {
+    heavyLayerIds.push(insertPiece({ category: 'outerwear', name: `heavy hot gate layer ${i}`, occasions: ['casual'], formality: 'everyday', fabric_weight: 'heavy' }))
+  }
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Hot Casual Day', occasion: 'casual', activity: 'none', count: 1, weather: 'hot, around 95F' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'hot casual day' })
+  const suppressedLayerId = heavyLayerIds.map(Number).find(id => workbench.pendingPlan.slots[0].suppressedReasonsById.has(id))
+  assert.ok(suppressedLayerId, 'fixture needs at least one gate-suppressed layer')
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId), suppressedLayerId],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.match(result.failures[0].reasons.join(' '), /failed this slot's gates/)
+  assert.match(result.failures[0].reasons.join(' '), /hot weather|heavy/i)
+})
+
+test('describeOutfitStructureGap reports the specific structural gap', () => {
+  const topA = { id: 1, category: 'top' }
+  const topB = { id: 2, category: 'top' }
+  const bottomA = { id: 3, category: 'bottom' }
+  const bottomB = { id: 4, category: 'bottom' }
+  const dress = { id: 5, category: 'dress' }
+  const shoesA = { id: 6, category: 'shoes' }
+  const shoesB = { id: 7, category: 'shoes' }
+
+  assert.equal(describeOutfitStructureGap([topA, bottomA]), 'missing shoes')
+  assert.equal(describeOutfitStructureGap([topA, bottomA, shoesA, shoesB]), 'more than one shoe option was submitted')
+  assert.equal(describeOutfitStructureGap([topA, bottomA, bottomB, shoesA]), 'more than one bottom was submitted')
+  assert.equal(describeOutfitStructureGap([dress, bottomA, shoesA]), 'dress and bottom were both submitted')
+  assert.equal(describeOutfitStructureGap([bottomA, shoesA]), 'missing top or dress')
+  assert.equal(describeOutfitStructureGap([topA, topB, shoesA]), '2 tops were submitted without a bottom')
+  assert.equal(describeOutfitStructureGap([topA, bottomA, shoesA]), '')
+})
+
+test('assembleSubmittedPlanOutfits reports model validation shortfalls as submitted-plan gaps', () => {
+  const top = { id: 1, name: 'gap top', category: 'top' }
+  const bottom = { id: 2, name: 'gap bottom', category: 'bottom' }
+  const shoes = { id: 3, name: 'gap shoes', category: 'shoes' }
+  const pendingPlan = {
+    slots: [{
+      id: 'winery_exploring',
+      label: 'Winery Exploring',
+      occasion: 'city',
+      activity: 'walking',
+      bestFor: 'walking around wineries',
+      coverage: 'winery exploring',
+      targetOutfits: 2,
+      originalIndex: 0,
+      allowedPieces: [top, bottom, shoes],
+      gateAllowedIds: new Set([1, 2, 3]),
+      weatherLabel: 'warm',
+    }],
+    constraints: { reuse: 'maximize', noRepeat: new Set(), pieceBudget: 0 },
+    slotWeather: [],
+    coverageGaps: [],
+  }
+
+  const outfits = assembleSubmittedPlanOutfits(pendingPlan, [{
+    _slotId: 'winery_exploring',
+    title: 'One valid winery look',
+    reason: 'Only one made it through validation.',
+    pieces: [top, bottom, shoes],
+    pieceIds: [1, 2, 3],
+    source: 'plan_outfit_set',
+    composedBy: 'model',
+  }])
+
+  assert.equal(outfits[0].composedBy, 'model')
+  assert.ok(outfits[0].tripPlanLines.some(line => line === '[coverage gap: "Winery Exploring" needed 2 looks but only 1 valid outfit was submitted — the other attempts failed validation]'), `expected model shortfall wording, got ${JSON.stringify(outfits[0].tripPlanLines)}`)
 })
 
 test('submit_plan_outfits merges validation failures and holds accepted outfits for resubmit', async () => {
@@ -198,7 +312,7 @@ test('submit_plan_outfits merges validation failures and holds accepted outfits 
 
     assert.equal(invalid.status, 'validation_error')
     assert.equal(invalid.held_count, 1)
-    assert.match(invalid.message, /not in this slot roster/)
+    assert.match(invalid.message, /not an active wardrobe piece for this plan/)
     assert.equal(toolContext.pendingPlan.heldOutfits.length, 1)
     assert.equal(toolContext.freeformDiagnostics.submitPlanValidationFails, 1)
 
@@ -267,6 +381,8 @@ function insertPiece(overrides = {}) {
     fiber_content: [],
     formality: 'everyday',
     length_hits_at: '',
+    heel_height: null,
+    walk_support: null,
     style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
     ...overrides,
   }
@@ -276,13 +392,13 @@ function insertPiece(overrides = {}) {
       recommendation_status, fit_confidence, role_permission, occasion_permissions,
       engine_notes, photo, worn_photo, pattern_type, pattern_scale,
       pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content,
-      formality, length_hits_at, style_profile_json
+      formality, length_hits_at, heel_height, walk_support, style_profile_json
     ) VALUES (
       @name, @category, @colors, @occasions, @season, @notes, @status,
       @recommendation_status, @fit_confidence, @role_permission, @occasion_permissions,
       @engine_notes, @photo, @worn_photo, @pattern_type, @pattern_scale,
       @pattern_complexity, @reads_as, @silhouette, @fabric_category, @fabric_weight, @fiber_content,
-      @formality, @length_hits_at, @style_profile_json
+      @formality, @length_hits_at, @heel_height, @walk_support, @style_profile_json
     )
   `).run({
     ...piece,
@@ -439,6 +555,7 @@ test('plan_outfit_set composes a multi-slot set with plan lines, slot labels, an
   assert.ok(labels.has('City Days') && labels.has('Dinner Out'), `cards carry slot labels, got ${[...labels]}`)
   for (const outfit of toolContext.generatedOutfits) {
     assert.equal(outfit.source, 'plan_outfit_set')
+    assert.equal(outfit.composedBy, 'engine')
     assert.ok(outfit.coveragePosition, 'each card carries its coverage position')
   }
   assert.ok(result.plan_lines.some(line => /Packing reuse/.test(line)), 'plan lines include the reuse report')
@@ -479,6 +596,19 @@ test('normalizePlanSlots carries location, date, and stated weather, inheriting 
   assert.equal(slots[0].location, 'Portland, OR', 'a slot without a location inherits the plan location')
   assert.equal(slots[1].location, 'Cambria, CA', 'a slot location overrides the plan location')
   assert.equal(slots[1].statedWeather, '', 'no stated weather when none is given')
+})
+
+test('normalizePlanSlots does not treat echoed fallback weather as slot-stated weather', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Coast Walk', occasion: 'city', activity: 'walking', location: 'Cambria, CA', weather: ' warm ' },
+    { label: 'Indoor Dinner', occasion: 'evening', activity: 'none', location: 'Paso Robles, CA', weather: 'indoor' },
+    { label: 'Cool Patio', occasion: 'city', activity: 'none', location: 'Cambria, CA', weather: 'cool and breezy' },
+  ], { fallbackWeather: 'warm', fallbackLocation: 'Paso Robles, CA' })
+
+  assert.equal(slots[0].statedWeather, '', 'fallback echo should still allow live slot forecast to win')
+  assert.equal(slots[0].season, 'warm', 'fallback still seeds heuristic season text')
+  assert.equal(slots[1].statedWeather, 'indoor', 'different explicit indoor weather should still win')
+  assert.equal(slots[2].statedWeather, 'cool and breezy', 'different explicit slot weather should still win')
 })
 
 test('normalizePlanSlots treats office and client-meeting slots as indoor when the model omits weather', () => {
@@ -1198,6 +1328,58 @@ test('selectCapsuleRoster reserves multiple elevated shoes for roomier mixed-reg
   assert.equal(slots.find(slot => slot.label === 'Casual Dinner')?.occasion, 'evening')
   assert.ok(rosterShoes.length >= 4, `24-piece capsules should have room for more shoe variety, got ${rosterShoes.map(piece => piece.name)}`)
   assert.ok(elevatedShoes.length >= 3, `brunch/gallery/dinner demand should reserve multiple elevated shoes, got ${rosterShoes.map(piece => `${piece.name}:${piece.formality}`)}`)
+})
+
+test('selectCapsuleRoster leaves the roster unchanged when no demanding activity is present', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  for (const name of ['white cotton tee', 'olive cotton tank', 'striped linen shirt']) {
+    insertPiece({ category: 'top', name, colors: ['white'], reads_as: 'easy casual top', occasions: ['casual', 'city'], formality: 'everyday' })
+  }
+  for (const name of ['black cotton pants', 'linen wide-leg pants', 'denim straight jeans']) {
+    insertPiece({ category: 'bottom', name, colors: ['black'], reads_as: 'easy casual bottom', occasions: ['casual', 'city'], formality: 'everyday' })
+  }
+  insertPiece({ category: 'dress', name: 'olive day dress', colors: ['olive'], reads_as: 'easy day dress', occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'outerwear', name: 'light cotton jacket', colors: ['navy'], reads_as: 'light casual jacket', occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'navy canvas flats', colors: ['navy'], reads_as: 'easy flats', occasions: ['casual', 'city'], formality: 'everyday', heel_height: 'flat', walk_support: 'medium' })
+  insertPiece({ category: 'shoes', name: 'white city sneakers', colors: ['white'], reads_as: 'city sneakers', occasions: ['casual', 'city'], formality: 'everyday', heel_height: 'flat', walk_support: 'medium' })
+  insertPiece({ category: 'shoes', name: 'black polished loafers', colors: ['black'], reads_as: 'polished loafers', occasions: ['city'], formality: 'elevated', heel_height: 'flat', walk_support: 'medium' })
+
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const noActivitySlots = normalizePlanSlots([
+    { label: 'Casual Day', occasion: 'casual', activity: 'none', count: 1 },
+  ])
+  const baseline = selectCapsuleRoster(pool, { budget: 8, isSummer: true, occasions: noActivitySlots.map(slot => slot.occasion), slots: [] })
+  const withSlots = selectCapsuleRoster(pool, { budget: 8, isSummer: true, occasions: noActivitySlots.map(slot => slot.occasion), slots: noActivitySlots })
+
+  assert.deepEqual(withSlots.map(piece => Number(piece.id)), baseline.map(piece => Number(piece.id)))
+})
+
+test('selectCapsuleRoster reserves activity-safe hiking footwear alongside elevated shoes', async () => {
+  db.prepare("DELETE FROM pieces").run()
+  for (const name of ['white cotton tee', 'olive cotton tank', 'striped linen shirt', 'black silk blouse']) {
+    insertPiece({ category: 'top', name, colors: ['white'], reads_as: 'capsule top', occasions: ['casual', 'city', 'evening'], formality: name.includes('silk') ? 'elevated' : 'everyday' })
+  }
+  for (const name of ['black cotton pants', 'linen wide-leg pants', 'denim straight jeans', 'tailored black trousers']) {
+    insertPiece({ category: 'bottom', name, colors: ['black'], reads_as: 'capsule bottom', occasions: ['casual', 'city', 'evening'], formality: name.includes('tailored') ? 'elevated' : 'everyday' })
+  }
+  insertPiece({ category: 'dress', name: 'olive day dress', colors: ['olive'], reads_as: 'easy day dress', occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'outerwear', name: 'light cotton jacket', colors: ['navy'], reads_as: 'light casual jacket', occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'black low heels', colors: ['black'], reads_as: 'polished low heels', occasions: ['city', 'evening'], formality: 'elevated', heel_height: 'low', walk_support: 'medium' })
+  insertPiece({ category: 'shoes', name: 'cream leather mules', colors: ['cream'], reads_as: 'polished mules', occasions: ['city', 'evening'], formality: 'elevated', heel_height: 'low', walk_support: 'medium' })
+  insertPiece({ category: 'shoes', name: 'navy canvas flats', colors: ['navy'], reads_as: 'easy flats', occasions: ['casual', 'city'], formality: 'everyday', heel_height: 'flat', walk_support: 'low' })
+  insertPiece({ category: 'shoes', name: 'magenta trail sneakers', colors: ['magenta'], reads_as: 'trail sneakers', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Morning Hike', occasion: 'casual', activity: 'hiking', count: 1 },
+    { label: 'Dinner Out', occasion: 'evening', activity: 'none', count: 2 },
+  ])
+  const roster = selectCapsuleRoster(pool, { budget: 24, isSummer: true, occasions: slots.map(slot => slot.occasion), slots })
+  const rosterNames = roster.map(piece => piece.name)
+  const rosterShoes = roster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes')
+
+  assert.ok(rosterNames.includes('magenta trail sneakers'), `hiking demand should reserve a high-support flat shoe, got ${rosterShoes.map(piece => `${piece.name}:${piece.heel_height}/${piece.walk_support}`)}`)
+  assert.ok(rosterShoes.some(piece => piece.formality === 'elevated'), `elevated shoe reserve should still hold, got ${rosterShoes.map(piece => `${piece.name}:${piece.formality}`)}`)
 })
 
 test('selectCapsuleRoster reserves enough everyday-compatible pieces for repeated casual capsule demand', async () => {

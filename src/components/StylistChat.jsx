@@ -1227,7 +1227,10 @@ export default function StylistChat({
   // composing via propose_outfit, which can happen even after plan_outfit_set already ran (found
   // 2026-07-14 testing #87-89: the model called plan_outfit_set then silently re-composed every
   // card itself via propose_outfit, bypassing the engine's coverage-gap/trim disclosures).
-  const getCardAuthorLabel = (source) => {
+  const getCardAuthorLabel = (outfit = {}) => {
+    const source = outfit?.source
+    const composedBy = outfit?.composedBy
+    if (source === 'plan_outfit_set' && composedBy === 'model') return 'AI · plan_outfit_set'
     if (source === 'plan_outfit_set') return 'engine · plan_outfit_set'
     if (source === 'trip_precompose') return 'engine · precompose'
     if (source === 'proposed_outfit' || source === 'proposed') return 'AI · propose_outfit'
@@ -2131,8 +2134,8 @@ export default function StylistChat({
                   <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
                   <div style={{ fontSize: 10, color: isBrokenCard ? 'var(--repair)' : (idx === 0 ? 'var(--accent)' : 'var(--text-muted)'), textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isBrokenCard ? 'needs review' : (isTripCard ? (outfit.coveragePosition || 'trip look') : strength)}</div>
                 </div>
-                {getCardAuthorLabel(outfit.source) && (
-                  <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, letterSpacing: '0.02em', marginTop: 2 }}>{getCardAuthorLabel(outfit.source)}</div>
+                {getCardAuthorLabel(outfit) && (
+                  <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, letterSpacing: '0.02em', marginTop: 2 }}>{getCardAuthorLabel(outfit)}</div>
                 )}
                 {isBrokenCard && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45, fontWeight: 600 }}>
