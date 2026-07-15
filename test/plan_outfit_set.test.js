@@ -330,6 +330,47 @@ test('submit_plan_outfits merges validation failures and holds accepted outfits 
   }
 })
 
+test('submit_plan_outfits reports missing slots together with other validation failures', async () => {
+  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
+  process.env.WARDROBE_PLAN_COMPOSE = 'model'
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'roundtrip top one', occasions: ['city', 'casual'] })
+  insertPiece({ category: 'bottom', name: 'roundtrip bottom one', occasions: ['city', 'casual'] })
+  insertPiece({ category: 'shoes', name: 'roundtrip shoes one', occasions: ['city', 'casual'], heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'top', name: 'roundtrip top two', occasions: ['city', 'casual'] })
+  insertPiece({ category: 'bottom', name: 'roundtrip bottom two', occasions: ['city', 'casual'] })
+  insertPiece({ category: 'shoes', name: 'roundtrip shoes two', occasions: ['city', 'casual'], heel_height: 'flat', walk_support: 'high' })
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'three simple outfits' }
+    await executeTool('plan_outfit_set', {
+      slots: [
+        { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
+        { label: 'Coastal Day', occasion: 'casual', activity: 'none', count: 1 },
+        { label: 'Winery Day', occasion: 'city', activity: 'walking', count: 2 },
+      ]
+    }, toolContext)
+    const citySlot = toolContext.pendingPlan.slots.find(slot => slot.label === 'City Day')
+    const coastalSlot = toolContext.pendingPlan.slots.find(slot => slot.label === 'Coastal Day')
+    const cityIds = idsForSlot(citySlot)
+
+    const invalid = await executeTool('submit_plan_outfits', {
+      outfits: [
+        { slot_id: citySlot.id, piece_ids: [cityIds.get('top'), cityIds.get('bottom'), cityIds.get('shoes')] },
+        { slot_id: coastalSlot.id, piece_ids: [999999] }
+      ]
+    }, toolContext)
+
+    assert.equal(invalid.status, 'validation_error')
+    assert.ok(invalid.failures.some(failure => failure.label === 'Coastal Day'), `expected coastal failure, got ${JSON.stringify(invalid.failures)}`)
+    const missing = invalid.failures.find(failure => failure.label === 'Missing slots')
+    assert.ok(missing, `missing slots should be merged with other failures, got ${JSON.stringify(invalid.failures)}`)
+    assert.ok(missing.reasons.some(reason => /Winery Day still needs 2 outfits/.test(reason)), `expected winery shortfall in same response, got ${missing.reasons}`)
+  } finally {
+    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
+    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
+  }
+})
+
 test('propose_outfit redirects while a model-mode pending plan awaits submission', async () => {
   const previousMode = process.env.WARDROBE_PLAN_COMPOSE
   process.env.WARDROBE_PLAN_COMPOSE = 'model'
@@ -609,6 +650,22 @@ test('normalizePlanSlots does not treat echoed fallback weather as slot-stated w
   assert.equal(slots[0].season, 'warm', 'fallback still seeds heuristic season text')
   assert.equal(slots[1].statedWeather, 'indoor', 'different explicit indoor weather should still win')
   assert.equal(slots[2].statedWeather, 'cool and breezy', 'different explicit slot weather should still win')
+})
+
+test('normalizePlanSlots treats environment enum in weather as a declared environment', () => {
+  const diagnostics = {}
+  const slots = normalizePlanSlots([
+    { label: 'Coastal Day', occasion: 'outdoor_daytime_social', activity: 'none', location: 'Cambria, CA', weather: 'beach_coastal' },
+  ], {
+    fallbackWeather: 'warm',
+    onDiagnostic: key => { diagnostics[key] = (diagnostics[key] || 0) + 1 }
+  })
+
+  assert.equal(slots[0].environment, 'beach_coastal')
+  assert.equal(slots[0].occasion, 'casual')
+  assert.equal(slots[0].statedWeather, '', 'environment enum in weather must not block live forecast as stated weather')
+  assert.equal(slots[0].season, 'warm')
+  assert.equal(diagnostics.planSlotEnvironmentInferred || 0, 0, 'weather enum should count as a declaration, not prose inference')
 })
 
 test('normalizePlanSlots treats office and client-meeting slots as indoor when the model omits weather', () => {
