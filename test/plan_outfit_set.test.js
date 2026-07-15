@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics, sanitizePlanConstraintsForQuestion } = await import('../styling-engine/tools.js')
-const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget } = await import('../styling-engine/outfitSetPlanner.js')
+const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildPlanSlotWorkbench, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
@@ -122,6 +122,49 @@ test('plan_outfit_set model mode returns slot rosters and submit_plan_outfits cr
     if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
     else process.env.WARDROBE_PLAN_COMPOSE = previousMode
   }
+})
+
+test('model plan slot workbench reports suppressed pieces from the generation gates', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'hot day top', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light' })
+  insertPiece({ category: 'bottom', name: 'hot day pants', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light' })
+  insertPiece({ category: 'shoes', name: 'hot day flat shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  for (let i = 0; i < 5; i += 1) {
+    insertPiece({ category: 'outerwear', name: `hot weather extra layer ${i}`, occasions: ['casual'], formality: 'everyday', fabric_weight: 'heavy' })
+  }
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Hot Casual Day', occasion: 'casual', activity: 'none', count: 1, weather: 'hot, around 95F' },
+  ])
+
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'hot casual day' })
+  const suppressedCount = Number.parseInt(workbench.slots[0].suppressed_note, 10)
+  assert.ok(suppressedCount > 0, `suppressed note should report gated pieces, got "${workbench.slots[0].suppressed_note}"`)
+})
+
+test('model plan slot workbench force-includes a shared anchor that would fall past the cap', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'bottom', name: 'anchor cap pants', occasions: ['city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'anchor cap shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  for (let i = 0; i < 45; i += 1) {
+    insertPiece({ category: 'top', name: `ordinary roster top ${i}`, occasions: ['city'], formality: 'everyday' })
+  }
+  const anchorId = insertPiece({ category: 'top', name: 'late shared anchor top', occasions: ['city'], formality: 'everyday' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' },
+  ])
+
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces,
+    question: 'build around the late top',
+    constraints: { shared_anchor_ids: [anchorId] },
+  })
+
+  assert.equal(workbench.slots[0].allowed_pieces.length, 40)
+  assert.ok(workbench.pendingPlan.slots[0].rosterIds.has(anchorId), 'late anchor must stay inside rosterIds despite the cap')
+  assert.ok(workbench.slots[0].allowed_pieces.some(line => line.includes(`ID ${anchorId}`)), 'late anchor must be visible to the model')
+  assert.ok(workbench.slots[0].allowed_pieces.some(line => line.includes('ordinary roster top 44')), 'the cap should not simply take the oldest first 40 pieces')
 })
 
 test('submit_plan_outfits merges validation failures and holds accepted outfits for resubmit', async () => {

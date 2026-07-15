@@ -1447,6 +1447,7 @@ function outfitDressId(outfit = {}) {
 // budget. Below this floor a "capsule" can't cover top+bottom+shoes, so we keep
 // the soft-report behavior instead.
 const MIN_ENFORCED_CAPSULE_BUDGET = 6
+const PLAN_WORKBENCH_PIECE_LIMIT = 40
 
 const CAPSULE_NEUTRAL_COLORS = ['black', 'white', 'ivory', 'cream', 'navy', 'blue', 'grey', 'gray', 'charcoal', 'beige', 'tan', 'khaki', 'stone', 'olive', 'denim', 'brown', 'camel']
 
@@ -1704,6 +1705,65 @@ function planWorkbenchPieceLine(piece = {}) {
   return bits.join(' | ')
 }
 
+function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set() } = {}) {
+  const id = Number(piece.id)
+  let score = 0
+  if (anchorIds.has(id)) score += 100000
+  const group = wardrobeCategoryGroup(piece)
+  if (['top', 'bottom', 'dress', 'shoes'].includes(group)) score += 80
+  if (['outerwear', 'accessory'].includes(group)) score += 30
+  if (piece.recommendation_status === 'trusted') score += 50
+  if (piece.fit_confidence === 'high') score += 30
+  if (piece.role_permission === 'hero' || piece.role_permission === 'auto') score += 20
+  const occasions = Array.isArray(piece.occasions) ? piece.occasions.map(occ => String(occ || '').toLowerCase()) : []
+  const slotOccasion = String(slot?.occasion || '').toLowerCase()
+  if (slotOccasion && occasions.includes(slotOccasion)) score += 35
+  const slotFloor = String(slot?.register || '').toLowerCase() === 'formal'
+    ? formalityRank('dressy')
+    : formalityRank(slot?.register)
+  const pieceRank = formalityRank(pieceFormality(piece))
+  if (slotFloor !== null && pieceRank !== null) {
+    score += Math.max(0, 20 - Math.abs(pieceRank - slotFloor) * 5)
+  }
+  if (fabricWeight(piece) === 'light') score += 5
+  return score
+}
+
+function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
+  const scored = allowedPieces
+    .map((piece, index) => ({ piece, index, score: planWorkbenchPieceScore(piece, slot, { anchorIds }) }))
+    .sort((a, b) => b.score - a.score || Number(b.piece.id || 0) - Number(a.piece.id || 0) || a.index - b.index)
+  const selected = []
+  const seen = new Set()
+  const add = item => {
+    if (!item || selected.length >= limit) return
+    const id = Number(item.piece.id)
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    selected.push(item.piece)
+  }
+
+  for (const item of scored) {
+    if (anchorIds.has(Number(item.piece.id))) add(item)
+  }
+
+  const coverageGroups = ['top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory']
+  for (const group of coverageGroups) {
+    const quota = group === 'accessory' || group === 'outerwear' ? 4 : 8
+    let taken = selected.filter(piece => wardrobeCategoryGroup(piece) === group).length
+    for (const item of scored) {
+      if (taken >= quota || selected.length >= limit) break
+      if (wardrobeCategoryGroup(item.piece) !== group) continue
+      const before = selected.length
+      add(item)
+      if (selected.length > before) taken += 1
+    }
+  }
+
+  for (const item of scored) add(item)
+  return selected
+}
+
 function registerRankName(rank = null) {
   return ['lounge', 'everyday', 'elevated', 'dressy', 'formal'][rank] || ''
 }
@@ -1731,7 +1791,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl })
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
-    const { allowedPieces, excluded } = filterWholeWardrobePiecesForGeneration(composePool, {
+    const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(composePool, {
       occasion: slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,
@@ -1739,7 +1799,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       activity: slot.activity,
       request: slotRequestText
     })
-    const shownPieces = allowedPieces.slice(0, 40)
+    const shownPieces = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds })
     const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
     const floorRank = String(slot?.register || '').toLowerCase() === 'formal'
       ? formalityRank('dressy')
@@ -1756,7 +1816,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       register_ceiling: registerRankName(ceilingRank),
       register_floor: registerRankName(floorRank),
       allowed_pieces: shownPieces.map(planWorkbenchPieceLine),
-      suppressed_note: `${Array.isArray(excluded) ? excluded.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing first ${shownPieces.length} of ${allowedPieces.length} allowed pieces` : ''}`
+      suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`
     })
     slot._modelWorkbench = {
       weatherProfile,
