@@ -751,6 +751,11 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           const name = tu.name
           const args = tu.input
           const result = await executeTool(name, args, toolContext)
+          if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
+            const summary = { status: result?.status, message: result?.message }
+            if (result?.failures) summary.failures = result.failures
+            console.log(`🧾 [Agent Tool Result] ${name}`, JSON.stringify(summary, null, 2))
+          }
           if (name === 'store_user_correction') {
             savedCorrections.push(args)
           }

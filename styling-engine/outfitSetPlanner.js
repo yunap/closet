@@ -1318,7 +1318,7 @@ function isIndoorPlanSlot(slot = {}, { occasion = '', activity = '' } = {}) {
   ].filter(Boolean).join(' ').toLowerCase()
   if (!text || activity === 'walking' || activity === 'hiking') return false
   if (/\b(outdoor|outside|patio|garden|hike|hiking|walk|walking|sightseeing|winery|wineries|coast|beach)\b/.test(text)) return false // ratchet-allow: slot-place classifier, not garment matching
-  return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurant|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
+  return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurants?|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
 }
 
 function hasDeclaredPlanSlotActivity(slot = {}) {
@@ -2566,8 +2566,13 @@ export function normalizePlanSlots(rawSlots = [], {
       const explicitWeather = normalizedExplicitWeather && !weatherAsEnvironment && normalizedExplicitWeather !== normalizedFallbackWeather
         ? rawExplicitWeather
         : ''
-      const statedWeather = beachCoastalStatedWeather(explicitWeather, { environment }) ||
-        (isIndoorPlanSlot(slot, { occasion, activity }) && environment !== 'beach_coastal' ? 'indoor' : '')
+      const statedWeather = beachCoastalStatedWeather(explicitWeather, { environment }) || (
+        environment === 'indoor'
+          ? 'indoor'
+          : environment
+            ? ''
+            : (isIndoorPlanSlot(slot, { occasion, activity }) ? 'indoor' : '')
+      )
       return {
         id: label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `slot_${index + 1}`,
         label,
