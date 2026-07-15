@@ -5194,28 +5194,30 @@ export default function StylistChat({
         </div>
       )}
 
-      {imagePrev && (
-        <div style={{ padding: '0 16px 8px', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ position: 'relative' }}>
-            <img src={imagePrev} alt="" style={{ height: 56, width: 56, objectFit: 'contain', borderRadius: 8, background: 'var(--surface-2)' }} />
-            <button onClick={() => { setImageFile(null); setImagePrev(null) }} style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, background: 'var(--text)', color: '#fff', borderRadius: '50%', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+      <div className={`stylist-composer-dock ${messages.length > 1 ? 'is-sticky' : ''}`}>
+        {imagePrev && (
+          <div className="stylist-attached-photo">
+            <div style={{ position: 'relative' }}>
+              <img src={imagePrev} alt="" style={{ height: 56, width: 56, objectFit: 'contain', borderRadius: 8, background: 'var(--surface-2)' }} />
+              <button onClick={() => { setImageFile(null); setImagePrev(null) }} style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, background: 'var(--text)', color: '#fff', borderRadius: '50%', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Photo attached</span>
           </div>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Photo attached</span>
-        </div>
-      )}
+        )}
 
-      <div className={`stylist-input-shell ${pending ? 'is-hidden-for-pending-action' : ''}`}>
-        <div className="ai-input-row" aria-hidden={pending ? 'true' : undefined}>
-          {!pending && (
-            <>
-              <label className={`ai-upload-btn ${imagePrev ? 'has-image' : ''}`} title="Attach photo">
-                <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
-                📷
-              </label>
-              <textarea ref={textRef} className="ai-input" placeholder="Ask about your wardrobe..." value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
-              <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
-            </>
-          )}
+        <div className={`stylist-input-shell ${pending ? 'is-hidden-for-pending-action' : ''}`}>
+          <div className="ai-input-row" aria-hidden={pending ? 'true' : undefined}>
+            {!pending && (
+              <>
+                <label className={`ai-upload-btn ${imagePrev ? 'has-image' : ''}`} title="Attach photo">
+                  <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
+                  📷
+                </label>
+                <textarea ref={textRef} className="ai-input" placeholder="Ask about your wardrobe..." value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
+                <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
+              </>
+            )}
+          </div>
         </div>
       </div>
       {previewImage && (

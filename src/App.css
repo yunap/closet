@@ -1073,13 +1073,11 @@ img { display: block; max-width: 100%; }
 
 .stylist-chat-scroll {
   min-height: 0;
-  max-height: min(68vh, calc(100dvh - 240px));
-  overflow-y: auto;
+  overflow: visible;
   padding: 16px 16px 8px;
-  overscroll-behavior: contain;
 }
 .stylist-chat-scroll.has-pending-action {
-  max-height: min(260px, 34vh);
+  max-height: none;
 }
 
 .generated-visual-grid {
@@ -1122,10 +1120,25 @@ img { display: block; max-width: 100%; }
   box-shadow: var(--shadow);
 }
 
+.stylist-composer-dock {
+  z-index: 5;
+  padding-top: 8px;
+  background: linear-gradient(to bottom, rgba(247, 243, 238, 0), var(--bg) 22%);
+}
+.stylist-composer-dock.is-sticky {
+  position: sticky;
+  bottom: 0;
+}
+
+.stylist-attached-photo {
+  padding: 0 16px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .stylist-input-shell {
-  padding: 8px 16px 16px;
-  background: linear-gradient(to bottom, rgba(247, 243, 238, 0), var(--bg) 28%);
-  z-index: 4;
+  padding: 0 16px 16px;
 }
 .stylist-input-shell.is-hidden-for-pending-action {
   display: none;
@@ -1610,12 +1623,10 @@ img { display: block; max-width: 100%; }
 
 .stylist-chat-main {
   flex: 1;
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, max-content) auto;
-  align-content: start;
   height: 100%;
   min-width: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: relative;
 }
 
