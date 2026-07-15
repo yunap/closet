@@ -2548,8 +2548,12 @@ export function normalizePlanSlots(rawSlots = [], {
         ? inferPlanSlotActivity(slot, fallbackActivity)
         : (proseActivity || inferPlanSlotActivity(slot, fallbackActivity))
       if (!declaredActivity && proseActivity && typeof onDiagnostic === 'function') onDiagnostic('planSlotActivityInferred')
-      const declaredEnvironment = normalizePlanEnvironment(slot?.environment)
-      const inferredEnvironment = declaredEnvironment ? '' : normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
+      const rawExplicitWeather = String(slot?.weather || slot?.stated_weather || '').trim()
+      const weatherAsEnvironment = normalizePlanEnvironment(rawExplicitWeather)
+      const explicitEnvironment = normalizePlanEnvironment(slot?.environment)
+      const proseEnvironment = explicitEnvironment ? '' : normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
+      const declaredEnvironment = explicitEnvironment || (weatherAsEnvironment && (weatherAsEnvironment === 'beach_coastal' || !proseEnvironment) ? weatherAsEnvironment : '')
+      const inferredEnvironment = declaredEnvironment ? '' : proseEnvironment
       const environment = declaredEnvironment || inferredEnvironment
       if (!declaredEnvironment && inferredEnvironment && typeof onDiagnostic === 'function') onDiagnostic('planSlotEnvironmentInferred')
       const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote, environment })
@@ -2557,10 +2561,9 @@ export function normalizePlanSlots(rawSlots = [], {
       // over the live forecast. The trip-level fallbackWeather is not "stated"
       // for this purpose: it feeds season/heuristic but must let a slot's own
       // forecast override it (that is the coastal-microclimate case).
-      const rawExplicitWeather = String(slot?.weather || slot?.stated_weather || '').trim()
       const normalizedExplicitWeather = rawExplicitWeather.toLowerCase().replace(/\s+/g, ' ')
       const normalizedFallbackWeather = String(fallbackWeather || '').trim().toLowerCase().replace(/\s+/g, ' ')
-      const explicitWeather = normalizedExplicitWeather && normalizedExplicitWeather !== normalizedFallbackWeather
+      const explicitWeather = normalizedExplicitWeather && !weatherAsEnvironment && normalizedExplicitWeather !== normalizedFallbackWeather
         ? rawExplicitWeather
         : ''
       const statedWeather = beachCoastalStatedWeather(explicitWeather, { environment }) ||

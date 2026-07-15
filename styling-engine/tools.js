@@ -1541,7 +1541,7 @@ export async function executeTool(name, args, toolContext = {}) {
         const missingSlots = (pendingPlan.slots || []).filter(slot =>
           (countsBySlot.get(slot.id) || 0) < Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1))
         )
-        if (missingSlots.length && !failures.length) {
+        if (missingSlots.length) {
           failures.push({
             slot_id: '',
             label: 'Missing slots',
