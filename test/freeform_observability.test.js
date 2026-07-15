@@ -23,6 +23,8 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     zeroResultContradictionBlocks: 0,
     destinationClarificationRetries: 0,
     tripScopeClarificationRetries: 0,
+    planSlotEnvironmentInferred: 0,
+    planSlotActivityInferred: 0,
     planKeywordMatched: 0,
     planPrerouteComposed: 0,
     planModelCalled: 0,
@@ -344,7 +346,9 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
       planOutfitSetCalls: 0,
       outfitProseWithoutToolCall: 1,
       zeroResultContradictionBlocks: 1,
-      destinationClarificationRetries: 1
+      destinationClarificationRetries: 1,
+      planSlotEnvironmentInferred: 2,
+      planSlotActivityInferred: 3
     }
   })
   const row = db.prepare('SELECT * FROM freeform_generation_runs WHERE session_id = ?').get('test-session')
@@ -357,6 +361,8 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
   assert.equal(row.outfit_prose_without_tool_count, 1)
   assert.equal(row.zero_result_contradiction_blocks, 1)
   assert.equal(row.destination_clarification_retries, 1)
+  assert.equal(row.plan_slot_environment_inferred, 2)
+  assert.equal(row.plan_slot_activity_inferred, 3)
 })
 
 // Spec 3 Part 0 (live-testing findings, 2026-07-09):

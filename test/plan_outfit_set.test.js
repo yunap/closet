@@ -19,7 +19,7 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics, sanitizePlanConstraintsForQuestion } = await import('../styling-engine/tools.js')
+const { STYLIST_TOOLS, executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics, sanitizePlanConstraintsForQuestion } = await import('../styling-engine/tools.js')
 const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
@@ -27,6 +27,11 @@ const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js'
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
+
+function planOutfitSetSlotSchema() {
+  const tool = STYLIST_TOOLS.find(entry => entry.name === 'plan_outfit_set')
+  return tool?.input_schema?.properties?.slots?.items || {}
+}
 
 // A fetchImpl (injected the same way weather.test.js does) that returns a hot
 // inland forecast for everything EXCEPT a coastal town, which comes back mild —
@@ -58,6 +63,12 @@ after(() => {
 beforeEach(() => {
   db.prepare('DELETE FROM pieces').run()
   seedWardrobe()
+})
+
+test('plan_outfit_set slot schema declares environment and requires activity', () => {
+  const schema = planOutfitSetSlotSchema()
+  assert.deepEqual(schema.properties.environment.enum, ['indoor', 'outdoor', 'beach_coastal'])
+  assert.ok(schema.required.includes('activity'))
 })
 
 function insertPiece(overrides = {}) {
@@ -187,16 +198,39 @@ test('normalizePlanSlots corrects beach slots misclassified as outdoor daytime s
   assert.equal(slots[1].environment, '')
 })
 
+test('normalizePlanSlots uses declared environment before coastal prose inference', () => {
+  const diagnostics = {}
+  const bump = field => { diagnostics[field] = (diagnostics[field] || 0) + 1 }
+  const slots = normalizePlanSlots([
+    { label: 'Quiet Resort Slot', occasion: 'outdoor_daytime_social', activity: 'none', environment: 'beach_coastal', count: 1, best_for: 'easy warm-weather day' },
+    { label: 'Shoreline Viewing', occasion: 'outdoor_daytime_social', activity: 'none', environment: 'indoor', count: 1, best_for: 'climate-controlled waterfront slot' },
+    { label: 'Pool Morning', occasion: 'outdoor_daytime_social', activity: 'none', count: 1, best_for: 'swimming and poolside reading' },
+  ], { fallbackWeather: 'warm', onDiagnostic: bump })
+
+  assert.equal(slots[0].environment, 'beach_coastal')
+  assert.equal(slots[0].occasion, 'casual')
+  assert.equal(slots[1].environment, 'indoor')
+  assert.equal(slots[1].occasion, 'outdoor_daytime_social')
+  assert.equal(slots[2].environment, 'beach_coastal')
+  assert.equal(slots[2].occasion, 'casual')
+  assert.deepEqual(diagnostics, { planSlotEnvironmentInferred: 1 })
+})
+
 test('normalizePlanSlots infers walking activity from slot prose when the model omits activity', () => {
+  const diagnostics = {}
+  const bump = field => { diagnostics[field] = (diagnostics[field] || 0) + 1 }
   const slots = normalizePlanSlots([
     { label: 'City Walking Days', occasion: 'city', count: 2, best_for: 'walking around the city' },
     { label: 'Gallery Visit', occasion: 'gallery / art event', count: 1, best_for: 'art gallery visit' },
     { label: 'Outdoor Market', occasion: 'outdoor_daytime_social', count: 1, best_for: 'exploring the market' },
-  ], { fallbackWeather: 'cool mild weather' })
+    { label: 'Declared Wandering', occasion: 'city', activity: 'none', count: 1, best_for: 'walking around the city' },
+  ], { fallbackWeather: 'cool mild weather', onDiagnostic: bump })
 
   assert.equal(slots[0].activity, 'walking')
   assert.equal(slots[1].activity, 'none')
   assert.equal(slots[2].activity, 'walking')
+  assert.equal(slots[3].activity, 'none')
+  assert.deepEqual(diagnostics, { planSlotActivityInferred: 2 })
 })
 
 test('plan_outfit_set is blocked until cards intent is declared', async () => {
