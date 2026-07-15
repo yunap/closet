@@ -150,6 +150,8 @@ db.exec(`
     outfit_prose_without_tool_count INTEGER DEFAULT 0,
     zero_result_contradiction_blocks INTEGER DEFAULT 0,
     destination_clarification_retries INTEGER DEFAULT 0,
+    plan_slot_environment_inferred INTEGER DEFAULT 0,
+    plan_slot_activity_inferred INTEGER DEFAULT 0,
     weather_source          TEXT DEFAULT '',
     created_at              TEXT DEFAULT (datetime('now'))
   );
@@ -254,7 +256,9 @@ NEW_COLUMNS.forEach(col => {
 ;[
   'outfit_prose_without_tool_count INTEGER DEFAULT 0',
   'zero_result_contradiction_blocks INTEGER DEFAULT 0',
-  'destination_clarification_retries INTEGER DEFAULT 0'
+  'destination_clarification_retries INTEGER DEFAULT 0',
+  'plan_slot_environment_inferred INTEGER DEFAULT 0',
+  'plan_slot_activity_inferred INTEGER DEFAULT 0'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
 })

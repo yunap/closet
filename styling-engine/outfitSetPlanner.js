@@ -618,10 +618,6 @@ function textLooksLikeEveningPlanSlot(text = '') {
   return /\b(dinners?|dining|restaurants?|drinks|wine bars?|night out|date night|evenings?)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
 }
 
-function textLooksLikeBeachPlanSlot(text = '') {
-  return /\b(beach(?:es)?|pool(?:side)?|swim(?:ming)?)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
-}
-
 function textLooksLikeCoastalPlanSlot(text = '') {
   return /\b(beach(?:es)?|pool(?:side)?|swim(?:ming)?|coast(?:al)?|seaside|oceanfront|shore|sand)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
 }
@@ -631,10 +627,15 @@ function normalizePlanSlotEnvironment({ label = '', bestFor = '', coverage = '',
   return textLooksLikeCoastalPlanSlot(text) ? 'beach_coastal' : ''
 }
 
-function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '' } = {}) {
+function normalizePlanEnvironment(rawEnvironment = '') {
+  const value = String(rawEnvironment || '').trim().toLowerCase()
+  return ['indoor', 'outdoor', 'beach_coastal'].includes(value) ? value : ''
+}
+
+function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '', environment = '' } = {}) {
   const occasion = normalizeOccasion(rawOccasion)
   const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
-  if (occasion === 'outdoor_daytime_social' && textLooksLikeBeachPlanSlot(text)) return 'casual'
+  if (occasion === 'outdoor_daytime_social' && environment === 'beach_coastal') return 'casual'
   if ((occasion === 'casual' || occasion === 'city') && textLooksLikeEveningPlanSlot(text)) return 'evening'
   return occasion
 }
@@ -1314,10 +1315,11 @@ function isIndoorPlanSlot(slot = {}, { occasion = '', activity = '' } = {}) {
   return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurant|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
 }
 
-function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
-  const explicit = normalizeActivity(String(slot?.activity || 'none'))
-  if (explicit && explicit !== 'none') return explicit
-  const fallback = normalizeActivity(String(fallbackActivity || 'none'))
+function hasDeclaredPlanSlotActivity(slot = {}) {
+  return slot?.activity !== undefined && slot?.activity !== null && String(slot.activity).trim() !== ''
+}
+
+function inferPlanSlotActivityFromProse(slot = {}) {
   const text = [
     slot?.label,
     slot?.best_for,
@@ -1331,7 +1333,14 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
       /\b(walk|walking|stroll|strolling|explore|exploring|sightsee|sightseeing|market)\b/.test(text)) { // ratchet-allow: slot activity classifier, not garment matching
     return 'walking'
   }
-  return fallback || explicit || 'none'
+  return ''
+}
+
+function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
+  const explicit = normalizeActivity(String(slot?.activity || 'none'))
+  if (hasDeclaredPlanSlotActivity(slot)) return explicit || 'none'
+  const fallback = normalizeActivity(String(fallbackActivity || 'none'))
+  return inferPlanSlotActivityFromProse(slot) || fallback || explicit || 'none'
 }
 
 // Per-slot weather resolution (build step 3). Precedence: user-stated per-slot
@@ -2036,7 +2045,8 @@ export function normalizePlanSlots(rawSlots = [], {
   fallbackLocation = '',
   maxSlots = PLAN_TOTAL_OUTFIT_CAP,
   maxTotalOutfits = PLAN_TOTAL_OUTFIT_CAP,
-  tripSummary = null
+  tripSummary = null,
+  onDiagnostic = null
 } = {}) {
   const allRawSlots = Array.isArray(rawSlots) ? rawSlots : []
   // A separate slot-count cap keeps the model from opening more use cases than
@@ -2047,14 +2057,22 @@ export function normalizePlanSlots(rawSlots = [], {
   const normalized = allRawSlots
     .slice(0, maxSlots)
     .map((slot, index) => {
-      const activity = inferPlanSlotActivity(slot, fallbackActivity)
       const label = String(slot?.label || '').trim()
       const bestFor = String(slot?.best_for || slot?.bestFor || label).trim()
       const coverage = String(slot?.coverage || bestFor || label).trim()
       const planNote = String(slot?.plan_note || slot?.planNote || '').trim()
       const location = String(slot?.location || fallbackLocation || '').trim()
-      const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote })
-      const environment = normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
+      const declaredActivity = hasDeclaredPlanSlotActivity(slot)
+      const proseActivity = declaredActivity ? '' : inferPlanSlotActivityFromProse(slot)
+      const activity = declaredActivity
+        ? inferPlanSlotActivity(slot, fallbackActivity)
+        : (proseActivity || inferPlanSlotActivity(slot, fallbackActivity))
+      if (!declaredActivity && proseActivity && typeof onDiagnostic === 'function') onDiagnostic('planSlotActivityInferred')
+      const declaredEnvironment = normalizePlanEnvironment(slot?.environment)
+      const inferredEnvironment = declaredEnvironment ? '' : normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
+      const environment = declaredEnvironment || inferredEnvironment
+      if (!declaredEnvironment && inferredEnvironment && typeof onDiagnostic === 'function') onDiagnostic('planSlotEnvironmentInferred')
+      const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote, environment })
       // statedWeather is ONLY the model's explicit per-slot weather — it wins
       // over the live forecast. The trip-level fallbackWeather is not "stated"
       // for this purpose: it feeds season/heuristic but must let a slot's own

@@ -138,6 +138,8 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       zeroResultContradictionBlocks: 0,
       destinationClarificationRetries: 0,
       tripScopeClarificationRetries: 0,
+      planSlotEnvironmentInferred: 0,
+      planSlotActivityInferred: 0,
       // Step 6 build 7 — parallel-path signals (set once per turn by
       // recordPlanPathDiagnostics; see classifyPlanPath for planPathOutcome).
       planKeywordMatched: 0,
@@ -510,6 +512,7 @@ export const STYLIST_TOOLS = [
               label: { type: "string", description: "Short user-facing slot label (e.g. 'Winery Days', 'Dinner Out', 'Coastal Day')." },
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. Map dinner/evening-restaurant/night-out use cases to 'evening'." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
+              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting. Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling and overrides contradictory weather:'indoor'. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries). Omit when unsure; outdoor is the default." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
               weather: { type: "string", description: "This slot's known weather/context when it should override the outdoor forecast. Use `indoor` for climate-controlled slots such as office/work days, client meetings, indoor events, and restaurants, so outdoor heat/cold does not drive the outfit. For a slot at a different outdoor place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
               location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
@@ -518,7 +521,7 @@ export const STYLIST_TOOLS = [
               best_for: { type: "string", description: "The specific use case this slot covers (defaults to the label)." },
               plan_note: { type: "string", description: "Optional one-sentence composer guidance for this slot." }
             },
-            required: ["label", "occasion"]
+            required: ["label", "occasion", "activity"]
           }
         },
         constraints: {
@@ -1397,7 +1400,8 @@ export async function executeTool(name, args, toolContext = {}) {
           fallbackLocation,
           maxSlots: planTotalOutfitCap,
           maxTotalOutfits: planTotalOutfitCap,
-          tripSummary
+          tripSummary,
+          onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
         if (!planSlots.length) {
           return {
