@@ -173,9 +173,14 @@ function buildWeatherLine(slotWeather = []) {
 // guessing WHICH category is missing, matching the "flag, don't guess"
 // discipline: a wrong specific guess (e.g. "missing shoes" when the real
 // issue was weather) would be worse than an honest, general gap note.
-function describeSlotCoverageGap(slot = {}, { requestedCount = 0, composedCount = 0, candidateCount = 0 } = {}) {
+function describeSlotCoverageGap(slot = {}, { requestedCount = 0, composedCount = 0, candidateCount = 0, exhaustedByUsedCombos = false, compatibleCombinationCount = 0, ceilingRank = null } = {}) {
   if (composedCount >= requestedCount) return ''
   const label = slot?.label || slot?.bestFor || 'this use case'
+  const ceilingLabel = ['lounge', 'everyday', 'elevated', 'dressy'][ceilingRank] || 'compatible'
+  if (exhaustedByUsedCombos) {
+    const supported = Math.max(composedCount, compatibleCombinationCount)
+    return `[missing wardrobe gap: "${label}" needed ${requestedCount} distinct look${requestedCount === 1 ? '' : 's'} but the capsule roster only supports ${supported} before repeating — not enough distinct ${ceilingLabel}-compatible combinations for the full rotation]`
+  }
   if (composedCount === 0) {
     return candidateCount > 0
       ? `[missing wardrobe gap: "${label}" — no outfit passed the ${slot.occasion || 'occasion'}/weather/register gates; the wardrobe may be missing a category (top, bottom, dress, or shoes) suited to this use case]`
@@ -197,7 +202,8 @@ function describePlanCapTrim(slot = {}) {
   const actual = Number(slot?.targetOutfits) || 0
   if (!requested || requested <= actual) return ''
   const label = slot?.label || slot?.bestFor || 'this use case'
-  return `[plan trimmed: "${label}" reduced from ${requested} to ${actual} look${actual === 1 ? '' : 's'} — the plan asked for more outfits than the ${PLAN_TOTAL_OUTFIT_CAP}-outfit total across the set allows]`
+  const cap = Number(slot?.totalOutfitCap) || PLAN_TOTAL_OUTFIT_CAP
+  return `[plan trimmed: "${label}" reduced from ${requested} to ${actual} look${actual === 1 ? '' : 's'} — the plan asked for more outfits than the ${cap}-outfit total across the set allows]`
 }
 
 function buildCoverageGapLines(coverageGaps = []) {
@@ -593,6 +599,37 @@ function isClientPlanSlot(slot = {}) {
   return /\b(client|meeting|client[- ]?facing)\b/.test(text) // ratchet-allow: slot-register classifier, not garment matching
 }
 
+function isSmartCasualPlanSlot(slot = {}) {
+  const text = [
+    slot?.label,
+    slot?.bestFor,
+    slot?.coverage,
+    slot?.planNote,
+    slot?.occasion
+  ].filter(Boolean).join(' ').toLowerCase()
+  return /\bsmart[- ]?casual\b/.test(text) // ratchet-allow: slot-register classifier, not garment matching
+}
+
+function textLooksLikeEveningPlanSlot(text = '') {
+  return /\b(dinners?|dining|restaurants?|drinks|wine bars?|night out|date night|evenings?)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
+function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '' } = {}) {
+  const occasion = normalizeOccasion(rawOccasion)
+  const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
+  if ((occasion === 'casual' || occasion === 'city') && textLooksLikeEveningPlanSlot(text)) return 'evening'
+  return occasion
+}
+
+function slotWantsElevatedShoe(slot = {}) {
+  const text = [slot?.label, slot?.bestFor, slot?.coverage, slot?.planNote, slot?.occasion].filter(Boolean).join(' ')
+  const occasion = normalizeOccasion(slot?.occasion)
+  return occasion === 'evening' ||
+    occasion === 'gallery / art event' ||
+    isSmartCasualPlanSlot(slot) ||
+    textLooksLikeEveningPlanSlot(text)
+}
+
 function pieceOfficePolishScore(piece = {}) {
   if (!piece) return 0
   let score = 0
@@ -755,6 +792,26 @@ function tripOutfitOfficeRegisterScore(outfit = {}, slot = {}) {
   return { score, hardRejects }
 }
 
+function tripOutfitSmartCasualRegisterScore(outfit = {}, slot = {}) {
+  if (!isSmartCasualPlanSlot(slot)) return { score: 0, hardRejects: [] }
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const nonShoePieces = pieces.filter(piece => wardrobeCategoryGroup(piece) !== 'shoes')
+  const elevatedRank = formalityRank('elevated')
+  const hasElevatedAnchor = nonShoePieces.some(piece => {
+    const rank = formalityRank(pieceFormality(piece))
+    return rank !== null && elevatedRank !== null && rank >= elevatedRank
+  })
+  const hardRejects = []
+  let score = hasElevatedAnchor ? 12 : -46
+  if (!hasElevatedAnchor) hardRejects.push('no elevated non-shoe anchor for smart casual')
+  for (const piece of nonShoePieces) {
+    if (piece?.formality === 'elevated') score += 8
+    if (piece?.formality === 'dressy') score += 4
+    if (['everyday', 'casual'].includes(String(piece?.formality || '').toLowerCase())) score -= 10
+  }
+  return { score, hardRejects }
+}
+
 // An outdoor-ACTIVE slot (a hike, a park/market wander, "outdoor adventures") is
 // not a winery: it wants sneakers/practical shoes and rugged casual pieces, not
 // leather loafers and city-casual. outdoor_daytime_social alone can't tell a
@@ -870,6 +927,9 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSumme
   const officeFit = tripOutfitOfficeRegisterScore(outfit, slot)
   score += officeFit.score
   hardRejects.push(...officeFit.hardRejects)
+  const smartCasualFit = tripOutfitSmartCasualRegisterScore(outfit, slot)
+  score += smartCasualFit.score
+  hardRejects.push(...smartCasualFit.hardRejects)
   const registerFit = tripOutfitRegisterEscalationScore(outfit, slot)
   score += registerFit.score
   hardRejects.push(...registerFit.hardRejects)
@@ -1000,6 +1060,44 @@ function rehydrateOutfitPieces(outfit, pool = []) {
   const byId = new Map(pool.map(piece => [Number(piece.id), piece]))
   const pieces = outfit.pieces.map(piece => byId.get(Number(piece.id)) || piece)
   return { ...outfit, pieces }
+}
+
+function buildCapsuleStructuralSeparateOutfits(allowedPieces = [], limit = 48) {
+  const groups = { top: [], bottom: [], shoes: [] }
+  for (const piece of allowedPieces || []) {
+    const group = wardrobeCategoryGroup(piece)
+    if (groups[group]) groups[group].push(piece)
+  }
+  const outfits = []
+  const seen = new Set()
+  for (const top of groups.top.slice(0, 8)) {
+    for (const bottom of groups.bottom.slice(0, 8)) {
+      for (const shoe of groups.shoes.slice(0, 6)) {
+        const pieces = [top, bottom, shoe].filter(Boolean)
+        const key = pieces.map(piece => Number(piece.id)).sort((a, b) => a - b).join('|')
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        outfits.push({
+          label: 'Capsule separates',
+          title: 'Capsule separates',
+          bestFor: 'capsule separates fallback',
+          pieces,
+          pieceIds: pieces.map(piece => Number(piece.id)).filter(Boolean),
+          source: 'plan_outfit_set'
+        })
+        if (outfits.length >= limit) return outfits
+      }
+    }
+  }
+  return outfits
+}
+
+function slotCompositionPriority(slot = {}) {
+  const occasion = normalizeOccasion(slot?.occasion)
+  const rank = effectiveSlotRegisterCeilingRank(slot)
+  if (occasion === 'evening') return 40
+  if (rank !== null) return 10 + rank
+  return 0
 }
 
 function withEveningLayerIfUseful(outfit, allPieces = [], slot = {}) {
@@ -1148,6 +1246,12 @@ function outfitCategoryPairs(outfit = {}) {
     .filter(pair => pair.id)
 }
 
+function outfitDressId(outfit = {}) {
+  const dress = (Array.isArray(outfit.pieces) ? outfit.pieces : [])
+    .find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  return Number(dress?.id) || null
+}
+
 // Real capsule builder (path 1): when the plan carries a piece_budget, don't
 // just REPORT the roster — enforce it. Pre-select ~budget versatile pieces with
 // category coverage (a summer capsule must include shorts), then compose the
@@ -1177,9 +1281,9 @@ function capsuleVersatilityScore(piece = {}, { isSummer = false } = {}) {
 
 // Category quotas for a ~budget-piece day capsule. Kept proportional so a bigger
 // budget widens tops/bottoms rather than piling on shoes.
-function capsuleQuotas(budget = 10) {
-  const shoes = Math.min(3, Math.max(2, Math.round(budget * 0.2)))
-  const outerwear = budget >= 8 ? 1 : 0
+function capsuleQuotas(budget = 10, { isSummer = false } = {}) {
+  const shoes = budget >= 30 ? 5 : budget >= 24 ? 4 : budget >= 12 ? 3 : Math.min(3, Math.max(2, Math.round(budget * 0.2)))
+  const outerwear = budget >= 8 && (!isSummer || budget < 12) ? 1 : 0
   const dress = budget >= 6 ? 1 : 0
   const remaining = Math.max(0, budget - shoes - outerwear - dress)
   const bottom = Math.max(2, Math.round(remaining * 0.45))
@@ -1207,6 +1311,14 @@ function capsuleSimilarityKey(piece = {}) {
 // 2026-07-14: an 8-slot capsule's roster was 5/6 `elevated` pieces plus 1
 // `everyday` shoe; `casual`-occasion slots (Beach Day, City Outing) got zero
 // outfits because only shoes cleared the ceiling — no top/bottom/dress did.
+function effectiveSlotRegisterCeilingRank(slot = {}) {
+  const occasionRank = formalityRank(resolveOccasionProfile(slot?.occasion)?.register_ceiling)
+  const slotRank = formalityRank(slot?.register)
+  if (occasionRank === null) return slotRank
+  if (slotRank === null) return occasionRank
+  return Math.min(occasionRank, slotRank)
+}
+
 function strictestRegisterCeilingRank(occasions = []) {
   const ranks = occasions
     .map(occasion => formalityRank(resolveOccasionProfile(occasion)?.register_ceiling))
@@ -1214,8 +1326,102 @@ function strictestRegisterCeilingRank(occasions = []) {
   return ranks.length ? Math.min(...ranks) : null
 }
 
-export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, occasions = [] } = {}) {
-  const quotas = capsuleQuotas(budget)
+function capsuleDemandReserve(slots = [], quotas = {}) {
+  const demandByRank = new Map()
+  for (const slot of Array.isArray(slots) ? slots : []) {
+    const rank = effectiveSlotRegisterCeilingRank(slot)
+    if (rank === null) continue
+    const looks = Math.max(1, Number(slot?.targetOutfits) || 1)
+    demandByRank.set(rank, (demandByRank.get(rank) || 0) + looks)
+  }
+  const ranks = [...demandByRank.keys()].sort((a, b) => a - b)
+  if (!ranks.length) return null
+  const rank = ranks[0]
+  const looks = demandByRank.get(rank) || 0
+  const mainReserve = looks <= 1 ? 1 : (looks >= 4 && Math.min(quotas.top || 0, quotas.bottom || 0) >= 4 ? 3 : 2)
+  return {
+    rank,
+    looks,
+    byGroup: {
+      top: Math.min(quotas.top || 0, mainReserve),
+      bottom: Math.min(quotas.bottom || 0, mainReserve),
+      dress: Math.min(quotas.dress || 0, 1),
+      outerwear: Math.min(quotas.outerwear || 0, looks >= 3 ? 1 : 0),
+      shoes: Math.min(quotas.shoes || 0, looks <= 1 ? 1 : 2)
+    }
+  }
+}
+
+function pieceClearsCeilingRank(piece = {}, ceilingRank = null) {
+  if (ceilingRank === null) return false
+  const rank = formalityRank(pieceFormality(piece))
+  return rank !== null && rank <= ceilingRank
+}
+
+function pieceMeetsFloorRank(piece = {}, floorRank = null) {
+  if (floorRank === null) return false
+  const rank = formalityRank(pieceFormality(piece))
+  return rank !== null && rank >= floorRank
+}
+
+function ensureCapsuleGroupReserve(roster = [], groups = {}, group = '', required = 0, ceilingRank = null, scoreOf = new Map()) {
+  if (!(required > 0)) return roster
+  let nextRoster = roster
+  const selectedInGroup = () => nextRoster.filter(piece => wardrobeCategoryGroup(piece) === group)
+  const compliantSelected = () => selectedInGroup().filter(piece => pieceClearsCeilingRank(piece, ceilingRank))
+  while (compliantSelected().length < required) {
+    const selected = selectedInGroup()
+    if (!selected.length) break
+    const candidate = (groups[group] || []).find(piece =>
+      !nextRoster.includes(piece) &&
+      pieceClearsCeilingRank(piece, ceilingRank) &&
+      !compliantSelected().some(selectedPiece => capsuleSimilarityKey(selectedPiece) === capsuleSimilarityKey(piece))
+    ) || (groups[group] || []).find(piece =>
+      !nextRoster.includes(piece) &&
+      pieceClearsCeilingRank(piece, ceilingRank)
+    )
+    if (!candidate) break
+    const swapTarget = selected
+      .filter(piece => !pieceClearsCeilingRank(piece, ceilingRank))
+      .sort((a, b) => (scoreOf.get(a) || 0) - (scoreOf.get(b) || 0))[0]
+    if (!swapTarget) break
+    const swapIndex = nextRoster.indexOf(swapTarget)
+    if (swapIndex === -1) break
+    nextRoster = nextRoster.map((piece, index) => index === swapIndex ? candidate : piece)
+  }
+  return nextRoster
+}
+
+function ensureCapsuleGroupFloorReserve(roster = [], groups = {}, group = '', required = 0, floorRank = null, scoreOf = new Map()) {
+  if (!(required > 0)) return roster
+  let nextRoster = roster
+  const selectedInGroup = () => nextRoster.filter(piece => wardrobeCategoryGroup(piece) === group)
+  const floorSelected = () => selectedInGroup().filter(piece => pieceMeetsFloorRank(piece, floorRank))
+  while (floorSelected().length < required) {
+    const selected = selectedInGroup()
+    if (!selected.length) break
+    const candidate = (groups[group] || []).find(piece =>
+      !nextRoster.includes(piece) &&
+      pieceMeetsFloorRank(piece, floorRank) &&
+      !floorSelected().some(selectedPiece => capsuleSimilarityKey(selectedPiece) === capsuleSimilarityKey(piece))
+    ) || (groups[group] || []).find(piece =>
+      !nextRoster.includes(piece) &&
+      pieceMeetsFloorRank(piece, floorRank)
+    )
+    if (!candidate) break
+    const swapTarget = selected
+      .filter(piece => !pieceMeetsFloorRank(piece, floorRank))
+      .sort((a, b) => (scoreOf.get(a) || 0) - (scoreOf.get(b) || 0))[0]
+    if (!swapTarget) break
+    const swapIndex = nextRoster.indexOf(swapTarget)
+    if (swapIndex === -1) break
+    nextRoster = nextRoster.map((piece, index) => index === swapIndex ? candidate : piece)
+  }
+  return nextRoster
+}
+
+export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, occasions = [], slots = [] } = {}) {
+  const quotas = capsuleQuotas(budget, { isSummer })
   const groups = { top: [], bottom: [], dress: [], outerwear: [], shoes: [] }
   const scoreOf = new Map()
   for (const piece of pool) {
@@ -1259,14 +1465,12 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
       if (!count) continue
       const selectedInGroup = roster.filter(piece => wardrobeCategoryGroup(piece) === group)
       const alreadyCompliant = selectedInGroup.some(piece => {
-        const rank = formalityRank(pieceFormality(piece))
-        return rank !== null && rank <= ceilingRank
+        return pieceClearsCeilingRank(piece, ceilingRank)
       })
       if (alreadyCompliant || !selectedInGroup.length) continue
       const compliantCandidate = groups[group].find(piece => {
         if (selectedInGroup.includes(piece)) return false
-        const rank = formalityRank(pieceFormality(piece))
-        return rank !== null && rank <= ceilingRank
+        return pieceClearsCeilingRank(piece, ceilingRank)
       })
       if (!compliantCandidate) continue
       const worst = selectedInGroup.reduce((min, piece) =>
@@ -1274,6 +1478,22 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
       const swapIndex = roster.indexOf(worst)
       if (swapIndex !== -1) roster[swapIndex] = compliantCandidate
     }
+  }
+  const reserve = capsuleDemandReserve(slots, quotas)
+  if (reserve) {
+    for (const [group, required] of Object.entries(reserve.byGroup)) {
+      const updated = ensureCapsuleGroupReserve(roster, groups, group, required, reserve.rank, scoreOf)
+      roster.splice(0, roster.length, ...updated)
+    }
+  }
+  const elevatedRank = formalityRank('elevated')
+  const elevatedShoeLooks = (Array.isArray(slots) ? slots : [])
+    .filter(slot => slotWantsElevatedShoe(slot))
+    .reduce((sum, slot) => sum + Math.max(1, Number(slot?.targetOutfits) || 1), 0)
+  if (elevatedShoeLooks > 0 && quotas.shoes > 1) {
+    const required = Math.min(quotas.shoes, Math.max(1, Math.ceil(elevatedShoeLooks / 2)))
+    const updated = ensureCapsuleGroupFloorReserve(roster, groups, 'shoes', required, elevatedRank, scoreOf)
+    roster.splice(0, roster.length, ...updated)
   }
   return roster.slice(0, budget)
 }
@@ -1284,15 +1504,17 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
   const usedKeys = seeded.usedKeys
   const usedTopBottom = seeded.usedTopBottom
   const { reuse: reuseMode, noRepeat: noRepeatCats, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
+  const avoidRepeatedDressMain = pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET && slots.length > 1
   // A summer plan keeps discouraging warm fabrics on indoor (weather-neutral)
   // slots, where the forecast can't. Text-based so it only fires when the plan
   // is explicitly summer — a trip's per-slot live weather handles its own slots.
-  const isSummerContext = /\bsummer\b/i.test(`${question} ${mood}`)
+  const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
+  const isSummerContext = /\b(summer|warm|hot|80s?|90s?|heat)\b/i.test(`${question} ${mood} ${weatherContextText}`)
   // Capsule enforcement: when a real budget is set, curate the roster up front
   // and compose every slot ONLY from it, so the distinct-piece count lands
   // within budget instead of being reported after the fact.
   const composePool = pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
-    ? selectCapsuleRoster(allPieces, { budget: pieceBudget, isSummer: isSummerContext, occasions: slots.map(slot => slot.occasion) })
+    ? selectCapsuleRoster(allPieces, { budget: pieceBudget, isSummer: isSummerContext, occasions: slots.map(slot => slot.occasion), slots })
     : allPieces
   // Set-scoped piece bookkeeping for the reuse dial + no_repeat. usedPieceIds
   // seeds from any prior set (a replan) so novelty is measured against what the
@@ -1339,10 +1561,29 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
     return count
   }
   const shoeUseCounts = new Map()
+  const pieceUseCounts = new Map()
   const shoeUseCount = outfit => {
     const shoeId = outfitCategoryPairs(outfit).find(({ group }) => group === 'shoes')?.id
     return shoeId ? (shoeUseCounts.get(shoeId) || 0) : 0
   }
+  const capsuleMainWearPressure = outfit => {
+    let pressure = 0
+    for (const { id, group } of outfitCategoryPairs(outfit)) {
+      if (group === 'top' || group === 'bottom' || group === 'dress') {
+        pressure += pieceUseCounts.get(id) || 0
+      }
+    }
+    return pressure
+  }
+  const capsuleNewMainCount = outfit => {
+    let count = 0
+    for (const { id, group } of outfitCategoryPairs(outfit)) {
+      if ((group === 'top' || group === 'bottom' || group === 'dress') && !usedPieceIds.has(id)) count += 1
+    }
+    return count
+  }
+  const canSpendCapsuleVariety = () =>
+    pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET && usedPieceIds.size < pieceBudget
   const anchorPresence = outfit => {
     if (!anchorIds.size) return 0
     let count = 0
@@ -1356,6 +1597,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       usedPieceIds.add(id)
       if (!usedPieceIdsByCategory.has(group)) usedPieceIdsByCategory.set(group, new Set())
       usedPieceIdsByCategory.get(group).add(id)
+      pieceUseCounts.set(id, (pieceUseCounts.get(id) || 0) + 1)
       if (group === 'shoes') shoeUseCounts.set(id, (shoeUseCounts.get(id) || 0) + 1)
     }
   }
@@ -1365,7 +1607,10 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
   if (droppedSlotLabels.length) {
     coverageGaps.push(`[plan trimmed: ${droppedSlotLabels.length} use case${droppedSlotLabels.length === 1 ? '' : 's'} dropped — ${droppedSlotLabels.map(label => `"${label}"`).join(', ')} — a plan can only include up to ${slots.length} use-case slots at once; ask again with the dropped one${droppedSlotLabels.length === 1 ? '' : 's'} as a follow-up]`)
   }
-  for (const slot of slots) {
+  const compositionSlots = slots
+    .map((slot, originalIndex) => ({ ...slot, originalIndex }))
+    .sort((a, b) => slotCompositionPriority(b) - slotCompositionPriority(a) || a.originalIndex - b.originalIndex)
+  for (const slot of compositionSlots) {
     // Cross-slot keyword leakage guard: a multi-slot plan's `question` (the
     // user's whole request) naturally names every slot together — "3 Smart
     // Casual looks, 2 Beach Day looks, ... 1 Gallery Visit look". Using that
@@ -1379,7 +1624,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
     // own (rare — label is always set in practice).
     const slotRequestText = [slot.label, slot.best_for, slot.plan_note].filter(Boolean).join('. ') || question
     const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl })
-    slotWeather.push({ label: slot.label, weather: weatherLabel })
+    slotWeather.push({ label: slot.label, weather: weatherLabel, order: slot.originalIndex })
     const { allowedPieces } = filterWholeWardrobePiecesForGeneration(composePool, {
       occasion: slot.occasion,
       explorationMode: 'moderate',
@@ -1427,6 +1672,17 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
     }
     let localOutfits = buildSlotLocalOutfits(anchorPieceId)
     if (anchorPieceId && !localOutfits.length) localOutfits = buildSlotLocalOutfits(null)
+    if (pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET) {
+      const structuralSeparates = buildCapsuleStructuralSeparateOutfits(allowedPieces)
+      const seenLocalKeys = new Set(localOutfits.map(outfit => tripOutfitKey(outfit)).filter(Boolean))
+      for (const outfit of structuralSeparates) {
+        const key = tripOutfitKey(outfit)
+        if (key && !seenLocalKeys.has(key)) {
+          seenLocalKeys.add(key)
+          localOutfits.push(outfit)
+        }
+      }
+    }
     const ranked = locallyGateWholeWardrobeOutfits(localOutfits, Math.max(3, slots.length), {
       mode: 'advisor', // spec 9 — matches the 2026-06-25 advisor-mode decision, closes the "missing
       // outfit count" gap that only the primary visual composer had been fixed for; applyDiversity
@@ -1472,6 +1728,8 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
         if (!key || usedKeys.has(key)) return false
         const formulaKey = tripOutfitFormulaKey(outfit)
         if (avoidUsedFormula && formulaKey && usedTopBottom.has(formulaKey)) return false
+        const dressId = outfitDressId(outfit)
+        if (avoidRepeatedDressMain && dressId && !anchorIds.has(dressId) && formulaKey && usedTopBottom.has(formulaKey)) return false
         if (enforceNoRepeat && violatesNoRepeat(outfit)) return false
         return true
       })
@@ -1498,6 +1756,11 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       // 2) Signed reuse dial within that pool.
       if (reuseMode === 'maximize') {
         return [...pool].sort((a, b) =>
+          (Math.abs(b.fit.score - a.fit.score) > 14 ? b.fit.score - a.fit.score : 0) ||
+          (canSpendCapsuleVariety()
+            ? capsuleMainWearPressure(a.outfit) - capsuleMainWearPressure(b.outfit) ||
+              capsuleNewMainCount(b.outfit) - capsuleNewMainCount(a.outfit)
+            : 0) ||
           nonShoeOverlapCount(b.outfit) - nonShoeOverlapCount(a.outfit) ||
           shoeUseCount(a.outfit) - shoeUseCount(b.outfit) ||
           b.fit.score - a.fit.score
@@ -1536,24 +1799,38 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
       recordOutfitUse(choice)
       slotChoices.push(choice)
     }
+    const compatibleKeys = new Set(scoredOutfits.map(({ outfit }) => tripOutfitKey(outfit)).filter(Boolean))
     const gapMessage = describeSlotCoverageGap(slot, {
       requestedCount: targetOutfits,
       composedCount: slotChoices.length,
-      candidateCount: scoredOutfits.length
+      candidateCount: scoredOutfits.length,
+      exhaustedByUsedCombos: scoredOutfits.length > 0 && !scoredOutfits.some(({ outfit }) => {
+        const key = tripOutfitKey(outfit)
+        return key && !usedKeys.has(key)
+      }),
+      compatibleCombinationCount: compatibleKeys.size,
+      ceilingRank: effectiveSlotRegisterCeilingRank(slot)
     })
     if (gapMessage) coverageGaps.push(gapMessage)
     const trimMessage = describePlanCapTrim(slot)
     if (trimMessage) coverageGaps.push(trimMessage)
     slotChoices.forEach((choice, slotIndex) => {
-      picked.push(annotateTripOutfit(choice, slot, picked.length, {
+      picked.push({
+        ...annotateTripOutfit(choice, slot, picked.length, {
         slotIndex,
         slotTotal: slotChoices.length,
         source,
         weatherLabel
-      }))
+        }),
+        _planOrder: slot.originalIndex
+      })
     })
   }
-  return attachTripPlanMetadata(picked, { source, slotWeather, reuseMode, noRepeatCats, pieceBudget, coverageGaps })
+  const orderedPicked = picked
+    .sort((a, b) => (a._planOrder ?? 0) - (b._planOrder ?? 0) || (a.coveragePosition || '').localeCompare(b.coveragePosition || ''))
+    .map(({ _planOrder, ...outfit }) => outfit)
+  const orderedSlotWeather = [...slotWeather].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+  return attachTripPlanMetadata(orderedPicked, { source, slotWeather: orderedSlotWeather, reuseMode, noRepeatCats, pieceBudget, coverageGaps })
 }
 
 // Tool-argument slots (plan_outfit_set) -> engine slots. Mirrors the pre-route
@@ -1561,32 +1838,38 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
 // until the keyword pre-route retires on diagnostics evidence.
 export const PLAN_TOTAL_OUTFIT_CAP = 8
 
+export function planTotalOutfitCapForBudget(budget = 0) {
+  const numericBudget = Number(budget) || 0
+  if (numericBudget >= 30) return 20
+  if (numericBudget >= 24) return 16
+  if (numericBudget >= 18) return 12
+  return PLAN_TOTAL_OUTFIT_CAP
+}
+
 export function normalizePlanSlots(rawSlots = [], {
   fallbackWeather = '',
   fallbackOccasion = 'city',
   fallbackActivity = 'none',
   fallbackLocation = '',
-  maxSlots = 6,
+  maxSlots = PLAN_TOTAL_OUTFIT_CAP,
+  maxTotalOutfits = PLAN_TOTAL_OUTFIT_CAP,
   tripSummary = null
 } = {}) {
   const allRawSlots = Array.isArray(rawSlots) ? rawSlots : []
-  // Same silent-drop bug PR #89 fixed for the total-outfit cap, found in a
-  // different spot: this slice enforces a separate, independent maxSlots cap
-  // (default 6) on the NUMBER OF SLOTS, before PLAN_TOTAL_OUTFIT_CAP or any
-  // per-slot composition ever runs. Live-tested 2026-07-14: an 8-slot capsule
-  // request silently lost its last 2 slots ("City Outing 2", "Gallery Visit")
-  // here — no trim line, no gap line, nothing; the ONLY hint was City Outing 2
-  // and Gallery Visit's cards just never appearing in the response. Record
-  // what got dropped so composeOutfitSet can disclose it the same way
-  // PLAN_TOTAL_OUTFIT_CAP's trims already are.
+  // A separate slot-count cap keeps the model from opening more use cases than
+  // the set can render. Default it to the same 8 as PLAN_TOTAL_OUTFIT_CAP so an
+  // 8 one-look capsule is not silently split, while 9+ use cases still get a
+  // deterministic disclosure via droppedSlotLabels.
   const droppedRawSlots = allRawSlots.slice(maxSlots)
   const normalized = allRawSlots
     .slice(0, maxSlots)
     .map((slot, index) => {
-      const occasion = normalizeOccasion(String(slot?.occasion || fallbackOccasion || 'city'))
       const activity = normalizeActivity(String(slot?.activity || fallbackActivity || 'none'))
       const label = String(slot?.label || '').trim()
       const bestFor = String(slot?.best_for || slot?.bestFor || label).trim()
+      const coverage = String(slot?.coverage || bestFor || label).trim()
+      const planNote = String(slot?.plan_note || slot?.planNote || '').trim()
+      const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote })
       // statedWeather is ONLY the model's explicit per-slot weather — it wins
       // over the live forecast. The trip-level fallbackWeather is not "stated"
       // for this purpose: it feeds season/heuristic but must let a slot's own
@@ -1603,18 +1886,19 @@ export function normalizePlanSlots(rawSlots = [], {
         location: String(slot?.location || fallbackLocation || '').trim(),
         date: String(slot?.date || '').trim(),
         bestFor,
-        coverage: String(slot?.coverage || bestFor || label).trim(),
+        coverage,
         targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),
+        totalOutfitCap: maxTotalOutfits,
         register: normalizeRegisterLevel(slot?.register),
         tripSummary,
-        planNote: String(slot?.plan_note || slot?.planNote || '').trim()
+        planNote
       }
     })
     .filter(slot => slot.label && slot.bestFor)
   let total = normalized.reduce((sum, slot) => sum + slot.targetOutfits, 0)
-  for (let index = normalized.length - 1; index >= 0 && total > PLAN_TOTAL_OUTFIT_CAP; index -= 1) {
+  for (let index = normalized.length - 1; index >= 0 && total > maxTotalOutfits; index -= 1) {
     const slot = normalized[index]
-    const trim = Math.min(slot.targetOutfits - 1, total - PLAN_TOTAL_OUTFIT_CAP)
+    const trim = Math.min(slot.targetOutfits - 1, total - maxTotalOutfits)
     if (trim > 0) {
       // Record what was actually asked for before trimming — this cap runs
       // silently (a live capsule test asked for 10 outfits across 5 slots and

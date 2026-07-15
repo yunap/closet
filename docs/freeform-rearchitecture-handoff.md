@@ -106,6 +106,13 @@ not keyword-guessed.
   never reached main (same trap as #57→#58) — recovered by cherry-pick. Also a
   server-side safety net now infers `piece_budget` from an "N-piece capsule"
   question when the model omits it (it forgot on the 14-piece live test).
+  Follow-up capsule hardening: if the model invents `constraints.no_repeat`
+  while also setting `reuse: "maximize"` and a `piece_budget`, the executor
+  strips that no-repeat rule unless the user's actual question explicitly asked
+  not to repeat/reuse pieces. This preserves intentional "no shirt twice" work
+  weeks, but prevents reusable capsules from starving their own roster (live
+  24-piece test: the model added `no_repeat: ["tops"]` even though the user
+  asked for a mix-and-match capsule).
   **FOLLOW-UP replan pre-route RETIRED (2026-07-14) — step 8's second half,
   now COMPLETE too:** `maybePrecomposeStructuredFollowupForAsk` used to run
   unconditionally regardless of the `plan_outfit_set` flags — the one
@@ -523,6 +530,13 @@ ones as a follow-up]` line before the per-slot loop runs. Verified against
 the exact live 8-slot input: the line now names `City Outing 2` and
 `Gallery Visit` explicitly. 506/506 tests still green.
 
+**Follow-up fix (2026-07-14):** after the register-demand reserve and
+plan-level weather fixes, the same 8-slot capsule ask showed the disclosure was
+working but still prevented the full ask from running. `normalizePlanSlots` now
+defaults `maxSlots` to `PLAN_TOTAL_OUTFIT_CAP` (8), so 8 one-look use cases are
+attempted and only a 9th+ use case is dropped with the same disclosure metadata.
+The total outfit cap remains 8.
+
 **Honest state after those four fixes**, re-verified on the same 8-slot live
 request: 8 requested → 6 slots even attempted (now disclosed) → only 3
 actually composed (all three `Smart Casual` looks). `Beach Day 1`,
@@ -609,6 +623,88 @@ direction: count slots per resolved register tier in `composeOutfitSet`
 before calling `selectCapsuleRoster`, and pass a per-tier minimum-piece-count
 (not just "at least one") into the roster quota logic.
 
+### Capsule allocator spec — register demand reserve — IMPLEMENTED 2026-07-14
+
+Goal: make the capsule roster match the plan's actual slot demand, not just a
+generic "versatile piece" formula. A capsule with four casual/everyday use
+cases needs enough everyday-compatible ingredients to produce multiple
+distinct formulas before exact-combo exhaustion; one compliant piece per
+category is not coverage.
+
+Implementation landed in `styling-engine/outfitSetPlanner.js`: `composeOutfitSet`
+passes the normalized slots into `selectCapsuleRoster`; the roster derives a
+strictest register-demand reserve from `slot.targetOutfits`, then swaps
+lower-scoring non-compliant picks inside the existing category quotas until
+repeated same-tier demand has enough compliant tops/bottoms/shoes where the
+wardrobe and `piece_budget` allow. It stays budget-capped and preserves the
+near-duplicate suppression pass. Coverage gaps now distinguish generic
+gate failure from "compatible combinations existed but were already consumed by
+earlier same-tier slots."
+
+**Demand model.**
+
+- For each normalized slot, resolve its effective register ceiling from
+  `resolveOccasionProfile(slot.occasion).register_ceiling`; slot-level
+  escalation (`slot.register`) should only make demand stricter when it already
+  maps to a known formality rank.
+- Count demanded looks by ceiling rank, using `slot.targetOutfits` after
+  `PLAN_TOTAL_OUTFIT_CAP` trimming. Example: `Beach Day` x2 + `City Outing` x2
+  under an everyday ceiling means four everyday-demanded looks, not "casual is
+  present."
+- Treat unknown ceilings as non-reserved demand. They still compose from the
+  roster, but they should not distort the reserve math.
+
+**Budget allocation.**
+
+- Keep `capsuleQuotas(budget)` as the outer category budget so a 10- or
+  14-piece capsule still reads like a capsule (separates-heavy, limited shoes,
+  optional layer/dress).
+- Replace the current register-floor guarantee with a register demand reserve:
+  within each category quota, reserve more than one ceiling-compliant piece
+  when a tier has repeated demand. The reserve should scale gently with looks,
+  not one-for-one; a good first invariant is:
+  - one demanded look: at least one compliant main path is enough;
+  - two to three demanded looks: at least two compliant choices in the relevant
+    main categories (`top`/`bottom` or `dress`) plus enough shoes;
+  - four or more demanded looks: at least two distinct main formulas, preferably
+    three compatible mains if the quota and wardrobe allow it.
+- Dresses count as a main formula path; tops and bottoms need pairability. Do
+  not satisfy all everyday demand with one dress plus one shoe if several
+  everyday looks are requested.
+- The reserve is category-local and budget-aware: swap lower-scoring,
+  non-compliant pieces out of the existing quota before increasing the roster.
+  Never exceed `piece_budget` to satisfy the reserve.
+- Non-redundancy still applies inside each reserved tier: two near-identical
+  black tees should not satisfy a two-top reserve unless the wardrobe has no
+  distinct alternative.
+
+**Fallback and reporting.**
+
+- If the wardrobe cannot supply enough compliant pieces inside the budget, keep
+  the best roster and disclose the real limitation. The message should name the
+  exhausted tier/use case, e.g. `[missing wardrobe gap: "City Outing" needed a
+  third distinct everyday-compatible combination, but the capsule roster only
+  supports 2]`.
+- Do not relax hard register/weather/activity gates to fill the count. A
+  capsule under-delivering honestly is better than quietly upgrading a casual
+  slot into dressy pieces.
+- Improve `describeSlotCoverageGap()` or pass it richer cause data so
+  "candidate combos existed but were already consumed by earlier same-tier
+  slots" does not appear as "no outfit passed the gates."
+
+**Acceptance tests.**
+
+- Added a fixture with several casual/everyday capsule slots and a
+  `piece_budget`; before the fix, later slots fail because exact combos were
+  already used by earlier same-tier slots. After the fix, the selected roster
+  must include enough everyday-compatible variety to compose the requested
+  attempted slots within budget.
+- Added a constrained fixture where the wardrobe truly lacks enough everyday
+  pieces; it should keep the budget and emit the more truthful "not enough
+  distinct everyday-compatible combinations" line.
+- Existing tests for near-duplicate suppression, shoe rotation, summer
+  shorts, budget enforcement, and plan trim disclosures green.
+
 ## Session verdict: is the PR #86-89 capsule feature usable? (2026-07-14)
 
 Goal of this session was to determine whether PR #86-89's capsule-feature
@@ -627,16 +723,68 @@ end-to-end rather than accepted at face value:
   failure has a diagnosed (if unfixed) cause instead of a misleading
   message.
 
-**Verdict: real, verified progress — not yet a reliably usable feature.**
-0/8 → 5/8-ish is a large improvement, but a capsule request with several
-slots at the same stricter register tier (the common case — a real capsule
-naturally has multiple `casual`/`everyday` use cases) will still silently
-under-deliver once that tier's thin roster runs out of distinct
-combinations. The `maxSlots = 6` cap is also still low for a realistic
-multi-occasion capsule ask (this session's request needed 8) — now
-disclosed rather than silent, but not raised. Both are legitimate follow-up
-work, not confirmed-fixed. 506/506 tests green throughout every fix in this
-session.
+**Verdict at that point: real, verified progress — not yet a reliably usable
+feature.** 0/8 → 5/8-ish was a large improvement, but a capsule request with
+several slots at the same stricter register tier (the common case — a real
+capsule naturally has multiple `casual`/`everyday` use cases) could still
+under-deliver once that tier's thin roster ran out of distinct combinations.
+The `maxSlots = 6` cap was also still low for a realistic multi-occasion capsule
+ask (this session's request needed 8). 506/506 tests were green throughout every
+fix in this session.
+
+**Follow-up status (2026-07-14):** the register-demand reserve is implemented,
+plan-level `weather` now feeds the slots, and `maxSlots` now defaults to 8. The
+remaining live-test question is whether the full 8-slot capsule composes with
+acceptable quality, not whether the engine silently drops the last two slots.
+
+**Follow-up quality fix (2026-07-14):** the 8/8 live capsule still had two
+quality failures: `Smart Casual Look 1` used an everyday `Casual/City` dress,
+and three slots reused that same dress with different shoes. The planner now
+requires smart-casual slots to contain an elevated-or-better non-shoe anchor,
+so an everyday city dress plus nicer shoes is not enough. Enforced capsules also
+block repeated dress-as-main formulas across slots unless the user explicitly
+pins that dress as a shared anchor. That exposed a candidate-generation blind
+spot: the mission candidate builder emitted only dress formulas for `Beach Day`
+even though the already-allowed capsule roster had valid top/bottom/shoe
+separates. `composeOutfitSet` now appends a structural-separates fallback for
+enforced capsules from already-allowed pieces only, preserving occasion/weather
+gates while giving the selector enough non-dress formulas to fill the rotation.
+The exact 8-slot summer capsule ask now composes 8/8 locally, with the blue
+botanical dress appearing once and not in smart casual. `test/plan_outfit_set`
+has regression coverage for both failures.
+
+**Follow-up generalization fix (2026-07-14):** a nearby ask using
+`warm-weather` instead of `summer` under-filled to 4/8. The engine was honest
+about the gaps, but the roster was wrong: warm text on normalized slots was not
+feeding `isSummerContext`, so the capsule did not prioritize warm casual bottoms
+and later Beach/City/Outdoor slots had no bottom path. `composeOutfitSet` now
+derives warm context from question, mood, and slot weather/season text
+(`summer|warm|hot|80s|90s|heat`). Regression coverage confirms the
+12-piece warm-weather capsule fills the repeated Beach and City slots without
+gap lines.
+
+**Follow-up scale fix (2026-07-14):** the 12-piece capsule ask was a useful
+stress test, but a realistic 24-piece seasonal capsule exposed a separate
+normalization bug: `PLAN_TOTAL_OUTFIT_CAP = 8` forced a 14-look request into
+only 8 attempted cards before the wardrobe was consulted, reducing every later
+slot to one look. `planTotalOutfitCapForBudget()` now keeps compact/travel
+capsules at 8 cards, raises 18-piece capsules to 12 cards, 24-piece capsules to
+16 cards, and 30-piece capsules to 20 cards. `executeTool('plan_outfit_set')`
+infers or reads `piece_budget` before slot normalization and passes the dynamic
+cap through. Regression coverage confirms the exact 24-piece/14-look seasonal
+shape is no longer trimmed by the compact cap.
+
+**Follow-up shoe/register fix (2026-07-14):** the first 24-piece live retest
+proved the card cap was fixed, but showed two quality issues: `Casual Dinner`
+arrived from the model as `occasion:"casual"`, and smart-casual brunch still
+looked underpowered because the 24-piece roster carried only the compact
+capsule's shoe allowance. Slot normalization now corrects contradictory
+casual/city dinner labels to `evening`. Capsule quotas now reserve 4 shoes for
+24-piece capsules and 5 shoes for 30-piece capsules, and the elevated-shoe
+floor scales with actual smart-casual/gallery/evening demand instead of
+guaranteeing only one polished pair. Regression coverage checks both the
+misclassified dinner normalization and multiple elevated shoes in a roomy
+mixed-register capsule.
 
 ## Live-testing findings so far (why each fix exists)
 
