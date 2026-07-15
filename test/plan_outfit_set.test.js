@@ -173,6 +173,16 @@ test('normalizePlanSlots corrects contradictory casual dinner slots to evening',
   assert.equal(slots[1].occasion, 'casual')
 })
 
+test('normalizePlanSlots corrects beach slots misclassified as outdoor daytime social', () => {
+  const slots = normalizePlanSlots([
+    { label: 'Beach Day', occasion: 'outdoor_daytime_social', activity: 'none', count: 2, best_for: 'relaxed beach outings' },
+    { label: 'Outdoor Market', occasion: 'outdoor_daytime_social', activity: 'none', count: 1, best_for: 'markets and fairs' },
+  ], { fallbackWeather: 'warm' })
+
+  assert.equal(slots[0].occasion, 'casual')
+  assert.equal(slots[1].occasion, 'outdoor_daytime_social')
+})
+
 test('plan_outfit_set is blocked until cards intent is declared', async () => {
   const toolContext = { declaredIntent: null }
   const result = await executeTool('plan_outfit_set', {
@@ -1124,6 +1134,9 @@ test('plan_outfit_set honors the larger card cap for 24-piece seasonal capsules'
   const dinnerOutfits = toolContext.generatedOutfits.filter(outfit => outfit.label === 'Casual Dinners')
   assert.ok(dinnerOutfits.length >= 1, 'misclassified casual dinner slot should still compose')
   assert.ok(dinnerOutfits.every(outfit => outfit.occasion === 'evening'), `casual dinner slot should normalize to evening, got ${dinnerOutfits.map(outfit => outfit.occasion)}`)
+  const beachOutfits = toolContext.generatedOutfits.filter(outfit => outfit.label === 'Beach Day')
+  assert.ok(beachOutfits.length >= 1, 'misclassified beach slot should still compose')
+  assert.ok(beachOutfits.every(outfit => outfit.occasion === 'casual'), `beach slot should normalize to casual, got ${beachOutfits.map(outfit => outfit.occasion)}`)
 })
 
 // --- Follow-up replan path diagnostics (step 8's second half) ----------------

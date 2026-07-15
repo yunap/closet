@@ -614,9 +614,14 @@ function textLooksLikeEveningPlanSlot(text = '') {
   return /\b(dinners?|dining|restaurants?|drinks|wine bars?|night out|date night|evenings?)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
 }
 
+function textLooksLikeBeachPlanSlot(text = '') {
+  return /\b(beach(?:es)?|pool(?:side)?|swim(?:ming)?)\b/i.test(String(text || '')) // ratchet-allow: slot-use-case classifier, not garment matching
+}
+
 function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '' } = {}) {
   const occasion = normalizeOccasion(rawOccasion)
   const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
+  if (occasion === 'outdoor_daytime_social' && textLooksLikeBeachPlanSlot(text)) return 'casual'
   if ((occasion === 'casual' || occasion === 'city') && textLooksLikeEveningPlanSlot(text)) return 'evening'
   return occasion
 }
