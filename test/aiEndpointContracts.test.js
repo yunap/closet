@@ -18,7 +18,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
-const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, systemToAnthropicBlocks, systemToPlainText, PROMPT_CACHE_BREAKPOINT } = await import('../styling-engine/provider.js')
+const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT } = await import('../styling-engine/provider.js')
 
 let server
 let baseUrl
@@ -3107,6 +3107,62 @@ test('prompt cache breakpoint splits the system into stable + volatile blocks', 
   // No marker → passthrough, unchanged shape.
   assert.equal(systemToAnthropicBlocks('plain system'), 'plain system')
   assert.equal(systemToPlainText('plain system'), 'plain system')
+})
+
+test('moving prompt cache breakpoint marks the final message block only', () => {
+  const messages = withMovingCacheBreakpoint([
+    { role: 'user', content: [{ type: 'text', text: 'first', cache_control: { type: 'ephemeral' } }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'middle' }] },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'last text' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc' } }
+      ]
+    }
+  ])
+
+  assert.equal(messages[0].content[0].cache_control, undefined, 'prior cache marks are stripped')
+  assert.equal(messages[1].content[0].cache_control, undefined)
+  assert.equal(messages[2].content[0].cache_control, undefined)
+  assert.deepEqual(messages[2].content[1].cache_control, { type: 'ephemeral' })
+})
+
+test('moving prompt cache breakpoint wraps final string content as a marked text block', () => {
+  const messages = withMovingCacheBreakpoint([
+    { role: 'user', content: 'plain question' }
+  ])
+
+  assert.deepEqual(messages, [{
+    role: 'user',
+    content: [{ type: 'text', text: 'plain question', cache_control: { type: 'ephemeral' } }]
+  }])
+})
+
+test('moving prompt cache breakpoint places cache_control on the outer tool_result block', () => {
+  const messages = withMovingCacheBreakpoint([
+    {
+      role: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: 'toolu_123',
+        content: [
+          { type: 'text', text: 'tool result text' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'xyz' } }
+        ]
+      }]
+    }
+  ])
+
+  const toolResult = messages[0].content[0]
+  assert.equal(toolResult.type, 'tool_result')
+  assert.deepEqual(toolResult.cache_control, { type: 'ephemeral' })
+  assert.equal(toolResult.content[0].cache_control, undefined, 'nested tool_result content is not marked')
+  assert.equal(toolResult.content[1].cache_control, undefined, 'nested tool_result images are not marked')
+})
+
+test('moving prompt cache breakpoint is a no-op for empty messages', () => {
+  assert.deepEqual(withMovingCacheBreakpoint([]), [])
 })
 
 test('stylist system prompt orders stable blocks before the cache breakpoint and volatile after', async () => {

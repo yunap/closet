@@ -524,6 +524,39 @@ export function systemToPlainText(system) {
   return String(system || '').split(PROMPT_CACHE_BREAKPOINT).join('')
 }
 
+function stripCacheControlFromBlock(block = {}) {
+  const { cache_control, ...cleaned } = block
+  return cleaned
+}
+
+export function withMovingCacheBreakpoint(messages = []) {
+  const cleaned = (Array.isArray(messages) ? messages : []).map(message => ({
+    role: message.role,
+    content: typeof message.content === 'string'
+      ? message.content
+      : Array.isArray(message.content)
+        ? message.content.map(stripCacheControlFromBlock)
+        : message.content
+  }))
+  if (!cleaned.length) return cleaned
+
+  const lastIndex = cleaned.length - 1
+  const last = cleaned[lastIndex]
+  const blocks = typeof last.content === 'string'
+    ? [{ type: 'text', text: last.content }]
+    : Array.isArray(last.content)
+      ? last.content.map(block => ({ ...block }))
+      : []
+
+  if (!blocks.length) return cleaned
+  blocks[blocks.length - 1] = {
+    ...blocks[blocks.length - 1],
+    cache_control: { type: 'ephemeral' }
+  }
+  cleaned[lastIndex] = { ...last, content: blocks }
+  return cleaned
+}
+
 export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
   const { text } = await askStylistWithUsage({ system, messages, maxTokens })
   return text
@@ -687,9 +720,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     } else {
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
       
-      const formattedMessages = currentMessages.map(m => {
+      const formattedMessages = withMovingCacheBreakpoint(currentMessages.map(m => {
         return { role: m.role, content: m.content }
-      })
+      }))
 
       const response = await client.messages.create({
         model: ANTHROPIC_MODEL,
@@ -698,6 +731,16 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         messages: formattedMessages,
         tools: STYLIST_TOOLS
       })
+      if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
+        const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
+        console.log('[Anthropic Tool Loop Usage]', {
+          iter,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cacheReadInputTokens: usage.cacheReadInputTokens,
+          cacheCreationInputTokens: usage.cacheCreationInputTokens
+        })
+      }
 
       if (response.stop_reason === 'tool_use') {
         const toolUses = response.content.filter(block => block.type === 'tool_use')
