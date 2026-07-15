@@ -152,6 +152,11 @@ db.exec(`
     destination_clarification_retries INTEGER DEFAULT 0,
     plan_slot_environment_inferred INTEGER DEFAULT 0,
     plan_slot_activity_inferred INTEGER DEFAULT 0,
+    plan_compose_mode      TEXT DEFAULT '',
+    submit_plan_calls      INTEGER DEFAULT 0,
+    submit_plan_validation_fails INTEGER DEFAULT 0,
+    submit_plan_resubmits  INTEGER DEFAULT 0,
+    submit_plan_partial_accepts INTEGER DEFAULT 0,
     weather_source          TEXT DEFAULT '',
     created_at              TEXT DEFAULT (datetime('now'))
   );
@@ -258,7 +263,12 @@ NEW_COLUMNS.forEach(col => {
   'zero_result_contradiction_blocks INTEGER DEFAULT 0',
   'destination_clarification_retries INTEGER DEFAULT 0',
   'plan_slot_environment_inferred INTEGER DEFAULT 0',
-  'plan_slot_activity_inferred INTEGER DEFAULT 0'
+  'plan_slot_activity_inferred INTEGER DEFAULT 0',
+  'plan_compose_mode TEXT DEFAULT ""',
+  'submit_plan_calls INTEGER DEFAULT 0',
+  'submit_plan_validation_fails INTEGER DEFAULT 0',
+  'submit_plan_resubmits INTEGER DEFAULT 0',
+  'submit_plan_partial_accepts INTEGER DEFAULT 0'
 ].forEach(col => {
   try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
 })

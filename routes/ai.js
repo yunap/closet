@@ -884,8 +884,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, plan_compose_mode, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -898,6 +898,11 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.destinationClarificationRetries) || 0,
       Number(diagnostics.planSlotEnvironmentInferred) || 0,
       Number(diagnostics.planSlotActivityInferred) || 0,
+      diagnostics.planComposeMode || '',
+      Number(diagnostics.submitPlanCalls) || 0,
+      Number(diagnostics.submitPlanValidationFails) || 0,
+      Number(diagnostics.submitPlanResubmits) || 0,
+      Number(diagnostics.submitPlanPartialAccepts) || 0,
       diagnostics.weatherSource || ''
     )
   } catch (err) {

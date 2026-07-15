@@ -6,7 +6,14 @@ import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
-import { composeOutfitSet, normalizePlanSlots, planTotalOutfitCapForBudget } from './outfitSetPlanner.js'
+import {
+  composeOutfitSet,
+  normalizePlanSlots,
+  planTotalOutfitCapForBudget,
+  buildPlanSlotWorkbench,
+  validateSubmittedPlanOutfits,
+  assembleSubmittedPlanOutfits
+} from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind } from './attributes.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
@@ -140,6 +147,11 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       tripScopeClarificationRetries: 0,
       planSlotEnvironmentInferred: 0,
       planSlotActivityInferred: 0,
+      planComposeMode: '',
+      submitPlanCalls: 0,
+      submitPlanValidationFails: 0,
+      submitPlanResubmits: 0,
+      submitPlanPartialAccepts: 0,
       // Step 6 build 7 — parallel-path signals (set once per turn by
       // recordPlanPathDiagnostics; see classifyPlanPath for planPathOutcome).
       planKeywordMatched: 0,
@@ -499,7 +511,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "plan_outfit_set",
-    description: "Compose a coordinated SET of outfits across multiple use-case slots under shared constraints — trip packing, multi-day plans, event weekends. YOU decompose the request into slots (that's judgment: 'mainly wineries, hiking, maybe the coast' → winery days + dinner + hike + optional coast day). The deterministic engine then composes gated outfits per slot, maximizes piece reuse across the whole set, and returns cards plus a plan summary (per-slot coverage lines + a packing-reuse report). Requires declare_intent want:'cards' first. Use this for multi-slot planning turns; use propose_outfit for one specific outfit and generate_outfits for a single-context batch.",
+    description: "Compose a coordinated SET of outfits across multiple use-case slots under shared constraints — trip packing, multi-day plans, event weekends. YOU decompose the request into slots (that's judgment: 'mainly wineries, hiking, maybe the coast' → winery days + dinner + hike + optional coast day). In engine mode, the deterministic engine composes gated outfits per slot and returns cards plus a plan summary. In model-composition mode, this returns slot rosters; YOU then compose the outfits and call submit_plan_outfits once with every slot. Requires declare_intent want:'cards' first. Use this for multi-slot planning turns; use propose_outfit for one specific outfit and generate_outfits for a single-context batch.",
     input_schema: {
       type: "object",
       properties: {
@@ -549,6 +561,30 @@ export const STYLIST_TOOLS = [
         day_breakdown: { type: "string", description: "Short natural breakdown of recurring day/evening needs — shown as the plan's 'Coverage' line." }
       },
       required: ["slots"]
+    }
+  },
+  {
+    name: "submit_plan_outfits",
+    description: "Submit the outfits you composed for this turn's plan_outfit_set slot rosters. ONE call carrying every slot that still needs an outfit. Each outfit must use piece IDs only from that slot's allowed roster.",
+    input_schema: {
+      type: "object",
+      properties: {
+        outfits: {
+          type: "array",
+          description: "Outfits composed from the pending plan_outfit_set slot rosters. Submit all slots in the first call; after a validation_error, resubmit only failed slots.",
+          items: {
+            type: "object",
+            properties: {
+              slot_id: { type: "string", description: "The slot id returned by plan_outfit_set." },
+              piece_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs chosen only from that slot's allowed piece list." },
+              title: { type: "string", description: "Optional short card title." },
+              reason: { type: "string", description: "Optional one-sentence styling rationale." }
+            },
+            required: ["slot_id", "piece_ids"]
+          }
+        }
+      },
+      required: ["outfits"]
     }
   },
   {
@@ -977,6 +1013,10 @@ export async function executeTool(name, args, toolContext = {}) {
             toolContext.generatedOutfits.some(o => o?.source === 'plan_outfit_set')) {
           bumpFreeformDiagnostic(toolContext, 'proposeAfterPlanOutfitSetBlocked')
           contractIssues.push("plan_outfit_set already composed this turn's cards — do not call propose_outfit to rebuild, top up, or replace them; present the existing cards plus their plan_lines as the answer instead. If a genuinely new use case is needed beyond the composed slots, call plan_outfit_set again with just that additional slot rather than hand-composing it here.")
+        }
+        if (toolContext.pendingPlan?.mode === 'model') {
+          bumpFreeformDiagnostic(toolContext, 'proposeAfterPlanOutfitSetBlocked')
+          contractIssues.push("plan_outfit_set returned slot rosters for model-composition mode — do not call propose_outfit. Submit the plan cards with submit_plan_outfits, using only piece IDs from each slot roster.")
         }
         const { retrieved: retrievedIdsThisTurn, seen: seenIdsThisTurn, known: knownCardIds } = verifiedPieceIdSets(toolContext)
         const unverifiedPieces = resolved.filter(p =>
@@ -1410,6 +1450,29 @@ export async function executeTool(name, args, toolContext = {}) {
           }
         }
         const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+        const planComposeMode = String(process.env.WARDROBE_PLAN_COMPOSE || 'engine').trim().toLowerCase() === 'model'
+          ? 'model'
+          : 'engine'
+        bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls', 0)
+        toolContext.freeformDiagnostics.planComposeMode = planComposeMode
+        if (planComposeMode === 'model') {
+          const workbench = await buildPlanSlotWorkbench(planSlots, {
+            constraints: planConstraints,
+            allPieces: planPieces,
+            dateRange: planDateRange,
+            mood: toolContext.mood || '',
+            question: toolContext.question || ''
+          })
+          toolContext.pendingPlan = {
+            ...workbench.pendingPlan,
+            mode: 'model'
+          }
+          const { pendingPlan, ...result } = workbench
+          return {
+            ...result,
+            message: "Slot rosters are ready. Compose the plan yourself and call submit_plan_outfits once with every slot's outfits; use only each slot's allowed piece IDs."
+          }
+        }
         // Seed with the thread's current outfit set so a replan varies from what
         // the user already has instead of re-serving the same combinations.
         // (Thread-state cards carry snake_case piece_ids; the engine's keys read
@@ -1453,6 +1516,98 @@ export async function executeTool(name, args, toolContext = {}) {
             pieceNames: (outfit.pieces || []).map(piece => piece.name)
           }))
           }
+        }
+      }
+      case 'submit_plan_outfits': {
+        bumpFreeformDiagnostic(toolContext, 'submitPlanCalls')
+        if (!toolContext.pendingPlan || toolContext.pendingPlan.mode !== 'model') {
+          bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+          return {
+            status: "validation_error",
+            message: "No pending plan rosters exist. Call plan_outfit_set first, then compose from its slot rosters and call submit_plan_outfits."
+          }
+        }
+        const pendingPlan = toolContext.pendingPlan
+        const submittedOutfits = Array.isArray(args?.outfits) ? args.outfits : []
+        const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits)
+        const alreadyHeld = Array.isArray(pendingPlan.heldOutfits) ? pendingPlan.heldOutfits : []
+        const heldPlusAccepted = [...alreadyHeld, ...accepted]
+        const countsBySlot = new Map()
+        for (const outfit of heldPlusAccepted) {
+          const slotId = outfit?._slotId || outfit?.slot_id || outfit?.tripSlot
+          if (!slotId) continue
+          countsBySlot.set(slotId, (countsBySlot.get(slotId) || 0) + 1)
+        }
+        const missingSlots = (pendingPlan.slots || []).filter(slot =>
+          (countsBySlot.get(slot.id) || 0) < Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1))
+        )
+        if (missingSlots.length && !failures.length) {
+          failures.push({
+            slot_id: '',
+            label: 'Missing slots',
+            reasons: missingSlots.map(slot => `${slot.label} still needs ${Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1)) - (countsBySlot.get(slot.id) || 0)} outfit${Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1)) - (countsBySlot.get(slot.id) || 0) === 1 ? '' : 's'}`)
+          })
+        }
+        pendingPlan.heldOutfits = heldPlusAccepted
+        if (failures.length) {
+          bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+          pendingPlan.resubmits = Number(pendingPlan.resubmits || 0) + 1
+          bumpFreeformDiagnostic(toolContext, 'submitPlanResubmits')
+          const failureText = failures
+            .map(failure => `${failure.label}: ${failure.reasons.join('; ')}`)
+            .join(' | ')
+          if (pendingPlan.resubmits <= 2 || !pendingPlan.heldOutfits.length) {
+            return {
+              status: "validation_error",
+              message: `${accepted.length} outfit${accepted.length === 1 ? '' : 's'} accepted and held. Fix these plan outfit issues in ONE submit_plan_outfits call, resubmitting ONLY the failed/missing slots: ${failureText}`,
+              accepted_count: accepted.length,
+              held_count: pendingPlan.heldOutfits.length,
+              failures
+            }
+          }
+          bumpFreeformDiagnostic(toolContext, 'submitPlanPartialAccepts')
+          const planOutfits = assembleSubmittedPlanOutfits(pendingPlan, pendingPlan.heldOutfits)
+          toolContext.generatedOutfits = planOutfits
+          toolContext.source = 'plan_outfit_set'
+          toolContext.sourceLocked = true
+          toolContext.pendingPlan = null
+          const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
+          return {
+            status: "success",
+            partial: true,
+            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText}`,
+            plan_lines: planLinesForResponse,
+            outfit_summaries: planOutfits.map(outfit => ({
+              slot: outfit.label,
+              coverage: outfit.coveragePosition,
+              weather: outfit.slotWeather || '',
+              pieceNames: (outfit.pieces || []).map(piece => piece.name)
+            }))
+          }
+        }
+        const planOutfits = assembleSubmittedPlanOutfits(pendingPlan, pendingPlan.heldOutfits)
+        if (!planOutfits.length) {
+          bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+          return {
+            status: "validation_error",
+            message: "No valid plan outfits were submitted. Pick complete outfits from the slot rosters and call submit_plan_outfits again."
+          }
+        }
+        toolContext.generatedOutfits = planOutfits
+        toolContext.source = 'plan_outfit_set'
+        toolContext.sourceLocked = true
+        toolContext.pendingPlan = null
+        const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
+        return {
+          status: "success",
+          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it.`,
+          plan_lines: planLinesForResponse,
+          outfit_summaries: planOutfits.map(outfit => ({
+            slot: outfit.label,
+            coverage: outfit.coveragePosition,
+            weather: outfit.slotWeather || '',
+            pieceNames: (outfit.pieces || []).map(piece => piece.name)
+          }))
         }
       }
       case 'generate_outfits': {

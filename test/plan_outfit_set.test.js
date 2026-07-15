@@ -69,6 +69,133 @@ test('plan_outfit_set slot schema declares environment and requires activity', (
   const schema = planOutfitSetSlotSchema()
   assert.deepEqual(schema.properties.environment.enum, ['indoor', 'outdoor', 'beach_coastal'])
   assert.ok(schema.required.includes('activity'))
+  const submitTool = STYLIST_TOOLS.find(entry => entry.name === 'submit_plan_outfits')
+  assert.ok(submitTool, 'submit_plan_outfits tool must exist for model-composition mode')
+})
+
+function idsForSlot(slot = {}, offset = 0) {
+  const byGroup = new Map()
+  for (const piece of slot.allowedPieces || []) {
+    const group = wardrobeCategoryGroup(piece)
+    if (!byGroup.has(group)) byGroup.set(group, [])
+    byGroup.get(group).push(Number(piece.id))
+  }
+  return new Map([...byGroup.entries()].map(([group, ids]) => [group, ids[Math.min(offset, ids.length - 1)]]))
+}
+
+test('plan_outfit_set model mode returns slot rosters and submit_plan_outfits creates cards', async () => {
+  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
+  process.env.WARDROBE_PLAN_COMPOSE = 'model'
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'model mode cotton top', occasions: ['city', 'casual'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'model mode cotton pants', occasions: ['city', 'casual'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'model mode walking shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city day outfit' }
+    const workbench = await executeTool('plan_outfit_set', {
+      slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
+    }, toolContext)
+
+    assert.equal(workbench.status, 'slot_rosters')
+    assert.equal(toolContext.pendingPlan?.mode, 'model')
+    assert.equal(toolContext.freeformDiagnostics.planComposeMode, 'model')
+    assert.ok(workbench.slots[0].allowed_pieces.some(line => /ID \d+/.test(line)))
+
+    const ids = idsForSlot(toolContext.pendingPlan.slots[0])
+    const submitted = await executeTool('submit_plan_outfits', {
+      outfits: [{
+        slot_id: toolContext.pendingPlan.slots[0].id,
+        piece_ids: [ids.get('top'), ids.get('bottom'), ids.get('shoes')],
+        title: 'Model Picked City Day',
+        reason: 'A simple complete city formula.'
+      }]
+    }, toolContext)
+
+    assert.equal(submitted.status, 'success')
+    assert.equal(toolContext.pendingPlan, null)
+    assert.equal(toolContext.source, 'plan_outfit_set')
+    assert.equal(toolContext.sourceLocked, true)
+    assert.equal(toolContext.generatedOutfits.length, 1)
+    assert.equal(toolContext.generatedOutfits[0].source, 'plan_outfit_set')
+    assert.equal(toolContext.generatedOutfits[0].label, 'City Day')
+  } finally {
+    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
+    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
+  }
+})
+
+test('submit_plan_outfits merges validation failures and holds accepted outfits for resubmit', async () => {
+  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
+  process.env.WARDROBE_PLAN_COMPOSE = 'model'
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'held top one', occasions: ['city', 'casual'] })
+  insertPiece({ category: 'bottom', name: 'held bottom one', occasions: ['city', 'casual'] })
+  insertPiece({ category: 'shoes', name: 'held shoes one', occasions: ['city', 'casual'], heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'top', name: 'held top two', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'bottom', name: 'held bottom two', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'shoes', name: 'held shoes two', occasions: ['casual', 'city'], heel_height: 'flat', walk_support: 'high' })
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'two simple outfits' }
+    await executeTool('plan_outfit_set', {
+      slots: [
+        { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
+        { label: 'Casual Day', occasion: 'casual', activity: 'none', count: 1 }
+      ]
+    }, toolContext)
+    const firstSlot = toolContext.pendingPlan.slots[0]
+    const secondSlot = toolContext.pendingPlan.slots[1]
+    const firstIds = idsForSlot(firstSlot)
+    const secondIds = idsForSlot(secondSlot, 1)
+    const invalid = await executeTool('submit_plan_outfits', {
+      outfits: [
+        { slot_id: firstSlot.id, piece_ids: [firstIds.get('top'), firstIds.get('bottom'), firstIds.get('shoes')] },
+        { slot_id: secondSlot.id, piece_ids: [secondIds.get('top'), 999999] }
+      ]
+    }, toolContext)
+
+    assert.equal(invalid.status, 'validation_error')
+    assert.equal(invalid.held_count, 1)
+    assert.match(invalid.message, /not in this slot roster/)
+    assert.equal(toolContext.pendingPlan.heldOutfits.length, 1)
+    assert.equal(toolContext.freeformDiagnostics.submitPlanValidationFails, 1)
+
+    const fixed = await executeTool('submit_plan_outfits', {
+      outfits: [
+        { slot_id: secondSlot.id, piece_ids: [secondIds.get('top'), secondIds.get('bottom'), secondIds.get('shoes')] }
+      ]
+    }, toolContext)
+
+    assert.equal(fixed.status, 'success')
+    assert.equal(toolContext.generatedOutfits.length, 2)
+  } finally {
+    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
+    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
+  }
+})
+
+test('propose_outfit redirects while a model-mode pending plan awaits submission', async () => {
+  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
+  process.env.WARDROBE_PLAN_COMPOSE = 'model'
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'redirect top', occasions: ['city'] })
+  const bottomId = insertPiece({ category: 'bottom', name: 'redirect bottom', occasions: ['city'] })
+  const shoesId = insertPiece({ category: 'shoes', name: 'redirect shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city outfit', retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
+    await executeTool('plan_outfit_set', {
+      slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
+    }, toolContext)
+    const result = await executeTool('propose_outfit', {
+      label: 'Wrong path',
+      pieces: [{ id: topId, role: 'primary_top' }, { id: bottomId, role: 'primary_bottom' }, { id: shoesId, role: 'shoes' }]
+    }, toolContext)
+
+    assert.equal(result.status, 'validation_error')
+    assert.match(result.message, /submit_plan_outfits/)
+  } finally {
+    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
+    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
+  }
 })
 
 function insertPiece(overrides = {}) {

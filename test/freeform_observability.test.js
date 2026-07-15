@@ -25,6 +25,11 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     tripScopeClarificationRetries: 0,
     planSlotEnvironmentInferred: 0,
     planSlotActivityInferred: 0,
+    planComposeMode: '',
+    submitPlanCalls: 0,
+    submitPlanValidationFails: 0,
+    submitPlanResubmits: 0,
+    submitPlanPartialAccepts: 0,
     planKeywordMatched: 0,
     planPrerouteComposed: 0,
     planModelCalled: 0,
@@ -348,7 +353,12 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
       zeroResultContradictionBlocks: 1,
       destinationClarificationRetries: 1,
       planSlotEnvironmentInferred: 2,
-      planSlotActivityInferred: 3
+      planSlotActivityInferred: 3,
+      planComposeMode: 'model',
+      submitPlanCalls: 4,
+      submitPlanValidationFails: 2,
+      submitPlanResubmits: 2,
+      submitPlanPartialAccepts: 1
     }
   })
   const row = db.prepare('SELECT * FROM freeform_generation_runs WHERE session_id = ?').get('test-session')
@@ -363,6 +373,11 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
   assert.equal(row.destination_clarification_retries, 1)
   assert.equal(row.plan_slot_environment_inferred, 2)
   assert.equal(row.plan_slot_activity_inferred, 3)
+  assert.equal(row.plan_compose_mode, 'model')
+  assert.equal(row.submit_plan_calls, 4)
+  assert.equal(row.submit_plan_validation_fails, 2)
+  assert.equal(row.submit_plan_resubmits, 2)
+  assert.equal(row.submit_plan_partial_accepts, 1)
 })
 
 // Spec 3 Part 0 (live-testing findings, 2026-07-09):
