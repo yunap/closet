@@ -360,6 +360,284 @@ shapes: `Smart Casual Day` and `Beach Day` (both requested 2, cut to 1) now
 report the trim; `Everyday City Outing` and `Gallery Visit` (untouched by the
 cap) correctly report nothing.
 
+## Plan-notes UI truncation was silently eating disclosure lines — FIXED (2026-07-14)
+
+Found live-testing PR #89 above: a "10 outfits, no specific instructions"
+capsule request (7 slots, 3+2+2+2+1+1+2=13, over the 8-cap) came back with
+only 4 outfits and zero explanation — three whole slots vanished with no
+`[plan trimmed: ...]` or `[missing wardrobe gap: ...]` line anywhere in the
+chat UI, even though PRs #87/#88/#89's engine code was suspected working.
+
+Two-step investigation, both confirmed by a local `composeOutfitSet` repro
+against the real wardrobe DB (no LLM calls):
+
+1. **The model itself was the first-order problem in earlier test turns —
+   root cause found and fixed.** `plan_outfit_set`'s tool result explicitly
+   says "the cards are already attached to this turn... do not compose
+   another set," but for a *specific* 10-outfit ask the model called
+   `plan_outfit_set`, got that instruction, and immediately re-composed every
+   card anyway via `search_wardrobe` + `propose_outfit` — discarding the
+   engine's cards and `tripPlanLines` entirely. This did NOT reproduce on a
+   vaguer "no specific instructions" capsule ask, which pointed at a
+   conflicting instruction rather than pure model flakiness: `declare_intent`
+   (always called before `plan_outfit_set`) told the model, unconditionally,
+   "every card goes through propose_outfit" — a contract written before
+   `plan_outfit_set` existed and never updated to exempt it. Fixed in
+   `tools.js`'s `declare_intent` handler: the `propose_outfit` contract is now
+   scoped to a single outfit / small fixed set, with an explicit instruction
+   to call `plan_outfit_set` once for a multi-slot plan and NOT also use
+   `propose_outfit` to rebuild or top up that same set — including when its
+   total comes in under what the user asked for (that shortfall is a real cap
+   or wardrobe gap, already disclosed via `plan_lines`, not something to paper
+   over with hand-composed cards).
+
+   **Round 2 finding (2026-07-14, same day):** re-tested live after the fix
+   above — the duplicate-`propose_outfit` behavior was gone, but a new
+   failure appeared: `plan_outfit_set` succeeded (4 cards, 3 honest
+   `[missing wardrobe gap: ...]` lines, confirmed via local repro), and the
+   model discarded all 4 cards and re-declared intent as `text`, answering
+   with a vague "the wardrobe can't fully satisfy this" apology instead of
+   presenting the cards it already had. Likely an overcorrection from the
+   round-1 wording ("do not paper over a shortfall with hand-composed
+   cards") being read as license to abandon the turn rather than present the
+   partial-but-honest result. Fixed by making both `declare_intent` and
+   `plan_outfit_set`'s own success message state explicitly: a
+   `plan_outfit_set` success response — even one whose `plan_lines` disclose
+   trimmed/unfillable slots — IS the complete answer; present the cards plus
+   `plan_lines` verbatim, never downgrade to text-only, and only skip cards
+   entirely if `plan_outfit_set` itself returned `status:"error"`.
+
+   **Round 3 finding: prompt wording alone did not hold.** Re-tested live a
+   third time with an explicit numeric slot breakdown (3+2+2+1=8, within the
+   cap) after round 2's fix — the authorship badge (built in round 2)
+   immediately showed all three cards tagged `AI · propose_outfit`: the model
+   called `plan_outfit_set` once, then hand-composed every card via
+   `propose_outfit` anyway, the same duplication round 1 was meant to fix.
+   Two rounds of stronger instruction text did not reliably prevent this.
+
+   **Fixed mechanically instead**, consistent with this codebase's existing
+   preference for hard gates over prompt-only compliance on anything that
+   must be correct (see `validateOutfitRoles` replacing prompt-based layering
+   rules). `propose_outfit`'s contract-issue check (`tools.js`, alongside the
+   existing declared-intent / unverified-piece / unseen-layer blocks) now
+   also blocks when `toolContext.source === 'plan_outfit_set'` and
+   `sourceLocked` and this turn's `generatedOutfits` already contains
+   `plan_outfit_set`-sourced cards — i.e. propose_outfit cannot duplicate a
+   plan_outfit_set composition within the same turn, full stop, regardless of
+   what the model reasons its way into. The block message redirects the
+   model to present the existing cards, or call `plan_outfit_set` again with
+   an additional slot for a genuinely new use case.
+
+   Not yet re-verified live. The per-card authorship badge is now the
+   fastest way to check: if `propose_outfit` duplication recurs, the gate
+   above should hard-block it and force the model back onto the composed
+   cards rather than merely discouraging the duplicate call.
+2. **The actual bug for the "no specific instructions" case: a UI truncation.**
+   `StylistChat.jsx`'s `getTripPlanNotes()` built the "Outfit plan" box
+   correctly from `outfit.tripPlanLines` (confirmed via direct repro: all
+   gap/trim lines were present in the engine's return) but then did a flat
+   `.slice(0, 7)` on the combined notes array. The 5 baseline lines (plan
+   length, coverage, weather, piece roster, budget) plus per-slot coverage
+   lines already crowd that budget on anything past a 2-3 slot plan, so on a
+   7-slot capsule (11 total lines, 6 of them gap/trim disclosures) the last 4
+   lines — all disclosures — were cut with no signal to the user that
+   anything was missing.
+
+   Fixed: the slice now protects bracket-prefixed disclosure lines
+   (`[plan trimmed: ...]`, `[missing wardrobe gap: ...]`) from truncation —
+   cosmetic lines (weather, piece roster wording) are trimmed first to make
+   room, and only if disclosures alone exceed 7 do they extend past the old
+   cap (better to show all of them than silently hide a gap).
+
+Also added: a small per-card authorship label (`engine · plan_outfit_set` vs
+`AI · propose_outfit`, etc., from `outfit.source`) so future live-testing can
+tell at a glance whether a card came from the deterministic composer or the
+model's own `propose_outfit` — this would have made finding #1 above
+immediate instead of requiring console-log archaeology.
+
+## Cross-slot mood/request text leakage silently zeroed out plan_outfit_set — FIXED (2026-07-14)
+
+Found while investigating why `plan_outfit_set` kept returning `status:"error"`
+(zero outfits composed) on live capsule tests, forcing the model into its
+documented — and, after the fixes above, now gated-but-legitimate —
+`propose_outfit` fallback. Suspected model misbehavior at first; turned out
+to be a real engine bug, isolated with a controlled pair of local
+`composeOutfitSet` runs (same 8 slots, same wardrobe, only the `question`
+text changed):
+
+- `question: 'warm summer weather'` → 4 outfits composed successfully
+- `question: 'Build me a summer capsule wardrobe: 3 Smart Casual looks, 2
+  Beach Day looks, 2 Everyday City Outing looks, 1 Gallery Visit look — 10
+  outfits total, warm summer weather.'` → 0 outfits, total failure
+
+Root cause: every per-slot gating call inside `composeOutfitSet`'s slot loop
+(`filterWholeWardrobePiecesForGeneration`, `resolveComfortFootwearConstraint`,
+`buildWholeWardrobeCandidateOutfits`, `wholeWardrobeOutfitsFromCandidates`,
+`locallyGateWholeWardrobeOutfits`, `applyComfortFootwearRepair`, and
+`resolveSlotWeather`) fell back to `mood: mood || question` /
+`request: question` — using the PLAN-LEVEL `question` (the user's entire
+original request) as every individual SLOT's mood/request text whenever no
+explicit `mood` was set (the normal case). Since a multi-slot capsule
+request naturally names every slot together in one sentence ("3 Smart
+Casual looks, 2 Beach Day looks, ... 1 Gallery Visit look"), each slot's
+gating was seeing keywords from every OTHER slot too — strict enough,
+apparently, to zero out candidates for all 8 slots simultaneously in this
+case. This is likely why several live tests earlier tonight saw
+`plan_outfit_set` fail outright rather than partially succeed with disclosed
+gaps: this bug, not a model or gating-logic problem, was silently deciding
+whether the whole engine path worked at all.
+
+Fixed: each slot now builds its own `slotRequestText` from
+`[slot.label, slot.best_for, slot.plan_note]` (falling back to the
+plan-level `question` only if a slot genuinely has none of its own text) and
+every in-loop gating call uses that instead of the raw plan-level `question`.
+The plan-wide `isSummerContext` check (a single boolean, not per-piece
+keyword matching) was left untouched — it's legitimately plan-scoped.
+Verified via the same controlled pair: the full multi-slot question now
+composes the same 4/8 outfits the short question did. 506/506 tests still
+green; no test depended on the old cross-slot leakage.
+
+## `normalizePlanSlots` had its OWN silent slot-count cap — FIXED (2026-07-14)
+
+Found immediately after the fix above, while re-verifying live: an 8-slot
+capsule request (all the round-3 fixes applied, badges all reading
+`engine · plan_outfit_set`, gap lines rendering correctly) looked like a
+genuine success at first glance — until a closer read caught that only 3 of
+8 requested use cases ever appeared, with no error and no disclosure for two
+of them (`City Outing 2`, `Gallery Visit` — not even a `[missing wardrobe
+gap: ...]` line, they just weren't there). Traced to `normalizePlanSlots`
+(`outfitSetPlanner.js`): a `.slice(0, maxSlots)` (`maxSlots = 6` by default)
+silently drops any slots past the 6th, entirely independent of
+`PLAN_TOTAL_OUTFIT_CAP` (PR #89's cap) — this is the identical class of bug
+PR #89 fixed (a real cap trimming a plan with zero disclosure), in a
+different spot #89 never touched, since #89 only covers the total-OUTFIT-
+count cap, not this separate total-SLOT-count cap.
+
+Fixed the same way: `normalizePlanSlots` now records the dropped raw slots'
+labels as `.droppedSlotLabels` on the returned array (arrays can carry extra
+properties; kept the return shape a plain slot array so no caller needed to
+change), and `composeOutfitSet` seeds `coverageGaps` with a
+`[plan trimmed: N use cases dropped — "Label1", "Label2" — a plan can only
+include up to {maxSlots} use-case slots at once; ask again with the dropped
+ones as a follow-up]` line before the per-slot loop runs. Verified against
+the exact live 8-slot input: the line now names `City Outing 2` and
+`Gallery Visit` explicitly. 506/506 tests still green.
+
+**Honest state after those four fixes**, re-verified on the same 8-slot live
+request: 8 requested → 6 slots even attempted (now disclosed) → only 3
+actually composed (all three `Smart Casual` looks). `Beach Day 1`,
+`Beach Day 2`, `City Outing 1` failed. That's a 3/8 real fill rate. Do not
+read "no propose_outfit duplication + badges correct + some gap lines
+visible" as "the capsule rework works" — always check the actual composed
+count against the actual requested count before calling a test result good.
+This exact mistake was made once already tonight before being caught on a
+second look.
+
+## `selectCapsuleRoster` had zero visibility into the plan's occasions — FIXED (2026-07-14)
+
+Traced why `Beach Day`/`City Outing` (occasion `casual`) were failing while
+`Smart Casual` succeeded, using the same 6-piece roster for both: `casual`
+enforces an `everyday` register ceiling, and the roster was 5/6 pieces tagged
+`elevated` — only one pair of shoes cleared it, so no top+bottom/dress
+survived for any `casual`-occasion slot. Not a real "wardrobe is missing
+beach clothes" gap (the `[missing wardrobe gap: ...]` message was
+misleading) — `selectCapsuleRoster(pool, { budget, isSummer })` never
+receives the plan's occasions at all, so its scoring
+(`capsuleVersatilityScore`: neutral color, tagged-occasion breadth, solid
+pattern, fabric weight for summer) optimizes for generic "versatility" with
+zero awareness of register/formality spread. A roster that scores well on
+that formula can still read uniformly dressy and fail every stricter-ceiling
+occasion in the plan at once.
+
+Fixed: `composeOutfitSet` now passes `occasions: slots.map(slot =>
+slot.occasion)` into `selectCapsuleRoster`. A new `strictestRegisterCeilingRank()`
+resolves the lowest (strictest) `register_ceiling` among those occasions via
+`resolveOccasionProfile` (`occasions.js`). After the existing quota-based
+selection, a register-floor guarantee pass checks each category (top,
+bottom, dress, shoes) for at least one selected piece whose own `formality`
+clears that ceiling — if none do, it swaps in the best ceiling-compliant
+candidate from the pool for the category's lowest-scoring pick. Skipped
+entirely when the plan's occasions don't resolve to a ceiling, so it only
+tightens an otherwise-blind selection and never loosens anything for plans
+where it doesn't apply.
+
+Verified against the same live 8-slot input: composed count went from 3/6
+attempted slots to 5/6 (`Beach Day 1` and `Beach Day 2` now both succeed).
+`City Outing 1` still fails, but with a narrower, different message now —
+"no outfit passed the casual/weather/register gates" rather than the
+earlier blanket "no candidate outfit could be assembled" — meaning pieces
+now survive the roster/register floor and the initial per-piece filter, but
+the assembled outfit still gets rejected at a later scoring/gating stage.
+That remaining gap is diagnosed (not fixed) in the next entry.
+
+## Remaining gap: register-floor guarantees PRESENCE, not enough QUANTITY — diagnosed, NOT fixed (2026-07-14)
+
+Traced why `City Outing 1` still failed after the `selectCapsuleRoster`
+register-floor fix above. In isolation it composes exactly 2 valid outfits:
+
+```
+blue botanical sleeveless dress + navy solid canvas slip shoes
+blue botanical sleeveless dress + navy solid canvas slip shoes + navy technical hoodie
+```
+
+Both are the EXACT combos already assigned to `Beach Day 1` and `Beach Day
+2` (also `casual`-occasion slots, processed earlier in the slot order).
+`composeOutfitSet`'s `chooseScoredOutfit` unconditionally excludes any
+outfit whose exact piece combo (`tripOutfitKey`) is already in `usedKeys` —
+that check is never relaxed across any of the four fallback passes, unlike
+the formula/no-repeat relaxations. So by the time `City Outing 1` runs, its
+entire candidate pool is already consumed. The gap message ("no outfit
+passed the casual/weather/register gates") is misleading here — the real
+cause is "the roster has too few `everyday`-tier pieces to produce a THIRD
+distinct outfit," not a gating failure.
+
+This is the register-floor fix's real limitation, not a bug in it: it
+guarantees ONE register-compliant piece per category exists, which is
+enough for the FIRST `casual`-occasion slot processed, but this plan had
+FOUR `casual`-occasion slots (`Beach Day` ×2, `City Outing` ×2) all drawing
+from the same thin `everyday` slice (1 dress, 1 top, 1 bottom, 1 outerwear,
+1 shoe pair post-fix) — enough combinatorial variety for ~2-4 distinct
+outfits before it runs dry. Presence was fixed; quantity was not — the
+quota reserved per register tier should scale with how many plan slots
+actually need that tier, not just guarantee a single representative piece.
+
+**Not implemented.** This is a design decision (how `piece_budget` gets
+allocated across register tiers when a plan has several same-tier slots),
+not a mechanical correctness fix like the others tonight — flagged for the
+next assistant/owner decision rather than patched silently. A plausible
+direction: count slots per resolved register tier in `composeOutfitSet`
+before calling `selectCapsuleRoster`, and pass a per-tier minimum-piece-count
+(not just "at least one") into the roster quota logic.
+
+## Session verdict: is the PR #86-89 capsule feature usable? (2026-07-14)
+
+Goal of this session was to determine whether PR #86-89's capsule-feature
+work actually produces a usable capsule, not just to spot-check individual
+fixes. Progression on the same 8-slot live capsule request, tracked
+end-to-end rather than accepted at face value:
+
+- Before tonight's fixes: `plan_outfit_set` failed outright (0 outfits),
+  the model silently fell back to hand-composing duplicate/lower-quality
+  cards via `propose_outfit`, and — separately — 2 of 8 requested use cases
+  were dropped with zero disclosure by an unrelated `maxSlots` cap.
+- After tonight's five fixes (duplicate-composition gate, UI truncation,
+  cross-slot mood/request leakage, silent slot-count drop, blind capsule
+  roster curation): 5 of 6 attempted slots compose successfully, the 2
+  silently-dropped slots are now disclosed by name, and the 1 remaining
+  failure has a diagnosed (if unfixed) cause instead of a misleading
+  message.
+
+**Verdict: real, verified progress — not yet a reliably usable feature.**
+0/8 → 5/8-ish is a large improvement, but a capsule request with several
+slots at the same stricter register tier (the common case — a real capsule
+naturally has multiple `casual`/`everyday` use cases) will still silently
+under-deliver once that tier's thin roster runs out of distinct
+combinations. The `maxSlots = 6` cap is also still low for a realistic
+multi-occasion capsule ask (this session's request needed 8) — now
+disclosed rather than silent, but not raised. Both are legitimate follow-up
+work, not confirmed-fixed. 506/506 tests green throughout every fix in this
+session.
+
 ## Live-testing findings so far (why each fix exists)
 
 1. Crochet top proposed as base layer → tags had no opacity; sight was optional

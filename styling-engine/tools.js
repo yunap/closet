@@ -632,7 +632,7 @@ export async function executeTool(name, args, toolContext = {}) {
           const seededCount = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits.filter(o => !o?.broken).length : 0
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}Contract: every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}Contract: for a SINGLE outfit or a small fixed set, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
@@ -940,6 +940,20 @@ export async function executeTool(name, args, toolContext = {}) {
         if (toolContext.declaredIntent?.want !== 'cards') {
           bumpFreeformDiagnostic(toolContext, 'composeWithoutDeclaredIntent')
           contractIssues.push("declare intent first: call declare_intent({ want: 'cards', outfit_count: <n if the user asked for a number> })")
+        }
+        // Mechanical gate (2026-07-14): prompt wording alone (declare_intent's and
+        // plan_outfit_set's own contract text) did not reliably stop the model from
+        // calling plan_outfit_set once and then hand-composing every card anyway via
+        // propose_outfit — live-tested three times same day, reproduced twice even
+        // after two rounds of stronger wording. This turn already has plan_outfit_set
+        // cards locked in as the source; block propose_outfit from duplicating them,
+        // the same way unverified pieces or missing declared intent are blocked
+        // mechanically rather than left to prompt compliance.
+        if (toolContext.source === 'plan_outfit_set' && toolContext.sourceLocked &&
+            Array.isArray(toolContext.generatedOutfits) &&
+            toolContext.generatedOutfits.some(o => o?.source === 'plan_outfit_set')) {
+          bumpFreeformDiagnostic(toolContext, 'proposeAfterPlanOutfitSetBlocked')
+          contractIssues.push("plan_outfit_set already composed this turn's cards — do not call propose_outfit to rebuild, top up, or replace them; present the existing cards plus their plan_lines as the answer instead. If a genuinely new use case is needed beyond the composed slots, call plan_outfit_set again with just that additional slot rather than hand-composing it here.")
         }
         const { retrieved: retrievedIdsThisTurn, seen: seenIdsThisTurn, known: knownCardIds } = verifiedPieceIdSets(toolContext)
         const unverifiedPieces = resolved.filter(p =>
@@ -1390,16 +1404,20 @@ export async function executeTool(name, args, toolContext = {}) {
           toolContext.source = 'plan_outfit_set'
           toolContext.sourceLocked = true
         }
-        return {
-          status: "success",
-          message: `Composed ${planOutfits.length} outfit cards across ${planSlots.length} slots. The cards are already attached to this turn — present THIS set (walk through it per slot and include the plan lines); do not compose another set.`,
-          plan_lines: Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : [],
+        {
+          const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
+          const hasGapOrTrimLines = planLinesForResponse.some(line => /^\[/.test(line))
+          return {
+            status: "success",
+            message: `Composed ${planOutfits.length} outfit cards across ${planSlots.length} slots. The cards are already attached to this turn — present THIS set (walk through it per slot and include the plan lines); do not compose another set.${hasGapOrTrimLines ? ' Some plan_lines below disclose a trimmed or unfillable slot — that is expected and already the complete, honest answer: present these cards plus the plan_lines as-is. Do NOT discard the cards and answer in prose instead, and do NOT call propose_outfit to top up or replace them.' : ''}`,
+            plan_lines: planLinesForResponse,
           outfit_summaries: planOutfits.map(outfit => ({
             slot: outfit.label,
             coverage: outfit.coveragePosition,
             weather: outfit.slotWeather || '',
             pieceNames: (outfit.pieces || []).map(piece => piece.name)
           }))
+          }
         }
       }
       case 'generate_outfits': {

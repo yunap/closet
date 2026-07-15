@@ -1222,6 +1222,19 @@ export default function StylistChat({
   // lines, tripPlanLines) and share one plan presentation.
   const isPlannedSetSource = (source) => source === 'trip_precompose' || source === 'plan_outfit_set'
 
+  // QA/debug aid: which code path produced this card. 'plan_outfit_set'/'trip_precompose' are the
+  // deterministic composer (gated, carries tripPlanLines); 'proposed_outfit' is the model hand-
+  // composing via propose_outfit, which can happen even after plan_outfit_set already ran (found
+  // 2026-07-14 testing #87-89: the model called plan_outfit_set then silently re-composed every
+  // card itself via propose_outfit, bypassing the engine's coverage-gap/trim disclosures).
+  const getCardAuthorLabel = (source) => {
+    if (source === 'plan_outfit_set') return 'engine · plan_outfit_set'
+    if (source === 'trip_precompose') return 'engine · precompose'
+    if (source === 'proposed_outfit' || source === 'proposed') return 'AI · propose_outfit'
+    if (source === 'whole_wardrobe') return 'AI · whole_wardrobe'
+    return source ? `source: ${source}` : ''
+  }
+
   const getCompactOutfitIntro = (message, hasBoards = false) => {
     if (message?.wholeWardrobe || message?.structuredOutfits?.some(outfit => isPlannedSetSource(outfit?.source))) {
       return ''
@@ -1252,12 +1265,24 @@ export default function StylistChat({
       if (outfit.tripNote) notes.push(`${outfit.label || outfit.title || 'Outfit'}: ${outfit.tripNote}`)
     }
     const seen = new Set()
-    return notes.filter(note => {
+    const deduped = notes.filter(note => {
       const key = note.toLowerCase()
       if (seen.has(key)) return false
       seen.add(key)
       return true
-    }).slice(0, 7)
+    })
+    // "[plan trimmed: ...]" and "[missing wardrobe gap: ...]" lines (bracket-prefixed) are the
+    // disclosure the user needs when a slot silently got fewer outfits than requested — a flat
+    // slice(0, 7) was cutting them off on any plan busy enough to need them (7-slot capsule live
+    // test: 11 total lines, the 4 gap/trim lines past index 7 vanished with no signal to the user).
+    // Cap the cosmetic lines instead so disclosure lines always survive.
+    const CAP = 7
+    if (deduped.length <= CAP) return deduped
+    const isCritical = (note) => /^\[/.test(note)
+    const critical = deduped.filter(isCritical)
+    const nonCritical = deduped.filter(note => !isCritical(note))
+    const keptNonCritical = new Set(nonCritical.slice(0, Math.max(0, CAP - critical.length)))
+    return deduped.filter(note => isCritical(note) || keptNonCritical.has(note))
   }
 
   const getPlanNotesTitle = (outfits = []) => {
@@ -2106,6 +2131,9 @@ export default function StylistChat({
                   <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
                   <div style={{ fontSize: 10, color: isBrokenCard ? 'var(--repair)' : (idx === 0 ? 'var(--accent)' : 'var(--text-muted)'), textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isBrokenCard ? 'needs review' : (isTripCard ? (outfit.coveragePosition || 'trip look') : strength)}</div>
                 </div>
+                {getCardAuthorLabel(outfit.source) && (
+                  <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, letterSpacing: '0.02em', marginTop: 2 }}>{getCardAuthorLabel(outfit.source)}</div>
+                )}
                 {isBrokenCard && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45, fontWeight: 600 }}>
                     Broken diagnostic card: shown to inspect a rejected model proposal.
