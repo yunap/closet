@@ -786,6 +786,52 @@ guaranteeing only one polished pair. Regression coverage checks both the
 misclassified dinner normalization and multiple elevated shoes in a roomy
 mixed-register capsule.
 
+**Follow-up beach/coastal environment + render-boundary fix (2026-07-15):**
+the exact warm-weather trip ask exposed two separate issues. First, a beach
+slot can arrive from the model as contradictory weather (`weather:"indoor"`)
+or as generic `occasion:"casual"`; either way the planner must treat "beach"
+as an environment, not just a casual use case. `normalizePlanSlots` now
+preserves beach/coastal environment intent and beach/coastal slots ignore
+contradictory indoor weather, falling back to plan/live weather. Beach/coastal
+slots also get earlier composition priority and a scorer that favors real
+beach-appropriate pieces (technical/performance/swim/cover-up/terry/sport
+signals, dresses/shorts in heat) while penalizing hot trousers, cargo, and
+tailored/wide-leg paths. Second, gallery/dinner/smart-casual slots were being
+shoe-repaired like all-day walking slots, so they lost elevated shoes in roomy
+capsules/trips. Those slots now keep elevated shoe intent even when the model
+mentions walking, and dinner/galleries suppress beach/technical/canvas drift.
+Regression coverage includes contradictory indoor beach weather and the exact
+warm trip shape reserving elevated shoes for gallery/dinner.
+
+The same live test also showed the model calling `render_preview` after a
+cards-only `plan_outfit_set` success, producing an unasked generated image.
+`render_preview` is now mechanically gated on `declare_intent({ want:"image" })`;
+a `want:"cards"` turn returns a validation error and tells the model to present
+the existing cards. Image-intent render tests were updated so legitimate "show
+me a rough preview" follow-ups still work.
+
+**Follow-up slot-prose normalization fix (2026-07-15):** the next Bay Area
+coastal trip retest exposed a subtler version of the same model/tool boundary:
+the model put important slot meaning in `best_for` while omitting structured
+fields. `City Walking Days` had `best_for:"walking around the city"` but no
+`activity:"walking"`, so the walking footwear gate never activated. Inside
+`composeOutfitSet`, normalized slots also store `bestFor`/`planNote`, but the
+slot request text was still reading snake-case `best_for`/`plan_note`, dropping
+that prose before weather, comfort, and candidate generation. Fix: slot
+normalization now infers walking/hiking from label/best-for prose when the model
+omits activity, excluding gallery/museum/dinner contexts so elevated gallery
+shoes are not flattened into walking shoes. The composer now scopes request text
+from `label + bestFor + coverage + planNote`.
+
+The same retest showed `cool mild weather` + `windy beach outing` was not cold
+enough to trigger the generic cold-weather layer hard gate, so the beach card
+could still be a bare sleeveless dress. Beach/coastal slots now treat cool,
+windy, breezy, chilly, foggy, or marine-layer wording as layer-worthy when the
+weather is not hot, and `composeOutfitSet` can add a light coastal layer from
+already-allowed roster pieces before final scoring. Regression coverage uses the
+live-style `cool mild weather` / `windy beach outing` language instead of only a
+literal cold forecast.
+
 ## Live-testing findings so far (why each fix exists)
 
 1. Crochet top proposed as base layer → tags had no opacity; sight was optional

@@ -252,6 +252,7 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', slot
 
 function tripSlotComfortConstraint(slot = {}, baseConstraint = null) {
   if (slot.activity !== 'walking') return baseConstraint
+  if (slotWantsElevatedShoe(slot)) return baseConstraint
   return {
     reason: 'all-day walking comfort',
     discouraged_footwear: [
@@ -553,7 +554,10 @@ function tripOutfitDinnerRegisterScore(outfit = {}, slot = {}) {
   const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
   let score = 0
 
-  if (dress) score += 34
+  if (dress) {
+    score += 34
+    if (tripPieceHasStructuredValue(dress, ['technical', 'performance', 'swim', 'cover_up', 'cover-up', 'beach', 'terry'])) score -= 54
+  }
   if (top) {
     if (isElevatedDinnerTop(top)) score += 18
     if (isCasualDinnerTop(top)) score -= 20
@@ -841,6 +845,17 @@ function isBeachCoastalPlanSlot(slot = {}) {
   return slot?.environment === 'beach_coastal'
 }
 
+function beachCoastalStatedWeather(explicitWeather = '', { environment = '' } = {}) {
+  const weather = String(explicitWeather || '').trim()
+  if (!weather) return ''
+  // Models sometimes mark a beach slot as `weather:"indoor"` because they are
+  // thinking "trip day" rather than physical environment. For a beach/coastal
+  // slot, that is contradictory; let the plan-level weather or live forecast
+  // drive the slot instead.
+  if (environment === 'beach_coastal' && /^indoor$/i.test(weather)) return ''
+  return weather
+}
+
 function tripOutfitBeachCoastalScore(outfit = {}, slot = {}, { isHotDay = false, isColdDay = false } = {}) {
   if (!isBeachCoastalPlanSlot(slot)) return { score: 0, hardRejects: [] }
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
@@ -852,10 +867,12 @@ function tripOutfitBeachCoastalScore(outfit = {}, slot = {}, { isHotDay = false,
   let score = 0
 
   const washableEasySignals = ['technical', 'performance', 'nylon', 'polyester', 'cotton', 'linen', 'rayon', 'viscose', 'tencel', 'jersey', 'terry', 'canvas']
+  const beachSpecificSignals = ['technical', 'performance', 'swim', 'swimsuit', 'cover_up', 'cover-up', 'terry', 'nylon', 'sport', 'beach']
   const fussySignals = ['silk', 'satin', 'suede', 'leather', 'lace', 'chiffon', 'sheer', 'velvet', 'beaded', 'sequin']
 
   for (const piece of pieces) {
     if (tripPieceHasStructuredValue(piece, washableEasySignals)) score += 8
+    if (tripPieceHasStructuredValue(piece, beachSpecificSignals)) score += 12
     if (fabricWeight(piece) === 'light') score += isHotDay ? 8 : 4
     if (fabricWeight(piece) === 'heavy' && isHotDay) score -= 18
     if (tripPieceHasStructuredValue(piece, fussySignals)) score -= 14
@@ -863,15 +880,17 @@ function tripOutfitBeachCoastalScore(outfit = {}, slot = {}, { isHotDay = false,
   }
 
   if (dress) {
-    score += 12
-    if (tripPieceHasStructuredValue(dress, ['technical', 'performance', 'swim', 'cover_up', 'cover-up'])) score += 20
-    if (isHotDay && sleeveCoverage(dress) === 'sleeveless') score += 8
+    score += isHotDay ? 24 : 14
+    if (tripPieceHasStructuredValue(dress, ['technical', 'performance', 'swim', 'cover_up', 'cover-up'])) score += 28
+    if (isHotDay && sleeveCoverage(dress) === 'sleeveless') score += 12
   }
   if (top && bottom) {
     if (garmentKind(top) === 'tee' || garmentKind(top) === 'tank') score += 8
     const kind = bottomKind(bottom)
-    if (kind === 'shorts') score += isHotDay ? 12 : 4
+    if (kind === 'shorts') score += isHotDay ? 24 : 4
     if ((kind === 'pants' || kind === 'trouser') && !isHotDay) score += 6
+    if ((kind === 'pants' || kind === 'trouser') && isHotDay) score -= 18
+    if (tripPieceHasStructuredValue(bottom, ['cargo', 'tailored', 'trouser', 'wide_leg']) && isHotDay) score -= 16
   }
   if (shoe) {
     if (tripShoeMatchesAny(shoe, ['sneaker', 'sneakers', 'canvas', 'sport sandal', 'sport sandals', 'slide', 'slides', 'slip-on', 'slip-ons', 'slip on'])) score += 12
@@ -887,6 +906,34 @@ function tripOutfitBeachCoastalScore(outfit = {}, slot = {}, { isHotDay = false,
   return { score, hardRejects: [] }
 }
 
+function beachCoastalNeedsLayer(slot = {}, { weatherProfile = {} } = {}) {
+  if (!isBeachCoastalPlanSlot(slot)) return false
+  if (weatherProfile?.isHot) return false
+  if (weatherProfile?.isCold) return true
+  const text = [slot?.label, slot?.bestFor, slot?.coverage, slot?.planNote, slot?.season]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return /\b(cool|windy|wind|breezy|chilly|fog|foggy|marine layer)\b/.test(text) // ratchet-allow: slot weather/environment classifier, not garment matching
+}
+
+function tripOutfitElevatedOccasionShoeScore(outfit = {}, slot = {}) {
+  if (!slotWantsElevatedShoe(slot)) return { score: 0, hardRejects: [] }
+  const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
+  const shoe = pieces.find(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  let score = 0
+  if (shoe) {
+    if (pieceMeetsFloorRank(shoe, formalityRank('elevated')) || isDinnerShoeRegister(shoe)) score += 28
+    if (isCasualDinnerShoe(shoe) || tripShoeMatchesAny(shoe, ['canvas', 'sneaker', 'sneakers', 'slip-on', 'slip-ons', 'slip on'])) score -= 45
+  }
+  for (const piece of pieces) {
+    if (pieceMeetsFloorRank(piece, formalityRank('elevated'))) score += 6
+    if (tripPieceHasStructuredValue(piece, ['cargo', 'drawstring', 'graphic']) && wardrobeCategoryGroup(piece) !== 'shoes') score -= 14
+    if (tripPieceHasStructuredValue(piece, ['technical', 'performance', 'swim', 'cover_up', 'cover-up', 'beach', 'terry']) && wardrobeCategoryGroup(piece) !== 'shoes') score -= 34
+  }
+  return { score, hardRejects: [] }
+}
+
 function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSummerContext = false } = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
@@ -898,7 +945,8 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSumme
   const isDinner = isTripDinnerSlot(slot)
   const isWinery = slot.occasion === 'outdoor_daytime_social'
   const isOutdoorActive = isOutdoorActivePlanSlot(slot)
-  const isDayWalking = isWalking && !isDinner
+  const isBeachCoastal = isBeachCoastalPlanSlot(slot)
+  const isDayWalking = isWalking && !isDinner && !isBeachCoastal && !slotWantsElevatedShoe(slot)
   // When the forecast is live, it is authoritative — the slot.season text may
   // still carry the trip-level weather (e.g. an inland "hot, 90F") that must NOT
   // re-inject heat into a slot whose own forecast came back cool (the coastal
@@ -1045,6 +1093,9 @@ function tripSlotFitScore(outfit = {}, slot = {}, { weatherProfile = {}, isSumme
   const beachCoastalFit = tripOutfitBeachCoastalScore(outfit, slot, { isHotDay, isColdDay })
   score += beachCoastalFit.score
   hardRejects.push(...beachCoastalFit.hardRejects)
+  const elevatedOccasionFit = tripOutfitElevatedOccasionShoeScore(outfit, slot)
+  score += elevatedOccasionFit.score
+  hardRejects.push(...elevatedOccasionFit.hardRejects)
 
   // Register DOWN for a casual/everyday day slot: the escalation scorer only
   // pushes up for dressy/formal, so a casual "city outing" happily pulled a
@@ -1112,6 +1163,29 @@ function chooseEveningLayerForOutfit(outfit, allPieces = [], slot = {}) {
   return options[0]?.candidate || outfit
 }
 
+function chooseBeachCoastalLayerForOutfit(outfit, allowedPieces = [], slot = {}, { weatherProfile = {}, isSummerContext = false } = {}) {
+  if (!beachCoastalNeedsLayer(slot, { weatherProfile })) return outfit
+  const pieces = Array.isArray(outfit?.pieces) ? outfit.pieces : []
+  if (pieces.some(piece => wardrobeCategoryGroup(piece) === 'outerwear')) return outfit
+  const existingIds = new Set(pieces.map(piece => Number(piece.id)).filter(Boolean))
+  const baseScore = tripSlotFitScore(outfit, slot, { weatherProfile, isSummerContext }).score
+  const options = (allowedPieces || [])
+    .filter(piece => wardrobeCategoryGroup(piece) === 'outerwear' && !existingIds.has(Number(piece.id)))
+    .map(layer => {
+      const nextPieces = [...pieces, layer]
+      const candidate = {
+        ...outfit,
+        pieces: nextPieces,
+        pieceIds: nextPieces.map(piece => Number(piece.id)).filter(Boolean)
+      }
+      const fit = tripSlotFitScore(candidate, slot, { weatherProfile, isSummerContext })
+      return { candidate, fit }
+    })
+    .filter(item => item.fit.accepted && item.fit.score >= baseScore + 4)
+    .sort((a, b) => b.fit.score - a.fit.score)
+  return options[0]?.candidate || outfit
+}
+
 // Candidate generation (buildWholeWardrobeCandidateOutfits -> candidateObjectFromPieces
 // in rules.js) trims outfit.pieces down to {id, name, category, photo, worn_photo} for
 // the eventual card shape. Every scorer below this point in the file reads structured
@@ -1164,6 +1238,7 @@ function slotCompositionPriority(slot = {}) {
   const occasion = normalizeOccasion(slot?.occasion)
   const rank = effectiveSlotRegisterCeilingRank(slot)
   if (occasion === 'evening') return 40
+  if (isBeachCoastalPlanSlot(slot)) return 35
   if (rank !== null) return 10 + rank
   return 0
 }
@@ -1180,6 +1255,21 @@ function withEveningLayerIfUseful(outfit, allPieces = [], slot = {}) {
     reason: [
       outfit.reason,
       `${layer.name} adds a light evening layer if the evening cools down.`
+    ].filter(Boolean).join(' '),
+    watchFor: outfit.watchFor || ''
+  }
+}
+
+function withBeachCoastalLayerIfUseful(outfit, allowedPieces = [], slot = {}, { weatherProfile = {}, isSummerContext = false } = {}) {
+  if (!outfit || !beachCoastalNeedsLayer(slot, { weatherProfile })) return outfit
+  const layered = chooseBeachCoastalLayerForOutfit(outfit, allowedPieces, slot, { weatherProfile, isSummerContext })
+  const layer = layered.pieces?.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  if (!layer || layered === outfit) return outfit
+  return {
+    ...layered,
+    reason: [
+      outfit.reason,
+      `${layer.name} adds a light coastal layer for wind or cool marine air.`
     ].filter(Boolean).join(' '),
     watchFor: outfit.watchFor || ''
   }
@@ -1222,6 +1312,26 @@ function isIndoorPlanSlot(slot = {}, { occasion = '', activity = '' } = {}) {
   if (!text || activity === 'walking' || activity === 'hiking') return false
   if (/\b(outdoor|outside|patio|garden|hike|hiking|walk|walking|sightseeing|winery|wineries|coast|beach)\b/.test(text)) return false // ratchet-allow: slot-place classifier, not garment matching
   return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurant|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
+}
+
+function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
+  const explicit = normalizeActivity(String(slot?.activity || 'none'))
+  if (explicit && explicit !== 'none') return explicit
+  const fallback = normalizeActivity(String(fallbackActivity || 'none'))
+  const text = [
+    slot?.label,
+    slot?.best_for,
+    slot?.bestFor,
+    slot?.coverage,
+    slot?.plan_note,
+    slot?.planNote
+  ].filter(Boolean).join(' ').toLowerCase()
+  if (/\b(hike|hiking|trail|trek|trekking)\b/.test(text)) return 'hiking' // ratchet-allow: slot activity classifier, not garment matching
+  if (!/\b(gallery|museum|dinner|restaurant|wedding|ceremony)\b/.test(text) && // ratchet-allow: slot activity classifier, not garment matching
+      /\b(walk|walking|stroll|strolling|explore|exploring|sightsee|sightseeing|market)\b/.test(text)) { // ratchet-allow: slot activity classifier, not garment matching
+    return 'walking'
+  }
+  return fallback || explicit || 'none'
 }
 
 // Per-slot weather resolution (build step 3). Precedence: user-stated per-slot
@@ -1690,7 +1800,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
     // slot at once. Scope each slot to its OWN descriptive text instead;
     // fall back to the plan-level question only for a slot with none of its
     // own (rare — label is always set in practice).
-    const slotRequestText = [slot.label, slot.best_for, slot.plan_note].filter(Boolean).join('. ') || question
+    const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl })
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: slot.originalIndex })
     const { allowedPieces } = filterWholeWardrobePiecesForGeneration(composePool, {
@@ -1775,7 +1885,12 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
           mood: mood || slotRequestText,
           activity: slot.activity
         })
-        const finalOutfit = withEveningLayerIfUseful(repaired, composePool, slot)
+        const finalOutfit = withBeachCoastalLayerIfUseful(
+          withEveningLayerIfUseful(repaired, composePool, slot),
+          allowedPieces,
+          slot,
+          { weatherProfile, isSummerContext }
+        )
         return {
           outfit: finalOutfit,
           fit: tripSlotFitScore(finalOutfit, slot, { weatherProfile, isSummerContext })
@@ -1932,7 +2047,7 @@ export function normalizePlanSlots(rawSlots = [], {
   const normalized = allRawSlots
     .slice(0, maxSlots)
     .map((slot, index) => {
-      const activity = normalizeActivity(String(slot?.activity || fallbackActivity || 'none'))
+      const activity = inferPlanSlotActivity(slot, fallbackActivity)
       const label = String(slot?.label || '').trim()
       const bestFor = String(slot?.best_for || slot?.bestFor || label).trim()
       const coverage = String(slot?.coverage || bestFor || label).trim()
@@ -1945,7 +2060,8 @@ export function normalizePlanSlots(rawSlots = [], {
       // for this purpose: it feeds season/heuristic but must let a slot's own
       // forecast override it (that is the coastal-microclimate case).
       const explicitWeather = String(slot?.weather || slot?.stated_weather || '').trim()
-      const statedWeather = explicitWeather || (isIndoorPlanSlot(slot, { occasion, activity }) ? 'indoor' : '')
+      const statedWeather = beachCoastalStatedWeather(explicitWeather, { environment }) ||
+        (isIndoorPlanSlot(slot, { occasion, activity }) && environment !== 'beach_coastal' ? 'indoor' : '')
       return {
         id: label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `slot_${index + 1}`,
         label,

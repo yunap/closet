@@ -3445,6 +3445,7 @@ test('render_preview renders a card from this turn and attaches the board for th
   const toolContext = {
     occasion: 'city',
     season: 'current season',
+    declaredIntent: { want: 'image', outfitCount: null, turnMode: null },
     generatedOutfits: [{
       label: 'Render me',
       pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
@@ -3461,8 +3462,22 @@ test('render_preview renders a card from this turn and attaches the board for th
   assert.equal(toolContext.freeformDiagnostics.renderCalls, 1)
 })
 
+test('render_preview is blocked during a cards-only turn', async () => {
+  const toolContext = {
+    declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
+    generatedOutfits: [{
+      label: 'Cards only',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe]
+    }]
+  }
+  const blocked = await executeTool('render_preview', { outfit_index: 1 }, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /want: 'image'/)
+  assert.equal(toolContext.renderedBoards, undefined)
+})
+
 test('render_preview refuses unverified piece_ids and bad indexes', async () => {
-  const toolContext = { generatedOutfits: [] }
+  const toolContext = { declaredIntent: { want: 'image', outfitCount: null, turnMode: null }, generatedOutfits: [] }
   const unverified = await executeTool('render_preview', { piece_ids: [seeded.top, seeded.bottom] }, toolContext)
   assert.equal(unverified.status, 'validation_error')
   assert.match(unverified.message, /verified this turn/)
@@ -3582,6 +3597,7 @@ test('render_preview resolves outfit_index against the thread outfit set on a fr
   const toolContext = {
     occasion: 'casual',
     season: 'current season',
+    declaredIntent: { want: 'image', outfitCount: null, turnMode: null },
     generatedOutfits: [],
     currentOutfitSet: [
       { index: 1, label: 'Look one', piece_ids: [seeded.top, seeded.shoe] },

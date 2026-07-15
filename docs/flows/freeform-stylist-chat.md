@@ -55,12 +55,12 @@ CONTROLLER" directive in the system prompt.
 
 ## Layer 1 — App pre-routing
 
-> **Status 2026-07-13:** the first two rows (broad-planning and travel
-> precompose) are **retired by default** — `shouldEngageAskPrecompose`
-> returns false unless `WARDROBE_PLAN_PREROUTE=on`; those turns now route to
-> the model + `plan_outfit_set` (step 8 of the migration). The **follow-up
-> replan row is still live and unflagged** — see the caveat at the end of the
-> "Step 6 resolution" section.
+> **Status 2026-07-14:** broad-planning, travel precompose, and follow-up
+> replan are **retired by default**. `shouldEngageAskPrecompose` returns false
+> unless `WARDROBE_PLAN_PREROUTE=on`; `followupPrerouteEnabled()` returns false
+> unless `WARDROBE_FOLLOWUP_PREROUTE=on`. Planning turns now route to the model
+> + `plan_outfit_set`, with the legacy precompose paths preserved only as
+> reversible fallbacks and contract tests.
 
 Deterministic, *before* the model. Decides whether to pre-build outfit cards for
 the turn (`maybePrecomposeStructuredOutfitsForAsk`, `routes/ai.js:1207`;
@@ -86,6 +86,8 @@ Model-driven, up to 7 iterations (`askStylistWithTools`,
 | `search_wardrobe` (± `visual`) | look up real owned pieces |
 | `propose_outfit` | render a verified outfit card ("show me") |
 | `generate_outfits` | compose fresh cards from scratch |
+| `plan_outfit_set` | compose coordinated multi-slot plans (trip, work-week, capsule, event set) from the deterministic planner |
+| `render_preview` | render an image from an existing card only after the turn declares `want:"image"` |
 | `get_garment_details` / `get_last_outfit_evaluation` / `get_current_image_inventory` | retrieve info |
 | `store_user_correction` | persist a taste correction |
 
@@ -155,6 +157,16 @@ stateDiagram-v2
   *verified* piece IDs (the model must `search_wardrobe` first); `generate_outfits`
   composes fresh cards from scratch. The `outfitProse` guard exists to force the
   model into `propose_outfit` when it tries to describe an outfit in prose instead.
+- **`plan_outfit_set` vs image rendering:** `plan_outfit_set` creates cards and
+  stores them as the current outfit set; it must not be followed by
+  `render_preview` unless the user separately asks for an image. `render_preview`
+  is tool-gated by declared image intent, so a cards-only planning turn cannot
+  accidentally spend an image render.
+- **Whole-wardrobe session memory:** `plan_outfit_set` does not write
+  `whole_wardrobe_sessions`. The "Use my wardrobe" memory counter is touched by
+  the visual composer path (`generate_outfits` / whole-wardrobe composer) and
+  by legacy precompose when explicitly re-enabled, not by a plain model-called
+  set plan.
 - **Diagnostics:** each turn logs gate exclusions / proposal validation via
   `persistFreeformGenerationRun` (`routes/ai.js`), mirroring the composer's debug.
 
