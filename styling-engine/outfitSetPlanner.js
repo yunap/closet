@@ -1975,9 +1975,22 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   const pieceCatalog = [...catalogById.values()]
     .sort((a, b) => Number(a.id) - Number(b.id))
     .map(planWorkbenchPieceLine)
+  const workbenchInstructions = [
+    'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Use piece_catalog for garment details and pick only from each slot allowed_piece_ids. Do not call view_pieces for roster pieces; make at most one small view_pieces call only if genuinely needed. If validation accepts some outfits and rejects others, resubmit only the failed slots.',
+    // Part 4 (spec 18): the spec-15 watch item's agreed escalation, now past
+    // its 3-run threshold (16/18/20 distinct pieces across live maximize-reuse
+    // packing runs, only accessories repeating).
+    reuseMode === 'maximize'
+      ? 'Reuse is set to maximize: aim to repeat bottoms and shoes across slots — every reused piece is one fewer to pack. Accessories alone do not count as reuse.'
+      : '',
+    // Part 5 (spec 18): live miss — a card described the Tropical pants
+    // (catalog: pattern floral, six colors) as "solid-base... muted print",
+    // fabricating past the catalog truth it already had in piece_catalog.
+    'The catalog\'s pattern and color fields are the truth about prints — never describe a piece as solid, muted, or subtle unless its line says so.'
+  ].filter(Boolean).join(' ')
   return {
     status: 'slot_rosters',
-    instructions: 'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Use piece_catalog for garment details and pick only from each slot allowed_piece_ids. Do not call view_pieces for roster pieces; make at most one small view_pieces call only if genuinely needed. If validation accepts some outfits and rejects others, resubmit only the failed slots.',
+    instructions: workbenchInstructions,
     piece_catalog: pieceCatalog,
     slots: workbenchSlots,
     constraints: {

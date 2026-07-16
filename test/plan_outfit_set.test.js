@@ -218,6 +218,37 @@ test('model plan slot workbench force-includes a shared anchor that would fall p
   assert.ok(workbench.pendingPlan.slots[0].gateAllowedIds.has(Number(anchorId)), 'anchor guarantee must use all gate-allowed IDs')
 })
 
+// Part 4 (spec 18): the spec-15 watch item's agreed escalation, now past its
+// 3-run threshold (three live maximize-reuse packing runs used 16/18/20
+// distinct pieces, only accessories repeating).
+test('model plan slot workbench instructions push reuse when reuseMode is maximize, and never otherwise', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
+  ])
+
+  const maximizeWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day', constraints: { reuse: 'maximize' } })
+  assert.match(maximizeWorkbench.instructions, /Reuse is set to maximize.*repeat bottoms and shoes/)
+
+  const defaultWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  assert.doesNotMatch(defaultWorkbench.instructions, /Reuse is set to maximize/)
+
+  const diversifyWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day', constraints: { reuse: 'diversify' } })
+  assert.doesNotMatch(diversifyWorkbench.instructions, /Reuse is set to maximize/)
+})
+
+// Part 5 (spec 18): live miss — a card described patterned Tropical pants
+// (catalog: pattern floral, six colors) as "solid-base... muted print",
+// fabricating past the catalog truth it already had.
+test('model plan slot workbench instructions always include the pattern-truth line', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  assert.match(workbench.instructions, /catalog's pattern and color fields are the truth about prints/)
+})
+
 test('submit_plan_outfits accepts gate-allowed pieces that were not in the shown roster', async () => {
   db.prepare('DELETE FROM pieces').run()
   const bottomId = insertPiece({ category: 'bottom', name: 'hidden roster pants', occasions: ['city'], formality: 'everyday' })
