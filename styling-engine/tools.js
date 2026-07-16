@@ -667,10 +667,30 @@ export function verifiedPieceIdSets(toolContext = {}) {
   return { retrieved, seen, known }
 }
 
+function logAgentToolResult(name, result) {
+  if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'production') return
+  const summary = { status: result?.status, message: result?.message }
+  if (result?.failures) summary.failures = result.failures
+  if (result?.error) summary.error = result.error
+  console.log(`[Agent Tool Result] ${name}`, JSON.stringify(summary, null, 2))
+}
+
 export async function executeTool(name, args, toolContext = {}) {
   console.log(`\n🤖 [Agent Tool Call] ${name} (${JSON.stringify(args)})`)
   try {
-    switch (name) {
+    const result = await executeToolInternal(name, args, toolContext)
+    logAgentToolResult(name, result)
+    return result
+  } catch (err) {
+    console.error(`Error executing tool ${name}:`, err)
+    const result = { error: err.message }
+    logAgentToolResult(name, result)
+    return result
+  }
+}
+
+async function executeToolInternal(name, args, toolContext = {}) {
+  switch (name) {
       case 'declare_intent': {
         // Step 4 (model-declared intent): the model states what this turn should
         // produce; guards and composing tools consume this instead of keyword-
@@ -1682,10 +1702,6 @@ export async function executeTool(name, args, toolContext = {}) {
       default:
         throw new Error(`Unknown tool: ${name}`)
     }
-  } catch (err) {
-    console.error(`Error executing tool ${name}:`, err)
-    return { error: err.message }
-  }
 }
 
 export function getLastOutfitEvaluation(outfitId) {
