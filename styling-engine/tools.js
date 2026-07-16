@@ -11,7 +11,8 @@ import {
   planTotalOutfitCapForBudget,
   buildPlanSlotWorkbench,
   validateSubmittedPlanOutfits,
-  assembleSubmittedPlanOutfits
+  assembleSubmittedPlanOutfits,
+  mergePendingPlanForReplan
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind } from './attributes.js'
@@ -1394,6 +1395,16 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls')
+        // Spec 23 Part 1: detect a partial re-plan BEFORE anything below
+        // mutates toolContext.pendingPlan — a plan already in progress this
+        // turn (held outfits still pending submit, and/or cards from an
+        // earlier fully-succeeded submit_plan_outfits round) means this call
+        // must merge into that plan rather than replace it.
+        const priorPendingPlan = (toolContext.pendingPlan && toolContext.pendingPlan.mode === 'model') ? toolContext.pendingPlan : null
+        const priorAssembledOutfits = (!priorPendingPlan && Array.isArray(toolContext.generatedOutfits))
+          ? toolContext.generatedOutfits.filter(outfit => outfit?.source === 'plan_outfit_set')
+          : []
+        const isPartialReplan = Boolean(priorPendingPlan?.heldOutfits?.length) || Boolean(priorAssembledOutfits.length)
         if (typeof args?.slots === 'string') {
           const recovered = coercePlanOutfitSetSlotsArg(args.slots)
           // Recovered sibling keys (e.g. a `location` that was flattened into
@@ -1426,6 +1437,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // came through with none, so the roster never enforced and 5 of 14 were
         // one-piece dresses). Infer it from the question so the curation still
         // fires; the model's own value always wins when present.
+        const explicitConstraintsProvided = Boolean(args?.constraints && typeof args.constraints === 'object' && Object.keys(args.constraints).length > 0)
         let planConstraints = { ...(args?.constraints || {}) }
         if (!(Number(planConstraints.piece_budget) > 0)) {
           const capsuleBudget = String(toolContext.question || '').match(/\b(\d{1,2})[-\s]?piece\b/i) // ratchet-allow: capsule budget extraction, not garment matching
@@ -1460,14 +1472,32 @@ async function executeToolInternal(name, args, toolContext = {}) {
           mood: toolContext.mood || '',
           question: toolContext.question || ''
         })
-        toolContext.pendingPlan = {
-          ...workbench.pendingPlan,
-          mode: 'model'
+        if (isPartialReplan) {
+          const merged = mergePendingPlanForReplan(priorPendingPlan, workbench.pendingPlan, {
+            explicitConstraintsProvided,
+            priorAssembledOutfits
+          })
+          toolContext.pendingPlan = { ...merged, mode: 'model' }
+          if (priorAssembledOutfits.length) {
+            // Folded into the merged plan's heldOutfits above — the final
+            // submit_plan_outfits success will re-assemble the full union, so
+            // this turn's generatedOutfits shouldn't also carry the old,
+            // now-superseded assembled copies.
+            toolContext.generatedOutfits = (toolContext.generatedOutfits || []).filter(outfit => outfit?.source !== 'plan_outfit_set')
+          }
+        } else {
+          toolContext.pendingPlan = {
+            ...workbench.pendingPlan,
+            mode: 'model'
+          }
         }
         const { pendingPlan, ...result } = workbench
+        const heldCount = toolContext.pendingPlan.heldOutfits?.length || 0
         return {
           ...result,
-          message: "Slot rosters are ready. Compose the plan yourself and call submit_plan_outfits once with every slot's outfits; use only each slot's allowed piece IDs."
+          message: isPartialReplan
+            ? `Slot rosters are ready for the re-planned slot(s). ${heldCount} previously accepted outfit${heldCount === 1 ? '' : 's'} from earlier in this plan carr${heldCount === 1 ? 'ies' : 'y'} forward automatically — compose only the slot(s) in this call, then call submit_plan_outfits once with just them; the eventual success response will include the full merged set.`
+            : "Slot rosters are ready. Compose the plan yourself and call submit_plan_outfits once with every slot's outfits; use only each slot's allowed piece IDs."
         }
       }
       case 'submit_plan_outfits': {

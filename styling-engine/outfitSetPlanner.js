@@ -617,28 +617,27 @@ function pieceMeetsFloorRank(piece = {}, floorRank = null) {
   return rank !== null && rank >= floorRank
 }
 
-// Part 1 (spec 19): arithmetic over tags already held on the pending plan —
-// does a structurally viable main path exist among this slot's gate-allowed
-// pieces that also clears the register floor? Used to tell a genuinely
-// unfillable floor ("no combination can meet it") apart from a floor the
-// model just hasn't hit yet with its current picks. No new gating, no
-// combinatorics beyond category counts.
+// Part 1 (spec 19), updated by spec 23 Part 2: arithmetic over tags already
+// held on the pending plan — does ANY main-category (non-shoe, non-accessory)
+// roster piece clear the register floor, and does the roster have shoes at
+// all? Used to tell a genuinely unfillable floor ("no combination can meet
+// it") apart from a floor the model just hasn't hit yet with its current
+// picks. Anchor-based to match the anchor-based floor check itself — a single
+// floor-clearing top, bottom, dress, or outerwear piece is enough; shoes never
+// needed to clear the floor themselves (they're bounded by the ceiling
+// elsewhere), only to exist in the roster.
 function slotFloorViability(gateAllowedIds = new Set(), piecesById = new Map(), floorRank = null) {
   if (floorRank === null) return { hasMainPath: true, hasShoes: true }
-  let hasDress = false
-  let hasTop = false
-  let hasBottom = false
+  let hasMainPath = false
   let hasShoes = false
   for (const id of gateAllowedIds) {
     const piece = piecesById.get(id)
-    if (!piece || !pieceMeetsFloorRank(piece, floorRank)) continue
+    if (!piece) continue
     const group = wardrobeCategoryGroup(piece)
-    if (group === 'dress') hasDress = true
-    else if (group === 'top') hasTop = true
-    else if (group === 'bottom') hasBottom = true
-    else if (group === 'shoes') hasShoes = true
+    if (group === 'shoes') { hasShoes = true; continue }
+    if (['dress', 'top', 'bottom', 'outerwear'].includes(group) && pieceMeetsFloorRank(piece, floorRank)) hasMainPath = true
   }
-  return { hasMainPath: hasDress || (hasTop && hasBottom), hasShoes }
+  return { hasMainPath, hasShoes }
 }
 
 function ensureCapsuleGroupReserve(roster = [], groups = {}, group = '', required = 0, ceilingRank = null, scoreOf = new Map()) {
@@ -1071,8 +1070,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // Part 4 (spec 18): the spec-15 watch item's agreed escalation, now past
     // its 3-run threshold (16/18/20 distinct pieces across live maximize-reuse
     // packing runs, only accessories repeating).
+    // Part 3 (spec 23): the vibe-based instruction ("aim to repeat bottoms
+    // and shoes") measured 16/18/20 distinct pieces across live maximize-
+    // reuse runs — trending the wrong way, and a live re-run still produced
+    // five different pairs of footwear across five outfits. A checkable
+    // number replaces the vibe.
     reuseMode === 'maximize'
-      ? 'Reuse is set to maximize: aim to repeat bottoms and shoes across slots — every reused piece is one fewer to pack. Accessories alone do not count as reuse.'
+      ? 'Reuse is set to maximize: pack at most 2 pairs of shoes across the whole set — a third only if a demanding activity (hiking, trail) requires it — and aim to repeat bottoms across slots. Every reused piece is one fewer to pack. Accessories alone do not count as reuse.'
       : '',
     // Part 5 (spec 18): live miss — a card described the Tropical pants
     // (catalog: pattern floral, six colors) as "solid-base... muted print",
@@ -1121,6 +1125,100 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   }
 }
 
+// Spec 23 Part 1: a plan_outfit_set call made while a plan is already in
+// progress this turn (held outfits from an earlier submit_plan_outfits round,
+// and/or already-assembled cards from an earlier fully-succeeded round) is a
+// PARTIAL RE-PLAN, not a new plan — the spec-19 hatch instruction ("re-call
+// plan_outfit_set with just this slot") predates the merge semantics below
+// and previously caused the new call's fresh, single-slot pendingPlan to
+// unconditionally overwrite the one holding everything already accepted this
+// turn, silently destroying it. Merges the new workbench's slot(s) into the
+// prior plan: slots not being re-planned (and their held outfits) carry
+// forward at their original position so Mon-Fri order survives; a slot being
+// re-planned supersedes only its own prior held outfits, disclosed via a
+// plan line; constraints inherit from the prior plan unless this call
+// explicitly restates them.
+export function mergePendingPlanForReplan(priorPendingPlan, newPendingPlan, {
+  explicitConstraintsProvided = false,
+  priorAssembledOutfits = []
+} = {}) {
+  const priorSlots = Array.isArray(priorPendingPlan?.slots) ? priorPendingPlan.slots : []
+  const priorHeld = Array.isArray(priorPendingPlan?.heldOutfits) ? priorPendingPlan.heldOutfits : []
+  const newSlots = Array.isArray(newPendingPlan?.slots) ? newPendingPlan.slots : []
+  const newSlotIds = new Set(newSlots.map(slot => slot.id))
+  const priorSlotById = new Map(priorSlots.map(slot => [slot.id, slot]))
+
+  const keptPriorSlots = priorSlots.filter(slot => !newSlotIds.has(slot.id))
+  const maxPriorIndex = priorSlots.reduce((max, slot) => Math.max(max, Number(slot.originalIndex) || 0), -1)
+  let nextAppendIndex = maxPriorIndex + 1
+  const positionedNewSlots = newSlots.map(slot => {
+    const priorMatch = priorSlotById.get(slot.id)
+    // A re-planned slot (label/id matches a prior slot) takes that slot's
+    // original position; a genuinely new slot appends after the existing set.
+    const originalIndex = priorMatch ? priorMatch.originalIndex : nextAppendIndex++
+    return { ...slot, originalIndex }
+  })
+  const mergedSlots = [...keptPriorSlots, ...positionedNewSlots]
+    .sort((a, b) => (a.originalIndex ?? 0) - (b.originalIndex ?? 0))
+
+  // Fold in already-assembled cards from an earlier fully-succeeded
+  // submit_plan_outfits round this turn (their tripSlot field, set by
+  // annotateTripOutfit, is the original slot id) alongside the still-pending
+  // plan's heldOutfits — either or both may be present.
+  const combinedPriorHeld = [
+    ...priorHeld,
+    ...priorAssembledOutfits.map(outfit => ({ ...outfit, _slotId: outfit._slotId || outfit.tripSlot }))
+  ]
+  const supersededCounts = new Map()
+  const keptHeld = []
+  for (const outfit of combinedPriorHeld) {
+    const slotId = outfit?._slotId || outfit?.slot_id || outfit?.tripSlot
+    if (slotId && newSlotIds.has(slotId)) {
+      supersededCounts.set(slotId, (supersededCounts.get(slotId) || 0) + 1)
+    } else {
+      keptHeld.push(outfit)
+    }
+  }
+
+  const coverageGaps = [
+    ...(Array.isArray(priorPendingPlan?.coverageGaps) ? priorPendingPlan.coverageGaps : []),
+    ...(Array.isArray(newPendingPlan?.coverageGaps) ? newPendingPlan.coverageGaps : [])
+  ]
+  for (const [slotId, count] of supersededCounts.entries()) {
+    const label = priorSlotById.get(slotId)?.label || slotId
+    coverageGaps.push(`[slot re-planned: "${label}" — ${count} earlier look${count === 1 ? '' : 's'} replaced]`)
+  }
+
+  const mergedConstraints = explicitConstraintsProvided
+    ? (newPendingPlan?.constraints || {})
+    : (priorPendingPlan?.constraints || newPendingPlan?.constraints || {})
+
+  const mergedPiecesById = new Map([
+    ...(priorPendingPlan?.piecesById instanceof Map ? priorPendingPlan.piecesById : []),
+    ...(newPendingPlan?.piecesById instanceof Map ? newPendingPlan.piecesById : [])
+  ])
+
+  // Each slot already carries its own resolved weatherLabel; rebuilding
+  // slotWeather from the merged slot list (rather than trying to splice two
+  // order-indexed arrays from different workbench calls) keeps the ordinal
+  // `order` field consistent with the merged slots' originalIndex.
+  const mergedSlotWeather = mergedSlots.map(slot => ({
+    label: slot.label,
+    weather: slot.weatherLabel || '',
+    order: slot.originalIndex
+  }))
+
+  return {
+    slots: mergedSlots,
+    piecesById: mergedPiecesById,
+    constraints: mergedConstraints,
+    slotWeather: mergedSlotWeather,
+    coverageGaps,
+    heldOutfits: keptHeld,
+    resubmits: 0
+  }
+}
+
 export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherProfile = {} } = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
   const reasons = []
@@ -1139,9 +1237,19 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
   }
   const floorRank = slotRegisterRank(slot)
   if (floorRank !== null && floorRank >= formalityRank('dressy')) {
-    for (const piece of mainPieces) {
+    // Spec 23 Part 2: the floor demands an ANCHOR, not uniformity — the
+    // outfit passes if at least one non-shoe, non-accessory piece (dress,
+    // top, bottom, or outerwear) clears the floor. Per-piece rejection threw
+    // out real dressed-up outfits built on quiet basics (dressy blouse +
+    // everyday trousers), which the capsule-era "elevated-or-better non-shoe
+    // anchor" precedent already established for smart-casual.
+    const floorAnchorCandidates = pieces.filter(piece => ['top', 'bottom', 'dress', 'outerwear'].includes(wardrobeCategoryGroup(piece)))
+    const hasFloorAnchor = floorAnchorCandidates.some(piece => {
       const rank = formalityRank(pieceFormality(piece))
-      if (rank !== null && rank < floorRank) reasons.push(`${piece.name || piece.id} is below the ${slot.register} register floor`)
+      return rank !== null && rank >= floorRank
+    })
+    if (!hasFloorAnchor) {
+      reasons.push(`no piece meets the ${slot.register} register floor — include at least one ${slot.register}-or-better main piece (top, bottom, dress, or outerwear), or re-call this slot at a lower register`)
     }
   }
   const activityProfile = resolveActivityProfile({ activity: slot.activity, occasion: slot.occasion, request: slot.slotRequestText || slot.bestFor || slot.label || '' })

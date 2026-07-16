@@ -256,6 +256,9 @@ test('model plan slot workbench force-includes a shared anchor that would fall p
 // Part 4 (spec 18): the spec-15 watch item's agreed escalation, now past its
 // 3-run threshold (three live maximize-reuse packing runs used 16/18/20
 // distinct pieces, only accessories repeating).
+// Part 3 (spec 23): the vibe-based wording still trended the wrong way (a
+// follow-up re-run produced five different pairs of footwear across five
+// outfits) — replaced with a checkable number.
 test('model plan slot workbench instructions push reuse when reuseMode is maximize, and never otherwise', async () => {
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([
@@ -263,7 +266,8 @@ test('model plan slot workbench instructions push reuse when reuseMode is maximi
   ])
 
   const maximizeWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day', constraints: { reuse: 'maximize' } })
-  assert.match(maximizeWorkbench.instructions, /Reuse is set to maximize.*repeat bottoms and shoes/)
+  assert.match(maximizeWorkbench.instructions, /Reuse is set to maximize.*at most 2 pairs of shoes/)
+  assert.match(maximizeWorkbench.instructions, /repeat bottoms across slots/)
 
   const defaultWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
   assert.doesNotMatch(defaultWorkbench.instructions, /Reuse is set to maximize/)
@@ -381,7 +385,7 @@ test('a register-floor rejection always names the re-call escape hatch', async (
 
   assert.equal(result.accepted.length, 0)
   const reasons = result.failures[0].reasons.join(' ')
-  assert.match(reasons, /is below the dressy register floor/)
+  assert.match(reasons, /no piece meets the dressy register floor/)
   assert.match(reasons, /re-call plan_outfit_set with just this slot at a lower register/)
   assert.doesNotMatch(reasons, /no combination in this slot's roster can meet/, 'a fillable path exists, so the stronger message must not fire')
 })
@@ -405,9 +409,79 @@ test('an unfillable register floor states the stronger truth: no combination can
 
   assert.equal(result.accepted.length, 0)
   const reasons = result.failures[0].reasons.join(' ')
-  assert.match(reasons, /is below the dressy register floor/)
+  assert.match(reasons, /no piece meets the dressy register floor/)
   assert.match(reasons, /re-call plan_outfit_set with just this slot at a lower register/)
   assert.match(reasons, /no combination in this slot's roster can meet the dressy floor/)
+})
+
+// --- Register floor is an ANCHOR, not uniformity (spec 23 Part 2) -------------
+
+test('a dressy anchor plus everyday supporting pieces clears the dressy floor on the first submit', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const blouseId = insertPiece({ category: 'top', name: 'silk blouse', occasions: ['city'], formality: 'dressy' })
+  const trousersId = insertPiece({ category: 'bottom', name: 'everyday wide leg trousers', occasions: ['city'], formality: 'everyday' })
+  const flatsId = insertPiece({ category: 'shoes', name: 'everyday flats', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Thursday', occasion: 'city', activity: 'none', count: 1, register: 'dressy' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(blouseId), Number(trousersId), Number(flatsId)],
+  }])
+
+  assert.equal(result.failures.length, 0, `expected the dressy-anchor outfit to clear the floor, got ${JSON.stringify(result.failures)}`)
+  assert.equal(result.accepted.length, 1)
+})
+
+test('an outfit with no floor-clearing main piece is still rejected, with the anchor wording', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const everydayTopId = insertPiece({ category: 'top', name: 'everyday top only', occasions: ['city'], formality: 'everyday' })
+  const everydayBottomId = insertPiece({ category: 'bottom', name: 'everyday bottom only', occasions: ['city'], formality: 'everyday' })
+  const dressyShoesId = insertPiece({ category: 'shoes', name: 'dressy shoes only', occasions: ['city'], formality: 'dressy', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Thursday', occasion: 'city', activity: 'none', count: 1, register: 'dressy' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  // A dressy pair of shoes alone is not an anchor (shoes are excluded from
+  // the anchor check) — no top/bottom/dress/outerwear here clears the floor.
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(everydayTopId), Number(everydayBottomId), Number(dressyShoesId)],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  const reasons = result.failures[0].reasons.join(' ')
+  assert.match(reasons, /no piece meets the dressy register floor — include at least one dressy-or-better main piece/)
+  assert.match(reasons, /re-call plan_outfit_set with just this slot at a lower register/)
+})
+
+test('an all-elevated outfit still fails a formal floor (ceremony guard unaffected)', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const elevatedTopId = insertPiece({ category: 'top', name: 'elevated evening top', occasions: ['evening'], formality: 'elevated' })
+  const elevatedBottomId = insertPiece({ category: 'bottom', name: 'elevated evening pants', occasions: ['evening'], formality: 'elevated' })
+  const elevatedShoesId = insertPiece({ category: 'shoes', name: 'elevated evening shoes', occasions: ['evening'], formality: 'elevated', heel_height: 'mid', walk_support: 'medium' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Ceremony', occasion: 'evening', activity: 'none', count: 1, register: 'formal' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'wedding ceremony' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(elevatedTopId), Number(elevatedBottomId), Number(elevatedShoesId)],
+  }])
+
+  assert.equal(result.accepted.length, 0, 'all-elevated must not satisfy a formal floor even under anchor semantics')
+  const reasons = result.failures[0].reasons.join(' ')
+  assert.match(reasons, /no piece meets the formal register floor/)
 })
 
 // --- Register ceiling reconciliation (spec 19 Part 2) -------------------------
@@ -626,6 +700,297 @@ test('propose_outfit redirects while a model-mode pending plan awaits submission
     if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
     else process.env.WARDROBE_PLAN_COMPOSE = previousMode
   }
+})
+
+// --- Partial re-plan must merge, not destroy (spec 23 Part 1, P0) ------------
+
+function pieceIdByName(slot = {}, name = '') {
+  const match = (slot.allowedPieces || []).find(piece => piece.name === name)
+  return match ? Number(match.id) : null
+}
+
+test('P0 regression: office week repro — 5 slots, 4 held + floor rejection, single-slot re-call at a lower register, one submit, 5 cards in Mon-Fri order', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+  for (const day of days) {
+    insertPiece({ category: 'top', name: `${day} everyday top`, occasions: ['city'], formality: 'everyday' })
+    insertPiece({ category: 'bottom', name: `${day} everyday pants`, occasions: ['city'], formality: 'everyday' })
+    insertPiece({ category: 'shoes', name: `${day} everyday shoes`, occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  }
+  // No dressy-or-better piece exists anywhere in the wardrobe, so Thursday's
+  // dressy floor is genuinely unfillable at the model's original register —
+  // the live repro's exact shape.
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'office week outfits' }
+  await executeTool('plan_outfit_set', {
+    slots: days.map(day => ({
+      label: day,
+      occasion: 'city',
+      activity: 'none',
+      count: 1,
+      ...(day === 'Thursday' ? { register: 'dressy' } : {})
+    }))
+  }, toolContext)
+
+  const slotsBeforeReplan = toolContext.pendingPlan.slots
+  const outfitFor = slot => {
+    const day = slot.label
+    return {
+      slot_id: slot.id,
+      piece_ids: [
+        pieceIdByName(slot, `${day} everyday top`),
+        pieceIdByName(slot, `${day} everyday pants`),
+        pieceIdByName(slot, `${day} everyday shoes`)
+      ]
+    }
+  }
+  const firstSubmit = await executeTool('submit_plan_outfits', {
+    outfits: slotsBeforeReplan.map(outfitFor)
+  }, toolContext)
+
+  assert.equal(firstSubmit.status, 'validation_error')
+  assert.equal(firstSubmit.held_count, 4, `expected 4 of 5 held, got ${JSON.stringify(firstSubmit)}`)
+  assert.match(firstSubmit.message, /re-call plan_outfit_set with just this slot at a lower register/)
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 4)
+
+  // The model obeys the hatch exactly: re-call plan_outfit_set with just
+  // Thursday, at a lower (default) register.
+  await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Thursday', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
+
+  // The 4 previously held outfits must survive this call, not be destroyed.
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 4, 'the 4 previously held outfits must carry forward through the re-plan call')
+  assert.equal(toolContext.pendingPlan.slots.length, 5, 'all 5 slots must still be present after the merge')
+
+  const mergedThursday = toolContext.pendingPlan.slots.find(slot => slot.label === 'Thursday')
+  const finalSubmit = await executeTool('submit_plan_outfits', {
+    outfits: [outfitFor(mergedThursday)]
+  }, toolContext)
+
+  assert.equal(finalSubmit.status, 'success', `expected the merged plan to submit cleanly, got ${JSON.stringify(finalSubmit)}`)
+  assert.equal(toolContext.generatedOutfits.length, 5, 'all 5 outfits must be delivered, not just the re-planned slot')
+  assert.deepEqual(toolContext.generatedOutfits.map(outfit => outfit.label), days, 'Mon-Fri order must survive the merge')
+})
+
+test('P0 regression: wedding weekend repro — 3 slots, 2 held, ceremony re-call, 3 cards', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const events = ['Rehearsal', 'Ceremony', 'Brunch']
+  for (const event of events) {
+    insertPiece({ category: 'top', name: `${event} everyday top`, occasions: ['city'], formality: 'everyday' })
+    insertPiece({ category: 'bottom', name: `${event} everyday pants`, occasions: ['city'], formality: 'everyday' })
+    insertPiece({ category: 'shoes', name: `${event} everyday shoes`, occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  }
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'wedding weekend outfits' }
+  await executeTool('plan_outfit_set', {
+    slots: events.map(event => ({
+      label: event,
+      occasion: 'city',
+      activity: 'none',
+      count: 1,
+      ...(event === 'Ceremony' ? { register: 'dressy' } : {})
+    }))
+  }, toolContext)
+
+  const outfitFor = slot => {
+    const event = slot.label
+    return {
+      slot_id: slot.id,
+      piece_ids: [
+        pieceIdByName(slot, `${event} everyday top`),
+        pieceIdByName(slot, `${event} everyday pants`),
+        pieceIdByName(slot, `${event} everyday shoes`)
+      ]
+    }
+  }
+  const firstSubmit = await executeTool('submit_plan_outfits', {
+    outfits: toolContext.pendingPlan.slots.map(outfitFor)
+  }, toolContext)
+
+  assert.equal(firstSubmit.status, 'validation_error')
+  assert.equal(firstSubmit.held_count, 2, `expected 2 of 3 held, got ${JSON.stringify(firstSubmit)}`)
+
+  await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Ceremony', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
+
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 2, 'the 2 previously held outfits must carry forward')
+  assert.equal(toolContext.pendingPlan.slots.length, 3)
+
+  const mergedCeremony = toolContext.pendingPlan.slots.find(slot => slot.label === 'Ceremony')
+  const finalSubmit = await executeTool('submit_plan_outfits', {
+    outfits: [outfitFor(mergedCeremony)]
+  }, toolContext)
+
+  assert.equal(finalSubmit.status, 'success', `expected the merged plan to submit cleanly, got ${JSON.stringify(finalSubmit)}`)
+  assert.equal(toolContext.generatedOutfits.length, 3, 'all 3 outfits must be delivered')
+  assert.deepEqual(toolContext.generatedOutfits.map(outfit => outfit.label), events)
+})
+
+test('a partial re-plan inherits the prior plan\'s constraints when the re-call omits them (no_repeat still enforced across the union)', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const top1 = insertPiece({ category: 'top', name: 'shared top one', occasions: ['city'] })
+  insertPiece({ category: 'top', name: 'shared top two', occasions: ['city'] })
+  insertPiece({ category: 'bottom', name: 'shared bottom one', occasions: ['city'] })
+  insertPiece({ category: 'bottom', name: 'shared bottom two', occasions: ['city'] })
+  insertPiece({ category: 'shoes', name: 'shared shoes one', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'shoes', name: 'shared shoes two', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'two outfits, no repeated tops' }
+  await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Slot A', occasion: 'city', activity: 'none', count: 1 },
+      { label: 'Slot B', occasion: 'city', activity: 'none', count: 1 }
+    ],
+    constraints: { no_repeat: ['top'] }
+  }, toolContext)
+
+  const slotA = toolContext.pendingPlan.slots.find(slot => slot.label === 'Slot A')
+  const firstSubmit = await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: slotA.id,
+      piece_ids: [
+        pieceIdByName(slotA, 'shared top one'),
+        pieceIdByName(slotA, 'shared bottom one'),
+        pieceIdByName(slotA, 'shared shoes one')
+      ]
+    }]
+  }, toolContext)
+  assert.equal(firstSubmit.status, 'validation_error', 'Slot B is still missing at this point')
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 1)
+
+  // Re-call omits constraints entirely.
+  await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Slot B', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
+
+  const mergedSlotB = toolContext.pendingPlan.slots.find(slot => slot.label === 'Slot B')
+  const repeatingSubmit = await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: mergedSlotB.id,
+      piece_ids: [
+        pieceIdByName(mergedSlotB, 'shared top one'), // reuses Slot A's top — should violate inherited no_repeat
+        pieceIdByName(mergedSlotB, 'shared bottom two'),
+        pieceIdByName(mergedSlotB, 'shared shoes two')
+      ]
+    }]
+  }, toolContext)
+
+  assert.equal(repeatingSubmit.status, 'validation_error')
+  assert.match(repeatingSubmit.message, /repeats despite no_repeat/)
+})
+
+test('a partial re-plan that explicitly restates constraints replaces the prior ones', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'shared top one', occasions: ['city'] })
+  insertPiece({ category: 'top', name: 'shared top two', occasions: ['city'] })
+  insertPiece({ category: 'bottom', name: 'shared bottom one', occasions: ['city'] })
+  insertPiece({ category: 'bottom', name: 'shared bottom two', occasions: ['city'] })
+  insertPiece({ category: 'shoes', name: 'shared shoes one', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'shoes', name: 'shared shoes two', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'two outfits, no repeated tops' }
+  await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Slot A', occasion: 'city', activity: 'none', count: 1 },
+      { label: 'Slot B', occasion: 'city', activity: 'none', count: 1 }
+    ],
+    constraints: { no_repeat: ['top'] }
+  }, toolContext)
+
+  const slotA = toolContext.pendingPlan.slots.find(slot => slot.label === 'Slot A')
+  await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: slotA.id,
+      piece_ids: [
+        pieceIdByName(slotA, 'shared top one'),
+        pieceIdByName(slotA, 'shared bottom one'),
+        pieceIdByName(slotA, 'shared shoes one')
+      ]
+    }]
+  }, toolContext)
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 1)
+
+  // Re-call explicitly restates constraints without no_repeat — this must
+  // REPLACE the inherited constraints, not merge with them.
+  await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Slot B', occasion: 'city', activity: 'none', count: 1 }],
+    constraints: { reuse: 'diversify' }
+  }, toolContext)
+
+  const mergedSlotB = toolContext.pendingPlan.slots.find(slot => slot.label === 'Slot B')
+  const repeatingSubmit = await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: mergedSlotB.id,
+      piece_ids: [
+        pieceIdByName(mergedSlotB, 'shared top one'),
+        pieceIdByName(mergedSlotB, 'shared bottom two'),
+        pieceIdByName(mergedSlotB, 'shared shoes two')
+      ]
+    }]
+  }, toolContext)
+
+  assert.equal(repeatingSubmit.status, 'success', `restated constraints should have dropped no_repeat, got ${JSON.stringify(repeatingSubmit)}`)
+})
+
+test('re-planning a slot that already had an accepted outfit supersedes it with a disclosure line', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'A top one', occasions: ['city'] })
+  insertPiece({ category: 'top', name: 'A top two', occasions: ['city'] })
+  insertPiece({ category: 'bottom', name: 'A bottom one', occasions: ['city'] })
+  insertPiece({ category: 'bottom', name: 'A bottom two', occasions: ['city'] })
+  insertPiece({ category: 'shoes', name: 'A shoes one', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'shoes', name: 'A shoes two', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'two outfits' }
+  await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Slot A', occasion: 'city', activity: 'none', count: 1 },
+      { label: 'Slot B', occasion: 'city', activity: 'none', count: 1 }
+    ]
+  }, toolContext)
+
+  const slotA = toolContext.pendingPlan.slots.find(slot => slot.label === 'Slot A')
+  await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: slotA.id,
+      piece_ids: [
+        pieceIdByName(slotA, 'A top one'),
+        pieceIdByName(slotA, 'A bottom one'),
+        pieceIdByName(slotA, 'A shoes one')
+      ]
+    }]
+  }, toolContext)
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 1)
+
+  // Re-plan Slot A again, even though it already had an accepted outfit.
+  await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Slot A', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
+
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 0, 'the superseded outfit must be dropped, not just added to')
+  assert.ok(
+    toolContext.pendingPlan.coverageGaps.some(line => /\[slot re-planned: "Slot A" — 1 earlier look replaced\]/.test(line)),
+    `expected a supersede disclosure line, got ${JSON.stringify(toolContext.pendingPlan.coverageGaps)}`
+  )
+})
+
+test('a fresh plan_outfit_set call with no pending plan and no plan cards this turn behaves exactly as today', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'fresh top', occasions: ['city'] })
+  insertPiece({ category: 'bottom', name: 'fresh bottom', occasions: ['city'] })
+  insertPiece({ category: 'shoes', name: 'fresh shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city outfit' }
+  const result = await executeTool('plan_outfit_set', {
+    slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
+
+  assert.equal(result.status, 'slot_rosters')
+  assert.doesNotMatch(result.message, /previously accepted/, 'a fresh plan must not carry the merge-specific wording')
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 0)
+  assert.equal(toolContext.pendingPlan.slots.length, 1)
 })
 
 function insertPiece(overrides = {}) {
