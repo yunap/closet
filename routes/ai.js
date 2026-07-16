@@ -43,8 +43,6 @@ import {
 } from '../styling-engine/prompts.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
-import { composeOutfitSet, normalizeTripPieceName } from '../styling-engine/outfitSetPlanner.js'
-import { recordPlanPathDiagnostics } from '../styling-engine/tools.js'
 import {
   pieceMatchesMaterial,
   pieceMatchesFootwear
@@ -177,211 +175,6 @@ const router = express.Router()
 const normalizeForMatch = (str) => {
   if (!str) return ''
   return String(str).toLowerCase().trim().replace(/\s+/g, ' ')
-}
-
-function isBroadOutfitPlanningText(text = '') {
-  const q = String(text || '').toLowerCase()
-  if (!q.trim()) return false
-  if (/\b(show|render|visualize|see|picture|image|why|what about|do you think|evaluate|critique)\b/.test(q)) return false // ratchet-allow: user intent routing words, not garment matching
-  return /\b(outfits|looks|pack|packing|trip|travel|capsule|wardrobe)\b/.test(q) && // ratchet-allow: user intent routing words, not garment matching
-    /\b(suggest|recommend|what should|help|plan|pack|wear|put together|create|build)\b/.test(q) // ratchet-allow: user intent routing words, not garment matching
-}
-
-// Step 8 (keyword pre-route retirement) — COMPLETE. Both the broad-planning and
-// the travel/packing pre-routes are retired by default: every planning turn now
-// reaches the model + plan_outfit_set, which applies the constraints, per-slot
-// live weather (resolved from location, so a stated forecast isn't needed), and
-// objective reports the keyword precompose could not. Live evidence: broad
-// planning (work week / capsule / event) AND a real trip ("5 days in Paso
-// Robles… wineries, a dinner, a hike, the coast") both self-route with
-// planPathOutcome 'model_only' and better decomposition than the pre-route ever
-// produced (the trip even made its own hiking slot and per-slot coastal
-// location). Set WARDROBE_PLAN_PREROUTE=on (or the legacy
-// WARDROBE_BROAD_PLAN_PREROUTE=on) to restore the whole legacy precompose as a
-// reversible fallback.
-// Read at call time (not module load) so the legacy path stays exercisable in
-// tests and can be flipped without a restart.
-function planPrerouteEnabled() {
-  return process.env.WARDROBE_PLAN_PREROUTE === 'on' || process.env.WARDROBE_BROAD_PLAN_PREROUTE === 'on'
-}
-
-export function shouldEngageAskPrecompose(question = '', occasion = '', { prerouteEnabled = planPrerouteEnabled() } = {}) {
-  if (!prerouteEnabled) return false // fully retired → the model owns every planning/travel turn
-  return isBroadOutfitPlanningText(question) || isTravelOrPackingRequest(question, occasion)
-}
-
-// Gate for the FOLLOW-UP replan pre-route (step 8's second half) — RETIRED by
-// default as of the 2026-07-14 canary run: with WARDROBE_FOLLOWUP_PREROUTE=off,
-// set-modification followups ("add a dinner option", "make it dressier", "add a
-// rainy-day option") all self-routed to the model with valid `model_propose`
-// cards (followupPathOutcome), matching the single-outfit-edit evidence from
-// before. No precompose-loss regression observed. Set
-// WARDROBE_FOLLOWUP_PREROUTE=on to restore the legacy replan precompose as a
-// reversible fallback. Read at call time.
-export function followupPrerouteEnabled() {
-  return process.env.WARDROBE_FOLLOWUP_PREROUTE === 'on'
-}
-
-function structuredOutfitContextText(outfits = [], { source = 'whole_wardrobe', reason = '' } = {}) {
-  if (!Array.isArray(outfits) || !outfits.length) return ''
-  const cards = outfits.slice(0, 8).map((outfit, index) => {
-    const pieces = Array.isArray(outfit?.pieces)
-      ? outfit.pieces.map(piece => `${piece?.name || 'Garment'}${piece?.category ? ` (${piece.category})` : ''}${piece?.id ? `, id ${piece.id}` : ''}`).join('\n- ')
-      : ''
-    return [
-      `Outfit ${index + 1}: ${outfit.label || outfit.title || `Structured outfit ${index + 1}`}`,
-      outfit.bestFor ? `Use case: ${outfit.bestFor}` : '',
-      outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
-      outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
-      pieces ? `Pieces:\n- ${pieces}` : '',
-      outfit.reason ? `Reason: ${outfit.reason}` : '',
-      outfit.watchFor ? `Watch: ${outfit.watchFor}` : '',
-    ].filter(Boolean).join('\n')
-  }).join('\n\n')
-  return [
-    'CURRENT OUTFIT SET (LATEST, HIGH AUTHORITY): These structured cards were pre-composed by the validated wardrobe composer before the chat answer. Explain and refine these cards; do not invent a separate prose-only outfit set.',
-    reason ? `Pre-composition reason: ${reason}` : '',
-    source ? `Source: ${source}` : '',
-    cards
-  ].filter(Boolean).join('\n')
-}
-
-const USE_CASE_PLANNER_SYSTEM = `FREEFORM_STYLIST_USE_CASE_PLANNER
-You convert a freeform wardrobe request into outfit use-case slots for a deterministic composer.
-Return strict JSON only:
-{
-  "shouldCompose": boolean,
-  "reason": "short reason",
-  "tripSummary": {
-    "durationText": "stated or inferred trip duration, if applicable",
-    "dayBreakdown": "short natural breakdown of recurring day/evening needs"
-  },
-  "slots": [
-    {
-      "id": "stable_snake_case",
-      "label": "short user-facing label",
-      "occasion": "casual|city|smart casual|outdoor_daytime_social|evening|gallery / art event|travel|concert",
-      "activity": "none|walking|hiking",
-      "season": "weather/temperature for this slot",
-      "bestFor": "specific use case",
-      "coverage": "how many days/instances this slot spans",
-      "targetOutfits": 1,
-      "planNote": "one sentence composer guidance"
-    }
-  ]
-}
-Use only needs stated or clearly implied by the user/current outfit set. Do not invent a destination-specific itinerary.
-For trips, infer the day structure from the stated duration and activities. A museum day is still part of the daytime city experience, even when the museum itself is indoors; fold it into the relevant daytime/city coverage instead of making a separate sedentary slot unless the user specifically asks for that.
-Estimate recurring instances like daytime city days and dinners, then set targetOutfits so a few distinct looks rotate through recombination. This is packing: assume pieces repeat across days; variety comes from recombining a shared wardrobe, not making a separate wardrobe per day. Keep total distinct outfits across all slots around 6-8 or fewer; spend the budget on recurring use-cases first, while one-offs usually get one look.
-Map dinner, evening restaurant, and night-out use cases to occasion "evening" with activity "none" unless the user explicitly says the dinner itself requires substantial walking. If the user asks a conversational question that does not need new composed cards, set shouldCompose false.`
-
-const TOTAL_OUTFIT_CAP = 8
-
-function normalizePlannerTripSummary(rawSummary = null) {
-  if (!rawSummary || typeof rawSummary !== 'object') return null
-  const durationText = String(rawSummary.durationText || '').trim()
-  const dayBreakdown = String(rawSummary.dayBreakdown || '').trim()
-  if (!durationText && !dayBreakdown) return null
-  return { durationText, dayBreakdown }
-}
-
-function tripCitySlotImpliesWalking(slot = {}, occasion = '') {
-  if (occasion !== 'city') return false
-  const text = [
-    slot?.id,
-    slot?.label,
-    slot?.bestFor,
-    slot?.coverage,
-    slot?.planNote
-  ].map(normalizeTripPieceName).join(' ')
-  const tokens = new Set(text.split(/\s+/).filter(Boolean))
-  return ['city', 'museum', 'museums', 'exploring', 'sightseeing', 'shopping', 'walking'].some(token => tokens.has(token))
-}
-
-function normalizePlannerSlots(rawSlots = [], { extractedWeather = '', fallbackOccasion = 'city', fallbackActivity = '', maxSlots = 5, tripSummary = null } = {}) {
-  const normalized = (Array.isArray(rawSlots) ? rawSlots : [])
-    .slice(0, maxSlots)
-    .map((slot, index) => {
-      const occasion = normalizeOccasion(slot?.occasion || fallbackOccasion || 'city')
-      const plannerActivity = normalizeActivity(slot?.activity || fallbackActivity || 'none')
-      const activity = plannerActivity === 'none' && tripSummary && tripCitySlotImpliesWalking(slot, occasion)
-        ? 'walking'
-        : plannerActivity
-      const label = String(slot?.label || '').trim() || (index === 0 ? 'Primary Outfit' : `Outfit ${index + 1}`)
-      const targetOutfits = Math.min(3, Math.max(1, Number.parseInt(slot?.targetOutfits, 10) || 1))
-      return {
-        id: String(slot?.id || label || `slot_${index + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `slot_${index + 1}`,
-        label,
-        occasion,
-        activity,
-        season: String(slot?.season || extractedWeather || 'current season').trim(),
-        bestFor: String(slot?.bestFor || label).trim(),
-        coverage: String(slot?.coverage || slot?.bestFor || label).trim(),
-        targetOutfits,
-        tripSummary,
-        planNote: String(slot?.planNote || '').trim()
-      }
-    })
-    .filter(slot => slot.label && slot.bestFor)
-  let total = normalized.reduce((sum, slot) => sum + slot.targetOutfits, 0)
-  for (let index = normalized.length - 1; index >= 0 && total > TOTAL_OUTFIT_CAP; index -= 1) {
-    const slot = normalized[index]
-    const trim = Math.min(slot.targetOutfits - 1, total - TOTAL_OUTFIT_CAP)
-    if (trim > 0) {
-      slot.targetOutfits -= trim
-      total -= trim
-    }
-  }
-  return normalized
-}
-
-async function planFreeformUseCases({
-  question = '',
-  extractedWeather = '',
-  conversationMode = 'new_request',
-  generatedContext = '',
-  generatedOutfits = [],
-  fallbackOccasion = 'city',
-  fallbackActivity = '',
-  maxSlots = 5
-} = {}) {
-  try {
-    const currentSet = Array.isArray(generatedOutfits) && generatedOutfits.length
-      ? generatedOutfits.slice(0, 8).map((outfit, index) => {
-          const pieces = (outfit?.pieces || []).map(piece => piece?.name).filter(Boolean).join(' + ')
-          return `${index + 1}. ${outfit?.label || outfit?.title || 'Outfit'}: ${pieces}`
-        }).join('\n')
-      : ''
-    const raw = await withTimeout(askStylist({
-      system: USE_CASE_PLANNER_SYSTEM,
-      maxTokens: 900,
-      messages: [{
-        role: 'user',
-        content: [
-          `Conversation mode: ${conversationMode}`,
-          extractedWeather ? `Established weather: ${extractedWeather}` : '',
-          fallbackOccasion ? `Default occasion: ${fallbackOccasion}` : '',
-          fallbackActivity ? `Default activity: ${fallbackActivity}` : '',
-          generatedContext ? `Current set context:\n${String(generatedContext).slice(0, 3000)}` : '',
-          currentSet ? `Current structured cards:\n${currentSet}` : '',
-          `Latest user request:\n${question}`
-        ].filter(Boolean).join('\n\n')
-      }]
-    }), 8000, 'freeform use-case planning')
-    const parsed = safeJsonFromModel(raw)
-    if (!parsed?.shouldCompose) return []
-    const tripSummary = normalizePlannerTripSummary(parsed.tripSummary)
-    return normalizePlannerSlots(parsed.slots, {
-      extractedWeather,
-      fallbackOccasion,
-      fallbackActivity,
-      maxSlots,
-      tripSummary
-    })
-  } catch (err) {
-    console.warn('Freeform use-case planner failed:', err.message)
-    return []
-  }
 }
 
 function qualifiedMissionForPieces(pieces = [], { occasion = '', mood = '', activity = '' } = {}) {
@@ -531,165 +324,6 @@ export function deriveTripTitle(question = '', weather = '', outfits = []) {
   if (friendlyOccasions) parts.push(friendlyOccasions)
 
   return parts.join(' · ')
-}
-
-async function maybePrecomposeStructuredOutfitsForAsk(body = {}, extractedWeather = '') {
-  const question = body.question || ''
-  const requestedMode = body.conversationMode || 'new_request'
-  if (requestedMode !== 'new_request') return null
-  if (Array.isArray(body.generatedOutfits) && body.generatedOutfits.length) return null
-  if (body.outfit || body.pieceId || body.piece || body.activeContext?.type === 'piece' || body.activeContext?.type === 'outfit') return null
-  const isTravelPlanning = isTravelOrPackingRequest(question, body.occasion)
-  // Step 8: the broad-planning (non-travel) pre-route is retired by default —
-  // those turns fall through to the model + plan_outfit_set.
-  if (!shouldEngageAskPrecompose(question, body.occasion)) return null
-  if (isTravelPlanning && !extractedWeather) return null
-  // A multi-day trip without enough stated activities/use cases shouldn't silently precompose thin
-  // coverage — skip precomposing so the model's own turn can ask what the packing plan should cover,
-  // per tripRequestNeedsScopeClarification's guard (see stylingIntent.js).
-  if (isTravelPlanning && tripRequestNeedsScopeClarification(question)) return null
-
-  const fallbackActivity = normalizeActivity(body.activity || 'none')
-  const occasion = normalizeOccasion(body.occasion || (isTravelPlanning ? 'city' : 'casual'))
-  const seasonParts = [body.season || 'current season', extractedWeather].filter(Boolean)
-  const plannedSlots = await planFreeformUseCases({
-    question,
-    extractedWeather,
-    conversationMode: requestedMode,
-    generatedContext: body.generatedContext || '',
-    generatedOutfits: [],
-    fallbackOccasion: occasion,
-    fallbackActivity,
-    maxSlots: isTravelPlanning ? 5 : 3
-  })
-  const result = await generateWholeWardrobeOutfitsVisualInternal({
-    occasion,
-    season: seasonParts.join('; '),
-    mood: body.mood || question,
-    mission: body.mission || 'mix',
-    limit: 5,
-    explorationMode: 'moderate',
-    question,
-    activity: plannedSlots[0]?.activity || fallbackActivity
-  })
-  let structuredOutfits = Array.isArray(result?.structuredOutfits) ? result.structuredOutfits : []
-  if (plannedSlots.length) {
-    const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const tripOutfits = await composeOutfitSet({
-      slots: plannedSlots,
-      question,
-      mood: body.mood || question,
-      allPieces
-    })
-    if (tripOutfits.length) structuredOutfits = tripOutfits
-  }
-  if (!structuredOutfits.length) {
-    const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-    const weatherProfile = weatherProfileFromContext({ mood: body.mood || question, season: seasonParts.join('; ') })
-    const { allowedPieces } = filterWholeWardrobePiecesForGeneration(allPieces, {
-      occasion,
-      explorationMode: 'moderate',
-      weatherProfile,
-      mood: body.mood || question,
-      activity: fallbackActivity,
-      request: question
-    })
-    const candidates = buildWholeWardrobeCandidateOutfits(allowedPieces, {
-      occasion,
-      season: seasonParts.join('; '),
-      mood: body.mood || question,
-      explorationMode: 'moderate',
-      activeMissions: ['controlled_print', 'monochrome_texture', 'structured_soft', 'color_anchor', 'unexpected_pairing'],
-      request: question,
-      question,
-      comfortConstraint: resolveComfortFootwearConstraint({
-        occasion,
-        mood: body.mood || question,
-        request: question,
-        activity: fallbackActivity
-      })
-    })
-    const localOutfits = wholeWardrobeOutfitsFromCandidates(candidates, allowedPieces, {
-      occasion,
-      mood: body.mood || question,
-      season: seasonParts.join('; '),
-      weatherProfile,
-      activity: fallbackActivity,
-      request: question,
-      question
-    }).filter(outfit => isOutfitStructurallyValid(outfit?.pieces || [], { requireShoes: true }))
-    structuredOutfits = locallyGateWholeWardrobeOutfits(localOutfits, 5, {
-      mode: 'advisor', // spec 9 — same as the trip-slot ranking tier above; this is the /ask
-      // precompose's last-resort fallback, the other call site that never got the 2026-06-25
-      // advisor-mode decision
-      repair: true, // spec 9 — locally-generated candidates, not LLM output; see note above
-      rejectProfileDiscouraged: true,
-      requireShoes: true,
-      candidatePieces: allowedPieces,
-      occasion,
-      mood: body.mood || question,
-      season: seasonParts.join('; '),
-      weatherProfile,
-      activity: fallbackActivity
-    }).outfits
-    if (!structuredOutfits.length) structuredOutfits = localOutfits.slice(0, 5)
-  }
-  if (!structuredOutfits.length) return null
-  return {
-    ...result,
-    structuredOutfits,
-    occasion,
-    season: seasonParts.join('; '),
-    activity: plannedSlots[0]?.activity || fallbackActivity,
-    contextText: structuredOutfitContextText(structuredOutfits, {
-      source: 'whole_wardrobe_visual_composer',
-      reason: 'freeform multi-outfit planning request'
-    })
-  }
-}
-
-async function maybePrecomposeStructuredFollowupForAsk(body = {}, extractedWeather = '') {
-  if (!followupPrerouteEnabled()) return null // canary off → the model owns followup replans
-  const question = body.question || ''
-  const requestedMode = body.conversationMode || 'new_request'
-  if (requestedMode === 'new_request') return null
-  if (body.outfit || body.pieceId || body.piece || body.activeContext?.type === 'piece' || body.activeContext?.type === 'outfit') return null
-  const currentOutfits = Array.isArray(body.generatedOutfits) ? body.generatedOutfits : []
-  if (!currentOutfits.length) return null
-
-  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-  const fallbackOccasion = normalizeOccasion(body.occasion || currentOutfits[0]?.occasion || 'city')
-  const fallbackActivity = normalizeActivity(body.activity || currentOutfits[0]?.activity || 'none')
-  const slots = await planFreeformUseCases({
-    question,
-    extractedWeather,
-    conversationMode: requestedMode,
-    generatedContext: body.generatedContext || '',
-    generatedOutfits: currentOutfits,
-    fallbackOccasion,
-    fallbackActivity,
-    maxSlots: 5
-  })
-  if (!slots.length) return null
-  const structuredOutfits = await composeOutfitSet({
-    slots,
-    question,
-    mood: body.mood || question,
-    allPieces,
-    seedOutfits: currentOutfits
-  })
-  if (!structuredOutfits.length) return null
-
-  return {
-    structuredOutfits,
-    occasion: slots[0]?.occasion || fallbackOccasion,
-    season: slots[0]?.season || body.season || 'cool evening weather',
-    activity: slots[0]?.activity || fallbackActivity,
-    contextText: structuredOutfitContextText(structuredOutfits, {
-      source: 'freeform_followup_composer',
-      reason: 'validated owned-wardrobe options for current outfit set follow-up'
-    })
-  }
 }
 
 // Multer storage setup
@@ -884,8 +518,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, plan_compose_mode, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -898,7 +532,6 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.destinationClarificationRetries) || 0,
       Number(diagnostics.planSlotEnvironmentInferred) || 0,
       Number(diagnostics.planSlotActivityInferred) || 0,
-      diagnostics.planComposeMode || '',
       Number(diagnostics.submitPlanCalls) || 0,
       Number(diagnostics.submitPlanValidationFails) || 0,
       Number(diagnostics.submitPlanResubmits) || 0,
@@ -3024,28 +2657,15 @@ router.post('/ask', async (req, res) => {
       req.body.threadContext || '',
       req.body.generatedContext || ''
     ].join('\n'))
-    const precomposed = await maybePrecomposeStructuredOutfitsForAsk(req.body, extractedWeather)
-    const followupPrecomposed = precomposed ? null : await maybePrecomposeStructuredFollowupForAsk(req.body, extractedWeather)
-    const activePrecompose = precomposed || followupPrecomposed
-    const generatedOutfitsForTurn = activePrecompose?.structuredOutfits || []
-    const generatedContextForTurn = [
-      activePrecompose?.contextText || '',
-      req.body.generatedContext || ''
-    ].filter(Boolean).join('\n\n')
     const toolContext = {
-      generatedOutfits: generatedOutfitsForTurn,
+      generatedOutfits: [],
       source: 'whole_wardrobe',
-      // When precompose seeded this turn's cards, later propose_outfit calls must
-      // not clobber the source flag — the client keys its whole-wardrobe/trip
-      // presentation off it (live bug: header showed "Outfit ideas for <first
-      // piece of the first trip card>").
-      sourceLocked: Boolean(activePrecompose),
-      occasion: activePrecompose?.occasion || req.body.occasion || 'casual',
-      season: activePrecompose?.season || req.body.season || 'current season',
+      occasion: req.body.occasion || 'casual',
+      season: req.body.season || 'current season',
       weather: extractedWeather,
       mood: req.body.mood || '',
       mission: req.body.mission || 'mix',
-      activity: activePrecompose?.activity || req.body.activity || '',
+      activity: req.body.activity || '',
       question: req.body.question || '',
       // 2026-07-10: home location is a pure fallback — an explicitly named place from this turn's
       // question (extracted by the model as search_wardrobe's own `location` arg) or an already-
@@ -3063,19 +2683,17 @@ router.post('/ask', async (req, res) => {
     }
     const payload = await buildStylistConversationPayload({
       ...req.body,
-      generatedContext: generatedContextForTurn,
-      generatedOutfits: generatedOutfitsForTurn.length ? generatedOutfitsForTurn : req.body.generatedOutfits,
-      occasion: activePrecompose?.occasion || req.body.occasion,
-      season: activePrecompose?.season || req.body.season,
-      activity: activePrecompose?.activity || req.body.activity
+      occasion: req.body.occasion,
+      season: req.body.season,
+      activity: req.body.activity
     })
-    // Pieces already inside verified cards — this turn's precompose and the
-    // thread's current outfit set — count as verified for citation purposes.
+    // Pieces already inside verified cards — the thread's current outfit set —
+    // count as verified for citation purposes.
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
-    toolContext.knownOutfitPieceIds = [...new Set([
-      ...generatedOutfitsForTurn.flatMap(outfit => Array.isArray(outfit?.pieceIds) ? outfit.pieceIds : []),
-      ...((payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : []))
-    ].map(Number).filter(Boolean))]
+    toolContext.knownOutfitPieceIds = [...new Set(
+      (payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : [])
+        .map(Number).filter(Boolean)
+    )]
     const { answer, savedCorrections } = await askStylistWithTools({
       ...payload,
       toolContext
@@ -3087,31 +2705,14 @@ router.post('/ask', async (req, res) => {
 
     const isTravel = isTravelOrPackingRequest(req.body.question || '', req.body.occasion || '')
     let suggestedTitle = null
-    // Title from the precomposed set, or from a set the model planned itself
-    // via the plan_outfit_set tool (step 6) — both are trip-shaped card sets.
-    const titledOutfits = generatedOutfitsForTurn.length
-      ? generatedOutfitsForTurn
-      : (toolContext.source === 'plan_outfit_set' && Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : [])
+    // A trip-shaped title from a set the model planned itself via the
+    // plan_outfit_set tool.
+    const titledOutfits = toolContext.source === 'plan_outfit_set' && Array.isArray(toolContext.generatedOutfits)
+      ? toolContext.generatedOutfits
+      : []
     if (isTravel && titledOutfits.length) {
       suggestedTitle = deriveTripTitle(req.body.question || '', extractedWeather, titledOutfits)
     }
-
-    // Step 6 build 7 — record the parallel plan paths for this turn: did the
-    // keyword pre-route match / actually compose a set, and did the model call
-    // plan_outfit_set itself. This accumulates the evidence the step-8 pre-route
-    // retirement is gated on (surfaced in the debug block below).
-    // followupEligible mirrors maybePrecomposeStructuredFollowupForAsk's guards:
-    // a non-new_request turn, no active piece/outfit, that already holds an
-    // outfit set — the exact turns the follow-up replan front-runs the model on.
-    const followupEligible = (req.body.conversationMode || 'new_request') !== 'new_request' &&
-      !(req.body.outfit || req.body.pieceId || req.body.piece || req.body.activeContext?.type === 'piece' || req.body.activeContext?.type === 'outfit') &&
-      Array.isArray(req.body.generatedOutfits) && req.body.generatedOutfits.length > 0
-    recordPlanPathDiagnostics(toolContext, {
-      keywordMatched: isTravel || isBroadOutfitPlanningText(req.body.question || ''),
-      prerouteComposed: Boolean(precomposed?.structuredOutfits?.length),
-      followupEligible,
-      followupComposed: Boolean(followupPrecomposed?.structuredOutfits?.length)
-    })
 
     // Spec 3: log this turn's freeform diagnostics (gate exclusions, propose_outfit validation
     // pass/fail) and surface a summary in the response so a proposal's "what got filtered/rejected"
@@ -3135,7 +2736,7 @@ router.post('/ask', async (req, res) => {
       structuredOutfitsMood: toolContext.mood,
       structuredOutfitsMission: toolContext.mission,
       structuredOutfitsActivity: toolContext.activity,
-      structuredOutfitsDebug: activePrecompose?.debug || null,
+      structuredOutfitsDebug: null,
       debug: freeformDiagnostics,
       suggestedTitle
     })

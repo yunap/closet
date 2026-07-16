@@ -53,27 +53,25 @@ CONTROLLER" directive in the system prompt.
 | `explanation` | you ask "why did you…" | yes |
 | `preference_reaction` | you state a taste preference to adapt to | yes |
 
-## Layer 1 — App pre-routing
+## Layer 1 — App pre-routing (retired, spec 14)
 
-> **Status 2026-07-14:** broad-planning, travel precompose, and follow-up
-> replan are **retired by default**. `shouldEngageAskPrecompose` returns false
-> unless `WARDROBE_PLAN_PREROUTE=on`; `followupPrerouteEnabled()` returns false
-> unless `WARDROBE_FOLLOWUP_PREROUTE=on`. Planning turns now route to the model
-> + `plan_outfit_set`, with the legacy precompose paths preserved only as
-> reversible fallbacks and contract tests.
+> **Status 2026-07-16 (spec 14):** the broad-planning, travel precompose, and
+> follow-up replan pre-routes — along with the deterministic engine composer
+> they called (`composeOutfitSet`) — are **permanently deleted**, not just
+> flag-disabled. `shouldEngageAskPrecompose`, `followupPrerouteEnabled`,
+> `maybePrecomposeStructuredOutfitsForAsk`, `maybePrecomposeStructuredFollowupForAsk`,
+> and `planFreeformUseCases` no longer exist; `WARDROBE_PLAN_PREROUTE` /
+> `WARDROBE_BROAD_PLAN_PREROUTE` / `WARDROBE_FOLLOWUP_PREROUTE` have no effect.
+> Every planning turn reaches the model + `plan_outfit_set`, which now always
+> composes via the model-mode workbench (`buildPlanSlotWorkbench` +
+> `submit_plan_outfits`) — there is no more engine-mode fallback
+> (`WARDROBE_PLAN_COMPOSE=engine` no longer does anything either). Git history
+> is the rollback path if a regression surfaces; see
+> docs/freeform-rearchitecture-handoff.md's spec 14 entry.
 
-Deterministic, *before* the model. Decides whether to pre-build outfit cards for
-the turn (`maybePrecomposeStructuredOutfitsForAsk`, `routes/ai.js:1207`;
-`maybePrecomposeStructuredFollowupForAsk`, `routes/ai.js:1320`).
-
-| State | Triggers | Result |
-| --- | --- | --- |
-| Broad-planning precompose | `new_request`, no active piece/outfit, no existing outfits, text matches "outfits/pack/capsule…" + "suggest/plan/wear…" (and *not* show/why/evaluate) | precompose whole-wardrobe cards |
-| Travel/packing precompose | travel request **and** weather known **and** scope clear | precompose trip-slot outfits |
-| Follow-up replan | `followup` **and** the thread already has outfits | refine the current set |
-| Travel-weather blocker | travel request **with no weather** | no precompose; prompt forces "ask for weather first" |
-| Trip-scope hold | multi-day trip, too few stated use-cases | no precompose; model must ask scope |
-| None (plain turn) | anything else | straight to the model |
+There is no more app pre-routing layer. `POST /api/ai/ask` builds `toolContext`
+directly and goes straight to Layer 2 — the model decides whether and how to
+plan from Layer 2's `plan_outfit_set` tool.
 
 ## Layer 2 — Model tool loop
 
@@ -137,13 +135,11 @@ stateDiagram-v2
 
 ## Engineer notes
 
-- **Entry:** `POST /api/ai/ask` (`routes/ai.js:3460`). The turn's `conversationMode`
+- **Entry:** `POST /api/ai/ask` (`routes/ai.js`). The turn's `conversationMode`
   is classified client-side by `classifyChatTurn` and passed in the body.
-- **Pre-route order:** `maybePrecomposeStructuredOutfitsForAsk` runs first (only
-  for `new_request`); if it returns null, `maybePrecomposeStructuredFollowupForAsk`
-  handles follow-ups that already have an outfit set. Precompose reuses the
-  whole-wardrobe visual composer / local trip-slot builder — so a "plan me a
-  trip" chat quietly runs the same machinery as [Use my wardrobe](use-my-wardrobe.md).
+- **No pre-route (spec 14):** the handler builds `toolContext` directly from
+  the request body and goes straight to the model — planning turns rely
+  entirely on the model calling `plan_outfit_set` itself.
 - **The model call is `askStylistWithTools`** with the tools in
   `styling-engine/tools.js` and the `STYLIST_SYSTEM` prompt assembled in
   `buildStylistConversationPayload` (`styling-engine/core.js:3469`), which injects
@@ -481,3 +477,10 @@ replace a model-planned, constraint-carrying set with a constraint-free one.
 Retiring it is the top item in
 [../freeform-rearchitecture-handoff.md](../freeform-rearchitecture-handoff.md)'s
 remaining work — same evidence-gated play as step 8.
+
+**Resolved (spec 14, 2026-07-16):** the follow-up pre-route was retired by
+default (2026-07-14) and then deleted outright, along with the
+new-request pre-routes, `planFreeformUseCases`, and `composeOutfitSet` itself
+(the engine composer both pre-routes and the legacy `WARDROBE_PLAN_COMPOSE=engine`
+tool branch called). See "Layer 1" above and the handoff doc's spec 14 entry —
+this whole caveat and the build-log above it are now historical.

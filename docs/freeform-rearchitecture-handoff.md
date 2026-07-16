@@ -918,6 +918,188 @@ scripts two tests read via `fs.readFileSync`, plus date/fixture-sensitive
 hot-weather tests — identical on a clean `origin/main` checkout, unrelated to
 this PR). Ratchet unchanged (238/238, no new text-matching debt).
 
+## Spec 14 — retire the taste-scorer layer of outfitSetPlanner.js — IMPLEMENTED (2026-07-16)
+
+Spec 13's flip criterion was met (model mode default since spec 19, PR #105)
+and the owner ruled no soak period — sequential PRs, git history is the
+rollback path. Step 0 first made the suite's own pre-existing fresh-clone gaps
+hermetic (see "Step 0" below), then the deletion itself.
+
+**hardRejects audit (by grep, since the spec's 2026-07-15 line numbers had
+drifted — the file grew from 2108 to 2756 lines across specs 15-19 before this
+PR touched it):** every `hardRejects.push` inside `tripSlotFitScore`'s family
+reduces one of three ways once `composeOutfitSet` is gone: (a) a tag/profile
+check already duplicated in spec 13's `validateSlotOutfitConstraints` (cold-
+layer, hot-heavy mains, register floor for dressy+, footwear/activity comfort);
+(b) a piece already excluded upstream before the model ever sees it, via
+`filterWholeWardrobePiecesForGeneration`'s register-ceiling/footwear-enum
+gates (used by `buildPlanSlotWorkbench`, spec 19 Part 2's `registerCeiling`
+override included) — this is why the formal-slot denim/jacket/shoe rejects and
+the outdoor-active loafer reject need no replacement: model mode never offers
+those pieces as candidates in the first place; or (c) genuinely retired taste
+(office/client structural judgment, smart-casual anchor, dinner register,
+double-cardigan, athletic-piece demotion) — the model's job now, no
+mechanical replacement, matching the spec's own framing.
+
+**Deleted from `styling-engine/outfitSetPlanner.js`** (2756 → ~1450 lines):
+the whole `tripSlotFitScore` family (`tripOutfitDinnerRegisterScore`,
+`tripOutfitOfficeRegisterScore`, `tripOutfitSmartCasualRegisterScore`,
+`tripOutfitRegisterEscalationScore`, `tripOutfitBeachCoastalScore`,
+`tripOutfitElevatedOccasionShoeScore`, `tripOutfitAestheticGravityScore`,
+`tripShoeSeasonScore`, `tripPieceFabricBreathabilityScore`,
+`tripPieceWalkabilityScore`, `tripDaytimeBottomScore`,
+`tripPieceIsDelicateForDay`, plus all the dinner/office helper predicates);
+`isOfficePlanSlot`, `isClientPlanSlot`, `isOutdoorActivePlanSlot`,
+`isBeachCoastalPlanSlot`; the layer injectors
+(`chooseEveningLayerForOutfit`, `chooseBeachCoastalLayerForOutfit`,
+`withEveningLayerIfUseful`, `withBeachCoastalLayerIfUseful`,
+`beachCoastalNeedsLayer`); `tripStructuredValueSet` / `tripPieceHasStructuredValue`
+/ `tripShoeMatchesAny` (after rewriting their two real keeper-side call sites —
+`capsuleVersatilityScore`'s fabric-weight check and `selectCapsuleRoster`'s
+shorts-float check — to read `fabric_category`/`fiber_content`/`bottomKind`
+directly, no structured-value indirection); `buildCapsuleStructuralSeparateOutfits`,
+`rehydrateOutfitPieces`, `slotCompositionPriority`, `seedTripUsedSets`,
+`tripOutfitFormulaKey`, `tripBottomSilhouetteKey`; and `composeOutfitSet`
+itself, wholesale, per the scope decision — its only other callers were the
+two pre-routes, deleted in the same pass (see below), so nothing was left
+calling it. **Audit surprise:** several functions the spec's draft expected to
+delete turned out to still be load-bearing for `normalizePlanSlots` (KEEP) —
+`isIndoorPlanSlot`, `isSmartCasualPlanSlot`, `textLooksLikeEveningPlanSlot`,
+`textLooksLikeCoastalPlanSlot`, `normalizePlanSlotEnvironment`,
+`normalizePlanEnvironment`, `normalizePlanSlotOccasion`, `slotWantsElevatedShoe`
+(via `shoeReserveDemands`), `beachCoastalStatedWeather`, `REGISTER_LEVELS` /
+`normalizeRegisterLevel`, and `inferPlanSlotActivity` / `hasDeclaredPlanSlotActivity`
+/ `inferPlanSlotActivityFromProse` — all of these stayed, exactly the kind of
+drift the grep-audit instruction was meant to catch instead of trusting the
+spec's stale line-number inventory.
+
+**Deleted from `routes/ai.js`:** both pre-routes wholesale —
+`maybePrecomposeStructuredOutfitsForAsk` (broad-planning/travel),
+`maybePrecomposeStructuredFollowupForAsk` (follow-up replan),
+`shouldEngageAskPrecompose`, `planPrerouteEnabled`, `followupPrerouteEnabled`,
+`isBroadOutfitPlanningText`, `structuredOutfitContextText`,
+`planFreeformUseCases` + its `USE_CASE_PLANNER_SYSTEM` prompt +
+`normalizePlannerSlots`/`normalizePlannerTripSummary`/`tripCitySlotImpliesWalking`.
+The `/ask` handler no longer calls any precompose function — `toolContext` is
+built directly from the request body and the model owns every planning turn
+via `plan_outfit_set`. `WARDROBE_PLAN_PREROUTE`, `WARDROBE_BROAD_PLAN_PREROUTE`,
+and `WARDROBE_FOLLOWUP_PREROUTE` no longer do anything (left in any local
+`.env` files harmlessly).
+
+**Deleted from `styling-engine/tools.js`:** the `plan_outfit_set` handler's
+engine-mode branch (`WARDROBE_PLAN_COMPOSE=engine` no longer restores
+anything — it always returns the model-mode workbench now); the
+`classifyPlanPath` / `classifyFollowupPath` / `recordPlanPathDiagnostics`
+diagnostics apparatus and the `planComposeMode` / `planKeywordMatched` /
+`planPrerouteComposed` / `planModelCalled` / `planPathOutcome` /
+`followupEligible` / `followupPrerouteComposed` / `followupPathOutcome`
+counters — all of it existed solely to gather evidence for retiring the
+pre-routes, a decision now permanent, so the evidence-gathering machinery is
+dead weight. `freeform_generation_runs.plan_compose_mode` stays as an inert,
+additive DB column (this codebase's migrations are additive-only) but the
+insert no longer writes to it.
+
+**Tests:** scorer/classifier unit tests deleted with their subjects, not
+ported onto the validator (spec 13 already owns the validator's own tests) —
+`test/ask_precompose_gate.test.js` deleted outright (its whole subject,
+`shouldEngageAskPrecompose`/`followupPrerouteEnabled`, is gone);
+`test/plan_outfit_set.test.js` (2410 lines, ~100 tests) had every test
+exercising `composeOutfitSet`, `WARDROBE_PLAN_COMPOSE=engine`, or
+`classifyPlanPath`/`classifyFollowupPath`/`recordPlanPathDiagnostics` deleted,
+while every test exercising still-live code (`normalizePlanSlots`,
+`normalizePlanConstraints`, `buildPlanSlotWorkbench`,
+`validateSlotOutfitConstraints`, `validateSubmittedPlanOutfits`,
+`assembleSubmittedPlanOutfits`, `selectCapsuleRoster` and its capsule/quota/
+reserve helpers, `describeOutfitStructureGap`, `describeSlotCoverageGap`,
+`describePlanCapTrim`, or the model-mode `plan_outfit_set`/`submit_plan_outfits`
+tool flow) was kept — 57/57 green. Three tests in `test/aiEndpointContracts.test.js`
+that specifically exercised the legacy pre-routes behind their reversible flags
+(`WARDROBE_FOLLOWUP_PREROUTE=on`, `WARDROBE_PLAN_PREROUTE=on`, plus one
+source-scan pinning `composeOutfitSet`'s internals) were deleted for the same
+reason. `test/spec9_advisor_mode_precompose_fallbacks.test.js` lost only its
+source-scan test (pinned the two now-deleted call sites' exact call shape);
+its three direct `locallyGateWholeWardrobeOutfits` regression tests stayed —
+that KEPT function is unchanged.
+
+**Taste-shaped incidents with no more automated coverage** (the scorers
+retired without a validator replacement, per the spec's "flag, don't guess"
+philosophy — these are now live-test-plan items, not unit tests, matching the
+house rule that `npm test` can't verify model judgment):
+- Office/client structural judgment (a dress "lacks enough office structure",
+  shorts/open shoes too casual for a client meeting) — verify a model-composed
+  client-meeting slot still reads structured/polished, not casual, on a live
+  office-week or client-meeting test.
+- Dinner register (casual layers/shoes demoted at a marquee dinner slot) —
+  verify a live dinner-slot plan doesn't compose a casual-registering look
+  when dressier pieces are available.
+- Smart-casual anchor (an elevated-or-better non-shoe anchor required, not an
+  everyday city dress plus nicer shoes) — verify a live smart-casual slot.
+- Double open-knit-cardigan-under-cardigan layering — verify a live cool-
+  weather multi-slot plan doesn't stack two open-knit layers.
+- Athletic/sporty piece demotion on non-outdoor-active slots — verify a live
+  "everyday"/dinner slot doesn't pull in gym-coded pieces.
+- Outdoor-active loafer/dress-shoe demotion — mostly covered by
+  `filterWholeWardrobePiecesForGeneration`'s footwear-enum gate now, but
+  loafers specifically aren't hard-prohibited in the hiking activity profile
+  (only "discouraged"), so worth a live hiking-slot spot-check.
+
+**Ratchet:** verified unchanged, not rebaselined — the ratchet's specific
+patterns (`.name.includes(`, `.test(reads_as)`, etc.) already scored 0 for
+`outfitSetPlanner.js` before this PR (confirmed by running the pattern scan
+against the pre-deletion file directly): the deleted code checked structured
+tag Sets (`tripPieceHasStructuredValue`) and wrapped its regex `.test()` calls
+in `String(...)`, neither of which this ratchet's naive per-variable-name
+patterns catch. Total stayed 238/238. The spec's expectation that this file
+was "regex-dense" enough to move the baseline was accurate for the file's
+prose-classifier surface area, just not for literal garment-name matching,
+which specs 13/18/19's earlier "no name-matching" rulings had already
+eliminated from this file before spec 14 ever started.
+
+**Step 0 — pre-existing fresh-clone gaps made hermetic** (found while
+verifying "green suite before deletion lands" — turned out the suite had
+*never* actually been green on a truly fresh clone, only on this repo's own
+long-lived dev checkout):
+- Two scratch/ scripts (`check_style_claims.js`, required directly by
+  `npm test`'s own prerequisite chain; `backfill_retagger.js`, read by
+  `test/gateMetadataPhase1.test.js`) were gitignored and never tracked —
+  tracked them now (`.gitignore`).
+- Several tests hardcode real personal-wardrobe piece IDs (106, 200, 233, 242)
+  that only exist in the developer's local `wardrobe.db` (gitignored). Added
+  `test/helpers/dbFixtures.js`'s `ensureFixturePieces()` — seeds exactly those
+  IDs, but only when missing, so real local data is never touched or
+  overwritten; used by `test/agent_tool_scoping.test.js` and
+  `test/hot_weather_ranking.test.js`. Getting the fixtures to actually
+  round-trip through the real composer pipelines (not just exist in the DB)
+  needed real tag data, not placeholders — e.g. `buildVisualComposerRoster`
+  hard-requires a `photo` value and a `formality` tag before a piece survives
+  its gates, and `buildWholeWardrobeCandidateOutfits`'s mission-qualification
+  step requires a genuine focal color / structured fabric token before ANY
+  candidate composes, matching this repo's own documented gotcha ("a minimal
+  fixture needs at least one piece carrying a focal color to qualify for
+  color_anchor"). Also found and fixed: `buildVisualComposerRoster`'s
+  category-cap/scoring path (and the `relevanceAdjustments` debug object,
+  including the "hot weather: shorts" adjustment reason) only engages once the
+  survivor pool exceeds `maxImages` (90) — true "by accident" on a real
+  wardrobe of hundreds of tagged pieces, never true on a small fixture set.
+  Fixed by padding the fixture pool past that threshold instead of lowering
+  `maxImages` in the test call (tried that first — it shrinks per-category
+  quotas too, which broke the SAME test against the real dev DB by crowding
+  real shorts out of a shrunk bottom-category cap; verified this failure mode
+  live before reverting to the padding approach).
+- `db.js`'s first-run wardrobe seed had a genuine check-then-act race: `node
+  --test` runs test files in parallel by default, and multiple workers
+  importing `db.js` against a brand-new (missing) `wardrobe.db` could all pass
+  the `SELECT ... WHERE key='seeded'` check before any of them committed the
+  sentinel row, then collide on the `INSERT INTO app_meta` — reproduced
+  directly (flaky: 2 different runs against the same fresh clone gave 573/0
+  and 559/14 respectively). Fixed with an atomic `INSERT OR IGNORE` claim
+  (only the process whose insert actually lands, i.e. `changes > 0`, seeds).
+  This closed the crash but not full cross-file interference from parallel
+  workers sharing one sqlite file with no per-file isolation, so `npm test`
+  now also pins `node --test --test-concurrency=1` — confirmed deterministic
+  green across multiple repeated runs on both a fresh clone and the real dev
+  checkout after that.
+
 ## Live-testing findings so far (why each fix exists)
 
 1. Crochet top proposed as base layer → tags had no opacity; sight was optional

@@ -31,8 +31,8 @@ export function findZeroResultContradiction(answerText = '', toolContext = {}) {
 // unnecessary" — it actively vandalized a turn that went right. The
 // destinationClarification clause has no such misfire evidence and stays
 // live. Set WARDROBE_TRIP_SCOPE_CLARIFICATION=on to restore this clause as a
-// reversible fallback. Read at call time (matches followupPrerouteEnabled's
-// pattern in routes/ai.js).
+// reversible fallback. Read at call time, not module load, so it can be
+// flipped without a restart.
 export function tripScopeClarificationEnabled() {
   return process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION === 'on'
 }

@@ -7,7 +7,6 @@ import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import {
-  composeOutfitSet,
   normalizePlanSlots,
   planTotalOutfitCapForBudget,
   buildPlanSlotWorkbench,
@@ -147,70 +146,14 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       tripScopeClarificationRetries: 0,
       planSlotEnvironmentInferred: 0,
       planSlotActivityInferred: 0,
-      planComposeMode: '',
       submitPlanCalls: 0,
       submitPlanValidationFails: 0,
       submitPlanResubmits: 0,
       submitPlanPartialAccepts: 0,
-      // Step 6 build 7 — parallel-path signals (set once per turn by
-      // recordPlanPathDiagnostics; see classifyPlanPath for planPathOutcome).
-      planKeywordMatched: 0,
-      planPrerouteComposed: 0,
-      planModelCalled: 0,
-      planPathOutcome: '',
-      // Follow-up replan path (step 8's still-live second half; see
-      // classifyFollowupPath).
-      followupEligible: 0,
-      followupPrerouteComposed: 0,
-      followupPathOutcome: '',
       weatherSource: ''
     }
   }
   toolContext.freeformDiagnostics[field] = (toolContext.freeformDiagnostics[field] || 0) + amount
-}
-
-// Step 6 build 7 — parallel-path diagnostics. On a planning-eligible turn the
-// keyword pre-route (isTravelOrPackingRequest / isBroadOutfitPlanningText) and
-// the model's own plan_outfit_set call are two paths to the same coordinated
-// set. This records, per turn, which fired, so the step-8 keyword-pre-route
-// retirement is evidence-gated rather than a guess: a steady stream of
-// 'model_only' (the model self-routed on a turn the pre-route did NOT compose)
-// is the generalization proof that the regex fast-path can go.
-export function classifyPlanPath({ keywordMatched = false, prerouteComposed = false, modelCalled = false } = {}) {
-  if (modelCalled && prerouteComposed) return 'both'
-  if (modelCalled) return 'model_only'
-  if (prerouteComposed) return 'preroute_only'
-  if (keywordMatched) return 'planning_uncomposed' // keywords read planning, but neither path produced a set
-  return 'not_planning'
-}
-
-// The FOLLOW-UP replan path — step 8's still-live second half. On a followup
-// turn that already holds an outfit set, maybePrecomposeStructuredFollowupForAsk
-// front-runs the model with an UNCONSTRAINED composeOutfitSet replan (no flag,
-// no constraints). This classifies what actually happened so the retirement is
-// evidence-gated like the initial pre-route: a steady stream of 'model_plan' /
-// 'model_propose' on turns where the pre-route abstained is the green light.
-export function classifyFollowupPath({ eligible = false, prerouteComposed = false, modelPlanned = false, modelProposed = false } = {}) {
-  if (!eligible) return '' // not a followup-with-an-existing-set turn
-  if (prerouteComposed) return 'preroute' // the followup pre-route seeded a replan (front-ran the model)
-  if (modelPlanned) return 'model_plan' // model self-handled via plan_outfit_set (the retirement win)
-  if (modelProposed) return 'model_propose' // model self-handled via propose_outfit
-  return 'model_prose' // model answered without composing a set
-}
-
-export function recordPlanPathDiagnostics(toolContext, { keywordMatched = false, prerouteComposed = false, followupEligible = false, followupComposed = false } = {}) {
-  if (!toolContext) return
-  bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls', 0) // ensure the diagnostics object exists
-  const diagnostics = toolContext.freeformDiagnostics
-  const modelCalled = (diagnostics.planOutfitSetCalls || 0) > 0
-  const modelProposed = (diagnostics.proposeCalls || 0) > 0
-  diagnostics.planKeywordMatched = keywordMatched ? 1 : 0
-  diagnostics.planPrerouteComposed = prerouteComposed ? 1 : 0
-  diagnostics.planModelCalled = modelCalled ? 1 : 0
-  diagnostics.planPathOutcome = classifyPlanPath({ keywordMatched, prerouteComposed, modelCalled })
-  diagnostics.followupEligible = followupEligible ? 1 : 0
-  diagnostics.followupPrerouteComposed = followupComposed ? 1 : 0
-  diagnostics.followupPathOutcome = classifyFollowupPath({ eligible: followupEligible, prerouteComposed: followupComposed, modelPlanned: modelCalled, modelProposed })
 }
 
 // Spec 4: records whether weather resolved live or fell back to the text heuristic, for spec 3's
@@ -1509,77 +1452,22 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-        // Spec 19 Part 4: the spec-13 flip criterion is met (all six scenario
-        // families ran live in model mode, resubmits converged, no validator-
-        // missed correctness class remains open, owner judged quality >=
-        // engine mode) — model mode is now the default. Engine mode stays
-        // fully runnable via WARDROBE_PLAN_COMPOSE=engine.
-        const planComposeMode = String(process.env.WARDROBE_PLAN_COMPOSE || 'model').trim().toLowerCase() === 'engine'
-          ? 'engine'
-          : 'model'
         bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls', 0)
-        toolContext.freeformDiagnostics.planComposeMode = planComposeMode
-        if (planComposeMode === 'model') {
-          const workbench = await buildPlanSlotWorkbench(planSlots, {
-            constraints: planConstraints,
-            allPieces: planPieces,
-            dateRange: planDateRange,
-            mood: toolContext.mood || '',
-            question: toolContext.question || ''
-          })
-          toolContext.pendingPlan = {
-            ...workbench.pendingPlan,
-            mode: 'model'
-          }
-          const { pendingPlan, ...result } = workbench
-          return {
-            ...result,
-            message: "Slot rosters are ready. Compose the plan yourself and call submit_plan_outfits once with every slot's outfits; use only each slot's allowed piece IDs."
-          }
-        }
-        // Seed with the thread's current outfit set so a replan varies from what
-        // the user already has instead of re-serving the same combinations.
-        // (Thread-state cards carry snake_case piece_ids; the engine's keys read
-        // pieceIds/pieces.)
-        const planSeeds = (Array.isArray(toolContext.currentOutfitSet) ? toolContext.currentOutfitSet : [])
-          .map(outfit => ({ ...outfit, pieceIds: outfit?.pieceIds || outfit?.piece_ids || [] }))
-        const planOutfits = await composeOutfitSet({
-          slots: planSlots,
-          question: toolContext.question || '',
-          mood: toolContext.mood || '',
+        const workbench = await buildPlanSlotWorkbench(planSlots, {
+          constraints: planConstraints,
           allPieces: planPieces,
-          seedOutfits: planSeeds,
-          source: 'plan_outfit_set',
           dateRange: planDateRange,
-          constraints: planConstraints
+          mood: toolContext.mood || '',
+          question: toolContext.question || ''
         })
-        if (!planOutfits.length) {
-          return {
-            status: "error",
-            message: "The engine could not compose a valid outfit set for these slots — the occasion/weather/activity gates may exclude too much. Adjust the slots (or their weather), or fall back to composing individual outfits with propose_outfit."
-          }
+        toolContext.pendingPlan = {
+          ...workbench.pendingPlan,
+          mode: 'model'
         }
-        toolContext.generatedOutfits = planOutfits
-        if (!toolContext.sourceLocked) {
-          // The client keys its trip-plan presentation off the source flag; lock
-          // it so a later propose_outfit call can't clobber the set's framing.
-          toolContext.source = 'plan_outfit_set'
-          toolContext.sourceLocked = true
-        }
-        {
-          const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
-          const hasGapOrTrimLines = planLinesForResponse.some(line => /^\[/.test(line))
-          return {
-            status: "success",
-            message: `Composed ${planOutfits.length} outfit cards across ${planSlots.length} slots. The cards are already attached to this turn — present THIS set (walk through it per slot and include the plan lines); do not compose another set.${hasGapOrTrimLines ? ' Some plan_lines below disclose a trimmed or unfillable slot — that is expected and already the complete, honest answer: present these cards plus the plan_lines as-is. Do NOT discard the cards and answer in prose instead, and do NOT call propose_outfit to top up or replace them.' : ''}`,
-            plan_lines: planLinesForResponse,
-          outfit_summaries: planOutfits.map(outfit => ({
-            slot: outfit.label,
-            coverage: outfit.coveragePosition,
-            weather: outfit.slotWeather || '',
-            pieceNames: (outfit.pieces || []).map(piece => piece.name)
-          }))
-          }
+        const { pendingPlan, ...result } = workbench
+        return {
+          ...result,
+          message: "Slot rosters are ready. Compose the plan yourself and call submit_plan_outfits once with every slot's outfits; use only each slot's allowed piece IDs."
         }
       }
       case 'submit_plan_outfits': {

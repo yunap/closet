@@ -1,33 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
 import { locallyGateWholeWardrobeOutfits } from '../styling-engine/rules.js'
 
-// Spec 9 (2026-07-10): extends the 2026-06-25 advisor-mode (reject->flag) decision to the two
-// locallyGateWholeWardrobeOutfits call sites inside /ask's own precompose (the trip-slot ranking —
-// since step 6 extracted into styling-engine/outfitSetPlanner.js's composeOutfitSet — and
-// maybePrecomposeStructuredOutfitsForAsk's own last-resort fallback tier) that
-// never received it -- only the primary visual composer had been migrated. Confirmed with Yuna:
-// applyDiversity stays on (repeat-wear avoidance matters across a trip), rejectProfileDiscouraged
-// stays true (matches the composer), and repair is decoupled from advisorMode for these two call
-// sites specifically -- they're locally-generated candidates, not LLM output, so a mechanical
-// slot-fill repair isn't "reinventing" a model's composition the way it would be for the composer's
+// Spec 9 (2026-07-10): extends the 2026-06-25 advisor-mode (reject->flag) decision to
+// locallyGateWholeWardrobeOutfits: applyDiversity stays on (repeat-wear avoidance matters
+// across a trip), rejectProfileDiscouraged stays true, and repair is decoupled from
+// advisorMode -- locally-generated candidates aren't LLM output, so a mechanical slot-fill
+// repair isn't "reinventing" a model's composition the way it would be for the composer's
 // advisor-mode calls (see yunap-closet-no-repair-in-advisor-mode).
-
-const routeAi = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
-const outfitSetPlanner = fs.readFileSync(new URL('../styling-engine/outfitSetPlanner.js', import.meta.url), 'utf8')
-
-test('both /ask precompose fallback call sites pass mode: advisor and repair: true', () => {
-  // Trip-slot ranking tier — moved to composeOutfitSet in styling-engine/outfitSetPlanner.js (step 6).
-  assert.match(outfitSetPlanner, /spec 9 — matches the 2026-06-25 advisor-mode decision/)
-  assert.equal((outfitSetPlanner.match(/repair: true/g) || []).length, 1)
-  assert.match(outfitSetPlanner, /rejectProfileDiscouraged: true,\s*\n\s*requireShoes: true,\s*\n\s*candidatePieces: allowedPieces,\s*\n\s*occasion: slot\.occasion/)
-  // /ask's own last-resort fallback tier — still in routes/ai.js.
-  assert.match(routeAi, /spec 9 — same as the trip-slot ranking tier above/)
-  // Only this call site remains in ai.js with repair decoupled from mode; the composer's calls don't pass this.
-  assert.equal((routeAi.match(/repair: true/g) || []).length, 1)
-  assert.match(routeAi, /rejectProfileDiscouraged: true,\s*\n\s*requireShoes: true,\s*\n\s*candidatePieces: allowedPieces,\s*\n\s*occasion,\s*\n\s*mood: body\.mood \|\| question/)
-})
+//
+// Spec 14 (2026-07-16): the two call sites this suite originally source-scanned for
+// (composeOutfitSet's trip-slot ranking tier, and /ask's own precompose last-resort
+// fallback) were both retired along with composeOutfitSet and the pre-routes; the
+// source-scan test that pinned their exact call shape is gone with them. These direct
+// locallyGateWholeWardrobeOutfits regression tests stay — the function itself is unchanged.
 
 test('advisor mode + repair: true keeps and flags an outfit that fails a soft/subjective check instead of dropping it', () => {
   const outfit = {
