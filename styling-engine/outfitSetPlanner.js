@@ -1496,6 +1496,18 @@ function capsuleSimilarityKey(piece = {}) {
   return `${group}:${color}:${kind}:${pattern}`
 }
 
+// 'formal' isn't one of the FORMALITY_VALUES pieces are actually tagged with
+// (the ceiling is 'dressy' — there's nothing above it), but the model may
+// still declare a slot 'formal'. Treat it as dressy-and-up everywhere a slot's
+// declared register maps to a rank, so floor derivation and ceiling
+// reconciliation (Part 2, spec 19) always agree on what 'formal' means — a
+// single source of truth for the ceiling >= floor invariant.
+function slotRegisterRank(slot = {}) {
+  return String(slot?.register || '').toLowerCase() === 'formal'
+    ? formalityRank('dressy')
+    : formalityRank(slot?.register)
+}
+
 // The strictest (lowest-rank) register ceiling across every occasion the plan
 // actually asked for. `capsuleVersatilityScore`'s generic "neutral color, wide
 // occasion tagging, solid, lightweight" formula has no idea what registers the
@@ -1505,12 +1517,20 @@ function capsuleSimilarityKey(piece = {}) {
 // 2026-07-14: an 8-slot capsule's roster was 5/6 `elevated` pieces plus 1
 // `everyday` shoe; `casual`-occasion slots (Beach Day, City Outing) got zero
 // outfits because only shoes cleared the ceiling — no top/bottom/dress did.
+//
+// Part 2 (spec 19): a declared `slot.register` ABOVE the occasion's ceiling is
+// an explicit escalation ("occasion: casual, register: elevated" = "casual
+// event, dressed up a notch" — the exact mechanism this field exists for) and
+// must win over the occasion default, or the slot is self-contradictory: a
+// floor the ceiling forbids. Only ever LIFTS the ceiling — a declared register
+// at or below the occasion's own ceiling changes nothing, so undeclared and
+// non-escalating slots keep today's occasion ceilings exactly.
 function effectiveSlotRegisterCeilingRank(slot = {}) {
   const occasionRank = formalityRank(resolveOccasionProfile(slot?.occasion)?.register_ceiling)
-  const slotRank = formalityRank(slot?.register)
+  const slotRank = slotRegisterRank(slot)
   if (occasionRank === null) return slotRank
   if (slotRank === null) return occasionRank
-  return Math.min(occasionRank, slotRank)
+  return Math.max(occasionRank, slotRank)
 }
 
 function strictestRegisterCeilingRank(occasions = []) {
@@ -1556,6 +1576,30 @@ function pieceMeetsFloorRank(piece = {}, floorRank = null) {
   if (floorRank === null) return false
   const rank = formalityRank(pieceFormality(piece))
   return rank !== null && rank >= floorRank
+}
+
+// Part 1 (spec 19): arithmetic over tags already held on the pending plan —
+// does a structurally viable main path exist among this slot's gate-allowed
+// pieces that also clears the register floor? Used to tell a genuinely
+// unfillable floor ("no combination can meet it") apart from a floor the
+// model just hasn't hit yet with its current picks. No new gating, no
+// combinatorics beyond category counts.
+function slotFloorViability(gateAllowedIds = new Set(), piecesById = new Map(), floorRank = null) {
+  if (floorRank === null) return { hasMainPath: true, hasShoes: true }
+  let hasDress = false
+  let hasTop = false
+  let hasBottom = false
+  let hasShoes = false
+  for (const id of gateAllowedIds) {
+    const piece = piecesById.get(id)
+    if (!piece || !pieceMeetsFloorRank(piece, floorRank)) continue
+    const group = wardrobeCategoryGroup(piece)
+    if (group === 'dress') hasDress = true
+    else if (group === 'top') hasTop = true
+    else if (group === 'bottom') hasBottom = true
+    else if (group === 'shoes') hasShoes = true
+  }
+  return { hasMainPath: hasDress || (hasTop && hasBottom), hasShoes }
 }
 
 function ensureCapsuleGroupReserve(roster = [], groups = {}, group = '', required = 0, ceilingRank = null, scoreOf = new Map()) {
@@ -1854,9 +1898,7 @@ function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set() 
   const occasions = Array.isArray(piece.occasions) ? piece.occasions.map(occ => String(occ || '').toLowerCase()) : []
   const slotOccasion = String(slot?.occasion || '').toLowerCase()
   if (slotOccasion && occasions.includes(slotOccasion)) score += 35
-  const slotFloor = String(slot?.register || '').toLowerCase() === 'formal'
-    ? formalityRank('dressy')
-    : formalityRank(slot?.register)
+  const slotFloor = slotRegisterRank(slot)
   const pieceRank = formalityRank(pieceFormality(piece))
   if (slotFloor !== null && pieceRank !== null) {
     score += Math.max(0, 20 - Math.abs(pieceRank - slotFloor) * 5)
@@ -1930,23 +1972,33 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl })
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
+    // Part 2 (spec 19): the piece-level gate below resolves its own occasion/
+    // activity-text ceiling and never saw the slot's structured `register`
+    // field, so a declared escalation above the occasion ceiling was silently
+    // ignored at the actual gate even though the workbench label (below)
+    // showed the raised ceiling. Only overrides in the genuine escalation
+    // case; an undeclared or non-escalating register leaves the gate's own
+    // occasion/activity ceiling logic untouched.
+    const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
+    const occasionCeilingRank = formalityRank(resolveOccasionProfile(slot?.occasion)?.register_ceiling)
+    const registerCeilingOverride = (ceilingRank !== null && occasionCeilingRank !== null && ceilingRank > occasionCeilingRank)
+      ? registerRankName(ceilingRank)
+      : null
     const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(composePool, {
       occasion: slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,
       mood: mood || slotRequestText,
       activity: slot.activity,
-      request: slotRequestText
+      request: slotRequestText,
+      ...(registerCeilingOverride ? { registerCeiling: registerCeilingOverride } : {})
     })
     const shownPieces = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds })
     for (const piece of shownPieces) {
       const id = Number(piece?.id)
       if (id && !catalogById.has(id)) catalogById.set(id, piece)
     }
-    const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
-    const floorRank = String(slot?.register || '').toLowerCase() === 'formal'
-      ? formalityRank('dressy')
-      : formalityRank(slot?.register)
+    const floorRank = slotRegisterRank(slot)
     workbenchSlots.push({
       id: slot.id,
       label: slot.label,
@@ -1986,7 +2038,15 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // Part 5 (spec 18): live miss — a card described the Tropical pants
     // (catalog: pattern floral, six colors) as "solid-base... muted print",
     // fabricating past the catalog truth it already had in piece_catalog.
-    'The catalog\'s pattern and color fields are the truth about prints — never describe a piece as solid, muted, or subtle unless its line says so.'
+    'The catalog\'s pattern and color fields are the truth about prints — never describe a piece as solid, muted, or subtle unless its line says so.',
+    // Part 3 (spec 19): live miss — a submitted card's reason said "Actually
+    // revising: emerald v-neck top + oatmeal textured elastic waist pants..."
+    // while piece_ids still carried the abstract midi dress the prose had just
+    // rejected. Same family as spec 18 Part 5 (instruction against an observed
+    // fabrication shape, zero mechanism — prose-vs-IDs consistency isn't
+    // mechanically checkable without the keyword-matching this codebase has
+    // repeatedly ruled out).
+    'The piece_ids ARE the outfit. If you change your mind while writing the reason, update piece_ids to match — never submit a reason describing pieces you did not include.'
   ].filter(Boolean).join(' ')
   return {
     status: 'slot_rosters',
@@ -2038,9 +2098,7 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
       if (fabricWeight(piece) === 'heavy') reasons.push(`${piece.name || piece.id} is a heavy main for hot weather`)
     }
   }
-  const floorRank = String(slot?.register || '').toLowerCase() === 'formal'
-    ? formalityRank('dressy')
-    : formalityRank(slot?.register)
+  const floorRank = slotRegisterRank(slot)
   if (floorRank !== null && floorRank >= formalityRank('dressy')) {
     for (const piece of mainPieces) {
       const rank = formalityRank(pieceFormality(piece))
@@ -2149,7 +2207,24 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [])
       if (structureGap || !isOutfitStructurallyValid(pieces, { requireShoes: true })) {
         reasons.push(structureGap || 'outfit is structurally incomplete or has duplicate core roles')
       }
-      reasons.push(...validateSlotOutfitConstraints(outfit, slot, { weatherProfile: slot.weatherProfile || {} }))
+      const constraintReasons = validateSlotOutfitConstraints(outfit, slot, { weatherProfile: slot.weatherProfile || {} })
+      const floorRejected = constraintReasons.some(reason => reason.includes('register floor'))
+      reasons.push(...constraintReasons)
+      if (floorRejected) {
+        // Part 1 (spec 19): a floor rejection had no legal move inside
+        // submit_plan_outfits — resubmitting different pieces cannot raise a
+        // slot's floor, only a fresh plan_outfit_set call with a lower
+        // register can. Always name that escape hatch, and when the roster
+        // genuinely cannot clear the floor, say the stronger truth instead of
+        // leaving the model to discover it by trial and error (live evidence:
+        // three blind resubmits against an unfillable dressy floor).
+        reasons.push('If this slot\'s register should be lower, re-call plan_outfit_set with just this slot at a lower register (or omit register) — resubmitting different pieces cannot change the floor.')
+        const floorRank = slotRegisterRank(slot)
+        const { hasMainPath, hasShoes } = slotFloorViability(gateAllowedIds, planPiecesById, floorRank)
+        if (!hasMainPath || !hasShoes) {
+          reasons.push(`no combination in this slot's roster can meet the ${slot.register} floor — lower the register via a fresh plan_outfit_set call for this slot, or accept the disclosed gap.`)
+        }
+      }
       const key = tripOutfitKey(outfit)
       if (key && usedKeys.has(key)) reasons.push('duplicate outfit already accepted in this plan')
       const repeatReason = modelPlanNoRepeatViolation(outfit, usedPieceIdsByCategory, noRepeat, anchorIds)
