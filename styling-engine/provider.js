@@ -20,6 +20,23 @@ export function findZeroResultContradiction(answerText = '', toolContext = {}) {
   return null
 }
 
+// Gate for the tripScopeClarification clause — RETIRED by default as of the
+// 2026-07-15 owner ruling. Live evidence: an "Apple skirt" long-weekend-city
+// trip turn was well-scoped (anchor viewed large, searched, 3 valid anchored
+// cards composed), but the clause's keyword match ("weekend" = multi-day,
+// only one use-case keyword matched) blocked the finished answer anyway,
+// forcing a fake clarifying question ("You're right — I jumped ahead...")
+// displayed ABOVE the three already-finished cards, addressed to the
+// validator as if the user had complained. This is stronger than "proved
+// unnecessary" — it actively vandalized a turn that went right. The
+// destinationClarification clause has no such misfire evidence and stays
+// live. Set WARDROBE_TRIP_SCOPE_CLARIFICATION=on to restore this clause as a
+// reversible fallback. Read at call time (matches followupPrerouteEnabled's
+// pattern in routes/ai.js).
+export function tripScopeClarificationEnabled() {
+  return process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION === 'on'
+}
+
 // Spec 3 Part 0a: outfit-shaped prose (a title followed by labeled slot lines) with zero
 // propose_outfit calls this turn — the model wrote what looks like a proposal without going through
 // the tool, so the pieces it named are unverified. Originally a soft signal only (flagged, not
@@ -157,7 +174,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // informed by THREAD STATE. Kept mechanical until live evidence shows the
   // prompt-level judgment holds — the history here is explicit that prompt
   // guidance alone failed before (2026-07-10 trip-scope live test).
-  if (!retried.has('tripScopeClarification') && tripRequestNeedsScopeClarification(toolContext?.question) &&
+  if (tripScopeClarificationEnabled() && !retried.has('tripScopeClarification') && tripRequestNeedsScopeClarification(toolContext?.question) &&
       ((toolContext?.freeformDiagnostics?.searchCalls || 0) > 0 || (toolContext?.freeformDiagnostics?.proposeCalls || 0) > 0)) {
     return fail('tripScopeClarification', 'tripScopeClarificationRetries',
       "This is a multi-day trip without enough activity/use-case scope, but you already searched or composed outfits before confirming what the trip needs to cover. Stop composing. Ask directly what activities or use cases to plan for — for example city walking, casual daytime, dinners, hiking/outdoors, anything dressier — before proposing garments this turn.")

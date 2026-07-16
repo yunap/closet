@@ -718,3 +718,134 @@ test('executeTool propose_outfit rejects hot-weather gated pieces using weather 
     db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(woolTopId, shortsId, shoesId)
   }
 })
+
+// Part 1 (spec 18): a proposal that STATES a different occasion than the
+// turn's context must not inherit that context's stale activity — the live
+// bug was a hiking-capsule turn's activity leaking into a same-turn dinner
+// follow-up, dragging the register ceiling down to "everyday" and rejecting
+// a dressy dinner outfit as if it were a hike.
+test('executeTool propose_outfit drops stale toolContext.activity when this call states a different occasion', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs dressy silk cami', 'top', '[]', '["evening"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'polished silk cami', '', 'silk', 'light', '["silk"]', 'dressy', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs dressy satin skirt', 'bottom', '[]', '["evening"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'polished satin skirt', '', 'satin', 'light', '["satin"]', 'dressy', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('obs sleek black cutout flats', 'shoes', '[]', '["evening"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', 'sleek dressy flats', '', 'leather', 'light', '["leather"]', 'dressy', '', '{}', 'flat', 'low')
+  `).run().lastInsertRowid
+
+  try {
+    // Simulates the earlier capsule turn having set a hiking context that
+    // persists on toolContext going into this NEW, differently-occasioned call.
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      occasion: 'casual',
+      activity: 'hiking',
+      retrievedPieceIds: new Set([topId, bottomId, shoesId])
+    }
+    const result = await executeTool('propose_outfit', {
+      label: 'Dinner Look',
+      occasion: 'evening',
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' }
+      ],
+      occasion_context: 'evening dinner',
+      why_it_works: 'A dressy dinner look, not a hike.'
+    }, toolContext)
+
+    assert.equal(result.status, 'success', `dressy dinner pieces should not be gated as a hike, got: ${JSON.stringify(result)}`)
+    assert.equal(toolContext.generatedOutfits.length, 1)
+    assert.equal(toolContext.generatedOutfits[0].debug.resolvedActivity, 'none')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+// Cross-turn state (handoff scenario 6) must stay untouched: a follow-up that
+// states NO occasion at all (e.g. "swap the shoes on #2") still inherits
+// toolContext.activity exactly as before.
+test('executeTool propose_outfit still inherits toolContext.activity when this call states no occasion', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs no-occasion top', 'top', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs no-occasion bottom', 'bottom', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('obs no-occasion shoes', 'shoes', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}', 'flat', 'high')
+  `).run().lastInsertRowid
+
+  try {
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      occasion: 'city',
+      activity: 'walking',
+      retrievedPieceIds: new Set([topId, bottomId, shoesId])
+    }
+    const result = await executeTool('propose_outfit', {
+      label: 'Swapped Shoes',
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' }
+      ]
+    }, toolContext)
+
+    assert.equal(result.status, 'success')
+    assert.equal(toolContext.generatedOutfits[0].debug.resolvedActivity, 'walking')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})
+
+// A follow-up that restates the SAME occasion still inherits the activity —
+// only a genuine occasion switch should drop it.
+test('executeTool propose_outfit inherits toolContext.activity when this call restates the same occasion', async () => {
+  const topId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs same-occasion top', 'top', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const bottomId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json)
+    VALUES ('obs same-occasion bottom', 'bottom', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}')
+  `).run().lastInsertRowid
+  const shoesId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, occasions, season, notes, status, recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes, pattern_type, pattern_scale, pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content, formality, length_hits_at, style_profile_json, heel_height, walk_support)
+    VALUES ('obs same-occasion shoes', 'shoes', '[]', '["city","casual"]', 'year-round', '', 'active', 'trusted', 'high', 'auto', '[]', '', 'solid', 'none', 'solid', '', '', '', '', '[]', 'everyday', '', '{}', 'flat', 'high')
+  `).run().lastInsertRowid
+
+  try {
+    const toolContext = {
+      declaredIntent: { want: 'cards' },
+      generatedOutfits: [],
+      occasion: 'city',
+      activity: 'walking',
+      retrievedPieceIds: new Set([topId, bottomId, shoesId])
+    }
+    const result = await executeTool('propose_outfit', {
+      label: 'Another Walking Look',
+      occasion: 'city',
+      pieces: [
+        { id: topId, role: 'primary_top' },
+        { id: bottomId, role: 'primary_bottom' },
+        { id: shoesId, role: 'shoes' }
+      ]
+    }, toolContext)
+
+    assert.equal(result.status, 'success')
+    assert.equal(toolContext.generatedOutfits[0].debug.resolvedActivity, 'walking')
+  } finally {
+    db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
+  }
+})

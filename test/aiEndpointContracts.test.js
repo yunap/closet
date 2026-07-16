@@ -3448,7 +3448,12 @@ test('turn contract blocks a declared cards turn that delivered zero cards', () 
   assert.equal(delivered.block, false)
 })
 
-test('turn contract keeps clarification precedence over delivery', () => {
+test('turn contract keeps clarification precedence over delivery', (t) => {
+  // tripScopeClarification is retired by default (2026-07-15 owner ruling);
+  // this test guards the legacy clause, which stays available behind the
+  // flag as a reversible fallback.
+  process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION = 'on'
+  t.after(() => { delete process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION })
   // Underscoped multi-day trip where the model already composed: the context
   // clause must fire before the count clause demands more cards.
   const ctx = {
@@ -3460,6 +3465,23 @@ test('turn contract keeps clarification precedence over delivery', () => {
   const check = applyFreeformOutputChecks('Here is a starting look for the trip.', ctx)
   assert.equal(check.block, true)
   assert.equal(check.blockType, 'tripScopeClarification', 'stop-and-ask beats deliver-more')
+})
+
+test('turn contract retires tripScopeClarification by default — an underscoped multi-day question with composed cards passes untouched', () => {
+  // Same shape as the guard test above (Fairfax, few days, one composed card,
+  // searches/proposes already happened) but WITHOUT the flag: the 2026-07-15
+  // owner ruling is that this clause misfires on well-scoped turns (the
+  // Apple-skirt live incident blocked a valid 3-card answer and forced a fake
+  // clarifying question above the finished cards) and should no longer block.
+  delete process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION
+  const ctx = {
+    question: 'Going to Fairfax, CA for a few days',
+    declaredIntent: { want: 'cards', outfitCount: 1, turnMode: null },
+    generatedOutfits: [{ label: 'One card', pieceIds: [seeded.top] }],
+    freeformDiagnostics: { searchCalls: 1, proposeCalls: 1 }
+  }
+  const check = applyFreeformOutputChecks('Here is a starting look for the trip.', ctx)
+  assert.equal(check.block, false, 'the retired clause must not block a well-scoped, already-composed turn')
 })
 
 test('view_pieces returns truth lines with thumbnails and satisfies the verification gates', async () => {

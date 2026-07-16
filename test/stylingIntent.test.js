@@ -185,6 +185,9 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes("propose each concrete outfit by calling 'propose_outfit' with verified piece IDs and roles"))
   assert.ok(STYLIST_SYSTEM.includes("call 'propose_outfit' for each referenced outfit using the same verified piece IDs and roles"))
   assert.ok(STYLIST_SYSTEM.includes('never as a generic category checklist'))
+  // Part 5 (spec 18): pattern-truth — never call a piece solid/muted/subtle unless its own data says so.
+  assert.ok(STYLIST_SYSTEM.includes("A piece's own pattern and color fields are the truth about its print"))
+  assert.ok(STYLIST_SYSTEM.includes('never describe a piece as solid, muted, or subtle in a "why it works" line unless its own data says so'))
   assert.ok(STYLIST_SYSTEM.includes('treat each already-assigned top, bottom, dress, shoes, and layer as occupied'))
   assert.ok(STYLIST_SYSTEM.includes("preserve the original outfit's occasion, social register, and visual thesis"))
   assert.ok(STYLIST_SYSTEM.includes('Do not downgrade a city, museum, restaurant, winery, gallery, smart-casual, or outdoor daytime social look into a plain casual tee/sneaker formula'))

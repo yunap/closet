@@ -667,6 +667,29 @@ export function verifiedPieceIdSets(toolContext = {}) {
   return { retrieved, seen, known }
 }
 
+// Part 3 (spec 18): the model has been observed sending plan_outfit_set's
+// `slots` as a JSON-encoded STRING with the sibling plan fields flattened
+// into that same string — e.g. `slots: "[ {...}, {...} ],\n\"location\":
+// \"Paso Robles, CA\", ..."` (the whole remaining args object, minus its own
+// key, dumped after the array). Recovers the array (and any flattened
+// sibling keys) before falling through to the "needs at least one slot"
+// rejection. Returns null when neither shape parses.
+export function coercePlanOutfitSetSlotsArg(rawSlots) {
+  if (typeof rawSlots !== 'string') return null
+  try {
+    const parsed = JSON.parse(rawSlots)
+    if (Array.isArray(parsed)) return { slots: parsed, extra: {} }
+  } catch { /* fall through to the flattened-siblings recovery below */ }
+  try {
+    const wrapped = JSON.parse(`{"slots":${rawSlots}}`)
+    if (wrapped && Array.isArray(wrapped.slots)) {
+      const { slots, ...extra } = wrapped
+      return { slots, extra }
+    }
+  } catch { /* unrecoverable — caller keeps the existing validation error */ }
+  return null
+}
+
 function logAgentToolResult(name, result) {
   if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'production') return
   const summary = { status: result?.status, message: result?.message }
@@ -1066,11 +1089,21 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
 
-        const resolvedOccasion = occasion ? normalizeOccasion(occasion) : (toolContext.occasion || 'casual')
+        const statedOccasion = occasion ? normalizeOccasion(occasion) : ''
+        const contextOccasion = toolContext.occasion || ''
+        const resolvedOccasion = statedOccasion || contextOccasion || 'casual'
         const resolvedSeason = season || toolContext.weather || toolContext.season || 'current season'
+        // Inherit toolContext.activity only when this call doesn't contradict
+        // the context it came from. A proposal that states an occasion and
+        // omits activity otherwise inherits whatever activity a PRIOR turn
+        // set (e.g. "hiking" from an earlier capsule plan) — dragging that
+        // turn's register ceiling down even though this call is a dinner, not
+        // a hike. Same-occasion or occasion-less follow-ups still inherit
+        // exactly as before (cross-turn state, e.g. "swap the shoes on #2").
+        const occasionSwitched = Boolean(statedOccasion) && Boolean(contextOccasion) && statedOccasion !== contextOccasion
         const resolvedActivity = activity !== undefined && activity !== null && activity !== ''
           ? normalizeActivity(activity)
-          : (toolContext.activity || '')
+          : (occasionSwitched ? '' : (toolContext.activity || ''))
         const requestTextForProposal = [
           toolContext.request,
           toolContext.question,
@@ -1418,6 +1451,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls')
+        if (typeof args?.slots === 'string') {
+          const recovered = coercePlanOutfitSetSlotsArg(args.slots)
+          // Recovered sibling keys (e.g. a `location` that was flattened into
+          // the same string) fill gaps only — an explicitly-passed arg wins.
+          if (recovered) args = { ...recovered.extra, ...args, slots: recovered.slots }
+        }
         const tripSummary = (args?.duration_text || args?.day_breakdown)
           ? {
               durationText: String(args?.duration_text || '').trim(),
