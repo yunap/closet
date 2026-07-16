@@ -316,8 +316,13 @@ try {
 }
 
 // ── Seed data (first run only) ─────────────────────────────────────────────────
-const seeded = db.prepare("SELECT value FROM app_meta WHERE key = 'seeded'").get()
-if (!seeded) {
+// Claim the "first run" atomically via INSERT OR IGNORE so concurrent
+// processes touching a brand-new DB (e.g. node --test running multiple test
+// files in parallel against a fresh clone) can't both pass a check-then-act
+// race and collide inserting the sentinel row — only the process whose
+// INSERT actually lands (changes > 0) seeds.
+const claimedSeed = db.prepare("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('seeded', 'true')").run()
+if (claimedSeed.changes > 0) {
   const ins = db.prepare(`
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status)
     VALUES (@name, @category, @colors, @occasions, @season, @notes, @status)
@@ -408,7 +413,6 @@ if (!seeded) {
     { type: 'shopping', description: 'Shop for: quality black sleeveless top (fitted, structured, not clingy)' },
   ].forEach(t => insTodo.run(t))
 
-  db.prepare("INSERT INTO app_meta (key, value) VALUES ('seeded', 'true')").run()
   console.log('✓ Wardrobe seeded with sample data')
 }
 

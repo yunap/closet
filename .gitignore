@@ -16,3 +16,5 @@ scratch/*
 !scratch/audit_gate_metadata.js
 !scratch/backfill_gate_metadata.js
 !scratch/recall_at_cap.js
+!scratch/check_style_claims.js
+!scratch/backfill_retagger.js

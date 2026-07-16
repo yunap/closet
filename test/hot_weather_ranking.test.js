@@ -5,6 +5,46 @@ import { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterW
 import { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight } from '../styling-engine/attributes.js'
 import { resolveOccasionProfile } from '../styling-engine/occasions.js'
 import { resolveActivityProfile } from '../styling-engine/footwear-comfort.js'
+import { ensureFixturePieces } from './helpers/dbFixtures.js'
+
+// These IDs are real pieces from the developer's personal wardrobe
+// (wardrobe.db is gitignored) — seed them only if a fresh/empty DB is
+// missing them, never touching or overwriting real local data.
+const cleanupHotWeatherFixtures = ensureFixturePieces([
+  { id: 233, name: 'white octopus graphic t-shirt', category: 'top', status: 'active', occasions: '["casual"]', fabric_weight: 'light', formality: 'everyday', photo: 'fixture-233.jpg' },
+  { id: 242, name: 'beige tailored linen shorts', category: 'bottom', status: 'active', occasions: '["casual"]', fabric_weight: 'light', reads_as: 'tailored linen shorts', formality: 'everyday', photo: 'fixture-242.jpg' },
+  // A second hot-appropriate bottom so the ">= 2 hot-appropriate bottoms"
+  // assertions hold on a DB whose only bottoms are these fixtures.
+  { id: 700601, name: 'white cotton drawstring shorts', category: 'bottom', status: 'active', occasions: '["casual"]', fabric_weight: 'light', reads_as: 'cotton shorts', formality: 'everyday', photo: 'fixture-700601.jpg' },
+  // Elevated suede ankle boots unsuitable for hiking on both heel/support
+  // structure and register ceiling — the exact real-wardrobe piece this
+  // suite's hiking-exclusion regression test is anchored on.
+  { id: 200, name: 'taupe suede ankle boots', category: 'shoes', status: 'active', occasions: '["casual","city"]', formality: 'elevated', heel_height: 'low', walk_support: 'low', photo: 'fixture-200.jpg' },
+  // Padding so the Visual Composer Roster test's category-cap/scoring path
+  // (only reached once the survivor pool exceeds the production maxImages
+  // default of 90) engages the same way it does against a real, large
+  // wardrobe — deliberately NOT done by lowering maxImages in the test call,
+  // since that would change the category quotas and could crowd the real
+  // shorts fixtures out of a shrunk bottom-category cap in a real, large
+  // wardrobe (verified: it did, in the real dev DB).
+  ...Array.from({ length: 35 }, (_, i) => ({
+    id: 700710 + i, name: `filler top ${i}`, category: 'top', status: 'active',
+    occasions: '["casual"]', fabric_weight: 'light', formality: 'everyday', photo: `fixture-filler-top-${i}.jpg`
+  })),
+  ...Array.from({ length: 30 }, (_, i) => ({
+    id: 700760 + i, name: `filler bottom ${i}`, category: 'bottom', status: 'active',
+    occasions: '["casual"]', fabric_weight: 'medium', formality: 'everyday', photo: `fixture-filler-bottom-${i}.jpg`
+  })),
+  ...Array.from({ length: 15 }, (_, i) => ({
+    id: 700800 + i, name: `filler shoes ${i}`, category: 'shoes', status: 'active',
+    occasions: '["casual"]', heel_height: 'flat', walk_support: 'high', formality: 'everyday', photo: `fixture-filler-shoes-${i}.jpg`
+  })),
+  ...Array.from({ length: 12 }, (_, i) => ({
+    id: 700820 + i, name: `filler dress ${i}`, category: 'dress', status: 'active',
+    occasions: '["casual"]', fabric_weight: 'light', formality: 'everyday', photo: `fixture-filler-dress-${i}.jpg`
+  }))
+])
+test.after(cleanupHotWeatherFixtures)
 
 test('current season resolves to warm weather during June', () => {
   const june = weatherProfileFromContext({
@@ -341,7 +381,7 @@ test('Visual Composer Roster weather-aware ranking and tiebreaker rotation', () 
     occasion: 'travel',
     weatherProfile: { isHot: true, isCold: false }
   })
-  
+
   const bottomShorts = hotRosterRes.roster.filter(p => p.category === 'bottom' && bottomKind(p) === 'shorts')
   assert.ok(bottomShorts.length >= 2, `Should have at least 2 shorts in hot weather visual composer bottoms, found ${bottomShorts.length}`)
 

@@ -5,6 +5,22 @@ process.env.ANTHROPIC_API_KEY = ''
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { executeTool } from '../styling-engine/tools.js'
+import { ensureFixturePieces } from './helpers/dbFixtures.js'
+
+// Piece 106 is a real ID from the developer's personal wardrobe (wardrobe.db
+// is gitignored). Seed it only if a fresh/empty DB is missing it — never
+// touches or overwrites real local data.
+const cleanupFixtures = ensureFixturePieces([
+  { id: 106, name: 'black washed bootcut denim jeans', category: 'bottom', status: 'active', occasions: '["casual"]', fabric_weight: 'medium', fabric_category: 'denim', reads_as: 'denim jeans', formality: 'everyday', photo: 'fixture-106.jpg' },
+  // Companion pieces so the whole-wardrobe composer has enough category
+  // coverage to build a roster around piece 106 on an otherwise-empty DB.
+  // The composer's roster gate requires a photo/worn_photo value to be set
+  // (it does not need the file to actually exist on disk) and a formality
+  // tag (the register-gate metadata-completeness check).
+  { id: 700501, name: 'rust cotton crew tee', category: 'top', status: 'active', occasions: '["casual"]', colors: '["rust"]', fabric_weight: 'light', formality: 'everyday', photo: 'fixture-700501.jpg' },
+  { id: 700502, name: 'white leather sneakers', category: 'shoes', status: 'active', occasions: '["casual"]', heel_height: 'flat', walk_support: 'high', formality: 'everyday', photo: 'fixture-700502.jpg' }
+])
+test.after(cleanupFixtures)
 
 test('agent_tool_scoping: search_wardrobe is scoped by allowedPieceIds', async () => {
   // We expect denim pants ID 106 to be present in normal search, but hidden when scoped to not include it.
