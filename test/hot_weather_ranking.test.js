@@ -85,6 +85,31 @@ test('weatherProfileFromContext treats indoor season as weather-agnostic even wi
   assert.deepEqual(indoorOnly, { isHot: false, isCold: false })
 })
 
+// --- Stated cool qualifiers beat season words (spec 24 Part 2) --------------
+// Exact load-bearing fixtures from the spec: a bare season word ("summer")
+// loses to a stated cool/foggy/rainy signal, but an explicit heat word keeps
+// winning outright — the asymmetry is the point, and the third fixture pins
+// it (must NOT regress to non-hot).
+
+test('a bare season word loses to a stated cool signal: "cool coastal summer" is NOT hot (Point Reyes fog-walk miss)', () => {
+  const profile = weatherProfileFromContext({ season: 'cool coastal summer' })
+  assert.equal(profile.isHot, false)
+  assert.equal(profile.isCold, true)
+})
+
+test('a bare season word loses to a stated cool/rain signal: "summer rain, cool mountain" is NOT hot, and rainy', () => {
+  const profile = weatherProfileFromContext({ season: 'summer rain, cool mountain' })
+  assert.equal(profile.isHot, false)
+  assert.equal(profile.isCold, true)
+  assert.equal(profile.isRainy, true)
+})
+
+test('an explicit heat word still wins over a cool qualifier: "hot days, cool evenings" stays hot (must not regress daytime slots)', () => {
+  const profile = weatherProfileFromContext({ season: 'hot days, cool evenings' })
+  assert.equal(profile.isHot, true)
+  assert.equal(profile.isCold, false)
+})
+
 test('gate metadata helpers use structured fields without text guessing', () => {
   assert.equal(pieceFabricWeight({ fabric_weight: 'ultralight' }), 'light')
 

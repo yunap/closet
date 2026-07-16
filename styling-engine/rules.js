@@ -57,12 +57,22 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const hasColdTemperature = fahrenheitValues.some(n => n <= 45)
   const explicitWarmWeather = String(season || '').trim().toLowerCase() === 'warm'
     || /\bwarm(?:\s+(?:weather|climate|day|daytime|trip|season|current-season|current season))\b/.test(text)
-  const explicitHot = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text)
-    || explicitWarmWeather
-    || /\bsummer\b/.test(text)
-    || hasHotTemperature
+  // Part 2 (spec 24): a bare season word ("summer") is a weak prior — it lost
+  // twice live to a stated cool condition in the same sentence (Point Reyes:
+  // "cool coastal summer, 55-58F, foggy"; a separate incident: "summer rain,
+  // cool mountain"), both times firing the hot-weather insulating gate and
+  // rejecting a jacket the cool/foggy/rainy conditions actually called for.
+  // An EXPLICIT heat word/temperature (hot, 80s/90s, scorching...) still wins
+  // outright over a cool signal — the asymmetry is the point, pinned by the
+  // "hot days, cool evenings" fixture below, which must stay hot.
+  const hasCoolSignal = /\b(cool|cold|chilly|fog(?:gy)?|marine layer|wind(?:y)?|breez(?:e|y)|overcast|drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
+  const hasRainSignal = /\b(drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
+  const strongHotSignal = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text) || hasHotTemperature
+  const seasonHotSignal = explicitWarmWeather || /\bsummer\b/.test(text)
+  const explicitHot = strongHotSignal || (seasonHotSignal && !hasCoolSignal)
   const explicitCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
     || hasColdTemperature
+    || (hasCoolSignal && !strongHotSignal)
 
   // An explicit weather word/temperature always wins over the "current season" calendar guess below —
   // otherwise a stated "it'll be cold" during a warm month cancels itself out against the calendar
@@ -70,7 +80,7 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   // silently disabling weather gating entirely. Only fall back to the calendar guess when the user
   // (or context) gave no explicit signal at all.
   if (explicitHot || explicitCold) {
-    return { isHot: explicitHot && !explicitCold, isCold: explicitCold && !explicitHot }
+    return { isHot: explicitHot && !explicitCold, isCold: explicitCold && !explicitHot, isRainy: hasRainSignal }
   }
 
   const month = currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
@@ -79,7 +89,7 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const currentSeasonRequested = /\b(current season|current weather|right now|today|this month)\b/.test(text) // ratchet-allow: date-context parsing, not garment text matching
   const currentSeasonHot = currentSeasonRequested && month !== null && month >= 5 && month <= 7
   const currentSeasonCold = currentSeasonRequested && month !== null && (month === 11 || month <= 1)
-  return { isHot: currentSeasonHot, isCold: currentSeasonCold }
+  return { isHot: currentSeasonHot, isCold: currentSeasonCold, isRainy: hasRainSignal }
 }
 
 export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js'
