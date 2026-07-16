@@ -1509,9 +1509,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-        const planComposeMode = String(process.env.WARDROBE_PLAN_COMPOSE || 'engine').trim().toLowerCase() === 'model'
-          ? 'model'
-          : 'engine'
+        // Spec 19 Part 4: the spec-13 flip criterion is met (all six scenario
+        // families ran live in model mode, resubmits converged, no validator-
+        // missed correctness class remains open, owner judged quality >=
+        // engine mode) — model mode is now the default. Engine mode stays
+        // fully runnable via WARDROBE_PLAN_COMPOSE=engine.
+        const planComposeMode = String(process.env.WARDROBE_PLAN_COMPOSE || 'model').trim().toLowerCase() === 'engine'
+          ? 'engine'
+          : 'model'
         bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls', 0)
         toolContext.freeformDiagnostics.planComposeMode = planComposeMode
         if (planComposeMode === 'model') {

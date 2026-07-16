@@ -29,8 +29,10 @@ const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js'
 // already set by this file — including WARDROBE_PLAN_COMPOSE from a local
 // .env left in model mode for live testing. Force a known baseline so this
 // suite's engine-mode tests are hermetic regardless of the developer's local
-// environment; tests that specifically want model mode still set it themselves.
-delete process.env.WARDROBE_PLAN_COMPOSE
+// environment or the process-wide default (spec 19 Part 4 flipped the
+// default to 'model'); tests that specifically want model mode still set it
+// themselves via the previousMode save/restore pattern below.
+process.env.WARDROBE_PLAN_COMPOSE = 'engine'
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
@@ -173,6 +175,55 @@ test('plan_outfit_set model mode returns slot rosters and submit_plan_outfits cr
   }
 })
 
+// --- Mode default flip (spec 19 Part 4) ----------------------------------------
+
+test('plan_outfit_set defaults to model mode with no WARDROBE_PLAN_COMPOSE set', async () => {
+  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
+  delete process.env.WARDROBE_PLAN_COMPOSE
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'default mode top', occasions: ['city', 'casual'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'default mode pants', occasions: ['city', 'casual'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'default mode shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city day outfit' }
+    const workbench = await executeTool('plan_outfit_set', {
+      slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
+    }, toolContext)
+
+    assert.equal(workbench.status, 'slot_rosters', 'no env var set should default to model mode')
+    assert.equal(toolContext.freeformDiagnostics.planComposeMode, 'model')
+  } finally {
+    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
+    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
+  }
+})
+
+test('WARDROBE_PLAN_COMPOSE=engine restores engine composition', async () => {
+  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
+  process.env.WARDROBE_PLAN_COMPOSE = 'engine'
+  db.prepare('DELETE FROM pieces').run()
+  // A focal-color top plus neutral-color support pieces is needed so this
+  // minimal fixture qualifies for the color_anchor mission (one focal color,
+  // everything else quiet neutral) — an all-plain wardrobe produces zero
+  // candidates in engine mode (see the "Test-fixture gotcha" note in
+  // docs/freeform-rearchitecture-handoff.md).
+  insertPiece({ category: 'top', name: 'engine mode top', colors: ['olive'], occasions: ['city', 'casual'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'engine mode pants', colors: ['black'], occasions: ['city', 'casual'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'engine mode shoes', colors: ['black'], occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  try {
+    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city day outfit' }
+    const result = await executeTool('plan_outfit_set', {
+      slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
+    }, toolContext)
+
+    assert.equal(result.status, 'success', 'WARDROBE_PLAN_COMPOSE=engine must restore the composed response, not slot_rosters')
+    assert.equal(toolContext.freeformDiagnostics.planComposeMode, 'engine')
+  } finally {
+    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
+    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
+  }
+})
+
 test('model plan slot workbench reports suppressed pieces from the generation gates', async () => {
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'hot day top', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light' })
@@ -249,6 +300,20 @@ test('model plan slot workbench instructions always include the pattern-truth li
   assert.match(workbench.instructions, /catalog's pattern and color fields are the truth about prints/)
 })
 
+// Part 3 (spec 19): live miss — a submitted card's reason said "Actually
+// revising: emerald v-neck top + oatmeal textured elastic waist pants..."
+// while piece_ids still carried the abstract midi dress the prose had just
+// rejected. No mechanism (prose-vs-IDs consistency isn't mechanically
+// checkable), so this pins the instruction is always present.
+test('model plan slot workbench instructions always include the piece_ids-ARE-the-outfit line', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  assert.match(workbench.instructions, /The piece_ids ARE the outfit/)
+})
+
 test('submit_plan_outfits accepts gate-allowed pieces that were not in the shown roster', async () => {
   db.prepare('DELETE FROM pieces').run()
   const bottomId = insertPiece({ category: 'bottom', name: 'hidden roster pants', occasions: ['city'], formality: 'everyday' })
@@ -301,6 +366,112 @@ test('submit_plan_outfits rejects gate-suppressed pieces with the gate reason', 
   assert.equal(result.accepted.length, 0)
   assert.match(result.failures[0].reasons.join(' '), /failed this slot's gates/)
   assert.match(result.failures[0].reasons.join(' '), /hot weather|heavy/i)
+})
+
+// --- Register floor escape hatch + unfillability (spec 19 Part 1) -------------
+
+test('a register-floor rejection always names the re-call escape hatch', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dressyTopId = insertPiece({ category: 'top', name: 'dressy client top', occasions: ['city'], formality: 'dressy' })
+  const dressyBottomId = insertPiece({ category: 'bottom', name: 'dressy client pants', occasions: ['city'], formality: 'dressy' })
+  const dressyShoesId = insertPiece({ category: 'shoes', name: 'dressy client shoes', occasions: ['city'], formality: 'dressy', heel_height: 'flat', walk_support: 'high' })
+  const everydayTopId = insertPiece({ category: 'top', name: 'everyday office top', occasions: ['city'], formality: 'everyday' })
+  const everydayBottomId = insertPiece({ category: 'bottom', name: 'everyday office pants', occasions: ['city'], formality: 'everyday' })
+  const everydayShoesId = insertPiece({ category: 'shoes', name: 'everyday office shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Client Presentation', occasion: 'city', activity: 'none', count: 1, weather: 'indoor', register: 'dressy' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'client presentation day' })
+  const slot = workbench.pendingPlan.slots[0]
+  // Fixture needs a genuinely fillable dressy path so this case is NOT the
+  // unfillable one — that's the next test.
+  assert.ok(slot.gateAllowedIds.has(Number(dressyTopId)), 'the reconciled ceiling must let the dressy path through')
+  assert.ok(slot.gateAllowedIds.has(Number(dressyBottomId)))
+  assert.ok(slot.gateAllowedIds.has(Number(dressyShoesId)))
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(everydayTopId), Number(everydayBottomId), Number(everydayShoesId)],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  const reasons = result.failures[0].reasons.join(' ')
+  assert.match(reasons, /is below the dressy register floor/)
+  assert.match(reasons, /re-call plan_outfit_set with just this slot at a lower register/)
+  assert.doesNotMatch(reasons, /no combination in this slot's roster can meet/, 'a fillable path exists, so the stronger message must not fire')
+})
+
+test('an unfillable register floor states the stronger truth: no combination can meet it', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const everydayTopId = insertPiece({ category: 'top', name: 'plain office top', occasions: ['city'], formality: 'everyday' })
+  const everydayBottomId = insertPiece({ category: 'bottom', name: 'plain office pants', occasions: ['city'], formality: 'everyday' })
+  const everydayShoesId = insertPiece({ category: 'shoes', name: 'plain office shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Client Presentation', occasion: 'city', activity: 'none', count: 1, weather: 'indoor', register: 'dressy' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'client presentation day' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(everydayTopId), Number(everydayBottomId), Number(everydayShoesId)],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  const reasons = result.failures[0].reasons.join(' ')
+  assert.match(reasons, /is below the dressy register floor/)
+  assert.match(reasons, /re-call plan_outfit_set with just this slot at a lower register/)
+  assert.match(reasons, /no combination in this slot's roster can meet the dressy floor/)
+})
+
+// --- Register ceiling reconciliation (spec 19 Part 2) -------------------------
+
+test('a declared register above the occasion ceiling raises the effective ceiling (brunch repro)', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'elevated brunch top', occasions: ['casual'], formality: 'elevated' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'elevated brunch pants', occasions: ['casual'], formality: 'elevated' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'elevated brunch shoes', occasions: ['casual'], formality: 'elevated', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Farewell Brunch', occasion: 'casual', activity: 'none', count: 1, weather: 'indoor', register: 'elevated' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'farewell brunch' })
+
+  assert.equal(workbench.slots[0].register_ceiling, 'elevated')
+  const gateAllowedIds = workbench.pendingPlan.slots[0].gateAllowedIds
+  assert.ok(gateAllowedIds.has(Number(topId)), 'an elevated top must clear the reconciled ceiling')
+  assert.ok(gateAllowedIds.has(Number(bottomId)), 'an elevated bottom must clear the reconciled ceiling')
+  assert.ok(gateAllowedIds.has(Number(shoesId)), 'elevated shoes must clear the reconciled ceiling')
+})
+
+test('an undeclared register keeps today\'s occasion ceiling byte-identical', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const withRegister = normalizePlanSlots([{ label: 'City Day', occasion: 'casual', activity: 'none', count: 1, weather: 'indoor' }])
+  const withoutOverride = await buildPlanSlotWorkbench(withRegister, { allPieces, question: 'city day' })
+  assert.equal(withoutOverride.slots[0].register_ceiling, 'everyday')
+})
+
+test('effective register ceiling never drops below the effective floor across occasion x register combinations', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const rankOf = name => ({ lounge: 0, everyday: 1, elevated: 2, dressy: 3, formal: 4 }[name] ?? null)
+  const occasions = ['casual', 'city', 'evening']
+  const registers = ['', 'everyday', 'elevated', 'dressy', 'formal']
+  const rawSlots = []
+  for (const occasion of occasions) {
+    for (const register of registers) {
+      rawSlots.push({ label: `${occasion}-${register || 'none'}`, occasion, activity: 'none', count: 1, weather: 'indoor', register })
+    }
+  }
+  const slots = normalizePlanSlots(rawSlots, { maxSlots: rawSlots.length, maxTotalOutfits: rawSlots.length })
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'register matrix' })
+  for (const slot of workbench.slots) {
+    const floorRank = rankOf(slot.register_floor)
+    if (floorRank === null) continue
+    const ceilingRank = rankOf(slot.register_ceiling)
+    assert.ok(ceilingRank !== null && ceilingRank >= floorRank, `${slot.label}: ceiling "${slot.register_ceiling}" (${ceilingRank}) must be >= floor "${slot.register_floor}" (${floorRank})`)
+  }
 })
 
 test('describeOutfitStructureGap reports the specific structural gap', () => {

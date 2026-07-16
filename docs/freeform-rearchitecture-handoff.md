@@ -844,6 +844,80 @@ already-allowed roster pieces before final scoring. Regression coverage uses the
 live-style `cool mild weather` / `windy beach outing` language instead of only a
 literal cold forecast.
 
+## Spec 19 — register floor/ceiling reconciliation, unfillable-floor escape hatch, piece_ids truthfulness, and the model-mode default flip — IMPLEMENTED (2026-07-15)
+
+Four parts, shipped as one PR, all in `styling-engine/outfitSetPlanner.js`
+unless noted. Live evidence: two Anthropic model-mode scenario runs the same
+evening (office-week and wedding-weekend) surfaced three distinct
+validator-boundary misses on top of the already-good register-floor work.
+
+- **Part 1 — unfillable register floor now names its own escape hatch.**
+  `validateSubmittedPlanOutfits` always appends a re-call-with-a-lower-register
+  message to a register-floor rejection (the model previously had no legal
+  move inside `submit_plan_outfits` and nothing told it so — the office-week
+  run blind-resubmitted three times against an unfillable `dressy` floor
+  before hitting the resubmit cap). When the slot's `gateAllowedIds` genuinely
+  contain no floor-clearing main path (no dress AND no top+bottom pair, or no
+  shoes) — arithmetic over tags already on the pending plan, no new gating — a
+  stronger message says so outright instead of leaving the model to discover
+  it by trial and error. `slotFloorViability()` does the counting.
+- **Part 2 — a declared register above the occasion ceiling now reconciles
+  instead of contradicting.** Root cause was two-layered: (a)
+  `effectiveSlotRegisterCeilingRank` took `Math.min(occasionRank, slotRank)`
+  — a declared `elevated` register on a `casual` (`everyday`-ceiling) slot
+  made the ceiling STRICTER, the opposite of what an explicit escalation
+  should do; fixed to `Math.max`, so a declared register only ever lifts the
+  ceiling, never lowers it (undeclared/non-escalating slots are unchanged).
+  (b) Deeper bug: the actual piece-level gate
+  (`filterWholeWardrobePiecesForGeneration` → `wholeWardrobePieceTrustDecision`
+  → `resolveRegisterCeiling`) never saw the slot's structured `register` field
+  at all — it resolved its own ceiling from occasion/activity/mood TEXT, so
+  even the workbench's *displayed* reconciled ceiling was cosmetic; pieces
+  were still gated against the unreconciled occasion ceiling. Fixed by having
+  `buildPlanSlotWorkbench` pass an explicit `registerCeiling` override into
+  the gate call, but ONLY in the genuine escalation case (declared rank above
+  the occasion ceiling) — an undeclared or non-escalating register leaves the
+  gate's own occasion/activity ceiling logic untouched, so nothing loosens for
+  plans that don't declare an escalation. New invariant, tested across an
+  occasion × register matrix: effective ceiling ≥ effective floor for every
+  normalized slot. (Also fixed in the same pass: `register: "formal"` isn't
+  one of the four `FORMALITY_VALUES` pieces are tagged with — it was already
+  special-cased to `dressy` for floor derivation in three separate places but
+  silently ignored in the ceiling calc, which would have broken the new
+  invariant for a `formal`-declared slot; consolidated into one
+  `slotRegisterRank()` helper used everywhere a slot's register maps to a
+  rank.)
+- **Part 3 — "the piece_ids ARE the outfit."** One line added to
+  `buildPlanSlotWorkbench`'s workbench instructions (same family as spec 18
+  Part 5 — an instruction against an observed fabrication shape, no
+  mechanism, since prose-vs-IDs consistency isn't mechanically checkable).
+  Live evidence: a submitted card's reason said "Actually revising: emerald
+  v-neck top + oatmeal textured elastic waist pants..." while `piece_ids`
+  still carried the abstract midi dress the prose had just rejected.
+- **Part 4 — `WARDROBE_PLAN_COMPOSE` default flipped to `model`.** The
+  spec-13 flip criterion is met: all six scenario families ran live in model
+  mode, resubmits converged, no validator-missed correctness class remains
+  open, and the owner judged quality ≥ engine mode. The read in `tools.js`
+  (`planComposeMode`) now defaults to `'model'`; `WARDROBE_PLAN_COMPOSE=engine`
+  still fully restores engine composition (same reversible-flag convention as
+  the retired pre-routes) — no engine code deleted this PR, that's spec 14's
+  job on its own `hardRejects` audit. The repo-local (gitignored) `.env`'s now-
+  redundant `WARDROBE_PLAN_COMPOSE=model` line was removed so the real default
+  isn't masked in dev. **Spec 13 flip: DONE. Spec 14 (scorer-layer deletion)
+  is unblocked — owner ruling 2026-07-15: no soak period, sequential PRs, git
+  history is the fallback if anything regresses; spec 14's own `hardRejects`
+  audit is its gate, not a waiting period.**
+
+`test/plan_outfit_set.test.js` carries the regression coverage for all four
+parts (escape hatch + unfillability wording, ceiling-reconciliation +
+undeclared-stays-identical + the ceiling≥floor matrix, the instructions
+string, and both the default-model and `WARDROBE_PLAN_COMPOSE=engine` tool
+responses). Full suite green (563/572 node --test passes; the 9 failures are
+pre-existing environment gaps in a fresh clone — untracked local `scratch/`
+scripts two tests read via `fs.readFileSync`, plus date/fixture-sensitive
+hot-weather tests — identical on a clean `origin/main` checkout, unrelated to
+this PR). Ratchet unchanged (238/238, no new text-matching debt).
+
 ## Live-testing findings so far (why each fix exists)
 
 1. Crochet top proposed as base layer → tags had no opacity; sight was optional
