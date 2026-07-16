@@ -1066,11 +1066,21 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
 
-        const resolvedOccasion = occasion ? normalizeOccasion(occasion) : (toolContext.occasion || 'casual')
+        const statedOccasion = occasion ? normalizeOccasion(occasion) : ''
+        const contextOccasion = toolContext.occasion || ''
+        const resolvedOccasion = statedOccasion || contextOccasion || 'casual'
         const resolvedSeason = season || toolContext.weather || toolContext.season || 'current season'
+        // Inherit toolContext.activity only when this call doesn't contradict
+        // the context it came from. A proposal that states an occasion and
+        // omits activity otherwise inherits whatever activity a PRIOR turn
+        // set (e.g. "hiking" from an earlier capsule plan) — dragging that
+        // turn's register ceiling down even though this call is a dinner, not
+        // a hike. Same-occasion or occasion-less follow-ups still inherit
+        // exactly as before (cross-turn state, e.g. "swap the shoes on #2").
+        const occasionSwitched = Boolean(statedOccasion) && Boolean(contextOccasion) && statedOccasion !== contextOccasion
         const resolvedActivity = activity !== undefined && activity !== null && activity !== ''
           ? normalizeActivity(activity)
-          : (toolContext.activity || '')
+          : (occasionSwitched ? '' : (toolContext.activity || ''))
         const requestTextForProposal = [
           toolContext.request,
           toolContext.question,
