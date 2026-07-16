@@ -1586,45 +1586,6 @@ function ensureCapsuleGroupReserve(roster = [], groups = {}, group = '', require
   return nextRoster
 }
 
-function ensureCapsuleGroupFloorReserve(roster = [], groups = {}, group = '', required = 0, floorRank = null, scoreOf = new Map()) {
-  return ensureCapsuleGroupPredicateReserve(
-    roster,
-    groups,
-    group,
-    required,
-    piece => pieceMeetsFloorRank(piece, floorRank),
-    scoreOf
-  )
-}
-
-function ensureCapsuleGroupPredicateReserve(roster = [], groups = {}, group = '', required = 0, predicate = () => false, scoreOf = new Map()) {
-  if (!(required > 0)) return roster
-  let nextRoster = roster
-  const selectedInGroup = () => nextRoster.filter(piece => wardrobeCategoryGroup(piece) === group)
-  const predicateSelected = () => selectedInGroup().filter(piece => predicate(piece))
-  while (predicateSelected().length < required) {
-    const selected = selectedInGroup()
-    if (!selected.length) break
-    const candidate = (groups[group] || []).find(piece =>
-      !nextRoster.includes(piece) &&
-      predicate(piece) &&
-      !predicateSelected().some(selectedPiece => capsuleSimilarityKey(selectedPiece) === capsuleSimilarityKey(piece))
-    ) || (groups[group] || []).find(piece =>
-      !nextRoster.includes(piece) &&
-      predicate(piece)
-    )
-    if (!candidate) break
-    const swapTarget = selected
-      .filter(piece => !predicate(piece))
-      .sort((a, b) => (scoreOf.get(a) || 0) - (scoreOf.get(b) || 0))[0]
-    if (!swapTarget) break
-    const swapIndex = nextRoster.indexOf(swapTarget)
-    if (swapIndex === -1) break
-    nextRoster = nextRoster.map((piece, index) => index === swapIndex ? candidate : piece)
-  }
-  return nextRoster
-}
-
 function footwearPassesActivityProfile(piece = {}, activityProfile = null) {
   if (!activityProfile?.rules) return true
   const verdict = footwearComfortVerdict(
@@ -1718,28 +1679,107 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
     }
   }
   if (quotas.shoes > 0) {
-    for (const profile of demandingActivityProfilesForSlots(slots)) {
-      const updated = ensureCapsuleGroupPredicateReserve(
-        roster,
-        groups,
-        'shoes',
-        1,
-        piece => footwearPassesActivityProfile(piece, profile),
-        scoreOf
-      )
-      roster.splice(0, roster.length, ...updated)
+    const demands = shoeReserveDemands(slots, quotas)
+    const { roster: guaranteedRoster, gaps } = ensureCapsuleShoeDemands(roster, groups, demands, scoreOf, quotas.shoes)
+    roster.splice(0, roster.length, ...guaranteedRoster)
+    if (gaps.length) {
+      const finalRoster = roster.slice(0, budget)
+      finalRoster.shoeReserveGaps = describeShoeReserveGaps(gaps, budget)
+      return finalRoster
     }
+  }
+  return roster.slice(0, budget)
+}
+
+// One demand per "the shoe roster must guarantee something" reason: a
+// demanding activity profile (hiking's excluded heel/support rules) needs at
+// least one passing shoe, and an elevated-look floor needs enough polished
+// shoes for the plan's dressier slots. Each has a human label for the
+// coverage-gap disclosure if the quota can't hold all of them.
+function shoeReserveDemands(slots = [], quotas = {}) {
+  const demands = []
+  for (const profile of demandingActivityProfilesForSlots(slots)) {
+    demands.push({
+      label: profile.label || profile.id,
+      required: 1,
+      predicate: piece => footwearPassesActivityProfile(piece, profile),
+    })
   }
   const elevatedRank = formalityRank('elevated')
   const elevatedShoeLooks = (Array.isArray(slots) ? slots : [])
     .filter(slot => slotWantsElevatedShoe(slot))
     .reduce((sum, slot) => sum + Math.max(1, Number(slot?.targetOutfits) || 1), 0)
   if (elevatedShoeLooks > 0 && quotas.shoes > 1) {
-    const required = Math.min(quotas.shoes, Math.max(1, Math.ceil(elevatedShoeLooks / 2)))
-    const updated = ensureCapsuleGroupFloorReserve(roster, groups, 'shoes', required, elevatedRank, scoreOf)
-    roster.splice(0, roster.length, ...updated)
+    demands.push({
+      label: 'a dressy/elevated look',
+      required: Math.min(quotas.shoes, Math.max(1, Math.ceil(elevatedShoeLooks / 2))),
+      predicate: piece => pieceMeetsFloorRank(piece, elevatedRank),
+    })
   }
-  return roster.slice(0, budget)
+  return demands
+}
+
+// Guarantee every shoe demand together in one pass instead of sequential
+// blind swaps. The Part 6 bug: the elevated-shoe floor reserve ran AFTER the
+// activity reserve and chose its swap target as the lowest-versatility
+// non-elevated shoe — which was exactly the hiking shoe the activity reserve
+// had just installed — silently destroying that guarantee. Fix: a swap
+// target must satisfy ZERO of the demands currently on the table; only if no
+// such shoe exists do we evict one whose own demand(s) are still covered by
+// another selected shoe. A shoe satisfying multiple demands (an athletic
+// sneaker: hiking + walking) counts for all of them automatically, since
+// each demand's "is it satisfied" check scans every currently selected shoe.
+function ensureCapsuleShoeDemands(roster = [], groups = {}, demands = [], scoreOf = new Map(), quotaShoes = 0) {
+  if (!demands.length || !(quotaShoes > 0)) return { roster, gaps: [] }
+  let nextRoster = roster
+  const gaps = []
+  const selectedShoes = () => nextRoster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  const demandSatisfiedCount = demand => selectedShoes().filter(piece => demand.predicate(piece)).length
+  const demandsSatisfiedBy = piece => demands.filter(demand => demand.predicate(piece))
+
+  for (const demand of demands) {
+    let guard = 0
+    while (demandSatisfiedCount(demand) < demand.required && guard < quotaShoes) {
+      guard += 1
+      const selected = selectedShoes()
+      const candidatePool = (groups.shoes || []).filter(piece => !nextRoster.includes(piece) && demand.predicate(piece))
+      const candidate = candidatePool.find(piece =>
+        !selected.some(selectedPiece => capsuleSimilarityKey(selectedPiece) === capsuleSimilarityKey(piece))
+      ) || candidatePool[0]
+      if (!candidate) { gaps.push(demand); break }
+      if (selected.length < quotaShoes) {
+        nextRoster = [...nextRoster, candidate]
+        continue
+      }
+      // Roster is full: prefer evicting a shoe that satisfies NO demand at
+      // all; only if none exists, evict one whose every demand is still
+      // covered by another selected shoe once it's gone.
+      const zeroDemandTargets = selected.filter(piece => demandsSatisfiedBy(piece).length === 0)
+      const safeToEvictTargets = selected.filter(piece => {
+        const own = demandsSatisfiedBy(piece)
+        return own.length > 0 && own.every(ownDemand =>
+          selected.some(other => other !== piece && ownDemand.predicate(other)))
+      })
+      const swapTarget = [...zeroDemandTargets, ...safeToEvictTargets]
+        .sort((a, b) => (scoreOf.get(a) || 0) - (scoreOf.get(b) || 0))[0]
+      if (!swapTarget) { gaps.push(demand); break }
+      const swapIndex = nextRoster.indexOf(swapTarget)
+      if (swapIndex === -1) { gaps.push(demand); break }
+      nextRoster = nextRoster.map((piece, index) => index === swapIndex ? candidate : piece)
+    }
+  }
+  return { roster: nextRoster, gaps }
+}
+
+function describeShoeReserveGaps(gaps = [], budget = 0) {
+  if (gaps.length < 2) {
+    return gaps.map(gap => `[missing wardrobe gap: the ${budget}-piece capsule's shoe quota cannot cover ${gap.label} — keep the best assignment and pack around it]`)
+  }
+  const labels = gaps.map(gap => gap.label)
+  const joined = labels.length === 2
+    ? `${labels[0]} and ${labels[1]}`
+    : `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`
+  return [`[missing wardrobe gap: the shoe quota under this ${budget}-piece budget cannot cover both ${joined}]`]
 }
 
 function planWorkbenchPieceLine(piece = {}) {
@@ -1885,6 +1925,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   if (droppedSlotLabels.length) {
     coverageGaps.push(`[plan trimmed: ${droppedSlotLabels.length} use case${droppedSlotLabels.length === 1 ? '' : 's'} dropped — ${droppedSlotLabels.map(label => `"${label}"`).join(', ')} — a plan can only include up to ${slots.length} use-case slots at once; ask again with the dropped one${droppedSlotLabels.length === 1 ? '' : 's'} as a follow-up]`)
   }
+  if (Array.isArray(composePool.shoeReserveGaps)) coverageGaps.push(...composePool.shoeReserveGaps)
   for (const [index, slot] of slots.entries()) {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl })
@@ -2036,6 +2077,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [])
     : pieceMapForPieces(slots.flatMap(slot => slot.allowedPieces || []))
   const heldOutfits = Array.isArray(pendingPlan?.heldOutfits) ? pendingPlan.heldOutfits : []
   const { noRepeat = new Set(), anchorIds = new Set(), pieceBudget = 0 } = pendingPlan?.constraints || {}
+  const isEnforcedCapsule = pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
   const usedKeys = new Set(heldOutfits.map(outfit => tripOutfitKey(outfit)).filter(Boolean))
   const usedPieceIds = new Set()
   const usedPieceIdsByCategory = new Map()
@@ -2067,7 +2109,13 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [])
       if (suppressedReasonsById.has(id)) {
         reasons.push(`piece ${id} failed this slot's gates: ${suppressedReasonsById.get(id).join('; ')}`)
       } else {
-        reasons.push(`piece ${id} is not an active wardrobe piece for this plan`)
+        // In an enforced capsule, a piece missing from gateAllowedIds is
+        // almost always active but simply outside the curated budget roster
+        // (the model may have just verified it via search) — "not active"
+        // reads as a false contradiction there.
+        reasons.push(isEnforcedCapsule
+          ? `piece ${id} is outside this capsule's curated ${pieceBudget}-piece roster`
+          : `piece ${id} is not an active wardrobe piece for this plan`)
       }
       unresolvedPieceIds.push(id)
     }
@@ -2274,6 +2322,7 @@ export async function composeOutfitSet({ slots = [], question = '', mood = '', a
   if (droppedSlotLabels.length) {
     coverageGaps.push(`[plan trimmed: ${droppedSlotLabels.length} use case${droppedSlotLabels.length === 1 ? '' : 's'} dropped — ${droppedSlotLabels.map(label => `"${label}"`).join(', ')} — a plan can only include up to ${slots.length} use-case slots at once; ask again with the dropped one${droppedSlotLabels.length === 1 ? '' : 's'} as a follow-up]`)
   }
+  if (Array.isArray(composePool.shoeReserveGaps)) coverageGaps.push(...composePool.shoeReserveGaps)
   const compositionSlots = slots
     .map((slot, originalIndex) => ({ ...slot, originalIndex }))
     .sort((a, b) => slotCompositionPriority(b) - slotCompositionPriority(a) || a.originalIndex - b.originalIndex)

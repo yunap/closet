@@ -1498,6 +1498,124 @@ test('selectCapsuleRoster reserves activity-safe hiking footwear alongside eleva
   assert.ok(rosterShoes.some(piece => piece.formality === 'elevated'), `elevated shoe reserve should still hold, got ${rosterShoes.map(piece => `${piece.name}:${piece.formality}`)}`)
 })
 
+// Part 6 fixture: exactly the live decisive-probe shape — a slip-on that
+// satisfies no shoe demand at all, a wedge that only satisfies the elevated
+// floor, and an athletic sneaker that only satisfies activity demands (hiking
+// AND walking at once). budget 10 -> capsuleQuotas gives quotas.shoes = 2, so
+// the mountain-capsule bug (elevated-floor reserve evicting the shoe the
+// activity reserve just installed) reproduces deterministically here.
+function seedShoeReserveFixture() {
+  db.prepare('DELETE FROM pieces').run()
+  for (const name of ['white cotton tee', 'olive cotton tank', 'striped linen shirt']) {
+    insertPiece({ category: 'top', name, colors: ['white'], reads_as: 'capsule top', occasions: ['casual', 'city', 'smart casual'], formality: 'everyday' })
+  }
+  for (const name of ['black cotton pants', 'linen wide-leg pants', 'denim straight jeans']) {
+    insertPiece({ category: 'bottom', name, colors: ['black'], reads_as: 'capsule bottom', occasions: ['casual', 'city', 'smart casual'], formality: 'everyday' })
+  }
+  insertPiece({ category: 'dress', name: 'olive day dress', colors: ['olive'], reads_as: 'easy day dress', occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'outerwear', name: 'light cotton jacket', colors: ['navy'], reads_as: 'light casual jacket', occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'tan canvas slip-on shoes', colors: ['tan'], reads_as: 'easy slip-on shoes', occasions: ['casual', 'city'], formality: 'everyday', heel_height: 'flat', walk_support: 'medium' })
+  insertPiece({ category: 'shoes', name: 'black wedge sandals', colors: ['black'], reads_as: 'polished wedge sandals', occasions: ['city', 'smart casual'], formality: 'elevated', heel_height: 'high', walk_support: 'medium' })
+  insertPiece({ category: 'shoes', name: 'grey athletic trail sneakers', colors: ['grey'], reads_as: 'rugged trail sneakers', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  return db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+}
+
+test('capsule shoe reserve keeps BOTH a hiking-passing shoe and an elevated shoe instead of evicting one for the other', async () => {
+  const pool = seedShoeReserveFixture()
+  const slots = normalizePlanSlots([
+    { label: 'Hike Day 1', occasion: 'casual', activity: 'hiking', count: 1 },
+    { label: 'Hike Day 2', occasion: 'casual', activity: 'hiking', count: 1 },
+    { label: 'Town Stroll', occasion: 'city', activity: 'walking', count: 1 },
+    { label: 'Smart Casual Dinner', occasion: 'smart casual', count: 1 },
+  ])
+  const roster = selectCapsuleRoster(pool, { budget: 10, occasions: slots.map(slot => slot.occasion), slots })
+  const rosterShoes = roster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes')
+  const rosterNames = rosterShoes.map(piece => piece.name)
+
+  assert.ok(rosterNames.includes('grey athletic trail sneakers'), `hiking guarantee must survive the elevated-floor pass, got ${rosterNames}`)
+  assert.ok(rosterShoes.some(piece => piece.formality === 'elevated'), `elevated guarantee must also hold, got ${rosterNames}`)
+  assert.ok(!rosterNames.includes('tan canvas slip-on shoes'), `the zero-demand slip-on is the correct eviction, got ${rosterNames}`)
+  assert.equal(roster.shoeReserveGaps, undefined, 'a 2-shoe quota comfortably covers hiking + elevated; no gap expected')
+})
+
+test('capsule shoe reserve without a demanding activity keeps today\'s elevated-only behavior', async () => {
+  const pool = seedShoeReserveFixture()
+  const slots = normalizePlanSlots([
+    { label: 'Smart Casual Dinner', occasion: 'smart casual', count: 1 },
+  ])
+  const roster = selectCapsuleRoster(pool, { budget: 10, occasions: slots.map(slot => slot.occasion), slots })
+  const rosterNames = roster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes').map(piece => piece.name)
+
+  assert.ok(rosterNames.includes('black wedge sandals'), `elevated reserve should still pick the wedge, got ${rosterNames}`)
+})
+
+test('capsule shoe reserve without an elevated demand keeps the Part 7 hiking-only behavior', async () => {
+  const pool = seedShoeReserveFixture()
+  const slots = normalizePlanSlots([
+    { label: 'Hike Day 1', occasion: 'casual', activity: 'hiking', count: 1 },
+    { label: 'Hike Day 2', occasion: 'casual', activity: 'hiking', count: 1 },
+  ])
+  const roster = selectCapsuleRoster(pool, { budget: 10, occasions: slots.map(slot => slot.occasion), slots })
+  const rosterNames = roster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes').map(piece => piece.name)
+
+  assert.ok(rosterNames.includes('grey athletic trail sneakers'), `hiking reserve should still pick the trail sneaker, got ${rosterNames}`)
+})
+
+test('an over-constrained shoe quota keeps the best assignment and discloses the coverage gap instead of silently dropping a demand', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  for (const name of ['white cotton tee', 'olive cotton tank', 'striped linen shirt']) {
+    insertPiece({ category: 'top', name, colors: ['white'], reads_as: 'capsule top', occasions: ['casual', 'city', 'smart casual', 'evening'], formality: 'everyday' })
+  }
+  for (const name of ['black cotton pants', 'linen wide-leg pants', 'denim straight jeans']) {
+    insertPiece({ category: 'bottom', name, colors: ['black'], reads_as: 'capsule bottom', occasions: ['casual', 'city', 'smart casual', 'evening'], formality: 'everyday' })
+  }
+  insertPiece({ category: 'dress', name: 'olive day dress', colors: ['olive'], reads_as: 'easy day dress', occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'outerwear', name: 'light cotton jacket', colors: ['navy'], reads_as: 'light casual jacket', occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'grey athletic trail sneakers', colors: ['grey'], reads_as: 'rugged trail sneakers', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'shoes', name: 'black wedge sandals', colors: ['black'], reads_as: 'polished wedge sandals', occasions: ['city', 'smart casual', 'evening'], formality: 'elevated', heel_height: 'high', walk_support: 'medium' })
+  insertPiece({ category: 'shoes', name: 'cream block heel mules', colors: ['cream'], reads_as: 'polished block heel mules', occasions: ['city', 'smart casual', 'evening'], formality: 'elevated', heel_height: 'high', walk_support: 'medium' })
+
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  // 1 hiking demand + 3 elevated-wanting slots (elevatedShoeLooks=3 -> required 2)
+  // against a 2-shoe quota: 3 distinct demand-slots can never fit in 2 shoes.
+  const slots = normalizePlanSlots([
+    { label: 'Hike Day 1', occasion: 'casual', activity: 'hiking', count: 1 },
+    { label: 'Hike Day 2', occasion: 'casual', activity: 'hiking', count: 1 },
+    { label: 'Smart Casual Brunch', occasion: 'smart casual', count: 1 },
+    { label: 'Gallery Visit', occasion: 'gallery / art event', count: 1 },
+    { label: 'Dinner Out', occasion: 'evening', count: 1 },
+  ])
+  const roster = selectCapsuleRoster(pool, { budget: 10, occasions: slots.map(slot => slot.occasion), slots })
+  const rosterShoes = roster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes')
+
+  assert.ok(rosterShoes.some(piece => piece.name === 'grey athletic trail sneakers'), `hiking is the narrower, single-shoe demand and should still be kept, got ${rosterShoes.map(piece => piece.name)}`)
+  assert.ok(rosterShoes.some(piece => piece.formality === 'elevated'), `at least one elevated shoe should still be kept as the best assignment, got ${rosterShoes.map(piece => piece.name)}`)
+  assert.ok(Array.isArray(roster.shoeReserveGaps) && roster.shoeReserveGaps.length, `an unfillable demand should be disclosed, not silently dropped, got ${JSON.stringify(roster.shoeReserveGaps)}`)
+  assert.match(roster.shoeReserveGaps[0], /\[missing wardrobe gap:.*dressy\/elevated look/)
+})
+
+test('capsule pool rejection names the curated roster, not "active", when the piece is genuinely a real wardrobe item', async () => {
+  const pool = seedShoeReserveFixture()
+  const slots = normalizePlanSlots([
+    { label: 'Smart Casual Dinner', occasion: 'smart casual', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces: pool, question: 'a 10-piece capsule', constraints: { piece_budget: 10 } })
+  const rosterIds = new Set(workbench.slots[0].allowed_piece_ids)
+  const outsideRosterPiece = pool.find(piece => !rosterIds.has(Number(piece.id)))
+  assert.ok(outsideRosterPiece, 'fixture needs at least one active piece the curated roster excluded')
+
+  const slot = workbench.pendingPlan.slots[0]
+  const anyRosterIds = idsForSlot(slot)
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(outsideRosterPiece.id), anyRosterIds.get('bottom'), anyRosterIds.get('shoes')],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.match(result.failures[0].reasons.join(' '), /outside this capsule's curated 10-piece roster/)
+  assert.doesNotMatch(result.failures[0].reasons.join(' '), /not an active wardrobe piece/)
+})
+
 test('selectCapsuleRoster reserves enough everyday-compatible pieces for repeated casual capsule demand', async () => {
   db.prepare("DELETE FROM pieces").run()
   for (const name of ['ivory silk shell', 'navy silk blouse', 'cream satin camisole']) {
@@ -1623,7 +1741,13 @@ test('warm-weather capsule uses the warm roster path and fills repeated beach/ci
   const cityLooks = toolContext.generatedOutfits.filter(outfit => outfit.label === 'Everyday City Outing')
   assert.equal(beachLooks.length, 2)
   assert.equal(cityLooks.length, 2)
-  assert.ok(!result.plan_lines.some(line => line.startsWith('[missing wardrobe gap:')), `warm-weather capsule should fill all requested slots, got ${JSON.stringify(result.plan_lines)}`)
+  // The seeded wardrobe's 3 shoes are all `everyday` — genuinely zero elevated
+  // pairs exist for this fixture's brunch/gallery/dinner demand, so the shoe
+  // reserve's new honest coverage-gap disclosure (Part 6) correctly fires
+  // here; it is not the "wardrobe can't fill a requested slot count" gap this
+  // assertion originally guarded against.
+  const nonShoeGaps = result.plan_lines.filter(line => line.startsWith('[missing wardrobe gap:') && !line.includes('shoe quota'))
+  assert.equal(nonShoeGaps.length, 0, `warm-weather capsule should fill all requested slots, got ${JSON.stringify(result.plan_lines)}`)
 })
 
 test('beach coastal slot prefers a washable beach dress and easy shoe in warm weather', async () => {
