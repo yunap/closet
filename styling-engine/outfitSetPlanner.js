@@ -1089,7 +1089,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // fabrication shape, zero mechanism — prose-vs-IDs consistency isn't
     // mechanically checkable without the keyword-matching this codebase has
     // repeatedly ruled out).
-    'The piece_ids ARE the outfit. If you change your mind while writing the reason, update piece_ids to match — never submit a reason describing pieces you did not include.'
+    'The piece_ids ARE the outfit. If you change your mind while writing the reason, update piece_ids to match — never submit a reason describing pieces you did not include.',
+    // Part 4 (spec 24): third confirmed occurrence of cardigan+shawl stacking
+    // on the same outfit. Stays a string — layer COUNT is judgment (a ski
+    // plan legitimately doubles up), unlike Part 1's packing count.
+    'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.'
   ].filter(Boolean).join(' ')
   return {
     status: 'slot_rosters',
@@ -1287,14 +1291,15 @@ function recordModelPlanUse(outfit = {}, usedPieceIds = new Set(), usedPieceIdsB
   }
 }
 
-export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = []) {
+export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set() } = {}) {
   const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
   const slotById = new Map(slots.map(slot => [slot.id, slot]))
   const planPiecesById = pendingPlan?.piecesById instanceof Map
     ? pendingPlan.piecesById
     : pieceMapForPieces(slots.flatMap(slot => slot.allowedPieces || []))
   const heldOutfits = Array.isArray(pendingPlan?.heldOutfits) ? pendingPlan.heldOutfits : []
-  const { noRepeat = new Set(), anchorIds = new Set(), pieceBudget = 0 } = pendingPlan?.constraints || {}
+  const { reuse: reuseMode = '', noRepeat = new Set(), anchorIds = new Set(), pieceBudget = 0 } = pendingPlan?.constraints || {}
+  const seenPieceIds = visuallySeenPieceIds instanceof Set ? visuallySeenPieceIds : new Set()
   const isEnforcedCapsule = pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
   const usedKeys = new Set(heldOutfits.map(outfit => tripOutfitKey(outfit)).filter(Boolean))
   const usedPieceIds = new Set()
@@ -1378,6 +1383,39 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [])
       if (repeatReason) reasons.push(repeatReason)
       const nextDistinctPieceCount = new Set([...usedPieceIds, ...outfitCategoryPairs(outfit).map(pair => pair.id)]).size
       if (pieceBudget > 0 && nextDistinctPieceCount > pieceBudget) reasons.push(`would exceed the ${pieceBudget}-piece budget`)
+      // Part 1 (spec 24, owner ruling: enforce): reuse:maximize is a packing
+      // directive, not a taste judgment — under-reuse means the directive
+      // wasn't followed. Only blocks a 3rd+ distinct pair when an
+      // already-used pair is gate-eligible for THIS slot (the activity
+      // exemption — a hiking slot's athletic shoe, a dressy slot's heels —
+      // falls out of gate eligibility with no activity-specific code). Never
+      // blocks the first or second distinct pair.
+      if (reuseMode === 'maximize') {
+        const shoePair = outfitCategoryPairs(outfit).find(pair => pair.group === 'shoes')
+        if (shoePair) {
+          const usedShoes = usedPieceIdsByCategory.get('shoes') || new Set()
+          if (!usedShoes.has(shoePair.id) && usedShoes.size >= 2) {
+            const eligibleUsedShoeIds = [...usedShoes].filter(id => gateAllowedIds.has(id))
+            if (eligibleUsedShoeIds.length) {
+              const names = eligibleUsedShoeIds.map(id => planPiecesById.get(id)?.name || `piece ${id}`).join(', ')
+              reasons.push(`this would be a 3rd pair of shoes under reuse:maximize — reuse one of: ${names} (they pass this slot's gates), or drop reuse:maximize if packing light isn't the goal.`)
+            }
+          }
+        }
+      }
+      // Part 3 (spec 24): parity with propose_outfit's founding-incident rule
+      // (layer pieces must be SEEN, not just verified) — submit_plan_outfits
+      // was the one composition path that escaped it, and it let a top get
+      // layered blind over a dress. Does not ban top-over-dress, only
+      // requires the model to have actually looked at both pieces first.
+      const dressPair = outfitCategoryPairs(outfit).find(pair => pair.group === 'dress')
+      const topPair = outfitCategoryPairs(outfit).find(pair => pair.group === 'top')
+      if (dressPair && topPair) {
+        const unseenIds = [dressPair.id, topPair.id].filter(id => !seenPieceIds.has(id))
+        if (unseenIds.length) {
+          reasons.push(`this outfit layers a top over a dress — call view_pieces on [${unseenIds.join(', ')}] first, then resubmit; layering is a sight-required decision.`)
+        }
+      }
     }
     if (reasons.length) {
       failures.push({ slot_id: slot.id, label, reasons })

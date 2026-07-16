@@ -1511,7 +1511,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const pendingPlan = toolContext.pendingPlan
         const submittedOutfits = Array.isArray(args?.outfits) ? args.outfits : []
-        const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits)
+        const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
+          visuallySeenPieceIds: toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+        })
         const alreadyHeld = Array.isArray(pendingPlan.heldOutfits) ? pendingPlan.heldOutfits : []
         const heldPlusAccepted = [...alreadyHeld, ...accepted]
         const countsBySlot = new Map()
@@ -1557,7 +1559,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "success",
             partial: true,
-            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText}`,
+            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.`,
             plan_lines: planLinesForResponse,
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,
@@ -1582,7 +1584,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
         return {
           status: "success",
-          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it.`,
+          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.`,
           plan_lines: planLinesForResponse,
           outfit_summaries: planOutfits.map(outfit => ({
             slot: outfit.label,
