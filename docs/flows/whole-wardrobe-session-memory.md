@@ -68,7 +68,6 @@ table:
 | ----------- | --------------- | ------------- |
 | Visual Composer "Use my wardrobe" / "Create outfits" | `POST /generate-wardrobe-outfits-visual` | Garment IDs and formula families from returned whole-wardrobe cards |
 | Lookbook saved outfit "Similar" wardrobe variants, plus adjacent follow-up variants | `POST /generate-saved-outfit-variants` | Garment IDs and formula families from the returned variant cards |
-| Freeform stylist chat outfit-planning / packing requests that pre-build cards | `/ask` pre-route via `maybePrecomposeStructuredOutfitsForAsk` | Garment IDs and formula families from the precomposed whole-wardrobe cards |
 
 The shared implementation is `generateWholeWardrobeOutfitsVisualInternal`; any
 flow that routes through it writes the same recent-memory row.
