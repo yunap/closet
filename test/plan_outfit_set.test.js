@@ -19,7 +19,7 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { STYLIST_TOOLS, executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics, sanitizePlanConstraintsForQuestion } = await import('../styling-engine/tools.js')
+const { STYLIST_TOOLS, executeTool, classifyPlanPath, classifyFollowupPath, recordPlanPathDiagnostics, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg } = await import('../styling-engine/tools.js')
 const { composeOutfitSet, normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
@@ -78,6 +78,45 @@ test('plan_outfit_set slot schema declares environment and requires activity', (
   assert.ok(schema.required.includes('activity'))
   const submitTool = STYLIST_TOOLS.find(entry => entry.name === 'submit_plan_outfits')
   assert.ok(submitTool, 'submit_plan_outfits tool must exist for model-composition mode')
+})
+
+// Part 3 (spec 18): the live bad call was `slots: "[ {...} ],\n\"location\":
+// \"Paso Robles, CA\", ..."` — the model flattened the WHOLE remaining args
+// object into the slots string instead of sending a real array.
+test('coercePlanOutfitSetSlotsArg recovers the verbatim live string into an array plus sibling keys', () => {
+  const rawSlots = '[ { "label": "City Day", "occasion": "city", "activity": "walking", "count": 1 } ],\n"location": "Paso Robles, CA", "date_range": {"start": "2026-08-01", "end": "2026-08-03"}'
+  const recovered = coercePlanOutfitSetSlotsArg(rawSlots)
+  assert.ok(recovered, 'the flattened live shape must recover')
+  assert.equal(recovered.slots.length, 1)
+  assert.equal(recovered.slots[0].label, 'City Day')
+  assert.equal(recovered.extra.location, 'Paso Robles, CA')
+  assert.deepEqual(recovered.extra.date_range, { start: '2026-08-01', end: '2026-08-03' })
+})
+
+test('coercePlanOutfitSetSlotsArg passes a proper array straight through untouched', () => {
+  assert.equal(coercePlanOutfitSetSlotsArg([{ label: 'City Day' }]), null, 'only strings are coerced; a real array is not this function\'s job')
+  const recovered = coercePlanOutfitSetSlotsArg('[{"label":"City Day","occasion":"city","activity":"none","count":1}]')
+  assert.ok(recovered)
+  assert.deepEqual(recovered.slots, [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }])
+  assert.deepEqual(recovered.extra, {})
+})
+
+test('coercePlanOutfitSetSlotsArg returns null for an unrecoverable string', () => {
+  assert.equal(coercePlanOutfitSetSlotsArg('not json at all'), null)
+  assert.equal(coercePlanOutfitSetSlotsArg('{"not":"an array"}'), null)
+})
+
+test('plan_outfit_set recovers a flattened-string slots arg end to end and lets an explicitly-passed arg win over the recovered sibling', async () => {
+  const rawSlots = '[ { "label": "City Day", "occasion": "city", "activity": "walking", "count": 1 } ],\n"location": "Paso Robles, CA"'
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city day outfit' }
+  const result = await executeTool('plan_outfit_set', {
+    slots: rawSlots,
+    location: 'Cambria, CA' // explicitly passed — must win over the recovered "Paso Robles, CA"
+  }, toolContext)
+
+  assert.notEqual(result.status, 'validation_error', `expected the string to recover into slots, got ${JSON.stringify(result)}`)
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.equal(toolContext.generatedOutfits[0].label, 'City Day')
 })
 
 function idsForSlot(slot = {}, offset = 0) {
