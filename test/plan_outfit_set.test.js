@@ -25,6 +25,13 @@ const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
 
+// db.js's `dotenv/config` import (triggered above) fills in any env var not
+// already set by this file — including WARDROBE_PLAN_COMPOSE from a local
+// .env left in model mode for live testing. Force a known baseline so this
+// suite's engine-mode tests are hermetic regardless of the developer's local
+// environment; tests that specifically want model mode still set it themselves.
+delete process.env.WARDROBE_PLAN_COMPOSE
+
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
 
