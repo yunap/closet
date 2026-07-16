@@ -156,6 +156,18 @@ not keyword-guessed.
   `applyFreeformOutputChecks`) when live evidence shows thread-state-informed
   judgment holds. The code history is explicit that prompt guidance alone
   failed before — require evidence, not vibes.
+  **tripScope — DONE (2026-07-15, spec 18 Part 2), evidence-backed.** The
+  Apple-skirt live incident was stronger than "proved unnecessary": the model
+  had already produced a well-scoped, fully valid 3-card answer (anchor
+  viewed large, searched, 3 valid anchored cards), and the clause blocked it
+  anyway on a keyword miss ("weekend" = multi-day, only one use-case keyword
+  matched), forcing a fake clarifying question displayed ABOVE the three
+  finished cards. `tripScopeClarificationEnabled()` (`styling-engine/
+  provider.js`) now gates the clause behind `WARDROBE_TRIP_SCOPE_CLARIFICATION
+  =on`, off by default — same reversible-flag pattern as
+  `followupPrerouteEnabled`. `tripRequestNeedsScopeClarification` itself stays
+  exported/tested; only the enforcement retired. **destination — still
+  pending evidence**, no misfire observed yet; stays live.
 - **Volatile prompt tail** (~10.4k tokens: feedback memory, controller text) is
   a future cache/size optimization candidate.
 - ~~Known pre-existing failure: `npm test`'s text-matching ratchet fails on two
