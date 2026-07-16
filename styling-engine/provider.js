@@ -662,6 +662,16 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           }
         }))
       })
+      if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
+        const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+        console.log('[OpenAI Tool Loop Usage]', {
+          iter,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cacheReadInputTokens: usage.cacheReadInputTokens,
+          cacheCreationInputTokens: usage.cacheCreationInputTokens
+        })
+      }
 
       const message = response.choices?.[0]?.message
       if (!message) return { answer: '', savedCorrections }
@@ -751,11 +761,6 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           const name = tu.name
           const args = tu.input
           const result = await executeTool(name, args, toolContext)
-          if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
-            const summary = { status: result?.status, message: result?.message }
-            if (result?.failures) summary.failures = result.failures
-            console.log(`🧾 [Agent Tool Result] ${name}`, JSON.stringify(summary, null, 2))
-          }
           if (name === 'store_user_correction') {
             savedCorrections.push(args)
           }
@@ -774,7 +779,6 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
               contentBlocks.push({ type: 'text', text: img.label })
               contentBlocks.push({
                 type: 'image',
-                detail: 'low',
                 source: {
                   type: 'base64',
                   media_type: img.mime,
