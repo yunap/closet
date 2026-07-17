@@ -1016,6 +1016,16 @@ function getLinkedPiecesForOutfit(outfitId) {
 }
 
 
+// Spec 25 Part 2: rows written by store_user_correction (feedback_type
+// 'owner_rule' going forward; the legacy 'preference_reaction'/'message' rows
+// written before this spec are still owner rules — no migration, same
+// selector). Kept as a plain predicate so getStylistFeedbackMemory and the
+// plan-workbench delivery path (getOwnerRuleNotes) select identically.
+function isOwnerRuleRow(row = {}) {
+  return row.feedback_type === 'owner_rule' ||
+    (row.feedback_type === 'preference_reaction' && row.target_type === 'message')
+}
+
 export function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 16) {
   try {
     const clauses = []
@@ -1031,20 +1041,67 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
     `).all(...params, Number(limit))
 
     if (!rows.length) return ''
-    return rows.map(r => {
+
+    // Spec 25 Part 2/3: owner rules are standing instructions the model must
+    // apply everywhere; reaction history is taste feedback scoped to the
+    // board/context it was given on. Rendering them under the same flat list
+    // (the pre-spec-25 shape) let a stored office/client rule read as just
+    // another reaction crumb and get out-competed by an unrelated praise
+    // corpus. Owner rules always sort to the top, under their own
+    // sub-header, severed from the scoped-reaction section below.
+    const ownerRuleLines = []
+    const reactionLines = []
+    for (const r of rows) {
+      if (isOwnerRuleRow(r)) {
+        ownerRuleLines.push(`- OWNER RULE: ${String(r.note || '').trim().slice(0, 280)}`)
+        continue
+      }
       const target = r.target_type ? `${r.target_type}` : 'item'
       const label = r.label ? ` — ${r.label}` : ''
       const note = r.note ? `: ${String(r.note).slice(0, 280)}` : ''
       if (r.feedback_type === 'wrong_silhouette') {
-        return `- wrong_silhouette on ${target}${label}${note} — scoped to this selected garment/board; do NOT globally avoid this silhouette family.`
+        reactionLines.push(`- wrong_silhouette on ${target}${label}${note} — scoped to this selected garment/board; do NOT globally avoid this silhouette family.`)
+        continue
       }
       if (r.feedback_type === 'wrong_proportions' || r.feedback_type === 'proportion_problem') {
-        return `- ${r.feedback_type} on ${target}${label}${note} — scoped to this selected garment/board; do NOT treat as a universal proportion rule.`
+        reactionLines.push(`- ${r.feedback_type} on ${target}${label}${note} — scoped to this selected garment/board; do NOT treat as a universal proportion rule.`)
+        continue
       }
-      return `- ${r.feedback_type} on ${target}${label}${note}`
-    }).join('\n')
+      reactionLines.push(`- ${r.feedback_type} on ${target}${label}${note}`)
+    }
+
+    const sections = []
+    if (ownerRuleLines.length) {
+      sections.push(`Owner rules (standing, apply them):\n${ownerRuleLines.join('\n')}`)
+    }
+    if (reactionLines.length) {
+      sections.push(`Saved reactions (scoped to the named board/context they were given on — taste signals, not global directives):\n${reactionLines.join('\n')}`)
+    }
+    return sections.join('\n\n')
   } catch {
     return ''
+  }
+}
+
+// Spec 25 Part 2: the plan workbench (the one place composition-time context
+// actually gets obeyed — every existing plan instruction lives there, ~40k
+// tokens closer to the model's attention than the system-prompt tail) needs
+// the same owner-rule rows as plain notes, newest first, capped small so the
+// workbench doesn't balloon. Deterministic string pass-through — these
+// remain prompt guidance, never a mechanical gate (the #44 memory-pollution
+// lesson: stored text must never get absolute mechanical authority).
+export function getOwnerRuleNotes(limit = 8) {
+  try {
+    const rows = db.prepare(`
+      SELECT note FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0
+        AND (feedback_type = 'owner_rule' OR (feedback_type = 'preference_reaction' AND target_type = 'message'))
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(Number(limit))
+    return rows.map(r => String(r.note || '').trim()).filter(Boolean)
+  } catch {
+    return []
   }
 }
 

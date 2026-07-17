@@ -993,7 +993,7 @@ function modelPlanPool({ allPieces = [], slots = [], constraints = {}, question 
     : allPieces
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', fetchImpl } = {}) {
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', fetchImpl, ownerRules = [] } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const composePool = modelPlanPool({ allPieces, slots, constraints, question, mood })
   const piecesById = pieceMapForPieces(composePool)
@@ -1093,7 +1093,17 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // Part 4 (spec 24): third confirmed occurrence of cardigan+shawl stacking
     // on the same outfit. Stays a string — layer COUNT is judgment (a ski
     // plan legitimately doubles up), unlike Part 1's packing count.
-    'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.'
+    'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.',
+    // Part 2 (spec 25): a stored owner rule (e.g. "office/client days:
+    // structured silhouettes, no maxi skirts or shawls") was present in the
+    // system-prompt tail but got out-composed by an unrelated praise corpus
+    // sitting in the same flat feedback list, ~40k tokens further from
+    // composition-time attention than this workbench. Deterministic
+    // pass-through of the same rows getStylistFeedbackMemory renders under
+    // "Owner rules" — still prompt guidance, never a mechanical gate (#44).
+    Array.isArray(ownerRules) && ownerRules.length
+      ? `OWNER RULES — apply to every outfit you compose: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
+      : ''
   ].filter(Boolean).join(' ')
   return {
     status: 'slot_rosters',

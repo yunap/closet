@@ -240,6 +240,30 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(STYLIST_SYSTEM.includes('do not call \'propose_outfit\' for an incomplete outfit using missing_gaps as a shoe substitute'))
 })
 
+// Spec 25 Part 1: re-homes the deleted pieceOfficePolishScore/office-register
+// scorer's knowledge as prompt doctrine — professional contexts default to
+// quiet, low-print styling. Wording judged against the #68/#86 owner rulings:
+// constrains print COUNT and CONTEXT, never bans a print by name, and says
+// nothing about hemlines (the maxi-skirt/shawl rule is the owner's own stored
+// rule, delivered via Part 2's workbench mechanism, not hard-coded here).
+test('stylist prompt has professional-context competence as a system-side default', () => {
+  assert.ok(STYLIST_SYSTEM.includes('Professional and work contexts (office days, client meetings, presentations) default to quiet, structured, low-print styling'))
+  assert.ok(STYLIST_SYSTEM.includes('at most ONE bold print per outfit as a deliberate accent'))
+  assert.ok(STYLIST_SYSTEM.includes('every accessory\'s register must match the outfit\'s register'))
+  assert.ok(STYLIST_SYSTEM.includes('Save artisan, botanical, and statement styling for social contexts'))
+  assert.ok(STYLIST_SYSTEM.includes('This is the default, not a rule the user must state'))
+  // Judged wording (#68/#86 owner rulings): constrains print count/context,
+  // never bans a specific print by name, and never hard-codes the owner's
+  // own maxi-skirt/shawl rule (that's her stored rule, Part 2's job).
+  const bullet = 'Professional and work contexts (office days, client meetings, presentations) default to quiet, structured, low-print styling: solid or subtle pieces lead, at most ONE bold print per outfit as a deliberate accent, and every accessory\'s register must match the outfit\'s register (no dressy shawls or statement wraps over casual pieces at work). Save artisan, botanical, and statement styling for social contexts — dinners, galleries, weekends — unless the user asks for it at work. This is the default, not a rule the user must state.'
+  assert.ok(STYLIST_SYSTEM.includes(bullet))
+  assert.ok(!/\bhemline\b/i.test(bullet), 'must not hard-code the owner\'s own hemline (maxi-skirt) rule')
+  assert.ok(!/\bmaxi\b/i.test(bullet), 'must not hard-code "maxi" — that is the owner\'s stored rule, not system doctrine')
+  for (const printName of ['floral', 'paisley', 'animal print', 'polka dot', 'stripe']) {
+    assert.ok(!bullet.toLowerCase().includes(printName), `bullet must not ban a specific print by name, found "${printName}"`)
+  }
+})
+
 test('StylistChat carries generated styling context into ask requests', () => {
   const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
   const content = fs.readFileSync(chatPath, 'utf8')
