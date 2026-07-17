@@ -25,15 +25,6 @@ const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
 
-// db.js's `dotenv/config` import (triggered above) fills in any env var not
-// already set by this file — including WARDROBE_PLAN_COMPOSE from a local
-// .env left in model mode for live testing. Force a known baseline so this
-// suite's engine-mode tests are hermetic regardless of the developer's local
-// environment or the process-wide default (spec 19 Part 4 flipped the
-// default to 'model'); tests that specifically want model mode still set it
-// themselves via the previousMode save/restore pattern below.
-process.env.WARDROBE_PLAN_COMPOSE = 'engine'
-
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
 
@@ -154,68 +145,54 @@ function idsForSlot(slot = {}, offset = 0) {
 }
 
 test('plan_outfit_set model mode returns slot rosters and submit_plan_outfits creates cards', async () => {
-  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
-  process.env.WARDROBE_PLAN_COMPOSE = 'model'
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'model mode cotton top', occasions: ['city', 'casual'], formality: 'everyday' })
   insertPiece({ category: 'bottom', name: 'model mode cotton pants', occasions: ['city', 'casual'], formality: 'everyday' })
   insertPiece({ category: 'shoes', name: 'model mode walking shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
-  try {
-    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city day outfit' }
-    const workbench = await executeTool('plan_outfit_set', {
-      slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
-    }, toolContext)
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city day outfit' }
+  const workbench = await executeTool('plan_outfit_set', {
+    slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
 
-    assert.equal(workbench.status, 'slot_rosters')
-    assert.equal(toolContext.pendingPlan?.mode, 'model')
-    assert.ok(workbench.piece_catalog.some(line => /ID \d+/.test(line)))
-    assert.ok(workbench.slots[0].allowed_piece_ids.length > 0)
-    assert.equal(workbench.slots[0].allowed_pieces, undefined)
+  assert.equal(workbench.status, 'slot_rosters')
+  assert.equal(toolContext.pendingPlan?.mode, 'model')
+  assert.ok(workbench.piece_catalog.some(line => /ID \d+/.test(line)))
+  assert.ok(workbench.slots[0].allowed_piece_ids.length > 0)
+  assert.equal(workbench.slots[0].allowed_pieces, undefined)
 
-    const ids = idsForSlot(toolContext.pendingPlan.slots[0])
-    const submitted = await executeTool('submit_plan_outfits', {
-      outfits: [{
-        slot_id: toolContext.pendingPlan.slots[0].id,
-        piece_ids: [ids.get('top'), ids.get('bottom'), ids.get('shoes')],
-        title: 'Model Picked City Day',
-        reason: 'A simple complete city formula.'
-      }]
-    }, toolContext)
+  const ids = idsForSlot(toolContext.pendingPlan.slots[0])
+  const submitted = await executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: toolContext.pendingPlan.slots[0].id,
+      piece_ids: [ids.get('top'), ids.get('bottom'), ids.get('shoes')],
+      title: 'Model Picked City Day',
+      reason: 'A simple complete city formula.'
+    }]
+  }, toolContext)
 
-    assert.equal(submitted.status, 'success')
-    assert.equal(toolContext.pendingPlan, null)
-    assert.equal(toolContext.source, 'plan_outfit_set')
-    assert.equal(toolContext.sourceLocked, true)
-    assert.equal(toolContext.generatedOutfits.length, 1)
-    assert.equal(toolContext.generatedOutfits[0].source, 'plan_outfit_set')
-    assert.equal(toolContext.generatedOutfits[0].composedBy, 'model')
-    assert.equal(toolContext.generatedOutfits[0].label, 'City Day')
-  } finally {
-    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
-    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
-  }
+  assert.equal(submitted.status, 'success')
+  assert.equal(toolContext.pendingPlan, null)
+  assert.equal(toolContext.source, 'plan_outfit_set')
+  assert.equal(toolContext.sourceLocked, true)
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.equal(toolContext.generatedOutfits[0].source, 'plan_outfit_set')
+  assert.equal(toolContext.generatedOutfits[0].composedBy, 'model')
+  assert.equal(toolContext.generatedOutfits[0].label, 'City Day')
 })
 
 // --- Mode default flip (spec 19 Part 4) ----------------------------------------
 
 test('plan_outfit_set defaults to model mode with no WARDROBE_PLAN_COMPOSE set', async () => {
-  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
-  delete process.env.WARDROBE_PLAN_COMPOSE
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'default mode top', occasions: ['city', 'casual'], formality: 'everyday' })
   insertPiece({ category: 'bottom', name: 'default mode pants', occasions: ['city', 'casual'], formality: 'everyday' })
   insertPiece({ category: 'shoes', name: 'default mode shoes', occasions: ['city', 'casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
-  try {
-    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city day outfit' }
-    const workbench = await executeTool('plan_outfit_set', {
-      slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
-    }, toolContext)
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city day outfit' }
+  const workbench = await executeTool('plan_outfit_set', {
+    slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
 
-    assert.equal(workbench.status, 'slot_rosters', 'no env var set should default to model mode')
-  } finally {
-    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
-    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
-  }
+  assert.equal(workbench.status, 'slot_rosters', 'no env var set should default to model mode')
 })
 
 test('model plan slot workbench reports suppressed pieces from the generation gates', async () => {
@@ -598,8 +575,6 @@ test('assembleSubmittedPlanOutfits reports model validation shortfalls as submit
 })
 
 test('submit_plan_outfits merges validation failures and holds accepted outfits for resubmit', async () => {
-  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
-  process.env.WARDROBE_PLAN_COMPOSE = 'model'
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'held top one', occasions: ['city', 'casual'] })
   insertPiece({ category: 'bottom', name: 'held bottom one', occasions: ['city', 'casual'] })
@@ -607,48 +582,41 @@ test('submit_plan_outfits merges validation failures and holds accepted outfits 
   insertPiece({ category: 'top', name: 'held top two', occasions: ['casual', 'city'] })
   insertPiece({ category: 'bottom', name: 'held bottom two', occasions: ['casual', 'city'] })
   insertPiece({ category: 'shoes', name: 'held shoes two', occasions: ['casual', 'city'], heel_height: 'flat', walk_support: 'high' })
-  try {
-    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'two simple outfits' }
-    await executeTool('plan_outfit_set', {
-      slots: [
-        { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
-        { label: 'Casual Day', occasion: 'casual', activity: 'none', count: 1 }
-      ]
-    }, toolContext)
-    const firstSlot = toolContext.pendingPlan.slots[0]
-    const secondSlot = toolContext.pendingPlan.slots[1]
-    const firstIds = idsForSlot(firstSlot)
-    const secondIds = idsForSlot(secondSlot, 1)
-    const invalid = await executeTool('submit_plan_outfits', {
-      outfits: [
-        { slot_id: firstSlot.id, piece_ids: [firstIds.get('top'), firstIds.get('bottom'), firstIds.get('shoes')] },
-        { slot_id: secondSlot.id, piece_ids: [secondIds.get('top'), 999999] }
-      ]
-    }, toolContext)
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'two simple outfits' }
+  await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
+      { label: 'Casual Day', occasion: 'casual', activity: 'none', count: 1 }
+    ]
+  }, toolContext)
+  const firstSlot = toolContext.pendingPlan.slots[0]
+  const secondSlot = toolContext.pendingPlan.slots[1]
+  const firstIds = idsForSlot(firstSlot)
+  const secondIds = idsForSlot(secondSlot, 1)
+  const invalid = await executeTool('submit_plan_outfits', {
+    outfits: [
+      { slot_id: firstSlot.id, piece_ids: [firstIds.get('top'), firstIds.get('bottom'), firstIds.get('shoes')] },
+      { slot_id: secondSlot.id, piece_ids: [secondIds.get('top'), 999999] }
+    ]
+  }, toolContext)
 
-    assert.equal(invalid.status, 'validation_error')
-    assert.equal(invalid.held_count, 1)
-    assert.match(invalid.message, /not an active wardrobe piece for this plan/)
-    assert.equal(toolContext.pendingPlan.heldOutfits.length, 1)
-    assert.equal(toolContext.freeformDiagnostics.submitPlanValidationFails, 1)
+  assert.equal(invalid.status, 'validation_error')
+  assert.equal(invalid.held_count, 1)
+  assert.match(invalid.message, /not an active wardrobe piece for this plan/)
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 1)
+  assert.equal(toolContext.freeformDiagnostics.submitPlanValidationFails, 1)
 
-    const fixed = await executeTool('submit_plan_outfits', {
-      outfits: [
-        { slot_id: secondSlot.id, piece_ids: [secondIds.get('top'), secondIds.get('bottom'), secondIds.get('shoes')] }
-      ]
-    }, toolContext)
+  const fixed = await executeTool('submit_plan_outfits', {
+    outfits: [
+      { slot_id: secondSlot.id, piece_ids: [secondIds.get('top'), secondIds.get('bottom'), secondIds.get('shoes')] }
+    ]
+  }, toolContext)
 
-    assert.equal(fixed.status, 'success')
-    assert.equal(toolContext.generatedOutfits.length, 2)
-  } finally {
-    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
-    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
-  }
+  assert.equal(fixed.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 2)
 })
 
 test('submit_plan_outfits reports missing slots together with other validation failures', async () => {
-  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
-  process.env.WARDROBE_PLAN_COMPOSE = 'model'
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'roundtrip top one', occasions: ['city', 'casual'] })
   insertPiece({ category: 'bottom', name: 'roundtrip bottom one', occasions: ['city', 'casual'] })
@@ -656,60 +624,48 @@ test('submit_plan_outfits reports missing slots together with other validation f
   insertPiece({ category: 'top', name: 'roundtrip top two', occasions: ['city', 'casual'] })
   insertPiece({ category: 'bottom', name: 'roundtrip bottom two', occasions: ['city', 'casual'] })
   insertPiece({ category: 'shoes', name: 'roundtrip shoes two', occasions: ['city', 'casual'], heel_height: 'flat', walk_support: 'high' })
-  try {
-    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'three simple outfits' }
-    await executeTool('plan_outfit_set', {
-      slots: [
-        { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
-        { label: 'Coastal Day', occasion: 'casual', activity: 'none', count: 1 },
-        { label: 'Winery Day', occasion: 'city', activity: 'walking', count: 2 },
-      ]
-    }, toolContext)
-    const citySlot = toolContext.pendingPlan.slots.find(slot => slot.label === 'City Day')
-    const coastalSlot = toolContext.pendingPlan.slots.find(slot => slot.label === 'Coastal Day')
-    const cityIds = idsForSlot(citySlot)
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'three simple outfits' }
+  await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
+      { label: 'Coastal Day', occasion: 'casual', activity: 'none', count: 1 },
+      { label: 'Winery Day', occasion: 'city', activity: 'walking', count: 2 },
+    ]
+  }, toolContext)
+  const citySlot = toolContext.pendingPlan.slots.find(slot => slot.label === 'City Day')
+  const coastalSlot = toolContext.pendingPlan.slots.find(slot => slot.label === 'Coastal Day')
+  const cityIds = idsForSlot(citySlot)
 
-    const invalid = await executeTool('submit_plan_outfits', {
-      outfits: [
-        { slot_id: citySlot.id, piece_ids: [cityIds.get('top'), cityIds.get('bottom'), cityIds.get('shoes')] },
-        { slot_id: coastalSlot.id, piece_ids: [999999] }
-      ]
-    }, toolContext)
+  const invalid = await executeTool('submit_plan_outfits', {
+    outfits: [
+      { slot_id: citySlot.id, piece_ids: [cityIds.get('top'), cityIds.get('bottom'), cityIds.get('shoes')] },
+      { slot_id: coastalSlot.id, piece_ids: [999999] }
+    ]
+  }, toolContext)
 
-    assert.equal(invalid.status, 'validation_error')
-    assert.ok(invalid.failures.some(failure => failure.label === 'Coastal Day'), `expected coastal failure, got ${JSON.stringify(invalid.failures)}`)
-    const missing = invalid.failures.find(failure => failure.label === 'Missing slots')
-    assert.ok(missing, `missing slots should be merged with other failures, got ${JSON.stringify(invalid.failures)}`)
-    assert.ok(missing.reasons.some(reason => /Winery Day still needs 2 outfits/.test(reason)), `expected winery shortfall in same response, got ${missing.reasons}`)
-  } finally {
-    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
-    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
-  }
+  assert.equal(invalid.status, 'validation_error')
+  assert.ok(invalid.failures.some(failure => failure.label === 'Coastal Day'), `expected coastal failure, got ${JSON.stringify(invalid.failures)}`)
+  const missing = invalid.failures.find(failure => failure.label === 'Missing slots')
+  assert.ok(missing, `missing slots should be merged with other failures, got ${JSON.stringify(invalid.failures)}`)
+  assert.ok(missing.reasons.some(reason => /Winery Day still needs 2 outfits/.test(reason)), `expected winery shortfall in same response, got ${missing.reasons}`)
 })
 
 test('propose_outfit redirects while a model-mode pending plan awaits submission', async () => {
-  const previousMode = process.env.WARDROBE_PLAN_COMPOSE
-  process.env.WARDROBE_PLAN_COMPOSE = 'model'
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'redirect top', occasions: ['city'] })
   const bottomId = insertPiece({ category: 'bottom', name: 'redirect bottom', occasions: ['city'] })
   const shoesId = insertPiece({ category: 'shoes', name: 'redirect shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
-  try {
-    const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city outfit', retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
-    await executeTool('plan_outfit_set', {
-      slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
-    }, toolContext)
-    const result = await executeTool('propose_outfit', {
-      label: 'Wrong path',
-      pieces: [{ id: topId, role: 'primary_top' }, { id: bottomId, role: 'primary_bottom' }, { id: shoesId, role: 'shoes' }]
-    }, toolContext)
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'one city outfit', retrievedPieceIds: new Set([topId, bottomId, shoesId]) }
+  await executeTool('plan_outfit_set', {
+    slots: [{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
+  const result = await executeTool('propose_outfit', {
+    label: 'Wrong path',
+    pieces: [{ id: topId, role: 'primary_top' }, { id: bottomId, role: 'primary_bottom' }, { id: shoesId, role: 'shoes' }]
+  }, toolContext)
 
-    assert.equal(result.status, 'validation_error')
-    assert.match(result.message, /submit_plan_outfits/)
-  } finally {
-    if (previousMode === undefined) delete process.env.WARDROBE_PLAN_COMPOSE
-    else process.env.WARDROBE_PLAN_COMPOSE = previousMode
-  }
+  assert.equal(result.status, 'validation_error')
+  assert.match(result.message, /submit_plan_outfits/)
 })
 
 // --- Partial re-plan must merge, not destroy (spec 23 Part 1, P0) ------------

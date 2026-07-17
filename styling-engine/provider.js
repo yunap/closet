@@ -2,7 +2,6 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { STYLIST_SYSTEM } from './prompts.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
-import { tripRequestNeedsScopeClarification } from './stylingIntent.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
 // waiting. If the model's final answer then describes that exact query text as a real, ownable
@@ -18,23 +17,6 @@ export function findZeroResultContradiction(answerText = '', toolContext = {}) {
     if (normalizedQuery.length >= 6 && normalizedAnswer.includes(normalizedQuery)) return rawQuery
   }
   return null
-}
-
-// Gate for the tripScopeClarification clause — RETIRED by default as of the
-// 2026-07-15 owner ruling. Live evidence: an "Apple skirt" long-weekend-city
-// trip turn was well-scoped (anchor viewed large, searched, 3 valid anchored
-// cards composed), but the clause's keyword match ("weekend" = multi-day,
-// only one use-case keyword matched) blocked the finished answer anyway,
-// forcing a fake clarifying question ("You're right — I jumped ahead...")
-// displayed ABOVE the three already-finished cards, addressed to the
-// validator as if the user had complained. This is stronger than "proved
-// unnecessary" — it actively vandalized a turn that went right. The
-// destinationClarification clause has no such misfire evidence and stays
-// live. Set WARDROBE_TRIP_SCOPE_CLARIFICATION=on to restore this clause as a
-// reversible fallback. Read at call time, not module load, so it can be
-// flipped without a restart.
-export function tripScopeClarificationEnabled() {
-  return process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION === 'on'
 }
 
 // Spec 3 Part 0a: outfit-shaped prose (a title followed by labeled slot lines) with zero
@@ -110,11 +92,12 @@ export function looksLikeDestinationOrWeatherQuestion(answerText = '') {
 // described in prose. Live testing found that reconstruction step itself was the problem — the model
 // sometimes substituted a different-but-plausible piece for one it wasn't anchored to, instead of a
 // true re-render. Root cause traced further: the legacy client-side prose parser
-// (parseStructuredOutfitsFromAssistantText in StylistChat.jsx) that used to build cards locally from
-// plain-text outfit descriptions only matches the old pre-propose_outfit "### Outfit N" + "**Pieces**:
-// A + B + C" format — STYLIST_SYSTEM has explicitly told the model NOT to write that format since the
-// propose_outfit migration, so that fallback silently never fires against current prose. There is no
-// reliable local reconstruction path anymore. The actual fix is upstream: make the model call
+// (StylistChat.jsx's parseStructuredOutfitsFromAssistantText, deleted in spec 21 Part 4) that used to
+// build cards locally from plain-text outfit descriptions only matched the old pre-propose_outfit
+// "### Outfit N" + "**Pieces**: A + B + C" format — STYLIST_SYSTEM has explicitly told the model NOT to
+// write that format since the propose_outfit migration, so that fallback had silently stopped firing
+// against current prose well before it was removed. There is no reliable local reconstruction path
+// anymore. The actual fix is upstream: make the model call
 // propose_outfit on the FIRST turn, every time it's describing an outfit, so there's nothing to
 // reconstruct later. This hardens the existing looksLikeUnproposedOutfitProse signal (previously a
 // spec-3 soft flag only) into a hard block — same "don't trust the model's self-report, verify
@@ -169,16 +152,14 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
     }
   }
 
-  // ── context (legacy clarification clauses — retire candidates) ──────────
-  // Per the proposed architecture these should become the model's own judgment
+  // ── context (legacy clarification clause — retire candidate) ────────────
+  // Per the proposed architecture this should become the model's own judgment
   // informed by THREAD STATE. Kept mechanical until live evidence shows the
-  // prompt-level judgment holds — the history here is explicit that prompt
-  // guidance alone failed before (2026-07-10 trip-scope live test).
-  if (tripScopeClarificationEnabled() && !retried.has('tripScopeClarification') && tripRequestNeedsScopeClarification(toolContext?.question) &&
-      ((toolContext?.freeformDiagnostics?.searchCalls || 0) > 0 || (toolContext?.freeformDiagnostics?.proposeCalls || 0) > 0)) {
-    return fail('tripScopeClarification', 'tripScopeClarificationRetries',
-      "This is a multi-day trip without enough activity/use-case scope, but you already searched or composed outfits before confirming what the trip needs to cover. Stop composing. Ask directly what activities or use cases to plan for — for example city walking, casual daytime, dinners, hiking/outdoors, anything dressier — before proposing garments this turn.")
-  }
+  // prompt-level judgment holds. The sibling tripScopeClarification clause was
+  // retired outright in spec 21 Part 3 (spec 18 Part 2's flag window closed on
+  // owner ruling — the model repeatedly demonstrated the judgment the clause
+  // distrusted, with no misfire evidence for this one to justify keeping it
+  // mechanical too). This clause has no such misfire evidence and stays live.
   if (!retried.has('destinationClarification') && (toolContext?.freeformDiagnostics?.searchCalls || 0) === 0 && looksLikeDestinationOrWeatherQuestion(answerText)) {
     return fail('destinationClarification', 'destinationClarificationRetries',
       "You asked about weather or destination without calling search_wardrobe first. If this message names any real place or specific occasion (even one word — a city, region, venue, or event), call search_wardrobe with that as `location` and proceed to propose an outfit. Only ask again if you genuinely cannot identify any destination or occasion in the request.")

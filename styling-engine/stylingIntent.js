@@ -73,38 +73,6 @@ export function travelRequestCanResolveWeatherLive(text = '', occasion = '') {
   return Boolean(hasSpecificOccasionOrActivity)
 }
 
-const TRIP_ACTIVITY_OR_USE_CASE_PATTERNS = [
-  /\b(walk|walking|explor\w*|sightseeing|tour)\b/,
-  /\b(hik\w*|trail|outdoors?|outdoor)\b/,
-  /\b(ski\w*|snowboard\w*)\b/,
-  /\b(camp\w*|backpack\w*)\b/,
-  /\b(climb\w*|kayak\w*|surf\w*|bik\w*|cycl\w*)\b/,
-  /\b(dinner|evening|restaurant|date night)\b/,
-  /\b(museum|gallery|art)\b/,
-  /\b(brunch|lunch)\b/,
-  /\b(shopping|shop)\b/,
-  /\b(event|wedding|party)\b/,
-  /\b(meeting|conference|work|business)\b/,
-  /\b(drinks|bar|concert|show|theater)\b/,
-  /\b(wine|winery)\b/,
-  /\b(beach|pool|spa)\b/
-]
-
-// 2026-07-10: trip packing needs activity/use-case scope before garments. A destination and live
-// weather are enough to resolve climate, but not enough to decide between city walking, restaurants,
-// hiking, beach, work, etc. Multi-day trips with no use cases, or only one use case, should ask what
-// else is planned before composing a packing set.
-export function tripRequestNeedsScopeClarification(text = '') {
-  const q = String(text || '').toLowerCase()
-  if (!q.trim()) return false
-  const isMultiDay = /\b(weekend|week-?long|multi-?day|several days|a few days|\d+\s*-?\s*days?)\b/.test(q) // ratchet-allow: user intent routing words, not garment matching
-  if (!isMultiDay) return false
-  const useCaseCount = TRIP_ACTIVITY_OR_USE_CASE_PATTERNS.reduce((count, pattern) => (
-    pattern.test(q) ? count + 1 : count // ratchet-allow: trip scope intent counting, not garment matching
-  ), 0)
-  return useCaseCount < 2
-}
-
 export function normalizeStylingIntent({ occasion, season, mood, mission } = {}) {
   return {
     occasion: normalizeOccasion(occasion),

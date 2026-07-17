@@ -51,8 +51,7 @@ import {
   extractWeatherContext,
   isTravelOrPackingRequest,
   normalizeActivity,
-  normalizeOccasion,
-  tripRequestNeedsScopeClarification
+  normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
 
 import {

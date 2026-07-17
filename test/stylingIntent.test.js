@@ -15,7 +15,6 @@ import {
   normalizeMission,
   normalizeOccasion,
   normalizeStylingIntent,
-  tripRequestNeedsScopeClarification,
   travelRequestCanResolveWeatherLive
 } from '../styling-engine/stylingIntent.js'
 
@@ -272,44 +271,6 @@ test('StylistChat carries generated styling context into ask requests', () => {
   assert.ok((content.match(/stylingContext:\s*\{/g) || []).length >= 3, 'generated outfit thread memory should store stylingContext')
   assert.ok((content.match(/\.\.\.stylingContextFromMemory\(threadMemory/g) || []).length >= 3, 'ask requests should include carried styling context')
   assert.ok(!content.includes('activity: activeContext?.type === \'piece\' ? generateActivity : wardrobeOutfitActivity'), 'general ask body should reconcile activity through stylingContext')
-})
-
-// 2026-07-10: a multi-day trip needs activities/use cases before the system can safely compose
-// outfits or a packing set. Destination and weather resolve climate, not itinerary scope.
-test('tripRequestNeedsScopeClarification flags multi-day trips with missing or thin activity scope', () => {
-  assert.equal(
-    tripRequestNeedsScopeClarification('Going to Fairfax, CA for a few days'),
-    true
-  )
-  assert.equal(
-    tripRequestNeedsScopeClarification('Going to Fairfax, CA for a few days, what should I pack?'),
-    true
-  )
-  assert.equal(
-    tripRequestNeedsScopeClarification("I'm going to Bodega Bay this weekend for hiking, it'll be cold, what should I pack?"),
-    true
-  )
-  assert.equal(
-    tripRequestNeedsScopeClarification("I'm going hiking in Tahoe this weekend, it'll be cold, what should I pack?"),
-    true
-  )
-})
-
-test('tripRequestNeedsScopeClarification does not flag trips that already state multiple use cases', () => {
-  assert.equal(
-    tripRequestNeedsScopeClarification('Hiking this weekend, also want a nice dinner outfit for one night'),
-    false
-  )
-  assert.equal(
-    tripRequestNeedsScopeClarification("Hi! In a few days I'm going to Portland, OR for 4-5 days. Mainly city exploring, walking, a few museums, and also a few nice restaurants and one day at a winery. What should I pack?"),
-    false
-  )
-})
-
-test('tripRequestNeedsScopeClarification does not flag single-day or non-activity requests', () => {
-  assert.equal(tripRequestNeedsScopeClarification('Going hiking on Saturday, what should I wear?'), false)
-  assert.equal(tripRequestNeedsScopeClarification('What should I wear today, nothing special?'), false)
-  assert.equal(tripRequestNeedsScopeClarification(''), false)
 })
 
 test('travelRequestCanResolveWeatherLive allows named-place single-occasion trips to use live weather', () => {
