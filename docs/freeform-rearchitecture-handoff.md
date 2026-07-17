@@ -1238,6 +1238,61 @@ every turn = rails too expensive or prompt unclear (find which counter).
 Scenarios 3–5 passing is the generalization proof; 1–2 are regressions of known
 bugs and must pass; 8 accumulates the retirement evidence for the keyword pre-route.
 
+## Spec 27: sight for visual judgment — IMPLEMENTED (2026-07-16)
+
+**Owner ruling recorded:** norms enumeration (encoding per-occasion styling
+norms — office hemlines, print counts — as prompt bullets) is DEAD. It is
+scorer whack-a-mole reborn in prompt form. The architecture's thesis holds:
+the model's world knowledge covers occasion norms for free; the failures were
+never missing knowledge, they were **visual judgments made blind**. Fix the
+evidence, not the doctrine.
+
+**Part 1 — print-pairing sight gate (hard, evidence-backed).** A shared
+helper, `printPairingSightIssue` (`styling-engine/outfitSetPlanner.js`,
+alongside `printedMainPieceIds`), triggers when an outfit's MAIN pieces
+(top/bottom/dress/outerwear via `wardrobeCategoryGroup` — accessories
+excluded, see the registry below) include 2+ pieces with a known non-solid
+`pattern_type` (`pattern_type` present and not `solid`/`none`/empty —
+unknown/missing `pattern_type` never triggers; tags are the truth surface).
+Every one of those printed piece ids must be in this turn's
+`visuallySeenPieceIds` (the seen-set spec 24 Part 3 built for the
+layer-over-dress rule — extended, not duplicated) or the outfit is rejected
+with coaching naming the unseen ids and `view_pieces`. Wired into both
+composition paths, parallel to the existing layer-sight rule each already
+had:
+- `validateSubmittedPlanOutfits` (`outfitSetPlanner.js`) — plan/submit path.
+- `propose_outfit`'s contract-issue block (`tools.js`) — single/small-set path.
+
+**Part 2 — 6b instruction rewrite.** The plan-mode workbench's old default
+("Do not call view_pieces for roster pieces; make at most one small
+view_pieces call only if genuinely needed" — `buildPlanSlotWorkbench` in
+`outfitSetPlanner.js`) is replaced with judgment-to-the-model: view pieces
+whose visual coherence is uncertain (prints, statement pieces, layering,
+sheer/revealing, unfamiliar silhouette pairings); compose directly from the
+catalog for solids/conventional combos; don't bulk-browse the whole roster.
+Same principle as the rest of the architecture — license WHEN to look
+instead of enumerating cases. Part 1's gate still holds the floor if the
+model under-looks on a printed pairing. **Watch `viewCalls` per plan turn**
+(diagnostics): expected 1–3 small calls on print-heavy plans, 0 on
+solid-basics plans — a drift back to always-browsing-everything is the
+regression signal.
+
+**Part 3 — sight-registry (recorded, no code yet).** Candidate future hard
+gates, promoted only when live evidence shows Part 2's soft policy missing
+them (the same evidence path that earned layering its spec-24 gate and
+prints Part 1 above): sheer-as-coverage in a coverage-bearing role;
+high-`bareness` piece in a professional-context slot; printed accessories
+(scarves/wraps) joining the print-pairing trigger; silhouette bulk pairings
+(voluminous over voluminous); unknown-`pattern_type` pieces in
+multi-statement outfits. None implemented — this is a watchlist, not a plan.
+
+Tests: `test/plan_outfit_set.test.js` (blind two-print rejected + coached
+ids, seen accepted, one-print-plus-solids passes unseen, unknown
+`pattern_type` doesn't count, printed accessory doesn't trigger) and
+`test/aiEndpointContracts.test.js` (same three shapes on the `propose_outfit`
+path: blind rejected, seen accepted, printed scarf accessory doesn't gate a
+single printed top). 577/577 full suite green.
+
 ## Gotchas for the next assistant
 
 - **Branch off fresh main before every piece of work** (recurring slip: twice a

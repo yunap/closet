@@ -14,7 +14,8 @@ import {
   assembleSubmittedPlanOutfits,
   mergePendingPlanForReplan,
   reasonRevisesMidSentence,
-  REASON_REVISION_MESSAGE
+  REASON_REVISION_MESSAGE,
+  printPairingSightIssue
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind } from './attributes.js'
@@ -1025,6 +1026,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
         if (unseenLayerPieces.length) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnseenLayerBlocks')
           contractIssues.push(`layer pieces must be visually verified this turn: call view_pieces (size:'large') for [${unseenLayerPieces.map(p => Number(p.id)).join(', ')}] and confirm each works as a layer`)
+        }
+        // Spec 27 Part 1: print-pairing sight gate, parallel to the layer-sight
+        // rule above — parity with validateSubmittedPlanOutfits's plan-path check.
+        const printIssue = printPairingSightIssue(resolved, seenIdsThisTurn)
+        if (printIssue) {
+          bumpFreeformDiagnostic(toolContext, 'proposeUnseenPrintPairingBlocks')
+          contractIssues.push(printIssue)
         }
         // Spec 26 Part 1: same mid-revision reason check as
         // validateSubmittedPlanOutfits — a proposed outfit's why_it_works

@@ -3328,6 +3328,64 @@ test('view_pieces returns truth lines with thumbnails and satisfies the verifica
   assert.equal(proposed.status, 'success')
 })
 
+// --- Print-pairing sight gate, propose_outfit path (spec 27 Part 1) --------
+
+test('propose_outfit rejects a blind two-print outfit with view_pieces coaching', async () => {
+  const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season', declaredIntent: { want: 'cards', outfitCount: null, turnMode: null } }
+  const printedTopId = insertPiece({ name: 'floral print top', category: 'top', occasions: ['city'], photo: seeded.photos.top, pattern_type: 'floral' })
+  const printedBottomId = insertPiece({ name: 'plaid print pants', category: 'bottom', occasions: ['city'], photo: seeded.photos.bottom, pattern_type: 'plaid' })
+  // View them (retrieval verified) but never call view_pieces (no sight).
+  await executeTool('search_wardrobe', { query: 'print' }, toolContext)
+  toolContext.retrievedPieceIds = new Set([printedTopId, printedBottomId, seeded.shoe])
+
+  const blocked = await executeTool('propose_outfit', {
+    label: 'Blind print pairing',
+    pieces: [
+      { id: printedTopId, role: 'primary_top' },
+      { id: printedBottomId, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /pairs 2 printed pieces/)
+  assert.match(blocked.message, /call view_pieces on/)
+})
+
+test('propose_outfit accepts the same two-print outfit once both pieces have been visually seen', async () => {
+  const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season', declaredIntent: { want: 'cards', outfitCount: null, turnMode: null } }
+  const printedTopId = insertPiece({ name: 'floral print top', category: 'top', occasions: ['city'], photo: seeded.photos.top, pattern_type: 'floral' })
+  const printedBottomId = insertPiece({ name: 'plaid print pants', category: 'bottom', occasions: ['city'], photo: seeded.photos.bottom, pattern_type: 'plaid' })
+  await executeTool('view_pieces', { ids: [printedTopId, printedBottomId, seeded.shoe] }, toolContext)
+
+  const proposed = await executeTool('propose_outfit', {
+    label: 'Seen print pairing',
+    pieces: [
+      { id: printedTopId, role: 'primary_top' },
+      { id: printedBottomId, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }, toolContext)
+  assert.equal(proposed.status, 'success')
+})
+
+test('propose_outfit is not gated by a printed scarf accessory paired with one printed top', async () => {
+  const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season', declaredIntent: { want: 'cards', outfitCount: null, turnMode: null } }
+  const printedTopId = insertPiece({ name: 'floral print top', category: 'top', occasions: ['city'], photo: seeded.photos.top, pattern_type: 'floral' })
+  const scarfId = insertPiece({ name: 'printed silk scarf', category: 'accessory', occasions: ['city'], photo: seeded.photos.top, pattern_type: 'geometric' })
+  await executeTool('view_pieces', { ids: [printedTopId, seeded.bottom, scarfId, seeded.shoe] }, toolContext)
+
+  const proposed = await executeTool('propose_outfit', {
+    label: 'Print top with printed scarf',
+    pieces: [
+      { id: printedTopId, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: scarfId, role: 'accessory' },
+      { id: seeded.shoe, role: 'shoes' }
+    ]
+  }, toolContext)
+  assert.equal(proposed.status, 'success', `printed accessory must not gate the outfit: ${JSON.stringify(proposed)}`)
+})
+
 test('render_preview renders a card from this turn and attaches the board for the chat', async () => {
   const toolContext = {
     occasion: 'city',

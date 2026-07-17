@@ -1066,7 +1066,12 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     .sort((a, b) => Number(a.id) - Number(b.id))
     .map(planWorkbenchPieceLine)
   const workbenchInstructions = [
-    'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Use piece_catalog for garment details and pick only from each slot allowed_piece_ids. Do not call view_pieces for roster pieces; make at most one small view_pieces call only if genuinely needed. If validation accepts some outfits and rejects others, resubmit only the failed slots.',
+    // Spec 27 Part 2 (owner ruling: norms enumeration is DEAD — the failures
+    // were blind visual judgments, not missing occasion knowledge). Replaces
+    // the old blanket "don't call view_pieces" default with judgment-to-the-
+    // model on WHEN to look; Part 1's print-pairing gate still holds the
+    // floor if the model under-looks on a printed pairing.
+    'Compose the outfits yourself and submit ALL slots in ONE submit_plan_outfits call. Use piece_catalog for garment details and pick only from each slot allowed_piece_ids. Viewing pieces is cheap. VIEW the pieces of any outfit whose visual coherence you are uncertain about — print combinations, statement pieces, layering, anything sheer or revealing, silhouette pairings you haven\'t seen work. Compose directly from the catalog when pieces are solids and the combination is conventional. Do not bulk-browse the whole roster. If validation accepts some outfits and rejects others, resubmit only the failed slots.',
     // Part 4 (spec 18): the spec-15 watch item's agreed escalation, now past
     // its 3-run threshold (16/18/20 distinct pieces across live maximize-reuse
     // packing runs, only accessories repeating).
@@ -1261,6 +1266,33 @@ export function reasonRevisesMidSentence(reasonText = '') {
 }
 
 export const REASON_REVISION_MESSAGE = 'your reason revises itself mid-sentence — decide the pieces first, update piece_ids to match, and resubmit with a clean reason describing only the pieces you actually included.'
+
+// Spec 27 Part 1: print mixing is a visual decision, not a tag lookup — two
+// or more MAIN pieces (top/bottom/dress/outerwear; accessories excluded,
+// see the sight-registry) with a known non-solid pattern_type must have been
+// visually SEEN this turn before the outfit is accepted. Unknown/missing
+// pattern_type never triggers this — tags are the truth surface, and an
+// untagged piece isn't evidence of a clash. Shared by validateSubmittedPlanOutfits
+// (submit_plan_outfits) and propose_outfit's contract-issue block so both
+// composition paths enforce the same gate.
+const NON_PRINT_PATTERN_TYPES = new Set(['solid', 'none', ''])
+
+export function printedMainPieceIds(pieces = []) {
+  return pieces
+    .filter(piece => ['top', 'bottom', 'dress', 'outerwear'].includes(wardrobeCategoryGroup(piece)))
+    .filter(piece => !NON_PRINT_PATTERN_TYPES.has(String(piece?.pattern_type || '').toLowerCase()))
+    .map(piece => Number(piece?.id))
+    .filter(Boolean)
+}
+
+export function printPairingSightIssue(pieces = [], seenPieceIds = new Set()) {
+  const printedIds = printedMainPieceIds(pieces)
+  if (printedIds.length < 2) return ''
+  const seen = seenPieceIds instanceof Set ? seenPieceIds : new Set()
+  const unseenIds = printedIds.filter(id => !seen.has(id))
+  if (!unseenIds.length) return ''
+  return `this outfit pairs ${printedIds.length} printed pieces — print mixing is a visual decision: call view_pieces on [${unseenIds.join(', ')}], look at how the prints actually interact, then resubmit (keep the pairing only if it genuinely works to the eye).`
+}
 
 export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherProfile = {} } = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
@@ -1464,6 +1496,8 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           reasons.push(`this outfit layers a top over a dress — call view_pieces on [${unseenIds.join(', ')}] first, then resubmit; layering is a sight-required decision.`)
         }
       }
+      const printIssue = printPairingSightIssue(pieces, seenPieceIds)
+      if (printIssue) reasons.push(printIssue)
     }
     if (reasons.length) {
       failures.push({ slot_id: slot.id, label, reasons })
