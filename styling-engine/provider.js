@@ -520,8 +520,29 @@ export function extractToolResultImages(result) {
   return { textResult: JSON.stringify(stripped), images }
 }
 
-export function parseModelJson(raw) {
-  return JSON.parse(String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim())
+// Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"
+// used to read identically whether the model wrote malformed JSON or the
+// response simply hit maxTokens mid-string — the tagger's actual cause
+// ("the schema doesn't fit in the token budget") was indistinguishable from
+// "the model wrote bad JSON" in every error log. A response that hits the
+// cap always stops mid-token, so it can never end on a closing `}`/`]`
+// (after stripping the code-fence wrapper) — a cheap, reliable signal that
+// doesn't require guessing at exact token counts.
+export function parseModelJson(raw, { context = '', maxTokens = null } = {}) {
+  const cleaned = String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim()
+  try {
+    return JSON.parse(cleaned)
+  } catch (err) {
+    const looksTruncated = cleaned.length > 0 && !/[}\]]$/.test(cleaned)
+    if (looksTruncated) {
+      const capNote = maxTokens ? ` (maxTokens: ${maxTokens})` : ''
+      const truncationError = new Error(`Model response hit the token cap${capNote} and was truncated before valid JSON completed${context ? ` [${context}]` : ''}: ${err.message}`)
+      truncationError.isTruncation = true
+      truncationError.cause = err
+      throw truncationError
+    }
+    throw err
+  }
 }
 
 export async function askClaude({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {

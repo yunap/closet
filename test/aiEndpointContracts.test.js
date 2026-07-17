@@ -3106,6 +3106,36 @@ test('propose_outfit requires layer pieces to be visually seen this turn', async
   assert.equal(accepted.status, 'success')
 })
 
+// Spec 26 Part 1: same reason-revision truthfulness check as
+// validateSubmittedPlanOutfits, applied to propose_outfit's why_it_works —
+// a proposal whose rationale revises itself mid-sentence while `pieces`
+// stays the un-revised set is the same failure shape on this path.
+test('propose_outfit rejects a why_it_works that revises itself mid-sentence, then accepts a clean rewrite', async () => {
+  const toolContext = { generatedOutfits: [], occasion: 'city', season: 'current season', declaredIntent: { want: 'cards' } }
+  await executeTool('get_garment_details', { ids: [seeded.top, seeded.bottom, seeded.shoe] }, toolContext)
+  const outfitArgs = {
+    label: 'Revision test',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ],
+    why_it_works: '**Actually revising:** emerald v-neck top + oatmeal pants would work better here'
+  }
+
+  const blocked = await executeTool('propose_outfit', outfitArgs, toolContext)
+  assert.equal(blocked.status, 'validation_error')
+  assert.match(blocked.message, /your reason revises itself mid-sentence/)
+  assert.equal(toolContext.generatedOutfits.length, 0)
+
+  const accepted = await executeTool('propose_outfit', {
+    ...outfitArgs,
+    why_it_works: 'A quiet, structured look worth waiting for sunset to photograph.'
+  }, toolContext)
+  assert.equal(accepted.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+})
+
 test('prose citations of unverified piece ids force one corrective retry', () => {
   const answer = `Try layering the cream textured knit top (ID ${seeded.top}) under the blouse.`
 
