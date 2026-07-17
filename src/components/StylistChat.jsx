@@ -51,6 +51,26 @@ const ACTIVITY_OPTIONS = [
   ['hiking', 'Hiking / Outdoor active'],
 ]
 
+const wardrobeBuilderControlStyle = {
+  padding: '8px 10px',
+  borderRadius: 8,
+  border: '1px solid var(--border)',
+  background: 'var(--surface)',
+  color: 'var(--text)',
+  fontSize: 12,
+  minHeight: 34,
+}
+
+const wardrobeBuilderPanelBaseStyle = {
+  padding: 12,
+  border: '1px solid color-mix(in srgb, var(--accent) 28%, var(--border))',
+  borderRadius: 'var(--radius-sm)',
+  background: '#F4EADF',
+  boxShadow: 'inset 3px 0 0 var(--accent), 0 8px 20px rgba(83, 62, 37, 0.08)',
+  display: 'grid',
+  gap: 10,
+}
+
 const formatMs = (ms) => {
   const n = Number(ms)
   if (!Number.isFinite(n)) return null
@@ -4095,21 +4115,100 @@ export default function StylistChat({
     ? `${recentMemoryItemCount} recently shown wardrobe ${recentMemoryItemCount === 1 ? 'item is' : 'items are'} temporarily de-prioritized so new generated outfits do not repeat them too soon. Reset recent memory to put them back into normal rotation.`
     : 'No recently shown wardrobe items are being de-prioritized right now.'
   const RecentMemoryControls = () => (
-    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-      <button
-        onClick={resetWholeWardrobeSessionMemory}
-        disabled={recentMemoryResetting || loading}
-        title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
-        style={{ fontSize: 11, color: 'var(--text-muted)', padding: '7px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1 }}
-      >
-        {recentMemoryResetting ? 'Resetting...' : 'Reset recent memory'}
-      </button>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       <span
         title={recentMemoryTitle}
         style={{ fontSize: 11, color: recentMemoryItemCount ? 'var(--accent)' : 'var(--text-light)', whiteSpace: 'nowrap' }}
       >
         {recentMemoryLabel}
       </span>
+      <button
+        onClick={resetWholeWardrobeSessionMemory}
+        disabled={recentMemoryResetting || loading}
+        title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
+        style={{ fontSize: 11, color: 'var(--text-muted)', padding: 0, border: 0, background: 'transparent', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1, textDecoration: 'underline', textUnderlineOffset: 3 }}
+      >
+        {recentMemoryResetting ? 'Resetting...' : 'Reset memory'}
+      </button>
+    </div>
+  )
+
+  const renderWardrobeBuilderPanel = (style = {}) => (
+    <div style={{ ...wardrobeBuilderPanelBaseStyle, ...style }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 220, flex: '1 1 280px' }}>
+          <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)' }}>Build from my wardrobe</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
+          <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 5 }}>
+            {pieces.length} pieces{chatHistory.length > 0 ? ` · ${Math.ceil(chatHistory.length / 2)} exchanges` : ''}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setWardrobeBuilderOpen(false)}
+          className="chip"
+          style={{ marginTop: 0, background: 'var(--surface)', fontSize: 11, padding: '6px 10px' }}
+        >
+          Close
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 6 }}>
+        <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={wardrobeBuilderControlStyle}>
+          {OCCASION_OPTIONS.map(([val, label]) => (
+            <option key={val} value={val}>{label}</option>
+          ))}
+        </select>
+        <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={wardrobeBuilderControlStyle}>
+          {ACTIVITY_OPTIONS.map(([val, label]) => (
+            <option key={val} value={val}>{label}</option>
+          ))}
+        </select>
+        <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={wardrobeBuilderControlStyle}>
+          <option value="current season">Current season</option>
+          <option value="spring">Spring</option>
+          <option value="summer">Summer</option>
+          <option value="fall">Fall</option>
+          <option value="winter">Winter</option>
+          <option value="hot weather">Very hot weather</option>
+          <option value="cold weather">Very cold weather</option>
+        </select>
+        <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={wardrobeBuilderControlStyle}>
+          <option value="mix">Mix of missions</option>
+          <option value="controlled_print">Controlled Print</option>
+          <option value="monochrome_texture">Monochrome Texture</option>
+          <option value="structured_soft">Structured + Soft</option>
+          <option value="color_anchor">Color Anchor</option>
+          <option value="unexpected_pairing">Unexpected Pairing</option>
+          <option value="soft_architecture">Soft Architecture</option>
+        </select>
+        <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood" style={wardrobeBuilderControlStyle} />
+      </div>
+
+      <input
+        value={wardrobeOutfitRequest}
+        onChange={e => setWardrobeOutfitRequest(e.target.value)}
+        placeholder="Styling request (e.g. more everyday, not dressy)"
+        style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
+      />
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <RecentMemoryControls />
+          {recentMemoryStatus && (
+            <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
+              {recentMemoryStatus}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={generateWholeWardrobeOutfits}
+          disabled={loading}
+          style={{ fontSize: 12, color: '#fff', padding: '8px 14px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1, minHeight: 34 }}
+        >
+          {loading ? 'Creating...' : 'Create outfits'}
+        </button>
+      </div>
     </div>
   )
 
@@ -4203,9 +4302,11 @@ export default function StylistChat({
               >
                 🕒 History
               </button>
-              <button className="chip" style={{ marginTop: 4 }} onClick={() => setWardrobeBuilderOpen(v => !v)}>
-                {wardrobeBuilderOpen ? 'Close builder' : 'Use wardrobe'}
-              </button>
+              {!wardrobeBuilderOpen && (
+                <button className="chip" style={{ marginTop: 4 }} onClick={() => setWardrobeBuilderOpen(true)}>
+                  Use wardrobe
+                </button>
+              )}
               {activeContext && (
                 <button className="chip" style={{ marginTop: 4 }} onClick={() => setLearningOpen(v => !v)}>
                   Learning{learningRows.length ? ` · ${learningRows.length}` : ''}
@@ -4221,7 +4322,7 @@ export default function StylistChat({
               </button>
             </div>
           </div>
-          {recentMemoryStatus && (
+          {recentMemoryStatus && !wardrobeBuilderOpen && (
             <div style={{ marginTop: 6, fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
               {recentMemoryStatus}
             </div>
@@ -4252,66 +4353,7 @@ export default function StylistChat({
 
       {/* Wardrobe Builder Panel */}
       {wardrobeBuilderOpen && (
-        <div style={{ margin: '0 16px 10px', padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', display: 'grid', gap: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Use my wardrobe</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
-            </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              <RecentMemoryControls />
-              <button
-                onClick={generateWholeWardrobeOutfits}
-                disabled={loading}
-                style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
-              >
-                {loading ? 'Creating...' : 'Create outfits'}
-              </button>
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
-            <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-              {OCCASION_OPTIONS.map(([val, label]) => (
-                <option key={val} value={val}>{label}</option>
-              ))}
-            </select>
-            <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-              {ACTIVITY_OPTIONS.map(([val, label]) => (
-                <option key={val} value={val}>{label}</option>
-              ))}
-            </select>
-            <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-              <option value="current season">Current season</option>
-              <option value="spring">Spring</option>
-              <option value="summer">Summer</option>
-              <option value="fall">Fall</option>
-              <option value="winter">Winter</option>
-              <option value="hot weather">Very hot weather</option>
-              <option value="cold weather">Very cold weather</option>
-            </select>
-            <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-              <option value="mix">Mix of missions</option>
-              <option value="controlled_print">Controlled Print</option>
-              <option value="monochrome_texture">Monochrome Texture</option>
-              <option value="structured_soft">Structured + Soft</option>
-              <option value="color_anchor">Color Anchor</option>
-              <option value="unexpected_pairing">Unexpected Pairing</option>
-              <option value="soft_architecture">Soft Architecture</option>
-            </select>
-            <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood (e.g. minimalist, moody, soft)" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
-          </div>
-          <input
-            value={wardrobeOutfitRequest}
-            onChange={e => setWardrobeOutfitRequest(e.target.value)}
-            placeholder="Styling request (e.g. more everyday, not dressy)"
-            style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}
-          />
-          {recentMemoryStatus && (
-            <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
-              {recentMemoryStatus}
-            </div>
-          )}
-        </div>
+        renderWardrobeBuilderPanel({ margin: '0 16px 10px' })
       )}
 
 
@@ -4362,66 +4404,7 @@ export default function StylistChat({
               </>
             )}
             {!pending && (
-              <div style={{ marginTop: 12, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--text)' }}>Use my wardrobe</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <RecentMemoryControls />
-                    <button
-                      onClick={generateWholeWardrobeOutfits}
-                      disabled={loading}
-                      style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1 }}
-                    >
-                      {loading ? 'Creating...' : 'Create outfits'}
-                    </button>
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 6 }}>
-                  <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                    {OCCASION_OPTIONS.map(([val, label]) => (
-                      <option key={val} value={val}>{label}</option>
-                    ))}
-                  </select>
-                  <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                    {ACTIVITY_OPTIONS.map(([val, label]) => (
-                      <option key={val} value={val}>{label}</option>
-                    ))}
-                  </select>
-                  <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                    <option value="current season">Current season</option>
-                    <option value="spring">Spring</option>
-                    <option value="summer">Summer</option>
-                    <option value="fall">Fall</option>
-                    <option value="winter">Winter</option>
-                    <option value="hot weather">Very hot weather</option>
-                    <option value="cold weather">Very cold weather</option>
-                  </select>
-                  <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-                    <option value="mix">Mix of missions</option>
-                    <option value="controlled_print">Controlled Print</option>
-                    <option value="monochrome_texture">Monochrome Texture</option>
-                    <option value="structured_soft">Structured + Soft</option>
-                    <option value="color_anchor">Color Anchor</option>
-                    <option value="unexpected_pairing">Unexpected Pairing</option>
-                    <option value="soft_architecture">Soft Architecture</option>
-                  </select>
-                  <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood (e.g. minimalist, moody, soft)" style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }} />
-                </div>
-                <input
-                  value={wardrobeOutfitRequest}
-                  onChange={e => setWardrobeOutfitRequest(e.target.value)}
-                  placeholder="Styling request (e.g. more everyday, not dressy)"
-                  style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}
-                />
-                {recentMemoryStatus && (
-                  <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
-                    {recentMemoryStatus}
-                  </div>
-                )}
-              </div>
+              renderWardrobeBuilderPanel({ marginTop: 12 })
             )}
           </div>
         )}
