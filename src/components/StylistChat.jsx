@@ -2152,6 +2152,49 @@ export default function StylistChat({
           const historicalCritique = messages.find(msg => msg.role === 'assistant' && msg.wardrobeEvaluation && (msg.outfitName === outfitTitle || msg.outfitName === outfit.label || msg.outfitName === outfit.title))?.text
           const critiqueText = evaluationResultsByKey[boardKey] || historicalCritique
           const hasCritique = Boolean(critiqueText)
+          const renderOutfitFeedbackButtons = ({ fontSize = 10, padding = '2px 7px', borderRadius = 10 } = {}) => (
+            OUTFIT_FEEDBACK_LABELS.map(([type, label]) => {
+              const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
+              const isSaved = feedbackSaved.has(key)
+              return (
+                <button
+                  key={key}
+                  onClick={() => toggleStylistFeedback({
+                    key,
+                    feedbackType: type,
+                    targetType: 'whole_wardrobe_outfit',
+                    label: outfit.label || `Outfit ${idx + 1}`,
+                    note: [outfit.reason, outfit.watchFor].filter(Boolean).join(' Watch: '),
+                    payload: {
+                      outfit,
+                      messageIndex,
+                      outfitIndex: idx,
+                      pieceIds: outfit.pieceIds || [],
+                      pieces: outfit.pieces || [],
+                      formulaFamily: outfit.formulaFamily || '',
+                      archetypeId: outfit.archetypeId || '',
+                      occasion: wardrobeOutfitOccasion,
+                      season: wardrobeOutfitSeason,
+                      mood: wardrobeOutfitMood,
+                      ...(message?.source === 'visual_composer' ? { source: 'visual_composer' } : {})
+                    },
+                    appendToPiece: activeContext?.type === 'piece'
+                  })}
+                  style={{
+                    fontSize,
+                    color: isSaved ? 'var(--donate)' : 'var(--text-muted)',
+                    padding,
+                    borderRadius,
+                    border: '1px solid var(--border)',
+                    background: isSaved ? 'var(--surface-2)' : 'var(--surface)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {isSaved ? '✓ ' : ''}{label}
+                </button>
+              )
+            })
+          )
 
           return (
             <div key={idx} style={{
@@ -2428,7 +2471,7 @@ export default function StylistChat({
                 </details>
               )}
 
-              {(message?.wholeWardrobe || (activeContext?.type !== 'piece' && !outfit.pieceId && Array.isArray(outfit.pieces) && outfit.pieces.length > 0)) && (
+              {!canRenderStructuredOutfit && (message?.wholeWardrobe || (activeContext?.type !== 'piece' && !outfit.pieceId && Array.isArray(outfit.pieces) && outfit.pieces.length > 0)) && (
                 <>
                   <div style={{ marginTop: 9, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                     <button
@@ -2445,47 +2488,7 @@ export default function StylistChat({
                     >
                       {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
                     </button>
-                    {OUTFIT_FEEDBACK_LABELS.map(([type, label]) => {
-                      const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
-                      const isSaved = feedbackSaved.has(key)
-                      return (
-                        <button
-                          key={key}
-                          onClick={() => toggleStylistFeedback({
-                            key,
-                            feedbackType: type,
-                            targetType: 'whole_wardrobe_outfit',
-                            label: outfit.label || `Outfit ${idx + 1}`,
-                            note: [outfit.reason, outfit.watchFor].filter(Boolean).join(' Watch: '),
-                            payload: {
-                              outfit,
-                              messageIndex,
-                              outfitIndex: idx,
-                              pieceIds: outfit.pieceIds || [],
-                              pieces: outfit.pieces || [],
-                              formulaFamily: outfit.formulaFamily || '',
-                              archetypeId: outfit.archetypeId || '',
-                              occasion: wardrobeOutfitOccasion,
-                              season: wardrobeOutfitSeason,
-                              mood: wardrobeOutfitMood,
-                              ...(message?.source === 'visual_composer' ? { source: 'visual_composer' } : {})
-                            },
-                            appendToPiece: activeContext?.type === 'piece'
-                          })}
-                          style={{
-                            fontSize: 10,
-                            color: isSaved ? 'var(--donate)' : 'var(--text-muted)',
-                            padding: '2px 7px',
-                            borderRadius: 10,
-                            border: '1px solid var(--border)',
-                            background: isSaved ? 'var(--surface-2)' : 'var(--surface)',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          {isSaved ? '✓ ' : ''}{label}
-                        </button>
-                      )
-                    })}
+                    {renderOutfitFeedbackButtons()}
                   </div>
                 </>
               )}
@@ -2536,7 +2539,7 @@ export default function StylistChat({
                         </button>
                       </>
                     )}
-                    {!isPreview && <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Image generation cost: one outfit only.</span>}
+                    {!isPreview && renderOutfitFeedbackButtons({ fontSize: 12, padding: '3px 9px', borderRadius: 12 })}
                   </div>
                   {isEvaluating && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--accent)', marginTop: 8 }}>
@@ -4819,74 +4822,17 @@ export default function StylistChat({
             ) : null
           })()}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Choose how to use this piece' : 'Choose how to use this outfit'}</div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Anchor piece' : 'Choose how to use this outfit'}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pending.name}</div>
             {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
             {pendingPiece && (
               <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{
-                  display: 'flex',
-                  background: 'var(--surface-2)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 20,
-                  padding: 3,
-                  position: 'relative',
-                  width: '100%',
-                  userSelect: 'none'
-                }}>
-                  <div style={{
-                    position: 'absolute',
-                    top: 3,
-                    bottom: 3,
-                    left: pendingPieceMode === 'wardrobe' ? 3 : 'calc(50% + 1px)',
-                    width: 'calc(50% - 4px)',
-                    background: 'var(--accent)',
-                    borderRadius: 17,
-                    zIndex: 1,
-                    transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                  }} />
-                  <button
-                    type="button"
-                    onClick={() => setPendingPieceMode('wardrobe')}
-                    style={{
-                      flex: 1,
-                      textAlign: 'center',
-                      padding: '7px 0',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      fontFamily: 'var(--font-sans)',
-                      color: pendingPieceMode === 'wardrobe' ? '#fff' : 'var(--text-muted)',
-                      background: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                      zIndex: 2,
-                      transition: 'color 0.15s ease'
-                    }}
-                  >
-                    Use my wardrobe
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPendingPieceMode('ideal')}
-                    style={{
-                      flex: 1,
-                      textAlign: 'center',
-                      padding: '7px 0',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      fontFamily: 'var(--font-sans)',
-                      color: pendingPieceMode === 'ideal' ? '#fff' : 'var(--text-muted)',
-                      background: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                      zIndex: 2,
-                      transition: 'color 0.15s ease'
-                    }}
-                  >
-                    Explore additions
-                  </button>
+                <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
+                  Using this as the anchor piece for the next styling request.
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <div style={{ display: 'grid', gap: 5 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Context</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                   <div className="custom-select-container">
                     <button
                       type="button"
@@ -5122,13 +5068,18 @@ export default function StylistChat({
                     )}
                   </div>
 
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gap: 5 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Mood</div>
                   <input
                     type="text"
                     value={generateMood}
                     onChange={e => setGenerateMood(e.target.value)}
-                    placeholder="Aesthetic mood (e.g. minimalist, moody, soft)"
+                    placeholder="Optional mood: casual, polished, not too dressy..."
                     style={{
-                      height: 32,
+                      height: 34,
                       width: '100%',
                       borderRadius: 8,
                       padding: '0 10px',
@@ -5141,6 +5092,72 @@ export default function StylistChat({
                       boxSizing: 'border-box'
                     }}
                   />
+                </div>
+
+                <div style={{ display: 'grid', gap: 5 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Mode</div>
+                  <div style={{
+                    display: 'flex',
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 20,
+                    padding: 3,
+                    position: 'relative',
+                    width: '100%',
+                    userSelect: 'none'
+                  }}>
+                    <div style={{
+                      position: 'absolute',
+                      top: 3,
+                      bottom: 3,
+                      left: pendingPieceMode === 'wardrobe' ? 3 : 'calc(50% + 1px)',
+                      width: 'calc(50% - 4px)',
+                      background: 'var(--accent)',
+                      borderRadius: 17,
+                      zIndex: 1,
+                      transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
+                    }} />
+                    <button
+                      type="button"
+                      onClick={() => setPendingPieceMode('wardrobe')}
+                      style={{
+                        flex: 1,
+                        textAlign: 'center',
+                        padding: '7px 0',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        fontFamily: 'var(--font-sans)',
+                        color: pendingPieceMode === 'wardrobe' ? '#fff' : 'var(--text-muted)',
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        zIndex: 2,
+                        transition: 'color 0.15s ease'
+                      }}
+                    >
+                      Style with wardrobe
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingPieceMode('ideal')}
+                      style={{
+                        flex: 1,
+                        textAlign: 'center',
+                        padding: '7px 0',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        fontFamily: 'var(--font-sans)',
+                        color: pendingPieceMode === 'ideal' ? '#fff' : 'var(--text-muted)',
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        zIndex: 2,
+                        transition: 'color 0.15s ease'
+                      }}
+                    >
+                      Suggest new pieces
+                    </button>
+                  </div>
                 </div>
                 <button
                   onClick={() => {
@@ -5165,7 +5182,7 @@ export default function StylistChat({
                     transition: 'all 0.15s ease'
                   }}
                 >
-                  {pendingPieceMode === 'wardrobe' ? 'Style with my wardrobe' : 'Suggest ideal additions'}
+                  {pendingPieceMode === 'wardrobe' ? 'Create outfits with this piece' : 'Suggest new pieces for this item'}
                 </button>
               </div>
             )}
