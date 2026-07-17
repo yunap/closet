@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import ThreadRail, { humanizeLabel, deriveBuilderTitle } from './ThreadRail'
 import MarkdownMessage from './MarkdownMessage.js'
+import PieceDetail from './PieceDetail.jsx'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -329,6 +330,7 @@ export default function StylistChat({
 
   const [boardLoadingIndex, setBoardLoadingIndex] = useState(null)
   const [previewImage, setPreviewImage] = useState(null)
+  const [detailPiece, setDetailPiece] = useState(null)
   const [fileInputKey, setFileInputKey] = useState(0)
   const bottomRef = useRef(null)
   const pendingActionRef = useRef(null)
@@ -347,6 +349,19 @@ export default function StylistChat({
     setToastMessage(msg)
     setShowToast(true)
   }, [])
+
+  const openPieceDetail = useCallback(async (pieceInput) => {
+    const pieceId = Number(pieceInput?.id || pieceInput)
+    if (!Number.isFinite(pieceId)) return
+    try {
+      const res = await fetch(`/api/pieces/${pieceId}`)
+      if (!res.ok) throw new Error('Could not load wardrobe card')
+      const piece = await res.json()
+      setDetailPiece(piece)
+    } catch (err) {
+      triggerToast(err.message || 'Could not load wardrobe card')
+    }
+  }, [triggerToast])
 
   useEffect(() => {
     if (!showToast) return
@@ -2227,7 +2242,7 @@ export default function StylistChat({
                         <button
                           type="button"
                           disabled={!photo}
-                          onClick={() => photo && setPreviewImage({ src: `/uploads/${photo}`, title: piece?.name || 'Garment', meta: piece?.category || '' })}
+                          onClick={() => photo && setPreviewImage({ src: `/uploads/${photo}`, title: piece?.name || 'Garment', meta: piece?.category || '', pieceId: piece?.id || null })}
                           style={{ width: 72, height: 72, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: photo ? 'zoom-in' : 'default' }}
                           aria-label={photo ? `Open ${piece?.name || 'garment'} preview` : undefined}
                         >
@@ -2258,6 +2273,14 @@ export default function StylistChat({
                                   ...
                                 </summary>
                                 <div className="piece-action-menu-panel">
+                                  <button
+                                    type="button"
+                                    onClick={() => openPieceDetail(piece)}
+                                    className="piece-action-menu-item"
+                                    title="Open the full wardrobe card for this garment"
+                                  >
+                                    Open wardrobe card
+                                  </button>
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -5239,7 +5262,20 @@ export default function StylistChat({
                 <div style={{ fontSize: 14, fontWeight: 700 }}>{previewImage.title}</div>
                 {previewImage.meta && <div style={{ fontSize: 12, opacity: 0.78 }}>{previewImage.meta}</div>}
               </div>
-              <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {previewImage.pieceId && (
+                  <button
+                    className="chip"
+                    onClick={() => {
+                      openPieceDetail(previewImage.pieceId)
+                      setPreviewImage(null)
+                    }}
+                  >
+                    Open wardrobe card
+                  </button>
+                )}
+                <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+              </div>
             </div>
             <img
               src={previewImage.src}
@@ -5248,6 +5284,18 @@ export default function StylistChat({
             />
           </div>
         </div>
+      )}
+      {detailPiece && (
+        <PieceDetail
+          piece={detailPiece}
+          showManagementActions={false}
+          onClose={() => setDetailPiece(null)}
+          onSendToStylist={(piece) => {
+            setDetailPiece(null)
+            setActiveContext({ type: 'piece', id: piece.id, name: piece.name, ...piece })
+            triggerToast(`Stylist focused on ${piece.name}`)
+          }}
+        />
       )}
       </div>
     </div>
