@@ -12,7 +12,9 @@ import {
   buildPlanSlotWorkbench,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
-  mergePendingPlanForReplan
+  mergePendingPlanForReplan,
+  reasonRevisesMidSentence,
+  REASON_REVISION_MESSAGE
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind } from './attributes.js'
@@ -555,7 +557,7 @@ export const STYLIST_TOOLS = [
         why_it_works: { type: "string", description: "Brief styling rationale." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
-        season: { type: "string", description: "Season/weather context. Optional." },
+        season: { type: "string", description: "Season/weather context. Optional. For indoor occasions (office, restaurant, meeting, gallery), pass season:'indoor' — the live forecast applies only to time spent outdoors." },
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for card context. Optional; omit to carry forward the established activity." }
       },
       required: ["pieces"]
@@ -1023,6 +1025,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
         if (unseenLayerPieces.length) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnseenLayerBlocks')
           contractIssues.push(`layer pieces must be visually verified this turn: call view_pieces (size:'large') for [${unseenLayerPieces.map(p => Number(p.id)).join(', ')}] and confirm each works as a layer`)
+        }
+        // Spec 26 Part 1: same mid-revision reason check as
+        // validateSubmittedPlanOutfits — a proposed outfit's why_it_works
+        // revising itself mid-sentence while `pieces` stays the un-revised
+        // set is the same truthfulness failure on this composition path.
+        if (why_it_works && reasonRevisesMidSentence(why_it_works)) {
+          bumpFreeformDiagnostic(toolContext, 'proposeReasonRevisionBlocks')
+          contractIssues.push(REASON_REVISION_MESSAGE)
         }
         if (contractIssues.length) {
           return {
@@ -1565,7 +1575,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "success",
             partial: true,
-            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.`,
+            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. To fill the disclosed gaps, call plan_outfit_set again with JUST the unfilled slot(s) — accepted cards carry forward automatically.`,
             plan_lines: planLinesForResponse,
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,

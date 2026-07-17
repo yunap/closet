@@ -76,6 +76,20 @@ export function computeWaistbandNote(piece = {}) {
   if (piece.waistband_type === 'drawstring_relaxed') return 'drawstring — no tuck'
   return null
 }
+// Spec 26 Part 3: the prefix rule below predates the outdoor_daytime_social
+// occasion and was never a deliberate Decision — startsWith('outdoor')
+// accidentally routed every social outdoor occasion through the tagger's
+// rugged/exposure-flavored `outdoor` key, systematically suppressing refined
+// pieces (linen, blouses) that are fine for a winery patio but score
+// low on ruggedness. Exposure belongs to the weather gates; ruggedness
+// belongs to the activity profile; occasion confidence here should measure
+// social-register suitability instead. Plain outdoor/hiking-flavored
+// occasions keep reading the strict `outdoor` key.
+export function isOutdoorSocialOccasion(occ) {
+  const norm = String(occ || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+  return norm.startsWith('outdoor') && norm.includes('social')
+}
+
 export function normalizeOccasionForConfidence(occ) {
   const norm = String(occ || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
   if (norm.startsWith('outdoor')) return 'outdoor'
@@ -85,6 +99,23 @@ export function normalizeOccasionForConfidence(occ) {
   if (norm.includes('home') || norm.includes('lounge')) return 'home'
   if (norm.includes('evening')) return 'evening'
   return norm.replace(/\s+/g, '-')
+}
+
+const OCCASION_CONFIDENCE_RANK = { manual: 4, high: 3, medium: 2, low: 1 }
+
+// Best-of lookup for outdoor_daytime_social (and any future outdoor_*_social
+// occasion): reads casual/smart-casual/outdoor and keeps the highest
+// confidence found, rather than the single strict `outdoor` key.
+function resolveOccasionConfidence(occasion, occasionConfidence = {}) {
+  if (isOutdoorSocialOccasion(occasion)) {
+    const candidates = ['casual', 'smart-casual', 'outdoor']
+      .map(key => String(occasionConfidence?.[key] || '').toLowerCase())
+      .filter(Boolean)
+    if (!candidates.length) return ''
+    return candidates.sort((a, b) => (OCCASION_CONFIDENCE_RANK[b] || 0) - (OCCASION_CONFIDENCE_RANK[a] || 0))[0]
+  }
+  const normOcc = normalizeOccasionForConfidence(occasion)
+  return normOcc ? String(occasionConfidence?.[normOcc] || '').toLowerCase() : ''
 }
 
 function manualOverridesForPiece(piece = {}) {
@@ -126,7 +157,7 @@ export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', expl
     ...Object.values(intelligence.realWearNotes || {})
   ].join(' ').toLowerCase()
   const normOcc = normalizeOccasionForConfidence(occasion)
-  const occasionConfidence = normOcc ? String(intelligence.occasionConfidence?.[normOcc] || '').toLowerCase() : ''
+  const occasionConfidence = resolveOccasionConfidence(occasion, intelligence.occasionConfidence)
   const reasons = []
   const aggressive = explorationMode === 'aggressive'
   const manualOverrides = manualOverridesForPiece(piece)

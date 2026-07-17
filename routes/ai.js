@@ -405,7 +405,11 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null) {
   content.push({ type: 'text', text: TAG_PIECE_PROMPT })
   const payload = {
     system: TAG_PIECE_SYSTEM,
-    maxTokens: 1500,
+    // Spec 26 Part 7: the full tag schema was truncating mid-JSON
+    // ("Unterminated string in JSON at position 5084") at the prior cap —
+    // spec 22 fixed the 400 the truncated body caused on the Anthropic
+    // path, but the underlying truncation itself was still live.
+    maxTokens: 2500,
     messages: [{
       role: 'user',
       content
@@ -413,7 +417,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null) {
   }
 
   const raw = await askStylist(payload)
-  const tags = parseModelJson(raw)
+  const tags = parseModelJson(raw, { context: 'tagger', maxTokens: payload.maxTokens })
   if (tags && typeof tags === 'object') {
     tags.tagger_version = TAGGER_VERSION
     const confidence = normalizeConfidenceMap(tags._confidence || tags.style_profile_json?._confidence || {})

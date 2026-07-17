@@ -119,6 +119,70 @@ test('auto styling trust does not treat bohemian or folk/artisan as inherently b
   assert.deepEqual(decision.reasons, [])
 })
 
+// Spec 26 Part 3: outdoor_daytime_social must not read the tagger's rugged
+// `outdoor` confidence strictly — startsWith('outdoor') accidentally
+// prefix-collapsed every social outdoor occasion to the same key hiking uses,
+// systematically suppressing refined pieces (live DB shape: linen wide-leg
+// pants, patchwork top) that carry `outdoor: low` but are fine for a social
+// outdoor slot like a winery patio.
+test('outdoor_daytime_social reads the best of casual/smart-casual/outdoor (the live 128/260 shape) instead of the strict outdoor key', () => {
+  const decision = autoStylingTrustDecision({
+    name: 'linen wide-leg pants',
+    recommendation_status: 'trusted',
+    fit_confidence: 'high',
+    style_profile_json: {
+      garment_intelligence: {
+        occasion_confidence: {
+          outdoor: 'low',
+          casual: 'high'
+        }
+      }
+    }
+  }, { occasion: 'outdoor_daytime_social' })
+
+  assert.equal(decision.allowed, true)
+  assert.equal(decision.reasons.includes('AI profile low confidence for outdoor_daytime_social'), false)
+})
+
+test('outdoor_daytime_social still suppresses when casual/smart-casual/outdoor are all low (gate keeps teeth)', () => {
+  const decision = autoStylingTrustDecision({
+    name: 'rugged trail top',
+    recommendation_status: 'trusted',
+    fit_confidence: 'high',
+    style_profile_json: {
+      garment_intelligence: {
+        occasion_confidence: {
+          outdoor: 'low',
+          casual: 'low',
+          'smart-casual': 'low'
+        }
+      }
+    }
+  }, { occasion: 'outdoor_daytime_social' })
+
+  assert.equal(decision.allowed, false)
+  assert.ok(decision.reasons.includes('AI profile low confidence for outdoor_daytime_social'))
+})
+
+test('a plain hiking-flavored outdoor occasion still reads the strict outdoor key', () => {
+  const decision = autoStylingTrustDecision({
+    name: 'trail sneakers',
+    recommendation_status: 'trusted',
+    fit_confidence: 'high',
+    style_profile_json: {
+      garment_intelligence: {
+        occasion_confidence: {
+          outdoor: 'low',
+          casual: 'high'
+        }
+      }
+    }
+  }, { occasion: 'outdoor_hiking' })
+
+  assert.equal(decision.allowed, false)
+  assert.ok(decision.reasons.includes('AI profile low confidence for outdoor_hiking'), 'plain outdoor occasions must not borrow casual/smart-casual confidence')
+})
+
 test('manifest line is compact, carries attributes, trust flags, and low-confidence markers', () => {
   const line = buildWardrobeManifestLine({
     id: 132,

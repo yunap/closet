@@ -1076,7 +1076,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // five different pairs of footwear across five outfits. A checkable
     // number replaces the vibe.
     reuseMode === 'maximize'
-      ? 'Reuse is set to maximize: pack at most 2 pairs of shoes across the whole set — a third only if a demanding activity (hiking, trail) requires it — and aim to repeat bottoms across slots. Every reused piece is one fewer to pack. Accessories alone do not count as reuse.'
+      ? 'Reuse is set to maximize: pack at most 3 pairs of shoes across the whole set — a fourth only if a demanding activity (hiking, trail) requires it — and aim to repeat bottoms across slots. Every reused piece is one fewer to pack. Accessories alone do not count as reuse.'
       : '',
     // Part 5 (spec 18): live miss — a card described the Tropical pants
     // (catalog: pattern floral, six colors) as "solid-base... muted print",
@@ -1094,16 +1094,27 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // on the same outfit. Stays a string — layer COUNT is judgment (a ski
     // plan legitimately doubles up), unlike Part 1's packing count.
     'At most one layer (cardigan, jacket, or shawl) per outfit unless cold or rain genuinely demands two.',
-    // Part 2 (spec 25): a stored owner rule (e.g. "office/client days:
-    // structured silhouettes, no maxi skirts or shawls") was present in the
-    // system-prompt tail but got out-composed by an unrelated praise corpus
-    // sitting in the same flat feedback list, ~40k tokens further from
-    // composition-time attention than this workbench. Deterministic
-    // pass-through of the same rows getStylistFeedbackMemory renders under
-    // "Owner rules" — still prompt guidance, never a mechanical gate (#44).
+    // Part 2 (spec 25) / Part 5 (spec 26): a stored owner rule (e.g.
+    // "office/client days: structured silhouettes, no maxi skirts or
+    // shawls") was present in the system-prompt tail but got out-composed by
+    // an unrelated praise corpus sitting in the same flat feedback list,
+    // ~40k tokens further from composition-time attention than this
+    // workbench. Deterministic pass-through of the same rows
+    // getStylistFeedbackMemory renders under "Owner rules" — still prompt
+    // guidance, never a mechanical gate (#44). Spec 26 live miss: with the
+    // rule delivered and acknowledged, the model still wrote a constructed
+    // exception ("can drape over the shoulders if the office AC runs cold")
+    // on a regular office day — strengthened framing below to name and
+    // forbid that exact move.
     Array.isArray(ownerRules) && ownerRules.length
-      ? `OWNER RULES — apply to every outfit you compose: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
-      : ''
+      ? `OWNER RULES — hard requirements, not suggestions. Do not construct exceptions or conditional workarounds (no "in case the AC runs cold"). If a rule makes a slot impossible, disclose the conflict instead of bending the rule. Apply to every outfit you compose: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
+      : '',
+    // Part 6 (spec 26): the spec-25 professional-context competence bullet
+    // is live in STYLIST_SYSTEM but demonstrably weak from tail position (the
+    // 07-16 office run: shawl on Tuesday, double botanical on Wednesday).
+    // Same delivery lesson as owner rules above — repeat it here, ~40k
+    // tokens closer to composition-time attention.
+    'For professional/work slots (office, client, presentation): quiet, structured pieces lead; at most ONE bold print per outfit; accessory register matches the outfit; no statement wraps at work. Social slots (dinner, gallery, weekend) are where statement styling belongs.'
   ].filter(Boolean).join(' ')
   return {
     status: 'slot_rosters',
@@ -1232,6 +1243,24 @@ export function mergePendingPlanForReplan(priorPendingPlan, newPendingPlan, {
     resubmits: 0
   }
 }
+
+// Spec 26 Part 1: two captured occurrences of the model revising its outfit
+// mid-reason while submitting the un-revised piece_ids ("Actually revising:
+// emerald v-neck top..." with the dress submitted anyway; "wait, maxi skirt
+// is prohibited... Switching:" with maxi 167 submitted). The spec-19
+// piece_ids-ARE-the-outfit instruction (a prose-only fix) failed both times —
+// this hardens it into a mechanical check on the model's OWN reply prose, not
+// garment text, matching the looksLikeDestinationOrWeatherQuestion precedent
+// (provider.js). Each marker is anchored with its own \b so trailing
+// punctuation in the "wait" branch doesn't swallow the boundary check (a
+// combined \b(...)\b around the whole alternation fails to match "wait," since
+// both the comma and the following space are non-word characters).
+export function reasonRevisesMidSentence(reasonText = '') {
+  const text = String(reasonText || '')
+  return /\bwait\b[,—\- ]|\bactually\b[, ]|\bswitching to\b|\brevising\b|\bscratch that\b|\binstead let'?s\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
+}
+
+export const REASON_REVISION_MESSAGE = 'your reason revises itself mid-sentence — decide the pieces first, update piece_ids to match, and resubmit with a clean reason describing only the pieces you actually included.'
 
 export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherProfile = {} } = {}) {
   const pieces = Array.isArray(outfit.pieces) ? outfit.pieces : []
@@ -1364,6 +1393,9 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       source: 'plan_outfit_set',
       composedBy: 'model'
     }
+    if (outfit.reason && reasonRevisesMidSentence(outfit.reason)) {
+      reasons.push(REASON_REVISION_MESSAGE)
+    }
     if (!unresolvedPieceIds.length) {
       const structureGap = describeOutfitStructureGap(pieces, { requireShoes: true })
       if (structureGap || !isOutfitStructurallyValid(pieces, { requireShoes: true })) {
@@ -1395,20 +1427,26 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       if (pieceBudget > 0 && nextDistinctPieceCount > pieceBudget) reasons.push(`would exceed the ${pieceBudget}-piece budget`)
       // Part 1 (spec 24, owner ruling: enforce): reuse:maximize is a packing
       // directive, not a taste judgment — under-reuse means the directive
-      // wasn't followed. Only blocks a 3rd+ distinct pair when an
+      // wasn't followed. Only blocks a 4th+ distinct pair when an
       // already-used pair is gate-eligible for THIS slot (the activity
       // exemption — a hiking slot's athletic shoe, a dressy slot's heels —
       // falls out of gate eligibility with no activity-specific code). Never
-      // blocks the first or second distinct pair.
+      // blocks the first, second, or third distinct pair.
+      // Part 2 (spec 26, owner ruling 2026-07-16): the effective-2 trigger
+      // (reject the 3rd distinct pair) deadlocked the coastal slot on the
+      // first enforced run — the model refused loafers-at-the-beach
+      // (defensible taste), burned the resubmit budget, coastal delivered
+      // 0/1. Moved the trigger to distinct pairs >= 3 (reject the 4th); the
+      // eligibility exemption and coached message are unchanged.
       if (reuseMode === 'maximize') {
         const shoePair = outfitCategoryPairs(outfit).find(pair => pair.group === 'shoes')
         if (shoePair) {
           const usedShoes = usedPieceIdsByCategory.get('shoes') || new Set()
-          if (!usedShoes.has(shoePair.id) && usedShoes.size >= 2) {
+          if (!usedShoes.has(shoePair.id) && usedShoes.size >= 3) {
             const eligibleUsedShoeIds = [...usedShoes].filter(id => gateAllowedIds.has(id))
             if (eligibleUsedShoeIds.length) {
               const names = eligibleUsedShoeIds.map(id => planPiecesById.get(id)?.name || `piece ${id}`).join(', ')
-              reasons.push(`this would be a 3rd pair of shoes under reuse:maximize — reuse one of: ${names} (they pass this slot's gates), or drop reuse:maximize if packing light isn't the goal.`)
+              reasons.push(`this would be a 4th pair of shoes under reuse:maximize — reuse one of: ${names} (they pass this slot's gates), or drop reuse:maximize if packing light isn't the goal.`)
             }
           }
         }

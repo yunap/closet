@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup } = await import('../styling-engine/attributes.js')
@@ -41,6 +41,16 @@ function planOutfitSetSlotSchema() {
   const tool = STYLIST_TOOLS.find(entry => entry.name === 'plan_outfit_set')
   return tool?.input_schema?.properties?.slots?.items || {}
 }
+
+// Spec 26 Part 4: propose_outfit's season field must teach the indoor
+// escape hatch (mirrors the plan-slot weather:'indoor' mechanism, which
+// weatherProfileFromContext already honors on this path — rules.js).
+test('propose_outfit tool schema teaches season:"indoor" for climate-controlled occasions', () => {
+  const tool = STYLIST_TOOLS.find(entry => entry.name === 'propose_outfit')
+  const seasonDescription = tool?.input_schema?.properties?.season?.description || ''
+  assert.match(seasonDescription, /season:'indoor'/)
+  assert.match(seasonDescription, /office, restaurant, meeting, gallery/)
+})
 
 // A fetchImpl (injected the same way weather.test.js does) that returns a hot
 // inland forecast for everything EXCEPT a coastal town, which comes back mild —
@@ -266,7 +276,7 @@ test('model plan slot workbench instructions push reuse when reuseMode is maximi
   ])
 
   const maximizeWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day', constraints: { reuse: 'maximize' } })
-  assert.match(maximizeWorkbench.instructions, /Reuse is set to maximize.*at most 2 pairs of shoes/)
+  assert.match(maximizeWorkbench.instructions, /Reuse is set to maximize.*at most 3 pairs of shoes/)
   assert.match(maximizeWorkbench.instructions, /repeat bottoms across slots/)
 
   const defaultWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
@@ -995,7 +1005,42 @@ test('a fresh plan_outfit_set call with no pending plan and no plan cards this t
 
 // --- Enforced footwear packing under reuse:maximize (spec 24 Part 1) --------
 
-test('a 3rd distinct pair of shoes under reuse:maximize is rejected, coaching reuse of gate-eligible used pairs', async () => {
+test('a 4th distinct pair of shoes under reuse:maximize is rejected, coaching reuse of gate-eligible used pairs', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  for (const label of ['A', 'B', 'C', 'D']) {
+    insertPiece({ category: 'top', name: `${label} top`, occasions: ['city'] })
+    insertPiece({ category: 'bottom', name: `${label} bottom`, occasions: ['city'] })
+    insertPiece({ category: 'shoes', name: `${label} shoes`, occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  }
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Day A', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day B', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day C', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day D', occasion: 'city', activity: 'none', count: 1 },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'four days', constraints: { reuse: 'maximize' } })
+  const [slotA, slotB, slotC, slotD] = workbench.pendingPlan.slots
+  const idFor = (slot, name) => Number((slot.allowedPieces || []).find(piece => piece.name === name)?.id)
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [
+    { slot_id: slotA.id, piece_ids: [idFor(slotA, 'A top'), idFor(slotA, 'A bottom'), idFor(slotA, 'A shoes')] },
+    { slot_id: slotB.id, piece_ids: [idFor(slotB, 'B top'), idFor(slotB, 'B bottom'), idFor(slotB, 'B shoes')] },
+    { slot_id: slotC.id, piece_ids: [idFor(slotC, 'C top'), idFor(slotC, 'C bottom'), idFor(slotC, 'C shoes')] },
+    { slot_id: slotD.id, piece_ids: [idFor(slotD, 'D top'), idFor(slotD, 'D bottom'), idFor(slotD, 'D shoes')] },
+  ])
+
+  assert.equal(result.accepted.length, 3, `expected Day A, B, C accepted, Day D rejected, got ${JSON.stringify(result.failures)}`)
+  const failure = result.failures.find(entry => entry.label === 'Day D')
+  assert.ok(failure, 'Day D should have failed on the 4th-pair cap')
+  const reasons = failure.reasons.join(' ')
+  assert.match(reasons, /4th pair of shoes under reuse:maximize/)
+  assert.match(reasons, /A shoes/)
+  assert.match(reasons, /B shoes/)
+  assert.match(reasons, /C shoes/)
+})
+
+test('reuse:maximize never blocks the first, second, or third distinct pair of shoes', async () => {
   db.prepare('DELETE FROM pieces').run()
   for (const label of ['A', 'B', 'C']) {
     insertPiece({ category: 'top', name: `${label} top`, occasions: ['city'] })
@@ -1018,43 +1063,13 @@ test('a 3rd distinct pair of shoes under reuse:maximize is rejected, coaching re
     { slot_id: slotC.id, piece_ids: [idFor(slotC, 'C top'), idFor(slotC, 'C bottom'), idFor(slotC, 'C shoes')] },
   ])
 
-  assert.equal(result.accepted.length, 2, `expected Day A and Day B accepted, Day C rejected, got ${JSON.stringify(result.failures)}`)
-  const failure = result.failures.find(entry => entry.label === 'Day C')
-  assert.ok(failure, 'Day C should have failed on the 3rd-pair cap')
-  const reasons = failure.reasons.join(' ')
-  assert.match(reasons, /3rd pair of shoes under reuse:maximize/)
-  assert.match(reasons, /A shoes/)
-  assert.match(reasons, /B shoes/)
-})
-
-test('reuse:maximize never blocks the first or second distinct pair of shoes', async () => {
-  db.prepare('DELETE FROM pieces').run()
-  for (const label of ['A', 'B']) {
-    insertPiece({ category: 'top', name: `${label} top`, occasions: ['city'] })
-    insertPiece({ category: 'bottom', name: `${label} bottom`, occasions: ['city'] })
-    insertPiece({ category: 'shoes', name: `${label} shoes`, occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
-  }
-  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-  const slots = normalizePlanSlots([
-    { label: 'Day A', occasion: 'city', activity: 'none', count: 1 },
-    { label: 'Day B', occasion: 'city', activity: 'none', count: 1 },
-  ])
-  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'two days', constraints: { reuse: 'maximize' } })
-  const [slotA, slotB] = workbench.pendingPlan.slots
-  const idFor = (slot, name) => Number((slot.allowedPieces || []).find(piece => piece.name === name)?.id)
-
-  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [
-    { slot_id: slotA.id, piece_ids: [idFor(slotA, 'A top'), idFor(slotA, 'A bottom'), idFor(slotA, 'A shoes')] },
-    { slot_id: slotB.id, piece_ids: [idFor(slotB, 'B top'), idFor(slotB, 'B bottom'), idFor(slotB, 'B shoes')] },
-  ])
-
-  assert.equal(result.failures.length, 0, `first and second distinct pairs must never be blocked, got ${JSON.stringify(result.failures)}`)
-  assert.equal(result.accepted.length, 2)
+  assert.equal(result.failures.length, 0, `first, second, and third distinct pairs must never be blocked, got ${JSON.stringify(result.failures)}`)
+  assert.equal(result.accepted.length, 3)
 })
 
 test('reuse:diversify is byte-identical — the shoe cap only applies under maximize', async () => {
   db.prepare('DELETE FROM pieces').run()
-  for (const label of ['A', 'B', 'C']) {
+  for (const label of ['A', 'B', 'C', 'D']) {
     insertPiece({ category: 'top', name: `${label} top`, occasions: ['city'] })
     insertPiece({ category: 'bottom', name: `${label} bottom`, occasions: ['city'] })
     insertPiece({ category: 'shoes', name: `${label} shoes`, occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
@@ -1064,22 +1079,24 @@ test('reuse:diversify is byte-identical — the shoe cap only applies under maxi
     { label: 'Day A', occasion: 'city', activity: 'none', count: 1 },
     { label: 'Day B', occasion: 'city', activity: 'none', count: 1 },
     { label: 'Day C', occasion: 'city', activity: 'none', count: 1 },
+    { label: 'Day D', occasion: 'city', activity: 'none', count: 1 },
   ])
-  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'three days', constraints: { reuse: 'diversify' } })
-  const [slotA, slotB, slotC] = workbench.pendingPlan.slots
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'four days', constraints: { reuse: 'diversify' } })
+  const [slotA, slotB, slotC, slotD] = workbench.pendingPlan.slots
   const idFor = (slot, name) => Number((slot.allowedPieces || []).find(piece => piece.name === name)?.id)
 
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [
     { slot_id: slotA.id, piece_ids: [idFor(slotA, 'A top'), idFor(slotA, 'A bottom'), idFor(slotA, 'A shoes')] },
     { slot_id: slotB.id, piece_ids: [idFor(slotB, 'B top'), idFor(slotB, 'B bottom'), idFor(slotB, 'B shoes')] },
     { slot_id: slotC.id, piece_ids: [idFor(slotC, 'C top'), idFor(slotC, 'C bottom'), idFor(slotC, 'C shoes')] },
+    { slot_id: slotD.id, piece_ids: [idFor(slotD, 'D top'), idFor(slotD, 'D bottom'), idFor(slotD, 'D shoes')] },
   ])
 
   assert.equal(result.failures.length, 0, `diversify must be unaffected by the maximize-only shoe cap, got ${JSON.stringify(result.failures)}`)
-  assert.equal(result.accepted.length, 3)
+  assert.equal(result.accepted.length, 4)
 })
 
-test('a demanding activity (hiking) still gets its own shoe as a 3rd pair when the 2 used pairs fail its gates', async () => {
+test('a demanding activity (hiking) still gets its own shoe as a 4th pair when the 3 used pairs fail its gates', async () => {
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'top', name: 'office top one', occasions: ['casual'] })
   insertPiece({ category: 'bottom', name: 'office bottom one', occasions: ['casual'] })
@@ -1087,6 +1104,9 @@ test('a demanding activity (hiking) still gets its own shoe as a 3rd pair when t
   insertPiece({ category: 'top', name: 'office top two', occasions: ['casual'] })
   insertPiece({ category: 'bottom', name: 'office bottom two', occasions: ['casual'] })
   insertPiece({ category: 'shoes', name: 'office heels two', occasions: ['casual'], heel_height: 'mid', walk_support: 'medium' })
+  insertPiece({ category: 'top', name: 'office top three', occasions: ['casual'] })
+  insertPiece({ category: 'bottom', name: 'office bottom three', occasions: ['casual'] })
+  insertPiece({ category: 'shoes', name: 'office heels three', occasions: ['casual'], heel_height: 'mid', walk_support: 'medium' })
   insertPiece({ category: 'top', name: 'hike top', occasions: ['casual'] })
   insertPiece({ category: 'bottom', name: 'hike bottom', occasions: ['casual'] })
   insertPiece({ category: 'shoes', name: 'trail sneakers', occasions: ['casual'], heel_height: 'flat', walk_support: 'high' })
@@ -1094,10 +1114,11 @@ test('a demanding activity (hiking) still gets its own shoe as a 3rd pair when t
   const slots = normalizePlanSlots([
     { label: 'Office A', occasion: 'casual', activity: 'none', count: 1 },
     { label: 'Office B', occasion: 'casual', activity: 'none', count: 1 },
+    { label: 'Office C', occasion: 'casual', activity: 'none', count: 1 },
     { label: 'Hike', occasion: 'casual', activity: 'hiking', count: 1 },
   ])
   const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office days plus a hike', constraints: { reuse: 'maximize' } })
-  const [slotA, slotB, slotHike] = workbench.pendingPlan.slots
+  const [slotA, slotB, slotC, slotHike] = workbench.pendingPlan.slots
   const idFor = (slot, name) => Number((slot.allowedPieces || []).find(piece => piece.name === name)?.id)
 
   // The hiking slot's gate must exclude the mid-heel/medium-support office
@@ -1107,26 +1128,28 @@ test('a demanding activity (hiking) still gets its own shoe as a 3rd pair when t
   const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [
     { slot_id: slotA.id, piece_ids: [idFor(slotA, 'office top one'), idFor(slotA, 'office bottom one'), idFor(slotA, 'office heels one')] },
     { slot_id: slotB.id, piece_ids: [idFor(slotB, 'office top two'), idFor(slotB, 'office bottom two'), idFor(slotB, 'office heels two')] },
+    { slot_id: slotC.id, piece_ids: [idFor(slotC, 'office top three'), idFor(slotC, 'office bottom three'), idFor(slotC, 'office heels three')] },
     { slot_id: slotHike.id, piece_ids: [idFor(slotHike, 'hike top'), idFor(slotHike, 'hike bottom'), idFor(slotHike, 'trail sneakers')] },
   ])
 
-  assert.equal(result.failures.length, 0, `the hiking slot's 3rd pair should be exempt since neither used pair passes its gates, got ${JSON.stringify(result.failures)}`)
-  assert.equal(result.accepted.length, 3)
+  assert.equal(result.failures.length, 0, `the hiking slot's 4th pair should be exempt since none of the 3 used pairs pass its gates, got ${JSON.stringify(result.failures)}`)
+  assert.equal(result.accepted.length, 4)
 })
 
-test('the used-shoe ledger survives a spec-23 partial re-plan merge across two rounds', async () => {
+test('the used-shoe ledger survives a spec-23 partial re-plan merge across three rounds', async () => {
   db.prepare('DELETE FROM pieces').run()
-  for (const label of ['A', 'B', 'C']) {
+  for (const label of ['A', 'B', 'C', 'D']) {
     insertPiece({ category: 'top', name: `${label} top`, occasions: ['city'] })
     insertPiece({ category: 'bottom', name: `${label} bottom`, occasions: ['city'] })
     insertPiece({ category: 'shoes', name: `${label} shoes`, occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
   }
-  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'three days, pack light' }
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'four days, pack light' }
   await executeTool('plan_outfit_set', {
     slots: [
       { label: 'Day A', occasion: 'city', activity: 'none', count: 1 },
       { label: 'Day B', occasion: 'city', activity: 'none', count: 1 },
       { label: 'Day C', occasion: 'city', activity: 'none', count: 1 },
+      { label: 'Day D', occasion: 'city', activity: 'none', count: 1 },
     ],
     constraints: { reuse: 'maximize' }
   }, toolContext)
@@ -1142,7 +1165,7 @@ test('the used-shoe ledger survives a spec-23 partial re-plan merge across two r
 
   const slotA = toolContext.pendingPlan.slots.find(slot => slot.label === 'Day A')
   const firstSubmit = await executeTool('submit_plan_outfits', { outfits: [outfitFor(slotA)] }, toolContext)
-  assert.equal(firstSubmit.status, 'validation_error', 'Day B and Day C are still missing')
+  assert.equal(firstSubmit.status, 'validation_error', 'Day B, Day C, and Day D are still missing')
   assert.equal(toolContext.pendingPlan.heldOutfits.length, 1)
 
   // Round 1 of merge: re-plan Day B.
@@ -1151,18 +1174,27 @@ test('the used-shoe ledger survives a spec-23 partial re-plan merge across two r
   }, toolContext)
   const slotB = toolContext.pendingPlan.slots.find(slot => slot.label === 'Day B')
   const secondSubmit = await executeTool('submit_plan_outfits', { outfits: [outfitFor(slotB)] }, toolContext)
-  assert.equal(secondSubmit.status, 'validation_error', 'Day C is still missing')
+  assert.equal(secondSubmit.status, 'validation_error', 'Day C and Day D are still missing')
   assert.equal(toolContext.pendingPlan.heldOutfits.length, 2, 'the used-shoe ledger must reflect both A and B after the first merge')
 
-  // Round 2 of merge: re-plan Day C. A 3rd distinct pair must still be rejected.
+  // Round 2 of merge: re-plan Day C. The 3rd distinct pair must still be accepted.
   await executeTool('plan_outfit_set', {
     slots: [{ label: 'Day C', occasion: 'city', activity: 'none', count: 1 }]
   }, toolContext)
   const slotC = toolContext.pendingPlan.slots.find(slot => slot.label === 'Day C')
   const thirdSubmit = await executeTool('submit_plan_outfits', { outfits: [outfitFor(slotC)] }, toolContext)
+  assert.equal(thirdSubmit.status, 'validation_error', 'Day D is still missing')
+  assert.equal(toolContext.pendingPlan.heldOutfits.length, 3, 'the used-shoe ledger must reflect A, B, and C after the second merge')
 
-  assert.equal(thirdSubmit.status, 'validation_error', 'a 3rd distinct pair of shoes must still be caught after two rounds of merge')
-  assert.match(thirdSubmit.message, /3rd pair of shoes under reuse:maximize/)
+  // Round 3 of merge: re-plan Day D. A 4th distinct pair must still be rejected.
+  await executeTool('plan_outfit_set', {
+    slots: [{ label: 'Day D', occasion: 'city', activity: 'none', count: 1 }]
+  }, toolContext)
+  const slotD = toolContext.pendingPlan.slots.find(slot => slot.label === 'Day D')
+  const fourthSubmit = await executeTool('submit_plan_outfits', { outfits: [outfitFor(slotD)] }, toolContext)
+
+  assert.equal(fourthSubmit.status, 'validation_error', 'a 4th distinct pair of shoes must still be caught after three rounds of merge')
+  assert.match(fourthSubmit.message, /4th pair of shoes under reuse:maximize/)
 })
 
 // --- Plan-mode layering requires sight, parity with propose_outfit (spec 24 Part 3) --
@@ -1226,6 +1258,57 @@ test('a plain top+bottom outfit is unaffected by the layering sight check (no dr
   assert.equal(result.accepted.length, 1)
 })
 
+// --- Reason-revision validator (spec 26 Part 1) -----------------------------
+
+test('reasonRevisesMidSentence catches both captured live incidents verbatim', () => {
+  assert.equal(reasonRevisesMidSentence('**Actually revising:** emerald v-neck top + oatmeal pants…'), true)
+  assert.equal(reasonRevisesMidSentence('**wait, maxi skirt is prohibited per owner rule. Switching:** …mini skirt'), true)
+})
+
+test('reasonRevisesMidSentence does not false-positive on a clean reason containing "waiting"', () => {
+  assert.equal(reasonRevisesMidSentence('This look is worth waiting for sunset to photograph.'), false)
+})
+
+test('a submitted plan outfit whose reason revises itself mid-sentence is rejected with the coaching message', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'revision top', occasions: ['city'] })
+  const bottomId = insertPiece({ category: 'bottom', name: 'revision bottom', occasions: ['city'] })
+  const shoesId = insertPiece({ category: 'shoes', name: 'revision shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Thursday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+    reason: '**wait, maxi skirt is prohibited per owner rule. Switching:** …mini skirt'
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  assert.match(result.failures[0].reasons.join(' '), /your reason revises itself mid-sentence/)
+})
+
+test('resubmission with a clean, non-revising reason is accepted', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'clean top', occasions: ['city'] })
+  const bottomId = insertPiece({ category: 'bottom', name: 'clean bottom', occasions: ['city'] })
+  const shoesId = insertPiece({ category: 'shoes', name: 'clean shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Thursday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+    reason: 'A quiet, structured look worth waiting for sunset to photograph.'
+  }])
+
+  assert.equal(result.failures.length, 0, `expected the clean reason to pass, got ${JSON.stringify(result.failures)}`)
+  assert.equal(result.accepted.length, 1)
+})
+
 // --- One-layer instruction (spec 24 Part 4) ---------------------------------
 
 test('workbench instructions include the one-layer-per-outfit line', async () => {
@@ -1263,6 +1346,48 @@ test('submit_plan_outfits success message tells the model not to call propose_ou
   assert.match(result.message, /do NOT call propose_outfit or render them again/)
 })
 
+// --- Partial-accept gap-fill pointer (spec 26 Part 2) -----------------------
+
+test('the partial-accept success message after the resubmit cap names the plan_outfit_set gap-fill path', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'A top', occasions: ['city'] })
+  insertPiece({ category: 'bottom', name: 'A bottom', occasions: ['city'] })
+  insertPiece({ category: 'shoes', name: 'A shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+
+  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'two days' }
+  await executeTool('plan_outfit_set', {
+    slots: [
+      { label: 'Day A', occasion: 'city', activity: 'none', count: 1 },
+      { label: 'Day B', occasion: 'city', activity: 'none', count: 1 },
+    ]
+  }, toolContext)
+  const slotA = toolContext.pendingPlan.slots.find(slot => slot.label === 'Day A')
+
+  // Day A submits successfully and stays held; Day B is never submitted, so
+  // every round comes back a validation_error until the resubmit cap flips
+  // the response to a partial success.
+  const submitDayAOnly = () => executeTool('submit_plan_outfits', {
+    outfits: [{
+      slot_id: slotA.id,
+      piece_ids: [
+        pieceIdByName(slotA, 'A top'),
+        pieceIdByName(slotA, 'A bottom'),
+        pieceIdByName(slotA, 'A shoes')
+      ]
+    }]
+  }, toolContext)
+
+  const first = await submitDayAOnly()
+  assert.equal(first.status, 'validation_error')
+  const second = await submitDayAOnly()
+  assert.equal(second.status, 'validation_error')
+  const third = await submitDayAOnly()
+
+  assert.equal(third.status, 'success')
+  assert.equal(third.partial, true)
+  assert.match(third.message, /To fill the disclosed gaps, call plan_outfit_set again with JUST the unfilled slot\(s\) — accepted cards carry forward automatically\./)
+})
+
 // --- Owner rules delivered into the plan workbench (spec 25 Part 2) --------
 
 test('workbench instructions contain the OWNER RULES block when owner rules exist, and respect the cap', async () => {
@@ -1274,9 +1399,18 @@ test('workbench instructions contain the OWNER RULES block when owner rules exis
     question: 'city day',
     ownerRules: ['For office and client days: structured silhouettes only — no maxi skirts, no shawls at work.', 'No flats for me.']
   })
-  assert.match(withRules.instructions, /OWNER RULES — apply to every outfit you compose:/)
+  assert.match(withRules.instructions, /OWNER RULES — hard requirements, not suggestions\./)
+  assert.match(withRules.instructions, /Apply to every outfit you compose:/)
   assert.match(withRules.instructions, /"For office and client days: structured silhouettes only — no maxi skirts, no shawls at work\."/)
   assert.match(withRules.instructions, /"No flats for me\."/)
+})
+
+test('workbench instructions carry the professional-slot styling line unconditionally (spec 26 Part 6)', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  assert.match(workbench.instructions, /at most ONE bold print per outfit/)
+  assert.match(workbench.instructions, /no statement wraps at work/)
 })
 
 test('workbench instructions omit the OWNER RULES block when no owner rules exist', async () => {
