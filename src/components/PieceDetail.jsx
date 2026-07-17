@@ -77,7 +77,16 @@ function SavedBoardThumb({ board, onPreview }) {
   )
 }
 
-export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendToStylist }) {
+export default function PieceDetail({
+  piece,
+  onEdit,
+  onDelete,
+  onClose,
+  onSendToStylist,
+  showManagementActions = true,
+  showDeleteAction = showManagementActions,
+  showEditAction = showManagementActions
+}) {
   const bg = piece.colors[0] ? (COLOR_BG[piece.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
   const [photoTab, setPhotoTab] = useState(piece.photo ? 'hanger' : piece.worn_photo ? 'worn' : null)
   const [previewImage, setPreviewImage] = useState(null)
@@ -217,18 +226,20 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
           )}
 
           {/* Ask Stylist */}
-          <button
-            onClick={() => onSendToStylist(piece)}
-            style={{
-              width: '100%', padding: '13px', marginBottom: 10,
-              background: 'var(--accent-light)', color: 'var(--accent)',
-              border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-              fontSize: 14, fontWeight: 500,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            }}
-          >
-            ◇ Ask stylist about this piece
-          </button>
+          {onSendToStylist && (
+            <button
+              onClick={() => onSendToStylist(piece)}
+              style={{
+                width: '100%', padding: '13px', marginBottom: 10,
+                background: 'var(--accent-light)', color: 'var(--accent)',
+                border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
+                fontSize: 14, fontWeight: 500,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              ◇ Ask stylist about this piece
+            </button>
+          )}
 
           {/* Appears in */}
           {outfits.length > 0 ? (
@@ -246,10 +257,12 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
             </div>
           )}
 
-          <div className="detail-actions">
-            <button className="btn-danger" onClick={handleDelete}>Delete</button>
-            <button className="btn-primary" onClick={() => onEdit(piece)}>Edit</button>
-          </div>
+          {(showDeleteAction || showEditAction) && (
+            <div className="detail-actions">
+              {showDeleteAction && <button className="btn-danger" onClick={handleDelete}>Delete</button>}
+              {showEditAction && <button className="btn-primary" onClick={() => onEdit(piece)}>Edit</button>}
+            </div>
+          )}
         </div>
       </div>
       {previewImage && (
