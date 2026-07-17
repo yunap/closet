@@ -1,10 +1,21 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { db, parsePiece } from '../db.js'
-import { wholeWardrobePieceTrustDecision, filterWholeWardrobePiecesForGeneration, buildVisualComposerRoster } from '../styling-engine/rules.js'
-import { resolveOccasionProfile } from '../styling-engine/occasions.js'
-import fs from 'fs'
-import path from 'path'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+// Isolated per-run DB (spec 21 Part 1) — this file used to import `db.js`
+// statically, which meant it read/wrote the developer's real wardrobe.db.
+// The env vars must land before `db.js` (and anything importing it, like
+// rules.js) evaluates, so those imports are dynamic and come after this.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-occasion-exclusion-'))
+process.env.NODE_ENV = 'test'
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+
+const { db, parsePiece } = await import('../db.js')
+const { wholeWardrobePieceTrustDecision, filterWholeWardrobePiecesForGeneration, buildVisualComposerRoster } = await import('../styling-engine/rules.js')
+const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 
 test('Part 1 & 5 — Exclusion toggle API database mechanics', () => {
   // Let's create a temporary piece to test database toggling

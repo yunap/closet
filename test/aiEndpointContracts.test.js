@@ -2111,23 +2111,6 @@ test('StylistChat shows trip explanation before cards, not inside trip cards', (
   assert.doesNotMatch(src, /<details open=\{message\?\.wholeWardrobe \|\| outfit\.source === 'trip_precompose'\}/)
 })
 
-test('StylistChat parses freeform outfit sections into current outfit memory', () => {
-  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
-  assert.match(src, /parseStructuredOutfitsFromAssistantText/)
-  assert.match(src, /OUTFIT_CARD_RESPONSE_PATTERN/)
-  assert.doesNotMatch(src, /OUTFIT_CARD_RESPONSE_PATTERN = .*\\b\(show\|render\|visualize[^\\n]*\|pack\|/)
-  assert.doesNotMatch(src, /OUTFIT_CARD_RESPONSE_PATTERN = .*\\b\(show\|render\|visualize[^\\n]*\|wear\|/)
-  assert.match(src, /const shouldParseAssistantOutfitCards = replyConversationMode === 'new_request' \|\| OUTFIT_CARD_RESPONSE_PATTERN\.test\(q\)/)
-  assert.match(src, /mergeCurrentOutfitSet/)
-  assert.match(src, /unresolvedPieceNames/)
-  assert.match(src, /Needs exact wardrobe match:/)
-  assert.match(src, /outfits\.slice\(0, 8\)\.map/)
-  assert.match(src, /Unresolved cards stay visible here but are skipped for image generation/)
-  assert.match(src, /CURRENT OUTFIT SET \(LATEST, HIGH AUTHORITY\)/)
-  assert.match(src, /source: 'freeform_current_set'/)
-  assert.match(src, /setThreadMemory\(\{\s*type: 'generated_outfits',\s*source: 'freeform_current_set'/)
-})
-
 test('executeTool get_garment_details loads text and base64 photo blocks', async () => {
   // Write a dummy temp image to uploads directory to mock the photo file
   const topPhotoFilename = 'mock-top-photo.jpg'
@@ -3255,42 +3238,6 @@ test('turn contract blocks a declared cards turn that delivered zero cards', () 
     generatedOutfits: [{ label: 'Card', pieceIds: [seeded.top] }]
   })
   assert.equal(delivered.block, false)
-})
-
-test('turn contract keeps clarification precedence over delivery', (t) => {
-  // tripScopeClarification is retired by default (2026-07-15 owner ruling);
-  // this test guards the legacy clause, which stays available behind the
-  // flag as a reversible fallback.
-  process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION = 'on'
-  t.after(() => { delete process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION })
-  // Underscoped multi-day trip where the model already composed: the context
-  // clause must fire before the count clause demands more cards.
-  const ctx = {
-    question: 'Going to Fairfax, CA for a few days',
-    declaredIntent: { want: 'cards', outfitCount: 3, turnMode: null },
-    generatedOutfits: [{ label: 'One card', pieceIds: [seeded.top] }],
-    freeformDiagnostics: { searchCalls: 1, proposeCalls: 1 }
-  }
-  const check = applyFreeformOutputChecks('Here is a starting look for the trip.', ctx)
-  assert.equal(check.block, true)
-  assert.equal(check.blockType, 'tripScopeClarification', 'stop-and-ask beats deliver-more')
-})
-
-test('turn contract retires tripScopeClarification by default — an underscoped multi-day question with composed cards passes untouched', () => {
-  // Same shape as the guard test above (Fairfax, few days, one composed card,
-  // searches/proposes already happened) but WITHOUT the flag: the 2026-07-15
-  // owner ruling is that this clause misfires on well-scoped turns (the
-  // Apple-skirt live incident blocked a valid 3-card answer and forced a fake
-  // clarifying question above the finished cards) and should no longer block.
-  delete process.env.WARDROBE_TRIP_SCOPE_CLARIFICATION
-  const ctx = {
-    question: 'Going to Fairfax, CA for a few days',
-    declaredIntent: { want: 'cards', outfitCount: 1, turnMode: null },
-    generatedOutfits: [{ label: 'One card', pieceIds: [seeded.top] }],
-    freeformDiagnostics: { searchCalls: 1, proposeCalls: 1 }
-  }
-  const check = applyFreeformOutputChecks('Here is a starting look for the trip.', ctx)
-  assert.equal(check.block, false, 'the retired clause must not block a well-scoped, already-composed turn')
 })
 
 test('view_pieces returns truth lines with thumbnails and satisfies the verification gates', async () => {

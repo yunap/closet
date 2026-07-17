@@ -147,7 +147,6 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       outfitProseWithoutToolCall: 0,
       zeroResultContradictionBlocks: 0,
       destinationClarificationRetries: 0,
-      tripScopeClarificationRetries: 0,
       planSlotEnvironmentInferred: 0,
       planSlotActivityInferred: 0,
       submitPlanCalls: 0,

@@ -1,7 +1,21 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildVisualComposerRoster } from '../styling-engine/rules.js'
-import { db } from '../db.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+// Isolated per-run DB (spec 21 Part 1) — this file used to import `db.js`
+// (and rules.js, which imports db.js transitively) statically, which meant
+// it read/wrote the developer's real wardrobe.db. The env vars must land
+// before those modules evaluate, so those imports are dynamic and come
+// after this.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-visual-composer-roster-'))
+process.env.NODE_ENV = 'test'
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+
+const { buildVisualComposerRoster } = await import('../styling-engine/rules.js')
+const { db } = await import('../db.js')
 
 test('Visual Composer Roster - Hot weather filter ladder', () => {
   const pieces = [

@@ -1293,6 +1293,101 @@ ids, seen accepted, one-print-plus-solids passes unseen, unknown
 path: blind rejected, seen accepted, printed scarf accessory doesn't gate a
 single printed top). 577/577 full suite green.
 
+## Spec 21: the cleanup PR — hermetic tests, dead-code sweep, trip-scope machinery, and the prose-parser ruling — IMPLEMENTED (2026-07-17)
+
+Evidence source for every deletion in this PR: `docs/cleanup-inventory.md`
+(spec 20's read-only audit, re-verified 2026-07-17 against `origin/main`
+after specs 22-27 landed — still held). This PR is the delete-only follow-up
+that inventory recommended.
+
+- **Part 1 (P0, live data-safety fix).** `test/occasion_exclusion.test.js`,
+  `test/hot_weather_ranking.test.js`, `test/freeform_observability.test.js`,
+  and `test/visual_composer_roster.test.js` imported `db.js` (and, transitively,
+  `rules.js`/`tools.js`/`routes/ai.js`) statically, before any test-local env
+  var could take effect — so they read/wrote the developer's real
+  `wardrobe.db`, including `hot_weather_ranking.test.js`'s
+  `DELETE FROM todos WHERE type = 'metadata'` and
+  `freeform_observability.test.js`'s `DELETE FROM freeform_generation_runs`,
+  both global wipes of real tables. Fixed with the established
+  dynamic-import-after-env-var pattern (`test/plan_outfit_set.test.js`'s
+  precedent): a `tmpRoot`/`WARDROBE_DB_PATH`/`WARDROBE_UPLOADS_DIR` setup
+  block first, then every module that touches `db.js` (directly or
+  transitively) imported via `await import(...)` instead of a static
+  `import`. `hot_weather_ranking.test.js`'s `ensureFixturePieces` real-ID
+  fixture pattern was kept, now seeding into the isolated tmp DB instead of
+  the live one. **Acceptance check, verified directly, not assumed:**
+  `wardrobe.db`'s mtime (`Jul 16 22:19:26 2026`) was captured before this PR's
+  changes and confirmed byte-identical after every subsequent full `npm test`
+  run in this PR, including the Part 1-3 combined run and the final Part 4
+  run.
+- **Part 2 (mechanical, zero behavior change).** The dead
+  `tripRequestNeedsScopeClarification` import in `routes/ai.js` died as part
+  of Part 3 (its real subject was deleted, not just the unused import). The
+  ~23-line `WARDROBE_PLAN_COMPOSE` save/restore ceremony in
+  `test/plan_outfit_set.test.js` (module-level baseline + four per-test
+  try/finally blocks) was removed — the flag has had zero production reads
+  since PR #106; every wrapped assertion already only checked model-mode
+  behavior, so removing the ceremony changed no test outcome.
+  `scratch/diagnose_anchor_selectivity.js` (tracked, `.gitignore`-whitelisted,
+  referenced nowhere) was deleted along with its whitelist line.
+- **Part 3 (owner-ruled retirement, flag window closed).** The
+  `WARDROBE_TRIP_SCOPE_CLARIFICATION` clause — spec 18 Part 2's reversibility
+  window — is deleted outright: `tripScopeClarificationEnabled` and the
+  clause body in `applyFreeformOutputChecks` (`provider.js`),
+  `tripRequestNeedsScopeClarification` + `TRIP_ACTIVITY_OR_USE_CASE_PATTERNS`
+  (`stylingIntent.js`), the `tripScopeClarificationRetries` counter
+  (`tools.js` — it had no `persistFreeformGenerationRun` write to remove;
+  census 3 flagged it as DB-only but it turned out to only ever reach the
+  client-side `debug` object), and both the flag-on guard test
+  (`aiEndpointContracts.test.js`) and the flag-off default-behavior test that
+  exercised the same now-fully-deleted mechanism, plus
+  `tripRequestNeedsScopeClarification`'s three unit tests
+  (`stylingIntent.test.js`). `destinationClarification` is untouched, per the
+  spec's explicit instruction — no misfire evidence exists for it.
+- **Part 4 — owner ruling: DELETE.** `parseStructuredOutfitsFromAssistantText`
+  (`StylistChat.jsx`) is deleted, along with everything that existed solely to
+  feed it: `mergeCurrentOutfitSet`, `normalizeOutfitPieceName`,
+  `resolveNamedWardrobePiece`, `OUTFIT_CARD_RESPONSE_PATTERN`, the dead
+  `replyConversationMode` tracking variable (write-only once its one reader
+  was gone), the `freeform_current_set` branch in
+  `compactGeneratedOutfitContext` (no caller has passed that source string
+  since the parser's call site was removed), and the
+  `outfit.unresolvedPieceNames` card-rendering block (nothing produces that
+  field anymore). The real guarantee against unproposed-outfit prose was
+  already server-side (`outfitProseWithoutToolCall`'s hard block, spec 11) —
+  this was a dead client-side safety net for a prose format `STYLIST_SYSTEM`
+  has forbidden the model from writing since the `propose_outfit` migration.
+  The source-scan test pinning this machinery
+  (`'StylistChat parses freeform outfit sections into current outfit
+  memory'` in `aiEndpointContracts.test.js`) was deleted with its subject.
+  **`dist/` rebuilt** in this PR (frontend change, repo convention).
+- **Documentation hygiene.** `.env.example` gained a note that
+  `WARDROBE_PLAN_PREROUTE`, `WARDROBE_BROAD_PLAN_PREROUTE`,
+  `WARDROBE_FOLLOWUP_PREROUTE`, and `WARDROBE_PLAN_COMPOSE` are dead flags
+  (deleted with spec 14); the repo-local gitignored `.env`'s now-pointless
+  `WARDROBE_FOLLOWUP_PREROUTE=off` canary line was removed so the real
+  (nonexistent) behavior isn't masked in dev, same precedent as spec 19 Part
+  4's `WARDROBE_PLAN_COMPOSE=model` cleanup.
+
+**Carried forward from the inventory, still open, not addressed by this PR**
+(both explicitly out of scope per the spec):
+- The devtools-only diagnostics UI gap — `intentDeclared`, `viewCalls`,
+  `renderCalls`, `coverageCalls`, `composeWithoutDeclaredIntent`,
+  `proposeAfterPlanOutfitSetBlocked`, `proposeUnverifiedPieceBlocks`,
+  `proposeUnseenLayerBlocks`, `planOutfitSetCalls` reach the client via the
+  `debug` object but aren't rendered in the visible "Search & validation
+  details" panel. Optional wiring, owner's call someday.
+- `rules.js`, `core.js`, `attributes.js`, `occasions.js`, `weather.js`,
+  `taggerMerge.js`, `softScoreFloors.js`, and `routes/crud.js` were never
+  given a line-by-line reachability audit — needs its own commissioned pass
+  if ever wanted, not assumed clean by omission.
+
+Full suite: 571/571 (`npm test`, fresh run against this PR's final state,
+Part 1 acceptance re-verified). Ratchet: unchanged in every file except
+`stylingIntent.js`'s allowed-debt ceiling, which dropped from 3 to 1 as a
+side effect of Part 3 deleting `TRIP_ACTIVITY_OR_USE_CASE_PATTERNS` — no new
+debt, a real reduction.
+
 ## Gotchas for the next assistant
 
 - **Branch off fresh main before every piece of work** (recurring slip: twice a

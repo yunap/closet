@@ -1,9 +1,23 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { db } from '../db.js'
-import { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather } from '../styling-engine/tools.js'
-import { persistFreeformGenerationRun } from '../routes/ai.js'
-import { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, freeformToolLoopFallbackAnswer } from '../styling-engine/provider.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+// Isolated per-run DB (spec 21 Part 1) — this file used to import `db.js`
+// (and routes/ai.js, tools.js, provider.js, all of which import db.js
+// transitively) statically, which meant it read/wrote the developer's real
+// wardrobe.db. The env vars must land before those modules evaluate, so
+// those imports are dynamic and come after this.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-freeform-observability-'))
+process.env.NODE_ENV = 'test'
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+
+const { db } = await import('../db.js')
+const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather } = await import('../styling-engine/tools.js')
+const { persistFreeformGenerationRun } = await import('../routes/ai.js')
+const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, freeformToolLoopFallbackAnswer } = await import('../styling-engine/provider.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -22,7 +36,6 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     outfitProseWithoutToolCall: 0,
     zeroResultContradictionBlocks: 0,
     destinationClarificationRetries: 0,
-    tripScopeClarificationRetries: 0,
     planSlotEnvironmentInferred: 0,
     planSlotActivityInferred: 0,
     submitPlanCalls: 0,
@@ -538,10 +551,10 @@ test('looksLikeDestinationOrWeatherQuestion requires a question mark, not just m
 // asked to "show"/"render" an already-described outfit, by asking the model to reconstruct it —
 // unreliable, since the model would sometimes substitute a different-but-plausible piece instead of a
 // true re-render. Root cause traced further: the legacy client-side prose parser that used to build
-// cards locally (parseStructuredOutfitsFromAssistantText in StylistChat.jsx) only matches the old
-// pre-propose_outfit "### Outfit N" + "**Pieces**: A + B + C" format, which STYLIST_SYSTEM has
-// explicitly told the model not to write since the propose_outfit migration — so there's no reliable
-// local fallback to lean on either. The actual fix: harden looksLikeUnproposedOutfitProse (previously
+// cards locally (StylistChat.jsx's parseStructuredOutfitsFromAssistantText, deleted in spec 21 Part 4)
+// only matched the old pre-propose_outfit "### Outfit N" + "**Pieces**: A + B + C" format, which
+// STYLIST_SYSTEM has explicitly told the model not to write since the propose_outfit migration — so
+// there was no reliable local fallback to lean on either. The actual fix: harden looksLikeUnproposedOutfitProse (previously
 // a spec-3 soft flag only) into a hard block that fires on ANY outfit-shaped prose with zero
 // propose_outfit calls, not just ones following a "show" request — so there's ideally nothing left to
 // reconstruct by the time a follow-up like "show" is asked. Known test gap, same as spec 3/7/11's

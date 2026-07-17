@@ -1,15 +1,28 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { db, parsePiece } from '../db.js'
-import { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, getMergedProfileRules, profileRuleFit } from '../styling-engine/rules.js'
-import { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight } from '../styling-engine/attributes.js'
-import { resolveOccasionProfile } from '../styling-engine/occasions.js'
-import { resolveActivityProfile } from '../styling-engine/footwear-comfort.js'
-import { ensureFixturePieces } from './helpers/dbFixtures.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
-// These IDs are real pieces from the developer's personal wardrobe
-// (wardrobe.db is gitignored) — seed them only if a fresh/empty DB is
-// missing them, never touching or overwriting real local data.
+// Isolated per-run DB (spec 21 Part 1) — this file used to import `db.js`
+// statically, which meant it read/wrote the developer's real wardrobe.db.
+// The env vars must land before `db.js` (and anything importing it, like
+// rules.js) evaluates, so those imports are dynamic and come after this.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-hot-weather-'))
+process.env.NODE_ENV = 'test'
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+
+const { db, parsePiece } = await import('../db.js')
+const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
+const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight } = await import('../styling-engine/attributes.js')
+const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
+const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
+const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
+
+// These IDs mirror real pieces from the developer's personal wardrobe (the
+// shapes this suite's regression tests are anchored on), seeded into this
+// test's own isolated tmp DB rather than the developer's real wardrobe.db.
 const cleanupHotWeatherFixtures = ensureFixturePieces([
   { id: 233, name: 'white octopus graphic t-shirt', category: 'top', status: 'active', occasions: '["casual"]', fabric_weight: 'light', formality: 'everyday', photo: 'fixture-233.jpg' },
   { id: 242, name: 'beige tailored linen shorts', category: 'bottom', status: 'active', occasions: '["casual"]', fabric_weight: 'light', reads_as: 'tailored linen shorts', formality: 'everyday', photo: 'fixture-242.jpg' },
