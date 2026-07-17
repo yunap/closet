@@ -3943,9 +3943,12 @@ export function storeUserCorrection(note, contextType = 'general', contextId = n
       LIMIT 1
     `).get(trimmed)
     if (existing) return
+    // Spec 25 Part 2: 'owner_rule' going forward (previously
+    // 'preference_reaction'/'message') — legacy rows keep matching via
+    // isOwnerRuleRow's OR clause, no migration needed.
     db.prepare(`
       INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note)
-      VALUES ('preference_reaction', 'message', ?, ?, ?)
+      VALUES ('owner_rule', 'message', ?, ?, ?)
     `).run(contextType, contextId, trimmed)
   } catch (err) {
     console.error('storeUserCorrection error:', err)

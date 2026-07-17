@@ -1,7 +1,7 @@
 import path from 'path'
 import fs from 'fs'
 import { db, uploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes } from './rules.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
@@ -1465,12 +1465,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const planPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
         bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls', 0)
+        // Spec 25 Part 2: fetch here, render in buildPlanSlotWorkbench — the
+        // plan workbench is where every instruction the model demonstrably
+        // obeys lives, ~40k tokens closer than the system-prompt tail where a
+        // stored owner rule previously sat unread among reaction crumbs.
+        const ownerRules = getOwnerRuleNotes(8)
         const workbench = await buildPlanSlotWorkbench(planSlots, {
           constraints: planConstraints,
           allPieces: planPieces,
           dateRange: planDateRange,
           mood: toolContext.mood || '',
-          question: toolContext.question || ''
+          question: toolContext.question || '',
+          ownerRules
         })
         if (isPartialReplan) {
           const merged = mergePendingPlanForReplan(priorPendingPlan, workbench.pendingPlan, {
@@ -1704,9 +1710,12 @@ export function storeUserCorrection(note, contextType = 'general', contextId = n
       LIMIT 1
     `).get(trimmed)
     if (existing) return
+    // Spec 25 Part 2: 'owner_rule' going forward (previously
+    // 'preference_reaction'/'message') — legacy rows keep matching via
+    // isOwnerRuleRow's OR clause, no migration needed.
     db.prepare(`
       INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note)
-      VALUES ('preference_reaction', 'message', ?, ?, ?)
+      VALUES ('owner_rule', 'message', ?, ?, ?)
     `).run(contextType, contextId, trimmed)
   } catch (err) {
     console.error('storeUserCorrection error:', err)

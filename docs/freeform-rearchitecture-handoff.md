@@ -1224,6 +1224,14 @@ freeformDiagnostics counters (`intentDeclared`, `viewCalls`, `renderCalls`,
    or open-toe/wedge drift when structured options exist. A steady stream of
    `model_only` plus acceptable cards across planning turns is the evidence to
    retire the keyword pre-route (step 8).
+   **Smoke criterion updated (spec 25, 2026-07-16):** delivery counts alone no
+   longer pass this scenario. The office-week run is green only when it is
+   **5/5 cards AND Mon–Wed read office-quiet** (≤1 bold print per outfit, no
+   statement wraps/shawls, every accessory's register matches the outfit's
+   register). Friday may stay Friday (a legitimately more relaxed end-of-week
+   day). This closes the gap the spec-25 live evidence found: 5/5 delivery
+   with three of five days composing print-led/artisan was previously read as
+   a pass.
 
 Interpretation: blocks-counters firing occasionally = rails working; firing on
 every turn = rails too expensive or prompt unclear (find which counter).

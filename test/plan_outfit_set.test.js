@@ -1263,6 +1263,33 @@ test('submit_plan_outfits success message tells the model not to call propose_ou
   assert.match(result.message, /do NOT call propose_outfit or render them again/)
 })
 
+// --- Owner rules delivered into the plan workbench (spec 25 Part 2) --------
+
+test('workbench instructions contain the OWNER RULES block when owner rules exist, and respect the cap', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }])
+
+  const withRules = await buildPlanSlotWorkbench(slots, {
+    allPieces,
+    question: 'city day',
+    ownerRules: ['For office and client days: structured silhouettes only — no maxi skirts, no shawls at work.', 'No flats for me.']
+  })
+  assert.match(withRules.instructions, /OWNER RULES — apply to every outfit you compose:/)
+  assert.match(withRules.instructions, /"For office and client days: structured silhouettes only — no maxi skirts, no shawls at work\."/)
+  assert.match(withRules.instructions, /"No flats for me\."/)
+})
+
+test('workbench instructions omit the OWNER RULES block when no owner rules exist', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }])
+
+  const withoutRules = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  assert.doesNotMatch(withoutRules.instructions, /OWNER RULES/)
+
+  const withEmptyRules = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day', ownerRules: [] })
+  assert.doesNotMatch(withEmptyRules.instructions, /OWNER RULES/)
+})
+
 function insertPiece(overrides = {}) {
   const piece = {
     name: 'test piece',
