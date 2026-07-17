@@ -5293,7 +5293,10 @@ export default function StylistChat({
           showDeleteAction={false}
           showEditAction={true}
           onClose={() => setDetailPiece(null)}
-          onEdit={(piece) => setEditPiece(piece)}
+          onEdit={(piece) => {
+            setDetailPiece(null)
+            setEditPiece(piece)
+          }}
           onSendToStylist={(piece) => {
             setDetailPiece(null)
             setActiveContext({ type: 'piece', id: piece.id, name: piece.name, ...piece })
