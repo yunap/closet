@@ -77,7 +77,16 @@ function SavedBoardThumb({ board, onPreview }) {
   )
 }
 
-export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendToStylist, showManagementActions = true }) {
+export default function PieceDetail({
+  piece,
+  onEdit,
+  onDelete,
+  onClose,
+  onSendToStylist,
+  showManagementActions = true,
+  showDeleteAction = showManagementActions,
+  showEditAction = showManagementActions
+}) {
   const bg = piece.colors[0] ? (COLOR_BG[piece.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
   const [photoTab, setPhotoTab] = useState(piece.photo ? 'hanger' : piece.worn_photo ? 'worn' : null)
   const [previewImage, setPreviewImage] = useState(null)
@@ -248,10 +257,10 @@ export default function PieceDetail({ piece, onEdit, onDelete, onClose, onSendTo
             </div>
           )}
 
-          {showManagementActions && (
+          {(showDeleteAction || showEditAction) && (
             <div className="detail-actions">
-              <button className="btn-danger" onClick={handleDelete}>Delete</button>
-              <button className="btn-primary" onClick={() => onEdit(piece)}>Edit</button>
+              {showDeleteAction && <button className="btn-danger" onClick={handleDelete}>Delete</button>}
+              {showEditAction && <button className="btn-primary" onClick={() => onEdit(piece)}>Edit</button>}
             </div>
           )}
         </div>

@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import ThreadRail, { humanizeLabel, deriveBuilderTitle } from './ThreadRail'
 import MarkdownMessage from './MarkdownMessage.js'
 import PieceDetail from './PieceDetail.jsx'
+import PieceForm from './PieceForm.jsx'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -331,6 +332,7 @@ export default function StylistChat({
   const [boardLoadingIndex, setBoardLoadingIndex] = useState(null)
   const [previewImage, setPreviewImage] = useState(null)
   const [detailPiece, setDetailPiece] = useState(null)
+  const [editPiece, setEditPiece] = useState(null)
   const [fileInputKey, setFileInputKey] = useState(0)
   const bottomRef = useRef(null)
   const pendingActionRef = useRef(null)
@@ -5288,13 +5290,27 @@ export default function StylistChat({
       {detailPiece && (
         <PieceDetail
           piece={detailPiece}
-          showManagementActions={false}
+          showDeleteAction={false}
+          showEditAction={true}
           onClose={() => setDetailPiece(null)}
+          onEdit={(piece) => setEditPiece(piece)}
           onSendToStylist={(piece) => {
             setDetailPiece(null)
             setActiveContext({ type: 'piece', id: piece.id, name: piece.name, ...piece })
             triggerToast(`Stylist focused on ${piece.name}`)
           }}
+        />
+      )}
+      {editPiece && (
+        <PieceForm
+          piece={editPiece}
+          onSave={(updatedPiece) => {
+            setEditPiece(null)
+            setDetailPiece(updatedPiece)
+            setPieces(prev => prev.map(piece => Number(piece.id) === Number(updatedPiece.id) ? updatedPiece : piece))
+            triggerToast(`Updated ${updatedPiece.name}`)
+          }}
+          onCancel={() => setEditPiece(null)}
         />
       )}
       </div>
