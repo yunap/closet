@@ -449,6 +449,47 @@ export function contentToOpenAI(content) {
   })
 }
 
+// Spec 22 hotfix: an internal message shape that is a superset of what the
+// Anthropic API accepts, sent unsanitized — routes/ai.js's tagger builds
+// image blocks as `{ type: 'image', detail: 'low', source }`, an OpenAI-only
+// concept (contentToOpenAI reads part-level `detail` and moves it into
+// `image_url.detail`). The Anthropic SDK passes content blocks to
+// `client.messages.create` verbatim and 400s on the unknown `detail` field.
+// The identical bug already shipped once in the tool loop's image blocks
+// (fixed by deleting the field at that one call site in PR #103) — fixing
+// the class here instead of whack-a-moling each builder: an allowlist over
+// the block shapes this codebase actually produces, applied at every
+// Anthropic send site, so a stray extra field on any future builder can
+// never reach the API again. `cache_control` is preserved on every block
+// type — the spec-16 moving cache breakpoint depends on it surviving this
+// pass.
+export function toAnthropicContentBlocks(content) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return content
+  return content.map(block => {
+    if (!block || typeof block !== 'object') return block
+    const cacheControl = block.cache_control ? { cache_control: block.cache_control } : {}
+    switch (block.type) {
+      case 'text':
+        return { type: 'text', text: block.text, ...cacheControl }
+      case 'image':
+        return { type: 'image', source: block.source, ...cacheControl }
+      case 'tool_result':
+        return {
+          type: 'tool_result',
+          tool_use_id: block.tool_use_id,
+          ...(block.is_error !== undefined ? { is_error: block.is_error } : {}),
+          content: Array.isArray(block.content) ? toAnthropicContentBlocks(block.content) : block.content,
+          ...cacheControl
+        }
+      case 'tool_use':
+        return { type: 'tool_use', id: block.id, name: block.name, input: block.input, ...cacheControl }
+      default:
+        return block
+    }
+  })
+}
+
 export function normalizeToolImage(image = null) {
   if (!image) return null
   const mime = image.mime || image.media_type
@@ -493,11 +534,15 @@ export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, ma
     throw new Error('No ANTHROPIC_API_KEY set in .env')
   }
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const sanitizedMessages = (Array.isArray(messages) ? messages : []).map(message => ({
+    ...message,
+    content: toAnthropicContentBlocks(message.content)
+  }))
   const response = await client.messages.create({
     model: ANTHROPIC_MODEL,
     max_tokens: maxTokens,
     system: systemToAnthropicBlocks(system),
-    messages
+    messages: sanitizedMessages
   })
   return {
     text: response.content?.[0]?.text || '',
@@ -748,7 +793,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
       
       const formattedMessages = withMovingCacheBreakpoint(currentMessages.map(m => {
-        return { role: m.role, content: m.content }
+        return { role: m.role, content: toAnthropicContentBlocks(m.content) }
       }))
 
       const response = await client.messages.create({

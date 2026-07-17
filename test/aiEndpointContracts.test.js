@@ -18,7 +18,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
-const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT } = await import('../styling-engine/provider.js')
+const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
 
 let server
 let baseUrl
@@ -2428,6 +2428,87 @@ test('contentToOpenAI preserves image_url blocks without stringifying them', () 
   assert.equal(result[0].text, 'Hello!')
   assert.equal(result[1].type, 'image_url')
   assert.deepEqual(result[1].image_url, { url: 'data:image/jpeg;base64,abcdefg' })
+})
+
+// Spec 22 hotfix: routes/ai.js's tagger builds image blocks as
+// `{ type: 'image', detail: 'low', source }` — `detail` is an OpenAI-only
+// concept that the Anthropic API 400s on ("Extra inputs are not permitted").
+// toAnthropicContentBlocks is the allowlist sanitizer applied at every
+// Anthropic send site so this can't ship again from a different builder.
+test('toAnthropicContentBlocks drops detail from image blocks, preserves source/text, passes strings through', () => {
+  assert.equal(toAnthropicContentBlocks('plain string'), 'plain string')
+
+  const content = [
+    { type: 'text', text: 'Hello!' },
+    { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' } }
+  ]
+  const result = toAnthropicContentBlocks(content)
+  assert.equal(result.length, 2)
+  assert.deepEqual(result[0], { type: 'text', text: 'Hello!' })
+  assert.deepEqual(result[1], { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' } })
+  assert.equal('detail' in result[1], false, 'detail must not survive sanitization')
+})
+
+test('toAnthropicContentBlocks preserves cache_control on text and image blocks', () => {
+  const content = [
+    { type: 'text', text: 'stable prefix', cache_control: { type: 'ephemeral' } },
+    { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/png', data: 'xyz' }, cache_control: { type: 'ephemeral' } }
+  ]
+  const result = toAnthropicContentBlocks(content)
+  assert.deepEqual(result[0].cache_control, { type: 'ephemeral' })
+  assert.deepEqual(result[1].cache_control, { type: 'ephemeral' })
+  assert.equal('detail' in result[1], false)
+})
+
+test('toAnthropicContentBlocks preserves tool_result/tool_use blocks and recursively sanitizes nested content', () => {
+  const content = [
+    {
+      type: 'tool_result',
+      tool_use_id: 'toolu_123',
+      cache_control: { type: 'ephemeral' },
+      content: [
+        { type: 'text', text: 'tool result text' },
+        { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/png', data: 'xyz' } }
+      ]
+    },
+    { type: 'tool_use', id: 'toolu_456', name: 'search_wardrobe', input: { occasion: 'city' } }
+  ]
+  const result = toAnthropicContentBlocks(content)
+  assert.equal(result[0].type, 'tool_result')
+  assert.equal(result[0].tool_use_id, 'toolu_123')
+  assert.deepEqual(result[0].cache_control, { type: 'ephemeral' })
+  assert.equal('detail' in result[0].content[1], false, 'detail must be dropped from images nested inside tool_result content')
+  assert.deepEqual(result[1], { type: 'tool_use', id: 'toolu_456', name: 'search_wardrobe', input: { occasion: 'city' } })
+})
+
+test('retag path shape: the tagger\'s detail:low image block loses detail on the Anthropic path but keeps it on the OpenAI path', () => {
+  const taggerContent = [
+    { type: 'text', text: 'Tag this garment.' },
+    { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' } }
+  ]
+
+  const anthropicBlocks = toAnthropicContentBlocks(taggerContent)
+  assert.equal(JSON.stringify(anthropicBlocks).includes('"detail"'), false, 'no detail key anywhere in the Anthropic-bound payload')
+
+  const openAiBlocks = contentToOpenAI(taggerContent)
+  assert.equal(openAiBlocks[1].image_url.detail, 'low', 'OpenAI behavior must stay unchanged')
+})
+
+test('toAnthropicContentBlocks composes with the moving cache breakpoint — sanitizing first does not lose the breakpoint annotation', () => {
+  const messages = [
+    { role: 'user', content: [{ type: 'text', text: 'first' }] },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'last text' },
+        { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc' } }
+      ]
+    }
+  ]
+  const formatted = withMovingCacheBreakpoint(messages.map(m => ({ role: m.role, content: toAnthropicContentBlocks(m.content) })))
+
+  assert.equal('detail' in formatted[1].content[1], false, 'detail must still be dropped after composing with the breakpoint')
+  assert.deepEqual(formatted[1].content[1].cache_control, { type: 'ephemeral' }, 'the breakpoint annotation must survive sanitizing first')
 })
 
 test('extractToolResultImages strips image blobs and preserves labeled visual references', () => {
