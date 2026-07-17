@@ -1258,6 +1258,107 @@ test('a plain top+bottom outfit is unaffected by the layering sight check (no dr
   assert.equal(result.accepted.length, 1)
 })
 
+// --- Print-pairing sight gate (spec 27 Part 1) -------------------------------
+
+test('a blind two-print plan submission is rejected with view_pieces coaching', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'floral print top', occasions: ['city'], pattern_type: 'floral' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'plaid print pants', occasions: ['city'], pattern_type: 'plaid' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'print-gate shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Wednesday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+  }])
+
+  assert.equal(result.accepted.length, 0)
+  const reasons = result.failures[0].reasons.join(' ')
+  assert.match(reasons, /pairs 2 printed pieces/)
+  assert.match(reasons, /call view_pieces on/)
+  assert.match(reasons, new RegExp(`\\[${[topId, bottomId].sort((a, b) => a - b).join(', ')}\\]`))
+})
+
+test('the same two-print submission is accepted once both printed pieces have been visually seen', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'floral print top', occasions: ['city'], pattern_type: 'floral' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'plaid print pants', occasions: ['city'], pattern_type: 'plaid' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'print-gate shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Wednesday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+  }], { visuallySeenPieceIds: new Set([Number(topId), Number(bottomId)]) })
+
+  assert.equal(result.failures.length, 0, `expected the seen print pairing to pass, got ${JSON.stringify(result.failures)}`)
+  assert.equal(result.accepted.length, 1)
+})
+
+test('one print piece plus solids passes without requiring sight', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'floral print top', occasions: ['city'], pattern_type: 'floral' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'solid pants', occasions: ['city'], pattern_type: 'solid' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'solid shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Monday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+  }])
+
+  assert.equal(result.failures.length, 0, `a single print must not trigger the sight gate, got ${JSON.stringify(result.failures)}`)
+  assert.equal(result.accepted.length, 1)
+})
+
+test('an unknown pattern_type piece alongside one known print passes (tags are the truth surface)', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'floral print top', occasions: ['city'], pattern_type: 'floral' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'untagged pants', occasions: ['city'], pattern_type: '' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'solid shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Tuesday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+  }])
+
+  assert.equal(result.failures.length, 0, `an unknown pattern_type must not count toward the print trigger, got ${JSON.stringify(result.failures)}`)
+  assert.equal(result.accepted.length, 1)
+})
+
+test('a printed scarf accessory alongside one printed top does NOT trigger the print-pairing gate', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'floral print top', occasions: ['city'], pattern_type: 'floral' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'solid pants', occasions: ['city'], pattern_type: 'solid' })
+  const scarfId = insertPiece({ category: 'accessory', name: 'printed silk scarf', occasions: ['city'], pattern_type: 'geometric' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'solid shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Thursday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(topId), Number(bottomId), Number(scarfId), Number(shoesId)],
+  }])
+
+  assert.equal(result.failures.length, 0, `a printed accessory must not count as a MAIN print, got ${JSON.stringify(result.failures)}`)
+  assert.equal(result.accepted.length, 1)
+})
+
 // --- Reason-revision validator (spec 26 Part 1) -----------------------------
 
 test('reasonRevisesMidSentence catches both captured live incidents verbatim', () => {
