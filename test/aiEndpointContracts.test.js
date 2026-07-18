@@ -2049,6 +2049,26 @@ test('Stylist route disables page scroll so chat history owns its own scroll pan
   assert.doesNotMatch(css, /\.stylist-input-shell\s*\{[^}]*position:\s*sticky/)
 })
 
+test('Primary app navigation uses full-row accessible sidebar items with shared task count', () => {
+  const app = fs.readFileSync(path.join(process.cwd(), 'src/App.jsx'), 'utf8')
+  const inventory = fs.readFileSync(path.join(process.cwd(), 'src/views/PieceInventory.jsx'), 'utf8')
+  const css = fs.readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
+  const hook = fs.readFileSync(path.join(process.cwd(), 'src/utils/usePendingWardrobeTaskCount.js'), 'utf8')
+  assert.match(app, /<nav className="primary-nav" aria-label="Primary">/)
+  assert.match(app, /<ul className="primary-nav__list">/)
+  assert.match(app, /`primary-nav__item\$\{isActive \? ' active' : ''\}`/)
+  assert.match(app, /aria-label=\{`\$\{badgeCount\} wardrobe \$\{badgeCount === 1 \? 'task' : 'tasks'\}`\}/)
+  assert.match(app, /badgeCount > 99 \? '99\+' : String\(badgeCount\)/)
+  assert.match(app, /usePendingWardrobeTaskCount/)
+  assert.match(inventory, /usePendingWardrobeTaskCount/)
+  assert.match(hook, /window\.addEventListener\('todos-changed', refreshPendingCount\)/)
+  assert.match(css, /\.primary-nav__item\.active::before/)
+  assert.match(css, /\.primary-nav__item:focus-visible/)
+  assert.match(css, /@media \(min-width: 768px\) and \(max-width: 1040px\)/)
+  assert.doesNotMatch(app, /icon:\s*'◈'|icon:\s*'✦'|icon:\s*'◇'|icon:\s*'⌾'/)
+  assert.doesNotMatch(app, /className="bottom-nav"/)
+})
+
 test('StylistChat renders wardrobe evaluation replies in the chat thread', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.doesNotMatch(src, /if \(m\.wardrobeEvaluation \|\| m\.contextName === 'Whole wardrobe evaluation'\) \{\s*return null\s*\}/)

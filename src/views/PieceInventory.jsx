@@ -5,6 +5,7 @@ import PieceForm from '../components/PieceForm'
 import PieceDetail from '../components/PieceDetail'
 import BatchAdd from '../components/BatchAdd'
 import TodoList from './TodoList'
+import usePendingWardrobeTaskCount from '../utils/usePendingWardrobeTaskCount'
 
 const CATEGORIES = [
   { value: '',          label: 'All' },
@@ -84,23 +85,7 @@ export default function PieceInventory({ onSendToStylist }) {
   const [detailPiece, setDetailPiece] = useState(null)
   const [availableColors, setAvailableColors]   = useState([])
   const [availableFabrics, setAvailableFabrics] = useState([])
-  const [pendingCount, setPendingCount] = useState(0)
-
-  const fetchPendingCount = useCallback(async () => {
-    try {
-      const res = await fetch('/api/todos')
-      if (res.ok) {
-        const data = await res.json()
-        setPendingCount(data.filter(t => !t.completed).length)
-      }
-    } catch {}
-  }, [])
-
-  useEffect(() => {
-    fetchPendingCount()
-    window.addEventListener('todos-changed', fetchPendingCount)
-    return () => window.removeEventListener('todos-changed', fetchPendingCount)
-  }, [fetchPendingCount])
+  const pendingCount = usePendingWardrobeTaskCount()
 
   const fetchMeta = useCallback(async () => {
     try {

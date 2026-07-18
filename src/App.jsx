@@ -1,38 +1,73 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useMemo } from 'react'
 import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import PieceInventory from './views/PieceInventory'
 import OutfitLookbook from './views/OutfitLookbook'
 import AskClaude from './views/AskClaude'
 import VisualLab from './components/VisualLab'
+import usePendingWardrobeTaskCount from './utils/usePendingWardrobeTaskCount'
 
-const TABS = [
-  { id: 'pieces',  label: 'Wardrobe',    icon: '◈', to: '/wardrobe'   },
-  { id: 'outfits', label: 'Outfits',     icon: '✦', to: '/outfits'    },
-  { id: 'ask',     label: 'Stylist',     icon: '◇', to: '/stylist'    },
-  { id: 'vislab',  label: 'Visual Lab',  icon: '⌾', to: '/visual-lab' },
-]
+function NavIcon({ name }) {
+  const common = {
+    width: 18,
+    height: 18,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.9,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': 'true',
+  }
+  if (name === 'wardrobe') {
+    return (
+      <svg {...common}>
+        <path d="M12 6.5c0-1.4 1-2.5 2.4-2.5 1.2 0 2.1.8 2.3 1.9" />
+        <path d="M12 7v3" />
+        <path d="M5 20h14l-7-10-7 10Z" />
+      </svg>
+    )
+  }
+  if (name === 'outfits') {
+    return (
+      <svg {...common}>
+        <rect x="6" y="4" width="11" height="14" rx="2" />
+        <path d="M9 4c.5 1.3 1.4 2 2.5 2S13.5 5.3 14 4" />
+        <path d="M4 8h3" />
+        <path d="M17 8h3" />
+        <path d="M9 14h5" />
+      </svg>
+    )
+  }
+  if (name === 'stylist') {
+    return (
+      <svg {...common}>
+        <path d="M5 6.5h9.5a3.5 3.5 0 0 1 0 7H10l-4.5 4v-4H5a3.5 3.5 0 0 1 0-7Z" />
+        <path d="M18 4v4" />
+        <path d="M16 6h4" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...common}>
+      <rect x="4" y="5" width="12" height="12" rx="2" />
+      <path d="M8 17h10a2 2 0 0 0 2-2V8" />
+      <path d="M7.5 13.5 10 11l2 2 1.5-1.5" />
+      <path d="M8 8.5h.01" />
+    </svg>
+  )
+}
 
 export default function App() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [pendingTodoCount, setPendingTodoCount] = useState(0)
+  const pendingTodoCount = usePendingWardrobeTaskCount()
   const isStylistRoute = location.pathname === '/stylist' || location.pathname.startsWith('/stylist/')
-
-  const fetchPendingCount = useCallback(async () => {
-    try {
-      const res = await fetch('/api/todos')
-      if (res.ok) {
-        const data = await res.json()
-        setPendingTodoCount(data.filter(t => !t.completed).length)
-      }
-    } catch {}
-  }, [])
-
-  useEffect(() => {
-    fetchPendingCount()
-    window.addEventListener('todos-changed', fetchPendingCount)
-    return () => window.removeEventListener('todos-changed', fetchPendingCount)
-  }, [fetchPendingCount])
+  const navItems = useMemo(() => ([
+    { id: 'wardrobe', label: 'Wardrobe', icon: 'wardrobe', to: '/wardrobe', badgeCount: pendingTodoCount },
+    { id: 'outfits', label: 'Outfits', icon: 'outfits', to: '/outfits' },
+    { id: 'stylist', label: 'Stylist', icon: 'stylist', to: '/stylist' },
+    { id: 'visual_lab', label: 'Visual Lab', icon: 'visual_lab', to: '/visual-lab' },
+  ]), [pendingTodoCount])
 
   // Handoff: piece → stylist. Thin wrapper so PieceInventory/OutfitLookbook call-sites are unchanged.
   const sendPieceToStylist = (piece) => {
@@ -65,26 +100,37 @@ export default function App() {
         </Routes>
       </main>
 
-      <nav className="bottom-nav">
-        {TABS.map(t => {
-          const isWardrobe = t.id === 'pieces'
-          return (
-            <NavLink
-              key={t.id}
-              to={t.to}
-              // end=false so /stylist/:threadId also highlights the Stylist tab
-              end={t.id !== 'ask'}
-              className={({ isActive }) => `nav-btn${isActive ? ' active' : ''}`}
-              style={{ position: 'relative' }}
-            >
-              <span className="nav-icon">{t.icon}</span>
-              <span className="nav-label">{t.label}</span>
-              {isWardrobe && pendingTodoCount > 0 && (
-                <span className="badge-count nav-badge">{pendingTodoCount}</span>
-              )}
-            </NavLink>
-          )
-        })}
+      <nav className="primary-nav" aria-label="Primary">
+        <ul className="primary-nav__list">
+          {navItems.map(item => {
+            const badgeCount = Number(item.badgeCount || 0)
+            const badgeLabel = badgeCount > 99 ? '99+' : String(badgeCount)
+            return (
+              <li className="primary-nav__list-item" key={item.id}>
+                <NavLink
+                  to={item.to}
+                  className={({ isActive }) => `primary-nav__item${isActive ? ' active' : ''}`}
+                  data-label={item.label}
+                  title={item.label}
+                >
+                  <span className="primary-nav__icon">
+                    <NavIcon name={item.icon} />
+                  </span>
+                  <span className="primary-nav__label">{item.label}</span>
+                  {badgeCount > 0 && (
+                    <span
+                      className="badge-count primary-nav__badge"
+                      aria-label={`${badgeCount} wardrobe ${badgeCount === 1 ? 'task' : 'tasks'}`}
+                      title={`${badgeCount} wardrobe ${badgeCount === 1 ? 'task' : 'tasks'}`}
+                    >
+                      {badgeLabel}
+                    </span>
+                  )}
+                </NavLink>
+              </li>
+            )
+          })}
+        </ul>
       </nav>
     </div>
   )
