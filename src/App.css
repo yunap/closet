@@ -29,7 +29,7 @@
   --primary-nav-collapsed-width: 64px;
   --surface-sidebar: #F3EEE7;
   --surface-hover: #ECE4D9;
-  --surface-selected: #EDE5D8;
+  --surface-selected: #E8DDCF;
   --border-subtle: #DED4C8;
   --focus-ring: #2F75D6;
   --font-serif:   'Cormorant Garamond', Georgia, serif;
@@ -227,6 +227,15 @@ img { display: block; max-width: 100%; }
   .primary-nav__item:hover {
     background: var(--surface-hover);
     color: var(--text);
+  }
+
+  .primary-nav__item .primary-nav__icon {
+    color: color-mix(in srgb, var(--text) 74%, #fff);
+  }
+
+  .primary-nav__item:hover .primary-nav__icon,
+  .primary-nav__item.active .primary-nav__icon {
+    color: var(--accent);
   }
 
   .primary-nav__item.active {
