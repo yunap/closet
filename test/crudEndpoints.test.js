@@ -243,11 +243,16 @@ test('GET /api/pieces/meta and color/fabric filtering', async () => {
 
 test('CRUD operations for /api/chat-threads', async () => {
   const threadId = 'test_thread_' + Date.now()
+  const pieceId = db.prepare(`
+    INSERT INTO pieces (name, category, colors, status, photo)
+    VALUES (?, ?, ?, ?, ?)
+  `).run('chat subject blouse', 'top', '[]', 'active', 'chat-subject.jpg').lastInsertRowid
   const payload = {
     messages: [
       { role: 'assistant', text: 'Hi' },
       { role: 'user', text: 'Hello' }
-    ]
+    ],
+    activeContext: { type: 'piece', id: pieceId, name: 'chat subject blouse' }
   }
 
   // Create/Upsert Thread
@@ -275,6 +280,8 @@ test('CRUD operations for /api/chat-threads', async () => {
   assert.ok(found)
   assert.equal(found.title, 'Test Thread')
   assert.equal(found.message_count, 2)
+  assert.equal(found.subjectType, 'piece')
+  assert.equal(found.subjectPhoto, '/uploads/chat-subject.jpg')
 
   // Get Single Thread Detail
   const getRes = await fetch(`${baseUrl}/api/chat-threads/${threadId}`)

@@ -7,6 +7,7 @@ import {
   getThreadDisplayTitle,
   getThreadOutcomeSummary,
   getThreadOriginalFirstMessage,
+  getThreadSubjectChildTitle,
   groupThreadsByDate,
   clusterThreadsBySubject
 } from '../src/utils/threadGrouping.js'
@@ -83,6 +84,17 @@ test('thread display helpers derive concise history titles and outcome summaries
     }
   }
   assert.equal(getThreadOutcomeSummary(edgeThread), '3 directions · polished edge')
+
+  const subjectChildThread = {
+    title: 'dark grey gathered mini dress styling',
+    activeContext: { type: 'piece', id: 'piece_1', name: 'dark grey gathered mini dress' },
+    threadMemory: {
+      latestOutfits: [
+        { title: 'Belted Definition', previewOnly: true }
+      ]
+    }
+  }
+  assert.equal(getThreadSubjectChildTitle(subjectChildThread, subjectChildThread.activeContext), 'Belted Definition direction')
 })
 
 test('clusterThreadsBySubject clusters outfit/piece threads and groups freeform ones', () => {
@@ -91,6 +103,7 @@ test('clusterThreadsBySubject clusters outfit/piece threads and groups freeform 
       id: 'thread_1',
       title: 'Outfit discussion 1',
       activeContext: { type: 'outfit', id: 'outfit_123', name: 'Rioja Vineyard' },
+      subjectPhoto: '/uploads/rioja.jpg',
       updated_at: '2026-07-07 12:00:00'
     },
     {
@@ -103,6 +116,7 @@ test('clusterThreadsBySubject clusters outfit/piece threads and groups freeform 
       id: 'thread_3',
       title: 'Piece discussion',
       activeContext: { type: 'piece', id: 'piece_456', name: 'Emerald Pants' },
+      subjectPhoto: '/uploads/emerald.jpg',
       updated_at: '2026-07-07 10:00:00'
     },
     {
@@ -121,11 +135,15 @@ test('clusterThreadsBySubject clusters outfit/piece threads and groups freeform 
   // First cluster should be outfit_123 because maxTime is 13:00 vs 10:00 for piece_456
   assert.equal(clusters[0].id, 'outfit_123')
   assert.equal(clusters[0].name, 'Rioja Vineyard')
+  assert.equal(clusters[0].typeLabel, 'Outfit')
+  assert.equal(clusters[0].photo, '/uploads/rioja.jpg')
   assert.equal(clusters[0].threads.length, 2)
   assert.equal(clusters[0].threads[0].id, 'thread_2') // newest first within cluster
 
   assert.equal(clusters[1].id, 'piece_456')
   assert.equal(clusters[1].name, 'Emerald Pants')
+  assert.equal(clusters[1].typeLabel, 'Piece')
+  assert.equal(clusters[1].photo, '/uploads/emerald.jpg')
   assert.equal(clusters[1].threads.length, 1)
 
   // Freeform thread should land in other conversations
@@ -204,6 +222,17 @@ test('opening a saved thread does not rewrite thread recency metadata', () => {
   assert.match(source, /!skipSaveCurrent\s*&&\s*debounceTimerRef\.current\s*&&\s*currentThreadId/)
   assert.match(source, /suppressThreadLoadAutosaveRef\.current\s*=\s*true\s*\n\s*setMessages\(thread\.payload\.messages/)
   assert.match(source, /if\s*\(suppressThreadLoadAutosaveRef\.current\)\s*\{\s*suppressThreadLoadAutosaveRef\.current\s*=\s*false\s*return\s*\}/)
+})
+
+test('ThreadRail subject view renders a collapsible wardrobe tree', () => {
+  const source = fs.readFileSync(new URL('../src/components/ThreadRail.jsx', import.meta.url), 'utf8')
+
+  assert.match(source, /stylist_subject_groups_open/)
+  assert.match(source, /className="subject-cluster-header"/)
+  assert.match(source, /aria-expanded=\{isOpen\}/)
+  assert.match(source, /cluster\.photo\s*\?\s*\(/)
+  assert.match(source, /renderThreadRow\(thread,\s*\{\s*subject:\s*cluster\s*\}\)/)
+  assert.match(source, /getThreadSubjectChildTitle\(t,\s*subject\)/)
 })
 
 test('StylistChat queries saved-boards on mount and uses savedBoardUrls to check saved state', () => {

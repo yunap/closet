@@ -8,7 +8,8 @@ import {
   clusterThreadsBySubject,
   getThreadDisplayTitle,
   getThreadOutcomeSummary,
-  getThreadOriginalFirstMessage
+  getThreadOriginalFirstMessage,
+  getThreadSubjectChildTitle
 } from '../utils/threadGrouping.js'
 
 export {
@@ -19,7 +20,8 @@ export {
   clusterThreadsBySubject,
   getThreadDisplayTitle,
   getThreadOutcomeSummary,
-  getThreadOriginalFirstMessage
+  getThreadOriginalFirstMessage,
+  getThreadSubjectChildTitle
 }
 
 export default function ThreadRail({
@@ -58,6 +60,13 @@ export default function ThreadRail({
   const [olderBuilderExpanded, setOlderBuilderExpanded] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [openMenuId, setOpenMenuId] = useState(null)
+  const [openSubjectGroups, setOpenSubjectGroups] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('stylist_subject_groups_open') || '{}')
+    } catch {
+      return {}
+    }
+  })
 
   useEffect(() => {
     if (!isMobileDrawer) {
@@ -72,6 +81,12 @@ export default function ThreadRail({
       localStorage.setItem('stylist_rail_view_mode', viewMode)
     } catch {}
   }, [viewMode])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('stylist_subject_groups_open', JSON.stringify(openSubjectGroups))
+    } catch {}
+  }, [openSubjectGroups])
 
   const handleRenameSubmit = (id) => {
     if (renamingTitle.trim()) {
@@ -114,12 +129,13 @@ export default function ThreadRail({
   const groups = groupThreadsByDate(unpinnedThreads, archivedView)
   const subjectGroups = clusterThreadsBySubject(unpinnedThreads)
 
-  const renderThreadRow = (t) => {
+  const renderThreadRow = (t, options = {}) => {
+    const { subject = null } = options
     const isActive = t.id === currentThreadId
     const isRenaming = renamingId === t.id
     const isConfirmingDelete = confirmDeleteId === t.id
     const timeLabel = getRelativeTimeLabel(t.updatedAt || t.updated_at)
-    const displayTitle = getThreadDisplayTitle(t)
+    const displayTitle = subject ? getThreadSubjectChildTitle(t, subject) : getThreadDisplayTitle(t)
     const displaySummary = getThreadOutcomeSummary(t)
     const originalFirstMessage = getThreadOriginalFirstMessage(t)
     const menuOpen = openMenuId === t.id
@@ -127,7 +143,7 @@ export default function ThreadRail({
     return (
       <div
         key={t.id}
-        className={`thread-row ${isActive ? 'active' : ''}`}
+        className={`thread-row ${subject ? 'subject-child-row' : ''} ${isActive ? 'active' : ''}`}
         role="listitem"
       >
         {isRenaming ? (
@@ -238,6 +254,54 @@ export default function ThreadRail({
               )}
             </div>
           </>
+        )}
+      </div>
+    )
+  }
+
+  const toggleSubjectGroup = (key) => {
+    setOpenSubjectGroups(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const renderSubjectCluster = (cluster) => {
+    const key = `${cluster.type}_${cluster.id}`
+    const isActiveGroup = cluster.threads.some(t => t.id === currentThreadId)
+    const isOpen = isActiveGroup || Boolean(openSubjectGroups[key])
+    const latestLabel = getRelativeTimeLabel(cluster.maxTime)
+    const countLabel = `${cluster.threads.length} ${cluster.threads.length === 1 ? 'chat' : 'chats'}`
+
+    return (
+      <div
+        key={key}
+        className={`rail-group subject-cluster-group ${isOpen ? 'open' : 'collapsed'} ${isActiveGroup ? 'active-subject' : ''}`}
+      >
+        <button
+          type="button"
+          className="subject-cluster-header"
+          aria-expanded={isOpen}
+          onClick={() => toggleSubjectGroup(key)}
+        >
+          <span className="subject-disclosure">{isOpen ? '▾' : '▸'}</span>
+          <span className="subject-thumb" aria-hidden="true">
+            {cluster.photo ? (
+              <img src={cluster.photo} alt="" />
+            ) : (
+              <span className="subject-thumb-fallback">{cluster.icon}</span>
+            )}
+          </span>
+          <span className="subject-header-text">
+            <span className="subject-name">{cluster.name}</span>
+            <span className="subject-meta">
+              <span>{cluster.typeLabel}</span>
+              <span>{countLabel}</span>
+            </span>
+          </span>
+          {!isOpen && <span className="subject-latest-time">{latestLabel}</span>}
+        </button>
+        {isOpen && (
+          <div className="cluster-rows" role="list">
+            {cluster.threads.map(thread => renderThreadRow(thread, { subject: cluster }))}
+          </div>
         )}
       </div>
     )
@@ -386,16 +450,7 @@ export default function ThreadRail({
         ) : (
           <>
             {/* By Outfit/Piece Subject Clusters */}
-            {subjectGroups.clusters.map(cluster => (
-              <div key={`${cluster.type}_${cluster.id}`} className="rail-group subject-cluster-group">
-                <div className="rail-group-title cluster-title">
-                  {cluster.type === 'outfit' ? '👗' : '🧥'} {cluster.name}
-                </div>
-                <div className="cluster-rows">
-                  {cluster.threads.map(renderThreadRow)}
-                </div>
-              </div>
-            ))}
+            {subjectGroups.clusters.map(renderSubjectCluster)}
 
             {/* Other Conversations */}
             {subjectGroups.otherConversations.length > 0 && (
