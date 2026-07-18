@@ -43,79 +43,16 @@ import {
   buildPieceText,
   wardrobeCategoryGroup,
   categoryConstraintForSelectedPiece,
-  idealAdditionAnchorConstraint,
   getWholeWardrobeFeedbackMemory,
   getSavedBoardMemory,
-  wholeWardrobeFeedbackInfluenceForCandidate,
-  wholeWardrobePieceBucket,
-  wholeWardrobePieceTrustDecision,
   wholeWardrobeMoodProfile,
-  wholeWardrobeBohoSignalScore,
-  wholeWardrobeMissesMood,
-  inferOutfitArchetype,
-  wholeWardrobeFormulaFamily,
-  wholeWardrobeFormulaType,
-  wholeWardrobeArchetypeFor,
-  wholeWardrobeFullPieces,
-  wholeWardrobePieceByGroup,
-  wholeWardrobeHeroPieceId,
-  wholeWardrobeIsExploratory,
-  wholeWardrobeHasPrintOrStripe,
-  wholeWardrobeHasGraphicTop,
-  wholeWardrobeHasNonGraphicTop,
-  wholeWardrobeHasDress,
-  wholeWardrobeTopBottomKey,
-  wholeWardrobeDirectionFromPieces,
-  wholeWardrobeSilhouetteFromPieces,
-  wholeWardrobeGroundingStrategy,
-  wholeWardrobeShoeShape,
-  wholeWardrobeVisualRhythm,
   pieceTextBlob,
-  pieceNameBlob,
-  pieceStyleProfile,
-  normalizeStyleProfileList,
-  pieceGarmentIntelligence,
-  inferWholeWardrobePieceRoles,
-  inferWholeWardrobeOutfitRoles,
-  occasionBiasForArchetype,
-  occasionScoreForOutfit,
   selectDiverseWholeWardrobeCandidates,
   wholeWardrobeCandidateAxes,
-  wholeWardrobeCandidateFormulaCounts,
   wholeWardrobeCandidateText,
-  buildWholeWardrobeCandidateOutfits,
-  normalizeWholeWardrobeOutfitObject,
-  candidateObjectFromPieces,
-  scoreWholeWardrobeCandidate,
   optionalLayerCoherenceIssue,
-  textIncludesAny,
-  visualWeightProfile,
-  buildVisualWeightText,
-  hasPairingReference,
-  hasRejectedReference,
-  collectPieceIdsFromFeedbackPayload,
-  feedbackWeight,
-  getFeedbackInfluenceForPair,
-  buildGoldStandardFeedbackMemory,
-  collectPieceIdsFromSavedBoardRow,
-  getSavedBoardInfluenceForPair,
-  explicitOccasionsForPiece,
-  profileOccasionConfidence,
-  pieceMatchesOccasion,
-  styleLaneScore,
-  garmentProfileText,
-  compatibilityScoreForSelectedItem,
-  rankedComplementaryWardrobeFor,
-  complementaryWardrobeFor,
-  buildRankedCandidateText,
-  selectCandidatesForOutfitGeneration,
   buildOutfitGenerationCandidateText,
-  getOutfitsForPieceMemory,
   getStylistFeedbackMemory,
-  buildWholeWardrobeFeedbackInfluence,
-  saveWholeWardrobeSession,
-  getRecentWholeWardrobeSessionInfluence,
-  mergeStyleProfilePatch,
   outfitStylisticStrengthScore,
   sortByStylisticStrength,
   weatherProfileFromContext
@@ -204,38 +141,6 @@ export function computeWaistbandNote(p) {
   if (p.waistband_type === 'structured_mid_waist') return 'structured mid waist — receives tuck'
   if (p.waistband_type === 'drawstring_relaxed') return 'drawstring — no tuck'
   return null
-}
-
-export function buildCompactPieceText(p) {
-  const parts = []
-  const colors = Array.isArray(p.colors) ? p.colors : []
-
-  if (p.reads_as) parts.push(`reads as: ${p.reads_as}`)
-  else if (colors.length) parts.push(colors.join('/'))
-
-  if (p.bottom_shape) parts.push(`shape: ${p.bottom_shape}`)
-  if (p.silhouette) parts.push(`silhouette: ${p.silhouette}`)
-  if (p.fabric_category) parts.push(`fabric: ${p.fabric_category}`)
-  
-  const tuck = computeTuckNote(p) || computeWaistbandNote(p)
-  if (tuck) parts.push(tuck)
-
-  if (Array.isArray(p.occasions) && p.occasions.length) parts.push(p.occasions.join(', '))
-  if (p.recommendation_status && p.recommendation_status !== 'trusted') parts.push(`recommendation trust: ${p.recommendation_status}`)
-  if (p.fit_confidence && p.fit_confidence !== 'unknown') parts.push(`fit: ${p.fit_confidence}`)
-  if (p.engine_notes) parts.push(`engine note: ${p.engine_notes}`)
-
-  let text = `• ${p.name} (${p.category} | ${parts.join(' | ')})`
-  if (Array.isArray(p.styling_rules_learned) && p.styling_rules_learned.length) {
-    text += `\n  RULES (authoritative): ${p.styling_rules_learned.join(' | ')}`
-  }
-  if (Array.isArray(p.tried_and_rejected) && p.tried_and_rejected.length) {
-    text += `\n  REJECTED: ${p.tried_and_rejected.join(' | ')}`
-  }
-  if (Array.isArray(p.pairs_well_with) && p.pairs_well_with.length) {
-    text += `\n  PAIRS WITH: ${p.pairs_well_with.join(', ')}`
-  }
-  return text
 }
 
 export function buildLinkedPieceFitCautions(pieces = []) {
@@ -3356,49 +3261,12 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   }
 }
 
-export function getPiecePhotoPath(piece, preferWorn = true) {
-  const photo = preferWorn ? (piece.worn_photo || piece.photo) : (piece.photo || piece.worn_photo)
-  if (!photo) return null
-  const filePath = path.join(uploadsDir, photo)
-  return fs.existsSync(filePath) ? filePath : null
-}
-
 export function imageUrlToUploadPath(imageUrl) {
   const value = String(imageUrl || '')
   const filename = value.startsWith('/uploads/') ? value.replace('/uploads/', '') : path.basename(value)
   if (!filename || filename.includes('..')) return null
   const filePath = path.join(uploadsDir, filename)
   return fs.existsSync(filePath) ? filePath : null
-}
-
-export function getCalibrationSourcePhotoPath() {
-  try {
-    const rows = db.prepare(`
-      SELECT * FROM calibration_images
-      WHERE COALESCE(archived,0) = 0
-        AND kind IN ('real_photo', 'good_reference')
-      ORDER BY
-        CASE WHEN kind = 'real_photo' THEN 0 ELSE 1 END,
-        COALESCE(favorite,0) DESC,
-        id DESC
-      LIMIT 12
-    `).all()
-    for (const row of rows) {
-      const filePath = imageUrlToUploadPath(row.image_url)
-      if (filePath) {
-        return {
-          path: filePath,
-          label: row.kind === 'real_photo'
-            ? (row.favorite ? 'calibration real photo marked Use strongly' : 'calibration real outfit photo')
-            : (row.favorite ? 'good calibration reference marked Use strongly' : 'good calibration reference'),
-          row: normalizeCalibrationRow(row)
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('Calibration source lookup failed:', err.message)
-  }
-  return null
 }
 
 // ── Conversation controller helpers ──────────────────────────────────────────

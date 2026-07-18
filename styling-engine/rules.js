@@ -3007,49 +3007,6 @@ export function wholeWardrobeGarmentModifier(pieces = []) {
   return notes.join(', ') || 'standard wear'
 }
 
-export function wholeWardrobeSelectionScore(outfit, selected, options = {}) {
-  const pieces = outfit.pieces || []
-  const text = pieces.map(pieceTextBlob).join(' ')
-  const label = String(outfit.label || '').toLowerCase()
-  const mood = String(options.mood || '').toLowerCase()
-  const occasion = String(options.occasion || '').toLowerCase()
-  const formula = wholeWardrobeFormulaFamily(outfit, pieces, occasion)
-  const scoreReasons = []
-
-  let score = 0
-  const add = (val, reason) => {
-    score += val
-    scoreReasons.push(`${reason} (${val})`)
-  }
-
-  // Basic outfit validity
-  if (wholeWardrobeHasDress(outfit)) {
-    add(20, 'dress-grounding-shoe formula')
-  } else {
-    const top = wholeWardrobePieceByGroup(outfit, 'top')
-    const bottom = wholeWardrobePieceByGroup(outfit, 'bottom')
-    if (top && bottom) add(12, 'contains top + bottom separates')
-  }
-
-  // Occasion alignment
-  if (occasion) {
-    const occasionScore = occasionScoreForOutfit(pieces, occasion)
-    if (occasionScore) add(occasionScore, `occasion: ${occasion} score`)
-  }
-
-  // Favorite piece bonuses
-  const favoriteCount = pieces.filter(p => p.favorite).length
-  if (favoriteCount) add(favoriteCount * 4, 'contains favorite pieces')
-
-  // Core rule checks
-  const ruleInfluence = wholeWardrobeFeedbackInfluenceForCandidate(pieces, options)
-  if (ruleInfluence) {
-    add(ruleInfluence.score, 'feedback memory influence')
-  }
-
-  return { score, reasons: scoreReasons }
-}
-
 export function wholeWardrobeOutfitsFromCandidates(candidates = [], candidatePieces = [], options = {}) {
   return candidates.map(candidate => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject({
     label: wholeWardrobeLabelFromPieces({ pieces: candidate.pieces }),

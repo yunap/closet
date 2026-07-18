@@ -165,19 +165,6 @@ export function getPath(obj, path) {
   return pathParts(path).reduce((acc, part) => acc && typeof acc === 'object' ? acc[part] : undefined, obj)
 }
 
-export function setPath(obj, path, value) {
-  const parts = pathParts(path)
-  if (!parts.length) return obj
-  let cursor = obj
-  for (let i = 0; i < parts.length - 1; i += 1) {
-    const part = parts[i]
-    if (!cursor[part] || typeof cursor[part] !== 'object' || Array.isArray(cursor[part])) cursor[part] = {}
-    cursor = cursor[part]
-  }
-  cursor[parts[parts.length - 1]] = value
-  return obj
-}
-
 function isObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value)
 }
