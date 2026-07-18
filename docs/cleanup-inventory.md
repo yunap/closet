@@ -350,3 +350,22 @@ Everything else audited this phase — the four route-root components and their 
 ## Cross-phase scope note
 
 Phase 1 covered `styling-engine/rules.js`+`core.js` and five smaller riders. Phase 2 covered the non-freeform server surface (`routes/ai.js` minus `/ask`, `routes/crud.js`, `server.js`, `db.js`). Phase 3 covered `src/` beyond `StylistChat.jsx`. Together with spec 20/21's prior coverage of the freeform plan/precompose/scorer surface and `StylistChat.jsx` itself, this closes every surface spec 20's own scope note listed as not-yet-covered. `styling-engine/outfitSetPlanner.js`, `styling-engine/tools.js`, `styling-engine/provider.js`, and `StylistChat.jsx` remain covered by spec 20/21 and are not re-walked here except where a cross-reference was needed (e.g. Phase 1's P0 tracing into `outfitSetPlanner.js`'s already-fixed sibling bug). `dist/` was excluded throughout, per the spec's instruction — noted only that it must be rebuilt by whichever deletion spec follows.
+
+---
+
+## Spec 29 execution (2026-07-17) — all rows from this audit closed
+
+Every row this audit proposed for a follow-up spec has now been executed, one PR, Part 1 as its own first commit:
+
+- **Phase 1 P0** (the `rehydrateOutfitPieces` bug class in `/evaluate-piece`) — **FIXED**. `locallyGateWholeWardrobeOutfits` (`rules.js`) now rehydrates `outfit.pieces` against `candidatePieces` by id before `profileFits` runs, direction (b) from this audit's two candidate fix directions. Regression test added (`test/whole_wardrobe_gate_rehydration.test.js`), verified red against pre-fix code.
+- **Phase 2 P0** (`test/threadRail.test.js` non-hermetic) — **FIXED**. Same dynamic-import-after-env-var pattern as spec 21 Part 1.
+- **~60 unused `core.js` imports, `wholeWardrobeSelectionScore`, `buildCompactPieceText`, `getPiecePhotoPath`, `getCalibrationSourcePhotoPath`, `setPath`** — **DELETED**. Each re-verified with a word-boundary grep immediately before deletion, per the doctrine; every one still came back zero-caller.
+- **`structuredOutfitsDebug` dead response field** — **DELETED** from `/ask`'s response (`routes/ai.js`).
+- **Identity-feedback family (7 files)** — **DELETED**. Owner ruling: never shipped.
+- **`VisualLab.jsx`'s `activeContext` prop/branch + stale doc comment** — **DELETED**. Owner ruling: `/visual-lab` is a standalone tab by design, delete the dead branch rather than wire it up.
+- **`attributes.js`'s duplicate `pieceTextBlob`** — **RENAMED** to `attributePieceTextBlob`. Owner ruling: rename only, no consolidation (consolidation would change what the matching gates see and needs its own evidence-backed pass).
+- **Devtools-diagnostics UI gap (Phase 3, census 3)** — **CLOSED — affirmed keep-as-is** (owner ruling, 2026-07-17). This is a deliberate developer-only channel, not a missed-wiring bug: the 9 non-rendered debug counters are turn-mechanics/architecture-compliance signals for developer/QA use via devtools, distinct in kind from the 7 counters already rendered in the visible "Search & validation details" panel (which share a common "how many times did an auto-correction fire" end-user-relevant shape). Two independent audits (spec 20, spec 28) converged on the same recommendation before this ruling. This item is not to be carried forward again.
+
+`dist/` was rebuilt in the same PR as the frontend deletions (Parts 4–5), per repo convention. `npm test`: 576/576 green throughout every commit in this PR.
+
+**The audit arc is complete: spec 20 → 21 → 28 → 29.** Every app surface named across all four specs has now been walked at least once, and every finding from spec 28's audit has either been fixed, deleted, renamed, or explicitly closed as intentional. No open items remain from this arc.
