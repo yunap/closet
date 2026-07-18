@@ -355,6 +355,8 @@ export default function StylistChat({
   const pendingActionRef = useRef(null)
   const holdActionScrollRef = useRef(false)
   const textRef = useRef(null)
+  const createOutfitsButtonRef = useRef(null)
+  const wardrobeBuilderFirstFieldRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
   const suppressThreadLoadAutosaveRef = useRef(false)
@@ -532,6 +534,7 @@ export default function StylistChat({
     setCompareOutfitId('')
     setGenerateOutfitMode(false)
     setEditorialVisualMode(false)
+    setWardrobeBuilderOpen(false)
     clearLoadingTimers()
     setLoadingStatus('')
 
@@ -1332,6 +1335,231 @@ export default function StylistChat({
     return plannedCards.some(outfit => outfit?.source === 'plan_outfit_set') ? 'Outfit plan' : 'Trip plan'
   }
 
+  const sentenceCaseLabel = (value = '') => {
+    const text = String(value || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+    if (!text) return ''
+    return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase()
+  }
+
+  const singularLookLabel = (count) => `${count} ${count === 1 ? 'look' : 'looks'}`
+
+  const getPreviousUserText = (messageIndex) => {
+    for (let idx = messageIndex - 1; idx >= 0; idx -= 1) {
+      if (messages[idx]?.role === 'user') return String(messages[idx].text || '')
+    }
+    return ''
+  }
+
+  const derivePlanDestination = (text = '') => {
+    const known = ['Paso Robles', 'Cambria', 'Los Angeles', 'Walnut Creek', 'San Francisco', 'Napa', 'Sonoma']
+    const foundKnown = known.find(place => new RegExp(`\\b${place}\\b`, 'i').test(text))
+    if (foundKnown) return foundKnown
+    const match = text.match(/\b(?:in|for|to)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})(?=[:.,;]|\s+(?:for|with|during|and|after|before)\b|$)/)
+    return match ? match[1].trim() : ''
+  }
+
+  const derivePlanLength = (outfits = []) => {
+    const lines = Array.isArray(outfits?.[0]?.tripPlanLines) ? outfits[0].tripPlanLines : []
+    const line = lines.find(note => /^Plan length:/i.test(String(note || '')))
+    const value = line ? line.replace(/^Plan length:\s*/i, '').trim() : ''
+    const dayMatch = value.match(/(\d+)[-\s]*day/i)
+    return dayMatch ? `${dayMatch[1]}-day` : ''
+  }
+
+  const summarizePlanCoverage = (outfits = []) => {
+    const labels = []
+    for (const outfit of outfits) {
+      const label = outfit?.label || outfit?.bestFor || outfit?.title
+      if (!label) continue
+      const normalized = sentenceCaseLabel(label).toLowerCase()
+      if (!labels.includes(normalized)) labels.push(normalized)
+      if (labels.length >= 3) break
+    }
+    if (!labels.length) return ''
+    return labels.join(', ')
+  }
+
+  const getResponseChips = (message = {}) => {
+    const options = message.queryOptions || {}
+    const chips = [
+      options.occasion && { id: 'occasion', label: sentenceCaseLabel(options.occasion) },
+      options.season && { id: 'season', label: sentenceCaseLabel(options.season) },
+      options.mission && { id: 'mission', label: options.mission === 'mix' ? 'Mix of missions' : sentenceCaseLabel(options.mission) },
+      options.activity && options.activity !== 'none' && { id: 'activity', label: ACTIVITY_OPTIONS.find(opt => opt[0] === options.activity)?.[1] || sentenceCaseLabel(options.activity) },
+      options.idealOnly && { id: 'ideal', label: 'New-piece ideas' },
+      message.wholeWardrobe && { id: 'wardrobe', label: 'Wardrobe only' },
+    ].filter(Boolean)
+    const seen = new Set()
+    return chips.filter(chip => {
+      const key = chip.label.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }).slice(0, 4)
+  }
+
+  const buildStylistPresentation = (message = {}, outfits = [], messageIndex = -1) => {
+    const visible = outfits.filter(outfit => !outfit?.diagnosticOnly)
+    const plannedCards = visible.filter(outfit => isPlannedSetSource(outfit?.source))
+    const lookCount = visible.length || outfits.length
+    const first = visible[0] || outfits[0] || {}
+    const query = message.queryOptions || {}
+    const isPlanned = plannedCards.length > 0
+    const isIdealDirections = outfits.length >= 2 && outfits.some(outfit => outfit?.previewOnly && outfit?.pieceId)
+    const targetPiece = first.pieceId
+      ? pieces.find(piece => Number(piece.id) === Number(first.pieceId))
+      : null
+    const pieceName = activeContext?.type === 'piece'
+      ? activeContext.name
+      : (targetPiece?.name || first?.pieces?.[0]?.name || 'this piece')
+
+    if (isPlanned) {
+      const coverage = summarizePlanCoverage(plannedCards)
+      const prompt = getPreviousUserText(messageIndex)
+      const destination = derivePlanDestination(prompt)
+      const planLength = derivePlanLength(plannedCards)
+      const title = destination
+        ? [planLength, destination, 'outfit plan'].filter(Boolean).join(' ')
+        : (plannedCards.some(outfit => outfit?.source === 'trip_precompose') ? 'Trip wardrobe plan' : 'Wardrobe outfit plan')
+      return {
+        type: 'trip_plan',
+        title,
+        summary: [singularLookLabel(plannedCards.length), coverage].filter(Boolean).join(' · '),
+        chips: getResponseChips(message)
+      }
+    }
+    if (isIdealDirections || activeContext?.type === 'piece') {
+      return {
+        type: 'garment_styling',
+        title: `${lookCount} ${lookCount === 1 ? 'way' : 'ways'} to style ${pieceName}`,
+        summary: `${singularLookLabel(lookCount)} · ${query.occasion ? sentenceCaseLabel(query.occasion).toLowerCase() : 'wardrobe-based directions'}`,
+        chips: getResponseChips(message)
+      }
+    }
+    if (message.wholeWardrobe) {
+      return {
+        type: 'occasion_look',
+        title: lookCount === 1 ? 'Wardrobe outfit' : 'Wardrobe outfit options',
+        summary: `${singularLookLabel(lookCount)}${query.occasion ? ` · ${sentenceCaseLabel(query.occasion).toLowerCase()}` : ''}`,
+        chips: getResponseChips(message)
+      }
+    }
+    return {
+      type: 'general',
+      title: lookCount === 1 ? 'Stylist recommendation' : 'Stylist recommendations',
+      summary: lookCount ? singularLookLabel(lookCount) : '',
+      chips: getResponseChips(message)
+    }
+  }
+
+  const buildResponseSections = (outfits = [], presentation = {}) => {
+    const visible = outfits.slice(0, 8)
+    if (presentation.type === 'trip_plan') {
+      const groups = []
+      visible.forEach((outfit, idx) => {
+        const title = sentenceCaseLabel(outfit.label || outfit.bestFor || outfit.title || `Look ${idx + 1}`)
+        let group = groups.find(entry => entry.title.toLowerCase() === title.toLowerCase())
+        if (!group) {
+          group = { title, items: [] }
+          groups.push(group)
+        }
+        group.items.push({ outfit, idx })
+      })
+      return groups.map(group => ({
+        ...group,
+        countLabel: singularLookLabel(group.items.length)
+      }))
+    }
+    return visible.map((outfit, idx) => {
+      const explicitRank = outfit.rankLabel || outfit.directionLabel
+      const strength = String(outfit.strength || '').toLowerCase()
+      const rankLabel = explicitRank || (['signature', 'strong', 'usable', 'experimental'].includes(strength)
+        ? sentenceCaseLabel(strength === 'strong' ? 'alternate' : strength)
+        : '')
+      return {
+        title: rankLabel ? `${rankLabel} direction` : `Direction ${idx + 1}`,
+        countLabel: '',
+        items: [{ outfit, idx }]
+      }
+    })
+  }
+
+  const getTripPlanOverviewRows = (notes = []) => {
+    const rows = []
+    const addRow = (label, value) => {
+      const clean = String(value || '').trim()
+      const cleanLabel = String(label || '').trim()
+      if (!clean && !cleanLabel) return
+      if (rows.some(row => row.label === label && row.value.toLowerCase() === clean.toLowerCase())) return
+      rows.push({ label: cleanLabel, value: clean })
+    }
+    for (const note of notes) {
+      const text = String(note || '').trim()
+      if (/^Plan length:/i.test(text)) {
+        const value = text.replace(/^Plan length:\s*/i, '').replace(/(\d+)-day/i, '$1 days')
+        addRow(value, '')
+      }
+      else if (/^Coverage:/i.test(text)) addRow('Coverage', text.replace(/^Coverage:\s*/i, ''))
+      else if (/^Weather used:/i.test(text)) {
+        const compact = text
+          .replace(/^Weather used:\s*/i, '')
+          .replace(/\s+\((?:live forecast|fallback)[^)]+\)/gi, '')
+          .replace(/\s*—\s*/g, ': ')
+        addRow('Conditions', compact)
+      } else if (/repeat|reuse|packing/i.test(text) && !/image space/i.test(text)) {
+        addRow(/packing/i.test(text) ? 'Packing' : 'Useful repeats', text)
+      }
+      if (rows.length >= 4) break
+    }
+    return rows
+  }
+
+  const simplifyPieceTitle = (piece = {}) => {
+    const raw = String(piece?.name || '').replace(/\s+/g, ' ').trim()
+    if (!raw) return ''
+    const category = String(piece?.category || '').toLowerCase()
+    const removeWords = new Set([
+      'black', 'white', 'cream', 'beige', 'tan', 'brown', 'navy', 'blue', 'red', 'coral', 'orange',
+      'green', 'olive', 'grey', 'gray', 'colorful', 'solid', 'print', 'printed', 'leather', 'suede'
+    ])
+    let words = raw.split(/\s+/).filter(word => !removeWords.has(word.toLowerCase()))
+    if (category === 'dress') {
+      const descriptor = words.find(word => /botanical|floral|paisley|abstract|geometric|striped|stripe/i.test(word))
+      const length = words.find(word => /maxi|midi|mini/i.test(word))
+      words = [descriptor, length, 'dress'].filter(Boolean)
+    } else if (category === 'bottom') {
+      const garment = words.find(word => /shorts|pants|trousers|skirt|jeans|capris|culottes/i.test(word))
+      const descriptor = words.find(word => !new RegExp(`^${garment || ''}$`, 'i').test(word))
+      words = [descriptor, garment].filter(Boolean)
+    } else if (category === 'top') {
+      const garment = words.find(word => /top|blouse|shirt|tank|tee|sweater|camisole/i.test(word))
+      const descriptor = words.find(word => /botanical|floral|paisley|abstract|geometric|striped|stripe|ruffled|tie|linen/i.test(word))
+      words = [descriptor, garment].filter(Boolean)
+    }
+    const compact = words.filter(Boolean).slice(0, 4).join(' ').trim()
+    return sentenceCaseLabel(compact || raw)
+  }
+
+  const getTripCardMarker = (outfit = {}) => {
+    const position = String(outfit.coveragePosition || '').trim()
+    const match = position.match(/\b\d+\s+of\s+\d+\b/i)
+    return match ? match[0].toLowerCase() : (position || 'look')
+  }
+
+  const getTripCardDisplayTitle = (outfit = {}, section = {}, sectionItemIndex = 0) => {
+    if (!isPlannedSetSource(outfit.source)) return outfit.label || outfit.title || `Direction ${sectionItemIndex + 1}`
+    const hydrated = Array.isArray(outfit.pieces) ? outfit.pieces.map(piece => hydrateDisplayPiece(piece)) : []
+    const dress = hydrated.find(piece => String(piece?.category || '').toLowerCase() === 'dress')
+    if (dress) return simplifyPieceTitle(dress)
+    const top = hydrated.find(piece => String(piece?.category || '').toLowerCase() === 'top')
+    const bottom = hydrated.find(piece => String(piece?.category || '').toLowerCase() === 'bottom')
+    if (top && bottom) return `${simplifyPieceTitle(top)} with ${simplifyPieceTitle(bottom).toLowerCase()}`
+    const pieces = hydrated.map(piece => simplifyPieceTitle(piece)).filter(Boolean)
+    if (pieces.length >= 2) return pieces.slice(0, 2).join(' and ')
+    const sectionBase = String(section?.title || outfit.label || 'Look').replace(/\s+days?$/i, '').trim()
+    return `${sectionBase || 'Look'} look ${sectionItemIndex + 1}`
+  }
+
   const hydrateDisplayPiece = (piece = {}) => {
     const saved = piece?.id ? pieces.find(p => Number(p.id) === Number(piece.id)) : null
     return {
@@ -1782,7 +2010,7 @@ export default function StylistChat({
 
     const strengthLabel = (value, index) => {
       const v = String(value || '').toLowerCase()
-      if (v === 'signature' || index === 0) return 'signature'
+      if (v === 'signature') return 'signature'
       if (v === 'strong') return 'strong'
       if (v === 'usable') return 'usable'
       if (v === 'experimental') return 'experimental'
@@ -1805,9 +2033,22 @@ export default function StylistChat({
     const isIdealAdditions = outfits.length >= 2 &&
       outfits.some(outfit => outfit.previewOnly && outfit.pieceId)
     const canExploreAdjacent = message?.savedOutfitVariantMode === 'formula' && message?.variantSourceOutfit
+    const presentation = buildStylistPresentation(message, outfits, messageIndex)
+    const responseSections = buildResponseSections(outfits, presentation)
+    const tripNotes = getTripPlanNotes(outfits)
+    const tripOverviewRows = getTripPlanOverviewRows(tripNotes)
 
     return (
-      <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+      <div className="stylist-response-shell">
+        <div className="stylist-response-header">
+          <h2 className="stylist-response-title">{presentation.title}</h2>
+          {presentation.summary && <div className="stylist-response-summary">{presentation.summary}</div>}
+          {presentation.chips?.length > 0 && (
+            <div className="stylist-response-chips" aria-label="Response context">
+              {presentation.chips.map(chip => <span key={chip.id} className="stylist-response-chip">{chip.label}</span>)}
+            </div>
+          )}
+        </div>
         <MessageTelemetryDisclosure message={message} />
         {canExploreAdjacent && (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -1826,11 +2067,11 @@ export default function StylistChat({
           </div>
         )}
         {canGenerateComparison && (
-          <div style={{ display: 'grid', gap: 8, padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface-2)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Rough visual preview</div>
-                <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>One quick comparison image for complete saved-piece cards. Unresolved cards stay visible here but are skipped for image generation.</div>
+          <div className={`stylist-preview-action ${comparisonBoards.length || isGeneratingComparison ? 'has-preview' : ''}`}>
+            <div className="stylist-preview-action-row">
+              <div className="stylist-preview-action-copy">
+                <div className="stylist-preview-action-title">Comparison preview</div>
+                <div className="stylist-preview-action-note">See complete outfits side by side.</div>
               </div>
               <button
                 type="button"
@@ -1838,7 +2079,7 @@ export default function StylistChat({
                 disabled={isGeneratingComparison}
                 style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isGeneratingComparison ? 'default' : 'pointer', opacity: isGeneratingComparison ? 0.65 : 1 }}
               >
-                {isGeneratingComparison ? 'Generating rough preview...' : (comparisonBoards.length ? 'Regenerate rough preview' : 'Generate rough preview')}
+                {isGeneratingComparison ? 'Generating preview...' : (comparisonBoards.length ? 'Regenerate comparison' : 'Preview all looks')}
               </button>
             </div>
             {(isGeneratingComparison || comparisonBoards.length > 0) && (
@@ -1931,11 +2172,11 @@ export default function StylistChat({
           const idealComparisonBoards = boardResults[idealComparisonKey] || []
           const isGeneratingIdealComparison = boardLoadingIndex === idealComparisonKey
           return (
-            <div style={{ display: 'grid', gap: 8, padding: '9px 10px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface-2)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Rough visual preview</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>One quick comparison image for all directions. Use individual renders for garment-faithful final images.</div>
+            <div className={`stylist-preview-action ${idealComparisonBoards.length || isGeneratingIdealComparison ? 'has-preview' : ''}`}>
+              <div className="stylist-preview-action-row">
+                <div className="stylist-preview-action-copy">
+                  <div className="stylist-preview-action-title">Comparison preview</div>
+                  <div className="stylist-preview-action-note">See all directions side by side.</div>
                 </div>
                  <button
                   type="button"
@@ -1943,7 +2184,7 @@ export default function StylistChat({
                   disabled={isGeneratingIdealComparison}
                   style={{ fontSize: 12, color: 'var(--accent)', padding: '5px 11px', borderRadius: 14, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isGeneratingIdealComparison ? 'default' : 'pointer', opacity: isGeneratingIdealComparison ? 0.65 : 1 }}
                 >
-                  {isGeneratingIdealComparison ? 'Generating rough preview...' : (idealComparisonBoards.length ? 'Regenerate rough preview' : 'Rough preview · all directions (~$0.07)')}
+                  {isGeneratingIdealComparison ? 'Generating preview...' : (idealComparisonBoards.length ? 'Regenerate comparison' : 'Preview all directions (~$0.07)')}
                 </button>
               </div>
               {(isGeneratingIdealComparison || idealComparisonBoards.length > 0) && (
@@ -2039,19 +2280,35 @@ export default function StylistChat({
             </div>
           )
         })()}
-        {(() => {
-          const tripNotes = getTripPlanNotes(outfits)
-          if (!tripNotes.length) return null
-          return (
-            <div style={{ padding: '10px 12px', border: '1px solid var(--border)', background: 'var(--surface-2)', borderRadius: 12, marginBottom: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 5 }}>{getPlanNotesTitle(outfits)}</div>
-              <div style={{ display: 'grid', gap: 3, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+        {tripNotes.length > 0 && (
+          <div className="stylist-overview">
+            <div className="stylist-overview-title">{getPlanNotesTitle(outfits)}</div>
+            {tripOverviewRows.length > 0 && (
+              <div className="stylist-overview-key-rows">
+                {tripOverviewRows.map(row => (
+                  <div className={`stylist-overview-key-row ${row.value ? '' : 'headline'}`} key={row.label}>
+                    <span>{row.label}</span>
+                    {row.value && <strong>{row.value}</strong>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <details className="stylist-overview-details">
+              <summary>View details</summary>
+              <div className="stylist-overview-rows">
                 {tripNotes.map((note, noteIdx) => <div key={noteIdx}>{note}</div>)}
               </div>
+            </details>
+          </div>
+        )}
+        {responseSections.map((section, sectionIndex) => (
+          <section className="stylist-response-section" key={`${section.title}-${sectionIndex}`}>
+            <div className="stylist-response-section-heading">
+              <h3>{section.title}</h3>
+              {section.countLabel && <span>{section.countLabel}</span>}
             </div>
-          )
-        })()}
-        {outfits.slice(0, 8).map((outfit, idx) => {
+            {section.items.map(({ outfit, idx }, sectionItemIndex) => {
+          const cardDisplayTitle = getTripCardDisplayTitle(outfit, section, sectionItemIndex)
           const strength = strengthLabel(outfit.strength, idx)
           const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean) : []
           const boardKey = `${messageResultKey}:${idx}`
@@ -2072,6 +2329,7 @@ export default function StylistChat({
           const showOutfitSketch = isPreview && !isTextOnly && Boolean(outfit.pieceId)
           const isTripCard = isPlannedSetSource(outfit.source)
           const isBrokenCard = Boolean(outfit.broken || outfit.diagnosticOnly)
+          const isRankedCard = !isTripCard && strength === 'signature'
           const brokenReasonRows = Array.isArray(outfit.brokenPieces)
             ? outfit.brokenPieces.filter(piece => piece?.name && piece?.reason)
             : []
@@ -2127,18 +2385,18 @@ export default function StylistChat({
           return (
             <div key={idx} style={{
               padding: '10px 12px',
-              background: isBrokenCard ? 'var(--repair-bg)' : (idx === 0 ? 'var(--surface)' : 'var(--surface-2)'),
+              background: isBrokenCard ? 'var(--repair-bg)' : (isRankedCard ? 'var(--surface)' : 'var(--surface-2)'),
               borderRadius: 12,
-              border: isBrokenCard ? '1px solid var(--repair)' : (idx === 0 ? '1px solid var(--accent)' : '1px solid var(--border)'),
-              boxShadow: idx === 0 ? '0 2px 8px rgba(0,0,0,0.04)' : 'none',
+              border: isBrokenCard ? '1px solid var(--repair)' : (isRankedCard ? '1px solid var(--accent)' : '1px solid var(--border)'),
+              boxShadow: isRankedCard ? '0 2px 8px rgba(0,0,0,0.04)' : 'none',
               display: 'flex',
               gap: 12,
               alignItems: 'flex-start'
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{outfit.label || outfit.title || `Direction ${idx + 1}`}</div>
-                  <div style={{ fontSize: 10, color: isBrokenCard ? 'var(--repair)' : (idx === 0 ? 'var(--accent)' : 'var(--text-muted)'), textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isBrokenCard ? 'needs review' : (isTripCard ? (outfit.coveragePosition || 'trip look') : strength)}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{cardDisplayTitle}</div>
+                  <div style={{ fontSize: 10, color: isBrokenCard ? 'var(--repair)' : (isRankedCard ? 'var(--accent)' : 'var(--text-muted)'), textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
                 </div>
                 {getCardAuthorLabel(outfit) && (
                   <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, letterSpacing: '0.02em', marginTop: 2 }}>{getCardAuthorLabel(outfit)}</div>
@@ -2698,7 +2956,9 @@ export default function StylistChat({
               </div>
             </div>
           )
-        })}
+            })}
+          </section>
+        ))}
       </div>
     )
   }
@@ -3118,6 +3378,7 @@ export default function StylistChat({
     const activityLabel = activity !== 'none' ? `, ${ACTIVITY_OPTIONS.find(opt => opt[0] === activity)?.[1].toLowerCase()}` : ''
     const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, mood: ${mood}` : ''}${request ? `, request: ${request}` : ''}${activityLabel}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
     const resultId = createResultId('whole-wardrobe')
+    setWardrobeBuilderOpen(false)
 
     // Automatically spin up a dedicated thread for this wardrobe generation
     const builderParams = { occasion, activity, season, mood, request }
@@ -4024,28 +4285,47 @@ export default function StylistChat({
     </div>
   )
 
+  const openWardrobeBuilderComposer = () => {
+    setWardrobeBuilderOpen(true)
+  }
+
+  const closeWardrobeBuilderComposer = () => {
+    setWardrobeBuilderOpen(false)
+    requestAnimationFrame(() => {
+      createOutfitsButtonRef.current?.focus()
+    })
+  }
+
+  useEffect(() => {
+    if (!wardrobeBuilderOpen) return
+    requestAnimationFrame(() => {
+      wardrobeBuilderFirstFieldRef.current?.focus()
+    })
+  }, [wardrobeBuilderOpen])
+
   const renderWardrobeBuilderPanel = (style = {}) => (
     <div style={{ ...wardrobeBuilderPanelBaseStyle, ...style }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 220, flex: '1 1 280px' }}>
-          <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)' }}>Build from my wardrobe</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Create outfits from saved pieces. Images can be generated after you choose a card.</div>
+          <h2 id="outfit-builder-composer-title" style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)', margin: 0 }}>Create outfits from my wardrobe</h2>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Choose the occasion, season, mood, and styling direction.</div>
           <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 5 }}>
             {pieces.length} pieces{chatHistory.length > 0 ? ` · ${Math.ceil(chatHistory.length / 2)} exchanges` : ''}
           </div>
         </div>
         <button
           type="button"
-          onClick={() => setWardrobeBuilderOpen(false)}
+          onClick={closeWardrobeBuilderComposer}
           className="chip"
           style={{ marginTop: 0, background: 'var(--surface)', fontSize: 11, padding: '6px 10px' }}
+          aria-label="Close outfit builder"
         >
           Close
         </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 6 }}>
-        <select value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={wardrobeBuilderControlStyle}>
+        <select ref={wardrobeBuilderFirstFieldRef} value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={wardrobeBuilderControlStyle}>
           {OCCASION_OPTIONS.map(([val, label]) => (
             <option key={val} value={val}>{label}</option>
           ))}
@@ -4097,7 +4377,7 @@ export default function StylistChat({
           disabled={loading}
           style={{ fontSize: 12, color: '#fff', padding: '8px 14px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1, minHeight: 34 }}
         >
-          {loading ? 'Creating...' : 'Create outfits'}
+          {loading ? 'Generating...' : 'Generate outfits'}
         </button>
       </div>
     </div>
@@ -4193,11 +4473,6 @@ export default function StylistChat({
               >
                 🕒 History
               </button>
-              {!wardrobeBuilderOpen && (
-                <button className="chip" style={{ marginTop: 4 }} onClick={() => setWardrobeBuilderOpen(true)}>
-                  Use wardrobe
-                </button>
-              )}
               {activeContext && (
                 <button className="chip" style={{ marginTop: 4 }} onClick={() => setLearningOpen(v => !v)}>
                   Learning{learningRows.length ? ` · ${learningRows.length}` : ''}
@@ -4213,11 +4488,6 @@ export default function StylistChat({
               </button>
             </div>
           </div>
-          {recentMemoryStatus && !wardrobeBuilderOpen && (
-            <div style={{ marginTop: 6, fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
-              {recentMemoryStatus}
-            </div>
-          )}
           {homeLocationOpen && (
             <div style={{ marginTop: 8, padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', flex: '1 1 220px' }}>
@@ -4241,13 +4511,6 @@ export default function StylistChat({
             </div>
           )}
         </div>
-
-      {/* Wardrobe Builder Panel */}
-      {wardrobeBuilderOpen && (
-        renderWardrobeBuilderPanel({ margin: '0 16px 10px' })
-      )}
-
-
 
       {/* Learning Panel */}
       {learningOpen && activeContext && (
@@ -4293,9 +4556,6 @@ export default function StylistChat({
                   {SUGGESTIONS.map(s => <button key={s} onClick={() => setInput(s)} style={{ textAlign: 'left', padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer' }}>{s}</button>)}
                 </div>
               </>
-            )}
-            {!pending && (
-              renderWardrobeBuilderPanel({ marginTop: 12 })
             )}
           </div>
         )}
@@ -4385,7 +4645,7 @@ export default function StylistChat({
                       ) : compactIntro ? (
                         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.45 }}>{compactIntro}</p>
                       ) : null}
-                      {m.queryOptions && (
+                      {m.queryOptions && !hasStructuredIdeas && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0 12px' }}>
                           {m.queryOptions.occasion && (
                             <span style={{ fontSize: 11, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 12, padding: '3px 8px', color: 'var(--text-muted)', textTransform: 'capitalize', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
@@ -5109,6 +5369,20 @@ export default function StylistChat({
       )}
 
       <div className={`stylist-composer-dock ${messages.length > 1 ? 'is-sticky' : ''}`}>
+        {wardrobeBuilderOpen ? (
+          <div
+            className="stylist-builder-composer-shell"
+            id="outfit-builder-composer"
+            role="region"
+            aria-labelledby="outfit-builder-composer-title"
+            onKeyDown={e => {
+              if (e.key === 'Escape') closeWardrobeBuilderComposer()
+            }}
+          >
+            {renderWardrobeBuilderPanel()}
+          </div>
+        ) : (
+          <>
         {imagePrev && (
           <div className="stylist-attached-photo">
             <div style={{ position: 'relative' }}>
@@ -5128,11 +5402,23 @@ export default function StylistChat({
                   📷
                 </label>
                 <textarea ref={textRef} className="ai-input" placeholder="Ask about your wardrobe..." value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
+                <button
+                  ref={createOutfitsButtonRef}
+                  type="button"
+                  className="composer-create-outfits-btn"
+                  onClick={openWardrobeBuilderComposer}
+                  aria-expanded={wardrobeBuilderOpen}
+                  aria-controls="outfit-builder-composer"
+                >
+                  Create outfits
+                </button>
                 <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
               </>
             )}
           </div>
         </div>
+          </>
+        )}
       </div>
       {previewImage && (
         <div
