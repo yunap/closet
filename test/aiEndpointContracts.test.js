@@ -1955,7 +1955,7 @@ test('StylistChat enables rough preview for rendered freeform outfit cards', () 
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /const isTextOnlyPreviewSet = Boolean\(outfits\[0\]\?\.previewOnly\)/)
   assert.match(src, /const canGenerateComparison = !isTextOnlyPreviewSet && outfits\.length >= 2/)
-  assert.match(src, /Generate rough preview/)
+  assert.match(src, /Preview all looks/)
 })
 
 test('StylistChat uses outfit sketch instead of color balance on ideal direction cards', () => {
