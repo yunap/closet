@@ -42,13 +42,28 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
   const bg = getPlaceholderBg(piece.colors)
   const [imageFailed, setImageFailed] = useState(false)
 
+  const openPiece = () => onTap(piece)
   const handleFav = (e) => {
     e.stopPropagation()
     onFavorite(piece)
   }
+  const handleKeyDown = (event) => {
+    if (event.target.closest('button')) return
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      openPiece()
+    }
+  }
 
   return (
-    <div className="piece-card" onClick={() => onTap(piece)}>
+    <div
+      className="piece-card"
+      onClick={openPiece}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${piece.name} wardrobe card`}
+    >
       {/* Photo or placeholder */}
       {piece.photo && !imageFailed ? (
         <img
@@ -83,11 +98,11 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
       {/* Info */}
       <div className="piece-card-body">
         <div className="piece-card-name">{piece.name}</div>
-        <div className="piece-card-meta" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ textTransform: 'capitalize' }}>
+        <div className="piece-card-meta">
+          <span className="piece-card-colors">
             {piece.colors.slice(0, 2).join(' · ')}
           </span>
-          <span style={{ fontFamily: 'monospace', opacity: 0.65, fontSize: '0.95em' }}>#{piece.id}</span>
+          <span className="piece-card-id">#{piece.id}</span>
         </div>
       </div>
     </div>

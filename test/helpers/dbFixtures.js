@@ -2,9 +2,9 @@ import { db } from '../../db.js'
 
 // Some older tests hardcode real IDs from the developer's personal wardrobe
 // (wardrobe.db is gitignored — a fresh clone starts with an empty table).
-// This helper seeds exactly those IDs, but ONLY when they're missing, so a
-// developer's real local data is never touched or overwritten — it just
-// fills the gap that makes a fresh clone hermetic.
+// This helper seeds exactly those IDs, but ONLY when they're missing. Callers
+// that need synthetic pieces must set WARDROBE_DB_PATH before importing any
+// DB-bound modules so fixture rows land in an isolated test database.
 //
 // Usage: const cleanup = ensureFixturePieces([{ id, name, category, ... }])
 //        ... run test ...

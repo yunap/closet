@@ -1,15 +1,21 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-agent-scope-'))
 process.env.NODE_ENV = 'test'
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { executeTool } from '../styling-engine/tools.js'
-import { ensureFixturePieces } from './helpers/dbFixtures.js'
+const { executeTool } = await import('../styling-engine/tools.js')
+const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
 
-// Piece 106 is a real ID from the developer's personal wardrobe (wardrobe.db
-// is gitignored). Seed it only if a fresh/empty DB is missing it — never
-// touches or overwrites real local data.
+// Keep these scoped-tool fixtures in an isolated DB. The IDs mirror historical
+// local data, but the test must never touch the developer's real wardrobe.
 const cleanupFixtures = ensureFixturePieces([
   { id: 106, name: 'black washed bootcut denim jeans', category: 'bottom', status: 'active', occasions: '["casual"]', fabric_weight: 'medium', fabric_category: 'denim', reads_as: 'denim jeans', formality: 'everyday', photo: 'fixture-106.jpg' },
   // Companion pieces so the whole-wardrobe composer has enough category
@@ -20,7 +26,10 @@ const cleanupFixtures = ensureFixturePieces([
   { id: 700501, name: 'rust cotton crew tee', category: 'top', status: 'active', occasions: '["casual"]', colors: '["rust"]', fabric_weight: 'light', formality: 'everyday', photo: 'fixture-700501.jpg' },
   { id: 700502, name: 'white leather sneakers', category: 'shoes', status: 'active', occasions: '["casual"]', heel_height: 'flat', walk_support: 'high', formality: 'everyday', photo: 'fixture-700502.jpg' }
 ])
-test.after(cleanupFixtures)
+test.after(() => {
+  cleanupFixtures()
+  fs.rmSync(tmpRoot, { recursive: true, force: true })
+})
 
 test('agent_tool_scoping: search_wardrobe is scoped by allowedPieceIds', async () => {
   // We expect denim pants ID 106 to be present in normal search, but hidden when scoped to not include it.

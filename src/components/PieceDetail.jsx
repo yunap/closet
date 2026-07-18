@@ -14,6 +14,7 @@ const COLOR_BG = {
 function OutfitThumb({ outfit, onPreview }) {
   return (
     <button
+      className="garment-relation-tile outfit-relation-tile"
       type="button"
       onClick={() => outfit.photo && onPreview({
         src: `/uploads/${outfit.photo}`,
@@ -21,24 +22,15 @@ function OutfitThumb({ outfit, onPreview }) {
         meta: outfit.occasion || '',
       })}
       disabled={!outfit.photo}
-      style={{
-        flexShrink: 0,
-        width: 80,
-        border: 0,
-        padding: 0,
-        background: 'transparent',
-        textAlign: 'left',
-        cursor: outfit.photo ? 'zoom-in' : 'default',
-      }}
       aria-label={outfit.photo ? `Open outfit ${outfit.name || ''}` : undefined}
     >
-      <div style={{ width: 80, height: 106, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-light)', background: 'var(--surface-2)' }}>
+      <div className="garment-relation-thumb outfit-relation-thumb">
         {outfit.photo
-          ? <img src={`/uploads/${outfit.photo}`} alt={outfit.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-          : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, color: 'var(--text-light)' }}>✦</div>
+          ? <img src={`/uploads/${outfit.photo}`} alt={outfit.name} />
+          : <div className="garment-relation-empty">✦</div>
         }
       </div>
-      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, textAlign: 'center', lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+      <div className="garment-relation-label">
         {outfit.name}
       </div>
     </button>
@@ -48,30 +40,24 @@ function OutfitThumb({ outfit, onPreview }) {
 function SavedBoardThumb({ board, onPreview }) {
   if (!board?.image_url) return null
   const pieces = Array.isArray(board.pieces) ? board.pieces.map(p => p?.name).filter(Boolean) : []
+  const title = board.title || 'Saved board'
   return (
     <button
+      className="garment-relation-tile saved-board-tile"
       type="button"
       onClick={() => onPreview({
         src: board.image_url,
-        title: board.title || 'Saved board',
+        title,
         meta: pieces.length ? pieces.slice(0, 4).join(' + ') : (board.context_name || 'Saved board'),
       })}
-      style={{
-        flexShrink: 0,
-        width: 118,
-        border: 0,
-        padding: 0,
-        background: 'transparent',
-        textAlign: 'left',
-        cursor: 'zoom-in',
-      }}
-      aria-label={`Open saved board ${board.title || ''}`}
+      aria-label={`Open saved board ${title}`}
+      title={title}
     >
-      <div style={{ width: 118, height: 148, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border-light)', background: 'var(--surface-2)' }}>
-        <img src={board.image_url} alt={board.title || 'Saved board'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      <div className="garment-relation-thumb saved-board-thumb">
+        <img src={board.image_url} alt={title} />
       </div>
-      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.3, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-        {board.title || 'Saved board'}
+      <div className="garment-relation-label">
+        {title}
       </div>
     </button>
   )
@@ -92,6 +78,7 @@ export default function PieceDetail({
   const [previewImage, setPreviewImage] = useState(null)
   const [outfits,  setOutfits]  = useState([])
   const [savedBoards, setSavedBoards] = useState([])
+  const [showAllBoards, setShowAllBoards] = useState(false)
   const sheetRef = useRef(null)
 
   useEffect(() => {
@@ -108,6 +95,7 @@ export default function PieceDetail({
 
   useEffect(() => {
     requestAnimationFrame(() => sheetRef.current?.scrollTo({ top: 0 }))
+    setShowAllBoards(false)
   }, [piece.id])
 
   const handleDelete = () => {
@@ -118,24 +106,36 @@ export default function PieceDetail({
   const hasEither = piece.photo || piece.worn_photo
   const activePhoto = photoTab === 'worn' ? piece.worn_photo : piece.photo
   const activePhotoLabel = photoTab === 'worn' ? 'Worn photo' : 'Hanger photo'
+  const formattedCategory = piece.category ? piece.category.charAt(0).toUpperCase() + piece.category.slice(1) : 'Piece'
+  const visibleSavedBoards = showAllBoards ? savedBoards : savedBoards.slice(0, 4)
+  const remainingSavedBoards = savedBoards.length - visibleSavedBoards.length
 
   return createPortal(
     <div className="modal-overlay piece-detail-overlay" onClick={onClose}>
-      <div ref={sheetRef} className="modal-sheet piece-detail-sheet" onClick={e => e.stopPropagation()}>
-        <div className="modal-handle" />
+      <div
+        ref={sheetRef}
+        className="modal-sheet piece-detail-sheet"
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="garment-detail-title"
+      >
+        <button className="garment-detail-close" onClick={onClose} aria-label="Close garment detail">✕</button>
 
         {/* Photo */}
         {hasEither ? (
-          <div style={{ position: 'relative' }}>
+          <div className="garment-photo-section">
             {hasBoth && (
-              <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 2, display: 'flex', gap: 4, background: 'rgba(38,32,26,0.5)', borderRadius: 20, padding: 3, backdropFilter: 'blur(8px)' }}>
+              <div className="garment-photo-toggle" role="group" aria-label="Garment photo view">
                 {[['hanger','On hanger'],['worn','Worn']].map(([tab, label]) => (
-                  <button key={tab} onClick={() => setPhotoTab(tab)} style={{
-                    padding: '4px 12px', borderRadius: 16, fontSize: 11, fontWeight: 500,
-                    background: photoTab === tab ? '#fff' : 'transparent',
-                    color: photoTab === tab ? '#2A2420' : 'rgba(255,255,255,0.8)',
-                    transition: 'all 0.15s'
-                  }}>{label}</button>
+                  <button
+                    key={tab}
+                    className={photoTab === tab ? 'active' : ''}
+                    onClick={() => setPhotoTab(tab)}
+                    aria-pressed={photoTab === tab}
+                  >
+                    {label}
+                  </button>
                 ))}
               </div>
             )}
@@ -155,16 +155,29 @@ export default function PieceDetail({
         )}
 
         <div className="detail-body">
-          <div className="detail-title">
-            <span style={{ fontFamily: 'monospace', color: 'var(--text-light)', marginRight: 8, fontSize: '0.85em', fontWeight: 'normal' }}>#{piece.id}</span>
-            {piece.name}
+          <div className="garment-identity">
+            <div className="detail-title" id="garment-detail-title">
+              {piece.name}
+            </div>
+            <div className="detail-category">#{piece.id} · {formattedCategory}</div>
           </div>
-          <div className="detail-category">{piece.category}</div>
 
-          <div className="detail-tags">
-            {piece.colors.map(c    => <span key={c} className="detail-tag">{c}</span>)}
-            {piece.occasions.map(o => <span key={o} className="detail-tag">{o}</span>)}
-            <span className="detail-tag">{piece.season}</span>
+          <div className="garment-meta-groups" aria-label="Garment metadata">
+            <div className="garment-meta-group">
+              <div className="form-label">Colors</div>
+              <div className="garment-meta-values">{piece.colors?.length ? piece.colors.join(' · ') : 'Not set'}</div>
+            </div>
+            <div className="garment-meta-group">
+              <div className="form-label">Best for</div>
+              <div className="garment-meta-values">{piece.occasions?.length ? piece.occasions.join(' · ') : 'Not set'}</div>
+            </div>
+            <div className="garment-meta-group">
+              <div className="form-label">Season</div>
+              <div className="garment-meta-values">{piece.season || 'Not set'}</div>
+            </div>
+          </div>
+
+          <div className="detail-tags garment-status-tags">
             {piece.status !== 'active' && (
               <span className="detail-tag" style={{
                 background:  piece.status === 'needs-repair' ? 'var(--repair-bg)' : 'var(--donate-bg)',
@@ -178,7 +191,7 @@ export default function PieceDetail({
           </div>
 
           {piece.tag_state === 'provisional' && (
-            <div style={{ fontSize: 12, color: 'var(--accent)', background: 'var(--accent-light)', padding: '9px 11px', borderRadius: 8, marginBottom: 14, lineHeight: 1.45 }}>
+            <div className="garment-provisional-note">
               Provisional tag: Add a worn photo to fully tag fit and drape behavior.
             </div>
           )}
@@ -211,50 +224,60 @@ export default function PieceDetail({
               </div>
             </div>
           )}
-          {/* Saved boards */}
-          {savedBoards.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div className="form-label" style={{ marginBottom: 10 }}>
-                Saved boards with this piece
+          <section className="garment-relationships" aria-label="Saved boards and linked outfits">
+            {savedBoards.length > 0 && (
+              <div className="garment-relationship-block">
+                <div className="garment-section-heading">
+                  Saved boards · {savedBoards.length}
+                </div>
+                <div className="garment-relation-strip">
+                  {visibleSavedBoards.map(board => (
+                    <SavedBoardThumb key={board.id} board={board} onPreview={setPreviewImage} />
+                  ))}
+                  {remainingSavedBoards > 0 && (
+                    <button
+                      className="garment-relation-more"
+                      type="button"
+                      onClick={() => setShowAllBoards(true)}
+                      aria-label={`Show ${remainingSavedBoards} more saved boards`}
+                    >
+                      +{remainingSavedBoards}
+                      <span>more</span>
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-                {savedBoards.map(board => (
-                  <SavedBoardThumb key={board.id} board={board} onPreview={setPreviewImage} />
-                ))}
+            )}
+
+            {outfits.length > 0 ? (
+              <div className="garment-relationship-block">
+                <div className="garment-section-heading">
+                  Linked outfits · {outfits.length}
+                </div>
+                <div className="garment-relation-strip">
+                  {outfits.map(o => <OutfitThumb key={o.id} outfit={o} onPreview={setPreviewImage} />)}
+                </div>
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="garment-relationship-block">
+                <div className="garment-section-heading">
+                  Linked outfits
+                </div>
+                <div className="garment-link-status">
+                  Not linked to any outfits yet
+                </div>
+              </div>
+            )}
+          </section>
 
           {/* Ask Stylist */}
           {onSendToStylist && (
             <button
+              className="garment-ask-stylist"
               onClick={() => onSendToStylist(piece)}
-              style={{
-                width: '100%', padding: '13px', marginBottom: 10,
-                background: 'var(--accent-light)', color: 'var(--accent)',
-                border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-                fontSize: 14, fontWeight: 500,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              }}
             >
               ◇ Ask stylist about this piece
             </button>
-          )}
-
-          {/* Appears in */}
-          {outfits.length > 0 ? (
-            <div style={{ marginBottom: 16 }}>
-              <div className="form-label" style={{ marginBottom: 10 }}>
-                Appears in {outfits.length} {outfits.length === 1 ? 'outfit' : 'outfits'}
-              </div>
-              <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-                {outfits.map(o => <OutfitThumb key={o.id} outfit={o} onPreview={setPreviewImage} />)}
-              </div>
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 16, fontStyle: 'italic' }}>
-              Not linked to any outfits yet
-            </div>
           )}
 
           {(showDeleteAction || showEditAction) && (
