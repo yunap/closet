@@ -357,6 +357,7 @@ export default function StylistChat({
   const textRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
+  const suppressThreadLoadAutosaveRef = useRef(false)
   const currentThreadIdRef = useRef(currentThreadId)
   useEffect(() => {
     currentThreadIdRef.current = currentThreadId
@@ -503,8 +504,8 @@ export default function StylistChat({
     await saveThreadState(threadId, data)
   }
 
-  const openThread = async (threadId) => {
-    if (currentThreadId && currentThreadId !== 'new_chat') {
+  const openThread = async (threadId, { skipSaveCurrent = false } = {}) => {
+    if (!skipSaveCurrent && debounceTimerRef.current && currentThreadId && currentThreadId !== 'new_chat') {
       await flushSaveThread(currentThreadId, {
         messages,
         chatHistory,
@@ -568,6 +569,7 @@ export default function StylistChat({
       }
       const thread = await res.json()
       
+      suppressThreadLoadAutosaveRef.current = true
       setMessages(thread.payload.messages || [])
       setChatHistory(thread.payload.chatHistory || [])
       setThreadMemory(thread.payload.threadMemory || null)
@@ -604,9 +606,6 @@ export default function StylistChat({
   }
 
   const deleteThread = async (threadId) => {
-    const totalThreads = threads.length + archivedThreads.length
-    if (totalThreads <= 1 && threadId === currentThreadId) return
-    
     try {
       const res = await fetch(`/api/chat-threads/${threadId}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Delete failed')
@@ -624,9 +623,11 @@ export default function StylistChat({
       if (currentThreadId === threadId) {
         const nextThread = remainingActive[0] || remainingArchived[0]
         if (nextThread) {
-          await openThread(nextThread.id)
+          await openThread(nextThread.id, { skipSaveCurrent: true })
+          navigate('/stylist/' + nextThread.id, { replace: true })
         } else {
-          await openThread('new_chat')
+          await openThread('new_chat', { skipSaveCurrent: true })
+          navigate('/stylist', { replace: true })
         }
       }
     } catch (err) {
@@ -981,6 +982,10 @@ export default function StylistChat({
   // Debounced auto-save of active thread updates
   useEffect(() => {
     if (currentThreadId === 'new_chat' || initialLoading || loadingThread) return
+    if (suppressThreadLoadAutosaveRef.current) {
+      suppressThreadLoadAutosaveRef.current = false
+      return
+    }
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current)

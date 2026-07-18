@@ -4,6 +4,9 @@ import fs from 'node:fs'
 import {
   humanizeLabel,
   deriveBuilderTitle,
+  getThreadDisplayTitle,
+  getThreadOutcomeSummary,
+  getThreadOriginalFirstMessage,
   groupThreadsByDate,
   clusterThreadsBySubject
 } from '../src/utils/threadGrouping.js'
@@ -26,6 +29,60 @@ test('deriveBuilderTitle generates concise titles based on query details', () =>
     mood: 'artistic minimalist'
   })
   assert.equal(title, 'Smart casual · Lots of walking · Warm · "artistic minimalist"')
+})
+
+test('thread display helpers derive concise history titles and outcome summaries', () => {
+  const tripThread = {
+    title: 'In a few days, I am going to Paso Robles...',
+    originalFirstMessage: 'In a few days, I am going to Paso Robles for wineries, a hike, and dinner.',
+    threadMemory: {
+      latestOutfits: [
+        { label: 'Winery Day' },
+        { label: 'Hike Morning' },
+        { label: 'Dinner Out' }
+      ]
+    }
+  }
+
+  assert.equal(getThreadOriginalFirstMessage(tripThread), tripThread.originalFirstMessage)
+  assert.equal(getThreadDisplayTitle(tripThread), 'Paso Robles trip outfits')
+  assert.equal(getThreadOutcomeSummary(tripThread), '3 looks · winery, hike and dinner')
+
+  const renamedThread = {
+    title: 'Review later',
+    user_renamed: true,
+    originalFirstMessage: 'Build me a 24-piece summer capsule'
+  }
+  assert.equal(getThreadDisplayTitle(renamedThread), 'Review later')
+
+  const capsuleThread = {
+    originalFirstMessage: 'Build me a 24-piece summer capsule wardrobe.'
+  }
+  assert.equal(getThreadDisplayTitle(capsuleThread), '24-piece summer capsule')
+  assert.equal(getThreadOutcomeSummary(capsuleThread), 'New styling chat')
+
+  const meetingThread = {
+    originalFirstMessage: 'I need one outfit for a Thursday client meeting.',
+    threadMemory: {
+      latestOutfits: [
+        { label: 'Everyday Office' },
+        { label: 'Client Prep' }
+      ]
+    }
+  }
+  assert.equal(getThreadDisplayTitle(meetingThread), 'Thursday client outfit')
+  assert.equal(getThreadOutcomeSummary(meetingThread), '2 looks · office and client meetings')
+
+  const edgeThread = {
+    threadMemory: {
+      latestOutfits: [
+        { title: 'Controlled Edge', previewOnly: true },
+        { title: 'Polished Edge', previewOnly: true },
+        { title: 'Elevated Edge', previewOnly: true }
+      ]
+    }
+  }
+  assert.equal(getThreadOutcomeSummary(edgeThread), '3 directions · polished edge')
 })
 
 test('clusterThreadsBySubject clusters outfit/piece threads and groups freeform ones', () => {
@@ -128,6 +185,27 @@ test('ThreadRail component view toggle and collapsed state persists via localSto
   assert.match(source, /localStorage\.setItem\('stylist_rail_collapsed',\s*String\(collapsed\)\)/)
 })
 
+test('active thread deletion can fall through to another thread or new chat', () => {
+  const chatSource = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
+  const railSource = fs.readFileSync(new URL('../src/components/ThreadRail.jsx', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(chatSource, /totalThreads\s*<=\s*1\s*&&\s*threadId\s*===\s*currentThreadId/)
+  assert.match(chatSource, /openThread\(nextThread\.id,\s*\{\s*skipSaveCurrent:\s*true\s*\}\)/)
+  assert.match(chatSource, /openThread\('new_chat',\s*\{\s*skipSaveCurrent:\s*true\s*\}\)/)
+  assert.match(chatSource, /navigate\('\/stylist\/'\s*\+\s*nextThread\.id,\s*\{\s*replace:\s*true\s*\}\)/)
+  assert.match(chatSource, /navigate\('\/stylist',\s*\{\s*replace:\s*true\s*\}\)/)
+  assert.doesNotMatch(railSource, /threads\.length\s*>\s*1\s*&&\s*\(/)
+})
+
+test('opening a saved thread does not rewrite thread recency metadata', () => {
+  const source = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
+
+  assert.match(source, /const\s+suppressThreadLoadAutosaveRef\s*=\s*useRef\(false\)/)
+  assert.match(source, /!skipSaveCurrent\s*&&\s*debounceTimerRef\.current\s*&&\s*currentThreadId/)
+  assert.match(source, /suppressThreadLoadAutosaveRef\.current\s*=\s*true\s*\n\s*setMessages\(thread\.payload\.messages/)
+  assert.match(source, /if\s*\(suppressThreadLoadAutosaveRef\.current\)\s*\{\s*suppressThreadLoadAutosaveRef\.current\s*=\s*false\s*return\s*\}/)
+})
+
 test('StylistChat queries saved-boards on mount and uses savedBoardUrls to check saved state', () => {
   const source = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
   
@@ -219,5 +297,3 @@ test('Outfit card layout refinement - split chips, saved badge, details teaser, 
   // 6. Verify telemetry details collapse
   assert.match(source, /className="telemetry-details"/i)
 })
-
-
