@@ -133,3 +133,220 @@ Everything else audited this pass (census 3's remaining counters, census 2's liv
 ## Scope note
 
 This inventory covers the areas spec 20 explicitly seeded (the plan/precompose/scorer surface spec 14 touched) plus the four census categories applied to that surface, at high confidence (every claim traced to an actual call site or a `git show`/`npm test` run, not grep-count). It does **not** cover a fresh line-by-line reachability pass of `styling-engine/rules.js` (3800+ lines), `styling-engine/core.js` (3700+ lines), `styling-engine/attributes.js`, `styling-engine/occasions.js`, `styling-engine/weather.js`, `styling-engine/taggerMerge.js`, `styling-engine/softScoreFloors.js`, or `routes/crud.js` — those are large, mostly-unrelated-to-spec-14 surfaces that would need their own scoped pass rather than being rushed here. If a future cleanup spec wants that ground covered, it should be commissioned as its own audit rather than assumed clean by omission from this one.
+
+---
+
+# Spec 28 audit (2026-07-17) — whole-app cleanup inventory, all three phases
+
+**Status:** Complete, all three phases. Read-only — zero code changes; this append is the entire deliverable. Baseline: `origin/main` @ `7912ed9`/`79d592a` (post-spec-21, current at audit time). Method identical to spec 20: reachability verified by walking actual call paths from the entry points named in the spec (never grep-count as final evidence), four censuses per phase where applicable, every row gets a disposition (`delete in next spec` / `keep` / `owner ruling needed`).
+
+**Why this pass exists:** the freeform arc's deletions (specs 14, 21) changed the call graph INTO the surfaces below — branches that only the deleted engine composer called are now unreachable with nobody having audited them — and the pre-inversion pipelines (older routes, `rules.js`/`core.js`, most of the frontend) had never had a reachability pass at all before this.
+
+**Top-line result: two independent live-risk findings, no large dead-code caches.** Every route handler in Phase 2's scope came back LIVE (zero orphaned/dead routes). Phase 3 closed both of its carried-forward open items cleanly (one confirmed intentional-by-design, one confirmed a fully clean deletion with zero residue). Phase 1 found the single most consequential issue in this whole pass — see P0 below. The dead-code actually found is small and mechanical (unused imports, a handful of unreferenced functions, one abandoned early feature never wired up) — consistent with this codebase's established pattern of catching orphaned code quickly rather than letting it accumulate.
+
+## P0 findings — data-safety / data-quality, fix ahead of any cosmetic cleanup
+
+1. **(Phase 1) The `rehydrateOutfitPieces` bug class reproduces, live, in `/evaluate-piece`.** `normalizeWholeWardrobeOutfitObject` (`styling-engine/rules.js:3782`) resolves each outfit piece against the full, fully-tagged candidate pool and then unconditionally re-trims the result to `{id, name, category, photo, worn_photo}` before handing it to `locallyGateWholeWardrobeOutfits`. Every structured gate downstream (`registerCeilingVerdict`, `footwearComfortVerdict`, `pieceMatchesMaterial`/`pieceMatchesFootwear`) reads `undefined` for `formality`/`heel_height`/`walk_support`/`fabric_category`/etc. and silently degrades to matching on the piece's literal name text — the same failure class the handoff doc already found and fixed once in `outfitSetPlanner.js`'s `composeOutfitSet`, but this is a second, independent occurrence rooted in `rules.js` itself, currently live on both call paths inside the `/evaluate-piece` route handler (`routes/ai.js:1804`, `1816`). Full trace, evidence, and two candidate fix directions in Phase 1's section below. **This is not the documented "repair skipped in advisor mode" ruling** (that's a separate, correct, deliberate decision) — this is an antecedent trim that runs regardless of the repair setting.
+2. **(Phase 2) `test/threadRail.test.js` is a fifth non-hermetic DB test — same hazard class spec 21 Part 1 already fixed for four other files, missed here.** It statically imports `routes/ai.js` → `db.js` with no `WARDROBE_DB_PATH`/`WARDROBE_UPLOADS_DIR` override. Unlike the four files spec 21 fixed, the exposure here is a `db.js` module-load side effect (the unconditional `tag_state` lifecycle backfill, `db.js:291-316`) rather than explicit test-body `INSERT`/`DELETE` calls — but it's a real, ungated `UPDATE` against any real closet DB with genuinely-untagged pieces. Confirmed this session that `wardrobe.db`'s mtime was unchanged after a full `npm test` run (no rows currently match the backfill's `WHERE` clause on this checkout's data) — that's a property of current data, not of the test file; the exposure is structural. Fix: apply the same dynamic-import-after-env-var pattern already proven in spec 21 Part 1.
+
+---
+
+## Phase 1 — `styling-engine/rules.js` + `styling-engine/core.js`
+
+**Scope walked:** `styling-engine/rules.js` (4,617 lines), `styling-engine/core.js` (3,956 lines), `styling-engine/softScoreFloors.js`, `styling-engine/attributes.js`, `styling-engine/occasions.js`, `styling-engine/weather.js`, `styling-engine/taggerMerge.js`. Entry points: `routes/ai.js`/`routes/crud.js` handlers, `executeTool`'s switch (`styling-engine/tools.js`), `styling-engine/outfitSetPlanner.js` as a Phase-1-adjacent consumer.
+
+### P0 — live data-quality bug: the `rehydrateOutfitPieces` bug class reproduces in the LIVE `/evaluate-piece` Visual Composer flow
+
+**This is not the same instance the handoff doc already fixed (that one was in the now-deleted `outfitSetPlanner.js` `composeOutfitSet` path). This is a second, independent, still-live occurrence of the identical bug class, rooted in `styling-engine/rules.js` itself, and it is currently running in production on every `/evaluate-piece` turn.**
+
+**Root cause — `styling-engine/rules.js:3782-3815`, `normalizeWholeWardrobeOutfitObject`.** This function receives an outfit whose `pieces` may already be full DB objects (with `formality`, `heel_height`, `walk_support`, `fabric_category`, `pattern_type`, `colors`, `occasions`, etc.), resolves each piece id against the full `candidatePieces` pool it's given (`ownedPieces = ids.map(id => candidateById.get(id))` — genuinely full objects), and then **deliberately re-trims them on the way out**:
+```js
+pieces: ownedPieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null }))
+```
+Every structured tag is discarded even though the full object was sitting right there a line earlier.
+
+**Confirmed live call chain, walked end to end (`routes/ai.js`, `/evaluate-piece` handler, `POST /api/ai/evaluate-piece`, hardcoded `mode: 'advisor'`):**
+
+1. `routes/ai.js:1620-1636` — the model's own proposed outfits (`resolved`) are piece-resolved against `allowedPieces` (the **full**, fully-tagged DB piece pool). At this point `resolved[i].pieces` are full objects.
+2. `routes/ai.js:1638` — `normalizedModelOutfits = resolved.map(o => normalizeWholeWardrobeOutfitObject(o, allowedPieces))` — **the full data is thrown away right here.** `modelOutfits` derived from this (line 1666) now carry pieces trimmed to `{id, name, category, photo, worn_photo}`.
+3. `routes/ai.js:1804-1808` — `gatedModel = locallyGateWholeWardrobeOutfits(modelOutfits, ..., { mode: 'advisor', candidatePieces: allowedPieces, ... })` — no `repair: true` passed.
+4. Inside `locallyGateWholeWardrobeOutfits` (`rules.js:4349`): `shouldRepair = repair !== undefined ? repair : !advisorMode` → `false` here (advisor mode, no override). This particular skip **is** the documented deliberate decision ([[yunap-closet-no-repair-in-advisor-mode]]) — not itself a bug.
+5. But even where `shouldRepair` were `true`, `repairWholeWardrobeOutfit` (`rules.js:3954`) does **not** restore full pieces onto the outfit's own `.pieces` array for the general case — it only rehydrates on-demand internally via `wholeWardrobeFullPieces()` for specific sub-checks (footwear swap, boho-mood reason text) and only overwrites `.pieces` in the footwear-swap and boho-mood branches. Every other consumer downstream still sees the outfit object's `.pieces` as trimmed.
+6. `rules.js:4377` — `const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []` — trimmed.
+7. `rules.js:4433` — `const profileFits = pieces.map(piece => profileRuleFit(piece, mergedRules, { ...registerCeiling }))` — **gates every piece on trimmed data.**
+
+**What actually breaks, confirmed by reading each downstream function:**
+- `registerCeilingVerdict` (`rules.js:1784`) calls `pieceFormality(piece)` → `attributes.js:87` reads `p.formality`, which is `undefined` on a trimmed piece → `formalityRank(undefined)` returns `null` → verdict is **always `'unknown'`**, never `'exclude'`. The register-ceiling gate (dressy piece for a `casual`/`everyday`-ceiling ask, etc.) cannot fire; in advisor mode `'unknown'` only appends a soft "verify manually" flag instead of rejecting.
+- `footwearComfortVerdict` (`rules.js:1772`) reads `pieceHeelHeight`/`pieceWalkSupport` → `p.heel_height`/`p.walk_support` undefined on trimmed shoes → verdict `'unknown'` instead of a real comfort exclusion.
+- `pieceMatchesMaterial`/`pieceMatchesFootwear`/`pieceMatchesPieceName` (`attributes.js:441-460`) all run against `pieceTextBlob(p)` (`rules.js:353`), which concatenates `fabric_category`, `pattern_type`, `colors`, `occasions`, `notes`, etc. — all `undefined` on a trimmed piece, leaving only `name`+`category`. **Prohibited-material and prohibited-footwear checks silently degrade to matching the piece's literal name text** — the same "test passes for the wrong reason" failure mode already documented once (#86, the "jersey" incident, see [[dont-overgeneralize-incident-into-material-rule]]).
+
+This affects **both** paths in the route: the model-composed outfits (`gatedModel`, step 2-3 above) **and** the locally-generated fallback candidates (`buildVisualLocalBackfill()` → `wholeWardrobeOutfitsFromCandidates` → same `normalizeWholeWardrobeOutfitObject` trim → `gatedLocal` at `routes/ai.js:1816-1820`, also no `repair: true`).
+
+**Why this wasn't caught by tests:** `test/formality_gate.test.js:128`, `test/spec9_advisor_mode_precompose_fallbacks.test.js` (all three tests) hand-construct outfit objects with **already-full** `pieces` arrays (`{id, name, category, formality, heel_height, walk_support}` supplied directly) and call `locallyGateWholeWardrobeOutfits` **directly**, bypassing `normalizeWholeWardrobeOutfitObject`/`wholeWardrobeOutfitsFromCandidates` entirely. None of the three exercises the real production sequence (`resolved` → `normalizeWholeWardrobeOutfitObject` → `locallyGateWholeWardrobeOutfits`), so the trim is invisible to the suite.
+
+**Standing-caution check:** this is **not** the "repair skipped in advisor mode" deliberate decision — that's a documented, correct ruling and untouched by this finding. This finding is about the antecedent trim in `normalizeWholeWardrobeOutfitObject`, which runs unconditionally, upstream of and independent from the repair skip, and defeats `profileRuleFit`'s structured gates regardless of `repair`/`advisorMode` settings. It reproduces for **every** caller of `locallyGateWholeWardrobeOutfits` in production — currently that's only the two `/evaluate-piece` call sites (`routes/ai.js:1804`, `1816`), confirmed by repo-wide grep.
+
+**Recommended fix direction (not implemented, per read-only scope):** either (a) stop re-trimming inside `normalizeWholeWardrobeOutfitObject` — keep the full `ownedPieces` objects on `.pieces` and trim only at the JSON-response boundary if payload size is the original reason for trimming, or (b) add a universal `rehydrateOutfitPieces`-equivalent call inside `locallyGateWholeWardrobeOutfits` itself (mapping `repaired.pieces` back to `candidatePieces` by id) before the `profileFits` computation, so every caller gets it automatically regardless of `repair`/`advisorMode`. Owner ruling needed on which.
+
+### Census 1 — reachability
+
+| Symbol | File:Line | Classification | Evidence | Notes |
+|---|---|---|---|---|
+| `buildWholeWardrobeCandidateOutfits` — 3rd `routes/ai.js` call site (spec's own seed) | was inside `maybePrecomposeStructuredOutfitsForAsk` | **ALREADY RESOLVED — deleted, not carried-forward risk** | `git log -S"buildWholeWardrobeCandidateOutfits" -- routes/ai.js` → last touched by `ce2adc5` (spec 14); `git show ce2adc5 -- routes/ai.js` shows the 3rd call site deleted wholesale along with its enclosing (also-deleted) `maybePrecomposeStructuredOutfitsForAsk` pre-route function | The handoff doc's "3 call sites, NOT touched or audited" note (2026-07-14) predates spec 14 (2026-07-16). Only 2 real call sites remain, both investigated for the P0 finding above. |
+| `buildWholeWardrobeCandidateOutfits` — remaining 2 call sites | `routes/ai.js:1738`, `routes/ai.js:1765` | **LIVE**, and both are on the P0 bug's path | Called inside `buildVisualLocalBackfill()`/`buildDiagnosticLocalBackfill()`, both nested in the `/evaluate-piece` handler | `buildDiagnosticLocalBackfill()` is explicitly `diagnosticOnly: true` (shows why local candidates fail gates — lack of repair looks intentional). `buildVisualLocalBackfill()`'s output is a real user-facing fallback and is in scope for the P0 finding. |
+| `buildWholeWardrobeCandidateOutfits` import in `styling-engine/core.js:86` | `core.js:86` | **DEAD IMPORT** | Zero calls anywhere in `core.js` | One of ~60 unused imports, see below. |
+| `candidateObjectFromPieces` | `rules.js:3420` | **LIVE, internal-only** | Called once, inside `buildWholeWardrobeCandidateOutfits` itself | Correctly not exported for outside use beyond the trimming behavior documented in the P0 section. |
+| `qualifiesWholeWardrobeMission` | `rules.js:1497` | **LIVE** | Called inside `buildWholeWardrobeCandidateOutfits`'s `addCandidate` gate and directly from `routes/ai.js:184`/`1903` | Confirmed NOT era-orphaned — the mission-qualification gate for the still-live whole-wardrobe candidate generator, unrelated to the deleted `composeOutfitSet` era. |
+| `capsuleVersatilityScore` and the `composeOutfitSet`/capsule-allocator family | N/A to Phase 1 | **out of file scope** | These live in `styling-engine/outfitSetPlanner.js`, not `rules.js`/`core.js` | The spec's named "cousins" hunting ground isn't present in this phase's files. |
+| `wholeWardrobeSelectionScore` | `rules.js:3010` | **DEAD — delete in next spec** | Zero calls anywhere in the repo, including within `rules.js` itself | Superseded by `wholeWardrobeDiversitySelectionScore` (`rules.js:4073`, live, called from `applyWholeWardrobeDiversity`). Never covered by any test. |
+| ~60 unused `rules.js`-sourced imports into `core.js` | `core.js:41-122` | **DEAD IMPORTS — delete in next spec** | Each name in the `from './rules.js'` import block searched against the rest of `core.js` with a word-boundary check; zero hits. Spot-checked 4 by hand to rule out a check bug. | Full list: `idealAdditionAnchorConstraint, wholeWardrobeFeedbackInfluenceForCandidate, wholeWardrobePieceBucket, wholeWardrobePieceTrustDecision, wholeWardrobeBohoSignalScore, wholeWardrobeMissesMood, inferOutfitArchetype, wholeWardrobeFormulaFamily, wholeWardrobeFormulaType, wholeWardrobeArchetypeFor, wholeWardrobeFullPieces, wholeWardrobePieceByGroup, wholeWardrobeHeroPieceId, wholeWardrobeIsExploratory, wholeWardrobeHasPrintOrStripe, wholeWardrobeHasGraphicTop, wholeWardrobeHasNonGraphicTop, wholeWardrobeHasDress, wholeWardrobeTopBottomKey, wholeWardrobeDirectionFromPieces, wholeWardrobeSilhouetteFromPieces, wholeWardrobeGroundingStrategy, wholeWardrobeShoeShape, wholeWardrobeVisualRhythm, pieceNameBlob, pieceStyleProfile, normalizeStyleProfileList, pieceGarmentIntelligence, inferWholeWardrobePieceRoles, inferWholeWardrobeOutfitRoles, occasionBiasForArchetype, occasionScoreForOutfit, wholeWardrobeCandidateFormulaCounts, buildWholeWardrobeCandidateOutfits, normalizeWholeWardrobeOutfitObject, candidateObjectFromPieces, scoreWholeWardrobeCandidate, textIncludesAny, visualWeightProfile, buildVisualWeightText, hasPairingReference, hasRejectedReference, collectPieceIdsFromFeedbackPayload, feedbackWeight, getFeedbackInfluenceForPair, buildGoldStandardFeedbackMemory, collectPieceIdsFromSavedBoardRow, getSavedBoardInfluenceForPair, explicitOccasionsForPiece, profileOccasionConfidence, pieceMatchesOccasion, styleLaneScore, garmentProfileText, compatibilityScoreForSelectedItem, rankedComplementaryWardrobeFor, complementaryWardrobeFor, buildRankedCandidateText, selectCandidatesForOutfitGeneration, getOutfitsForPieceMemory, buildWholeWardrobeFeedbackInfluence, saveWholeWardrobeSession, getRecentWholeWardrobeSessionInfluence, mergeStyleProfilePatch`. Suggests `core.js` used to own whole-wardrobe candidate/scoring logic directly before it moved to `routes/ai.js` calling `rules.js` directly — the import list was never pruned to match. Mechanical, zero-behavior-change. |
+| `buildCompactPieceText` | `core.js:209` | **DEAD — delete in next spec** | 1 self-match only (its own def line), zero test coverage | Superseded by `rules.js`'s live `buildPieceText`. |
+| `getPiecePhotoPath` | `core.js:3359` | **DEAD — delete in next spec** | 1 self-match only, zero test coverage | `imageUrlToUploadPath` (nearby, live) does similar work; this one looks abandoned. |
+| `getCalibrationSourcePhotoPath` | `core.js:3374` | **DEAD — delete in next spec** | 1 self-match only, zero test coverage | Reads `calibration_images` directly; no caller anywhere. |
+| `setPath` | `taggerMerge.js:168` | **DEAD — delete in next spec** | Zero calls anywhere, including within `taggerMerge.js` itself | Its sibling `getPath` (line 164) IS live. Looks like unused write-side scaffolding for a feature that never landed. |
+| `hasFitVisiblePhoto`, `hasPhotoPropertyJudgment`, `pathIsProtected` | `taggerMerge.js` (various) | **LIVE, internal-only** | Each called within `taggerMerge.js` itself; zero external imports | Correctly private-by-convention, not dead. No action. |
+| `pieceTextBlob` — duplicate implementation | `attributes.js:33` vs. `rules.js:353` | **owner ruling needed** (consistency hazard, not a deletion) | `rules.js` defines and uses its own local `pieceTextBlob` (with a `WeakMap` cache) throughout; does not import `attributes.js`'s version. `attributes.js`'s own `pieceTextBlob` (line 33) is a second, independently-written implementation, used only internally within `attributes.js`. | The two have already diverged — `attributes.js`'s version includes `season`/`fiber_content`; `rules.js`'s does not. Both are live for their own callers, so neither is a deletion candidate, but the identical naming across two files that behave differently is a real footgun. Flagging for an owner decision: rename one, or consolidate. |
+| `qualifiesWholeWardrobeMission`, mission-scoring family (`scoreWholeWardrobeCandidate`, `selectDiverseWholeWardrobeCandidates`, `wholeWardrobeCandidateAxes`) | `rules.js` (various) | **LIVE** | Directly reachable from `buildWholeWardrobeCandidateOutfits` and `routes/ai.js`'s own direct calls | Predates and survives the freeform arc entirely — the mission-candidate machinery for the Visual Composer selected-item flow. Standing caution #1: pre-inversion ≠ dead. |
+| `core.js`'s evaluator/boards/render pipelines (`evaluateOutfitThroughSharedPipeline`, `createOutfitBoardImage`, `createWholeWardrobeOutfitImage`, `createSavedOutfitImage`, `createEditorialConceptImage`, etc.) | `core.js` (various) | **LIVE — product features (standing caution #1)** | All imported and called from `routes/ai.js` route handlers | No internal branches found reading fields no longer produced anywhere — the P0 finding is the one confirmed instance of that pattern in this scope, located in the candidate-gating layer rather than the render layer. |
+| `runOccasionStartupAssertions` | `occasions.js:121` | **LIVE — self-invoking startup gate** | Called unconditionally at module load (`occasions.js:151`) | Not dead despite no external callers — a module-load-time assertion, the correct pattern for it. |
+| `softScorePredicates` | `softScoreFloors.js:142` | **LIVE, internal-only** | Called once, inside `applySoftScoreFloors` (live, imported by `routes/crud.js`/`taggerMerge.js`) | No issue. |
+
+### Census 2 — env-flag census
+
+| Flag | Default | Gates | Read sites (this scope) | Status |
+|---|---|---|---|---|
+| `PHOTO_PRESERVING_VISUALS` | unset → `'false'` | Local-collage vs. AI render | `core.js:1825`, `rules.js:3863` | **live config**, unchanged from spec-20 census |
+| `WARDROBE_MANIFEST_MAX_PIECES` | unset → `400` | Whole-closet prompt manifest cap | `core.js:3713` | **live config**, unchanged |
+| `WARDROBE_TEST_MAX_WHOLE_WARDROBE_CANDIDATES` | unset → no override, test-only | Candidate-pool size override | `rules.js:3604-3605` | **live config (test harness knob)**, unchanged |
+| `WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES` | unset → no override, test-only | Review-candidate cap | `core.js:1403-1404` | **live config**, unchanged |
+| `STYLIST_CRITIC_DISABLED` | unset → critic runs | Post-generation critic kill-switch | `core.js:438, 469` | **live config, still untested**, unchanged |
+| `OPENAI_IMAGE_MODEL`, `OPENAI_IDENTITY_IMAGE_SIZE`, `OPENAI_EDITORIAL_IMAGE_SIZE`, `OPENAI_IMAGE_SIZE` | model/size defaults | AI-rendered visual params | `core.js:1454, 1468-1469` | **live config**, unchanged |
+| `NODE_ENV==='test'` gate (`shouldSkipLive`) | n/a | Skips live geocode/forecast network calls under the test runner | `weather.js:115` | **live test-harness convention**, newly enumerated (weather.js wasn't in spec 20's scope) but correct and intentional — keep |
+
+### Census 3 — diagnostics counters
+
+No new counters found living in this Phase 1 surface. All `bumpFreeformDiagnostic` counters live in `tools.js`/`outfitSetPlanner.js`, already fully catalogued by spec 20.
+
+### Census 4 — test/fixture hygiene
+
+| Test file | Subject | Hermeticity | Disposition |
+|---|---|---|---|
+| `test/occasion_exclusion.test.js`, `test/hot_weather_ranking.test.js`, `test/visual_composer_roster.test.js` | Previously flagged non-hermetic by spec 20 | **Fixed, re-verified** — all three set `WARDROBE_DB_PATH` to a tmpdir before any dynamic `db.js`-touching import | Spec 21 Part 1's fix confirmed still in place. No action. |
+| `test/formality_gate.test.js`, `test/spec9_advisor_mode_precompose_fallbacks.test.js` | `locallyGateWholeWardrobeOutfits`/`profileRuleFit` scoring | Hermetic (no DB), but every fixture hand-builds outfit objects with already-full `.pieces`, bypassing `normalizeWholeWardrobeOutfitObject` | **Gap, not a hermeticity bug** — this is why the P0 bug has zero test coverage. Add a regression test running the real `resolved → normalizeWholeWardrobeOutfitObject → locallyGateWholeWardrobeOutfits` sequence with DB-shaped pieces, to pin the eventual fix. |
+| `test/outfit_structure.test.js`, `test/softScoreFloors.test.js`, `test/taggerMerge.test.js`, `test/weather.test.js`, `test/owner_rules.test.js` | Their respective files | Hermetic, no DB touch | keep, no action |
+
+### Proposed deletion-spec grouping (Phase 1)
+
+1. **P0 fix — rehydrate the whole-wardrobe candidate gating pipeline** (correctness, highest priority, ship before/alongside anything else here). Fix `normalizeWholeWardrobeOutfitObject`/`locallyGateWholeWardrobeOutfits` so structured gates see real tag data on both `/evaluate-piece` candidate paths. Add the missing-coverage regression test from census 4.
+2. **Dead-import mechanical cleanup, `core.js`**: remove the ~60 unused `rules.js`-sourced imports (full list above), zero behavior change.
+3. **Dead-function cleanup**: `wholeWardrobeSelectionScore`, `buildCompactPieceText`, `getPiecePhotoPath`, `getCalibrationSourcePhotoPath`, `setPath` — zero test coverage to update, zero behavior change.
+4. **Owner ruling, not a deletion** — consolidate or rename the two divergent `pieceTextBlob` implementations before either file is touched again for unrelated work.
+
+Everything else audited this pass (mission-candidate family, evaluator/boards/render pipelines, census 2 flags, `runOccasionStartupAssertions`, `softScorePredicates`, the three private `taggerMerge.js` helpers) is **keep, no action**.
+
+---
+
+## Phase 2 — `routes/ai.js` (non-freeform) + `routes/crud.js` + `server.js` + `db.js`
+
+**Scope:** `routes/ai.js` non-freeform routes (everything except `/api/ai/ask`), `routes/crud.js`, `server.js`, `db.js`. `npm test` re-run fresh this session: **571/571 pass, 0 fail** (matches spec 21's recorded post-cleanup baseline).
+
+### P0 — live data-safety issue
+
+**`test/threadRail.test.js` statically imports `routes/ai.js` (line 10: `import { deriveTripTitle } from '../routes/ai.js'`), which statically imports `db.js` — with no `WARDROBE_DB_PATH`/`WARDROBE_UPLOADS_DIR` override anywhere in the file.** This is the exact hazard class spec 21 Part 1 fixed for `occasion_exclusion.test.js`, `hot_weather_ranking.test.js`, `freeform_observability.test.js`, and `visual_composer_roster.test.js` — but this fifth file was missed. On a bare `npm test` run with no env override, this test module load opens the developer's real repo-root `wardrobe.db`.
+
+Unlike the four files spec 21 fixed (explicit `INSERT`/`DELETE` in test bodies), the exposure here is a `db.js` module-load side effect:
+- The seed-data insert is safely gated by an atomic `INSERT OR IGNORE` (`db.js:324`) — harmless on an already-seeded DB.
+- The `ALTER TABLE` migrations (`db.js:184-274`) are idempotent no-ops after first application — harmless.
+- **The lifecycle-state backfill (`db.js:289-316`) is not gated by a first-run check — it runs unconditionally on every module load**, querying `SELECT * FROM pieces WHERE tag_state IS NULL OR tag_state = 'untagged'` and issuing real `UPDATE`s against any matching rows. On a real closet DB with genuinely-untagged pieces (a normal state for an in-use inventory app), running `npm test` would silently rewrite `tag_state` on real rows.
+
+Verified this session: `wardrobe.db`'s mtime was unchanged after a full `npm test` run — on this checkout's DB, no pieces currently match the backfill's `WHERE` clause, so no mutation occurred this time. That's a property of the current data, not of the test file; the exposure is structural and will fire the moment any untagged piece exists in whatever `wardrobe.db` a developer runs tests against. **Disposition: fix in next spec** — apply the same dynamic-import-after-env-var pattern spec 21 Part 1 already established.
+
+### Census 1 — route-handler reachability
+
+Every `routes/crud.js` route was checked against actual `fetch(...)` call sites in `src/**/*.jsx`, including template-literal ID-interpolated paths. **Result: every route in `routes/crud.js` has a confirmed live frontend caller — no orphaned or dead routes.** This covers `pieces` (CRUD, meta, favorite, occasion-exclusion, append-note), `outfits` (CRUD, favorite, pieces, append-note), `stylist-feedback` (CRUD), `calibration-images` (CRUD), `saved-boards` (CRUD), `todos` (CRUD, clear-orphaned), `chat-threads` (CRUD, pin, archive), and `settings/home-location`.
+
+`routes/ai.js` non-freeform routes — every one confirmed LIVE with a real frontend caller: `/extract-pieces`, `/tag-piece`, `/tag-piece-existing/:id`, `/evaluate-piece`, `/generate-outfits-for-piece`, `/whole-wardrobe-session-memory` (GET/DELETE), `/generate-wardrobe-outfits-visual`, `/generate-outfit-boards`, `/generate-saved-outfit-variants`, `/generate-wardrobe-outfit-image`, `/generate-wardrobe-outfit-comparison-sheet`, `/generate-ideal-additions-preview-sheet`, `/generate-saved-outfit-image`, `/evaluate-wardrobe-outfit`, `/outfit-feedback`, `/editorial-directions-preview`, `/editorial-render-one`, `/compare-outfits`. **No FRONTEND-ORPHANED or DEAD routes found in this scope**, including every category the spec called out by name (upload/photo, tagger, board, evaluation). None trace back to a UI element deleted in specs 14/21 — those deletions were entirely inside the freeform precompose machinery, which fed no route in this scope.
+
+**Standing-caution check (pre-inversion ≠ dead):** `composeSelectedPieceVisualWardrobeOutfits` (`routes/ai.js:562`, called from `/evaluate-piece`) contains the two `buildWholeWardrobeCandidateOutfits` call sites the handoff doc flagged as never audited — confirmed this is the LIVE "AI stylist composer" the standing caution names explicitly, not dead. (Whether it shares the trimmed-pieces bug class is Phase 1's question — see the P0 above, now resolved: yes, it does.)
+
+`db.js`: schema/migration/seed blocks all confirmed LIVE and correctly additive-only, except the lifecycle-state backfill flagged as the P0 mechanism above (the backfill itself is live, wanted behavior for the real app — the hazard is a test importing it without isolation, not the backfill existing).
+
+### Census 2 — env-flag census (this scope)
+
+| Flag | Default | Gates | Read sites | Status |
+|---|---|---|---|---|
+| `PORT` | `3001` | Listen port | `server.js:14` | live config |
+| `NODE_ENV` | unset | Production static-serving + catch-all route; suppresses `app.listen` under `test` | `server.js:26,33` | live config |
+| `WARDROBE_DB_PATH` | `'wardrobe.db'` | Which SQLite file opens | `db.js:12` | live config, unchanged from spec 20 — the P0 finding is a consumer of this flag being absent in one more test file, not a new flag issue |
+| `WARDROBE_UPLOADS_DIR` | `<repo>/uploads` | Garment photo storage dir | `db.js:9` | live config, unchanged |
+
+No `process.env.*` reads exist in `routes/ai.js` or `routes/crud.js` themselves.
+
+### Census 3 — diagnostics counters
+
+None live in this scope's own code (`persistFreeformGenerationRun` is defined at `routes/ai.js:521` but is exclusively a freeform-pipeline concern, already catalogued by spec 20). Nothing new.
+
+### Census 4 — test/fixture hygiene
+
+Hermetic: `test/crudEndpoints.test.js`, `test/metadataTodos.test.js`, `test/savedBoardsVisibility.test.js`, `test/aiEndpointContracts.test.js`, `test/occasion_exclusion.test.js` (all set env vars before dynamic import). **Not hermetic: `test/threadRail.test.js`** — see P0 above. `test/outfitLookbook.test.js`, `test/feedback_redesign.test.js`, `test/boardCritiqueFix.test.js`, `test/outfit_structure.test.js` never touch `db.js` (pure source-scan or pure-function tests) — N/A.
+
+Coverage gap (not a reachability question, flagged for awareness only): `stylist-feedback`, `calibration-images`, `saved-boards`, `todos/clear-orphaned`, `pieces/:id/outfits`, `outfits/:id/pieces`, the two `append-note` routes, `occasion-exclusion`, `outfits/:id/favorite`, and every non-freeform `routes/ai.js` route are confirmed LIVE via frontend call sites but have no integration test in this scope. "Untested" is not "dead" — not a deletion candidate.
+
+### Proposed deletion-spec grouping (Phase 2)
+
+Because every route handler in scope came back LIVE, this phase has no code-deletion rows — the older pipelines really are live product surface, exactly as the standing cautions predicted. The one actionable item is a hygiene fix:
+
+1. **Test-isolation fix (P0, mechanical, zero production-code behavior change)** — apply the dynamic-import-after-env-var pattern from spec 21 Part 1 to `test/threadRail.test.js`. Single highest-priority item from this phase; should be its own small PR.
+
+No other family exists to group. The coverage gaps in census 4 are explicitly not proposed for a deletion spec (additive test-writing work, out of an audit's scope to schedule).
+
+---
+
+## Phase 3 — frontend beyond `StylistChat.jsx`
+
+**Entry point walked:** `src/main.jsx` → `src/App.jsx`'s `<Routes>` (`/wardrobe`, `/outfits`, `/stylist` + `/stylist/:threadId`, `/visual-lab`) → each view's own component tree. No P0 live data-safety issue found in this phase's scope.
+
+### Census 1 — component/module reachability
+
+| Symbol / file | File:Line | Classification | Evidence | Notes |
+|---|---|---|---|---|
+| `PieceInventory`, `OutfitLookbook`, `AskClaude`, `VisualLab` | route roots | **LIVE** | Directly mounted by `src/App.jsx`'s `<Routes>` | Everything else was walked from these. |
+| `BatchAdd`, `PieceCard`, `PieceDetail`, `PieceForm`, `TodoList`, `ThreadRail`, `MarkdownMessage` | `src/components/*`, `src/views/*` | **LIVE** | Imported and rendered by their parent views (confirmed both import and JSX render site for each) | — |
+| `src/utils/threadGrouping.js`, `src/utils/intakeReview.js` | — | **LIVE** | Imported by `ThreadRail.jsx` / `BatchAdd.jsx` respectively | — |
+| `src/utils/wardrobeAiContext.js` | — | **LIVE, but not part of the React tree** | Imported by `styling-engine/tools.js`, `rules.js`, `core.js`, and its own test | Genuinely live (reachable from the `executeTool` entry point), just organizationally misfiled under `src/utils/` even though no React component touches it. Awareness-only — moving it is a refactor, not a cleanup. |
+| `src/constants/feedback.js` (`STYLE_FEEDBACK`, `IDENTITY_FEEDBACK`), `src/constants/identityFeedbackChips.js`, `src/utils/feedbackMessages.js`, `src/utils/feedbackRouting.js`, `src/utils/identityFeedback.js`, `src/utils/identityLearning.js`, `src/styles/feedback.css` | 7 files, 130 lines total | **DEAD — never wired, not carried-forward debt — delete in next spec** | Exhaustive grep for every exported symbol: zero hits anywhere outside the family's own 7 files. `git log --diff-filter=A --follow` on all 7 shows a single commit each: the initial commit — never touched since. | A different system from the live one: the app's real outfit feedback is `OUTFIT_FEEDBACK_LABELS` (`StylistChat.jsx:32`, two labels — `works`/`not_me`) wired to `feedback_labels`/`/api/stylist-feedback`, pinned by `test/feedback_redesign.test.js`, independently scored by `feedbackWeight()` (`rules.js:451`). This family looks like an early, more elaborate feedback-taxonomy design superseded before ever being imported. Not mentioned in the handoff doc or spec 20's inventory — genuinely undocumented, not a standing-caution "pre-inversion live feature" (that caution protects *live* surfaces; this never went live). |
+| `VisualLab`'s `activeContext` prop | `src/components/VisualLab.jsx:58,474` | **owner ruling needed** | Sole render site (`App.jsx:64`) passes only `onGoToThread` — `activeContext` is never supplied, so the per-context empty-state message can never fire | Either (a) wire `activeContext` through from `AskClaude`'s state so the per-context message works as designed, or (b) delete the dead prop/branch since `/visual-lab` is now a standalone tab, not opened from an active stylist context. Not resolved here per the standing-caution framing. |
+| `VisualLab.jsx`'s doc comment (lines 50-56) | — | **stale documentation — delete in next spec (mechanical)** | Documents `boardSaveCount`/`onClose` props that don't exist in the actual two-prop signature | Leftover from when `VisualLab` was a closeable modal rather than its own route. Resolve alongside the `activeContext` ruling above. |
+| `structuredOutfitsDebug` (API field) | `routes/ai.js:2742` | **cross-reference note, not this phase's scope** | `/api/ai/ask` always sends `structuredOutfitsDebug: null`; zero reads anywhere in `src/` | A Phase 2 dead-field question, not a frontend one — flagged so Phase 2 has frontend-side confirmation nothing depends on it. |
+
+### Census 2 — env-flag census
+
+No frontend `.env`/`import.meta.env`/`process.env` reads exist anywhere in `src/` (zero hits, repo-wide grep). All flag-gated behavior lives server-side. Nothing to census.
+
+### Census 3 — carried-forward open item #1, resolved: devtools-only diagnostics UI gap
+
+Re-verified against current code: 7 counters (`searchCalls`, `gateExcludedTotal`, `proposeCalls`, `proposeValidationFails`, `outfitProseWithoutToolCall`, `zeroResultContradictionBlocks`, `destinationClarificationRetries`) ARE rendered in `StylistChat.jsx`'s "Search & validation details" panel. 9 more (`intentDeclared`, `viewCalls`, `renderCalls`, `coverageCalls`, `composeWithoutDeclaredIntent`, `proposeAfterPlanOutfitSetBlocked`, `proposeUnverifiedPieceBlocks`, `proposeUnseenLayerBlocks`, `planOutfitSetCalls`) reach the client in the full `debug` object but are NOT rendered in the visible panel.
+
+**This audit's recommendation: keep as a deliberate developer-only channel — do not wire into the visible panel.** The handoff doc's own testing protocol treats the full `debug` object as developer/QA evidence inspected via devtools, distinct from the rendered panel's end-user-facing "what got filtered or fixed" summary. The 7 rendered counters share a common "how many times did an auto-correction fire" shape; the 9 non-rendered ones are mostly turn-mechanics/architecture-compliance signals ("is the model using the tools correctly") — a developer question, not an end-user one. No incident report describes a user or tester confused by their absence from the panel. **Judgment call, not certainty** — flagged as owner-ruling-needed with a stated recommendation, since two consecutive audits (spec 20 and this one) independently found evidence pointing toward "intentional," not "missed wiring." Recorded so the open item is finally closed by an owner decision or explicitly re-affirmed as permanent-by-design.
+
+### Census 3b — carried-forward open item #2, resolved: no residue
+
+Spec 21 Part 4 (`7912ed9`) executed the `parseStructuredOutfitsFromAssistantText` deletion in full — `parseStructuredOutfitsFromAssistantText`, `mergeCurrentOutfitSet`, `normalizeOutfitPieceName`, `resolveNamedWardrobePiece`, `OUTFIT_CARD_RESPONSE_PATTERN`, the `replyConversationMode` variable, the `freeform_current_set` branch, and `outfit.unresolvedPieceNames` — all confirmed zero matches in `src/`. `dist/` was rebuilt in the same commit. The source-scan test that pinned this machinery was deleted alongside its subject. **Disposition: fully clean deletion, no residue. Item closed.**
+
+### Census 4 — test/fixture hygiene
+
+`test/feedback_redesign.test.js` correctly tests the LIVE two-label feedback system, not the dead `IDENTITY_FEEDBACK*` family — confirmed by reading the test body, not assumed from the filename. `test/threadRail.test.js`, `test/markdownMessage.test.js`, `test/outfitLookbook.test.js`, `test/batchAdd.test.js`, `test/wardrobeAiContext.test.js` all correctly cover confirmed-live subjects. No test file references any of the 7 orphaned `feedback`/`identity*` files.
+
+### Proposed deletion-spec grouping (Phase 3)
+
+1. **Dead identity-feedback family removal** — recommend a quick owner confirmation first ("did you ever ship a richer feedback taxonomy than works/not_me?") since this audit found no *code* evidence of use but can't rule out an unshipped in-progress design. Then delete `src/constants/feedback.js`, `src/constants/identityFeedbackChips.js`, `src/utils/feedbackMessages.js`, `src/utils/feedbackRouting.js`, `src/utils/identityFeedback.js`, `src/utils/identityLearning.js`, `src/styles/feedback.css`. Rebuild `dist/`.
+2. **`VisualLab.jsx` prop/doc cleanup** — owner ruling needed first (wire `activeContext` through, or delete the dead prop/branch and the stale doc comment). Group as one PR once the ruling lands.
+3. **Devtools-diagnostics UI gap** — no code action recommended (keep as a deliberate developer channel per this audit's ruling), but should be formally closed by an owner decision rather than carried forward a third time. If ruled "wire it in," that's a ~10-line addition, not a deletion.
+
+Everything else audited this phase — the four route-root components and their children, `threadGrouping.js`/`intakeReview.js`, the prose-parser deletion site, the (empty) frontend env-flag surface — is **keep, no action**.
+
+---
+
+## Cross-phase scope note
+
+Phase 1 covered `styling-engine/rules.js`+`core.js` and five smaller riders. Phase 2 covered the non-freeform server surface (`routes/ai.js` minus `/ask`, `routes/crud.js`, `server.js`, `db.js`). Phase 3 covered `src/` beyond `StylistChat.jsx`. Together with spec 20/21's prior coverage of the freeform plan/precompose/scorer surface and `StylistChat.jsx` itself, this closes every surface spec 20's own scope note listed as not-yet-covered. `styling-engine/outfitSetPlanner.js`, `styling-engine/tools.js`, `styling-engine/provider.js`, and `StylistChat.jsx` remain covered by spec 20/21 and are not re-walked here except where a cross-reference was needed (e.g. Phase 1's P0 tracing into `outfitSetPlanner.js`'s already-fixed sibling bug). `dist/` was excluded throughout, per the spec's instruction — noted only that it must be rebuilt by whichever deletion spec follows.
