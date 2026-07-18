@@ -77,6 +77,15 @@ function stripTruncation(value = '') {
   return compactText(value).replace(/\.{3}$|…$/g, '').trim()
 }
 
+function normalizeComparable(value = '') {
+  return compactText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(outfit|outfits|look|looks|styling|style|critique|directions?|ideas?)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function promptDay(raw = '') {
   return raw.toLowerCase().match(/\b(saturday|sunday|monday|tuesday|wednesday|thursday|friday)\b/)?.[1] || ''
 }
@@ -233,6 +242,52 @@ export function getThreadOutcomeSummary(thread = {}) {
   return 'Wardrobe styling chat'
 }
 
+function subjectPhotoFromThread(thread = {}) {
+  return compactText(
+    thread.subjectPhoto ||
+    thread.subject_photo ||
+    thread.activeContext?.photo ||
+    thread.activeContext?.imageUrl ||
+    thread.activeContext?.image_url ||
+    ''
+  )
+}
+
+export function getSubjectTypeLabel(type = '') {
+  if (type === 'piece') return 'Piece'
+  if (type === 'outfit') return 'Outfit'
+  return 'Chat'
+}
+
+export function getSubjectIcon(type = '') {
+  if (type === 'piece') return '□'
+  if (type === 'outfit') return '◇'
+  return '○'
+}
+
+export function getThreadSubjectChildTitle(thread = {}, subject = {}) {
+  const customTitle = (thread.user_renamed || thread.userRenamed) ? compactText(thread.title) : ''
+  if (customTitle) return truncateLabel(customTitle, 42)
+
+  const displayTitle = getThreadDisplayTitle(thread)
+  const subjectName = compactText(subject.name || thread.activeContext?.name || '')
+  const sameAsSubject = subjectName && normalizeComparable(displayTitle).startsWith(normalizeComparable(subjectName))
+  if (sameAsSubject) {
+    const memory = threadMemory(thread)
+    const outfits = Array.isArray(memory?.latestOutfits) ? memory.latestOutfits : []
+    const firstOutcomeTitle = compactOutcomePhrase(outfits[0]?.title || outfits[0]?.label || outfits[0]?.bestFor || outfits[0]?.best_for || '')
+    const isDirections = outfits.some(o => o?.previewOnly)
+    if (firstOutcomeTitle && !normalizeComparable(firstOutcomeTitle).startsWith(normalizeComparable(subjectName))) {
+      return truncateLabel(`${titleCaseWords(firstOutcomeTitle)} ${isDirections ? 'direction' : 'styling'}`, 42)
+    }
+    if (thread.kind === 'outfit_critique' || thread.activeContext?.type === 'outfit') return 'Outfit critique'
+    if (isDirections) return 'Styling directions'
+    return 'Styling ideas'
+  }
+
+  return displayTitle
+}
+
 export function getRelativeTimeLabel(timestamp) {
   const now = new Date()
   const date = new Date(timestamp)
@@ -314,9 +369,15 @@ export function clusterThreadsBySubject(threads) {
           id: ctx.id,
           name: ctx.name || humanizeLabel(String(ctx.id)),
           type: ctx.type,
+          typeLabel: getSubjectTypeLabel(ctx.type),
+          icon: getSubjectIcon(ctx.type),
+          photo: subjectPhotoFromThread(t),
           maxTime: 0,
           threads: []
         }
+      }
+      if (!clusters[clusterId].photo) {
+        clusters[clusterId].photo = subjectPhotoFromThread(t)
       }
       const threadTime = new Date(t.updatedAt || t.updated_at || Date.now()).getTime()
       clusters[clusterId].threads.push(t)

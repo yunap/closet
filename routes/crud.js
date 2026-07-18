@@ -814,6 +814,22 @@ router.get('/chat-threads', (req, res) => {
     const rows = db.prepare(`
       SELECT id, title, user_renamed, kind, created_at, updated_at, pinned, archived,
              json_extract(payload, '$.activeContext') as activeContext,
+             json_extract(payload, '$.activeContext.type') as subjectType,
+             COALESCE(
+               CASE json_extract(payload, '$.activeContext.type')
+                 WHEN 'piece' THEN (
+                   SELECT COALESCE(NULLIF(worn_photo, ''), NULLIF(photo, ''))
+                   FROM pieces
+                   WHERE id = json_extract(payload, '$.activeContext.id')
+                 )
+                 WHEN 'outfit' THEN (
+                   SELECT NULLIF(photo, '')
+                   FROM outfits
+                   WHERE id = json_extract(payload, '$.activeContext.id')
+                 )
+               END,
+               ''
+             ) as subjectPhoto,
              json_extract(payload, '$.threadMemory') as threadMemory,
              COALESCE(
                json_extract(payload, '$.chatHistory[0].content'),
@@ -831,6 +847,8 @@ router.get('/chat-threads', (req, res) => {
       pinned: Boolean(r.pinned),
       archived: Boolean(r.archived),
       activeContext: safeJsonParse(r.activeContext),
+      subjectType: r.subjectType || '',
+      subjectPhoto: r.subjectPhoto ? `/uploads/${r.subjectPhoto}` : '',
       threadMemory: safeJsonParse(r.threadMemory),
       originalFirstMessage: r.originalFirstMessage || ''
     })))
