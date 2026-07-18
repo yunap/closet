@@ -5,7 +5,10 @@ import {
   deriveBuilderTitle,
   getRelativeTimeLabel,
   groupThreadsByDate,
-  clusterThreadsBySubject
+  clusterThreadsBySubject,
+  getThreadDisplayTitle,
+  getThreadOutcomeSummary,
+  getThreadOriginalFirstMessage
 } from '../utils/threadGrouping.js'
 
 export {
@@ -13,7 +16,10 @@ export {
   deriveBuilderTitle,
   getRelativeTimeLabel,
   groupThreadsByDate,
-  clusterThreadsBySubject
+  clusterThreadsBySubject,
+  getThreadDisplayTitle,
+  getThreadOutcomeSummary,
+  getThreadOriginalFirstMessage
 }
 
 export default function ThreadRail({
@@ -51,6 +57,7 @@ export default function ThreadRail({
   const [renamingTitle, setRenamingTitle] = useState('')
   const [olderBuilderExpanded, setOlderBuilderExpanded] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [openMenuId, setOpenMenuId] = useState(null)
 
   useEffect(() => {
     if (!isMobileDrawer) {
@@ -71,10 +78,12 @@ export default function ThreadRail({
       onRenameThread(id, renamingTitle.trim())
     }
     setRenamingId(null)
+    setOpenMenuId(null)
   }
 
   const handleDeleteClick = (e, t) => {
     e.stopPropagation()
+    setOpenMenuId(null)
     const messageCount = t.message_count ?? t.messages?.length ?? 0
     if (messageCount > 2) {
       setConfirmDeleteId(t.id)
@@ -85,7 +94,15 @@ export default function ThreadRail({
 
   // Filter threads by search term
   const filteredThreads = search.trim()
-    ? threads.filter(t => t.title?.toLowerCase().includes(search.toLowerCase().trim()))
+    ? threads.filter(t => {
+      const query = search.toLowerCase().trim()
+      return [
+        t.title,
+        getThreadDisplayTitle(t),
+        getThreadOutcomeSummary(t),
+        getThreadOriginalFirstMessage(t)
+      ].some(value => String(value || '').toLowerCase().includes(query))
+    })
     : threads
 
   // Separate pinned vs regular threads
@@ -102,17 +119,16 @@ export default function ThreadRail({
     const isRenaming = renamingId === t.id
     const isConfirmingDelete = confirmDeleteId === t.id
     const timeLabel = getRelativeTimeLabel(t.updatedAt || t.updated_at)
+    const displayTitle = getThreadDisplayTitle(t)
+    const displaySummary = getThreadOutcomeSummary(t)
+    const originalFirstMessage = getThreadOriginalFirstMessage(t)
+    const menuOpen = openMenuId === t.id
 
     return (
       <div
         key={t.id}
         className={`thread-row ${isActive ? 'active' : ''}`}
-        onClick={() => {
-          if (!isRenaming && !isConfirmingDelete) {
-            onSelectThread(t.id)
-            if (isMobileDrawer && onCloseDrawer) onCloseDrawer()
-          }
-        }}
+        role="listitem"
       >
         {isRenaming ? (
           <div className="thread-rename-form" onClick={e => e.stopPropagation()}>
@@ -146,58 +162,80 @@ export default function ThreadRail({
           </div>
         ) : (
           <>
-            <div className="thread-row-left">
-              {isActive && <span className="thread-active-dot" />}
-              <span className="thread-title-text" title={t.title}>{t.title}</span>
-            </div>
-            
-            <div className="thread-row-right">
-              <span className="thread-time">{timeLabel}</span>
-              
-              <div className="thread-actions">
-                {!archivedView && (
+            <button
+              type="button"
+              className="thread-row-main"
+              aria-current={isActive ? 'page' : undefined}
+              title={originalFirstMessage || displayTitle}
+              onClick={() => {
+                setOpenMenuId(null)
+                onSelectThread(t.id)
+                if (isMobileDrawer && onCloseDrawer) onCloseDrawer()
+              }}
+            >
+              <span className="thread-row-title-line">
+                <span className="thread-title-text">{displayTitle}</span>
+                <span className="thread-time">{timeLabel}</span>
+              </span>
+              <span className="thread-summary-text">{displaySummary}</span>
+            </button>
+
+            <div className="thread-actions">
+              <button
+                type="button"
+                className="thread-overflow-btn"
+                aria-label={`More options for ${displayTitle}`}
+                aria-expanded={menuOpen}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setOpenMenuId(menuOpen ? null : t.id)
+                }}
+              >
+                …
+              </button>
+              {menuOpen && (
+                <div className="thread-overflow-menu" onClick={e => e.stopPropagation()}>
+                  {!archivedView && (
                   <button
-                    className={`thread-action-btn pin ${t.pinned ? 'active' : ''}`}
+                    className={`thread-menu-item pin ${t.pinned ? 'active' : ''}`}
                     onClick={(e) => {
                       e.stopPropagation()
+                      setOpenMenuId(null)
                       onTogglePinThread(t.id)
                     }}
-                    title={t.pinned ? 'Unpin' : 'Pin'}
                   >
-                    📌
+                    {t.pinned ? 'Unpin' : 'Pin'}
                   </button>
-                )}
-                <button
-                  className="thread-action-btn rename"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setRenamingId(t.id)
-                    setRenamingTitle(t.title || '')
-                  }}
-                  title="Rename"
-                >
-                  ✎
-                </button>
-                <button
-                  className={`thread-action-btn archive ${t.archived ? 'active' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onToggleArchiveThread(t.id)
-                  }}
-                  title={t.archived ? 'Unarchive' : 'Archive'}
-                >
-                  📦
-                </button>
-                {threads.length > 1 && (
+                  )}
                   <button
-                    className="thread-action-btn delete"
-                    onClick={(e) => handleDeleteClick(e, t)}
-                    title="Delete"
+                    className="thread-menu-item rename"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setOpenMenuId(null)
+                      setRenamingId(t.id)
+                      setRenamingTitle(t.title || '')
+                    }}
                   >
-                    ✕
+                    Rename
                   </button>
-                )}
-              </div>
+                  <button
+                    className={`thread-menu-item archive ${t.archived ? 'active' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setOpenMenuId(null)
+                      onToggleArchiveThread(t.id)
+                    }}
+                  >
+                    {t.archived ? 'Unarchive' : 'Archive'}
+                  </button>
+                  <button
+                    className="thread-menu-item delete"
+                    onClick={(e) => handleDeleteClick(e, t)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -277,7 +315,7 @@ export default function ThreadRail({
           <input
             type="text"
             className="rail-search-input"
-            placeholder="Search threads..."
+            placeholder="Search chats..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />

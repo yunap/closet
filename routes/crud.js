@@ -814,6 +814,12 @@ router.get('/chat-threads', (req, res) => {
     const rows = db.prepare(`
       SELECT id, title, user_renamed, kind, created_at, updated_at, pinned, archived,
              json_extract(payload, '$.activeContext') as activeContext,
+             json_extract(payload, '$.threadMemory') as threadMemory,
+             COALESCE(
+               json_extract(payload, '$.chatHistory[0].content'),
+               json_extract(payload, '$.messages[1].text'),
+               json_extract(payload, '$.messages[0].text')
+             ) as originalFirstMessage,
              COALESCE(json_array_length(payload, '$.messages'), 0) as message_count
       FROM chat_threads
       WHERE COALESCE(archived, 0) = ?
@@ -824,7 +830,9 @@ router.get('/chat-threads', (req, res) => {
       user_renamed: Boolean(r.user_renamed),
       pinned: Boolean(r.pinned),
       archived: Boolean(r.archived),
-      activeContext: safeJsonParse(r.activeContext)
+      activeContext: safeJsonParse(r.activeContext),
+      threadMemory: safeJsonParse(r.threadMemory),
+      originalFirstMessage: r.originalFirstMessage || ''
     })))
   } catch (err) {
     console.error('Error fetching chat threads:', err)
