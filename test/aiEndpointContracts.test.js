@@ -729,6 +729,39 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 0)
 })
 
+test('whole-wardrobe visual composer per-piece lines include fabric/reads_as hints', async () => {
+  aiCalls = []
+  const plainPiece = insertPiece({
+    name: 'plain grey tee',
+    category: 'top',
+    colors: ['gray'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+  })
+
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'spring',
+    mood: 'artistic minimalist',
+    limit: 3,
+  })
+
+  const composerCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.ok(composerCall)
+  const textLines = composerCall.messages
+    .flatMap(m => Array.isArray(m.content) ? m.content : [])
+    .filter(part => part?.type === 'text')
+    .map(part => part.text)
+
+  const bottomLine = textLines.find(line => line.startsWith(`ID ${seeded.bottom}:`))
+  assert.ok(bottomLine)
+  assert.equal(bottomLine, 'ID ' + seeded.bottom + ': light beige linen wide-leg pants; fabric: linen; reads_as: soft structured light column')
+
+  const plainLine = textLines.find(line => line.startsWith(`ID ${plainPiece}:`))
+  assert.ok(plainLine)
+  assert.equal(plainLine, `ID ${plainPiece}: plain grey tee`)
+})
+
 test('visual wardrobe composer endpoint returns outfits and populates debug shownPieceCount', async () => {
   // Clear any pre-existing calls
   aiCalls = []

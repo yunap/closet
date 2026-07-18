@@ -116,6 +116,13 @@ Engineer notes:
 - **Everything excluded is recorded** in `excluded[]` with a reason and counted
   in `debug.excludedCounts` — this is what powers the diagnostic cards in stage 7
   and the `[Visual Composer Roster]` server log.
+- **Per-piece prompt lines carry register hints.** Each roster line sent to the
+  model (`ID {id}: {name}`) is appended with `; fabric: {fabric_category}` and
+  `; reads_as: {reads_as}` when present (`composerPieceLineSuffix`, `routes/ai.js`,
+  shared with the selected-piece composer). This is additive text next to the
+  untouched photo — no gate, no roster change — so the model can see the register
+  facts the tagger already recorded (e.g. "sporty casual pants") instead of
+  composing from name + photo alone (spec 30).
 
 ---
 
