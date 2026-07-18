@@ -966,6 +966,32 @@ router.delete('/chat-threads/:id', (req, res) => {
 // style_constitution; EVERY write appends the prior text to constitution_history (owner
 // ruling 2026-07-18 — ruling archaeology survives the move out of git). Both PUTs call
 // refreshPrompts() so the live prompt bindings pick the change up without a restart.
+// First-run detection for the onboarding wizard (spec 32 Part 3). A fresh instance needs
+// onboarding until it is completed or skipped; a pre-existing (legacy-seeded) instance never
+// does — its profile arrived via the migration and must never be funneled through the wizard.
+router.get('/settings/onboarding-status', (req, res) => {
+  try {
+    const meta = key => db.prepare("SELECT value FROM app_meta WHERE key = ?").get(key)?.value
+    const needsOnboarding = meta('constitution_migrated') !== 'legacy-seeded'
+      && !meta('profile_display_name')
+      && !meta('onboarding_complete')
+    res.json({ needsOnboarding })
+  } catch (err) {
+    console.error('Error reading onboarding status:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/settings/onboarding-complete', (req, res) => {
+  try {
+    db.prepare("INSERT INTO app_meta (key, value) VALUES ('onboarding_complete', 'true') ON CONFLICT(key) DO UPDATE SET value = 'true'").run()
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('Error completing onboarding:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.get('/settings/profile', (req, res) => {
   try {
     res.json(loadUserProfile())

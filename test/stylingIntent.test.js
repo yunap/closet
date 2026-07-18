@@ -3,7 +3,13 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { STYLIST_TOOLS } from '../styling-engine/tools.js'
+import os from 'node:os'
+// Hermetic DB isolation (spec 21/29 doctrine): this file's import chain reaches db.js,
+// whose module-load migrations would otherwise run against the real wardrobe.db.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'styling-intent-'))
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
 import { ACTIVITY_PROFILES } from '../styling-engine/footwear-comfort.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'

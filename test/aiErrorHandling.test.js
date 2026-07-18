@@ -1,6 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { describeAiError } from '../styling-engine/provider.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import nodePath from 'node:path'
+// Hermetic DB isolation (spec 21/29 doctrine): this file's import chain reaches db.js,
+// whose module-load migrations would otherwise run against the real wardrobe.db.
+const tmpRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'ai-error-handling-'))
+process.env.WARDROBE_DB_PATH = nodePath.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = nodePath.join(tmpRoot, 'uploads')
+const { describeAiError } = await import('../styling-engine/provider.js')
 
 // 2026-07-10: /ask's catch block was the one AI-backed route that suppressed the real error behind a
 // hardcoded "Something went wrong — try again", unlike every other route in this file, which already

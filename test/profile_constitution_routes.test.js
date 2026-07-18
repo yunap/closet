@@ -36,6 +36,15 @@ const putJson = async (route, body) => {
   return { status: res.status, body: await res.json() }
 }
 
+test('fresh instance needs onboarding until completed; profile PUT alone also satisfies it', async () => {
+  const before = await getJson('/api/settings/onboarding-status')
+  assert.equal(before.needsOnboarding, true)
+  const res = await fetch(`${baseUrl}/api/settings/onboarding-complete`, { method: 'POST' })
+  assert.equal(res.status, 200)
+  const afterComplete = await getJson('/api/settings/onboarding-status')
+  assert.equal(afterComplete.needsOnboarding, false)
+})
+
 test('fresh instance serves the generic profile and default constitution layers', async () => {
   const profile = await getJson('/api/settings/profile')
   assert.equal(profile.displayName, DEFAULT_PROFILE.displayName)
