@@ -3,6 +3,8 @@ import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
 import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
+import { PROFILE_NAME, loadUserProfile, refreshPrompts } from '../styling-engine/promptRuntime.js'
+import { CONSTITUTION_LAYER_KEYS, DEFAULT_CONSTITUTION } from '../styling-engine/prompts.js'
 import { collectPieceIdsFromSavedBoardRow } from '../styling-engine/rules.js'
 import {
   mergeWithManualOverrides,
@@ -238,11 +240,11 @@ router.post('/pieces/:id/occasion-exclusion', (req, res) => {
     if (!exclusions.includes(normOccasion)) {
       exclusions.push(normOccasion)
     }
-    const note = `Excluded from ${occasion} by Yuna (${date})`
+    const note = `Excluded from ${occasion} by ${PROFILE_NAME} (${date})`
     rules.push(note)
   } else {
     exclusions = exclusions.filter(o => o !== normOccasion)
-    const note = `Restored for ${occasion} by Yuna (${date})`
+    const note = `Restored for ${occasion} by ${PROFILE_NAME} (${date})`
     rules.push(note)
   }
 
@@ -959,6 +961,98 @@ router.delete('/chat-threads/:id', (req, res) => {
 // found silently mistreating the app's hardcoded timezone string as a location for plain local asks.
 // This is the real fix: a real, structured home location the server injects itself (routes/ai.js's
 // /ask handler), never inferred by the model.
+// ── Spec 32: user profile + style constitution ──────────────────────────────
+// Profile follows the home_location precedent (app_meta keys). Constitution layers live in
+// style_constitution; EVERY write appends the prior text to constitution_history (owner
+// ruling 2026-07-18 — ruling archaeology survives the move out of git). Both PUTs call
+// refreshPrompts() so the live prompt bindings pick the change up without a restart.
+router.get('/settings/profile', (req, res) => {
+  try {
+    res.json(loadUserProfile())
+  } catch (err) {
+    console.error('Error reading profile:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.put('/settings/profile', (req, res) => {
+  try {
+    const displayName = String(req.body?.displayName || '').trim()
+    if (!displayName) return res.status(400).json({ error: 'displayName is required' })
+    const pronouns = req.body?.pronouns
+    const upsert = db.prepare("INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    upsert.run('profile_display_name', displayName)
+    if (pronouns && typeof pronouns === 'object') {
+      const cleaned = {
+        subject: String(pronouns.subject || 'they').trim() || 'they',
+        object: String(pronouns.object || 'them').trim() || 'them',
+        possessive: String(pronouns.possessive || 'their').trim() || 'their',
+        plural: Boolean(pronouns.plural)
+      }
+      upsert.run('profile_pronouns', JSON.stringify(cleaned))
+    }
+    refreshPrompts()
+    res.json(loadUserProfile())
+  } catch (err) {
+    console.error('Error saving profile:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/settings/constitution', (req, res) => {
+  try {
+    const rows = db.prepare('SELECT layer, body, updated_at FROM style_constitution').all()
+    const stored = Object.fromEntries(rows.map(row => [row.layer, { body: row.body, updatedAt: row.updated_at }]))
+    res.json({
+      layers: CONSTITUTION_LAYER_KEYS.map(layer => ({
+        layer,
+        body: stored[layer]?.body ?? DEFAULT_CONSTITUTION[layer],
+        updatedAt: stored[layer]?.updatedAt ?? null,
+        isDefault: !(layer in stored)
+      }))
+    })
+  } catch (err) {
+    console.error('Error reading constitution:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.put('/settings/constitution/:layer', (req, res) => {
+  try {
+    const layer = String(req.params.layer || '')
+    if (!CONSTITUTION_LAYER_KEYS.includes(layer)) {
+      return res.status(400).json({ error: `Unknown constitution layer: ${layer}` })
+    }
+    const body = String(req.body?.body || '').trim()
+    if (!body) return res.status(400).json({ error: 'body is required' })
+    const source = req.body?.source === 'interview' ? 'interview' : 'edit'
+    const prior = db.prepare('SELECT body FROM style_constitution WHERE layer = ?').get(layer)
+    db.transaction(() => {
+      db.prepare("INSERT INTO constitution_history (layer, prior_body, source) VALUES (?, ?, ?)").run(layer, prior?.body ?? null, source)
+      db.prepare("INSERT INTO style_constitution (layer, body, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(layer) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at").run(layer, body)
+    })()
+    refreshPrompts()
+    res.json({ layer, body })
+  } catch (err) {
+    console.error('Error saving constitution layer:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/settings/constitution/:layer/history', (req, res) => {
+  try {
+    const layer = String(req.params.layer || '')
+    if (!CONSTITUTION_LAYER_KEYS.includes(layer)) {
+      return res.status(400).json({ error: `Unknown constitution layer: ${layer}` })
+    }
+    const rows = db.prepare('SELECT id, layer, prior_body, source, created_at FROM constitution_history WHERE layer = ? ORDER BY id DESC LIMIT 50').all(layer)
+    res.json({ history: rows })
+  } catch (err) {
+    console.error('Error reading constitution history:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.get('/settings/home-location', (req, res) => {
   try {
     const row = db.prepare("SELECT value FROM app_meta WHERE key = 'home_location'").get()

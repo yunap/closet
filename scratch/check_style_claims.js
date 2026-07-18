@@ -15,14 +15,13 @@ const forbiddenPatterns = [
 function checkFile(filePath) {
   let content = fs.readFileSync(filePath, 'utf8');
 
-  // Strip constitution constant definitions in prompts.js to avoid scanning them
+  // The ratified constitution text is the ONE sanctioned home for style-claim phrases.
+  // Spec 32 moved it out of prompts.js constants: the legacy (owner) text lives in
+  // constitutionSeed.js (skipped whole — it is the constitution, verbatim) and the
+  // generic starter layers live in prompts.js's DEFAULT_CONSTITUTION (stripped here).
+  if (filePath.endsWith('constitutionSeed.js')) return [];
   if (filePath.endsWith('prompts.js')) {
-    content = content
-      .replace(/export const BODY_CONTRACT = `[^`]+`/g, '')
-      .replace(/export const PROVEN_FORMULAS = `[^`]+`/g, '')
-      .replace(/export const AESTHETIC_GRAVITY = `[^`]+`/g, '')
-      .replace(/export const LANE_NEUTRALITY = `[^`]+`/g, '')
-      .replace(/export const WORKING_STYLE = `[^`]+`/g, '');
+    content = content.replace(/export const DEFAULT_CONSTITUTION = \{[\s\S]+?\n\}/, '');
   }
 
   const lines = content.split('\n');

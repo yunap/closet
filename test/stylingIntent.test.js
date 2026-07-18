@@ -5,7 +5,9 @@ import path from 'node:path'
 
 import { STYLIST_TOOLS } from '../styling-engine/tools.js'
 import { ACTIVITY_PROFILES } from '../styling-engine/footwear-comfort.js'
-import { STYLIST_SYSTEM } from '../styling-engine/prompts.js'
+import { buildPrompts } from '../styling-engine/prompts.js'
+import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
+const { STYLIST_SYSTEM } = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION })
 import {
   OCCASION_VALUES,
   ACTIVITY_VALUES,

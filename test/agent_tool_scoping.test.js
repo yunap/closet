@@ -62,7 +62,7 @@ test('agent_tool_scoping: get_garment_details returns refusal for unallowed piec
   const detailsScoped = await executeTool('get_garment_details', { ids: [106] }, { allowedPieceIds: new Set([1, 2, 3]) })
   assert.equal(detailsScoped.length, 1)
   assert.equal(detailsScoped[0].id, 106)
-  assert.ok(detailsScoped[0].text.includes('piece 106 is not available for Yuna\'s current request'), 'Should return refusal text')
+  assert.ok(detailsScoped[0].text.includes('piece 106 is not available for this request'), 'Should return refusal text')
   assert.ok(!detailsScoped[0].image, 'Should not load photo/image data for unallowed piece')
 })
 

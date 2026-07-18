@@ -22,8 +22,9 @@ import {
   BODY_CONTRACT,
   PROVEN_FORMULAS,
   AESTHETIC_GRAVITY,
-  LANE_NEUTRALITY
-} from './prompts.js'
+  LANE_NEUTRALITY,
+  PROFILE_NAME
+} from './promptRuntime.js'
 
 import {
   askStylist,
@@ -187,7 +188,7 @@ export function buildOutfitAuthorityNote(outfit, linkedPieces = [], likelyPieces
   }
 
   if (isConfirmed) {
-    lines.push('STATUS NOTE: This outfit is marked confirmed/favorite. Start from the assumption that the core outfit has worked for Yuna. Explain WHY it works first. Suggest only minor refinements unless the user asks for alternatives.')
+    lines.push(`STATUS NOTE: This outfit is marked confirmed/favorite. Start from the assumption that the core outfit has worked for ${PROFILE_NAME}. Explain WHY it works first. Suggest only minor refinements unless the user asks for alternatives.`)
   } else if (status === 'rejected') {
     lines.push('STATUS NOTE: This outfit is marked rejected. Diagnose what likely failed, but keep the critique garment-focused and practical.')
   } else {
@@ -254,7 +255,7 @@ export function buildSavedOutfitEvaluationContext(outfit) {
     buildOutfitAuthorityNote(outfit, linkedPieces, likelyPieces),
     buildOutfitText(outfit, linkedPieces),
     likelyPieces.length ? `Likely saved garment truth for Outfit A — hints only unless linked:\n${likelyPieces.map(buildPieceText).join('\n')}` : '',
-    getConfirmedOutfitMemory() ? `Other confirmed outfit memory for comparison. Use this to understand Yuna's taste, not as a rigid checklist:\n${getConfirmedOutfitMemory()}` : ''
+    getConfirmedOutfitMemory() ? `Other confirmed outfit memory for comparison. Use this to understand ${PROFILE_NAME}'s taste, not as a rigid checklist:\n${getConfirmedOutfitMemory()}` : ''
   ].filter(Boolean).join('\n\n')
   return { linkedPieces, likelyPieces, extraContextText }
 }
@@ -342,7 +343,7 @@ export function getCalibrationMemoryForStylist(limit = 32) {
 export async function criticPassForGeneratedOutfits({ selectedPiece, draft, userQuestion }) {
   if (process.env.STYLIST_CRITIC_DISABLED === 'true') return draft
 
-  const criticSystem = `You are a strict editor for Yuna's generated outfit ideas.
+  const criticSystem = `You are a strict editor for ${PROFILE_NAME}'s generated outfit ideas.
 Return ONLY the corrected final answer.
 
 Hard checks:
@@ -355,7 +356,7 @@ Hard checks:
 - Do not recommend tucking unless garment truth supports it.
 - Avoid section must be contextual and must not contradict the recommended outfits.
 - Keep the required output format: Signature / strongest direction, Usable variation, optional Experimental direction, optional I would skip, Saveable learning.
-- Use Yuna's language: visual column, relaxed structure, grounded texture, compact top, stable bottom, controlled softness, signature direction.`
+- Use ${PROFILE_NAME}'s language: visual column, relaxed structure, grounded texture, compact top, stable bottom, controlled softness, signature direction.`
 
   const checked = await askStylist({
     system: criticSystem,
@@ -373,7 +374,7 @@ Hard checks:
 export async function criticPassForSelectedItem({ selectedPiece, draft, userQuestion }) {
   if (process.env.STYLIST_CRITIC_DISABLED === 'true') return draft
 
-  const criticSystem = `You are a strict editor for Yuna's wardrobe stylist app.
+  const criticSystem = `You are a strict editor for ${PROFILE_NAME}'s wardrobe stylist app.
 Check the draft answer for rule violations.
 Fix it if needed. Return ONLY the corrected final answer, no meta-commentary.
 
@@ -3693,7 +3694,7 @@ export async function buildStylistConversationPayload(body) {
     'INTENT DECLARATION (mechanically enforced): before composing or answering substantively, call declare_intent with what this turn should produce — want:"text" (advice/critique prose), "cards" (composed outfit cards), or "image" (a rendered outfit image), plus outfit_count when the user asked for a specific number. propose_outfit and generate_outfits are blocked until cards intent is declared. If the user wants a rendered image, declare want:"image" and call render_preview (outfit_index for a card produced this turn, or piece_ids from a verified card such as THREAD STATE\'s current outfit set).',
     extractedWeather ? `Established weather context for this turn: ${extractedWeather}. Pass this weather to search_wardrobe and apply weatherFit/ruleFit before suggesting garments.` : '',
     missingTravelWeather ? 'TRAVEL WEATHER BLOCKER: The user gave a travel/packing request without weather or forecast context. Do not call search_wardrobe, do not recommend garments, and do not suggest outfits. Ask one friendly clarification for the expected weather/forecast first.' : '',
-    'If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from Yuna\'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").',
+    `If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from ${PROFILE_NAME}'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").`,
     'If mode is followup, answer the specific follow-up directly in a friendly conversational tone without restarting the whole evaluation, outfit generation, packing list, or plan.',
     'If mode is correction, acknowledge the correction, revise only the relevant mistaken point, and do not defend a contradiction.',
     'If mode is explanation, explain how the previous recommendation was made using the available context.',

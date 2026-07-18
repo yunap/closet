@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { EDITORIAL_NEW_PIECES_SYSTEM, OUTFIT_EVALUATOR_GATE_SYSTEM } from '../styling-engine/prompts.js'
+import { buildPrompts } from '../styling-engine/prompts.js'
+import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
+const { EDITORIAL_NEW_PIECES_SYSTEM, OUTFIT_EVALUATOR_GATE_SYSTEM } = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION })
 
 // Spec 6: occasion-register/weather/activity-comfort doctrine for the two editorial ideation prompts.
 // Neither operates on real tagged pieces (pure conceptual ideation), so this is prompt doctrine, not a

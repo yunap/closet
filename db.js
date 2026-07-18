@@ -3,6 +3,7 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
+import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from './styling-engine/constitutionSeed.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -313,6 +314,60 @@ try {
   }
 } catch (err) {
   console.warn('Backfill migration warning:', err.message)
+}
+
+// ── Spec 32: style constitution + user profile storage ────────────────────────
+// Additive tables. style_constitution holds the per-user constitution layers that
+// prompts.js assembles into system prompts (promptRuntime.js reads them);
+// constitution_history is the append-only ruling-archaeology log (owner ruling
+// 2026-07-18) — every write to a layer records the prior text and its source.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS style_constitution (
+    layer TEXT PRIMARY KEY,
+    body TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS constitution_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    layer TEXT NOT NULL,
+    prior_body TEXT,
+    source TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`)
+
+// One-time migration for PRE-EXISTING databases (detected by the 'seeded' sentinel
+// already present before this code ever ran): seed the legacy owner constitution and
+// profile verbatim so the instance's assembled prompts stay byte-identical to what it
+// shipped before the constants moved out of prompts.js (the prompt_equivalence test
+// pins this). Brand-new databases get NO rows here — promptRuntime falls back to the
+// generic DEFAULT_CONSTITUTION/DEFAULT_PROFILE until onboarding writes real ones.
+try {
+  // The 'constitution_migrated' marker makes this a strictly one-shot decision. A DB is
+  // "pre-existing" only if the 'seeded' sentinel exists AND this migration has never run —
+  // without the marker, a brand-new DB (which acquires 'seeded' on its first boot) would
+  // wrongly look pre-existing on its SECOND boot and get the legacy owner constitution.
+  const migrated = db.prepare("SELECT value FROM app_meta WHERE key = 'constitution_migrated'").get()
+  if (!migrated) {
+    const preexisting = db.prepare("SELECT value FROM app_meta WHERE key = 'seeded'").get()
+    const hasConstitution = db.prepare("SELECT COUNT(*) AS n FROM style_constitution").get().n > 0
+    const insLayer = db.prepare("INSERT INTO style_constitution (layer, body) VALUES (?, ?)")
+    const insHistory = db.prepare("INSERT INTO constitution_history (layer, prior_body, source) VALUES (?, NULL, 'migration')")
+    const insMeta = db.prepare("INSERT OR IGNORE INTO app_meta (key, value) VALUES (?, ?)")
+    db.transaction(() => {
+      if (preexisting && !hasConstitution) {
+        for (const [layer, body] of Object.entries(LEGACY_CONSTITUTION)) {
+          insLayer.run(layer, body)
+          insHistory.run(layer)
+        }
+        insMeta.run('profile_display_name', LEGACY_PROFILE.displayName)
+        insMeta.run('profile_pronouns', JSON.stringify(LEGACY_PROFILE.pronouns))
+      }
+      insMeta.run('constitution_migrated', preexisting && !hasConstitution ? 'legacy-seeded' : 'fresh')
+    })()
+  }
+} catch (err) {
+  console.warn('Constitution migration warning:', err.message)
 }
 
 // ── Seed data (first run only) ─────────────────────────────────────────────────
