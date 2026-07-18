@@ -41,21 +41,14 @@ const SAVED_BOARD_FEEDBACK_LABELS = [
 ]
 
 // ─── VisualLab ────────────────────────────────────────────────────────────────
-// The calibration library panel. Manages:
+// The calibration library panel, a standalone tab. Manages:
 //   - Reference images (good, bad, real photos) uploaded to calibrate
 //     the visual generation renderer
 //   - Saved boards (AI-generated outfit visuals the user has saved)
 //     which also serve as calibration data
-//
-// Props:
-//   activeContext   — { type, id, name } — not directly used in this panel
-//                     but kept for future per-context filtering
-//   boardSaveCount  — incremented by StylistChat on each board save;
-//                     VisualLab watches this to refresh its saved-boards list
-//   onClose         — called when the user closes the panel
 // ──────────────────────────────────────────────────────────────────────────────
 
-export default function VisualLab({ activeContext, onGoToThread } = {}) {
+export default function VisualLab({ onGoToThread } = {}) {
   const [calibrationImages, setCalibrationImages]           = useState([])
   const [calibrationFilter, setCalibrationFilter]           = useState('active')
   const [calibrationUploadFile, setCalibrationUploadFile]   = useState(null)
@@ -471,7 +464,7 @@ export default function VisualLab({ activeContext, onGoToThread } = {}) {
 
         {!savedBoards.length ? (
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            {activeContext ? `No saved boards for ${activeContext.name} yet.` : 'No saved boards yet.'}
+            No saved boards yet.
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 12 }}>
