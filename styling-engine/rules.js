@@ -3007,49 +3007,6 @@ export function wholeWardrobeGarmentModifier(pieces = []) {
   return notes.join(', ') || 'standard wear'
 }
 
-export function wholeWardrobeSelectionScore(outfit, selected, options = {}) {
-  const pieces = outfit.pieces || []
-  const text = pieces.map(pieceTextBlob).join(' ')
-  const label = String(outfit.label || '').toLowerCase()
-  const mood = String(options.mood || '').toLowerCase()
-  const occasion = String(options.occasion || '').toLowerCase()
-  const formula = wholeWardrobeFormulaFamily(outfit, pieces, occasion)
-  const scoreReasons = []
-
-  let score = 0
-  const add = (val, reason) => {
-    score += val
-    scoreReasons.push(`${reason} (${val})`)
-  }
-
-  // Basic outfit validity
-  if (wholeWardrobeHasDress(outfit)) {
-    add(20, 'dress-grounding-shoe formula')
-  } else {
-    const top = wholeWardrobePieceByGroup(outfit, 'top')
-    const bottom = wholeWardrobePieceByGroup(outfit, 'bottom')
-    if (top && bottom) add(12, 'contains top + bottom separates')
-  }
-
-  // Occasion alignment
-  if (occasion) {
-    const occasionScore = occasionScoreForOutfit(pieces, occasion)
-    if (occasionScore) add(occasionScore, `occasion: ${occasion} score`)
-  }
-
-  // Favorite piece bonuses
-  const favoriteCount = pieces.filter(p => p.favorite).length
-  if (favoriteCount) add(favoriteCount * 4, 'contains favorite pieces')
-
-  // Core rule checks
-  const ruleInfluence = wholeWardrobeFeedbackInfluenceForCandidate(pieces, options)
-  if (ruleInfluence) {
-    add(ruleInfluence.score, 'feedback memory influence')
-  }
-
-  return { score, reasons: scoreReasons }
-}
-
 export function wholeWardrobeOutfitsFromCandidates(candidates = [], candidatePieces = [], options = {}) {
   return candidates.map(candidate => repairWholeWardrobeOutfit(normalizeWholeWardrobeOutfitObject({
     label: wholeWardrobeLabelFromPieces({ pieces: candidate.pieces }),
@@ -4363,7 +4320,8 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
   // final gate an outfit passes through in the /ask precompose fallback tier and trip-slot ranking
   // before shipping. Resolved the same way buildVisualComposerRoster resolves it.
   const registerCeiling = resolveRegisterCeiling({ occasion, activity, mood, request, occasionProfile, activityProfile })
-  const ownedIds = new Set((candidatePieces || []).map(piece => Number(piece.id)).filter(Boolean))
+  const candidatePieceById = new Map((candidatePieces || []).map(piece => [Number(piece.id), piece]))
+  const ownedIds = new Set(candidatePieceById.keys())
   // Spec 9: repair defaults to running whenever NOT in advisor mode (original behavior), but a
   // caller can force it on even in advisor mode via options.repair — for locally-generated candidate
   // outfits (trip-slot ranking, the /ask fallback tier), where there's no LLM composition to preserve,
@@ -4374,7 +4332,14 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     let repaired = shouldRepair
       ? repairWholeWardrobeOutfit(outfit, candidatePieces, occasion, mood, { season, weatherProfile: resolvedWeatherProfile, activity })
       : { ...outfit }
-    const pieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
+    // Spec 29 Part 1: normalizeWholeWardrobeOutfitObject trims outfit.pieces to
+    // {id, name, category, photo, worn_photo} before this function ever sees them, so every
+    // structured gate below (registerCeilingVerdict, footwearComfortVerdict, prohibited-material/
+    // footwear checks via profileRuleFit) would otherwise read undefined and silently degrade to
+    // name-text matching. Rehydrate against candidatePieces by id before any gate runs; this is
+    // purely a local computation variable — repaired.pieces (the response shape) is untouched.
+    const trimmedPieces = Array.isArray(repaired?.pieces) ? repaired.pieces : []
+    const pieces = trimmedPieces.map(piece => candidatePieceById.get(Number(piece?.id)) || piece)
     const pieceIds = pieces.map(piece => Number(piece.id)).filter(Boolean)
     const text = [repaired.label, repaired.dominantDirection, repaired.silhouette, repaired.reason, repaired.watchFor, ...pieces.map(p => p.name)].join(' ').toLowerCase()
     const key = (repaired.pieceIds || pieceIds).map(Number).filter(Boolean).sort((a,b) => a-b).join('|')

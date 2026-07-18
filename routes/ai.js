@@ -2739,7 +2739,6 @@ router.post('/ask', async (req, res) => {
       structuredOutfitsMood: toolContext.mood,
       structuredOutfitsMission: toolContext.mission,
       structuredOutfitsActivity: toolContext.activity,
-      structuredOutfitsDebug: null,
       debug: freeformDiagnostics,
       suggestedTitle
     })

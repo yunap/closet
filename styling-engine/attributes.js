@@ -30,7 +30,7 @@ function trustedField(piece, field) {
   return confidence === 'manual' || confidence === 'high' || confidence === 'medium'
 }
 
-export function pieceTextBlob(p) {
+export function attributePieceTextBlob(p) {
   if (!p) return ''
   const colors = Array.isArray(p.colors) ? p.colors : []
   const occasions = Array.isArray(p.occasions) ? p.occasions : []
@@ -279,7 +279,7 @@ export function pieceSoftness(p) {
 }
 
 export function pieceGroundingValue(p) {
-  const blob = pieceTextBlob(p)
+  const blob = attributePieceTextBlob(p)
   const colors = (p.colors || []).map(c => String(c).toLowerCase())
   const dark = colors.some(c => ['black','navy','denim','brown','charcoal','dark grey','dark gray','deep navy','chocolate'].includes(c)) || textIncludesAny(blob, ['black','navy','dark denim','dark blue','charcoal','brown','chocolate'])
   const light = colors.some(c => ['white','cream','beige','taupe','oatmeal','ivory','nude'].includes(c)) || textIncludesAny(blob, ['white','cream','beige','oatmeal','ivory','nude','light'])
@@ -312,7 +312,7 @@ export function pieceGroundingValue(p) {
 }
 
 export function pieceStructureValue(p) {
-  const blob = pieceTextBlob(p)
+  const blob = attributePieceTextBlob(p)
   const denseTexture = fabricWeight(p) === 'heavy' || textIncludesAny(blob, ['denim','corduroy','wool','twill','utility','canvas','leather','structured','pencil','maxi','crochet','heavy','substantial','ribbed'])
   return (denseTexture ? 2 : 0) + (textIncludesAny(blob, ['tailored','structured','utility','straight','pencil','crisp','button-up','button down','button-down']) ? 1 : 0)
 }
@@ -326,7 +326,7 @@ export function groundingLevel(p) {
 }
 
 export function styleLanes(p) {
-  const blob = pieceTextBlob(p)
+  const blob = attributePieceTextBlob(p)
   const lanes = []
   if (textIncludesAny(blob, ['utility','olive','canvas','twill','cognac','linen','earthy'])) lanes.push('relaxed earthy')
   if (textIncludesAny(blob, ['tailored','trouser','button-up','button down','pencil','loafer','blazer'])) lanes.push('soft structured')
@@ -429,7 +429,7 @@ export function isDarkPiece(p) {
   const lightColors = ['white', 'cream', 'beige', 'taupe', 'oatmeal', 'ivory', 'nude', 'light grey', 'light gray', 'soft white', 'sand', 'light blue']
   if (colors.some(c => lightColors.includes(c))) return false
 
-  const blob = pieceTextBlob(p)
+  const blob = attributePieceTextBlob(p)
   if (/\b(white|cream|beige|taupe|oatmeal|ivory|nude|light|pale|sand)\b/i.test(blob)) return false
 
   const darkColors = ['black', 'navy', 'denim', 'charcoal', 'dark grey', 'dark gray', 'deep navy', 'chocolate', 'dark blue', 'espresso', 'brown']
@@ -439,21 +439,21 @@ export function isDarkPiece(p) {
 }
 
 export function pieceMatchesMaterial(p, material) {
-  const blob = pieceTextBlob(p)
+  const blob = attributePieceTextBlob(p)
   const cleanMat = material.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
   const regex = new RegExp(`\\b${cleanMat}\\b`, 'i')
   return regex.test(blob)
 }
 
 export function pieceMatchesFootwear(p, footwear) {
-  const blob = pieceTextBlob(p)
+  const blob = attributePieceTextBlob(p)
   const cleanFw = footwear.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
   const regex = new RegExp(`\\b${cleanFw}\\b`, 'i')
   return regex.test(blob)
 }
 
 export function pieceMatchesPieceName(p, name) {
-  const blob = pieceTextBlob(p)
+  const blob = attributePieceTextBlob(p)
   const cleanName = name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
   const regex = new RegExp(`\\b${cleanName}\\b`, 'i')
   return regex.test(blob)

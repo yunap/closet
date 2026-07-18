@@ -1388,6 +1388,45 @@ Part 1 acceptance re-verified). Ratchet: unchanged in every file except
 side effect of Part 3 deleting `TRIP_ACTIVITY_OR_USE_CASE_PATTERNS` — no new
 debt, a real reduction.
 
+## Spec 29 — post-audit fixes and cleanup — IMPLEMENTED (2026-07-17)
+
+The audit arc that opened with spec 20 and continued through spec 21 (cleanup)
+and spec 28 (whole-app inventory) is now **complete**: every app surface either
+audit named has been walked at least once, and every finding from spec 28 has
+been fixed, deleted, renamed, or explicitly closed as intentional — nothing is
+being carried forward into a future spec. One PR, Part 1 (the P0 gate fix) as
+its own first commit:
+
+- **Part 1 (P0):** `normalizeWholeWardrobeOutfitObject` was silently trimming
+  outfit pieces to `{id, name, category, photo, worn_photo}` before
+  `/evaluate-piece`'s two candidate paths reached `locallyGateWholeWardrobeOutfits`,
+  so every structured gate downstream read `undefined` and quietly degraded to
+  name-text matching — a second, independent live occurrence of the same bug
+  class this doc's capsule-builder section already found and fixed once in
+  the now-superseded `outfitSetPlanner.js` composer. Fixed by rehydrating
+  `outfit.pieces` against `candidatePieces` by id inside
+  `locallyGateWholeWardrobeOutfits`, immediately before `profileFits` runs —
+  every caller gets it automatically, regardless of `repair`/`advisorMode`.
+  Regression test runs the real production sequence and was verified red
+  against pre-fix code.
+- **Part 2 (P0):** `test/threadRail.test.js` was the fifth non-hermetic DB
+  test — spec 21 Part 1's isolation fix had covered four others but missed
+  this one. Same dynamic-import-after-env-var pattern applied.
+- **Part 3:** mechanical dead-code sweep — ~60 unused imports in `core.js`,
+  five dead functions, one always-null response field. Zero behavior change,
+  576/576 tests green throughout.
+- **Parts 4–5:** deleted the never-shipped identity-feedback family (7 files)
+  and `VisualLab.jsx`'s dead `activeContext` prop/branch + stale doc comment.
+  `dist/` rebuilt in the same PR.
+- **Part 6:** renamed `attributes.js`'s duplicate `pieceTextBlob` to
+  `attributePieceTextBlob` — kills the identical-name footgun against
+  `rules.js`'s own (already-diverged) implementation, zero behavior change.
+  Consolidation stays deliberately deferred.
+- **Part 7:** `docs/cleanup-inventory.md` closed out with this spec's
+  execution record, including the devtools-diagnostics UI gap now marked
+  **CLOSED — affirmed keep-as-is** by owner ruling (two prior audits had
+  independently recommended the same thing).
+
 ## Gotchas for the next assistant
 
 - **Branch off fresh main before every piece of work** (recurring slip: twice a

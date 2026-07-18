@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import {
   humanizeLabel,
   deriveBuilderTitle,
@@ -11,7 +13,17 @@ import {
   groupThreadsByDate,
   clusterThreadsBySubject
 } from '../src/utils/threadGrouping.js'
-import { deriveTripTitle } from '../routes/ai.js'
+
+// Isolated per-run DB (spec 21 Part 1 pattern; missed here per spec 28's audit, fixed spec 29 Part
+// 2) — this file imports `routes/ai.js`, which statically imports `db.js`. The env vars must land
+// before `db.js` evaluates (its module-load tag_state backfill issues real UPDATEs against
+// whatever DB it opens), so the import is dynamic and comes after this.
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-thread-rail-'))
+process.env.NODE_ENV = 'test'
+process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+
+const { deriveTripTitle } = await import('../routes/ai.js')
 
 test('humanizeLabel formats occasions and activities correctly', () => {
   assert.equal(humanizeLabel('outdoor_daytime_social'), 'Outdoor social')
