@@ -559,6 +559,9 @@ function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasion
   return ''
 }
 
+const composerPieceLineSuffix = piece =>
+  `${piece.fabric_category ? `; fabric: ${piece.fabric_category}` : ''}${piece.reads_as ? `; reads_as: ${piece.reads_as}` : ''}`
+
 async function composeSelectedPieceVisualWardrobeOutfits({
   selectedPiece,
   rankedCandidates = [],
@@ -671,7 +674,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     const filePath = path.join(uploadsDir, photoFile)
     if (!fs.existsSync(filePath)) return
     const thumb = await prepareWardrobeThumb(filePath, `${piece.id}:${photoFile}`, { maxPx: composerThumbPx })
-    content.push({ type: 'text', text: `${labelPrefix} ID ${piece.id}: ${piece.name}` })
+    content.push({ type: 'text', text: `${labelPrefix} ID ${piece.id}: ${piece.name}${composerPieceLineSuffix(piece)}` })
     content.push({ type: 'image', detail: detailOverride || composerImageDetail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
     shownPieceCount++
     shownPieces.push(piece)
@@ -1570,7 +1573,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         const filePath = path.join(uploadsDir, photoFile)
         if (!fs.existsSync(filePath)) continue
         const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${photoFile}`, { maxPx: composerThumbPx })
-        content.push({ type: 'text', text: `ID ${p.id}: ${p.name}` })
+        content.push({ type: 'text', text: `ID ${p.id}: ${p.name}${composerPieceLineSuffix(p)}` })
         // Composition depends on texture and construction cues; never hardcode this to low detail.
         content.push({ type: 'image', detail: composerImageDetail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
         shownPieceCount++

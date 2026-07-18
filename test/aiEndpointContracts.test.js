@@ -729,6 +729,39 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 0)
 })
 
+test('whole-wardrobe visual composer per-piece lines include fabric/reads_as hints', async () => {
+  aiCalls = []
+  const plainPiece = insertPiece({
+    name: 'plain grey tee',
+    category: 'top',
+    colors: ['gray'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+  })
+
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'city',
+    season: 'spring',
+    mood: 'artistic minimalist',
+    limit: 3,
+  })
+
+  const composerCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  assert.ok(composerCall)
+  const textLines = composerCall.messages
+    .flatMap(m => Array.isArray(m.content) ? m.content : [])
+    .filter(part => part?.type === 'text')
+    .map(part => part.text)
+
+  const bottomLine = textLines.find(line => line.startsWith(`ID ${seeded.bottom}:`))
+  assert.ok(bottomLine)
+  assert.equal(bottomLine, 'ID ' + seeded.bottom + ': light beige linen wide-leg pants; fabric: linen; reads_as: soft structured light column')
+
+  const plainLine = textLines.find(line => line.startsWith(`ID ${plainPiece}:`))
+  assert.ok(plainLine)
+  assert.equal(plainLine, `ID ${plainPiece}: plain grey tee`)
+})
+
 test('visual wardrobe composer endpoint returns outfits and populates debug shownPieceCount', async () => {
   // Clear any pre-existing calls
   aiCalls = []
@@ -2047,6 +2080,26 @@ test('Stylist route disables page scroll so chat history owns its own scroll pan
   assert.match(css, /\.stylist-chat-scroll\s*\{[\s\S]*max-height:/)
   assert.doesNotMatch(css, /\.stylist-chat-scroll\s*\{[^}]*flex:\s*1/)
   assert.doesNotMatch(css, /\.stylist-input-shell\s*\{[^}]*position:\s*sticky/)
+})
+
+test('Primary app navigation uses full-row accessible sidebar items with shared task count', () => {
+  const app = fs.readFileSync(path.join(process.cwd(), 'src/App.jsx'), 'utf8')
+  const inventory = fs.readFileSync(path.join(process.cwd(), 'src/views/PieceInventory.jsx'), 'utf8')
+  const css = fs.readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
+  const hook = fs.readFileSync(path.join(process.cwd(), 'src/utils/usePendingWardrobeTaskCount.js'), 'utf8')
+  assert.match(app, /<nav className="primary-nav" aria-label="Primary">/)
+  assert.match(app, /<ul className="primary-nav__list">/)
+  assert.match(app, /`primary-nav__item\$\{isActive \? ' active' : ''\}`/)
+  assert.match(app, /aria-label=\{`\$\{badgeCount\} wardrobe \$\{badgeCount === 1 \? 'task' : 'tasks'\}`\}/)
+  assert.match(app, /badgeCount > 99 \? '99\+' : String\(badgeCount\)/)
+  assert.match(app, /usePendingWardrobeTaskCount/)
+  assert.match(inventory, /usePendingWardrobeTaskCount/)
+  assert.match(hook, /window\.addEventListener\('todos-changed', refreshPendingCount\)/)
+  assert.match(css, /\.primary-nav__item\.active::before/)
+  assert.match(css, /\.primary-nav__item:focus-visible/)
+  assert.match(css, /@media \(min-width: 768px\) and \(max-width: 1040px\)/)
+  assert.doesNotMatch(app, /icon:\s*'◈'|icon:\s*'✦'|icon:\s*'◇'|icon:\s*'⌾'/)
+  assert.doesNotMatch(app, /className="bottom-nav"/)
 })
 
 test('StylistChat renders wardrobe evaluation replies in the chat thread', () => {
