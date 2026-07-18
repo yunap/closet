@@ -107,6 +107,28 @@ test('thread display helpers derive concise history titles and outcome summaries
     }
   }
   assert.equal(getThreadSubjectChildTitle(subjectChildThread, subjectChildThread.activeContext), 'Belted Definition direction')
+
+  const savedOutfitVariantThread = {
+    title: 'Volvo get together · Similar',
+    kind: 'outfit_critique',
+    originalFirstMessage: 'Generate similar variants from this saved outfit photo and linked garment references.',
+    activeContext: { type: 'outfit', id: 'outfit_1', name: 'Volvo get together' },
+    threadMemory: {
+      source: 'saved_outfit_formula',
+      latestOutfits: [
+        { title: 'Soft Structure Contrast' }
+      ]
+    }
+  }
+  assert.equal(getThreadSubjectChildTitle(savedOutfitVariantThread, savedOutfitVariantThread.activeContext), 'Similar outfit variants')
+
+  const savedOutfitCritiqueThread = {
+    title: 'Volvo get together · Critique',
+    kind: 'outfit_critique',
+    originalFirstMessage: 'Evaluate this outfit.',
+    activeContext: { type: 'outfit', id: 'outfit_1', name: 'Volvo get together' }
+  }
+  assert.equal(getThreadSubjectChildTitle(savedOutfitCritiqueThread, savedOutfitCritiqueThread.activeContext), 'Outfit critique')
 })
 
 test('clusterThreadsBySubject clusters outfit/piece threads and groups freeform ones', () => {
@@ -213,6 +235,7 @@ test('ThreadRail component view toggle and collapsed state persists via localSto
   assert.match(source, /localStorage\.setItem\('stylist_rail_view_mode',\s*viewMode\)/)
   assert.match(source, /localStorage\.getItem\('stylist_rail_collapsed'\)/)
   assert.match(source, /localStorage\.setItem\('stylist_rail_collapsed',\s*String\(collapsed\)\)/)
+  assert.doesNotMatch(source, /stylist_subject_groups_open/)
 })
 
 test('active thread deletion can fall through to another thread or new chat', () => {
@@ -232,19 +255,38 @@ test('opening a saved thread does not rewrite thread recency metadata', () => {
 
   assert.match(source, /const\s+suppressThreadLoadAutosaveRef\s*=\s*useRef\(false\)/)
   assert.match(source, /!skipSaveCurrent\s*&&\s*debounceTimerRef\.current\s*&&\s*currentThreadId/)
-  assert.match(source, /suppressThreadLoadAutosaveRef\.current\s*=\s*true\s*\n\s*setMessages\(thread\.payload\.messages/)
+  assert.match(source, /suppressThreadLoadAutosaveRef\.current\s*=\s*true/)
+  assert.match(source, /suppressNextMessageScrollRef\.current\s*=\s*true/)
+  assert.match(source, /setMessages\(thread\.payload\.messages/)
   assert.match(source, /if\s*\(suppressThreadLoadAutosaveRef\.current\)\s*\{\s*suppressThreadLoadAutosaveRef\.current\s*=\s*false\s*return\s*\}/)
 })
 
 test('ThreadRail subject view renders a collapsible wardrobe tree', () => {
   const source = fs.readFileSync(new URL('../src/components/ThreadRail.jsx', import.meta.url), 'utf8')
+  const css = fs.readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 
-  assert.match(source, /stylist_subject_groups_open/)
+  assert.match(source, /const\s+\[openSubjectGroups,\s*setOpenSubjectGroups\]\s*=\s*useState\(\{\}\)/)
   assert.match(source, /className="subject-cluster-header"/)
   assert.match(source, /aria-expanded=\{isOpen\}/)
+  assert.match(source, /aria-label=\{`\$\{isOpen \? 'Collapse' : 'Expand'\} \$\{cluster\.name\}/)
+  assert.match(source, /title=\{cluster\.name\}/)
   assert.match(source, /cluster\.photo\s*\?\s*\(/)
-  assert.match(source, /renderThreadRow\(thread,\s*\{\s*subject:\s*cluster\s*\}\)/)
+  assert.match(source, /const isOpen = isActiveGroup \|\| Boolean\(openSubjectGroups\[key\]\)/)
+  assert.match(source, /const childRows = getSubjectChildRows\(cluster\)/)
+  assert.match(source, /formatChildTitleTime\(row\.thread\.updatedAt \|\| row\.thread\.updated_at\)/)
+  assert.match(source, /title: time \? `\$\{row\.title\} · \$\{time\}` : row\.title/)
+  assert.match(source, /renderThreadRow\(thread,\s*\{\s*subject:\s*cluster,\s*childTitle:\s*title\s*\}\)/)
   assert.match(source, /getThreadSubjectChildTitle\(t,\s*subject\)/)
+  assert.match(source, /aria-label=\{`Open chat: \$\{fullLabel\}`\}/)
+  assert.match(source, /<span className="thread-title-text" title=\{displayTitle\}>/)
+  assert.match(css, /\.cluster-rows\s*\{[\s\S]*margin-left: 36px/)
+  assert.match(css, /\.cluster-rows\s*\{[\s\S]*border-left: 1px solid rgba\(139, 111, 82, 0\.1\)/)
+  assert.match(css, /\.thread-row\.subject-child-row \.thread-row-main\s*\{[\s\S]*padding-left: 18px/)
+  assert.match(css, /\.thread-row\.subject-child-row\.active[\s\S]*padding-top: 3px/)
+  assert.match(css, /\.subject-disclosure[\s\S]*width: 24px/)
+  assert.match(css, /\.subject-meta[\s\S]*font-weight: 650/)
+  assert.match(css, /\.thread-row-main:focus-visible/)
+  assert.match(css, /\.thread-overflow-btn:focus-visible/)
 })
 
 test('StylistChat queries saved-boards on mount and uses savedBoardUrls to check saved state', () => {

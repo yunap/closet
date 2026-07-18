@@ -265,6 +265,23 @@ export function getSubjectIcon(type = '') {
   return '○'
 }
 
+function outfitSubjectActionTitle(thread = {}) {
+  const memory = threadMemory(thread)
+  const prompt = firstAvailableText(thread)
+  const title = compactText(thread.generatedTitle || thread.generated_title || thread.title || '')
+  const source = compactText(memory?.source || '')
+  const haystack = `${prompt} ${title} ${source}`.toLowerCase()
+
+  if (/\bcreative\b|\balternatives?\b/.test(haystack)) return 'Creative alternatives'
+  if (/\badjacent\b/.test(haystack)) return 'Adjacent outfit variants'
+  if (/\bsimilar\b|\bvariant|variants\b|\bformula[-\s]*similar\b|\bsaved_outfit_formula\b/.test(haystack)) {
+    return 'Similar outfit variants'
+  }
+  if (/\bcompare|comparison\b/.test(haystack)) return 'Outfit comparison'
+  if (/\bcritique|evaluate|evaluation|feedback\b/.test(haystack)) return 'Outfit critique'
+  return ''
+}
+
 export function getThreadSubjectChildTitle(thread = {}, subject = {}) {
   const customTitle = (thread.user_renamed || thread.userRenamed) ? compactText(thread.title) : ''
   if (customTitle) return truncateLabel(customTitle, 42)
@@ -277,9 +294,14 @@ export function getThreadSubjectChildTitle(thread = {}, subject = {}) {
     const outfits = Array.isArray(memory?.latestOutfits) ? memory.latestOutfits : []
     const firstOutcomeTitle = compactOutcomePhrase(outfits[0]?.title || outfits[0]?.label || outfits[0]?.bestFor || outfits[0]?.best_for || '')
     const isDirections = outfits.some(o => o?.previewOnly)
+    const outfitActionTitle = subject.type === 'outfit' || thread.activeContext?.type === 'outfit'
+      ? outfitSubjectActionTitle(thread)
+      : ''
+    if (outfitActionTitle && outfitActionTitle !== 'Outfit critique') return outfitActionTitle
     if (firstOutcomeTitle && !normalizeComparable(firstOutcomeTitle).startsWith(normalizeComparable(subjectName))) {
       return truncateLabel(`${titleCaseWords(firstOutcomeTitle)} ${isDirections ? 'direction' : 'styling'}`, 42)
     }
+    if (outfitActionTitle) return outfitActionTitle
     if (thread.kind === 'outfit_critique' || thread.activeContext?.type === 'outfit') return 'Outfit critique'
     if (isDirections) return 'Styling directions'
     return 'Styling ideas'

@@ -60,13 +60,7 @@ export default function ThreadRail({
   const [olderBuilderExpanded, setOlderBuilderExpanded] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [openMenuId, setOpenMenuId] = useState(null)
-  const [openSubjectGroups, setOpenSubjectGroups] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('stylist_subject_groups_open') || '{}')
-    } catch {
-      return {}
-    }
-  })
+  const [openSubjectGroups, setOpenSubjectGroups] = useState({})
 
   useEffect(() => {
     if (!isMobileDrawer) {
@@ -81,12 +75,6 @@ export default function ThreadRail({
       localStorage.setItem('stylist_rail_view_mode', viewMode)
     } catch {}
   }, [viewMode])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('stylist_subject_groups_open', JSON.stringify(openSubjectGroups))
-    } catch {}
-  }, [openSubjectGroups])
 
   const handleRenameSubmit = (id) => {
     if (renamingTitle.trim()) {
@@ -129,16 +117,45 @@ export default function ThreadRail({
   const groups = groupThreadsByDate(unpinnedThreads, archivedView)
   const subjectGroups = clusterThreadsBySubject(unpinnedThreads)
 
+  const formatChildTitleTime = (timestamp) => {
+    const date = new Date(timestamp)
+    if (Number.isNaN(date.getTime())) return ''
+    const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()]
+    return `${day} ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+  }
+
+  const getSubjectChildRows = (cluster) => {
+    const rows = cluster.threads.map(thread => ({
+      thread,
+      title: getThreadSubjectChildTitle(thread, cluster)
+    }))
+    const titleCounts = rows.reduce((counts, row) => {
+      const key = row.title.toLowerCase()
+      counts[key] = (counts[key] || 0) + 1
+      return counts
+    }, {})
+
+    return rows.map(row => {
+      if (titleCounts[row.title.toLowerCase()] <= 1) return row
+      const time = formatChildTitleTime(row.thread.updatedAt || row.thread.updated_at)
+      return {
+        ...row,
+        title: time ? `${row.title} · ${time}` : row.title
+      }
+    })
+  }
+
   const renderThreadRow = (t, options = {}) => {
-    const { subject = null } = options
+    const { subject = null, childTitle = null } = options
     const isActive = t.id === currentThreadId
     const isRenaming = renamingId === t.id
     const isConfirmingDelete = confirmDeleteId === t.id
     const timeLabel = getRelativeTimeLabel(t.updatedAt || t.updated_at)
-    const displayTitle = subject ? getThreadSubjectChildTitle(t, subject) : getThreadDisplayTitle(t)
+    const displayTitle = childTitle || (subject ? getThreadSubjectChildTitle(t, subject) : getThreadDisplayTitle(t))
     const displaySummary = getThreadOutcomeSummary(t)
     const originalFirstMessage = getThreadOriginalFirstMessage(t)
     const menuOpen = openMenuId === t.id
+    const fullLabel = `${displayTitle}${displaySummary ? ` · ${displaySummary}` : ''}`
 
     return (
       <div
@@ -182,7 +199,8 @@ export default function ThreadRail({
               type="button"
               className="thread-row-main"
               aria-current={isActive ? 'page' : undefined}
-              title={originalFirstMessage || displayTitle}
+              aria-label={`Open chat: ${fullLabel}`}
+              title={originalFirstMessage || fullLabel}
               onClick={() => {
                 setOpenMenuId(null)
                 onSelectThread(t.id)
@@ -190,7 +208,7 @@ export default function ThreadRail({
               }}
             >
               <span className="thread-row-title-line">
-                <span className="thread-title-text">{displayTitle}</span>
+                <span className="thread-title-text" title={displayTitle}>{displayTitle}</span>
                 <span className="thread-time">{timeLabel}</span>
               </span>
               <span className="thread-summary-text">{displaySummary}</span>
@@ -269,6 +287,7 @@ export default function ThreadRail({
     const isOpen = isActiveGroup || Boolean(openSubjectGroups[key])
     const latestLabel = getRelativeTimeLabel(cluster.maxTime)
     const countLabel = `${cluster.threads.length} ${cluster.threads.length === 1 ? 'chat' : 'chats'}`
+    const childRows = getSubjectChildRows(cluster)
 
     return (
       <div
@@ -279,6 +298,8 @@ export default function ThreadRail({
           type="button"
           className="subject-cluster-header"
           aria-expanded={isOpen}
+          aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${cluster.name}, ${cluster.typeLabel}, ${countLabel}`}
+          title={cluster.name}
           onClick={() => toggleSubjectGroup(key)}
         >
           <span className="subject-disclosure">{isOpen ? '▾' : '▸'}</span>
@@ -290,7 +311,7 @@ export default function ThreadRail({
             )}
           </span>
           <span className="subject-header-text">
-            <span className="subject-name">{cluster.name}</span>
+            <span className="subject-name" title={cluster.name}>{cluster.name}</span>
             <span className="subject-meta">
               <span>{cluster.typeLabel}</span>
               <span>{countLabel}</span>
@@ -300,7 +321,7 @@ export default function ThreadRail({
         </button>
         {isOpen && (
           <div className="cluster-rows" role="list">
-            {cluster.threads.map(thread => renderThreadRow(thread, { subject: cluster }))}
+            {childRows.map(({ thread, title }) => renderThreadRow(thread, { subject: cluster, childTitle: title }))}
           </div>
         )}
       </div>
