@@ -354,6 +354,7 @@ export default function StylistChat({
   const bottomRef = useRef(null)
   const pendingActionRef = useRef(null)
   const holdActionScrollRef = useRef(false)
+  const suppressNextMessageScrollRef = useRef(false)
   const textRef = useRef(null)
   const createOutfitsButtonRef = useRef(null)
   const wardrobeBuilderFirstFieldRef = useRef(null)
@@ -573,6 +574,7 @@ export default function StylistChat({
       const thread = await res.json()
       
       suppressThreadLoadAutosaveRef.current = true
+      suppressNextMessageScrollRef.current = true
       setMessages(thread.payload.messages || [])
       setChatHistory(thread.payload.chatHistory || [])
       setThreadMemory(thread.payload.threadMemory || null)
@@ -1137,6 +1139,10 @@ export default function StylistChat({
     if (openingWithAction && messages.length <= 1 && !loading) return
     if (holdActionScrollRef.current) {
       if (!loading) holdActionScrollRef.current = false
+      return
+    }
+    if (suppressNextMessageScrollRef.current) {
+      suppressNextMessageScrollRef.current = false
       return
     }
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -4385,6 +4391,61 @@ export default function StylistChat({
 
 
 
+  const renderComposerDock = (extraClassName = '') => (
+    <div className={`stylist-composer-dock ${messages.length > 1 ? 'is-sticky' : ''} ${extraClassName}`.trim()}>
+      {wardrobeBuilderOpen ? (
+        <div
+          className="stylist-builder-composer-shell"
+          id="outfit-builder-composer"
+          role="region"
+          aria-labelledby="outfit-builder-composer-title"
+          onKeyDown={e => {
+            if (e.key === 'Escape') closeWardrobeBuilderComposer()
+          }}
+        >
+          {renderWardrobeBuilderPanel()}
+        </div>
+      ) : (
+        <>
+          {imagePrev && (
+            <div className="stylist-attached-photo">
+              <div style={{ position: 'relative' }}>
+                <img src={imagePrev} alt="" style={{ height: 56, width: 56, objectFit: 'contain', borderRadius: 8, background: 'var(--surface-2)' }} />
+                <button onClick={() => { setImageFile(null); setImagePrev(null) }} style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, background: 'var(--text)', color: '#fff', borderRadius: '50%', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+              </div>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Photo attached</span>
+            </div>
+          )}
+
+          <div className={`stylist-input-shell ${pending ? 'is-hidden-for-pending-action' : ''}`}>
+            <div className="ai-input-row" aria-hidden={pending ? 'true' : undefined}>
+              {!pending && (
+                <>
+                  <label className={`ai-upload-btn ${imagePrev ? 'has-image' : ''}`} title="Attach photo">
+                    <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
+                    📷
+                  </label>
+                  <textarea ref={textRef} className="ai-input" placeholder="Ask about your wardrobe..." value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
+                  <button
+                    ref={createOutfitsButtonRef}
+                    type="button"
+                    className="composer-create-outfits-btn"
+                    onClick={openWardrobeBuilderComposer}
+                    aria-expanded={wardrobeBuilderOpen}
+                    aria-controls="outfit-builder-composer"
+                  >
+                    Create outfits
+                  </button>
+                  <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+
   const latestAssistantIndex = (() => {
     for (let idx = messages.length - 1; idx >= 0; idx--) {
       if (messages[idx].role === 'assistant') return idx
@@ -4546,14 +4607,26 @@ export default function StylistChat({
       )}
 
       {/* Chat thread */}
-      <div className={`stylist-chat-scroll ${pending ? 'has-pending-action' : ''}`}>
+      <div className={`stylist-chat-scroll ${messages.length > 1 ? 'is-existing-chat' : 'is-empty-chat'} ${pending ? 'has-pending-action' : ''}`}>
         {messages.length === 1 && (
-          <div style={{ marginBottom: 16 }}>
+          <div className="stylist-empty-state">
             {!pending && (
               <>
-                <div style={{ fontSize: 11, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Try asking...</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {SUGGESTIONS.map(s => <button key={s} onClick={() => setInput(s)} style={{ textAlign: 'left', padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer' }}>{s}</button>)}
+                <div className="stylist-empty-intro">
+                  <h2>Ask anything about your wardrobe</h2>
+                  <p>I can create outfits from your saved pieces or review an outfit photo.</p>
+                </div>
+                {renderComposerDock('is-empty-state')}
+                <div className="stylist-suggestion-section">
+                  <div className="stylist-suggestion-heading">Try asking</div>
+                  <div className="stylist-suggestion-list">
+                    {SUGGESTIONS.map(s => (
+                      <button key={s} type="button" className="stylist-suggestion-btn" onClick={() => setInput(s)}>
+                        <span>{s}</span>
+                        <span className="stylist-suggestion-arrow" aria-hidden="true">→</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </>
             )}
@@ -4561,7 +4634,7 @@ export default function StylistChat({
         )}
 
         <div className="chat-thread">
-          {messages.map((m, i) => {
+          {messages.length > 1 && messages.map((m, i) => {
             if (m.contextName === 'Whole wardrobe evaluation') {
               return null
             }
@@ -5368,58 +5441,7 @@ export default function StylistChat({
         </div>
       )}
 
-      <div className={`stylist-composer-dock ${messages.length > 1 ? 'is-sticky' : ''}`}>
-        {wardrobeBuilderOpen ? (
-          <div
-            className="stylist-builder-composer-shell"
-            id="outfit-builder-composer"
-            role="region"
-            aria-labelledby="outfit-builder-composer-title"
-            onKeyDown={e => {
-              if (e.key === 'Escape') closeWardrobeBuilderComposer()
-            }}
-          >
-            {renderWardrobeBuilderPanel()}
-          </div>
-        ) : (
-          <>
-        {imagePrev && (
-          <div className="stylist-attached-photo">
-            <div style={{ position: 'relative' }}>
-              <img src={imagePrev} alt="" style={{ height: 56, width: 56, objectFit: 'contain', borderRadius: 8, background: 'var(--surface-2)' }} />
-              <button onClick={() => { setImageFile(null); setImagePrev(null) }} style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, background: 'var(--text)', color: '#fff', borderRadius: '50%', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
-            </div>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Photo attached</span>
-          </div>
-        )}
-
-        <div className={`stylist-input-shell ${pending ? 'is-hidden-for-pending-action' : ''}`}>
-          <div className="ai-input-row" aria-hidden={pending ? 'true' : undefined}>
-            {!pending && (
-              <>
-                <label className={`ai-upload-btn ${imagePrev ? 'has-image' : ''}`} title="Attach photo">
-                  <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
-                  📷
-                </label>
-                <textarea ref={textRef} className="ai-input" placeholder="Ask about your wardrobe..." value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
-                <button
-                  ref={createOutfitsButtonRef}
-                  type="button"
-                  className="composer-create-outfits-btn"
-                  onClick={openWardrobeBuilderComposer}
-                  aria-expanded={wardrobeBuilderOpen}
-                  aria-controls="outfit-builder-composer"
-                >
-                  Create outfits
-                </button>
-                <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
-              </>
-            )}
-          </div>
-        </div>
-          </>
-        )}
-      </div>
+      {messages.length > 1 && renderComposerDock()}
       {previewImage && (
         <div
           role="dialog"
