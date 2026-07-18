@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import PieceCard from '../components/PieceCard'
 import PieceForm from '../components/PieceForm'
@@ -83,6 +83,9 @@ export default function PieceInventory({ onSendToStylist }) {
   const [showBatch, setShowBatch]     = useState(false)
   const [editPiece, setEditPiece]     = useState(null)
   const [detailPiece, setDetailPiece] = useState(null)
+  const [openFilterMenu, setOpenFilterMenu] = useState(null)
+  const [fabricSearch, setFabricSearch] = useState('')
+  const compactFilterRef = useRef(null)
   const [availableColors, setAvailableColors]   = useState([])
   const [availableFabrics, setAvailableFabrics] = useState([])
   const pendingCount = usePendingWardrobeTaskCount()
@@ -114,6 +117,27 @@ export default function PieceInventory({ onSendToStylist }) {
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => { const t = setTimeout(fetchPieces, 300); return () => clearTimeout(t) }, [search])
+  useEffect(() => {
+    if (!openFilterMenu) return undefined
+    const handlePointerDown = (event) => {
+      if (!compactFilterRef.current?.contains(event.target)) {
+        setOpenFilterMenu(null)
+        setFabricSearch('')
+      }
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setOpenFilterMenu(null)
+        setFabricSearch('')
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [openFilterMenu])
 
   const handleFavorite = async (piece) => {
     await fetch(`/api/pieces/${piece.id}/favorite`, { method: 'PATCH' })
@@ -122,6 +146,12 @@ export default function PieceInventory({ onSendToStylist }) {
   const handleSave = () => { setShowForm(false); setEditPiece(null); setDetailPiece(null); fetchPieces(); fetchMeta() }
   const handleDelete = async (piece) => { await fetch(`/api/pieces/${piece.id}`, { method: 'DELETE' }); setDetailPiece(null); fetchPieces(); fetchMeta() }
   const handleEdit = (piece) => { setDetailPiece(null); setEditPiece(piece); setShowForm(true) }
+  const activeCompactFilters = [
+    filterColor ? { key: 'color', label: filterColor, clear: () => setFilter({ color: '' }) } : null,
+    filterFabric ? { key: 'fabric', label: filterFabric, clear: () => setFilter({ fabric: '' }) } : null,
+  ].filter(Boolean)
+  const visibleFabrics = availableFabrics.filter(fabric => fabric.toLowerCase().includes(fabricSearch.trim().toLowerCase()))
+  const addPiece = () => { setEditPiece(null); setShowForm(true) }
 
   return (
     <div>
@@ -132,9 +162,9 @@ export default function PieceInventory({ onSendToStylist }) {
             <div className="view-title">The Wardrobe Room</div>
             <div className="view-subtitle">{pieces.length} pieces{favOnly ? ' · favorites' : ''}</div>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
-            <button className={`chip ${favOnly ? 'active' : ''}`} onClick={() => setFilter({ fav: !favOnly })}>
-              {favOnly ? '♥' : '♡'}
+          <div className="wardrobe-header-actions">
+            <button className="chip wardrobe-add-piece" onClick={addPiece}>
+              Add piece
             </button>
             <button
               className="chip"
@@ -158,95 +188,153 @@ export default function PieceInventory({ onSendToStylist }) {
           <input type="search" placeholder="Search pieces by name, tags, or ID…" value={search} onChange={e => setFilter({ q: e.target.value })} />
         </div>
 
-        <div className="filter-row" style={{ marginBottom: 8 }}>
-          {CATEGORIES.map(c => (
-            <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value })}>{c.label}</button>
-          ))}
-        </div>
-
-        <div className="filter-row" style={{ marginBottom: 8 }}>
-          {OCCASIONS.map(o => (
-            <button key={o.value} className={`chip ${filterOcc === o.value ? 'active' : ''}`} onClick={() => setFilter({ occasion: o.value })}>{o.label}</button>
-          ))}
-        </div>
-
-        <div className="filter-row" style={{ marginBottom: 8 }}>
-          {SEASONS.map(s => (
-            <button key={s.value} className={`chip ${filterSeason === s.value ? 'active' : ''}`} onClick={() => setFilter({ season: s.value })}>{s.label}</button>
-          ))}
-        </div>
-
-        {availableColors.length > 0 && (
-          <div className="filter-row" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', minWidth: 52, flexShrink: 0 }}>Colors:</span>
-            <button
-              className={`chip ${!filterColor ? 'active' : ''}`}
-              onClick={() => setFilter({ color: '' })}
-              style={{ fontSize: 11, padding: '3px 8px' }}
-            >
-              All
-            </button>
-            {availableColors.map(color => {
-              const hex = COLOR_HEX_MAP[color] || '#ccc'
-              const active = filterColor === color
-              const isLight = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac'].includes(color)
-              return (
-                <button
-                  key={color}
-                  onClick={() => setFilter({ color: active ? '' : color })}
-                  style={{
-                    width: 18,
-                    height: 18,
-                    borderRadius: '50%',
-                    background: hex,
-                    border: active ? '2px solid var(--accent)' : '1px solid rgba(0,0,0,0.15)',
-                    boxShadow: active ? '0 0 0 1px var(--accent-light)' : 'none',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: 0,
-                    position: 'relative',
-                    transition: 'all 0.15s ease'
-                  }}
-                  title={color}
-                >
-                  {active && (
-                    <span style={{
-                      color: isLight ? '#333' : '#fff',
-                      fontSize: 10,
-                      fontWeight: 'bold',
-                      lineHeight: 1
-                    }}>✓</span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        {availableFabrics.length > 0 && (
-          <div className="filter-row" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', minWidth: 52, flexShrink: 0 }}>Fabrics:</span>
-            <button
-              className={`chip ${!filterFabric ? 'active' : ''}`}
-              onClick={() => setFilter({ fabric: '' })}
-              style={{ fontSize: 11, padding: '3px 8px' }}
-            >
-              All
-            </button>
-            {availableFabrics.map(fabric => (
-              <button
-                key={fabric}
-                className={`chip ${filterFabric === fabric ? 'active' : ''}`}
-                onClick={() => setFilter({ fabric: filterFabric === fabric ? '' : fabric })}
-                style={{ fontSize: 11, padding: '3px 8px', textTransform: 'capitalize' }}
-              >
-                {fabric}
-              </button>
+        <div className="wardrobe-filter-group">
+          <div className="wardrobe-filter-label">Category</div>
+          <div className="filter-row">
+            {CATEGORIES.map(c => (
+              <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value })}>{c.label}</button>
             ))}
           </div>
+        </div>
+
+        <div className="wardrobe-filter-group">
+          <div className="wardrobe-filter-label">Occasion</div>
+          <div className="filter-row">
+            {OCCASIONS.map(o => (
+              <button key={o.value} className={`chip ${filterOcc === o.value ? 'active' : ''}`} onClick={() => setFilter({ occasion: o.value })}>{o.label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="wardrobe-filter-group">
+          <div className="wardrobe-filter-label">Season</div>
+          <div className="filter-row">
+            {SEASONS.map(s => (
+              <button key={s.value} className={`chip ${filterSeason === s.value ? 'active' : ''}`} onClick={() => setFilter({ season: s.value })}>{s.label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="wardrobe-compact-filter-row" ref={compactFilterRef}>
+          {availableColors.length > 0 && (
+            <div className="wardrobe-filter-menu">
+              <button
+                className={`filter-menu-btn ${openFilterMenu === 'color' || filterColor ? 'active' : ''}`}
+                onClick={() => { setFabricSearch(''); setOpenFilterMenu(openFilterMenu === 'color' ? null : 'color') }}
+                aria-expanded={openFilterMenu === 'color'}
+                aria-haspopup="menu"
+              >
+                <span>{filterColor ? 'Color · 1' : 'Color'}</span>
+                <span className="filter-menu-chevron">⌄</span>
+              </button>
+              {openFilterMenu === 'color' && (
+                <div className="filter-menu-popover wardrobe-color-popover" role="menu">
+                  <button
+                    className={`custom-select-option ${!filterColor ? 'active' : ''}`}
+                    onClick={() => { setFilter({ color: '' }); setOpenFilterMenu(null) }}
+                    role="menuitem"
+                  >
+                    <span>All</span>
+                    {!filterColor && <span aria-hidden="true">✓</span>}
+                  </button>
+                  <div className="wardrobe-color-grid">
+                    {availableColors.map(color => {
+                      const hex = COLOR_HEX_MAP[color] || '#ccc'
+                      const active = filterColor === color
+                      const isLight = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac'].includes(color)
+                      return (
+                        <button
+                          key={color}
+                          className={`wardrobe-color-swatch ${active ? 'active' : ''}`}
+                          onClick={() => { setFilter({ color: active ? '' : color }); setOpenFilterMenu(null) }}
+                          style={{ background: hex }}
+                          title={color}
+                          aria-label={`${active ? 'Clear' : 'Filter by'} ${color}`}
+                          role="menuitem"
+                        >
+                          {active && <span style={{ color: isLight ? '#333' : '#fff' }}>✓</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {availableFabrics.length > 0 && (
+            <div className="wardrobe-filter-menu">
+              <button
+                className={`filter-menu-btn ${openFilterMenu === 'fabric' || filterFabric ? 'active' : ''}`}
+                onClick={() => setOpenFilterMenu(openFilterMenu === 'fabric' ? null : 'fabric')}
+                aria-expanded={openFilterMenu === 'fabric'}
+                aria-haspopup="menu"
+              >
+                <span>{filterFabric ? 'Fabric · 1' : 'Fabric'}</span>
+                <span className="filter-menu-chevron">⌄</span>
+              </button>
+              {openFilterMenu === 'fabric' && (
+                <div className="filter-menu-popover wardrobe-fabric-popover" role="menu">
+                  <div className="wardrobe-fabric-search-shell">
+                    <input
+                      className="wardrobe-fabric-search"
+                      type="search"
+                      placeholder="Search fabrics..."
+                      value={fabricSearch}
+                      onChange={event => setFabricSearch(event.target.value)}
+                    />
+                  </div>
+                  <button
+                    className={`custom-select-option ${!filterFabric ? 'active' : ''}`}
+                    onClick={() => { setFilter({ fabric: '' }); setOpenFilterMenu(null); setFabricSearch('') }}
+                    role="menuitem"
+                  >
+                    <span>All</span>
+                    {!filterFabric && <span aria-hidden="true">✓</span>}
+                  </button>
+                  {visibleFabrics.map(fabric => (
+                    <button
+                      key={fabric}
+                      className={`custom-select-option ${filterFabric === fabric ? 'active' : ''}`}
+                      onClick={() => { setFilter({ fabric: filterFabric === fabric ? '' : fabric }); setOpenFilterMenu(null); setFabricSearch('') }}
+                      role="menuitem"
+                      style={{ textTransform: 'capitalize' }}
+                    >
+                      <span>{fabric}</span>
+                      {filterFabric === fabric && <span aria-hidden="true">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            className={`chip wardrobe-favorite-filter ${favOnly ? 'active' : ''}`}
+            onClick={() => setFilter({ fav: !favOnly })}
+            title="Show favorite pieces"
+            aria-label="Show favorite pieces"
+            aria-pressed={favOnly}
+          >
+            {favOnly ? '♥ Favorites' : '♡ Favorites'}
+          </button>
+        </div>
+
+        {activeCompactFilters.length > 0 && (
+          <div className="active-filter-row wardrobe-active-filter-row">
+            {activeCompactFilters.map(filter => (
+              <button key={filter.key} className="active-filter-chip" onClick={filter.clear}>
+                {filter.label} ×
+              </button>
+            ))}
+            {activeCompactFilters.length >= 2 && (
+              <button className="clear-filters-btn" onClick={() => setFilter({ color: '', fabric: '' })}>
+                Clear all
+              </button>
+            )}
+          </div>
         )}
+
       </div>
 
       {/* Grid */}
@@ -269,7 +357,7 @@ export default function PieceInventory({ onSendToStylist }) {
       )}
 
       {/* FAB */}
-      <button className="fab" onClick={() => { setEditPiece(null); setShowForm(true) }}>+</button>
+      <button className="fab wardrobe-mobile-fab" onClick={addPiece}>+</button>
 
       {/* Modals */}
       {showForm && <PieceForm piece={editPiece} onSave={handleSave} onCancel={() => { setShowForm(false); setEditPiece(null) }} />}

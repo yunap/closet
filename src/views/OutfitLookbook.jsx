@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 
@@ -23,6 +23,7 @@ const OUTFIT_SEASONS = [
   { value: 'warm',       label: 'warm' },
   { value: 'cool',       label: 'cool' },
   { value: 'year-round', label: 'year-round' },
+  // Indoor is intentionally preserved as an outfit season/environment value for existing saved outfits.
   { value: 'indoor',     label: 'indoor' },
 ]
 const SORT_OPTIONS = [
@@ -840,16 +841,22 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
 
   return (
     <div className="modal-overlay">
-      <div className="modal-sheet" onClick={e => e.stopPropagation()}>
-        <div className="modal-handle" />
+      <div
+        className="modal-sheet outfit-form-sheet"
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="outfit-form-title"
+      >
+        <div className="modal-handle outfit-form-handle" />
         <div className="modal-header">
-          <span className="modal-title">{isEdit ? 'Edit outfit' : 'Add outfit'}</span>
-          <button className="modal-close" onClick={onCancel}>✕</button>
+          <span className="modal-title" id="outfit-form-title">{isEdit ? 'Edit outfit' : 'Add outfit'}</span>
+          <button className="modal-close" onClick={onCancel} aria-label="Close outfit form">✕</button>
         </div>
         <div className="form-body">
           {preview ? (
-            <div className="photo-preview">
-              <img src={preview} alt="preview" style={{ maxHeight: 280 }} />
+            <div className="photo-preview outfit-form-preview">
+              <img src={preview} alt="Outfit preview" />
               {photoFile && (
                 <button className="photo-preview-remove" onClick={() => { setPhotoFile(null); setPreview(outfit?.photo ? `/uploads/${outfit.photo}` : null); setExtracted([]); setExtractedActions([]) }}>✕</button>
               )}
@@ -922,7 +929,10 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
             <input className="form-input" placeholder="e.g. Weekend market look" value={name} onChange={e => setName(e.target.value)} />
           </div>
           <div className="form-group">
-            <label className="form-label">Occasion</label>
+            <div className="form-field-heading">
+              <label className="form-label">Occasion</label>
+              <span className="form-helper">Choose one</span>
+            </div>
             <div className="chip-grid">
               {OCCASIONS.filter(o => o.value).map(o => (
                 <button key={o.value} className={`chip-toggle ${occasion === o.value ? 'active' : ''}`} onClick={() => setOccasion(o.value)}>{o.label}</button>
@@ -930,7 +940,10 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Season</label>
+            <div className="form-field-heading">
+              <label className="form-label">Season</label>
+              <span className="form-helper">Choose one</span>
+            </div>
             <div className="radio-row">
               {OUTFIT_SEASONS.map(s => (
                 <button key={s.value} className={`radio-btn ${season === s.value ? 'active' : ''}`} onClick={() => setSeason(s.value)}>{s.label}</button>
@@ -938,7 +951,10 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Status</label>
+            <div className="form-field-heading">
+              <label className="form-label">Status</label>
+              <span className="form-helper">Choose one</span>
+            </div>
             <div className="chip-grid">
               {['confirmed','trying','archived'].map(s => <button key={s} className={`chip-toggle ${status === s ? 'active' : ''}`} onClick={() => setStatus(s)} style={{ textTransform: 'capitalize' }}>{s}</button>)}
             </div>
@@ -966,6 +982,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
   const [mainPieceId, setMainPieceId] = useState(outfit.main_piece_id || null)
   const [showSelector, setShowSelector] = useState(false)
   const [previewImage, setPreviewImage] = useState(null)
+  const [isMoreOpen, setIsMoreOpen] = useState(false)
 
   const handleDelete = () => {
     if (confirm(`Delete "${outfit.name}"?`)) onDelete(outfit)
@@ -987,8 +1004,16 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
   return (
     <>
       <div className="modal-overlay" onClick={onClose}>
-        <div className="modal-sheet" onClick={e => e.stopPropagation()}>
+        <div className="modal-sheet outfit-detail-sheet" onClick={e => e.stopPropagation()}>
           <div className="modal-handle" />
+          <button
+            type="button"
+            className="outfit-detail-close"
+            onClick={onClose}
+            aria-label="Close outfit details"
+          >
+            ✕
+          </button>
           {outfit.photo ? (
             <button
               type="button"
@@ -1005,35 +1030,78 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
           ) : (
             <div className="outfit-placeholder" style={{ height: 260, aspectRatio: 'auto', borderRadius: 0 }}>{OCCASION_ICONS[outfit.occasion] || '✦'}</div>
           )}
-          <div className="detail-body">
-            <div className="detail-title">{outfit.name}</div>
-            <div className="detail-category" style={{ textTransform: 'capitalize' }}>{outfit.occasion} · {outfit.season}</div>
-            <div className="detail-tags">
-              <span className="detail-tag" style={{ textTransform: 'capitalize' }}>{outfit.status}</span>
-              {outfit.favorite && <span className="detail-tag" style={{ color: 'var(--accent)' }}>♥ Favorite</span>}
-            </div>
-            {outfit.notes && <div className="detail-notes">{outfit.notes}</div>}
+          <div className="detail-body outfit-detail-body">
+            <section className="outfit-detail-section outfit-identity-section" aria-label="Outfit identity">
+              <div className="outfit-identity-header">
+                <div>
+                  <div className="detail-title">{outfit.name}</div>
+                  <div className="detail-category" style={{ textTransform: 'capitalize' }}>{outfit.occasion} · {outfit.season}</div>
+                </div>
+                <div className="outfit-overflow">
+                  <button
+                    type="button"
+                    className="outfit-overflow-btn"
+                    onClick={() => setIsMoreOpen(open => !open)}
+                    aria-haspopup="menu"
+                    aria-expanded={isMoreOpen}
+                    aria-label="More outfit actions"
+                  >
+                    ⋯
+                  </button>
+                  {isMoreOpen && (
+                    <div className="outfit-overflow-menu" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMoreOpen(false)
+                          onEdit({ ...outfit, pieces, main_piece_id: mainPieceId })
+                        }}
+                      >
+                        Edit outfit
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="danger"
+                        onClick={() => {
+                          setIsMoreOpen(false)
+                          handleDelete()
+                        }}
+                      >
+                        Delete outfit
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="detail-tags outfit-status-tags">
+                <span className="detail-tag" style={{ textTransform: 'capitalize' }}>{outfit.status}</span>
+                {outfit.favorite && <span className="detail-tag" style={{ color: 'var(--accent)' }}>♥ Favorite</span>}
+              </div>
+              {outfit.notes && <div className="detail-notes">{outfit.notes}</div>}
+            </section>
 
-            {/* Pieces section */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <section className="outfit-detail-section outfit-composition-section" aria-label="Outfit composition">
+              <div className="outfit-section-header">
                 <div className="form-label">
                   {pieces.length > 0 ? `${pieces.length} linked ${pieces.length === 1 ? 'piece' : 'pieces'}` : 'No pieces linked'}
                 </div>
                 <button
+                  type="button"
+                  className="outfit-text-action"
                   onClick={() => setShowSelector(true)}
-                  style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 500 }}
                 >
                   {pieces.length > 0 ? 'Edit pieces' : '+ Link pieces'}
                 </button>
               </div>
 
               {pieces.length > 0 && (
-                <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
+                <div className="outfit-linked-pieces">
                   {pieces.map(p => {
                     const bg = p.colors?.[0] ? (COLOR_BG[p.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
                     return (
-                      <div key={p.id} style={{ flexShrink: 0, width: 64 }}>
+                      <div key={p.id} className="outfit-linked-piece">
                         <button
                           type="button"
                           disabled={!p.photo}
@@ -1042,27 +1110,16 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
                             title: p.name || 'Garment',
                             meta: p.category || ''
                           })}
-                          style={{
-                            width: 64,
-                            height: 84,
-                            borderRadius: 8,
-                            overflow: 'hidden',
-                            border: '1px solid var(--border-light)',
-                            background: bg,
-                            padding: 0,
-                            cursor: p.photo ? 'zoom-in' : 'default',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}
-                          aria-label={p.photo ? `Open preview for ${p.name}` : undefined}
+                          className="outfit-linked-piece-photo"
+                          style={{ background: bg }}
+                          aria-label={p.photo ? `Open preview for ${p.name}` : p.name}
                         >
                           {p.photo
-                            ? <img src={`/uploads/${p.photo}`} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                            : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-serif)', fontSize: 22, fontStyle: 'italic', opacity: 0.5, color: 'rgba(255,255,255,0.9)' }}>{p.name.charAt(0)}</div>
+                            ? <img src={`/uploads/${p.photo}`} alt={p.name} />
+                            : <div className="outfit-linked-piece-initial">{p.name.charAt(0)}</div>
                           }
                         </button>
-                        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 3, textAlign: 'center', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                        <div className="outfit-linked-piece-name">
                           {p.name}
                         </div>
                       </div>
@@ -1070,68 +1127,62 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
                   })}
                 </div>
               )}
-            </div>
+            </section>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 8 }}>
-              <button onClick={() => onSendToStylist({
-                ...outfit,
-                pieces,
-                main_piece_id: mainPieceId,
-                autoSend: true,
-                stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
-              })} style={{
-                padding: '12px', background: 'var(--accent)', color: '#fff',
-                border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-                fontSize: 13, fontWeight: 500,
-              }}>
+            <section className="outfit-detail-section outfit-styling-actions" aria-label="Styling actions">
+              <button
+                type="button"
+                className="outfit-action-primary"
+                onClick={() => onSendToStylist({
+                  ...outfit,
+                  pieces,
+                  main_piece_id: mainPieceId,
+                  autoSend: true,
+                  stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
+                })}
+              >
                 Critique outfit
               </button>
-              <button onClick={() => onSendToStylist({
-                ...outfit,
-                pieces,
-                main_piece_id: mainPieceId,
-                autoSend: true,
-                imageGenerationMode: true,
-                variantMode: 'formula',
-                stylistPrompt: 'Create formula-similar outfits from my wardrobe based on this saved look.'
-              })} style={{
-                padding: '12px', background: 'var(--surface)', color: 'var(--accent)',
-                border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-                fontSize: 13, fontWeight: 500,
-              }}>
-                Similar variants
+              <div className="outfit-action-secondary-row">
+                <button
+                  type="button"
+                  className="outfit-action-secondary"
+                  onClick={() => onSendToStylist({
+                    ...outfit,
+                    pieces,
+                    main_piece_id: mainPieceId,
+                    autoSend: true,
+                    imageGenerationMode: true,
+                    variantMode: 'formula',
+                    stylistPrompt: 'Create formula-similar outfits from my wardrobe based on this saved look.'
+                  })}
+                >
+                  Similar variants
+                </button>
+                <button
+                  type="button"
+                  className="outfit-action-secondary"
+                  onClick={() => onSendToStylist({
+                    ...outfit,
+                    pieces,
+                    main_piece_id: mainPieceId,
+                    autoSend: true,
+                    imageGenerationMode: true,
+                    variantMode: 'creative',
+                    stylistPrompt: 'Generate creative alternatives from this saved outfit photo and linked garment references.'
+                  })}
+                >
+                  Creative alternatives
+                </button>
+              </div>
+              <button
+                type="button"
+                className="outfit-action-tertiary"
+                onClick={() => onSendToStylist({ ...outfit, pieces, main_piece_id: mainPieceId })}
+              >
+                ◇ Ask a custom question
               </button>
-              <button onClick={() => onSendToStylist({
-                ...outfit,
-                pieces,
-                main_piece_id: mainPieceId,
-                autoSend: true,
-                imageGenerationMode: true,
-                variantMode: 'creative',
-                stylistPrompt: 'Generate creative alternatives from this saved outfit photo and linked garment references.'
-              })} style={{
-                padding: '12px', background: 'var(--surface)', color: 'var(--accent)',
-                border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-                fontSize: 13, fontWeight: 500,
-              }}>
-                Creative alternatives
-              </button>
-            </div>
-
-            <button onClick={() => onSendToStylist({ ...outfit, pieces, main_piece_id: mainPieceId })} style={{
-              width: '100%', padding: '11px', marginBottom: 10,
-              background: 'var(--accent-light)', color: 'var(--accent)',
-              border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-              fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            }}>
-              ◇ Ask a custom question
-            </button>
-
-            <div className="detail-actions">
-              <button className="btn-secondary" onClick={() => onEdit({ ...outfit, pieces, main_piece_id: mainPieceId })}>Edit</button>
-              <button className="btn-danger" onClick={handleDelete}>Delete</button>
-              <button className="btn-secondary" onClick={onClose}>Close</button>
-            </div>
+            </section>
           </div>
         </div>
       </div>
@@ -1431,10 +1482,12 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
   const [outfits, setOutfits]           = useState([])
   const [loading, setLoading]           = useState(true)
   const [isSortOpen, setIsSortOpen]     = useState(false)
+  const [openFilterMenu, setOpenFilterMenu] = useState(null)
 
   const [showForm, setShowForm]         = useState(false)
   const [editOutfit, setEditOutfit]     = useState(null)
   const [detail, setDetail]             = useState(null)
+  const outfitCardFocusRef              = useRef(null)
   const [toast, setToast]               = useState(null)
 
   const [savedBoards, setSavedBoards]   = useState([])
@@ -1494,6 +1547,24 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
     })
     setBoardDetail(null)
     fetchSavedBoards()
+  }
+
+  const handleCardKeyDown = (event, openDetail) => {
+    if (event.target !== event.currentTarget) return
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      openDetail()
+    }
+  }
+
+  const openOutfitDetail = (outfit, event) => {
+    outfitCardFocusRef.current = event?.currentTarget || null
+    setDetail(outfit)
+  }
+
+  const closeOutfitDetail = () => {
+    setDetail(null)
+    requestAnimationFrame(() => outfitCardFocusRef.current?.focus?.())
   }
 
   const handleSave = (outfit, piecesAdded) => {
@@ -1643,6 +1714,13 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
     return 0
   })
 
+  const selectedOccasion = OCCASIONS.find(o => o.value === filterOcc)
+  const selectedSeason = SEASONS.find(s => s.value === filterSeason)
+  const activeFilterChips = [
+    selectedOccasion?.value ? { key: 'occasion', label: selectedOccasion.label, clear: () => setFilter({ occasion: '' }) } : null,
+    selectedSeason?.value ? { key: 'season', label: selectedSeason.label.replace(/^[^\w]+?\s*/, ''), clear: () => setFilter({ season: '' }) } : null,
+  ].filter(Boolean)
+
   return (
     <div>
       <div className="view-header sticky-header">
@@ -1661,12 +1739,22 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
               )}
             </div>
           </div>
-          <button 
-            className={`chip fav-pin-btn ${pinFavs ? 'active' : ''}`} 
-            onClick={() => setFilter({ pin: !pinFavs })}
-          >
-            {pinFavs ? '♥ Pinned' : '♡ Pin Favs'}
-          </button>
+          <div className="lookbook-pin-toggle" aria-label="Favorite sorting preference">
+            <button
+              type="button"
+              className={!pinFavs ? 'active' : ''}
+              onClick={() => setFilter({ pin: false })}
+            >
+              All outfits
+            </button>
+            <button
+              type="button"
+              className={pinFavs ? 'active' : ''}
+              onClick={() => setFilter({ pin: true })}
+            >
+              Pinned
+            </button>
+          </div>
         </div>
 
         <div className="subtab-container">
@@ -1675,24 +1763,25 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
             className={`subtab-btn ${activeSubTab === 'my-outfits' ? 'active' : ''}`}
             onClick={() => setFilter({ view: 'my-outfits' })}
           >
-            My Outfits
+            <span>My Outfits</span>
+            <span className="subtab-count">{outfits.length}</span>
           </button>
           <button
             type="button"
             className={`subtab-btn ${activeSubTab === 'generated-outfits' ? 'active' : ''}`}
             onClick={() => setFilter({ view: 'generated-outfits' })}
           >
-            Generated Outfits
+            <span>Generated Outfits</span>
+            <span className="subtab-count">{savedBoards.length}</span>
           </button>
         </div>
 
-        {/* Search and Sort row */}
         <div className="search-sort-row">
           <div className="search-bar search-bar-lookbook">
             <span className="search-icon">◎</span>
             <input 
               type="search" 
-              placeholder="Search outfits, garments, colors…" 
+              placeholder="Search outfits..." 
               value={search} 
               onChange={e => setFilter({ q: e.target.value })}
             />
@@ -1728,30 +1817,101 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
           </div>
         </div>
 
-        {/* Double-row filters */}
-        <div className="filter-row occ-filter-row" style={{ marginBottom: 8 }}>
-          {OCCASIONS.map(o => (
-            <button 
-              key={o.value} 
-              className={`chip ${filterOcc === o.value ? 'active' : ''}`} 
-              onClick={() => setFilter({ occasion: o.value })}
+        <div className="lookbook-filter-toolbar">
+          <div className="lookbook-filter-menu">
+            <button
+              type="button"
+              className={`filter-menu-btn ${filterOcc ? 'active' : ''}`}
+              onClick={e => {
+                e.stopPropagation()
+                setOpenFilterMenu(openFilterMenu === 'occasion' ? null : 'occasion')
+              }}
             >
-              {o.value && (OCCASION_ICONS[o.value] || '✦')} {o.label}
+              <span>{selectedOccasion?.value ? selectedOccasion.label : 'Occasion'}</span>
+              <span className="custom-select-arrow">▾</span>
             </button>
-          ))}
+            {openFilterMenu === 'occasion' && (
+              <>
+                <div className="custom-select-backdrop" onClick={() => setOpenFilterMenu(null)} />
+                <div className="filter-menu-popover">
+                  {OCCASIONS.map(o => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      className={`custom-select-option ${filterOcc === o.value ? 'active' : ''}`}
+                      onClick={() => {
+                        setFilter({ occasion: o.value })
+                        setOpenFilterMenu(null)
+                      }}
+                    >
+                      {o.value && <span aria-hidden="true">{OCCASION_ICONS[o.value] || '✦'} </span>}
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="lookbook-filter-menu">
+            <button
+              type="button"
+              className={`filter-menu-btn ${filterSeason ? 'active' : ''}`}
+              onClick={e => {
+                e.stopPropagation()
+                setOpenFilterMenu(openFilterMenu === 'season' ? null : 'season')
+              }}
+            >
+              <span>{selectedSeason?.value ? selectedSeason.label : 'Season'}</span>
+              <span className="custom-select-arrow">▾</span>
+            </button>
+            {openFilterMenu === 'season' && (
+              <>
+                <div className="custom-select-backdrop" onClick={() => setOpenFilterMenu(null)} />
+                <div className="filter-menu-popover">
+                  {SEASONS.map(s => (
+                    <button
+                      key={s.value}
+                      type="button"
+                      className={`custom-select-option ${filterSeason === s.value ? 'active' : ''}`}
+                      onClick={() => {
+                        setFilter({ season: s.value })
+                        setOpenFilterMenu(null)
+                      }}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
-        <div className="filter-row season-filter-row">
-          {SEASONS.map(s => (
-            <button 
-              key={s.value} 
-              className={`chip ${filterSeason === s.value ? 'active' : ''}`} 
-              onClick={() => setFilter({ season: s.value })}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
+        {activeFilterChips.length > 0 && (
+          <div className="active-filter-row" aria-label="Active filters">
+            {activeFilterChips.map(chip => (
+              <button
+                key={chip.key}
+                type="button"
+                className="active-filter-chip"
+                onClick={chip.clear}
+                aria-label={`Remove ${chip.label} filter`}
+              >
+                {chip.label} <span aria-hidden="true">×</span>
+              </button>
+            ))}
+            {activeFilterChips.length >= 2 && (
+              <button
+                type="button"
+                className="clear-filters-btn"
+                onClick={() => setFilter({ occasion: '', season: '' })}
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {activeSubTab === 'my-outfits' ? (
@@ -1766,57 +1926,25 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
         ) : (
           <div className="outfit-grid animate-grid">
             {filteredAndSorted.map(o => (
-              <div key={o.id} className="outfit-card" style={{ position: 'relative' }} onClick={() => setDetail(o)}>
+              <div
+                key={o.id}
+                className="outfit-card"
+                style={{ position: 'relative' }}
+                onClick={event => openOutfitDetail(o, event)}
+                onKeyDown={event => handleCardKeyDown(event, () => openOutfitDetail(o, event))}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open ${o.name || 'outfit'} outfit`}
+              >
                 {o.photo
                   ? <img className="outfit-photo" src={`/uploads/${o.photo}`} alt={o.name} loading="lazy" />
                   : <div className="outfit-placeholder">{OCCASION_ICONS[o.occasion] || '✦'}</div>
                 }
                 <button
-                  className="outfit-card-action btn-critique"
-                  onClick={e => {
-                    e.stopPropagation()
-                    onSendToStylist({
-                      ...o,
-                      autoSend: true,
-                      stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
-                    })
-                  }}
-                >
-                  Critique
-                </button>
-                <button
-                  className="outfit-card-action btn-variant btn-similar"
-                  onClick={e => {
-                    e.stopPropagation()
-                    onSendToStylist({
-                      ...o,
-                      autoSend: true,
-                      imageGenerationMode: true,
-                      variantMode: 'formula',
-                      stylistPrompt: 'Create formula-similar outfits from my wardrobe based on this saved look.'
-                    })
-                  }}
-                >
-                  Similar
-                </button>
-                <button
-                  className="outfit-card-action btn-variant btn-creative"
-                  onClick={e => {
-                    e.stopPropagation()
-                    onSendToStylist({
-                      ...o,
-                      autoSend: true,
-                      imageGenerationMode: true,
-                      variantMode: 'creative',
-                      stylistPrompt: 'Generate creative alternatives from this saved outfit photo and linked garment references.'
-                    })
-                  }}
-                >
-                  Creative
-                </button>
-                <button
+                  type="button"
                   className="outfit-card-fav"
                   onClick={e => { e.stopPropagation(); handleFav(o) }}
+                  aria-label={`${o.favorite ? 'Remove' : 'Add'} ${o.name || 'outfit'} ${o.favorite ? 'from' : 'to'} favorites`}
                 >
                   {o.favorite ? '♥' : '♡'}
                 </button>
@@ -1843,15 +1971,26 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
         ) : (
           <div className="outfit-grid animate-grid">
             {filteredAndSortedBoards.map(b => (
-              <div key={b.id} className="outfit-card" style={{ position: 'relative' }} onClick={() => setBoardDetail(b)}>
+              <div
+                key={b.id}
+                className="outfit-card"
+                style={{ position: 'relative' }}
+                onClick={() => setBoardDetail(b)}
+                onKeyDown={event => handleCardKeyDown(event, () => setBoardDetail(b))}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open ${b.title || 'saved board'} board`}
+              >
                 {resolveUploadImageSrc(b.image_url) ? (
                   <img className="outfit-photo" src={resolveUploadImageSrc(b.image_url)} alt={b.title} loading="lazy" style={{ objectFit: 'cover' }} />
                 ) : (
                   <div className="outfit-placeholder">✦</div>
                 )}
                 <button
+                  type="button"
                   className="outfit-card-fav"
                   onClick={e => { e.stopPropagation(); handleBoardFav(b) }}
+                  aria-label={`${b.favorite ? 'Remove' : 'Add'} ${b.title || 'saved board'} ${b.favorite ? 'from' : 'to'} favorites`}
                 >
                   {b.favorite ? '♥' : '♡'}
                 </button>
@@ -1875,7 +2014,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
       {detail && (
         <OutfitDetail
           outfit={detail}
-          onClose={() => setDetail(null)}
+          onClose={closeOutfitDetail}
           onEdit={outfit => { setDetail(null); setEditOutfit(outfit); setShowForm(true) }}
           onDelete={handleDelete}
           onSendToStylist={outfit => { setDetail(null); onSendToStylist(outfit) }}
