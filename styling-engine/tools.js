@@ -1,6 +1,6 @@
 import path from 'path'
 import fs from 'fs'
-import { db, uploadsDir, safeJsonParse } from '../db.js'
+import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes } from './rules.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
@@ -875,7 +875,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           if (visual && index < SEARCH_WARDROBE_VISUAL_CAP) {
             const photoFile = p.worn_photo || p.photo || ''
             if (photoFile) {
-              const filePath = path.join(uploadsDir, photoFile)
+              const filePath = path.join(userUploadsDir(), photoFile)
               if (fs.existsSync(filePath)) {
                 try {
                   const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${photoFile}`)
@@ -1227,7 +1227,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           let image = null
           const photoFile = parsed.worn_photo || parsed.photo || ''
           if (photoFile) {
-            const filePath = path.join(uploadsDir, photoFile)
+            const filePath = path.join(userUploadsDir(), photoFile)
             if (fs.existsSync(filePath)) {
               try {
                 const thumb = await prepareWardrobeThumb(filePath, `${parsed.id}:${photoFile}`, { maxPx })
@@ -1368,7 +1368,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           let imageData = null
           const photoFile = parsed.worn_photo || parsed.photo || ''
           if (photoFile) {
-            const filePath = path.join(uploadsDir, photoFile)
+            const filePath = path.join(userUploadsDir(), photoFile)
             if (fs.existsSync(filePath)) {
               try {
                 console.log(`📸 [Agent Vision] Resizing reference photo for piece ${parsed.id} (${photoFile})`)

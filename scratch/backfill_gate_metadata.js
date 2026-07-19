@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
-import { db, parsePiece, uploadsDir } from '../db.js'
+import { db, parsePiece, userUploadsDir } from '../db.js'
 import { askStylist, prepareImageForClaude } from '../styling-engine/provider.js'
 import { applyTaggerResult, buildAnchorBlock, normalizeManualOverrides, tagStateForTaggerResult } from '../styling-engine/taggerMerge.js'
 
@@ -113,7 +113,7 @@ export function imageCandidatesForPiece(piece = {}, fields = []) {
 }
 
 async function prepareImageCandidate(candidate, labelPrefix = '') {
-  const filePath = path.join(uploadsDir, candidate.file)
+  const filePath = path.join(userUploadsDir(), candidate.file)
   if (!fs.existsSync(filePath)) return null
   const image = await prepareImageForClaude(filePath)
   return { ...candidate, label: `${labelPrefix}${candidate.label}`, ...image }

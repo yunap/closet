@@ -54,7 +54,7 @@ test('fresh instance serves the generic profile and default constitution layers'
   const body = Object.fromEntries(constitution.layers.map(l => [l.layer, l]))
   assert.equal(body.body_contract.body, DEFAULT_CONSTITUTION.body_contract)
   assert.equal(body.body_contract.isDefault, true)
-  assert.ok(runtime.STYLIST_SYSTEM.includes("the user's personal stylist"))
+  assert.ok(runtime.prompts.STYLIST_SYSTEM.includes("the user's personal stylist"))
 })
 
 test('profile PUT updates the live prompt bindings without restart', async () => {
@@ -63,16 +63,16 @@ test('profile PUT updates the live prompt bindings without restart', async () =>
     pronouns: { subject: 'she', object: 'her', possessive: 'her', plural: false }
   })
   assert.equal(status, 200)
-  assert.equal(runtime.PROFILE_NAME, 'Maya')
-  assert.ok(runtime.STYLIST_SYSTEM.includes("Maya's personal stylist"))
-  assert.ok(runtime.STYLIST_SYSTEM.includes('You know her wardrobe'))
+  assert.equal(runtime.prompts.PROFILE_NAME, 'Maya')
+  assert.ok(runtime.prompts.STYLIST_SYSTEM.includes("Maya's personal stylist"))
+  assert.ok(runtime.prompts.STYLIST_SYSTEM.includes('You know her wardrobe'))
 })
 
 test('constitution PUT persists, appends history, and re-assembles prompts', async () => {
   const newLayer = 'Layer 1 — Body & Comfort Contract (hard rules):\n- Custom test rule: no test garments.'
   const first = await putJson('/api/settings/constitution/body_contract', { body: newLayer })
   assert.equal(first.status, 200)
-  assert.ok(runtime.STYLIST_SYSTEM.includes('Custom test rule: no test garments'))
+  assert.ok(runtime.prompts.STYLIST_SYSTEM.includes('Custom test rule: no test garments'))
 
   const second = await putJson('/api/settings/constitution/body_contract', { body: newLayer + '\n- Second rule.', source: 'interview' })
   assert.equal(second.status, 200)

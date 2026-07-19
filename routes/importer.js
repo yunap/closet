@@ -13,7 +13,7 @@ import os from 'os'
 import { spawnSync } from 'child_process'
 import sharp from 'sharp'
 import AdmZip from 'adm-zip'
-import { db, uploadsDir, safeJsonParse } from '../db.js'
+import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { tagPieceWithProvider } from './ai.js'
 import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, salvageFirstJson, ACTIVE_STYLIST_MODEL, AI_PROVIDER } from '../styling-engine/provider.js'
 import { IMPORT_CLASSIFIER_SYSTEM, IMPORT_DETECTOR_SYSTEM, IMPORT_CLUSTER_SYSTEM, IMPORT_MERGE_SYSTEM, IMPORT_CROP_VERIFY_SYSTEM, IMPORT_RELOCATE_SYSTEM } from '../styling-engine/prompts.js'
@@ -43,7 +43,7 @@ export function ffmpegAvailable() {
 }
 
 function sessionDir(sessionId) {
-  const dir = path.join(uploadsDir, 'import', String(sessionId))
+  const dir = path.join(userUploadsDir(), 'import', String(sessionId))
   fs.mkdirSync(dir, { recursive: true })
   return dir
 }
@@ -522,7 +522,7 @@ router.post('/sessions/:id/match-existing', async (req, res) => {
           const usable = []
           for (const piece of sheet) {
             const photoFile = piece.worn_photo || piece.photo
-            const photoPath = path.join(uploadsDir, photoFile)
+            const photoPath = path.join(userUploadsDir(), photoFile)
             if (!fs.existsSync(photoPath)) continue
             usable.push(piece)
             const buffer = await sharp(photoPath).resize({ width: 448, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer()
@@ -698,7 +698,7 @@ function copyIntoUploads(sessionId, file, prefix) {
   const src = path.join(sessionDir(sessionId), file)
   if (!fs.existsSync(src)) return null
   const name = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}.jpg`
-  fs.copyFileSync(src, path.join(uploadsDir, name))
+  fs.copyFileSync(src, path.join(userUploadsDir(), name))
   return name
 }
 

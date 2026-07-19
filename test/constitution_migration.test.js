@@ -30,7 +30,9 @@ function bootDb(dbPath) {
     WARDROBE_DB_PATH: dbPath,
     WARDROBE_UPLOADS_DIR: path.join(tmpRoot, 'uploads')
   }
-  const result = spawnSync(process.execPath, ['-e', "import('./db.js').then(() => process.exit(0))"], {
+  // Spec 33 Part 1: db.js no longer opens/migrates a connection as an import side effect
+  // (per-user files are opened lazily, on first access). Touch `db` once to trigger it.
+  const result = spawnSync(process.execPath, ['-e', "import('./db.js').then(m => { m.db.prepare('SELECT 1').get(); process.exit(0) })"], {
     cwd: process.cwd(),
     env,
     encoding: 'utf8'

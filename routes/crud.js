@@ -2,8 +2,8 @@ import express from 'express'
 import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
-import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
-import { PROFILE_NAME, loadUserProfile, refreshPrompts } from '../styling-engine/promptRuntime.js'
+import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
+import { prompts, loadUserProfile, refreshPrompts } from '../styling-engine/promptRuntime.js'
 import { CONSTITUTION_LAYER_KEYS, DEFAULT_CONSTITUTION } from '../styling-engine/prompts.js'
 import { DEMO_WARDROBE_PIECES, seedDemoWardrobe, demoWardrobeCount, removeDemoWardrobe } from '../demoWardrobe.js'
 import { collectPieceIdsFromSavedBoardRow } from '../styling-engine/rules.js'
@@ -22,7 +22,7 @@ const router = express.Router()
 
 // Multer storage setup matching server.js
 const storage = multer.diskStorage({
-  destination: uploadsDir,
+  destination: (req, file, cb) => cb(null, userUploadsDir()),
   filename: (req, file, cb) => {
     const unique = Date.now() + '-' + Math.round(Math.random() * 1e9)
     cb(null, unique + path.extname(file.originalname))
@@ -200,7 +200,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
 router.delete('/pieces/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
   if (!p) return res.status(404).json({ error: 'Not found' })
-  if (p.photo) { const fp = path.join(uploadsDir, p.photo); if (fs.existsSync(fp)) fs.unlinkSync(fp) }
+  if (p.photo) { const fp = path.join(userUploadsDir(), p.photo); if (fs.existsSync(fp)) fs.unlinkSync(fp) }
   db.prepare('DELETE FROM pieces WHERE id = ?').run(req.params.id)
   res.json({ success: true })
 })
@@ -241,11 +241,11 @@ router.post('/pieces/:id/occasion-exclusion', (req, res) => {
     if (!exclusions.includes(normOccasion)) {
       exclusions.push(normOccasion)
     }
-    const note = `Excluded from ${occasion} by ${PROFILE_NAME} (${date})`
+    const note = `Excluded from ${occasion} by ${prompts.PROFILE_NAME} (${date})`
     rules.push(note)
   } else {
     exclusions = exclusions.filter(o => o !== normOccasion)
-    const note = `Restored for ${occasion} by ${PROFILE_NAME} (${date})`
+    const note = `Restored for ${occasion} by ${prompts.PROFILE_NAME} (${date})`
     rules.push(note)
   }
 
@@ -328,7 +328,7 @@ router.put('/outfits/:id', upload.single('photo'), (req, res) => {
 router.delete('/outfits/:id', (req, res) => {
   const o = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
   if (!o) return res.status(404).json({ error: 'Not found' })
-  if (o.photo) { const fp = path.join(uploadsDir, o.photo); if (fs.existsSync(fp)) fs.unlinkSync(fp) }
+  if (o.photo) { const fp = path.join(userUploadsDir(), o.photo); if (fs.existsSync(fp)) fs.unlinkSync(fp) }
   db.prepare('DELETE FROM outfits WHERE id = ?').run(req.params.id)
   res.json({ success: true })
 })

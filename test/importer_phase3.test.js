@@ -51,6 +51,9 @@ const getJson = async (route) => (await fetch(`${baseUrl}${route}`)).json()
 // garment-only) and one merge cluster targeting a seeded existing piece.
 async function buildMatchedSession() {
   const photoName = `existing-${Date.now()}.jpg`
+  // Spec 33 Part 1: uploads dir creation is now lazy (per-user, on first access via
+  // userUploadsDir()) rather than an eager side effect of importing db.js.
+  fs.mkdirSync(path.join(tmpRoot, 'uploads'), { recursive: true })
   fs.writeFileSync(path.join(tmpRoot, 'uploads', photoName), await makeJpeg('#223355'))
   const existingId = db.prepare("INSERT INTO pieces (name, category, photo, status) VALUES ('owned navy top', 'top', ?, 'active')").run(photoName).lastInsertRowid
 

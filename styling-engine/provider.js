@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
-import { STYLIST_SYSTEM, PROFILE_NAME, PROFILE_PRONOUNS } from './promptRuntime.js'
+import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
@@ -132,7 +132,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
     const contradiction = findZeroResultContradiction(answerText, toolContext)
     if (contradiction) {
       return fail('zeroResultContradiction', 'zeroResultContradictionBlocks',
-        `You searched for "${contradiction}" and found nothing — do not describe this as a piece ${PROFILE_NAME} owns. Either offer a real alternative via search_wardrobe or say plainly that ${PROFILE_PRONOUNS.subject} ${PROFILE_PRONOUNS.does}n't have this piece.`)
+        `You searched for "${contradiction}" and found nothing — do not describe this as a piece ${prompts.PROFILE_NAME} owns. Either offer a real alternative via search_wardrobe or say plainly that ${prompts.PROFILE_PRONOUNS.subject} ${prompts.PROFILE_PRONOUNS.does}n't have this piece.`)
     }
   }
   // A piece ID cited in prose must have been verified this turn — retrieved via
@@ -555,12 +555,12 @@ export function parseModelJson(raw, { context = '', maxTokens = null } = {}) {
   }
 }
 
-export async function askClaude({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
+export async function askClaude({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
   const { text } = await askClaudeWithUsage({ system, messages, maxTokens })
   return text
 }
 
-export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
+export async function askClaudeWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
   // Spec 31: an explicit per-call model override (the importer's cheap classification tier).
   const resolvedModel = model || ANTHROPIC_MODEL
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -652,12 +652,12 @@ export function withMovingCacheBreakpoint(messages = []) {
   return cleaned
 }
 
-export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
+export async function askStylist({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
   const { text } = await askStylistWithUsage({ system, messages, maxTokens })
   return text
 }
 
-export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
+export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {

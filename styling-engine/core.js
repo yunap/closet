@@ -2,28 +2,14 @@ import path from 'path'
 import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
-import { db, uploadsDir, safeJsonParse } from '../db.js'
+import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { buildWardrobeManifest } from '../src/utils/wardrobeAiContext.js'
 
 import {
-  OUTFIT_COMPOSER_SYSTEM,
-  OUTFIT_EVALUATOR_GATE_SYSTEM,
-  EDITORIAL_NEW_PIECES_SYSTEM,
-  WHOLE_WARDROBE_EVALUATOR_SYSTEM,
-  STYLIST_SYSTEM,
-  COMPARE_OUTFITS_SYSTEM,
+  prompts,
   EXPRESSIVE_HIERARCHY_RULES,
-  VISUAL_SUPPORT_CRITIC_SYSTEM,
-  VISUAL_WARDROBE_CRITIC_SYSTEM,
   EDITORIAL_IMAGE_BASE_PROMPT,
-  EDITORIAL_IMAGE_SUBJECT_PROMPT,
-  EDITORIAL_IMAGE_SHOES_RULE,
-  EDITORIAL_IMAGE_REALISM_RULE,
-  BODY_CONTRACT,
-  PROVEN_FORMULAS,
-  AESTHETIC_GRAVITY,
-  LANE_NEUTRALITY,
-  PROFILE_NAME
+  EDITORIAL_IMAGE_REALISM_RULE
 } from './promptRuntime.js'
 
 import {
@@ -188,7 +174,7 @@ export function buildOutfitAuthorityNote(outfit, linkedPieces = [], likelyPieces
   }
 
   if (isConfirmed) {
-    lines.push(`STATUS NOTE: This outfit is marked confirmed/favorite. Start from the assumption that the core outfit has worked for ${PROFILE_NAME}. Explain WHY it works first. Suggest only minor refinements unless the user asks for alternatives.`)
+    lines.push(`STATUS NOTE: This outfit is marked confirmed/favorite. Start from the assumption that the core outfit has worked for ${prompts.PROFILE_NAME}. Explain WHY it works first. Suggest only minor refinements unless the user asks for alternatives.`)
   } else if (status === 'rejected') {
     lines.push('STATUS NOTE: This outfit is marked rejected. Diagnose what likely failed, but keep the critique garment-focused and practical.')
   } else {
@@ -255,7 +241,7 @@ export function buildSavedOutfitEvaluationContext(outfit) {
     buildOutfitAuthorityNote(outfit, linkedPieces, likelyPieces),
     buildOutfitText(outfit, linkedPieces),
     likelyPieces.length ? `Likely saved garment truth for Outfit A — hints only unless linked:\n${likelyPieces.map(buildPieceText).join('\n')}` : '',
-    getConfirmedOutfitMemory() ? `Other confirmed outfit memory for comparison. Use this to understand ${PROFILE_NAME}'s taste, not as a rigid checklist:\n${getConfirmedOutfitMemory()}` : ''
+    getConfirmedOutfitMemory() ? `Other confirmed outfit memory for comparison. Use this to understand ${prompts.PROFILE_NAME}'s taste, not as a rigid checklist:\n${getConfirmedOutfitMemory()}` : ''
   ].filter(Boolean).join('\n\n')
   return { linkedPieces, likelyPieces, extraContextText }
 }
@@ -343,7 +329,7 @@ export function getCalibrationMemoryForStylist(limit = 32) {
 export async function criticPassForGeneratedOutfits({ selectedPiece, draft, userQuestion }) {
   if (process.env.STYLIST_CRITIC_DISABLED === 'true') return draft
 
-  const criticSystem = `You are a strict editor for ${PROFILE_NAME}'s generated outfit ideas.
+  const criticSystem = `You are a strict editor for ${prompts.PROFILE_NAME}'s generated outfit ideas.
 Return ONLY the corrected final answer.
 
 Hard checks:
@@ -356,7 +342,7 @@ Hard checks:
 - Do not recommend tucking unless garment truth supports it.
 - Avoid section must be contextual and must not contradict the recommended outfits.
 - Keep the required output format: Signature / strongest direction, Usable variation, optional Experimental direction, optional I would skip, Saveable learning.
-- Use ${PROFILE_NAME}'s language: visual column, relaxed structure, grounded texture, compact top, stable bottom, controlled softness, signature direction.`
+- Use ${prompts.PROFILE_NAME}'s language: visual column, relaxed structure, grounded texture, compact top, stable bottom, controlled softness, signature direction.`
 
   const checked = await askStylist({
     system: criticSystem,
@@ -374,7 +360,7 @@ Hard checks:
 export async function criticPassForSelectedItem({ selectedPiece, draft, userQuestion }) {
   if (process.env.STYLIST_CRITIC_DISABLED === 'true') return draft
 
-  const criticSystem = `You are a strict editor for ${PROFILE_NAME}'s wardrobe stylist app.
+  const criticSystem = `You are a strict editor for ${prompts.PROFILE_NAME}'s wardrobe stylist app.
 Check the draft answer for rule violations.
 Fix it if needed. Return ONLY the corrected final answer, no meta-commentary.
 
@@ -951,7 +937,7 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
   ].filter(Boolean).join('\n')
 
   const rawComposer = await askStylist({
-    system: OUTFIT_COMPOSER_SYSTEM,
+    system: prompts.OUTFIT_COMPOSER_SYSTEM,
     maxTokens: 1800,
     messages: [
       ...(history || []).map(h => ({ role: h.role, content: h.content })),
@@ -967,7 +953,7 @@ export async function composeStructuredOutfitsForPiece({ selectedPiece, rankedCa
   let gated = { outfits: normalized, rejected: [], skip: composerParsed.skip || '', saveableLearning: composerParsed.saveableLearning || '' }
   try {
     const rawGate = await askStylist({
-      system: OUTFIT_EVALUATOR_GATE_SYSTEM,
+      system: prompts.OUTFIT_EVALUATOR_GATE_SYSTEM,
       maxTokens: 1400,
       messages: [{ role: 'user', content: [{ type: 'text', text: [
         `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
@@ -1038,7 +1024,7 @@ export async function makeTextTile({ width, height, title, subtitle }) {
 
 export async function makeGarmentTile(piece, width = 190, height = 230) {
   const photo = piece?.photo || piece?.worn_photo
-  const filePath = photo ? path.join(uploadsDir, photo) : null
+  const filePath = photo ? path.join(userUploadsDir(), photo) : null
   let image
   if (filePath && fs.existsSync(filePath)) {
     image = await sharp(filePath)
@@ -1237,7 +1223,7 @@ export async function rankSelectedPieceCandidatesWithVision({ selectedPiece, ran
     return `${index + 1}. id ${piece.id}: ${piece.name} (${piece.category})\n${buildPieceText(piece)}`
   }).join('\n\n')
   const raw = await askStylist({
-    system: VISUAL_SUPPORT_CRITIC_SYSTEM,
+    system: prompts.VISUAL_SUPPORT_CRITIC_SYSTEM,
     maxTokens: 900,
     messages: [{
       role: 'user',
@@ -1316,7 +1302,7 @@ export async function rankWholeWardrobeCandidatesWithVision({ candidates = [], c
   const candidateTruth = wholeWardrobeCandidateText(reviewCandidates)
   const moodProfile = wholeWardrobeMoodProfile(mood)
   const raw = await askStylist({
-    system: VISUAL_WARDROBE_CRITIC_SYSTEM,
+    system: prompts.VISUAL_WARDROBE_CRITIC_SYSTEM,
     maxTokens: 900,
     messages: [{
       role: 'user',
@@ -1762,7 +1748,7 @@ export function makeMissingPieceObject(name, idx = 0) {
 }
 
 export async function createPhotoPreservingCollageImage({ title, subtitle, sourcePath = null, selectedPiece = null, pieces = [], missingPieces = [], reason = '', index = 1, prefix = 'photo-collage' }) {
-  const boardDir = path.join(uploadsDir, 'generated-boards')
+  const boardDir = path.join(userUploadsDir(), 'generated-boards')
   if (!fs.existsSync(boardDir)) fs.mkdirSync(boardDir, { recursive: true })
 
   const width = 1024
@@ -1806,13 +1792,13 @@ export async function createPhotoPreservingCollageImage({ title, subtitle, sourc
   }
 
   const filename = `generated-boards/${prefix}-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
-  const outPath = path.join(uploadsDir, filename)
+  const outPath = path.join(userUploadsDir(), filename)
   await sharp(Buffer.from(baseSvg)).composite(composites).png().toFile(outPath)
   return `/uploads/${filename}`
 }
 
 export async function createOutfitBoardImage({ board, pieces, index }) {
-  const boardDir = path.join(uploadsDir, 'generated-boards')
+  const boardDir = path.join(userUploadsDir(), 'generated-boards')
   if (!fs.existsSync(boardDir)) fs.mkdirSync(boardDir, { recursive: true })
 
   const width = 900
@@ -1836,7 +1822,7 @@ export async function createOutfitBoardImage({ board, pieces, index }) {
   }
 
   const filename = `generated-boards/board-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
-  const outPath = path.join(uploadsDir, filename)
+  const outPath = path.join(userUploadsDir(), filename)
   await sharp(Buffer.from(headerSvg)).composite(composites).png().toFile(outPath)
   return `/uploads/${filename}`
 }
@@ -1844,7 +1830,7 @@ export async function createOutfitBoardImage({ board, pieces, index }) {
 export async function garmentReferenceImage(piece) {
   const photo = piece?.photo || piece?.worn_photo
   if (!photo) return null
-  const filePath = path.join(uploadsDir, photo)
+  const filePath = path.join(userUploadsDir(), photo)
   if (!fs.existsSync(filePath)) return null
   const buffer = await sharp(filePath)
     .rotate()
@@ -2019,7 +2005,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
   const startedAt = Date.now()
   const timings = {}
   const filename = `generated-boards/saved-outfit-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
-  const outPath = path.join(uploadsDir, filename)
+  const outPath = path.join(userUploadsDir(), filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
   const sourcePath = outfit.photo ? imageUrlToUploadPath(outfit.photo) : null
 
@@ -2108,7 +2094,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
   const startedAt = Date.now()
   const timings = {}
   const filename = `generated-boards/whole-wardrobe-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
-  const outPath = path.join(uploadsDir, filename)
+  const outPath = path.join(userUploadsDir(), filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
 
   const board = {
@@ -2198,7 +2184,7 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
   const startedAt = Date.now()
   const timings = {}
   const filename = `generated-boards/whole-wardrobe-comparison-${Date.now()}-${Math.round(Math.random() * 1e6)}.png`
-  const outPath = path.join(uploadsDir, filename)
+  const outPath = path.join(userUploadsDir(), filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
   const shown = outfits.slice(0, 5)
   const uniquePieces = [...new Map(
@@ -2358,7 +2344,7 @@ export async function createIdealAdditionsComparisonSheetImage({
   const startedAt = Date.now()
   const timings = {}
   const filename = `generated-boards/ideal-additions-sheet-${Date.now()}-${Math.round(Math.random() * 1e6)}.png`
-  const outPath = path.join(uploadsDir, filename)
+  const outPath = path.join(userUploadsDir(), filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
 
   // Single reference photo: the selected garment
@@ -2470,10 +2456,10 @@ export function uploadedOrSavedOutfitPhotoPath(outfitPhoto = '') {
   // generated-boards/ are not stripped (path.basename would lose them).
   const uploadsPrefix = '/uploads/'
   if (s.startsWith(uploadsPrefix)) {
-    return path.join(uploadsDir, s.slice(uploadsPrefix.length))
+    return path.join(userUploadsDir(), s.slice(uploadsPrefix.length))
   }
   // Legacy: bare filename or relative path — join directly.
-  return path.join(uploadsDir, path.basename(s))
+  return path.join(userUploadsDir(), path.basename(s))
 }
 
 export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', question = '', attachedImageInventory = [] }) {
@@ -2620,7 +2606,7 @@ export async function evaluateOutfitThroughSharedPipeline({
   const imageRefs = await Promise.all(pieces.slice(0, 5).map(async (piece) => {
     const photo = piece.worn_photo || piece.photo
     if (!photo) return null
-    const filePath = path.join(uploadsDir, photo)
+    const filePath = path.join(userUploadsDir(), photo)
     if (!fs.existsSync(filePath)) return null
     const { base64, mime } = await prepareImageForClaude(filePath)
     return { piece, base64, mime }
@@ -2700,7 +2686,7 @@ export async function evaluateOutfitThroughSharedPipeline({
   ].filter(Boolean).join('\n') })
 
   const raw = await withTimeout(askStylist({
-    system: WHOLE_WARDROBE_EVALUATOR_SYSTEM,
+    system: prompts.WHOLE_WARDROBE_EVALUATOR_SYSTEM,
     maxTokens: 1400,
     messages: [
       ...(history || []).map(h => ({ role: h.role, content: h.content })),
@@ -2984,18 +2970,18 @@ export function editorialImagePrompt({ selectedPiece, direction, occasion, seaso
   return [
     EDITORIAL_IMAGE_BASE_PROMPT,
  
-    EDITORIAL_IMAGE_SUBJECT_PROMPT,
+    prompts.EDITORIAL_IMAGE_SUBJECT_PROMPT,
  
     `Style Constitution:
-${BODY_CONTRACT}
-${PROVEN_FORMULAS}
-${AESTHETIC_GRAVITY}
-${LANE_NEUTRALITY}
+${prompts.BODY_CONTRACT}
+${prompts.PROVEN_FORMULAS}
+${prompts.AESTHETIC_GRAVITY}
+${prompts.LANE_NEUTRALITY}
 ${EXPRESSIVE_HIERARCHY_RULES}`,
  
     silhouetteRule,
  
-    EDITORIAL_IMAGE_SHOES_RULE,
+    prompts.EDITORIAL_IMAGE_SHOES_RULE,
  
     EDITORIAL_IMAGE_REALISM_RULE,
  
@@ -3134,7 +3120,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   const timings = {}
   const prompt = editorialImagePrompt({ selectedPiece, direction, occasion, season })
   const filename = `generated-boards/editorial-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
-  const outPath = path.join(uploadsDir, filename)
+  const outPath = path.join(userUploadsDir(), filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
  
   if (photoPreservingVisualsEnabled()) {
@@ -3173,7 +3159,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     const anchorParts = []
  
     if (selectedPiece.worn_photo) {
-      const filePath = path.join(uploadsDir, selectedPiece.worn_photo)
+      const filePath = path.join(userUploadsDir(), selectedPiece.worn_photo)
       if (fs.existsSync(filePath)) {
         const buffer = await sharp(filePath)
           .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
@@ -3188,7 +3174,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     }
  
     if (selectedPiece.photo) {
-      const filePath = path.join(uploadsDir, selectedPiece.photo)
+      const filePath = path.join(userUploadsDir(), selectedPiece.photo)
       if (fs.existsSync(filePath)) {
         const buffer = await sharp(filePath)
           .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
@@ -3266,7 +3252,7 @@ export function imageUrlToUploadPath(imageUrl) {
   const value = String(imageUrl || '')
   const filename = value.startsWith('/uploads/') ? value.replace('/uploads/', '') : path.basename(value)
   if (!filename || filename.includes('..')) return null
-  const filePath = path.join(uploadsDir, filename)
+  const filePath = path.join(userUploadsDir(), filename)
   return fs.existsSync(filePath) ? filePath : null
 }
 
@@ -3449,7 +3435,7 @@ export async function buildStylistConversationPayload(body) {
       const imageRefs = await Promise.all(outfitPieces.slice(0, 5).map(async (piece) => {
         const photo = piece.worn_photo || piece.photo
         if (!photo) return null
-        const filePath = path.join(uploadsDir, photo)
+        const filePath = path.join(userUploadsDir(), photo)
         if (!fs.existsSync(filePath)) return null
         const { base64, mime } = await prepareImageForClaude(filePath)
         return { piece, base64, mime }
@@ -3671,7 +3657,7 @@ export async function buildStylistConversationPayload(body) {
   // Prompt-cache layout: stable blocks first (constitution, profiles, wardrobe
   // manifest), then the cache breakpoint, then the volatile per-turn blocks.
   // Keep the stable prefix byte-stable — it is what makes the manifest cheap.
-  const system = STYLIST_SYSTEM + [
+  const system = prompts.STYLIST_SYSTEM + [
     '',
     'OCCASION & CLIMATE PROFILES (RULES-AS-DATA):',
     'Classify the user\'s event/activity and weather description into one of the profiles below. You MUST strictly apply that profile\'s prohibited_materials, prohibited_footwear, and preferred style vibe rules to recommended outfits or pieces. NEVER suggest heavy zip ankle boots in summer months (June, July, August) even on cooler/windy days, unless explicitly requested or for rain/mud.',
@@ -3694,7 +3680,7 @@ export async function buildStylistConversationPayload(body) {
     'INTENT DECLARATION (mechanically enforced): before composing or answering substantively, call declare_intent with what this turn should produce — want:"text" (advice/critique prose), "cards" (composed outfit cards), or "image" (a rendered outfit image), plus outfit_count when the user asked for a specific number. propose_outfit and generate_outfits are blocked until cards intent is declared. If the user wants a rendered image, declare want:"image" and call render_preview (outfit_index for a card produced this turn, or piece_ids from a verified card such as THREAD STATE\'s current outfit set).',
     extractedWeather ? `Established weather context for this turn: ${extractedWeather}. Pass this weather to search_wardrobe and apply weatherFit/ruleFit before suggesting garments.` : '',
     missingTravelWeather ? 'TRAVEL WEATHER BLOCKER: The user gave a travel/packing request without weather or forecast context. Do not call search_wardrobe, do not recommend garments, and do not suggest outfits. Ask one friendly clarification for the expected weather/forecast first.' : '',
-    `If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from ${PROFILE_NAME}'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").`,
+    `If mode is new_request and required context is present, answer the user’s request directly using wardrobe context by recommending specific items from ${prompts.PROFILE_NAME}'s closet. For travel or packing requests, required context means destination/location, timing, and weather/forecast; timing/season alone is not enough because trip outfits depend on the actual forecast. Parse relative timing (e.g., "in a week", "tomorrow") or specific dates as valid timing context (and infer likely season only as a fallback), but if travel weather context is missing, ask specifically for the expected weather forecast before searching the wardrobe or suggesting outfits. Do not ask "when" if timing or dates are already provided. Do not suggest generic categories or descriptions (like "a solid-colored tank", "a lightweight scarf", or "a compact umbrella"); you must search the wardrobe and recommend specific owned items (e.g., "your rust orange ribbed tank top") or flag them as missing wardrobe gaps. If details like location/city, timing, or travel weather are missing, do not call any database search tools (like search_wardrobe) and do not recommend garments or suggest outfits; you must ask exactly one friendly, natural clarifying question to gather the missing context (e.g., "What weather are you expecting for the trip?").`,
     'If mode is followup, answer the specific follow-up directly in a friendly conversational tone without restarting the whole evaluation, outfit generation, packing list, or plan.',
     'If mode is correction, acknowledge the correction, revise only the relevant mistaken point, and do not defend a contradiction.',
     'If mode is explanation, explain how the previous recommendation was made using the available context.',

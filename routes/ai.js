@@ -4,7 +4,7 @@ import path from 'path'
 import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
-import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
+import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult, normalizeManualOverrides } from '../styling-engine/taggerMerge.js'
 
 import {
@@ -30,18 +30,11 @@ import {
 } from '../styling-engine/footwear-comfort.js'
 
 import {
-  STYLIST_SYSTEM,
-  STYLE_SELECTED_ITEM_SYSTEM,
+  prompts,
   STYLE_SELECTED_ITEM_FEW_SHOTS,
-  OUTFIT_BOARD_PLANNER_SYSTEM,
-  WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
-  EDITORIAL_NEW_PIECES_SYSTEM,
-  COMPARE_OUTFITS_SYSTEM,
-  TAG_PIECE_PROMPT,
   OUTFIT_MISSIONS,
   TAG_PIECE_SYSTEM,
-  EXTRACT_PIECES_SYSTEM,
-  PROFILE_NAME
+  EXTRACT_PIECES_SYSTEM
 } from '../styling-engine/promptRuntime.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
@@ -329,7 +322,7 @@ export function deriveTripTitle(question = '', weather = '', outfits = []) {
 
 // Multer storage setup
 const storage = multer.diskStorage({
-  destination: uploadsDir,
+  destination: (req, file, cb) => cb(null, userUploadsDir()),
   filename: (req, file, cb) => {
     const unique = Date.now() + '-' + Math.round(Math.random() * 1e9)
     cb(null, unique + path.extname(file.originalname))
@@ -345,7 +338,7 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
     if (thumbs.length >= limit) break
     const photoFile = anchor.photo || anchor.worn_photo || ''
     if (!photoFile) continue
-    const filePath = path.join(uploadsDir, photoFile)
+    const filePath = path.join(userUploadsDir(), photoFile)
     if (!fs.existsSync(filePath)) continue
     try {
       const thumb = await prepareWardrobeThumb(filePath, `tagger-anchor:${anchor.id}:${photoFile}`, { maxPx: 448 })
@@ -403,7 +396,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     }
   }
 
-  content.push({ type: 'text', text: TAG_PIECE_PROMPT })
+  content.push({ type: 'text', text: prompts.TAG_PIECE_PROMPT })
   const payload = {
     system: TAG_PIECE_SYSTEM,
     // Spec 26 Part 7: the full tag schema was truncating mid-JSON
@@ -682,7 +675,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   async function addPieceImage(piece, labelPrefix, detailOverride = null) {
     const photoFile = piece.worn_photo || piece.photo || ''
     if (!photoFile) return
-    const filePath = path.join(uploadsDir, photoFile)
+    const filePath = path.join(userUploadsDir(), photoFile)
     if (!fs.existsSync(filePath)) return
     const thumb = await prepareWardrobeThumb(filePath, `${piece.id}:${photoFile}`, { maxPx: composerThumbPx })
     content.push({ type: 'text', text: `${labelPrefix} ID ${piece.id}: ${piece.name}${composerPieceLineSuffix(piece)}` })
@@ -706,7 +699,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   try {
     const composerStartedAt = Date.now()
     const composerResult = await withTimeout(askStylistWithUsage({
-      system: `${WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(ACTIVITY_PROFILES, null, 2)}`,
+      system: `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(OCCASION_PROFILES, null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(ACTIVITY_PROFILES, null, 2)}`,
       maxTokens: 2000,
       messages: [{ role: 'user', content }]
     }), 90000, 'Selected-piece visual composer')
@@ -829,7 +822,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
 // ── AI Tagging endpoints ───────────────────────────────────────────────────────
 router.post('/extract-pieces', upload.single('photo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No photo provided' })
-  const filePath = path.join(uploadsDir, req.file.filename)
+  const filePath = path.join(userUploadsDir(), req.file.filename)
   try {
     const { base64, mime } = await prepareImageForClaude(filePath)
     fs.unlinkSync(filePath)
@@ -899,7 +892,7 @@ router.post('/tag-piece', upload.fields([
 
   const photos = []
   if (photoFile) {
-    const filePath = path.join(uploadsDir, photoFile.filename)
+    const filePath = path.join(userUploadsDir(), photoFile.filename)
     photos.push({
       path: filePath,
       label: 'HANGER PHOTO',
@@ -907,7 +900,7 @@ router.post('/tag-piece', upload.fields([
     })
   }
   if (wornPhotoFile) {
-    const filePath = path.join(uploadsDir, wornPhotoFile.filename)
+    const filePath = path.join(userUploadsDir(), wornPhotoFile.filename)
     photos.push({
       path: filePath,
       label: 'WORN PHOTO',
@@ -940,11 +933,11 @@ const tagExistingHandler = async (req, res) => {
     const photos = []
     const photoFile = req.files?.photo?.[0]
     if (photoFile) {
-      const filePath = path.join(uploadsDir, photoFile.filename)
+      const filePath = path.join(userUploadsDir(), photoFile.filename)
       photos.push({ path: filePath, label: 'HANGER PHOTO', guidance: 'Use for literal garment truth: category, color, construction, pattern, fabric, and shape.' })
       tempFiles.push(filePath)
     } else if (piece.photo) {
-      const hangerPath = path.join(uploadsDir, piece.photo)
+      const hangerPath = path.join(userUploadsDir(), piece.photo)
       if (fs.existsSync(hangerPath)) {
         photos.push({ path: hangerPath, label: 'HANGER PHOTO', guidance: 'Use for literal garment truth: category, color, construction, pattern, fabric, and shape.' })
       }
@@ -952,11 +945,11 @@ const tagExistingHandler = async (req, res) => {
 
     const wornPhotoFile = req.files?.worn_photo?.[0]
     if (wornPhotoFile) {
-      const filePath = path.join(uploadsDir, wornPhotoFile.filename)
+      const filePath = path.join(userUploadsDir(), wornPhotoFile.filename)
       photos.push({ path: filePath, label: 'WORN PHOTO', guidance: 'Use for fit, drape, scale, real-wear behavior, outfit role, and risks. Do not override literal garment color/category from this styling context.' })
       tempFiles.push(filePath)
     } else if (piece.worn_photo) {
-      const wornPath = path.join(uploadsDir, piece.worn_photo)
+      const wornPath = path.join(userUploadsDir(), piece.worn_photo)
       if (fs.existsSync(wornPath)) {
         photos.push({ path: wornPath, label: 'WORN PHOTO', guidance: 'Use for fit, drape, scale, real-wear behavior, outfit role, and risks. Do not override literal garment color/category from this styling context.' })
       }
@@ -1011,7 +1004,7 @@ router.post('/evaluate-piece', async (req, res) => {
     const content = []
     const photoFile = piece.worn_photo || piece.photo
     if (photoFile) {
-      const filePath = path.join(uploadsDir, photoFile)
+      const filePath = path.join(userUploadsDir(), photoFile)
       if (fs.existsSync(filePath)) {
         const { base64, mime } = await prepareImageForClaude(filePath)
         content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
@@ -1028,7 +1021,7 @@ router.post('/evaluate-piece', async (req, res) => {
         '',
         selectedPieceOutfitsText ? `Saved outfits that already use this selected item:\n${selectedPieceOutfitsText}` : `Saved outfits using this selected item: none yet`,
         '',
-        confirmedOutfitsText ? `General confirmed/favorite outfit memory for ${PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
+        confirmedOutfitsText ? `General confirmed/favorite outfit memory for ${prompts.PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
         '',
         wardrobeText ? `Available wardrobe pieces that may be used as supporting items. Do not replace the selected item with these:\n${wardrobeText}` : '',
         '',
@@ -1040,7 +1033,7 @@ router.post('/evaluate-piece', async (req, res) => {
       ].filter(Boolean).join('\n') })
 
       const draft = await askStylist({
-        system: STYLE_SELECTED_ITEM_SYSTEM,
+        system: prompts.STYLE_SELECTED_ITEM_SYSTEM,
         maxTokens: 1200,
         messages: [
           ...(history || []).map(h => ({ role: h.role, content: h.content })),
@@ -1122,7 +1115,7 @@ export async function generateOutfitsForPieceInternal({
     goldFeedbackText ? `High-authority signature/works feedback for this garment. Reinforce similar formulas:\n${goldFeedbackText}` : '',
     selectedSavedBoardText ? `Saved visual boards for this garment. Use strongly boards are high-authority outfit memory:\n${selectedSavedBoardText}` : '',
     selectedFeedbackText ? `Recent feedback for this garment. Signature/Works should be reinforced; Not me/Too soft/Proportion problem should suppress similar ideas:\n${selectedFeedbackText}` : '',
-    confirmedOutfitsText ? `Confirmed/favorite outfit memory for ${PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
+    confirmedOutfitsText ? `Confirmed/favorite outfit memory for ${prompts.PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
     globalSavedBoardText ? `Global saved board memory. Use strongly boards should bias ranking when relevant:\n${globalSavedBoardText}` : '',
     calibrationMemoryText ? `Calibration Library memory. This is higher authority than broad style theory for taste boundaries and identity-preservation:\n${calibrationMemoryText}` : '',
     globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : ''
@@ -1581,7 +1574,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       for (const p of pieces) {
         const photoFile = p.worn_photo || p.photo || ''
         if (!photoFile) continue
-        const filePath = path.join(uploadsDir, photoFile)
+        const filePath = path.join(userUploadsDir(), photoFile)
         if (!fs.existsSync(filePath)) continue
         const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${photoFile}`, { maxPx: composerThumbPx })
         content.push({ type: 'text', text: `ID ${p.id}: ${p.name}${composerPieceLineSuffix(p)}` })
@@ -1601,8 +1594,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     try {
       const composerResult = await withTimeout(askStylistWithUsage({
         system: savedVariantGuidance
-          ? `${WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\n${savedVariantGuidance}`
-          : WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
+          ? `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\n${savedVariantGuidance}`
+          : prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
         maxTokens: 2200,
         messages: [{ role: 'user', content }]
       }), 90000, 'Visual wardrobe composer')
@@ -2082,7 +2075,7 @@ router.post('/generate-outfit-boards', async (req, res) => {
     if (!boardPlans.length) {
       const candidateText = candidatePieces.map(p => `${p.id}: ${p.name} (${p.category}) — ${buildPieceText(p)}`).join('\n')
       const rawPlan = await askStylist({
-        system: OUTFIT_BOARD_PLANNER_SYSTEM,
+        system: prompts.OUTFIT_BOARD_PLANNER_SYSTEM,
         maxTokens: 1000,
         messages: [{ role: 'user', content: [{ type: 'text', text: [
           `Selected garment id: ${selectedPiece.id}`,
@@ -2434,7 +2427,7 @@ router.post('/evaluate-wardrobe-outfit', async (req, res) => {
 })
 
 router.post('/outfit-feedback', upload.single('photo'), async (req, res) => {
-  const tempPath = req.file ? path.join(uploadsDir, req.file.filename) : ''
+  const tempPath = req.file ? path.join(userUploadsDir(), req.file.filename) : ''
   try {
     const { question, outfitName, outfitNotes } = req.body
     const activeWardrobeText = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece).map(buildPieceText).join('\n')
@@ -2475,7 +2468,7 @@ router.post('/editorial-directions-preview', async (req, res) => {
     const content = []
     const photoFile = piece.worn_photo || piece.photo
     if (photoFile) {
-      const filePath = path.join(uploadsDir, photoFile)
+      const filePath = path.join(userUploadsDir(), photoFile)
       if (fs.existsSync(filePath)) {
         const { base64, mime } = await prepareImageForClaude(filePath)
         content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
@@ -2486,7 +2479,7 @@ router.post('/editorial-directions-preview', async (req, res) => {
     const seedOutfit = seedLook?.outfit || null
     const seedImageUrl = typeof seedBoard?.imageUrl === 'string' ? seedBoard.imageUrl : ''
     if (seedImageUrl.startsWith('/uploads/')) {
-      const seedFilePath = path.join(uploadsDir, path.basename(seedImageUrl))
+      const seedFilePath = path.join(userUploadsDir(), path.basename(seedImageUrl))
       if (fs.existsSync(seedFilePath)) {
         const { base64, mime } = await prepareImageForClaude(seedFilePath)
         content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
@@ -2519,7 +2512,7 @@ router.post('/editorial-directions-preview', async (req, res) => {
     ].filter(Boolean).join('\n') })
 
     const raw = await askStylist({
-      system: EDITORIAL_NEW_PIECES_SYSTEM,
+      system: prompts.EDITORIAL_NEW_PIECES_SYSTEM,
       maxTokens: 1200,
       messages: [
         ...(history || []).map(h => ({ role: h.role, content: h.content })),
@@ -2605,7 +2598,7 @@ router.post('/compare-outfits', async (req, res) => {
 
     const addOutfitImage = async (label, outfit) => {
       if (!outfit.photo) return
-      const filePath = path.join(uploadsDir, outfit.photo)
+      const filePath = path.join(userUploadsDir(), outfit.photo)
       if (!fs.existsSync(filePath)) return
       const { base64, mime } = await prepareImageForClaude(filePath)
       content.push({ type: 'text', text: `${label} image:` })
@@ -2623,7 +2616,7 @@ router.post('/compare-outfits', async (req, res) => {
 
     content.push({ type: 'text', text: [
       `Mode: compare_outfits`,
-      `Question: ${question || `Which outfit works better for ${PROFILE_NAME}?`}`,
+      `Question: ${question || `Which outfit works better for ${prompts.PROFILE_NAME}?`}`,
       '',
       `Outfit A context:`,
       buildOutfitAuthorityNote(outfitA, linkedA, likelyA),
@@ -2635,13 +2628,13 @@ router.post('/compare-outfits', async (req, res) => {
       buildOutfitText(outfitB, linkedB),
       likelyB.length ? `Likely saved garment truth for Outfit B — hints only unless linked:\n${likelyB.map(buildPieceText).join('\n')}` : '',
       '',
-      confirmedOutfitsText ? `Other confirmed outfit memory for ${PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
+      confirmedOutfitsText ? `Other confirmed outfit memory for ${prompts.PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
       '',
       `Comparison instruction: make a call if one outfit is clearly stronger. If both work, explain the different use cases. If neither works, identify the shared issue. Do not give a vague "both are nice" answer.`
     ].filter(Boolean).join('\n') })
 
     const answer = await askStylist({
-      system: COMPARE_OUTFITS_SYSTEM,
+      system: prompts.COMPARE_OUTFITS_SYSTEM,
       maxTokens: 1400,
       messages: [
         ...(history || []).map(h => ({ role: h.role, content: h.content })),
