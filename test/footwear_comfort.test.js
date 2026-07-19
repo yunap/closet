@@ -117,7 +117,7 @@ function mockAiHandler({ system, messages }) {
     }
   }
 
-  if (text.includes('personal visual stylist agent') || text.includes('whole-wardrobe outfit composer') || text.includes("You are Yuna's personal stylist. You are looking at photos")) {
+  if (text.includes('personal visual stylist agent') || text.includes('whole-wardrobe outfit composer') || text.includes("personal stylist. You are looking at photos")) {
     return {
       outfits: [{
         label: 'Mock whole-wardrobe outfit',

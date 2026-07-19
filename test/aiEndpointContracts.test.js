@@ -367,7 +367,7 @@ function mockAiHandler({ system, messages }) {
     }
   }
 
-  if (text.includes("You are Yuna's personal stylist. You are looking at photos") && /Occasion:\s*outdoor_daytime_social/i.test(latestText)) {
+  if (text.includes("personal stylist. You are looking at photos") && /Occasion:\s*outdoor_daytime_social/i.test(latestText)) {
     const badTop = db.prepare("SELECT id FROM pieces WHERE name = ?").get('multicolor floral hooded sweatshirt')?.id
     const badShoe = db.prepare("SELECT id FROM pieces WHERE name = ?").get('light grey knit athletic shoes')?.id
     const goodTop = db.prepare("SELECT id FROM pieces WHERE name = ?").get('olive ruffled sleeveless top')?.id
@@ -399,7 +399,7 @@ function mockAiHandler({ system, messages }) {
     }
   }
 
-  if (text.includes("You are Yuna's personal stylist. You are looking at photos") && /Activity:\s*walking/i.test(latestText)) {
+  if (text.includes("personal stylist. You are looking at photos") && /Activity:\s*walking/i.test(latestText)) {
     return {
       outfits: [{
         label: 'Mock walking outfit with boots',
@@ -417,7 +417,7 @@ function mockAiHandler({ system, messages }) {
     }
   }
 
-  if (text.includes('personal visual stylist agent') || text.includes('whole-wardrobe outfit composer') || text.includes("You are Yuna's personal stylist. You are looking at photos")) {
+  if (text.includes('personal visual stylist agent') || text.includes('whole-wardrobe outfit composer') || text.includes("personal stylist. You are looking at photos")) {
     return {
       outfits: [{
         label: 'Mock city column',
@@ -638,7 +638,7 @@ test('selected-piece visual composer excludes boots from the June walking roster
   assert.equal(json.pipeline, 'selected_piece_visual_composer')
   assert.ok(first.pieceIds.includes(seeded.bottom))
   assert.equal(first.pieceIds.includes(seeded.boot), false, 'June walking should not return ankle boots')
-  const composerCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const composerCall = aiCalls.find(c => c.system.includes("personal stylist. You are looking at photos"))
   const composerText = JSON.stringify(composerCall?.messages || [])
   assert.doesNotMatch(composerText, /brown ankle boots/i, 'June walking should not show ankle boots to the composer roster')
 })
@@ -709,7 +709,7 @@ test('whole-wardrobe generator returns cards and records resettable session memo
   assert.equal(Object.hasOwn(json.debug.timings, 'agentStylistMs'), false)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM whole_wardrobe_sessions').get().count, 1)
 
-  const composerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const composerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.equal(composerCalls.length, 1)
   assert.ok(!composerCalls[0].system.includes('personal visual stylist agent'))
 
@@ -746,7 +746,7 @@ test('whole-wardrobe visual composer per-piece lines include fabric/reads_as hin
     limit: 3,
   })
 
-  const composerCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const composerCall = aiCalls.find(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(composerCall)
   const textLines = composerCall.messages
     .flatMap(m => Array.isArray(m.content) ? m.content : [])
@@ -831,7 +831,7 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.equal(json2.debug.sessionMemory.rotationWarningShown, true)
   
   // Verify that the second call received rotation warning texts (meaning it saw recently shown garments)
-  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.equal(visualComposerCalls.length, 2)
 
   // Verify the full rules blob is not present in the visual composer prompt; the lean digest stays in the user message.
@@ -864,7 +864,7 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   })
 
   assert.equal(json.mode, 'generate_wardrobe_outfits_visual')
-  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
   
   const contentText = visualComposerCalls[0].messages[0].content[0].text
@@ -903,7 +903,7 @@ test('visual wardrobe composer derives hot weather from styling request text bef
   assert.ok(generationRun)
   assert.equal(JSON.parse(generationRun.weather).isHot, true)
 
-  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
   const contentText = visualComposerCalls[0].messages[0].content[0].text
   assert.ok(contentText.includes('Styling request: not too dressy, hot weather'))
@@ -926,7 +926,7 @@ test('visual wardrobe composer excludes lightweight linen bottoms for cold reque
   assert.equal(json.debug.weatherProfile.isCold, true)
   assert.ok(json.debug.suppressedReasonCounts['cold weather: lightweight linen bottom'] >= 1)
 
-  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
   const contentText = visualComposerCalls[0].messages[0].content[0].text
   assert.ok(contentText.includes('Styling request: not too dressy, cold weather'))
@@ -936,7 +936,7 @@ test('visual wardrobe composer excludes lightweight linen bottoms for cold reque
 test('visual wardrobe composer shows rejected model cards as broken diagnostics', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
-    if (String(system || '').includes("You are Yuna's personal stylist. You are looking at photos")) {
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
       return {
         outfits: [{
           label: 'Valid model outfit',
@@ -998,7 +998,7 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
 test('visual wardrobe composer failure uses local fallback without retired agent call', async () => {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system }) => {
     aiCalls.push({ system, messages: [] })
-    if (String(system || '').includes("You are Yuna's personal stylist. You are looking at photos")) {
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
       throw new Error('mock composer outage')
     }
     return mockAiHandler({ system, messages: [] })
@@ -1099,7 +1099,7 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
   assert.equal(json.debug.finalSelection.localFillAdded, 0)
   assert.equal(json.debug.finalSelection.modelGateOutfits, 2)
 
-  const visualComposerCalls = aiCalls.filter(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   const contentText = visualComposerCalls[0].messages[0].content[0].text
   assert.match(contentText, /use sparingly and justify in watchFor:/i)
   assert.match(contentText, /hoodie/i)
@@ -1267,7 +1267,7 @@ test('saved outfit formula variants reject collapsed model cards for two-top sou
 
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     aiCalls.push({ system, messages })
-    if (String(system || '').includes("You are Yuna's personal stylist. You are looking at photos")) {
+    if (String(system || '').includes("personal stylist. You are looking at photos")) {
       return {
         outfits: [{
           label: 'Collapsed button-down city column',
@@ -2059,7 +2059,7 @@ test('StylistChat preserves generated board image urls for critique previews', (
 test('StylistChat pending garment action hides the generic chat input', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   const css = fs.readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
-  assert.match(src, /stylist-chat-scroll \$\{pending \? 'has-pending-action' : ''\}/)
+  assert.match(src, /stylist-chat-scroll .*\$\{pending \? 'has-pending-action' : ''\}/)
   assert.match(src, /stylist-input-shell \$\{pending \? 'is-hidden-for-pending-action' : ''\}/)
   assert.match(src, /\{!pending && \(/)
   assert.match(css, /\.stylist-chat-scroll\.has-pending-action/)
@@ -2930,7 +2930,7 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
     limit: 1
   })
   
-  const hikeCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const hikeCall = aiCalls.find(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(hikeCall, 'Should have visual composer call')
   const hikeUserMessage = hikeCall.messages[0].content.map(part => part?.text || '').join('\n')
   assert.ok(hikeUserMessage.includes('Occasion guidance:'), 'Should contain occasion guidance header')
@@ -2947,7 +2947,7 @@ test('Visual composer occasion profile prompt block and wardrobe coverage contra
     limit: 1
   })
   
-  const casualCall = aiCalls.find(c => c.system.includes("You are Yuna's personal stylist. You are looking at photos"))
+  const casualCall = aiCalls.find(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(casualCall, 'Should have visual composer call')
   const casualUserMessage = casualCall.messages[0].content.map(part => part?.text || '').join('\n')
   assert.ok(casualUserMessage.includes('Occasion guidance:'), 'Casual is now a ratified occasion profile and should contain guidance')

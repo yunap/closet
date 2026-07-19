@@ -1,9 +1,11 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import PieceInventory from './views/PieceInventory'
 import OutfitLookbook from './views/OutfitLookbook'
 import AskClaude from './views/AskClaude'
 import VisualLab from './components/VisualLab'
+import Onboarding from './views/Onboarding'
+import StylistSettings from './views/StylistSettings'
 import usePendingWardrobeTaskCount from './utils/usePendingWardrobeTaskCount'
 
 function NavIcon({ name }) {
@@ -47,6 +49,14 @@ function NavIcon({ name }) {
       </svg>
     )
   }
+  if (name === 'settings') {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14.2 3h-4l-.4 2.7a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2l.4 2.7h4l.4-2.7a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z" />
+      </svg>
+    )
+  }
   return (
     <svg {...common}>
       <rect x="4" y="5" width="12" height="12" rx="2" />
@@ -62,11 +72,31 @@ export default function App() {
   const location = useLocation()
   const pendingTodoCount = usePendingWardrobeTaskCount()
   const isStylistRoute = location.pathname === '/stylist' || location.pathname.startsWith('/stylist/')
+  const isOnboardingRoute = location.pathname === '/onboarding'
+
+  // Spec 32 Part 3: a fresh instance routes to the wizard until onboarding completes or is
+  // skipped. Pre-existing (legacy-seeded) instances never see it — the server decides.
+  // Redirect only from a FRESH server answer for the current route — never from held
+  // state. A stale needsOnboarding=true in a state-driven redirect effect bounces the
+  // user back into the wizard on the very navigation that completes it (live-found bug:
+  // the reset-then-refetch variant still lost the race within a single effect flush).
+  useEffect(() => {
+    if (isOnboardingRoute) return
+    let cancelled = false
+    fetch('/api/settings/onboarding-status')
+      .then(r => r.json())
+      .then(status => {
+        if (!cancelled && status?.needsOnboarding) navigate('/onboarding', { replace: true })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [location.pathname, isOnboardingRoute, navigate])
   const navItems = useMemo(() => ([
     { id: 'wardrobe', label: 'Wardrobe', icon: 'wardrobe', to: '/wardrobe', badgeCount: pendingTodoCount },
     { id: 'outfits', label: 'Outfits', icon: 'outfits', to: '/outfits' },
     { id: 'stylist', label: 'Stylist', icon: 'stylist', to: '/stylist' },
     { id: 'visual_lab', label: 'Visual Lab', icon: 'visual_lab', to: '/visual-lab' },
+    { id: 'settings', label: 'Settings', icon: 'settings', to: '/settings' },
   ]), [pendingTodoCount])
 
   // Handoff: piece → stylist. Thin wrapper so PieceInventory/OutfitLookbook call-sites are unchanged.
@@ -97,10 +127,12 @@ export default function App() {
           <Route path="/stylist"           element={<AskClaude />} />
           <Route path="/stylist/:threadId" element={<AskClaude />} />
           <Route path="/visual-lab" element={<VisualLab onGoToThread={goToThread} />} />
+          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/settings"   element={<StylistSettings />} />
         </Routes>
       </main>
 
-      <nav className="primary-nav" aria-label="Primary">
+      {!isOnboardingRoute && <nav className="primary-nav" aria-label="Primary">
         <ul className="primary-nav__list">
           {navItems.map(item => {
             const badgeCount = Number(item.badgeCount || 0)
@@ -131,7 +163,7 @@ export default function App() {
             )
           })}
         </ul>
-      </nav>
+      </nav>}
     </div>
   )
 }

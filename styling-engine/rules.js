@@ -868,7 +868,7 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
   const earthyOrDeep = ['olive','mustard','cognac','cream','beige','taupe','navy','denim','brown','tan','oatmeal','amber','plum','charcoal','dark blue','dark grey']
   const sharedColors = (candidate.colors || []).filter(c => (selected.colors || []).includes(c))
   if (sharedColors.length) { score += 3; reasons.push(`shared color: ${sharedColors.slice(0,2).join('/')}`) }
-  if ((candidate.colors || []).some(c => earthyOrDeep.includes(c))) { score += 3; reasons.push('Yuna palette') }
+  if ((candidate.colors || []).some(c => earthyOrDeep.includes(c))) { score += 3; reasons.push('signature palette') }
   if (textIncludesAny(candidateBlob, ['artistic', 'graphic', 'architectural', 'texture', 'textured', 'corduroy', 'crochet', 'cashmere', 'linen', 'knit'])) {
     score += 4; reasons.push('artistic/texture vocabulary')
   }
@@ -2787,7 +2787,7 @@ export function wholeWardrobeMoodProfile(mood = '') {
       id: 'modern_bohemian_restraint',
       label: 'modern bohemian restraint',
       guidance: [
-        'Translate "boho" as modern bohemian restraint for Yuna: earthy/artisan texture, relaxed movement, woven/crochet/linen/botanical/paisley/denim/cognac/olive/rust notes, with city-appropriate grounding.',
+        'Translate "boho" as modern bohemian restraint for this wardrobe: earthy/artisan texture, relaxed movement, woven/crochet/linen/botanical/paisley/denim/cognac/olive/rust notes, with city-appropriate grounding.',
         'Bohemian is not a negative lane. Do not collapse it into festival costume, excessive layers, delicate romantic softness, or generic hippie styling.',
         'Do not answer boho with plain all-black tailored minimalism unless another garment carries clear bohemian texture, print, movement, or warm artisan detail.',
         'Each returned boho outfit still needs a readable visual thesis: the bohemian element should be the hero or a clear support texture, and the other garments should stabilize it.'

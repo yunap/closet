@@ -1,0 +1,157 @@
+// Spec 32 Part 2's edit surface: the style constitution is per-user DATA, and the user
+// reading what their stylist believes about them — and correcting it directly — is the
+// product's core loop. Every save appends the prior text to constitution_history (the
+// ruling-archaeology log); the interviewable layers link back into the wizard for a re-run.
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+
+const LAYER_TITLES = {
+  body_contract: 'Layer 1 — Body & Comfort Contract',
+  proven_formulas: 'Layer 2 — Proven Formulas',
+  aesthetic_gravity: 'Layer 3 — Aesthetic Gravity',
+  lane_neutrality: 'Layer 4 — Style Lanes',
+  working_style: 'Working Style',
+  editorial_subject: 'Image Generation — Subject',
+  editorial_shoes: 'Image Generation — Shoe Rules'
+}
+const INTERVIEW_STEPS = { body_contract: 'comfort', aesthetic_gravity: 'aesthetic', working_style: 'working' }
+
+const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', marginBottom: 16 }
+const inputStyle = { width: '100%', padding: '9px 11px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 14, boxSizing: 'border-box' }
+const primaryBtn = { padding: '7px 14px', borderRadius: 9, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }
+const quietBtn = { padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 12.5, cursor: 'pointer' }
+
+export default function StylistSettings() {
+  const [profile, setProfile] = useState(null)
+  const [homeLocation, setHomeLocation] = useState('')
+  const [layers, setLayers] = useState([])
+  const [drafts, setDrafts] = useState({})
+  const [historyFor, setHistoryFor] = useState(null)
+  const [historyRows, setHistoryRows] = useState([])
+  const [status, setStatus] = useState('')
+
+  const load = async () => {
+    try {
+      const [p, h, c] = await Promise.all([
+        fetch('/api/settings/profile').then(r => r.json()),
+        fetch('/api/settings/home-location').then(r => r.json()),
+        fetch('/api/settings/constitution').then(r => r.json())
+      ])
+      setProfile(p)
+      setHomeLocation(h.homeLocation || '')
+      setLayers(c.layers || [])
+    } catch (err) {
+      setStatus(`Failed to load settings: ${err.message}`)
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  const flash = (msg) => { setStatus(msg); setTimeout(() => setStatus(''), 2500) }
+
+  const saveProfile = async () => {
+    const res = await fetch('/api/settings/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profile) })
+    if (res.ok) { flash('Profile saved — your stylist updated instantly.'); load() }
+    else flash((await res.json()).error || 'Failed to save profile')
+  }
+
+  const saveHomeLocation = async () => {
+    const res = await fetch('/api/settings/home-location', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ homeLocation }) })
+    if (res.ok) flash('Home location saved.')
+  }
+
+  const saveLayer = async (layer) => {
+    const body = drafts[layer]
+    const res = await fetch(`/api/settings/constitution/${layer}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) })
+    if (res.ok) {
+      const next = { ...drafts }; delete next[layer]; setDrafts(next)
+      flash('Saved — prior text kept in history.'); load()
+    } else flash((await res.json()).error || 'Failed to save layer')
+  }
+
+  const showHistory = async (layer) => {
+    if (historyFor === layer) { setHistoryFor(null); return }
+    const res = await fetch(`/api/settings/constitution/${layer}/history`)
+    const data = await res.json()
+    setHistoryRows(data.history || [])
+    setHistoryFor(layer)
+  }
+
+  return (
+    <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 60px' }}>
+      <h1 style={{ fontSize: 24, margin: '0 0 4px' }}>Stylist Settings</h1>
+      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 0 }}>
+        This is everything your stylist believes about you — plain text, yours to correct.
+      </p>
+      {status && <div style={{ padding: '8px 12px', borderRadius: 9, background: 'var(--donate-bg)', color: 'var(--donate)', fontSize: 13, marginBottom: 12 }}>{status}</div>}
+
+      {profile && (
+        <div style={card}>
+          <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Profile</h3>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 180px' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Name</div>
+              <input style={inputStyle} value={profile.displayName} onChange={e => setProfile({ ...profile, displayName: e.target.value })} />
+            </div>
+            <div style={{ flex: '1 1 90px' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Pronouns (subject/object/possessive)</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input style={inputStyle} value={profile.pronouns.subject} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, subject: e.target.value, plural: e.target.value.trim() === 'they' } })} />
+                <input style={inputStyle} value={profile.pronouns.object} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, object: e.target.value } })} />
+                <input style={inputStyle} value={profile.pronouns.possessive} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, possessive: e.target.value } })} />
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Home location (live weather)</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input style={inputStyle} value={homeLocation} onChange={e => setHomeLocation(e.target.value)} />
+              <button style={quietBtn} onClick={saveHomeLocation}>Save</button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+            <button style={primaryBtn} onClick={saveProfile}>Save profile</button>
+          </div>
+        </div>
+      )}
+
+      <h2 style={{ fontSize: 18, margin: '22px 0 10px' }}>Style constitution</h2>
+      {layers.map(({ layer, body, updatedAt, isDefault }) => (
+        <div key={layer} style={card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0, fontSize: 15 }}>{LAYER_TITLES[layer] || layer}</h3>
+            <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+              {isDefault ? 'default — not yet personalized' : (updatedAt ? `updated ${updatedAt}` : '')}
+            </div>
+          </div>
+          <textarea
+            style={{ ...inputStyle, minHeight: 120, marginTop: 10, fontFamily: 'monospace', fontSize: 12.5 }}
+            value={drafts[layer] ?? body}
+            onChange={e => setDrafts({ ...drafts, [layer]: e.target.value })}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {INTERVIEW_STEPS[layer] && (
+                <Link to={`/onboarding?step=${INTERVIEW_STEPS[layer]}&return=settings`} style={{ ...quietBtn, textDecoration: 'none', display: 'inline-block' }}>Redo interview</Link>
+              )}
+              {!isDefault && <button style={quietBtn} onClick={() => showHistory(layer)}>{historyFor === layer ? 'Hide history' : 'History'}</button>}
+            </div>
+            {drafts[layer] !== undefined && drafts[layer] !== body && (
+              <button style={primaryBtn} onClick={() => saveLayer(layer)}>Save layer</button>
+            )}
+          </div>
+          {historyFor === layer && (
+            <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10, display: 'grid', gap: 8 }}>
+              {historyRows.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No history yet.</div>}
+              {historyRows.map(row => (
+                <div key={row.id} style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  <div style={{ fontWeight: 600 }}>{row.created_at} · {row.source}</div>
+                  <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0 0', fontSize: 11.5, background: 'var(--surface-2)', padding: 8, borderRadius: 8 }}>{row.prior_body ?? '(no prior text — first write)'}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}

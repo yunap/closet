@@ -1,6 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { validateOutfitRoles } from '../styling-engine/tools.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import nodePath from 'node:path'
+// Hermetic DB isolation (spec 21/29 doctrine): this file's import chain reaches db.js,
+// whose module-load migrations would otherwise run against the real wardrobe.db.
+const tmpRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'propose-outfit-'))
+process.env.WARDROBE_DB_PATH = nodePath.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = nodePath.join(tmpRoot, 'uploads')
+const { validateOutfitRoles } = await import('../styling-engine/tools.js')
 
 // Spec 2: role-based outfit validation (roles only, no layerOf). Intentional layering is valid;
 // unresolved slot collisions are not — the malformed-vs-intentional distinction, mechanically enforced.

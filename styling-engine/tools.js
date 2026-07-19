@@ -440,7 +440,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "generate_outfits",
-    description: "Compose fresh visual outfit card options from Yuna's wardrobe. Use only when the user explicitly asks the system to generate/compose fresh cards from scratch, not for ordinary text styling advice or to show an outfit already discussed.",
+    description: "Compose fresh visual outfit card options from the saved wardrobe. Use only when the user explicitly asks the system to generate/compose fresh cards from scratch, not for ordinary text styling advice or to show an outfit already discussed.",
     input_schema: {
       type: "object",
       properties: {
@@ -1354,7 +1354,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           if (!allowed) {
             details.push({
               id: numId,
-              text: `piece ${numId} is not available for Yuna's current request`
+              text: `piece ${numId} is not available for this request`
             })
             continue
           }

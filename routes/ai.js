@@ -39,8 +39,9 @@ import {
   TAG_PIECE_PROMPT,
   OUTFIT_MISSIONS,
   TAG_PIECE_SYSTEM,
-  EXTRACT_PIECES_SYSTEM
-} from '../styling-engine/prompts.js'
+  EXTRACT_PIECES_SYSTEM,
+  PROFILE_NAME
+} from '../styling-engine/promptRuntime.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
 import {
@@ -1017,7 +1018,7 @@ router.post('/evaluate-piece', async (req, res) => {
         '',
         selectedPieceOutfitsText ? `Saved outfits that already use this selected item:\n${selectedPieceOutfitsText}` : `Saved outfits using this selected item: none yet`,
         '',
-        confirmedOutfitsText ? `General confirmed/favorite outfit memory for Yuna's taste filter:\n${confirmedOutfitsText}` : '',
+        confirmedOutfitsText ? `General confirmed/favorite outfit memory for ${PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
         '',
         wardrobeText ? `Available wardrobe pieces that may be used as supporting items. Do not replace the selected item with these:\n${wardrobeText}` : '',
         '',
@@ -1111,7 +1112,7 @@ export async function generateOutfitsForPieceInternal({
     goldFeedbackText ? `High-authority signature/works feedback for this garment. Reinforce similar formulas:\n${goldFeedbackText}` : '',
     selectedSavedBoardText ? `Saved visual boards for this garment. Use strongly boards are high-authority outfit memory:\n${selectedSavedBoardText}` : '',
     selectedFeedbackText ? `Recent feedback for this garment. Signature/Works should be reinforced; Not me/Too soft/Proportion problem should suppress similar ideas:\n${selectedFeedbackText}` : '',
-    confirmedOutfitsText ? `Confirmed/favorite outfit memory for Yuna's taste filter:\n${confirmedOutfitsText}` : '',
+    confirmedOutfitsText ? `Confirmed/favorite outfit memory for ${PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
     globalSavedBoardText ? `Global saved board memory. Use strongly boards should bias ranking when relevant:\n${globalSavedBoardText}` : '',
     calibrationMemoryText ? `Calibration Library memory. This is higher authority than broad style theory for taste boundaries and identity-preservation:\n${calibrationMemoryText}` : '',
     globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : ''
@@ -2612,7 +2613,7 @@ router.post('/compare-outfits', async (req, res) => {
 
     content.push({ type: 'text', text: [
       `Mode: compare_outfits`,
-      `Question: ${question || 'Which outfit works better for Yuna?'}`,
+      `Question: ${question || `Which outfit works better for ${PROFILE_NAME}?`}`,
       '',
       `Outfit A context:`,
       buildOutfitAuthorityNote(outfitA, linkedA, likelyA),
@@ -2624,7 +2625,7 @@ router.post('/compare-outfits', async (req, res) => {
       buildOutfitText(outfitB, linkedB),
       likelyB.length ? `Likely saved garment truth for Outfit B — hints only unless linked:\n${likelyB.map(buildPieceText).join('\n')}` : '',
       '',
-      confirmedOutfitsText ? `Other confirmed outfit memory for Yuna's taste filter:\n${confirmedOutfitsText}` : '',
+      confirmedOutfitsText ? `Other confirmed outfit memory for ${PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
       '',
       `Comparison instruction: make a call if one outfit is clearly stronger. If both work, explain the different use cases. If neither works, identify the shared issue. Do not give a vague "both are nice" answer.`
     ].filter(Boolean).join('\n') })

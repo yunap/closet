@@ -3,7 +3,15 @@
 // the identical "Unterminated string in JSON at position N" message.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseModelJson } from '../styling-engine/provider.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import nodePath from 'node:path'
+// Hermetic DB isolation (spec 21/29 doctrine): this file's import chain reaches db.js,
+// whose module-load migrations would otherwise run against the real wardrobe.db.
+const tmpRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'parse-model-json-'))
+process.env.WARDROBE_DB_PATH = nodePath.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = nodePath.join(tmpRoot, 'uploads')
+const { parseModelJson } = await import('../styling-engine/provider.js')
 
 test('parseModelJson parses well-formed JSON, including a ```json fence', () => {
   assert.deepEqual(parseModelJson('{"a":1}'), { a: 1 })

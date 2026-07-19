@@ -1,9 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
+import fs from 'node:fs'
+import os from 'node:os'
+import nodePath from 'node:path'
+// Hermetic DB isolation (spec 21/29 doctrine): this file's import chain reaches db.js,
+// whose module-load migrations would otherwise run against the real wardrobe.db.
+const tmpRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'editorial-ideal-additions-'))
+process.env.WARDROBE_DB_PATH = nodePath.join(tmpRoot, 'wardrobe.db')
+process.env.WARDROBE_UPLOADS_DIR = nodePath.join(tmpRoot, 'uploads')
+const {
   dedupeAndDifferentiateEditorialDirections,
   ownedLooksSimilarToArchetype,
-} from '../styling-engine/core.js'
+} = await import('../styling-engine/core.js')
 
 test('editorial ideal additions avoid owned color/category matches while preserving selected top role', () => {
   const selectedPiece = {
