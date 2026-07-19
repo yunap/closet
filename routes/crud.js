@@ -5,6 +5,7 @@ import fs from 'fs'
 import { db, uploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { PROFILE_NAME, loadUserProfile, refreshPrompts } from '../styling-engine/promptRuntime.js'
 import { CONSTITUTION_LAYER_KEYS, DEFAULT_CONSTITUTION } from '../styling-engine/prompts.js'
+import { DEMO_WARDROBE_PIECES, seedDemoWardrobe, demoWardrobeCount, removeDemoWardrobe } from '../demoWardrobe.js'
 import { collectPieceIdsFromSavedBoardRow } from '../styling-engine/rules.js'
 import {
   mergeWithManualOverrides,
@@ -1075,6 +1076,37 @@ router.get('/settings/constitution/:layer/history', (req, res) => {
     res.json({ history: rows })
   } catch (err) {
     console.error('Error reading constitution history:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Demo wardrobe (owner ruling 2026-07-19): fresh instances start empty; the former
+// auto-seeded sample pieces are opt-in and removable in one action.
+router.get('/settings/demo-wardrobe', (req, res) => {
+  try {
+    res.json({ count: demoWardrobeCount(db), available: DEMO_WARDROBE_PIECES.length })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/settings/demo-wardrobe', (req, res) => {
+  try {
+    if (demoWardrobeCount(db) > 0) return res.status(400).json({ error: 'Demo wardrobe is already loaded.' })
+    const count = seedDemoWardrobe(db)
+    res.json({ loaded: count })
+  } catch (err) {
+    console.error('Demo wardrobe load error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/settings/demo-wardrobe', (req, res) => {
+  try {
+    const removed = removeDemoWardrobe(db)
+    res.json({ removed })
+  } catch (err) {
+    console.error('Demo wardrobe remove error:', err)
     res.status(500).json({ error: err.message })
   }
 })

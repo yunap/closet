@@ -661,11 +661,15 @@ router.post('/sessions/:id/tag', async (req, res) => {
       const canonical = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
       if (!canonical) { failed++; continue }
       try {
-        const tags = await tagPieceWithProvider(
-          [{ path: path.join(sessionDir(session.id), garmentDisplayFile(canonical)), label: canonical.crop_ok ? 'HANGER PHOTO' : 'WORN PHOTO', guidance: `Imported garment${canonical.crop_ok ? ' crop' : ' (full photo — locate the garment)'}; detector read: ${cluster.descriptor}` }],
-          null,
-          { onUsage: usage => addSpend(session.id, usage) }
-        )
+        // Tag with the crop PLUS the full source photo when it came from a worn shot —
+        // live-found: tagging a partial crop alone misreads categories (a dress cropped
+        // waist-down tags as a skirt). The full photo restores garment-extent context.
+        const canonicalSourceImage = db.prepare('SELECT * FROM import_images WHERE id = ?').get(canonical.image_id)
+        const tagInputs = [{ path: path.join(sessionDir(session.id), garmentDisplayFile(canonical)), label: canonical.crop_ok ? 'HANGER PHOTO' : 'WORN PHOTO', guidance: `Imported garment${canonical.crop_ok ? ' crop' : ' (full photo — locate the garment)'}; detector read: ${cluster.descriptor}` }]
+        if (canonical.crop_ok && canonicalSourceImage?.kind === 'worn_outfit') {
+          tagInputs.push({ path: path.join(sessionDir(session.id), canonicalSourceImage.file), label: 'WORN PHOTO', guidance: `Full outfit photo the crop came from — use it to judge the garment's full extent and category (${cluster.descriptor}).` })
+        }
+        const tags = await tagPieceWithProvider(tagInputs, null, { onUsage: usage => addSpend(session.id, usage) })
         setTags.run(JSON.stringify(tags || {}), cluster.id)
         tagged++
         bumpCounts(session.id, { garmentsTagged: 1 })

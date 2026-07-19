@@ -33,6 +33,7 @@ export default function StylistSettings() {
   const [historyFor, setHistoryFor] = useState(null)
   const [historyRows, setHistoryRows] = useState([])
   const [learnings, setLearnings] = useState([])
+  const [demo, setDemo] = useState(null)
   const [learningDrafts, setLearningDrafts] = useState({})
   const [status, setStatus] = useState('')
 
@@ -48,6 +49,7 @@ export default function StylistSettings() {
       setLayers(c.layers || [])
       const feedback = await fetch('/api/stylist-feedback?limit=200').then(r => r.json()).catch(() => [])
       setLearnings((Array.isArray(feedback) ? feedback : []).filter(row => LEARNING_TYPES.has(row.feedback_type)))
+      setDemo(await fetch('/api/settings/demo-wardrobe').then(r => r.json()).catch(() => null))
     } catch (err) {
       setStatus(`Failed to load settings: ${err.message}`)
     }
@@ -174,6 +176,35 @@ export default function StylistSettings() {
           )}
         </div>
       ))}
+
+      {demo && (
+        <div style={card}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 15 }}>Demo wardrobe</h3>
+          {demo.count > 0 ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>{demo.count} demo pieces are in your wardrobe.</span>
+              <button
+                style={quietBtn}
+                onClick={async () => {
+                  const res = await fetch('/api/settings/demo-wardrobe', { method: 'DELETE' })
+                  if (res.ok) { flash('Demo wardrobe removed.'); load() }
+                }}
+              >Remove all demo pieces</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Explore the stylist with {demo.available} sample pieces — removable any time.</span>
+              <button
+                style={quietBtn}
+                onClick={async () => {
+                  const res = await fetch('/api/settings/demo-wardrobe', { method: 'POST' })
+                  if (res.ok) { flash('Demo wardrobe loaded.'); load() }
+                }}
+              >Load demo wardrobe</button>
+            </div>
+          )}
+        </div>
+      )}
 
       <h2 style={{ fontSize: 18, margin: '22px 0 4px' }}>Learned rules & preferences</h2>
       <p style={{ ...{ color: 'var(--text-muted)', fontSize: 13 }, marginTop: 0 }}>

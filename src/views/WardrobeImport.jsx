@@ -165,9 +165,20 @@ export default function WardrobeImport() {
             </div>
           )}
           {ffmpegHint && <div style={{ ...mutedText, marginTop: 8, color: 'var(--repair)' }}>{ffmpegHint}</div>}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+            <button
+              style={{ ...quietBtn, fontSize: 12.5 }}
+              onClick={async () => {
+                setError('')
+                const res = await fetch('/api/settings/demo-wardrobe', { method: 'POST' })
+                const data = await res.json()
+                if (res.ok) setProgress(`Demo wardrobe loaded (${data.loaded} pieces) — you can remove it any time from Settings.`)
+                else setError(data.error || 'Could not load the demo wardrobe.')
+              }}
+            >…or explore with a demo wardrobe first</button>
             <button style={primaryBtn} disabled={!uploadTotals || uploading} onClick={analyze}>Analyze photos</button>
           </div>
+          {progress && phase === 'upload' && <div style={{ ...mutedText, marginTop: 8 }}>{progress} <Link to="/wardrobe">See wardrobe</Link></div>}
         </div>
       )}
 
