@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import PieceCard from '../components/PieceCard'
 import PieceForm from '../components/PieceForm'
 import PieceDetail from '../components/PieceDetail'
@@ -48,6 +48,7 @@ const COLOR_HEX_MAP = {
 
 export default function PieceInventory({ onSendToStylist }) {
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
 
   // Filter state — backed by URL query params so state survives tab switches.
   // Reads fall back to the same defaults as the old useState initialisers.
@@ -165,6 +166,9 @@ export default function PieceInventory({ onSendToStylist }) {
           <div className="wardrobe-header-actions">
             <button className="chip wardrobe-add-piece" onClick={addPiece}>
               Add piece
+            </button>
+            <button className="chip" onClick={() => navigate('/import')}>
+              Import
             </button>
             <button
               className="chip"

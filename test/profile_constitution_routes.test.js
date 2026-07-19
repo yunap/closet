@@ -95,3 +95,28 @@ test('constitution PUT rejects unknown layers and empty bodies', async () => {
   const empty = await putJson('/api/settings/constitution/working_style', { body: '   ' })
   assert.equal(empty.status, 400)
 })
+
+test('demo wardrobe: fresh instances start empty; demo is opt-in, refuses double-load, removable', async () => {
+  const { db } = await import('../db.js')
+  const before = db.prepare('SELECT COUNT(*) AS n FROM pieces WHERE is_demo = 1').get().n
+  assert.equal(before, 0, 'fresh instance has no demo pieces (empty-wardrobe ruling)')
+
+  const status = await getJson('/api/settings/demo-wardrobe')
+  assert.equal(status.count, 0)
+  assert.ok(status.available >= 60, 'demo set advertised')
+
+  const load = await fetch(`${baseUrl}/api/settings/demo-wardrobe`, { method: 'POST' })
+  assert.equal(load.status, 200)
+  assert.equal((await load.json()).loaded, status.available)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pieces WHERE is_demo = 1').get().n, status.available)
+
+  const doubleLoad = await fetch(`${baseUrl}/api/settings/demo-wardrobe`, { method: 'POST' })
+  assert.equal(doubleLoad.status, 400, 'refuses to load twice')
+
+  // Removal targets exactly the demo rows; user-created pieces survive.
+  const userPiece = db.prepare("INSERT INTO pieces (name, category) VALUES ('my real top', 'top')").run().lastInsertRowid
+  const remove = await fetch(`${baseUrl}/api/settings/demo-wardrobe`, { method: 'DELETE' })
+  assert.equal((await remove.json()).removed, status.available)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pieces WHERE is_demo = 1').get().n, 0)
+  assert.ok(db.prepare('SELECT id FROM pieces WHERE id = ?').get(userPiece), 'user piece untouched')
+})

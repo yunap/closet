@@ -14,6 +14,8 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db, parsePiece } = await import('../db.js')
+const { seedDemoWardrobe } = await import('../demoWardrobe.js')
+seedDemoWardrobe(db)
 const { compatibilityScoreForSelectedItem, scoreWholeWardrobeCandidate, filterWholeWardrobePiecesForGeneration, wholeWardrobePieceTrustDecision, buildVisualComposerRoster, pieceOccasionCompatible, repairWholeWardrobeOutfit, weatherProfileFromContext, weatherFitForPiece, getMergedProfileRules, profileRuleFit } = await import('../styling-engine/rules.js')
 const { bottomKind, fabricWeight, pieceBareness, pieceCoverage, pieceFabricWeight } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')

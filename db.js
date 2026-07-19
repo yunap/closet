@@ -43,6 +43,7 @@ db.exec(`
     favorite     INTEGER DEFAULT 0,
     photo        TEXT,
     tagger_version TEXT,
+    is_demo      INTEGER DEFAULT 0,
     date_added   TEXT DEFAULT (datetime('now'))
   );
 
@@ -326,6 +327,76 @@ try {
   console.warn('Backfill migration warning:', err.message)
 }
 
+// ── Spec 31: batch wardrobe import (sessions, ingested images, evidence) ──────
+// import_sessions/import_images carry an import run through its phases
+// (ingesting → classified → clustered → tagged → reviewed). piece_import_evidence
+// is the durable output: extra worn/reference photos attached to a piece by an
+// accepted import merge (owner ruling: attachment is permanent on accept).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS import_sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    status      TEXT DEFAULT 'ingesting',
+    counts_json TEXT DEFAULT '{}',
+    spent_usd   REAL DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS import_images (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER REFERENCES import_sessions(id) ON DELETE CASCADE,
+    file        TEXT NOT NULL,
+    origin      TEXT DEFAULT 'upload',
+    album_hint  TEXT DEFAULT '',
+    kind        TEXT,
+    status      TEXT DEFAULT 'pending',
+    meta_json   TEXT DEFAULT '{}',
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS import_garments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER REFERENCES import_sessions(id) ON DELETE CASCADE,
+    image_id    INTEGER REFERENCES import_images(id) ON DELETE CASCADE,
+    crop_file   TEXT NOT NULL,
+    category    TEXT DEFAULT '',
+    color       TEXT DEFAULT '',
+    descriptor  TEXT DEFAULT '',
+    cluster_id  INTEGER,
+    crop_ok     INTEGER DEFAULT 1,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS import_clusters (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id            INTEGER REFERENCES import_sessions(id) ON DELETE CASCADE,
+    canonical_garment_id  INTEGER,
+    category              TEXT DEFAULT '',
+    color                 TEXT DEFAULT '',
+    descriptor            TEXT DEFAULT '',
+    merge_target_piece_id INTEGER,
+    status                TEXT DEFAULT 'proposed',
+    tags_json             TEXT DEFAULT NULL,
+    result_piece_id       INTEGER,
+    created_at            TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS piece_import_evidence (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    piece_id    INTEGER REFERENCES pieces(id) ON DELETE CASCADE,
+    session_id  INTEGER,
+    file        TEXT NOT NULL,
+    note        TEXT DEFAULT '',
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+`)
+
+// Additive migrations for import_clusters (pre-existing scratch DBs).
+;['tags_json TEXT DEFAULT NULL', 'result_piece_id INTEGER'].forEach(col => {
+  try { db.exec(`ALTER TABLE import_clusters ADD COLUMN ${col}`) } catch {}
+})
+;['crop_ok INTEGER DEFAULT 1'].forEach(col => {
+  try { db.exec(`ALTER TABLE import_garments ADD COLUMN ${col}`) } catch {}
+})
+;['is_demo INTEGER DEFAULT 0'].forEach(col => {
+  try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
+})
+
 // ── Spec 32: style constitution + user profile storage ────────────────────────
 // Additive tables. style_constitution holds the per-user constitution layers that
 // prompts.js assembles into system prompts (promptRuntime.js reads them);
@@ -386,95 +457,10 @@ try {
 // files in parallel against a fresh clone) can't both pass a check-then-act
 // race and collide inserting the sentinel row — only the process whose
 // INSERT actually lands (changes > 0) seeds.
-const claimedSeed = db.prepare("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('seeded', 'true')").run()
-if (claimedSeed.changes > 0) {
-  const ins = db.prepare(`
-    INSERT INTO pieces (name, category, colors, occasions, season, notes, status)
-    VALUES (@name, @category, @colors, @occasions, @season, @notes, @status)
-  `)
-  const seedPieces = db.transaction(() => {
-    const pieces = [
-      // Tops
-      { name: 'Whale stripe tee',        category: 'top',       colors: '["navy","white"]',      occasions: '["casual"]',                         season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Black sleeveless tank',   category: 'top',       colors: '["black"]',             occasions: '["casual","city"]',                  season: 'warm',       notes: 'Replace with better quality version',          status: 'active' },
-      { name: 'Daisy print tee',         category: 'top',       colors: '["white","yellow"]',    occasions: '["casual"]',                         season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Orange ribbed tank',      category: 'top',       colors: '["orange"]',            occasions: '["casual","home"]',                  season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Botanical wrap top',      category: 'top',       colors: '["green","cream"]',     occasions: '["casual","smart-casual"]',           season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Black blouse',            category: 'top',       colors: '["black"]',             occasions: '["city","evening"]',                 season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Navy pinstripe shirt',    category: 'top',       colors: '["navy"]',              occasions: '["city","smart-casual"]',            season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Floral blouse',           category: 'top',       colors: '["multi"]',             occasions: '["city","smart-casual"]',            season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Striped button-down',     category: 'top',       colors: '["navy","white"]',      occasions: '["city"]',                           season: 'year-round', notes: 'Wear open as a layer over navy top',           status: 'active' },
-      { name: 'Navy top',                category: 'top',       colors: '["navy"]',              occasions: '["city","casual"]',                  season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Black button-detail top', category: 'top',       colors: '["black"]',             occasions: '["evening","city"]',                 season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Cashmere tee',            category: 'top',       colors: '["grey"]',              occasions: '["smart-casual","casual"]',          season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Fitted Breton tee',       category: 'top',       colors: '["navy","white"]',      occasions: '["smart-casual","casual"]',          season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Black tank',              category: 'top',       colors: '["black"]',             occasions: '["outdoor","casual","home"]',        season: 'warm',       notes: 'Base layer',                                   status: 'active' },
-      { name: 'Navy graphic tee',        category: 'top',       colors: '["navy"]',              occasions: '["home","casual"]',                  season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Plum cap-sleeve top',     category: 'top',       colors: '["plum"]',              occasions: '["home","casual"]',                  season: 'warm',       notes: '',                                             status: 'active' },
-      // Bottoms
-      { name: 'Dark jeans',              category: 'bottom',    colors: '["dark blue"]',         occasions: '["casual","city","evening","smart-casual"]', season: 'year-round', notes: '',                                    status: 'active' },
-      { name: 'Orange pink floral mini skirt', category: 'bottom', colors: '["orange","pink"]', occasions: '["casual"]',                         season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Emerald green pants',     category: 'bottom',    colors: '["green"]',             occasions: '["casual"]',                         season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Cream wide-leg pants',    category: 'bottom',    colors: '["cream"]',             occasions: '["casual","city"]',                  season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Mustard corduroy skinnies', category: 'bottom', colors: '["mustard"]',            occasions: '["casual","smart-casual"]',          season: 'cool',       notes: 'Zipper needs repair',                          status: 'needs-repair' },
-      { name: 'Cream cropped wide-leg pants', category: 'bottom', colors: '["cream"]',           occasions: '["city"]',                           season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Dark wide-leg pants',     category: 'bottom',    colors: '["dark grey"]',         occasions: '["city","smart-casual","evening"]',  season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Cream knit skirt',        category: 'bottom',    colors: '["cream"]',             occasions: '["city"]',                           season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Light grey denim',        category: 'bottom',    colors: '["light grey"]',        occasions: '["evening","casual"]',               season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Grey lace-waist pants',   category: 'bottom',    colors: '["grey"]',              occasions: '["smart-casual"]',                   season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Brown-cream midi skirt',  category: 'bottom',    colors: '["brown","cream"]',     occasions: '["smart-casual"]',                   season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Dark fuller pants',       category: 'bottom',    colors: '["dark grey"]',         occasions: '["outdoor","casual"]',               season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Dark leggings',           category: 'bottom',    colors: '["black"]',             occasions: '["outdoor","home"]',                 season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'White terry pants',       category: 'bottom',    colors: '["white"]',             occasions: '["home"]',                           season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Floral leggings',         category: 'bottom',    colors: '["multi"]',             occasions: '["home"]',                           season: 'year-round', notes: '',                                             status: 'active' },
-      // Dresses
-      { name: 'Plum dress',              category: 'dress',     colors: '["plum"]',              occasions: '["evening"]',                        season: 'year-round', notes: 'Versatile — styles up or down easily',         status: 'active' },
-      { name: 'Green maxi dress',        category: 'dress',     colors: '["green"]',             occasions: '["casual","city"]',                  season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Charcoal ruched dress',   category: 'dress',     colors: '["charcoal"]',          occasions: '["city","evening"]',                 season: 'year-round', notes: '',                                             status: 'active' },
-      // Outerwear
-      { name: 'Grey vest',               category: 'outerwear', colors: '["grey"]',              occasions: '["casual","smart-casual"]',          season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Leather jacket',          category: 'outerwear', colors: '["black"]',             occasions: '["evening","casual"]',               season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Oatmeal cardigan',        category: 'outerwear', colors: '["oatmeal"]',           occasions: '["evening","casual","city"]',        season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Tweed vest',              category: 'outerwear', colors: '["brown","cream"]',     occasions: '["smart-casual"]',                   season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Plum hoodie',             category: 'outerwear', colors: '["plum"]',              occasions: '["outdoor"]',                        season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Olive hoodie',            category: 'outerwear', colors: '["olive"]',             occasions: '["outdoor","casual"]',               season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Cream cardigan',          category: 'outerwear', colors: '["cream"]',             occasions: '["city","evening","casual"]',        season: 'cool',       notes: '',                                             status: 'active' },
-      // Shoes
-      { name: 'White sneakers',          category: 'shoes',     colors: '["white"]',             occasions: '["casual","smart-casual"]',          season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Black sandals',           category: 'shoes',     colors: '["black"]',             occasions: '["casual","city"]',                  season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Brown ankle boots',       category: 'shoes',     colors: '["brown"]',             occasions: '["casual","smart-casual","city","evening"]', season: 'cool', notes: '',                                          status: 'active' },
-      { name: 'Black mules',             category: 'shoes',     colors: '["black"]',             occasions: '["city","evening"]',                 season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Black flats',             category: 'shoes',     colors: '["black"]',             occasions: '["city","smart-casual","evening"]',  season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Tan ankle boots',         category: 'shoes',     colors: '["tan"]',               occasions: '["evening","smart-casual","city"]',  season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Navy slip-ons',           category: 'shoes',     colors: '["navy"]',              occasions: '["smart-casual","casual"]',          season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Flat sandals',            category: 'shoes',     colors: '["brown"]',             occasions: '["smart-casual","casual"]',          season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Hiking boots',            category: 'shoes',     colors: '["brown"]',             occasions: '["outdoor"]',                        season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Flip-flops',              category: 'shoes',     colors: '["tan"]',               occasions: '["home"]',                           season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Platform sandals',        category: 'shoes',     colors: '["tan"]',               occasions: '["casual","city"]',                  season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Grey pointed flats',      category: 'shoes',     colors: '["grey"]',              occasions: '["city","evening"]',                 season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Taupe sneakers',          category: 'shoes',     colors: '["tan"]',               occasions: '["home","casual"]',                  season: 'year-round', notes: '',                                             status: 'active' },
-      // Accessories
-      { name: 'Red/orange crossbody bag',   category: 'accessory', colors: '["red","orange"]',  occasions: '["casual","city"]',                  season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Amber pendant necklace',     category: 'accessory', colors: '["amber"]',          occasions: '["city","evening","smart-casual"]',  season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Green beaded necklace',      category: 'accessory', colors: '["green"]',          occasions: '["evening","city"]',                 season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Turquoise pendant',          category: 'accessory', colors: '["turquoise"]',      occasions: '["casual","city"]',                  season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Colorful loop scarf',        category: 'accessory', colors: '["multi"]',          occasions: '["casual","city","evening"]',        season: 'cool',       notes: '',                                             status: 'active' },
-      { name: 'Brown leather belt',         category: 'accessory', colors: '["brown"]',          occasions: '["smart-casual","city"]',            season: 'year-round', notes: '',                                             status: 'active' },
-      { name: 'Woven/rattan crossbody bag', category: 'accessory', colors: '["tan","brown"]',    occasions: '["casual","city"]',                  season: 'warm',       notes: '',                                             status: 'active' },
-      { name: 'Green bucket hat',           category: 'accessory', colors: '["green"]',          occasions: '["outdoor"]',                        season: 'warm',       notes: '',                                             status: 'active' },
-    ]
-    pieces.forEach(p => ins.run(p))
-  })
-  seedPieces()
-
-  const constitutionMigration = db.prepare("SELECT value FROM app_meta WHERE key = 'constitution_migrated'").get()?.value
-  if (constitutionMigration !== 'fresh') {
-    const insTodo = db.prepare('INSERT INTO todos (type, description) VALUES (@type, @description)')
-    LEGACY_SEED_TODOS.forEach(t => insTodo.run(t))
-  }
-
-  console.log('✓ Wardrobe seeded with sample data')
-}
+db.prepare("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('seeded', 'true')").run()
+// Owner ruling 2026-07-19: fresh instances start with an EMPTY wardrobe. The former
+// auto-seeded 62 sample pieces are now the opt-in demo wardrobe (demoWardrobe.js),
+// loadable from the import screen or Settings and removable in one action.
 
 // Spec 32 follow-up: fresh/onboarded users must not inherit the legacy owner's
 // personal task list. Clean up only the exact demo rows that briefly leaked into

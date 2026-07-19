@@ -173,12 +173,13 @@ export default function Onboarding() {
     } catch (err) { setError(err.message) } finally { setSaving(false) }
   }
 
-  const finish = async () => {
+  const finish = async (destination = '/wardrobe') => {
     setSaving(true)
     try { await fetch('/api/settings/onboarding-complete', { method: 'POST' }) } catch {}
     setSaving(false)
-    navigate('/wardrobe')
+    navigate(typeof destination === 'string' ? destination : '/wardrobe')
   }
+  const finishToImport = () => finish('/import')
 
   const stepIndex = STEPS.indexOf(step)
 
@@ -377,12 +378,14 @@ export default function Onboarding() {
           <h2 style={{ margin: '0 0 6px', fontSize: 22 }}>Your stylist is ready{displayName ? `, ${displayName.trim()}` : ''} 🎉</h2>
           <p style={{ color: 'var(--text-muted)', lineHeight: 1.55 }}>
             One thing left, and it's the big one: your stylist can only recommend clothes it knows
-            you own. Head to the Wardrobe tab and add your pieces — photos of garments on hangers
-            or flat, or outfit photos. The more of your closet it can see, the better every
-            recommendation gets. You can revisit everything you just wrote in Settings.
+            you own. The fastest way in: batch-import photos of yourself wearing your clothes, a
+            Google Takeout ZIP, or a video of your closet rail — duplicates get grouped and nothing
+            is saved without your approval. You can also add pieces one at a time from the Wardrobe
+            tab, and revisit everything you just wrote in Settings.
           </p>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
-            <button style={primaryBtn} disabled={saving} onClick={finish}>Go to my wardrobe</button>
+            <button style={quietBtn} disabled={saving} onClick={finish}>Skip for now</button>
+            <button style={primaryBtn} disabled={saving} onClick={finishToImport}>Import my wardrobe</button>
           </div>
         </div>
       )}

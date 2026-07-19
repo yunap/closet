@@ -509,6 +509,35 @@ export function extractToolResultImages(result) {
 // cap always stops mid-token, so it can never end on a closing `}`/`]`
 // (after stripping the code-fence wrapper) — a cheap, reliable signal that
 // doesn't require guessing at exact token counts.
+// Extract the FIRST balanced JSON value from model text, string-aware. Live-found
+// failure mode: a model returns a short, COMPLETE JSON object and then keeps narrating
+// (or narrates BEFORE it, e.g. "I need to ...") — whole-string parsing rejects both as
+// invalid rather than pulling out the JSON that's actually there.
+export function salvageFirstJson(raw) {
+  const text = String(raw || '')
+  const start = text.search(/[{[]/)
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{' || ch === '[') depth++
+    if (ch === '}' || ch === ']') depth--
+    if (depth === 0 && i > start) {
+      try { return JSON.parse(text.slice(start, i + 1)) } catch { return null }
+    }
+  }
+  return null
+}
+
 export function parseModelJson(raw, { context = '', maxTokens = null } = {}) {
   const cleaned = String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim()
   try {
@@ -531,7 +560,9 @@ export async function askClaude({ system = STYLIST_SYSTEM, messages, maxTokens =
   return text
 }
 
-export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
+export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
+  // Spec 31: an explicit per-call model override (the importer's cheap classification tier).
+  const resolvedModel = model || ANTHROPIC_MODEL
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('No ANTHROPIC_API_KEY set in .env')
   }
@@ -541,14 +572,14 @@ export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, ma
     content: toAnthropicContentBlocks(message.content)
   }))
   const response = await client.messages.create({
-    model: ANTHROPIC_MODEL,
+    model: resolvedModel,
     max_tokens: maxTokens,
     system: systemToAnthropicBlocks(system),
     messages: sanitizedMessages
   })
   return {
     text: response.content?.[0]?.text || '',
-    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
+    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel })
   }
 }
 
@@ -626,7 +657,7 @@ export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens 
   return text
 }
 
-export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
+export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
@@ -654,7 +685,7 @@ export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, m
     }
   }
 
-  return askClaudeWithUsage({ system, messages, maxTokens })
+  return askClaudeWithUsage({ system, messages, maxTokens, model })
 }
 
 

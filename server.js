@@ -7,6 +7,7 @@ import { executeTool } from './styling-engine/tools.js'
 import { contentToOpenAI } from './styling-engine/provider.js'
 import { tagPieceWithProvider } from './routes/ai.js'
 import crudRouter from './routes/crud.js'
+import importerRouter from './routes/importer.js'
 import aiRouter from './routes/ai.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -20,6 +21,7 @@ app.use('/uploads', express.static(uploadsDir))
 
 // Mount API Routers
 app.use('/api', crudRouter)
+app.use('/api/import', importerRouter)
 app.use('/api/ai', aiRouter)
 
 // Catch-all: serve React app (production only)

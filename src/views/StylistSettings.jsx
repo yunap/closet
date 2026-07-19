@@ -15,6 +15,10 @@ const LAYER_TITLES = {
   editorial_shoes: 'Image Generation — Shoe Rules'
 }
 const INTERVIEW_STEPS = { body_contract: 'comfort', aesthetic_gravity: 'aesthetic', working_style: 'working' }
+// The durable learned classes: rules the stylist stored from conversations
+// (store_user_correction → owner_rule; persisted preference reactions). Card-level
+// taste feedback stays in the chat's context-scoped Learning panel.
+const LEARNING_TYPES = new Set(['owner_rule', 'preference_reaction', 'correction'])
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', marginBottom: 16 }
 const inputStyle = { width: '100%', padding: '9px 11px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 14, boxSizing: 'border-box' }
@@ -28,6 +32,9 @@ export default function StylistSettings() {
   const [drafts, setDrafts] = useState({})
   const [historyFor, setHistoryFor] = useState(null)
   const [historyRows, setHistoryRows] = useState([])
+  const [learnings, setLearnings] = useState([])
+  const [demo, setDemo] = useState(null)
+  const [learningDrafts, setLearningDrafts] = useState({})
   const [status, setStatus] = useState('')
 
   const load = async () => {
@@ -40,6 +47,9 @@ export default function StylistSettings() {
       setProfile(p)
       setHomeLocation(h.homeLocation || '')
       setLayers(c.layers || [])
+      const feedback = await fetch('/api/stylist-feedback?limit=200').then(r => r.json()).catch(() => [])
+      setLearnings((Array.isArray(feedback) ? feedback : []).filter(row => LEARNING_TYPES.has(row.feedback_type)))
+      setDemo(await fetch('/api/settings/demo-wardrobe').then(r => r.json()).catch(() => null))
     } catch (err) {
       setStatus(`Failed to load settings: ${err.message}`)
     }
@@ -66,6 +76,20 @@ export default function StylistSettings() {
       const next = { ...drafts }; delete next[layer]; setDrafts(next)
       flash('Saved — prior text kept in history.'); load()
     } else flash((await res.json()).error || 'Failed to save layer')
+  }
+
+  const saveLearning = async (row) => {
+    const note = learningDrafts[row.id]
+    const res = await fetch(`/api/stylist-feedback/${row.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) })
+    if (res.ok) {
+      const next = { ...learningDrafts }; delete next[row.id]; setLearningDrafts(next)
+      flash('Learning updated.'); load()
+    } else flash('Failed to update learning')
+  }
+
+  const archiveLearning = async (row) => {
+    const res = await fetch(`/api/stylist-feedback/${row.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true }) })
+    if (res.ok) { flash('Learning retired — it will no longer influence styling.'); load() }
   }
 
   const showHistory = async (layer) => {
@@ -150,6 +174,63 @@ export default function StylistSettings() {
               ))}
             </div>
           )}
+        </div>
+      ))}
+
+      {demo && (
+        <div style={card}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 15 }}>Demo wardrobe</h3>
+          {demo.count > 0 ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>{demo.count} demo pieces are in your wardrobe.</span>
+              <button
+                style={quietBtn}
+                onClick={async () => {
+                  const res = await fetch('/api/settings/demo-wardrobe', { method: 'DELETE' })
+                  if (res.ok) { flash('Demo wardrobe removed.'); load() }
+                }}
+              >Remove all demo pieces</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Explore the stylist with {demo.available} sample pieces — removable any time.</span>
+              <button
+                style={quietBtn}
+                onClick={async () => {
+                  const res = await fetch('/api/settings/demo-wardrobe', { method: 'POST' })
+                  if (res.ok) { flash('Demo wardrobe loaded.'); load() }
+                }}
+              >Load demo wardrobe</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <h2 style={{ fontSize: 18, margin: '22px 0 4px' }}>Learned rules & preferences</h2>
+      <p style={{ ...{ color: 'var(--text-muted)', fontSize: 13 }, marginTop: 0 }}>
+        Durable rules your stylist stored from conversations ("I don't wear…", weather corrections).
+        These live alongside the constitution and every future styling turn respects them.
+      </p>
+      {learnings.length === 0 && (
+        <div style={card}><div style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Nothing learned yet — corrections you give in chat land here.</div></div>
+      )}
+      {learnings.map(row => (
+        <div key={row.id} style={{ ...card, padding: '12px 16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{row.feedback_type.replace('_', ' ')}</span>
+            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{row.created_at}</span>
+          </div>
+          <textarea
+            style={{ ...inputStyle, minHeight: 48, marginTop: 8, fontSize: 13 }}
+            value={learningDrafts[row.id] ?? row.note}
+            onChange={e => setLearningDrafts({ ...learningDrafts, [row.id]: e.target.value })}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+            <button style={quietBtn} onClick={() => archiveLearning(row)}>Retire</button>
+            {learningDrafts[row.id] !== undefined && learningDrafts[row.id] !== row.note && (
+              <button style={primaryBtn} onClick={() => saveLearning(row)}>Save</button>
+            )}
+          </div>
         </div>
       ))}
     </div>

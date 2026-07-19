@@ -46,3 +46,13 @@ test('settings surface exposes per-layer editing, history, and interview re-runs
     assert.ok(src.includes(layer), `settings lists ${layer}`)
   }
 })
+
+test('settings surfaces learned rules globally: durable types listed, editable, retirable', () => {
+  const src = read('src/views/StylistSettings.jsx')
+  assert.match(src, /Learned rules & preferences/, 'global learnings section exists')
+  for (const type of ['owner_rule', 'preference_reaction', 'correction']) {
+    assert.ok(src.includes(type), `durable learning type ${type} included`)
+  }
+  assert.match(src, /archived: true/, 'learnings can be retired (archived), never silently deleted')
+  assert.match(src, /stylist-feedback\?limit/, 'reads the un-scoped feedback listing')
+})
