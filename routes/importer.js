@@ -16,7 +16,7 @@ import AdmZip from 'adm-zip'
 import { db, uploadsDir, safeJsonParse } from '../db.js'
 import { tagPieceWithProvider } from './ai.js'
 import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, ACTIVE_STYLIST_MODEL, AI_PROVIDER } from '../styling-engine/provider.js'
-import { IMPORT_CLASSIFIER_SYSTEM, IMPORT_DETECTOR_SYSTEM, IMPORT_CLUSTER_SYSTEM, IMPORT_MERGE_SYSTEM, IMPORT_CROP_VERIFY_SYSTEM } from '../styling-engine/prompts.js'
+import { IMPORT_CLASSIFIER_SYSTEM, IMPORT_DETECTOR_SYSTEM, IMPORT_CLUSTER_SYSTEM, IMPORT_MERGE_SYSTEM, IMPORT_CROP_VERIFY_SYSTEM, IMPORT_RELOCATE_SYSTEM } from '../styling-engine/prompts.js'
 
 const router = express.Router()
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 500 * 1024 * 1024 } })
@@ -370,34 +370,76 @@ router.post('/sessions/:id/detect', async (req, res) => {
       }
     }
     // Crop verification (cheap tier, batched): does each crop actually show its claimed
-    // garment? Failures flip crop_ok=0 → full-photo fallback. A failed verify sheet
-    // leaves its crops trusted (crop_ok=1) rather than blocking the pipeline.
-    const toVerify = db.prepare('SELECT * FROM import_garments WHERE session_id = ? AND crop_ok = 1').all(session.id)
-    let cropsFallback = 0
-    for (let start = 0; start < toVerify.length; start += 10) {
-      const sheet = toVerify.slice(start, start + 10)
-      const content = [{ type: 'text', text: `Verify these ${sheet.length} numbered crops against their claimed garments.` }]
-      for (let i = 0; i < sheet.length; i++) {
-        content.push({ type: 'text', text: `Crop ${i + 1} — claimed: ${sheet[i].descriptor} (${sheet[i].category})` })
-        content.push(await thumbBlock(session.id, sheet[i].crop_file))
-      }
-      try {
-        const parsed = await askCheapJson({ sessionId: session.id, system: IMPORT_CROP_VERIFY_SYSTEM, content, maxTokens: 600, context: 'import crop verification' })
-        const verdicts = new Map((parsed?.verdicts || []).map(v => [Number(v.index), Boolean(v.shows_garment)]))
+    // garment, as the MAIN subject? Returns the ids that failed. A failed verify sheet
+    // leaves its crops trusted rather than blocking the pipeline.
+    const verifyCrops = async (garments) => {
+      const failedIds = []
+      for (let start = 0; start < garments.length; start += 10) {
+        const sheet = garments.slice(start, start + 10)
+        const content = [{ type: 'text', text: `Verify these ${sheet.length} numbered crops against their claimed garments.` }]
         for (let i = 0; i < sheet.length; i++) {
-          if (verdicts.get(i + 1) === false) {
-            db.prepare('UPDATE import_garments SET crop_ok = 0 WHERE id = ?').run(sheet[i].id)
-            cropsFallback++
+          content.push({ type: 'text', text: `Crop ${i + 1} — claimed: ${sheet[i].descriptor} (${sheet[i].category})` })
+          content.push(await thumbBlock(session.id, sheet[i].crop_file))
+        }
+        try {
+          const parsed = await askCheapJson({ sessionId: session.id, system: IMPORT_CROP_VERIFY_SYSTEM, content, maxTokens: 600, context: 'import crop verification' })
+          const verdicts = new Map((parsed?.verdicts || []).map(v => [Number(v.index), Boolean(v.shows_garment)]))
+          for (let i = 0; i < sheet.length; i++) {
+            if (verdicts.get(i + 1) === false) failedIds.push(sheet[i].id)
           }
+        } catch (err) {
+          console.warn('Import crop verification sheet failed (crops left trusted):', err.message)
+        }
+      }
+      return failedIds
+    }
+
+    // Pass 1: verify the detector's crops.
+    const allGarments = db.prepare('SELECT * FROM import_garments WHERE session_id = ? AND crop_ok = 1').all(session.id)
+    const firstFailures = await verifyCrops(allGarments)
+
+    // Pass 2 (live-found: multi-garment boxes are weak, focused single-garment boxes are
+    // much stronger): re-locate each failed garment individually in its source photo,
+    // re-crop, and re-verify. Only what still fails falls back to the full photo.
+    let cropsRelocalized = 0
+    const relocated = []
+    for (const garmentId of firstFailures) {
+      const garment = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(garmentId)
+      const image = db.prepare('SELECT * FROM import_images WHERE id = ?').get(garment.image_id)
+      try {
+        const parsed = await askCheapJson({
+          sessionId: session.id,
+          system: IMPORT_RELOCATE_SYSTEM,
+          content: [
+            { type: 'text', text: `Locate this garment: ${garment.descriptor} (${garment.category}).` },
+            await thumbBlock(session.id, image.file, 1024)
+          ],
+          maxTokens: 300,
+          context: 'import crop relocation'
+        })
+        const newCrop = parsed?.box ? await cropGarment(session.id, image.file, parsed.box) : null
+        if (newCrop) {
+          db.prepare('UPDATE import_garments SET crop_file = ? WHERE id = ?').run(newCrop, garmentId)
+          relocated.push({ ...garment, crop_file: newCrop })
+          cropsRelocalized++
+        } else {
+          db.prepare('UPDATE import_garments SET crop_ok = 0 WHERE id = ?').run(garmentId)
         }
       } catch (err) {
-        console.warn('Import crop verification sheet failed (crops left trusted):', err.message)
+        console.warn('Import crop relocation failed for garment', garmentId, err.message)
+        db.prepare('UPDATE import_garments SET crop_ok = 0 WHERE id = ?').run(garmentId)
       }
     }
+    const secondFailures = relocated.length ? await verifyCrops(relocated) : []
+    for (const garmentId of secondFailures) {
+      db.prepare('UPDATE import_garments SET crop_ok = 0 WHERE id = ?').run(garmentId)
+    }
+    const cropsFallback = db.prepare('SELECT COUNT(*) AS n FROM import_garments WHERE session_id = ? AND crop_ok = 0').get(session.id).n
+    if (cropsRelocalized) bumpCounts(session.id, { cropsRelocalized })
     if (cropsFallback) bumpCounts(session.id, { cropsFallbackToFullPhoto: cropsFallback })
 
     if (!failedImages && images.length) db.prepare("UPDATE import_sessions SET status = 'detected' WHERE id = ?").run(session.id)
-    res.json({ imagesProcessed: images.length - failedImages, failedImages, garmentsDetected, cropsRejected, cropsFallbackToFullPhoto: cropsFallback, spentUsd: getSession(session.id).spent_usd })
+    res.json({ imagesProcessed: images.length - failedImages, failedImages, garmentsDetected, cropsRejected, cropsRelocalized, cropsFallbackToFullPhoto: cropsFallback, spentUsd: getSession(session.id).spent_usd })
   } catch (err) {
     console.error('Import detect error:', err)
     res.status(500).json({ error: err.message })
@@ -659,12 +701,14 @@ router.get('/sessions/:id/review-queue', (req, res) => {
           ? db.prepare('SELECT id, name, category, photo, worn_photo FROM pieces WHERE id = ?').get(cluster.merge_target_piece_id)
           : null
         const tags = safeJsonParse(cluster.tags_json, null)
+        const canonicalGarment = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
         return {
           id: cluster.id,
           category: cluster.category,
           descriptor: cluster.descriptor,
           proposedName: tags?.name || cluster.descriptor || `imported ${cluster.category}`,
           cropUrl: cropUrlFor(session.id, cluster),
+          cropOk: Boolean(canonicalGarment?.crop_ok),
           memberCrops: members.map(m => `/uploads/import/${session.id}/${garmentDisplayFile(m)}`),
           wornEvidenceCount: members.filter(m => m.image_kind === 'worn_outfit').length,
           mergeTarget: target ? { id: target.id, name: target.name, photoUrl: target.worn_photo || target.photo ? `/uploads/${target.worn_photo || target.photo}` : null } : null

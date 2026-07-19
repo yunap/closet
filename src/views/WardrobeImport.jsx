@@ -77,7 +77,8 @@ export default function WardrobeImport() {
       const parts = []
       if (c.imagesClassified) parts.push(`${c.imagesClassified} classified`)
       if (c.imagesDetected) parts.push(`${c.imagesDetected} scanned for garments`)
-      if (c.cropsFallbackToFullPhoto) parts.push(`${c.cropsFallbackToFullPhoto} crops replaced with full photos`)
+      if (c.cropsRelocalized) parts.push(`${c.cropsRelocalized} crops re-located`)
+      if (c.cropsFallbackToFullPhoto) parts.push(`${c.cropsFallbackToFullPhoto} using full photos`)
       if (c.clusterSheetsDone) parts.push(`${c.clusterSheetsDone} duplicate groups checked`)
       if (c.clustersMatched) parts.push(`${c.clustersMatched} checked against your wardrobe`)
       if (c.tagQueueTotal) parts.push(`${c.garmentsTagged || 0} of ${c.tagQueueTotal} tagged`)
@@ -211,7 +212,12 @@ export default function WardrobeImport() {
           </div>
           {queue.map(entry => (
             <div key={entry.id} style={{ ...card, display: 'flex', gap: 14 }}>
-              {entry.cropUrl && <img src={entry.cropUrl} alt="" style={{ width: 96, height: 128, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)' }} />}
+              {entry.cropUrl && (
+                <div style={{ textAlign: 'center' }}>
+                  <img src={entry.cropUrl} alt="" style={{ width: 96, height: 128, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)' }} />
+                  {entry.cropOk === false && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>full photo</div>}
+                </div>
+              )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 650, fontSize: 15 }}>{entry.proposedName}</div>
                 <div style={{ ...mutedText, fontSize: 12.5 }}>

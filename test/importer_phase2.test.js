@@ -237,3 +237,27 @@ test('crops failing verification fall back to the full photo everywhere', async 
   const preflight = await (await fetch(`${baseUrl}/api/import/sessions/${sessionId}/preflight`)).json()
   assert.ok(preflight.clusters[0].cropUrl.endsWith(sourceImage.file), 'review/preflight shows the full photo, not the bad crop')
 })
+
+test('failed crop is re-located with a focused query before falling back', async () => {
+  const { sessionId } = await createSession()
+  await uploadImages(sessionId, ['rl1.jpg'])
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [classifyAll('worn_outfit')]
+  await post(`/api/import/sessions/${sessionId}/classify`)
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [
+    // Detector box is wrong…
+    () => ({ garments: [{ box: { x: 0, y: 0, w: 200, h: 200 }, category: 'bottom', color: 'blue', descriptor: 'light blue skinny jeans' }] }),
+    // …verification catches it…
+    () => ({ verdicts: [{ index: 1, shows_garment: false }] }),
+    // …the focused relocation finds the real box…
+    () => ({ box: { x: 300, y: 400, w: 400, h: 500 } }),
+    // …and the re-verify approves the new crop.
+    () => ({ verdicts: [{ index: 1, shows_garment: true }] })
+  ]
+  const detect = await post(`/api/import/sessions/${sessionId}/detect`)
+  assert.equal(detect.cropsRelocalized, 1, JSON.stringify(detect))
+  assert.equal(detect.cropsFallbackToFullPhoto, 0, 'relocated crop verified — no fallback')
+  const garment = db.prepare('SELECT * FROM import_garments WHERE session_id = ?').get(sessionId)
+  assert.equal(garment.crop_ok, 1)
+  const cropPath = path.join(tmpRoot, 'uploads', 'import', String(sessionId), garment.crop_file)
+  assert.ok(fs.existsSync(cropPath), 'relocated crop file exists')
+})

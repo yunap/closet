@@ -1280,7 +1280,16 @@ export const IMPORT_CROP_VERIFY_SYSTEM = `You verify garment photo crops for a w
 
 For each numbered crop you are told what garment it is CLAIMED to show. Answer whether the crop actually shows that garment clearly enough to serve as the garment's catalog photo — the garment (or most of it) is visible and recognizable.
 
-Answer false when the crop shows the wrong region: scenery, sky, a face, a different garment, or only an incidental sliver of the claimed one.
+Answer false when the crop shows the wrong region: scenery, sky, a face, a different garment, or only an incidental sliver of the claimed one. Also answer false when the crop is DOMINATED by a different garment or by background — the claimed garment must be the main subject of the crop, not a partial presence at its edge.
 
 JSON shape (every index exactly once):
 { "verdicts": [ { "index": 1, "shows_garment": true } ] }`
+
+export const IMPORT_RELOCATE_SYSTEM = `You locate ONE specific garment in a photo for a wardrobe import pipeline. Return ONLY valid JSON. No markdown.
+
+You are told exactly which garment to find. Return its bounding box in per-mille image coordinates { "x": 0-1000, "y": 0-1000, "w": 0-1000, "h": 0-1000 } (x,y = top-left), cropped tight around the whole visible garment. Take your time to be spatially precise — the box becomes this garment's catalog photo.
+
+If the garment is not actually visible or identifiable in the photo, return { "box": null }.
+
+JSON shape:
+{ "box": { "x": 120, "y": 80, "w": 400, "h": 600 } }`
