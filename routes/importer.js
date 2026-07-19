@@ -14,7 +14,8 @@ import { spawnSync } from 'child_process'
 import sharp from 'sharp'
 import AdmZip from 'adm-zip'
 import { db, uploadsDir, safeJsonParse } from '../db.js'
-import { askStylistWithUsage, estimateAiUsageCost, parseModelJson } from '../styling-engine/provider.js'
+import { tagPieceWithProvider } from './ai.js'
+import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, ACTIVE_STYLIST_MODEL, AI_PROVIDER } from '../styling-engine/provider.js'
 import { IMPORT_CLASSIFIER_SYSTEM, IMPORT_DETECTOR_SYSTEM, IMPORT_CLUSTER_SYSTEM, IMPORT_MERGE_SYSTEM } from '../styling-engine/prompts.js'
 
 const router = express.Router()
@@ -447,6 +448,237 @@ router.post('/sessions/:id/match-existing', async (req, res) => {
     console.error('Import match-existing error:', err)
     res.status(500).json({ error: err.message })
   }
+})
+
+
+// ── Phase 3: cost preflight, gated bulk tagging, review gate ─────────────────
+
+// Rough per-garment full-model tagging shape (image + tagger prompt + anchors in;
+// full tag schema out). Used ONLY for the preflight estimate; real spend is recorded
+// from actual usage as calls happen.
+const TAG_EST_INPUT_TOKENS = 6000
+const TAG_EST_OUTPUT_TOKENS = 1400
+
+// Piece columns the tagger schema may fill on accept. Anything else the tagger returns
+// is dropped HERE, knowingly (the enumerate-and-drop lesson) — extend when schema grows.
+const TAGGABLE_PIECE_COLUMNS = new Set([
+  'name', 'category', 'colors', 'occasions', 'season', 'notes', 'pattern_type', 'pattern_scale',
+  'pattern_complexity', 'reads_as', 'hem_finish', 'neckline', 'sleeve_type', 'length_hits_at',
+  'silhouette', 'fabric_category', 'fabric_weight', 'stretch', 'fit_on_body', 'tuck_behavior',
+  'waistband_type', 'background_color', 'style_profile_json', 'fiber_content', 'formality',
+  'heel_height', 'walk_support', 'opacity', 'tagger_version'
+])
+
+router.get('/sessions/:id/preflight', (req, res) => {
+  try {
+    const session = getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: 'Unknown import session' })
+    const clusters = db.prepare("SELECT * FROM import_clusters WHERE session_id = ? AND status = 'proposed'").all(session.id)
+    const newPieceClusters = clusters.filter(c => !c.merge_target_piece_id)
+    const mergeClusters = clusters.filter(c => c.merge_target_piece_id)
+    const est = estimateAiUsageCost({
+      provider: AI_PROVIDER,
+      model: ACTIVE_STYLIST_MODEL,
+      inputTokens: TAG_EST_INPUT_TOKENS * newPieceClusters.length,
+      outputTokens: TAG_EST_OUTPUT_TOKENS * newPieceClusters.length,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0
+    })
+    res.json({
+      newPieceClusters: newPieceClusters.length,
+      mergeClusters: mergeClusters.length,
+      estimatedTagUsd: est?.estimatedUsd ?? null,
+      spentSoFarUsd: session.spent_usd,
+      clusters: clusters.map(c => ({
+        id: c.id, category: c.category, descriptor: c.descriptor,
+        mergeTargetPieceId: c.merge_target_piece_id,
+        cropUrl: cropUrlFor(session.id, c)
+      }))
+    })
+  } catch (err) {
+    console.error('Import preflight error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+function cropUrlFor(sessionId, cluster) {
+  const canonical = db.prepare('SELECT crop_file FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
+  return canonical ? `/uploads/import/${sessionId}/${canonical.crop_file}` : null
+}
+
+// The cost gate contract: full-model tagging refuses to run without an explicit
+// preflight approval in the request (and records it on the session).
+router.post('/sessions/:id/tag', async (req, res) => {
+  try {
+    const session = getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: 'Unknown import session' })
+    if (req.body?.approve !== true) {
+      return res.status(400).json({ error: 'Tagging requires explicit preflight approval: POST { approve: true } after reviewing GET .../preflight.' })
+    }
+    bumpCounts(session.id, { tagApprovals: 1 })
+    const trim = Array.isArray(req.body?.clusterIds) ? new Set(req.body.clusterIds.map(Number)) : null
+    const clusters = db.prepare("SELECT * FROM import_clusters WHERE session_id = ? AND status = 'proposed' AND merge_target_piece_id IS NULL AND tags_json IS NULL").all(session.id)
+      .filter(c => !trim || trim.has(c.id))
+    const setTags = db.prepare("UPDATE import_clusters SET tags_json = ?, status = 'tagged' WHERE id = ?")
+    let tagged = 0
+    let failed = 0
+    for (const cluster of clusters) {
+      const canonical = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
+      if (!canonical) { failed++; continue }
+      try {
+        const tags = await tagPieceWithProvider([{ path: path.join(sessionDir(session.id), canonical.crop_file), label: 'HANGER PHOTO', guidance: `Imported garment crop; detector read: ${cluster.descriptor}` }])
+        setTags.run(JSON.stringify(tags || {}), cluster.id)
+        tagged++
+      } catch (err) {
+        console.warn('Import tagging failed for cluster', cluster.id, err.message)
+        failed++
+      }
+    }
+    // Merge clusters skip tagging entirely — they attach evidence to already-tagged pieces.
+    db.prepare("UPDATE import_clusters SET status = 'tagged' WHERE session_id = ? AND status = 'proposed' AND merge_target_piece_id IS NOT NULL").run(session.id)
+    if (!failed) db.prepare("UPDATE import_sessions SET status = 'tagged' WHERE id = ?").run(session.id)
+    res.json({ tagged, failed, spentUsd: getSession(session.id).spent_usd })
+  } catch (err) {
+    console.error('Import tag error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/sessions/:id/review-queue', (req, res) => {
+  try {
+    const session = getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: 'Unknown import session' })
+    const clusters = db.prepare("SELECT * FROM import_clusters WHERE session_id = ? AND status = 'tagged'").all(session.id)
+    const memberStmt = db.prepare('SELECT g.*, i.kind AS image_kind, i.file AS image_file FROM import_garments g JOIN import_images i ON i.id = g.image_id WHERE g.cluster_id = ?')
+    // Calibration seeding default is instance-state-aware (owner ruling): ON for a fresh
+    // calibration library (taste bootstrap), OFF when a curated library already exists.
+    const calibrationCount = db.prepare('SELECT COUNT(*) AS n FROM calibration_images WHERE archived = 0').get().n
+    res.json({
+      calibrationSeedDefault: calibrationCount === 0,
+      queue: clusters.map(cluster => {
+        const members = memberStmt.all(cluster.id)
+        const target = cluster.merge_target_piece_id
+          ? db.prepare('SELECT id, name, category, photo, worn_photo FROM pieces WHERE id = ?').get(cluster.merge_target_piece_id)
+          : null
+        const tags = safeJsonParse(cluster.tags_json, null)
+        return {
+          id: cluster.id,
+          category: cluster.category,
+          descriptor: cluster.descriptor,
+          proposedName: tags?.name || cluster.descriptor || `imported ${cluster.category}`,
+          cropUrl: cropUrlFor(session.id, cluster),
+          memberCrops: members.map(m => `/uploads/import/${session.id}/${m.crop_file}`),
+          wornEvidenceCount: members.filter(m => m.image_kind === 'worn_outfit').length,
+          mergeTarget: target ? { id: target.id, name: target.name, photoUrl: target.worn_photo || target.photo ? `/uploads/${target.worn_photo || target.photo}` : null } : null
+        }
+      })
+    })
+  } catch (err) {
+    console.error('Import review-queue error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+function copyIntoUploads(sessionId, file, prefix) {
+  const src = path.join(sessionDir(sessionId), file)
+  if (!fs.existsSync(src)) return null
+  const name = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}.jpg`
+  fs.copyFileSync(src, path.join(uploadsDir, name))
+  return name
+}
+
+router.post('/sessions/:id/review', (req, res) => {
+  (async () => {
+    const session = getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: 'Unknown import session' })
+    const decisions = Array.isArray(req.body?.decisions) ? req.body.decisions : []
+    const seedCalibration = Boolean(req.body?.seedCalibration)
+    const memberStmt = db.prepare('SELECT g.*, i.kind AS image_kind, i.file AS image_file FROM import_garments g JOIN import_images i ON i.id = g.image_id WHERE g.cluster_id = ?')
+    const insEvidence = db.prepare('INSERT INTO piece_import_evidence (piece_id, session_id, file, note) VALUES (?, ?, ?, ?)')
+    const insCalibration = db.prepare("INSERT INTO calibration_images (image_url, kind, source, notes) VALUES (?, 'good_reference', 'import', ?)")
+    const results = []
+
+    for (const decision of decisions) {
+      const cluster = db.prepare('SELECT * FROM import_clusters WHERE id = ? AND session_id = ?').get(Number(decision.clusterId), session.id)
+      if (!cluster || cluster.status !== 'tagged') { results.push({ clusterId: decision.clusterId, outcome: 'not_reviewable' }); continue }
+      const action = String(decision.action || '')
+      const members = memberStmt.all(cluster.id)
+
+      if (action === 'reject' || action === 'skip') {
+        db.prepare('UPDATE import_clusters SET status = ? WHERE id = ?').run(action === 'reject' ? 'rejected' : 'skipped', cluster.id)
+        results.push({ clusterId: cluster.id, outcome: action })
+        continue
+      }
+
+      if (action === 'merge') {
+        const targetId = Number(decision.targetPieceId || cluster.merge_target_piece_id)
+        const target = db.prepare("SELECT * FROM pieces WHERE id = ? AND status = 'active'").get(targetId)
+        if (!target) { results.push({ clusterId: cluster.id, outcome: 'merge_target_missing' }); continue }
+        let attached = 0
+        let wornPhotoSet = false
+        for (const member of members) {
+          const evidenceFile = copyIntoUploads(session.id, member.image_file, 'import-evidence')
+          if (!evidenceFile) continue
+          insEvidence.run(target.id, session.id, evidenceFile, `import merge: ${member.descriptor || cluster.descriptor}`)
+          attached++
+          // Honest enrichment: a worn photo fills an empty worn_photo slot on the target.
+          if (!target.worn_photo && !wornPhotoSet && member.image_kind === 'worn_outfit') {
+            db.prepare('UPDATE pieces SET worn_photo = ? WHERE id = ?').run(evidenceFile, target.id)
+            wornPhotoSet = true
+          }
+          if (seedCalibration && member.image_kind === 'worn_outfit') {
+            insCalibration.run(`/uploads/${evidenceFile}`, `import session ${session.id}: worn evidence for ${target.name}`)
+          }
+        }
+        db.prepare("UPDATE import_clusters SET status = 'merged', result_piece_id = ? WHERE id = ?").run(target.id, cluster.id)
+        results.push({ clusterId: cluster.id, outcome: 'merged', pieceId: target.id, evidenceAttached: attached })
+        continue
+      }
+
+      if (action === 'accept') {
+        const tags = safeJsonParse(cluster.tags_json, {}) || {}
+        const canonical = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
+        const photoFile = canonical ? copyIntoUploads(session.id, canonical.crop_file, 'import-piece') : null
+        const canonicalImage = canonical ? db.prepare('SELECT * FROM import_images WHERE id = ?').get(canonical.image_id) : null
+        const wornFile = canonicalImage?.kind === 'worn_outfit' ? copyIntoUploads(session.id, canonicalImage.file, 'import-worn') : null
+
+        const columns = ['status', 'tag_state', 'photo', 'worn_photo']
+        const values = ['active', 'provisional', photoFile, wornFile]
+        for (const [key, raw] of Object.entries(tags)) {
+          if (!TAGGABLE_PIECE_COLUMNS.has(key) || raw === null || raw === undefined) continue
+          columns.push(key)
+          values.push(typeof raw === 'object' ? JSON.stringify(raw) : raw)
+        }
+        if (!columns.includes('name')) { columns.push('name'); values.push(cluster.descriptor || `imported ${cluster.category || 'piece'}`) }
+        if (!columns.includes('category')) { columns.push('category'); values.push(cluster.category || 'top') }
+        const info = db.prepare(`INSERT INTO pieces (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).run(...values)
+        const pieceId = info.lastInsertRowid
+
+        let attached = 0
+        for (const member of members) {
+          const evidenceFile = copyIntoUploads(session.id, member.image_file, 'import-evidence')
+          if (!evidenceFile) continue
+          insEvidence.run(pieceId, session.id, evidenceFile, `import: ${member.descriptor || cluster.descriptor}`)
+          attached++
+          if (seedCalibration && member.image_kind === 'worn_outfit') {
+            insCalibration.run(`/uploads/${evidenceFile}`, `import session ${session.id}: worn evidence`)
+          }
+        }
+        db.prepare("UPDATE import_clusters SET status = 'accepted', result_piece_id = ? WHERE id = ?").run(pieceId, cluster.id)
+        results.push({ clusterId: cluster.id, outcome: 'accepted', pieceId, evidenceAttached: attached })
+        continue
+      }
+
+      results.push({ clusterId: cluster.id, outcome: 'unknown_action' })
+    }
+
+    const remaining = db.prepare("SELECT COUNT(*) AS n FROM import_clusters WHERE session_id = ? AND status = 'tagged'").get(session.id).n
+    if (!remaining) db.prepare("UPDATE import_sessions SET status = 'reviewed' WHERE id = ?").run(session.id)
+    res.json({ results, remaining })
+  })().catch(err => {
+    console.error('Import review error:', err)
+    res.status(500).json({ error: err.message })
+  })
 })
 
 router.get('/sessions/:id', (req, res) => {

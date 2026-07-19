@@ -6,6 +6,7 @@ import AskClaude from './views/AskClaude'
 import VisualLab from './components/VisualLab'
 import Onboarding from './views/Onboarding'
 import StylistSettings from './views/StylistSettings'
+import WardrobeImport from './views/WardrobeImport'
 import usePendingWardrobeTaskCount from './utils/usePendingWardrobeTaskCount'
 
 function NavIcon({ name }) {
@@ -129,6 +130,7 @@ export default function App() {
           <Route path="/visual-lab" element={<VisualLab onGoToThread={goToThread} />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/settings"   element={<StylistSettings />} />
+          <Route path="/import"     element={<WardrobeImport />} />
         </Routes>
       </main>
 

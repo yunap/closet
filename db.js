@@ -370,6 +370,8 @@ db.exec(`
     descriptor            TEXT DEFAULT '',
     merge_target_piece_id INTEGER,
     status                TEXT DEFAULT 'proposed',
+    tags_json             TEXT DEFAULT NULL,
+    result_piece_id       INTEGER,
     created_at            TEXT DEFAULT (datetime('now'))
   );
   CREATE TABLE IF NOT EXISTS piece_import_evidence (
@@ -381,6 +383,11 @@ db.exec(`
     created_at  TEXT DEFAULT (datetime('now'))
   );
 `)
+
+// Additive migrations for import_clusters (pre-existing scratch DBs).
+;['tags_json TEXT DEFAULT NULL', 'result_piece_id INTEGER'].forEach(col => {
+  try { db.exec(`ALTER TABLE import_clusters ADD COLUMN ${col}`) } catch {}
+})
 
 // ── Spec 32: style constitution + user profile storage ────────────────────────
 // Additive tables. style_constitution holds the per-user constitution layers that
