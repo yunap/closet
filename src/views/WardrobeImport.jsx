@@ -22,6 +22,60 @@ const COUNT_LABELS = {
   videosFailed: 'videos failed to sample'
 }
 
+const STAGES = [
+  { key: 'classify', label: 'Classify' },
+  { key: 'detect', label: 'Detect garments' },
+  { key: 'cluster', label: 'Group duplicates' },
+  { key: 'match', label: 'Match to wardrobe' }
+]
+
+function StageBar({ stage, counts, totalImages }) {
+  const stageIndex = STAGES.findIndex(s => s.key === stage)
+  const activeIndex = stage === 'done' ? STAGES.length : stageIndex
+  return (
+    <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+      <style>{'@keyframes import-stage-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }'}</style>
+      {STAGES.map((s, i) => {
+        const status = i < activeIndex ? 'done' : i === activeIndex ? 'active' : 'pending'
+        let fill = 1
+        if (status === 'pending') fill = 0
+        else if (status === 'active') {
+          if (s.key === 'classify' && totalImages) fill = Math.min(1, (counts.imagesClassified || 0) / totalImages)
+          else if (s.key === 'detect' && totalImages) fill = Math.min(1, (counts.imagesDetected || 0) / totalImages)
+          else fill = 0.35
+        }
+        return (
+          <div key={s.key} style={{ flex: 1 }}>
+            <div style={{ height: 6, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', width: `${fill * 100}%`, borderRadius: 4, background: 'var(--accent)',
+                transition: 'width .4s ease', ...(status === 'active' ? { animation: 'import-stage-pulse 1.4s ease-in-out infinite' } : {})
+              }} />
+            </div>
+            <div style={{ fontSize: 11, marginTop: 4, color: status === 'pending' ? 'var(--text-muted)' : 'var(--text)' }}>{s.label}</div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SimpleBar({ done, total }) {
+  const fill = total > 0 ? Math.min(1, done / total) : 0
+  return (
+    <div style={{ marginTop: 12 }}>
+      <style>{'@keyframes import-stage-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .5 } }'}</style>
+      <div style={{ height: 8, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', width: `${(total > 0 ? fill : 0.35) * 100}%`, borderRadius: 4, background: 'var(--accent)',
+          transition: 'width .4s ease', ...(total === 0 ? { animation: 'import-stage-pulse 1.4s ease-in-out infinite' } : {})
+        }} />
+      </div>
+      {total > 0 && <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-muted)' }}>{done} of {total} tagged</div>}
+    </div>
+  )
+}
+
 export default function WardrobeImport() {
   const [sessionId, setSessionId] = useState(null)
   const [phase, setPhase] = useState('upload') // upload | analyzing | preflight | tagging | review | done
@@ -29,6 +83,8 @@ export default function WardrobeImport() {
   const [ffmpegHint, setFfmpegHint] = useState('')
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState('')
+  const [stage, setStage] = useState('')
+  const [liveCounts, setLiveCounts] = useState({})
   const [preflight, setPreflight] = useState(null)
   const [queue, setQueue] = useState([])
   const [decisions, setDecisions] = useState({})
@@ -38,12 +94,59 @@ export default function WardrobeImport() {
   const [error, setError] = useState('')
   const fileInput = useRef(null)
 
+  // A refresh has no other way to know which import session was in flight — sessionId
+  // otherwise lives only in memory, so a reload orphans any in-progress analysis on the
+  // server (still running, just unreachable). Persist the id and reconnect on mount.
   useEffect(() => {
-    fetch('/api/import/sessions', { method: 'POST' })
-      .then(r => r.json())
-      .then(data => setSessionId(data.sessionId))
-      .catch(() => setError('Could not start an import session.'))
+    const resume = async () => {
+      const savedId = localStorage.getItem('importSessionId')
+      if (savedId) {
+        try {
+          const s = await fetch(`/api/import/sessions/${savedId}`).then(r => r.json())
+          if (s.status && s.status !== 'reviewed') {
+            setSessionId(Number(savedId))
+            setUploadTotals(s.counts)
+            if (s.status === 'ingesting') {
+              // nothing analyzed yet — stay on the upload screen with restored totals.
+            } else if (s.status === 'classified' || s.status === 'detected' || s.status === 'clustered') {
+              // analysis was interrupted mid-pipeline; remaining steps are safe to
+              // re-run since each filters to its own unprocessed rows.
+              runAnalysis(Number(savedId))
+            } else {
+              // status is 'matched' or 'tagged' — but status only flips to 'tagged' when
+              // an ENTIRE tag batch finishes with zero failures, so a partial batch (one
+              // straggler cluster) leaves status stuck at 'matched' even though most
+              // clusters are already tagged and waiting on the review screen. Check the
+              // review queue itself rather than trusting the coarse status field, or a
+              // reload mid-review silently discards every in-progress decision.
+              const data = await fetch(`/api/import/sessions/${savedId}/review-queue`).then(r => r.json())
+              if (data.queue?.length) {
+                setQueue(data.queue)
+                setSeedCalibration(Boolean(data.calibrationSeedDefault))
+                const initial = {}
+                for (const entry of data.queue) initial[entry.id] = entry.mergeTarget ? 'merge' : 'accept'
+                setDecisions(initial)
+                setPhase('review')
+              } else {
+                const pf = await fetch(`/api/import/sessions/${savedId}/preflight`).then(r => r.json())
+                setPreflight(pf); setPhase('preflight')
+              }
+            }
+            return
+          }
+        } catch {}
+      }
+      fetch('/api/import/sessions', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => setSessionId(data.sessionId))
+        .catch(() => setError('Could not start an import session.'))
+    }
+    resume()
   }, [])
+
+  useEffect(() => {
+    if (sessionId) localStorage.setItem('importSessionId', String(sessionId))
+  }, [sessionId])
 
   const postJson = async (route, body) => {
     const res = await fetch(route, {
@@ -65,16 +168,17 @@ export default function WardrobeImport() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Upload failed')
       setUploadTotals(data.totals)
-      if (data.ffmpegHint) setFfmpegHint(data.ffmpegHint)
+      setFfmpegHint(data.ffmpegHint || '')
     } catch (err) { setError(err.message) } finally { setUploading(false) }
   }
 
   // Every long stage is one long HTTP request; the server bumps per-unit progress
   // counts as it works, and this poll renders them so no stage ever looks hung.
-  const startStatusPoll = (label) => setInterval(async () => {
+  const startStatusPoll = (label, id = sessionId) => setInterval(async () => {
     try {
-      const status = await fetch(`/api/import/sessions/${sessionId}`).then(r => r.json())
+      const status = await fetch(`/api/import/sessions/${id}`).then(r => r.json())
       const c = status.counts || {}
+      setLiveCounts(c)
       const parts = []
       if (c.imagesClassified) parts.push(`${c.imagesClassified} classified`)
       if (c.imagesDetected) parts.push(`${c.imagesDetected} scanned for garments`)
@@ -88,24 +192,31 @@ export default function WardrobeImport() {
     } catch {}
   }, 2500)
 
-  const analyze = async () => {
-    setPhase('analyzing'); setError('')
-    const poll = startStatusPoll('Analyzing…')
+  // Function declaration (not const) so it's hoisted — the mount-time resume effect
+  // above calls this before this line executes during render.
+  async function runAnalysis(id = sessionId) {
+    setPhase('analyzing'); setError(''); setStage('classify')
+    const poll = startStatusPoll('Analyzing…', id)
     try {
       setProgress('Classifying photos…')
-      const classify = await postJson(`/api/import/sessions/${sessionId}/classify`)
-      const detect = await postJson(`/api/import/sessions/${sessionId}/detect`)
-      const cluster = await postJson(`/api/import/sessions/${sessionId}/cluster`)
-      const match = await postJson(`/api/import/sessions/${sessionId}/match-existing`)
+      const classify = await postJson(`/api/import/sessions/${id}/classify`)
+      setStage('detect')
+      const detect = await postJson(`/api/import/sessions/${id}/detect`)
+      setStage('cluster')
+      const cluster = await postJson(`/api/import/sessions/${id}/cluster`)
+      setStage('match')
+      const match = await postJson(`/api/import/sessions/${id}/match-existing`)
+      setStage('done')
       clearInterval(poll)
       setProgress(`${classify.classified} photos classified · ${detect.garmentsDetected} garments found · ${cluster.clustersCreated} distinct · ${match.mergeProposals} matched to your wardrobe.`)
-      const pf = await fetch(`/api/import/sessions/${sessionId}/preflight`).then(r => r.json())
+      const pf = await fetch(`/api/import/sessions/${id}/preflight`).then(r => r.json())
       setPreflight(pf)
       setPhase('preflight')
     } catch (err) {
       clearInterval(poll)
       setError(err.message)
       setPhase('upload')
+      setStage('')
     }
   }
 
@@ -137,12 +248,21 @@ export default function WardrobeImport() {
       const result = await postJson(`/api/import/sessions/${sessionId}/review`, { decisions: payload, seedCalibration })
       setSummary(result.results)
       setPhase('done')
+      localStorage.removeItem('importSessionId')
     } catch (err) { setError(err.message) }
   }
 
   const countRows = uploadTotals
-    ? Object.entries(uploadTotals).filter(([key, n]) => n > 0 && COUNT_LABELS[key]).map(([key, n]) => `${n} ${COUNT_LABELS[key]}`)
+    ? Object.entries(uploadTotals).filter(([key, n]) => n > 0 && COUNT_LABELS[key] && key !== 'videosSkippedNoFfmpeg').map(([key, n]) => `${n} ${COUNT_LABELS[key]}`)
     : []
+  const ffmpegSkippedCount = uploadTotals?.videosSkippedNoFfmpeg || 0
+
+  const decisionTally = queue.reduce((acc, entry) => {
+    const d = decisions[entry.id] || (entry.mergeTarget ? 'merge' : 'accept')
+    acc[d] = (acc[d] || 0) + 1
+    return acc
+  }, {})
+  const TALLY_LABELS = [['accept', 'new piece'], ['merge', 'merge'], ['reject', 'not mine'], ['skip', 'skipped']]
 
   return (
     <div style={{ maxWidth: 760, margin: '0 auto', padding: '28px 20px 60px' }}>
@@ -171,6 +291,11 @@ export default function WardrobeImport() {
             </div>
           )}
           {ffmpegHint && <div style={{ ...mutedText, marginTop: 8, color: 'var(--repair)' }}>{ffmpegHint}</div>}
+          {!ffmpegHint && ffmpegSkippedCount > 0 && (
+            <div style={{ marginTop: 8, fontSize: 12.5, fontStyle: 'italic', color: 'var(--text-muted)', opacity: 0.75 }}>
+              Earlier this session, {ffmpegSkippedCount} video{ffmpegSkippedCount > 1 ? 's' : ''} {ffmpegSkippedCount > 1 ? 'were' : 'was'} skipped because ffmpeg wasn't installed yet — resolved since.
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
             <button
               style={{ ...quietBtn, fontSize: 12.5 }}
@@ -182,7 +307,7 @@ export default function WardrobeImport() {
                 else setError(data.error || 'Could not load the demo wardrobe.')
               }}
             >…or explore with a demo wardrobe first</button>
-            <button style={primaryBtn} disabled={!uploadTotals || uploading} onClick={analyze}>Analyze photos</button>
+            <button style={primaryBtn} disabled={!uploadTotals || uploading} onClick={() => runAnalysis()}>Analyze photos</button>
           </div>
           {progress && phase === 'upload' && <div style={{ ...mutedText, marginTop: 8 }}>{progress} <Link to="/wardrobe">See wardrobe</Link></div>}
         </div>
@@ -191,7 +316,8 @@ export default function WardrobeImport() {
       {phase === 'analyzing' && (
         <div style={card}>
           <div style={{ fontSize: 15, fontWeight: 600 }}>Analyzing…</div>
-          <p style={mutedText}>{progress}</p>
+          <StageBar stage={stage} counts={liveCounts} totalImages={(uploadTotals?.imagesIngested || 0) + (uploadTotals?.framesSampled || 0)} />
+          <p style={{ ...mutedText, marginTop: 12 }}>{progress}</p>
           <p style={{ ...mutedText, fontSize: 12 }}>This runs on the inexpensive model tier; the costly step comes after your approval.</p>
         </div>
       )}
@@ -215,17 +341,27 @@ export default function WardrobeImport() {
       )}
 
       {phase === 'tagging' && (
-        <div style={card}><div style={{ fontSize: 15, fontWeight: 600 }}>Tagging…</div><p style={mutedText}>{progress}</p></div>
+        <div style={card}>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>Tagging…</div>
+          <SimpleBar done={liveCounts.garmentsTagged || 0} total={liveCounts.tagQueueTotal || 0} />
+          <p style={{ ...mutedText, marginTop: 12 }}>{progress}</p>
+        </div>
       )}
 
       {phase === 'review' && (
         <>
-          <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <label style={{ ...mutedText, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={seedCalibration} onChange={e => setSeedCalibration(e.target.checked)} />
-              Use my worn photos to teach the stylist my taste (calibration library)
-            </label>
-            <button style={primaryBtn} onClick={applyDecisions}>Apply decisions</button>
+          <div style={{ ...card, position: 'sticky', top: 12, zIndex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <label style={{ ...mutedText, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={seedCalibration} onChange={e => setSeedCalibration(e.target.checked)} />
+                Use my worn photos to teach the stylist my taste (calibration library)
+              </label>
+              <button style={primaryBtn} onClick={applyDecisions}>Apply decisions</button>
+            </div>
+            <div style={{ ...mutedText, fontSize: 12.5 }}>
+              {TALLY_LABELS.map(([key, label]) => `${decisionTally[key] || 0} ${label}`).join(' · ')}
+              {' '}· {queue.length} total
+            </div>
           </div>
           {queue.map(entry => (
             <div key={entry.id} style={{ ...card, display: 'flex', gap: 14 }}>
