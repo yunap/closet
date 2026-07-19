@@ -32,6 +32,7 @@ export default function WardrobeImport() {
   const [preflight, setPreflight] = useState(null)
   const [queue, setQueue] = useState([])
   const [decisions, setDecisions] = useState({})
+  const [edits, setEdits] = useState({})
   const [seedCalibration, setSeedCalibration] = useState(false)
   const [summary, setSummary] = useState(null)
   const [error, setError] = useState('')
@@ -127,7 +128,12 @@ export default function WardrobeImport() {
   const applyDecisions = async () => {
     setError('')
     try {
-      const payload = queue.map(entry => ({ clusterId: entry.id, action: decisions[entry.id] || 'skip' }))
+      const payload = queue.map(entry => ({
+        clusterId: entry.id,
+        action: decisions[entry.id] || 'skip',
+        ...(edits[entry.id]?.name !== undefined ? { name: edits[entry.id].name } : {}),
+        ...(edits[entry.id]?.category !== undefined ? { category: edits[entry.id].category } : {})
+      }))
       const result = await postJson(`/api/import/sessions/${sessionId}/review`, { decisions: payload, seedCalibration })
       setSummary(result.results)
       setPhase('done')
@@ -230,10 +236,22 @@ export default function WardrobeImport() {
                 </div>
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 650, fontSize: 15 }}>{entry.proposedName}</div>
-                <div style={{ ...mutedText, fontSize: 12.5 }}>
-                  {entry.category} · seen in {entry.memberCrops.length} photo{entry.memberCrops.length === 1 ? '' : 's'}
-                  {entry.wornEvidenceCount > 0 && ` · ${entry.wornEvidenceCount} worn`}
+                <input
+                  value={edits[entry.id]?.name ?? entry.proposedName}
+                  onChange={e => setEdits({ ...edits, [entry.id]: { ...edits[entry.id], name: e.target.value } })}
+                  style={{ fontWeight: 650, fontSize: 15, border: '1px solid transparent', borderRadius: 8, padding: '2px 6px', margin: '-2px -6px 0', width: '100%', boxSizing: 'border-box', background: 'transparent', color: 'var(--text)' }}
+                  onFocus={e => { e.target.style.border = '1px solid var(--border)'; e.target.style.background = 'var(--surface)' }}
+                  onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent' }}
+                />
+                <div style={{ ...mutedText, fontSize: 12.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <select
+                    value={edits[entry.id]?.category ?? entry.category}
+                    onChange={e => setEdits({ ...edits, [entry.id]: { ...edits[entry.id], category: e.target.value } })}
+                    style={{ fontSize: 12.5, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 7, padding: '1px 4px', background: 'var(--surface)' }}
+                  >
+                    {['top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory'].map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <span>· seen in {entry.memberCrops.length} photo{entry.memberCrops.length === 1 ? '' : 's'}{entry.wornEvidenceCount > 0 && ` · ${entry.wornEvidenceCount} worn`}</span>
                 </div>
                 {entry.mergeTarget && (
                   <div style={{ ...mutedText, fontSize: 12.5, marginTop: 4 }}>

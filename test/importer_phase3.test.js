@@ -186,3 +186,22 @@ test('failed-crop worn garment stores the photo once: worn_photo set, hanger pho
   assert.ok(piece.worn_photo, 'worn photo stored (source was a worn outfit photo)')
   assert.equal(piece.photo, null, 'no duplicate hanger photo — same image not stored twice')
 })
+
+test('reviewer overrides beat model tags: corrected name and category land on the piece', async () => {
+  const { sessionId } = await buildMatchedSession()
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [
+    // The model misreads the garment (the occluded-waist dress case).
+    () => ({ name: 'navy denim midi skirt', category: 'bottom' }),
+    () => ({ name: 'olive cargo pants', category: 'bottom' })
+  ]
+  await post(`/api/import/sessions/${sessionId}/tag`, { approve: true })
+  const queue = await getJson(`/api/import/sessions/${sessionId}/review-queue`)
+  const entry = queue.queue.find(e => e.proposedName === 'navy denim midi skirt')
+  const review = await post(`/api/import/sessions/${sessionId}/review`, {
+    decisions: [{ clusterId: entry.id, action: 'accept', name: 'navy denim midi dress', category: 'dress' }]
+  })
+  const accepted = review.body.results.find(r => r.outcome === 'accepted')
+  const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(accepted.pieceId)
+  assert.equal(piece.name, 'navy denim midi dress')
+  assert.equal(piece.category, 'dress')
+})

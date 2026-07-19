@@ -783,6 +783,12 @@ router.post('/sessions/:id/review', (req, res) => {
 
       if (action === 'accept') {
         const tags = safeJsonParse(cluster.tags_json, {}) || {}
+        // Reviewer overrides beat model tags — the review card is where a human fixes
+        // what a single photo genuinely can't settle (live-found: a denim dress with
+        // the waist occluded reads as skirt+top to any vision model).
+        if (typeof decision.name === 'string' && decision.name.trim()) tags.name = decision.name.trim()
+        const validCategories = ['top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory']
+        if (validCategories.includes(decision.category)) tags.category = decision.category
         const canonical = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
         const canonicalImage = canonical ? db.prepare('SELECT * FROM import_images WHERE id = ?').get(canonical.image_id) : null
         const wornFile = canonicalImage?.kind === 'worn_outfit' ? copyIntoUploads(session.id, canonicalImage.file, 'import-worn') : null
