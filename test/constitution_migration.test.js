@@ -14,6 +14,15 @@ import Database from 'better-sqlite3'
 import { LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'constitution-migration-'))
+const LEGACY_TASK_DESCRIPTIONS = [
+  'Fix zipper on mustard corduroy skinnies',
+  'Replace worn black sleeveless tank with better quality version — fitted, structured, not clingy',
+  'Consider donating: grey tunic',
+  'Consider donating: olive drapey tank',
+  'Consider donating: worn black tank',
+  'Shop for: tan/cognac flat mule sandal',
+  'Shop for: quality black sleeveless top (fitted, structured, not clingy)',
+]
 
 function bootDb(dbPath) {
   const env = {
@@ -37,10 +46,41 @@ test('fresh DB never receives the legacy constitution, even on a second boot', (
   const layers = db.prepare('SELECT COUNT(*) AS n FROM style_constitution').get().n
   const marker = db.prepare("SELECT value FROM app_meta WHERE key = 'constitution_migrated'").get()?.value
   const profileName = db.prepare("SELECT value FROM app_meta WHERE key = 'profile_display_name'").get()
+  const todoCount = db.prepare('SELECT COUNT(*) AS n FROM todos').get().n
   db.close()
   assert.strictEqual(layers, 0, 'fresh DB must have no constitution rows (generic defaults apply)')
   assert.strictEqual(marker, 'fresh')
   assert.strictEqual(profileName, undefined, 'fresh DB must have no seeded profile name')
+  assert.strictEqual(todoCount, 0, 'fresh DB must not inherit legacy owner tasks')
+})
+
+test('fresh DB cleanup removes only leaked legacy owner todos', () => {
+  const dbPath = path.join(tmpRoot, 'fresh-leaked-todos.db')
+  bootDb(dbPath)
+
+  const setup = new Database(dbPath)
+  const insertTodo = setup.prepare('INSERT INTO todos (type, description) VALUES (?, ?)')
+  for (const description of LEGACY_TASK_DESCRIPTIONS) {
+    const type = description.startsWith('Fix ') ? 'repair' : description.startsWith('Consider ') ? 'donate' : 'shopping'
+    insertTodo.run(type, description)
+  }
+  insertTodo.run('shopping', 'Shop for: black socks')
+  setup.prepare("DELETE FROM app_meta WHERE key = 'legacy_todos_fresh_cleanup'").run()
+  setup.close()
+
+  bootDb(dbPath)
+
+  const db = new Database(dbPath, { readonly: true })
+  const legacyTodos = db.prepare(
+    `SELECT COUNT(*) AS n FROM todos WHERE description IN (${LEGACY_TASK_DESCRIPTIONS.map(() => '?').join(',')})`
+  ).get(...LEGACY_TASK_DESCRIPTIONS).n
+  const realTodo = db.prepare("SELECT COUNT(*) AS n FROM todos WHERE description = 'Shop for: black socks'").get().n
+  const marker = db.prepare("SELECT value FROM app_meta WHERE key = 'legacy_todos_fresh_cleanup'").get()?.value
+  db.close()
+
+  assert.strictEqual(legacyTodos, 0, 'fresh cleanup removes exact leaked legacy owner tasks')
+  assert.strictEqual(realTodo, 1, 'fresh cleanup preserves user-created tasks')
+  assert.strictEqual(marker, 'true')
 })
 
 test('pre-existing DB receives the legacy constitution exactly once', () => {

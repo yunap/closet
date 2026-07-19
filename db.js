@@ -14,6 +14,16 @@ const db = new Database(process.env.WARDROBE_DB_PATH || 'wardrobe.db')
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 
+const LEGACY_SEED_TODOS = [
+  { type: 'repair', description: 'Fix zipper on mustard corduroy skinnies' },
+  { type: 'shopping', description: 'Replace worn black sleeveless tank with better quality version — fitted, structured, not clingy' },
+  { type: 'donate', description: 'Consider donating: grey tunic' },
+  { type: 'donate', description: 'Consider donating: olive drapey tank' },
+  { type: 'donate', description: 'Consider donating: worn black tank' },
+  { type: 'shopping', description: 'Shop for: tan/cognac flat mule sandal' },
+  { type: 'shopping', description: 'Shop for: quality black sleeveless top (fitted, structured, not clingy)' },
+]
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS pieces (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -457,18 +467,37 @@ if (claimedSeed.changes > 0) {
   })
   seedPieces()
 
-  const insTodo = db.prepare('INSERT INTO todos (type, description) VALUES (@type, @description)')
-  ;[
-    { type: 'repair',   description: 'Fix zipper on mustard corduroy skinnies' },
-    { type: 'shopping', description: 'Replace worn black sleeveless tank with better quality version — fitted, structured, not clingy' },
-    { type: 'donate',   description: 'Consider donating: grey tunic' },
-    { type: 'donate',   description: 'Consider donating: olive drapey tank' },
-    { type: 'donate',   description: 'Consider donating: worn black tank' },
-    { type: 'shopping', description: 'Shop for: tan/cognac flat mule sandal' },
-    { type: 'shopping', description: 'Shop for: quality black sleeveless top (fitted, structured, not clingy)' },
-  ].forEach(t => insTodo.run(t))
+  const constitutionMigration = db.prepare("SELECT value FROM app_meta WHERE key = 'constitution_migrated'").get()?.value
+  if (constitutionMigration !== 'fresh') {
+    const insTodo = db.prepare('INSERT INTO todos (type, description) VALUES (@type, @description)')
+    LEGACY_SEED_TODOS.forEach(t => insTodo.run(t))
+  }
 
   console.log('✓ Wardrobe seeded with sample data')
+}
+
+// Spec 32 follow-up: fresh/onboarded users must not inherit the legacy owner's
+// personal task list. Clean up only the exact demo rows that briefly leaked into
+// fresh DBs; legacy-seeded owner databases keep their existing todos untouched.
+try {
+  const cleanupMarker = db.prepare("SELECT value FROM app_meta WHERE key = 'legacy_todos_fresh_cleanup'").get()
+  const constitutionMigration = db.prepare("SELECT value FROM app_meta WHERE key = 'constitution_migrated'").get()?.value
+  if (!cleanupMarker && constitutionMigration === 'fresh') {
+    const delLegacyTodo = db.prepare(`
+      DELETE FROM todos
+      WHERE type = ?
+        AND description = ?
+        AND linked_piece_id IS NULL
+        AND completed = 0
+    `)
+    const insMeta = db.prepare("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('legacy_todos_fresh_cleanup', 'true')")
+    db.transaction(() => {
+      LEGACY_SEED_TODOS.forEach(t => delLegacyTodo.run(t.type, t.description))
+      insMeta.run()
+    })()
+  }
+} catch (err) {
+  console.warn('Legacy todo cleanup warning:', err.message)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
