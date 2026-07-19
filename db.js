@@ -326,6 +326,40 @@ try {
   console.warn('Backfill migration warning:', err.message)
 }
 
+// ── Spec 31: batch wardrobe import (sessions, ingested images, evidence) ──────
+// import_sessions/import_images carry an import run through its phases
+// (ingesting → classified → clustered → tagged → reviewed). piece_import_evidence
+// is the durable output: extra worn/reference photos attached to a piece by an
+// accepted import merge (owner ruling: attachment is permanent on accept).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS import_sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    status      TEXT DEFAULT 'ingesting',
+    counts_json TEXT DEFAULT '{}',
+    spent_usd   REAL DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS import_images (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER REFERENCES import_sessions(id) ON DELETE CASCADE,
+    file        TEXT NOT NULL,
+    origin      TEXT DEFAULT 'upload',
+    album_hint  TEXT DEFAULT '',
+    kind        TEXT,
+    status      TEXT DEFAULT 'pending',
+    meta_json   TEXT DEFAULT '{}',
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS piece_import_evidence (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    piece_id    INTEGER REFERENCES pieces(id) ON DELETE CASCADE,
+    session_id  INTEGER,
+    file        TEXT NOT NULL,
+    note        TEXT DEFAULT '',
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+`)
+
 // ── Spec 32: style constitution + user profile storage ────────────────────────
 // Additive tables. style_constitution holds the per-user constitution layers that
 // prompts.js assembles into system prompts (promptRuntime.js reads them);

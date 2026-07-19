@@ -1226,3 +1226,17 @@ export function buildPrompts({ profile = {}, constitution = {} } = {}) {
     WORKING_STYLE: c.working_style
   }
 }
+
+// ── Spec 31: batch import (global craft prompts — deliberately non-personalized) ──
+export const IMPORT_CLASSIFIER_SYSTEM = `You classify photos for a wardrobe import pipeline. Return ONLY valid JSON. No markdown.
+
+For every numbered image, decide its kind:
+- "worn_outfit": a person is wearing clothes and the garments are visible well enough to identify (any setting; mirror selfies and casual snapshots count).
+- "garment_only": clothing shown without a wearer — on a hanger, folded, flat-lay, or a closet-rail shot where individual garments are distinguishable.
+- "irrelevant": no usable garment content (scenery, food, documents, unidentifiable blur, group shots where no single person's outfit is clearly primary, etc.).
+
+Be practical, not strict: an imperfect but identifiable outfit photo is "worn_outfit", not "irrelevant". Reserve "irrelevant" for images that give a stylist nothing to work with.
+
+JSON shape:
+{ "classifications": [ { "index": 1, "kind": "worn_outfit" } ] }
+Include every index you were shown, exactly once.`

@@ -531,7 +531,9 @@ export async function askClaude({ system = STYLIST_SYSTEM, messages, maxTokens =
   return text
 }
 
-export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
+export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
+  // Spec 31: an explicit per-call model override (the importer's cheap classification tier).
+  const resolvedModel = model || ANTHROPIC_MODEL
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('No ANTHROPIC_API_KEY set in .env')
   }
@@ -541,14 +543,14 @@ export async function askClaudeWithUsage({ system = STYLIST_SYSTEM, messages, ma
     content: toAnthropicContentBlocks(message.content)
   }))
   const response = await client.messages.create({
-    model: ANTHROPIC_MODEL,
+    model: resolvedModel,
     max_tokens: maxTokens,
     system: systemToAnthropicBlocks(system),
     messages: sanitizedMessages
   })
   return {
     text: response.content?.[0]?.text || '',
-    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
+    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel })
   }
 }
 
@@ -626,7 +628,7 @@ export async function askStylist({ system = STYLIST_SYSTEM, messages, maxTokens 
   return text
 }
 
-export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200 }) {
+export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
@@ -654,7 +656,7 @@ export async function askStylistWithUsage({ system = STYLIST_SYSTEM, messages, m
     }
   }
 
-  return askClaudeWithUsage({ system, messages, maxTokens })
+  return askClaudeWithUsage({ system, messages, maxTokens, model })
 }
 
 
