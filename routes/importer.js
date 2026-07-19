@@ -251,9 +251,40 @@ async function cropGarment(sessionId, imageFile, box) {
   return name
 }
 
-// Cheap-tier JSON call with spend accounting and ONE automatic retry at a higher cap
-// when the response was truncated mid-JSON (live-found failure: a truncated sheet
-// degrades dedup far more expensively than the retry tokens cost).
+// Extract the FIRST balanced JSON value from model text, string-aware. Live-found
+// failure mode: the cheap tier returns a short, COMPLETE JSON object and then keeps
+// narrating until the token cap — whole-string parsing rejects that as trailing
+// content (and mislabels it truncation because the response did hit the cap).
+function salvageFirstJson(raw) {
+  const text = String(raw || '')
+  const start = text.search(/[{[]/)
+  if (start === -1) return null
+  const open = text[start]
+  const close = open === '{' ? '}' : ']'
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{' || ch === '[') depth++
+    if (ch === '}' || ch === ']') depth--
+    if (depth === 0 && i > start) {
+      try { return JSON.parse(text.slice(start, i + 1)) } catch { return null }
+    }
+  }
+  return null
+}
+
+// Cheap-tier JSON call with spend accounting and two recovery layers:
+// 1. salvage — first balanced JSON value from a chatty response (no extra spend);
+// 2. ONE retry at a higher cap for GENUINE mid-JSON truncation.
 async function askCheapJson({ sessionId, system, content, maxTokens, context }) {
   const attempt = async (cap) => {
     const { text, usage } = await askStylistWithUsage({
@@ -263,7 +294,16 @@ async function askCheapJson({ sessionId, system, content, maxTokens, context }) 
       model: IMPORT_CHEAP_MODEL
     })
     addSpend(sessionId, usage)
-    return parseModelJson(text, { context, maxTokens: cap })
+    try {
+      return parseModelJson(text, { context, maxTokens: cap })
+    } catch (err) {
+      const salvaged = salvageFirstJson(text)
+      if (salvaged !== null) {
+        console.warn(`Import ${context}: salvaged leading JSON from a chatty response`)
+        return salvaged
+      }
+      throw err
+    }
   }
   try {
     return await attempt(maxTokens)

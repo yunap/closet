@@ -191,3 +191,27 @@ test('truncated cluster sheet retries once at a higher cap instead of failing', 
   assert.equal(caps.length, 2)
   assert.ok(caps[1] > caps[0], 'retry runs at a higher token cap')
 })
+
+test('complete JSON followed by model chatter is salvaged without a retry call', async () => {
+  const { sessionId } = await createSession()
+  await uploadImages(sessionId, ['s1.jpg', 's2.jpg'])
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [classifyAll('worn_outfit')]
+  await post(`/api/import/sessions/${sessionId}/classify`)
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [
+    () => ({ garments: [{ box: { x: 100, y: 100, w: 500, h: 600 }, category: 'shoes', color: 'black', descriptor: 'black boots A' }] }),
+    () => ({ garments: [{ box: { x: 100, y: 100, w: 500, h: 600 }, category: 'shoes', color: 'black', descriptor: 'black boots B' }] })
+  ]
+  await post(`/api/import/sessions/${sessionId}/detect`)
+
+  // Live-found failure mode: valid JSON, then the model keeps narrating to the cap.
+  // Must be salvaged from the FIRST response — a second call would be wasted spend.
+  let calls = 0
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [
+    () => { calls++; return '{"groups": [[1, 2]]}\n\nLooking at these crops more closely, I notice both show...' },
+    () => { calls++; return { groups: [[1], [2]] } }
+  ]
+  const result = await post(`/api/import/sessions/${sessionId}/cluster`)
+  assert.equal(result.failedSheets, 0, JSON.stringify(result))
+  assert.equal(result.clustersCreated, 1, 'salvaged grouping used — both crops one cluster')
+  assert.equal(calls, 1, 'no retry consumed for a salvageable response')
+})
