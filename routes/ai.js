@@ -360,7 +360,7 @@ async function anchorThumbsForTagger(anchors = [], { limit = 8 } = {}) {
   return thumbs
 }
 
-export async function tagPieceWithProvider(photoInputs, existingPiece = null) {
+export async function tagPieceWithProvider(photoInputs, existingPiece = null, { onUsage } = {}) {
   const inputs = Array.isArray(photoInputs) ? photoInputs : [{ path: photoInputs, label: 'HANGER PHOTO' }]
   const prepared = await Promise.all(inputs.map(async input => ({
     ...input,
@@ -416,7 +416,8 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null) {
     }]
   }
 
-  const raw = await askStylist(payload)
+  const { text: raw, usage } = await askStylistWithUsage(payload)
+  if (onUsage && usage) onUsage(usage)
   const tags = parseModelJson(raw, { context: 'tagger', maxTokens: payload.maxTokens })
   if (tags && typeof tags === 'object') {
     tags.tagger_version = TAGGER_VERSION

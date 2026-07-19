@@ -91,6 +91,16 @@ export default function WardrobeImport() {
 
   const approveTagging = async () => {
     setPhase('tagging'); setError('')
+    // Tagging is one long request (one full-model call per garment, sequential) —
+    // poll the session's progress counts so the step never looks hung.
+    const poll = setInterval(async () => {
+      try {
+        const status = await fetch(`/api/import/sessions/${sessionId}`).then(r => r.json())
+        const done = status.counts?.garmentsTagged || 0
+        const total = status.counts?.tagQueueTotal || 0
+        setProgress(total ? `Tagged ${done} of ${total} garments · $${Number(status.spentUsd || 0).toFixed(2)} spent…` : 'Tagging garments with the full stylist model…')
+      } catch {}
+    }, 2500)
     try {
       setProgress('Tagging garments with the full stylist model…')
       await postJson(`/api/import/sessions/${sessionId}/tag`, { approve: true })
@@ -101,7 +111,7 @@ export default function WardrobeImport() {
       for (const entry of data.queue || []) initial[entry.id] = entry.mergeTarget ? 'merge' : 'accept'
       setDecisions(initial)
       setPhase('review')
-    } catch (err) { setError(err.message); setPhase('preflight') }
+    } catch (err) { setError(err.message); setPhase('preflight') } finally { clearInterval(poll) }
   }
 
   const applyDecisions = async () => {

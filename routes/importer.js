@@ -199,7 +199,7 @@ router.post('/sessions/:id/classify', async (req, res) => {
         const { text, usage } = await askStylistWithUsage({
           system: IMPORT_CLASSIFIER_SYSTEM,
           messages: [{ role: 'user', content }],
-          maxTokens: 800,
+          maxTokens: 1200,
           model: IMPORT_CHEAP_MODEL
         })
         addSpend(session.id, usage)
@@ -283,7 +283,7 @@ router.post('/sessions/:id/detect', async (req, res) => {
             { type: 'text', text: `Detect the garments in this ${image.kind === 'worn_outfit' ? 'worn outfit photo' : 'garment photo'}.` },
             await thumbBlock(session.id, image.file, 1024)
           ] }],
-          maxTokens: 900,
+          maxTokens: 1600,
           model: IMPORT_CHEAP_MODEL
         })
         addSpend(session.id, usage)
@@ -358,7 +358,7 @@ router.post('/sessions/:id/cluster', async (req, res) => {
           content.push(await thumbBlock(session.id, sheet[i].crop_file))
         }
         try {
-          const { text, usage } = await askStylistWithUsage({ system: IMPORT_CLUSTER_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 400, model: IMPORT_CHEAP_MODEL })
+          const { text, usage } = await askStylistWithUsage({ system: IMPORT_CLUSTER_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 1500, model: IMPORT_CHEAP_MODEL })
           addSpend(session.id, usage)
           const parsed = parseModelJson(text, { context: 'import clustering' })
           const seen = new Set()
@@ -426,7 +426,7 @@ router.post('/sessions/:id/match-existing', async (req, res) => {
             content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: buffer.toString('base64') } })
           }
           if (!usable.length) continue
-          const { text, usage } = await askStylistWithUsage({ system: IMPORT_MERGE_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 120, model: IMPORT_CHEAP_MODEL })
+          const { text, usage } = await askStylistWithUsage({ system: IMPORT_MERGE_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 400, model: IMPORT_CHEAP_MODEL })
           addSpend(session.id, usage)
           const parsed = parseModelJson(text, { context: 'import merge matching' })
           const matchIndex = Number(parsed?.match_index)
@@ -522,13 +522,19 @@ router.post('/sessions/:id/tag', async (req, res) => {
     const setTags = db.prepare("UPDATE import_clusters SET tags_json = ?, status = 'tagged' WHERE id = ?")
     let tagged = 0
     let failed = 0
+    bumpCounts(session.id, { tagQueueTotal: clusters.length })
     for (const cluster of clusters) {
       const canonical = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
       if (!canonical) { failed++; continue }
       try {
-        const tags = await tagPieceWithProvider([{ path: path.join(sessionDir(session.id), canonical.crop_file), label: 'HANGER PHOTO', guidance: `Imported garment crop; detector read: ${cluster.descriptor}` }])
+        const tags = await tagPieceWithProvider(
+          [{ path: path.join(sessionDir(session.id), canonical.crop_file), label: 'HANGER PHOTO', guidance: `Imported garment crop; detector read: ${cluster.descriptor}` }],
+          null,
+          { onUsage: usage => addSpend(session.id, usage) }
+        )
         setTags.run(JSON.stringify(tags || {}), cluster.id)
         tagged++
+        bumpCounts(session.id, { garmentsTagged: 1 })
       } catch (err) {
         console.warn('Import tagging failed for cluster', cluster.id, err.message)
         failed++
