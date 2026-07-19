@@ -1,4 +1,4 @@
-import { db, uploadsDir, parsePiece } from '../db.js';
+import { db, userUploadsDir, parsePiece } from '../db.js';
 import { tagPieceWithProvider } from '../routes/ai.js';
 import { normalizeManualOverrides, getPath } from '../styling-engine/taggerMerge.js';
 import path from 'path';
@@ -41,7 +41,7 @@ async function retagPiece(id) {
 
   const photos = [];
   if (piece.photo) {
-    const hangerPath = path.join(uploadsDir, piece.photo);
+    const hangerPath = path.join(userUploadsDir(), piece.photo);
     if (fs.existsSync(hangerPath)) {
       photos.push({
         path: hangerPath,
@@ -51,7 +51,7 @@ async function retagPiece(id) {
     }
   }
   if (piece.worn_photo) {
-    const wornPath = path.join(uploadsDir, piece.worn_photo);
+    const wornPath = path.join(userUploadsDir(), piece.worn_photo);
     if (fs.existsSync(wornPath)) {
       photos.push({
         path: wornPath,

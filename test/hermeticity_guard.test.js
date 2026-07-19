@@ -4,6 +4,11 @@
 // migration made a stray import WRITE to the real wardrobe.db during a test run).
 // File-by-file fixes don't survive refactors that change the import graph — this guard
 // does: any test file whose imports can reach db.js MUST set WARDROBE_DB_PATH first.
+//
+// Spec 33 Part 1: db.js resolution is now per-user (DEFAULT_USER_ID still falls back to
+// the legacy WARDROBE_DB_PATH-or-project-root path; other userIds resolve under
+// WARDROBE_USERS_DIR / data/users/{id}/). A test isolates itself with EITHER env var —
+// WARDROBE_USERS_DIR alone is valid for tests that only ever use non-default userIds.
 import test from 'node:test'
 import assert from 'node:assert'
 import fs from 'node:fs'
@@ -23,15 +28,31 @@ const DB_REACHING_PATTERNS = [
   /import\('[^']*\/server\.js'\)/
 ]
 
-test('every test file that can reach db.js isolates WARDROBE_DB_PATH', () => {
+test('every test file that can reach db.js isolates WARDROBE_DB_PATH or WARDROBE_USERS_DIR', () => {
   const testDir = path.join(process.cwd(), 'test')
   const offenders = []
   for (const file of fs.readdirSync(testDir)) {
     if (!file.endsWith('.test.js')) continue
     const src = fs.readFileSync(path.join(testDir, file), 'utf8')
     const reachesDb = DB_REACHING_PATTERNS.some(pattern => pattern.test(src))
-    if (reachesDb && !src.includes('WARDROBE_DB_PATH')) offenders.push(file)
+    const isolated = src.includes('WARDROBE_DB_PATH') || src.includes('WARDROBE_USERS_DIR')
+    if (reachesDb && !isolated) offenders.push(file)
   }
   assert.deepStrictEqual(offenders, [],
-    `These test files import db.js-reaching modules without isolating WARDROBE_DB_PATH — they will run db.js migrations against the real wardrobe.db: ${offenders.join(', ')}`)
+    `These test files import db.js-reaching modules without isolating WARDROBE_DB_PATH/WARDROBE_USERS_DIR — they will run db.js migrations against the real wardrobe.db: ${offenders.join(', ')}`)
+})
+
+test('no test file references the real data/users/ multiuser directory directly', () => {
+  const testDir = path.join(process.cwd(), 'test')
+  const offenders = []
+  for (const file of fs.readdirSync(testDir)) {
+    if (!file.endsWith('.test.js')) continue
+    const src = fs.readFileSync(path.join(testDir, file), 'utf8')
+    // A literal data/users/ reference (not routed through a tmp WARDROBE_USERS_DIR)
+    // would mean a test is reading/writing the real multiuser layout instead of an
+    // isolated copy — same bug class as touching the real wardrobe.db directly.
+    if (/['"`][^'"`]*\bdata\/users\//.test(src) && !src.includes('WARDROBE_USERS_DIR')) offenders.push(file)
+  }
+  assert.deepStrictEqual(offenders, [],
+    `These test files reference data/users/ without routing through a tmp WARDROBE_USERS_DIR: ${offenders.join(', ')}`)
 })

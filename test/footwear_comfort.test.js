@@ -13,7 +13,7 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-comfort-'))
 process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
-const { app, db, uploadsDir } = await import('../server.js')
+const { app, db, userUploadsDir } = await import('../server.js')
 const { resolveComfortFootwearConstraint, applyComfortFootwearRepair } = await import('../styling-engine/footwear-comfort.js')
 const { generateWholeWardrobeOutfitsVisualInternal, generateOutfitsForPieceInternal } = await import('../routes/ai.js')
 const { parsePiece } = await import('../db.js')
@@ -26,10 +26,10 @@ function resetTables() {
 }
 
 async function makeImage(filename, color = '#222222') {
-  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
+  if (!fs.existsSync(userUploadsDir())) fs.mkdirSync(userUploadsDir(), { recursive: true })
   await sharp({
     create: { width: 120, height: 160, channels: 3, background: color }
-  }).png().toFile(path.join(uploadsDir, filename))
+  }).png().toFile(path.join(userUploadsDir(), filename))
   return filename
 }
 

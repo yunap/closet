@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import sharp from 'sharp'
-import { db, parsePiece, uploadsDir } from '../db.js'
+import { db, parsePiece, userUploadsDir } from '../db.js'
 import { confidenceFromProfile } from '../styling-engine/taggerMerge.js'
 
 const FORMALITY_VALUES = ['lounge', 'everyday', 'elevated', 'dressy']
@@ -71,7 +71,7 @@ function wrapLabel(value = '', max = 22) {
 
 async function makeTile(piece, width = 150, height = 196) {
   const photo = piece.photo || piece.worn_photo
-  const filePath = photo ? path.join(uploadsDir, photo) : null
+  const filePath = photo ? path.join(userUploadsDir(), photo) : null
   let image
   if (filePath && fs.existsSync(filePath)) {
     image = await sharp(filePath)

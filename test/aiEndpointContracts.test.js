@@ -16,7 +16,7 @@ process.env.PHOTO_PRESERVING_VISUALS = 'true'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_CANDIDATES = '18'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
-const { app, db, uploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
+const { app, db, userUploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
 const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
 
@@ -67,7 +67,7 @@ function resetTables() {
 }
 
 async function makeImage(filename, color = '#d8c9b7') {
-  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
+  if (!fs.existsSync(userUploadsDir())) fs.mkdirSync(userUploadsDir(), { recursive: true })
   await sharp({
     create: {
       width: 120,
@@ -75,7 +75,7 @@ async function makeImage(filename, color = '#d8c9b7') {
       channels: 3,
       background: color,
     },
-  }).png().toFile(path.join(uploadsDir, filename))
+  }).png().toFile(path.join(userUploadsDir(), filename))
   return filename
 }
 
@@ -1118,7 +1118,7 @@ test('selected-piece board generation returns saved-garment visual boards', asyn
   assert.equal(json.mode, 'generate_outfit_boards')
   assert.ok(Array.isArray(json.boards))
   assert.ok(json.boards[0].imageUrl.startsWith('/uploads/generated-boards/'))
-  assert.ok(fs.existsSync(path.join(uploadsDir, json.boards[0].imageUrl.replace('/uploads/', ''))))
+  assert.ok(fs.existsSync(path.join(userUploadsDir(), json.boards[0].imageUrl.replace('/uploads/', ''))))
 })
 
 test('whole-wardrobe image endpoint returns one generated board artifact', async () => {
@@ -1510,7 +1510,7 @@ test('saved outfit cards use the shared wardrobe evaluator with linked garment i
 
 test('uploaded outfit feedback uses the shared wardrobe evaluator with uploaded image evidence', async () => {
   const form = new FormData()
-  const fileBuffer = fs.readFileSync(path.join(uploadsDir, seeded.photos.outfit))
+  const fileBuffer = fs.readFileSync(path.join(userUploadsDir(), seeded.photos.outfit))
   form.set('photo', new Blob([fileBuffer], { type: 'image/png' }), 'outfit.png')
   form.set('question', 'What do you think of this outfit?')
   form.set('outfitName', 'Uploaded hotel breakfast outfit')
@@ -2271,10 +2271,10 @@ test('StylistChat shows trip explanation before cards, not inside trip cards', (
 test('executeTool get_garment_details loads text and base64 photo blocks', async () => {
   // Write a dummy temp image to uploads directory to mock the photo file
   const topPhotoFilename = 'mock-top-photo.jpg'
-  const mockFilePath = path.join(uploadsDir, topPhotoFilename)
+  const mockFilePath = path.join(userUploadsDir(), topPhotoFilename)
   
   // Ensure uploads directory exists and write a valid dummy 1x1 JPEG to satisfy sharp resizing
-  fs.mkdirSync(uploadsDir, { recursive: true })
+  fs.mkdirSync(userUploadsDir(), { recursive: true })
   const dummy1x1Jpeg = Buffer.from('/9j/4AAQSkZJRgABAQAAZABkAAD/2wCEABQQEBkSGScXFycyJh8mMi4mJiYmLj41NTU1NT5EQUFBQUFBREREREREREREREREREREREREREREREREREREREQBFRkZIBwgJhgYJjYmICY2RDYrKzZERERCNUJERERERERERERERERERERERERERERERERERERERERERERERERERP/AABEIAAEAAQMBIgACEQEDEQH/xABMAAEBAAAAAAAAAAAAAAAAAAAABQEBAQAAAAAAAAAAAAAAAAAABQYQAQAAAAAAAAAAAAAAAAAAAAARAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJQA9Yv/2Q==', 'base64')
   fs.writeFileSync(mockFilePath, dummy1x1Jpeg)
 
@@ -2818,7 +2818,7 @@ test('getCalibrationReferenceImagesForGeneration priority-starred random rotatio
   } finally {
     // Cleanup generated files
     for (const file of files) {
-      const p = path.join(uploadsDir, file)
+      const p = path.join(userUploadsDir(), file)
       if (fs.existsSync(p)) fs.unlinkSync(p)
     }
   }
