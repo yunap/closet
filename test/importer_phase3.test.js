@@ -165,3 +165,24 @@ test('calibration seeding stays opt-out once a curated library exists', async ()
   const queue = await getJson(`/api/import/sessions/${sessionId}/review-queue`)
   assert.equal(queue.calibrationSeedDefault, false, 'curated calibration library flips the default OFF (owner ruling)')
 })
+
+test('failed-crop worn garment stores the photo once: worn_photo set, hanger photo empty', async () => {
+  const { sessionId } = await buildMatchedSession()
+  // Mark every canonical crop as failed verification before tagging/accept.
+  db.prepare('UPDATE import_garments SET crop_ok = 0 WHERE session_id = ?').run(sessionId)
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [
+    () => ({ name: 'fallback tank', category: 'top' }),
+    () => ({ name: 'fallback cargo', category: 'bottom' })
+  ]
+  await post(`/api/import/sessions/${sessionId}/tag`, { approve: true })
+  const queue = await getJson(`/api/import/sessions/${sessionId}/review-queue`)
+  const tank = queue.queue.find(entry => entry.descriptor === 'rust ribbed tank')
+  assert.equal(tank.cropOk, false, 'review card labeled as full photo')
+  const review = await post(`/api/import/sessions/${sessionId}/review`, {
+    decisions: [{ clusterId: tank.id, action: 'accept' }]
+  })
+  const accepted = review.body.results.find(r => r.outcome === 'accepted')
+  const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(accepted.pieceId)
+  assert.ok(piece.worn_photo, 'worn photo stored (source was a worn outfit photo)')
+  assert.equal(piece.photo, null, 'no duplicate hanger photo — same image not stored twice')
+})

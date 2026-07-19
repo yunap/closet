@@ -780,9 +780,15 @@ router.post('/sessions/:id/review', (req, res) => {
       if (action === 'accept') {
         const tags = safeJsonParse(cluster.tags_json, {}) || {}
         const canonical = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
-        const photoFile = canonical ? copyIntoUploads(session.id, garmentDisplayFile(canonical), 'import-piece') : null
         const canonicalImage = canonical ? db.prepare('SELECT * FROM import_images WHERE id = ?').get(canonical.image_id) : null
         const wornFile = canonicalImage?.kind === 'worn_outfit' ? copyIntoUploads(session.id, canonicalImage.file, 'import-worn') : null
+        // A failed crop's display file IS the full source photo — when that photo is
+        // already going into worn_photo, storing it again as the hanger photo would be
+        // the same image twice (live-found). Store it once, in the slot it truthfully
+        // is; pieces without a hanger photo are first-class throughout the app.
+        const photoFile = canonical && (canonical.crop_ok || !wornFile)
+          ? copyIntoUploads(session.id, garmentDisplayFile(canonical), 'import-piece')
+          : null
 
         const columns = ['status', 'tag_state', 'photo', 'worn_photo']
         const values = ['active', 'provisional', photoFile, wornFile]
