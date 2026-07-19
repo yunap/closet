@@ -11,7 +11,7 @@ import nodePath from 'node:path'
 const tmpRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'parse-model-json-'))
 process.env.WARDROBE_DB_PATH = nodePath.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = nodePath.join(tmpRoot, 'uploads')
-const { parseModelJson } = await import('../styling-engine/provider.js')
+const { parseModelJson, salvageFirstJson } = await import('../styling-engine/provider.js')
 
 test('parseModelJson parses well-formed JSON, including a ```json fence', () => {
   assert.deepEqual(parseModelJson('{"a":1}'), { a: 1 })
@@ -42,4 +42,16 @@ test('parseModelJson reports an ordinary bad-JSON error (not truncation) when th
       return true
     }
   )
+})
+
+// Live-found: a retag call returned "I need to look at this garment more closely
+// before tagging it.\n\n{\"name\": ...}" — leading chatter parseModelJson rejects
+// outright, that salvageFirstJson is meant to recover from.
+test('salvageFirstJson pulls the JSON object out of leading model chatter', () => {
+  const chatty = 'I need to look at this garment more closely before tagging it.\n\n{"name":"cream knit top","colors":["cream"]}'
+  assert.deepEqual(salvageFirstJson(chatty), { name: 'cream knit top', colors: ['cream'] })
+})
+
+test('salvageFirstJson returns null when there is no valid JSON to recover', () => {
+  assert.equal(salvageFirstJson('I need more information to tag this garment.'), null)
 })

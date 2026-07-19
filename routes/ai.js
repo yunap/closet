@@ -16,6 +16,7 @@ import {
   askStylistWithTools,
   estimateAiUsageCost,
   parseModelJson,
+  salvageFirstJson,
   AI_PROVIDER,
   ACTIVE_STYLIST_MODEL,
   describeAiError
@@ -418,7 +419,15 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
 
   const { text: raw, usage } = await askStylistWithUsage(payload)
   if (onUsage && usage) onUsage(usage)
-  const tags = parseModelJson(raw, { context: 'tagger', maxTokens: payload.maxTokens })
+  let tags
+  try {
+    tags = parseModelJson(raw, { context: 'tagger', maxTokens: payload.maxTokens })
+  } catch (err) {
+    const salvaged = salvageFirstJson(raw)
+    if (salvaged === null) throw err
+    console.warn('[tagger] salvaged leading JSON from a chatty response')
+    tags = salvaged
+  }
   if (tags && typeof tags === 'object') {
     tags.tagger_version = TAGGER_VERSION
     const confidence = normalizeConfidenceMap(tags._confidence || tags.style_profile_json?._confidence || {})

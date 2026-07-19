@@ -509,6 +509,35 @@ export function extractToolResultImages(result) {
 // cap always stops mid-token, so it can never end on a closing `}`/`]`
 // (after stripping the code-fence wrapper) — a cheap, reliable signal that
 // doesn't require guessing at exact token counts.
+// Extract the FIRST balanced JSON value from model text, string-aware. Live-found
+// failure mode: a model returns a short, COMPLETE JSON object and then keeps narrating
+// (or narrates BEFORE it, e.g. "I need to ...") — whole-string parsing rejects both as
+// invalid rather than pulling out the JSON that's actually there.
+export function salvageFirstJson(raw) {
+  const text = String(raw || '')
+  const start = text.search(/[{[]/)
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{' || ch === '[') depth++
+    if (ch === '}' || ch === ']') depth--
+    if (depth === 0 && i > start) {
+      try { return JSON.parse(text.slice(start, i + 1)) } catch { return null }
+    }
+  }
+  return null
+}
+
 export function parseModelJson(raw, { context = '', maxTokens = null } = {}) {
   const cleaned = String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim()
   try {

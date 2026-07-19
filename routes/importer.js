@@ -15,7 +15,7 @@ import sharp from 'sharp'
 import AdmZip from 'adm-zip'
 import { db, uploadsDir, safeJsonParse } from '../db.js'
 import { tagPieceWithProvider } from './ai.js'
-import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, ACTIVE_STYLIST_MODEL, AI_PROVIDER } from '../styling-engine/provider.js'
+import { askStylistWithUsage, estimateAiUsageCost, parseModelJson, salvageFirstJson, ACTIVE_STYLIST_MODEL, AI_PROVIDER } from '../styling-engine/provider.js'
 import { IMPORT_CLASSIFIER_SYSTEM, IMPORT_DETECTOR_SYSTEM, IMPORT_CLUSTER_SYSTEM, IMPORT_MERGE_SYSTEM, IMPORT_CROP_VERIFY_SYSTEM, IMPORT_RELOCATE_SYSTEM } from '../styling-engine/prompts.js'
 
 const router = express.Router()
@@ -249,37 +249,6 @@ async function cropGarment(sessionId, imageFile, box) {
   const name = `crop-${Date.now()}-${Math.round(Math.random() * 1e9)}.jpg`
   await sharp(srcPath).extract({ left: x, top: y, width: w, height: h }).jpeg({ quality: 88 }).toFile(path.join(dir, name))
   return name
-}
-
-// Extract the FIRST balanced JSON value from model text, string-aware. Live-found
-// failure mode: the cheap tier returns a short, COMPLETE JSON object and then keeps
-// narrating until the token cap — whole-string parsing rejects that as trailing
-// content (and mislabels it truncation because the response did hit the cap).
-function salvageFirstJson(raw) {
-  const text = String(raw || '')
-  const start = text.search(/[{[]/)
-  if (start === -1) return null
-  const open = text[start]
-  const close = open === '{' ? '}' : ']'
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i]
-    if (inString) {
-      if (escaped) escaped = false
-      else if (ch === '\\') escaped = true
-      else if (ch === '"') inString = false
-      continue
-    }
-    if (ch === '"') { inString = true; continue }
-    if (ch === '{' || ch === '[') depth++
-    if (ch === '}' || ch === ']') depth--
-    if (depth === 0 && i > start) {
-      try { return JSON.parse(text.slice(start, i + 1)) } catch { return null }
-    }
-  }
-  return null
 }
 
 // Cheap-tier JSON call with spend accounting and two recovery layers:
