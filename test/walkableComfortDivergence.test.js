@@ -12,6 +12,7 @@ import sharp from 'sharp'
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-walkable-divergence-'))
 process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 
 const { app, db, userUploadsDir } = await import('../server.js')
 const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')

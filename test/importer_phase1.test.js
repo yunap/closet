@@ -17,6 +17,7 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-importer-'))
 process.env.NODE_ENV = 'test'
 process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 process.env.ANTHROPIC_API_KEY = ''
 process.env.OPENAI_API_KEY = ''
 // Point at a guaranteed-missing ffmpeg by default; individual tests swap in a stub.
