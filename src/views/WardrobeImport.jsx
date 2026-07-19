@@ -68,22 +68,39 @@ export default function WardrobeImport() {
     } catch (err) { setError(err.message) } finally { setUploading(false) }
   }
 
+  // Every long stage is one long HTTP request; the server bumps per-unit progress
+  // counts as it works, and this poll renders them so no stage ever looks hung.
+  const startStatusPoll = (label) => setInterval(async () => {
+    try {
+      const status = await fetch(`/api/import/sessions/${sessionId}`).then(r => r.json())
+      const c = status.counts || {}
+      const parts = []
+      if (c.imagesClassified) parts.push(`${c.imagesClassified} classified`)
+      if (c.imagesDetected) parts.push(`${c.imagesDetected} scanned for garments`)
+      if (c.clusterSheetsDone) parts.push(`${c.clusterSheetsDone} duplicate groups checked`)
+      if (c.clustersMatched) parts.push(`${c.clustersMatched} checked against your wardrobe`)
+      if (c.tagQueueTotal) parts.push(`${c.garmentsTagged || 0} of ${c.tagQueueTotal} tagged`)
+      parts.push(`$${Number(status.spentUsd || 0).toFixed(2)} spent`)
+      setProgress(`${label} ${parts.join(' · ')}`)
+    } catch {}
+  }, 2500)
+
   const analyze = async () => {
     setPhase('analyzing'); setError('')
+    const poll = startStatusPoll('Analyzing…')
     try {
       setProgress('Classifying photos…')
       const classify = await postJson(`/api/import/sessions/${sessionId}/classify`)
-      setProgress(`Classified ${classify.classified} photos. Detecting garments…`)
       const detect = await postJson(`/api/import/sessions/${sessionId}/detect`)
-      setProgress(`Found ${detect.garmentsDetected} garments. Grouping duplicates…`)
       const cluster = await postJson(`/api/import/sessions/${sessionId}/cluster`)
-      setProgress(`${cluster.clustersCreated} distinct garments. Checking your existing wardrobe…`)
       const match = await postJson(`/api/import/sessions/${sessionId}/match-existing`)
-      setProgress(`${match.mergeProposals} look like clothes you already have.`)
+      clearInterval(poll)
+      setProgress(`${classify.classified} photos classified · ${detect.garmentsDetected} garments found · ${cluster.clustersCreated} distinct · ${match.mergeProposals} matched to your wardrobe.`)
       const pf = await fetch(`/api/import/sessions/${sessionId}/preflight`).then(r => r.json())
       setPreflight(pf)
       setPhase('preflight')
     } catch (err) {
+      clearInterval(poll)
       setError(err.message)
       setPhase('upload')
     }
@@ -91,16 +108,7 @@ export default function WardrobeImport() {
 
   const approveTagging = async () => {
     setPhase('tagging'); setError('')
-    // Tagging is one long request (one full-model call per garment, sequential) —
-    // poll the session's progress counts so the step never looks hung.
-    const poll = setInterval(async () => {
-      try {
-        const status = await fetch(`/api/import/sessions/${sessionId}`).then(r => r.json())
-        const done = status.counts?.garmentsTagged || 0
-        const total = status.counts?.tagQueueTotal || 0
-        setProgress(total ? `Tagged ${done} of ${total} garments · $${Number(status.spentUsd || 0).toFixed(2)} spent…` : 'Tagging garments with the full stylist model…')
-      } catch {}
-    }, 2500)
+    const poll = startStatusPoll('Tagging…')
     try {
       setProgress('Tagging garments with the full stylist model…')
       await postJson(`/api/import/sessions/${sessionId}/tag`, { approve: true })

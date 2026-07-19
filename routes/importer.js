@@ -196,20 +196,14 @@ router.post('/sessions/:id/classify', async (req, res) => {
         content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: thumb.toString('base64') } })
       }
       try {
-        const { text, usage } = await askStylistWithUsage({
-          system: IMPORT_CLASSIFIER_SYSTEM,
-          messages: [{ role: 'user', content }],
-          maxTokens: 1200,
-          model: IMPORT_CHEAP_MODEL
-        })
-        addSpend(session.id, usage)
-        const parsed = parseModelJson(text, { context: 'import classification' })
+        const parsed = await askCheapJson({ sessionId: session.id, system: IMPORT_CLASSIFIER_SYSTEM, content, maxTokens: 1200, context: 'import classification' })
         const byIndex = new Map((parsed?.classifications || []).map(c => [Number(c.index), String(c.kind || '')]))
         for (let i = 0; i < batch.length; i++) {
           const kind = byIndex.get(i + 1)
           markKind.run(['worn_outfit', 'garment_only', 'irrelevant'].includes(kind) ? kind : 'irrelevant', batch[i].id)
           classified++
         }
+        bumpCounts(session.id, { imagesClassified: batch.length })
       } catch (err) {
         console.warn('Import classify batch failed:', err.message)
         failedBatches++
@@ -257,6 +251,29 @@ async function cropGarment(sessionId, imageFile, box) {
   return name
 }
 
+// Cheap-tier JSON call with spend accounting and ONE automatic retry at a higher cap
+// when the response was truncated mid-JSON (live-found failure: a truncated sheet
+// degrades dedup far more expensively than the retry tokens cost).
+async function askCheapJson({ sessionId, system, content, maxTokens, context }) {
+  const attempt = async (cap) => {
+    const { text, usage } = await askStylistWithUsage({
+      system,
+      messages: [{ role: 'user', content }],
+      maxTokens: cap,
+      model: IMPORT_CHEAP_MODEL
+    })
+    addSpend(sessionId, usage)
+    return parseModelJson(text, { context, maxTokens: cap })
+  }
+  try {
+    return await attempt(maxTokens)
+  } catch (err) {
+    if (!/token cap|truncated/i.test(err.message)) throw err
+    console.warn(`Import ${context}: truncated at ${maxTokens} tokens, retrying at ${maxTokens * 3}`)
+    return attempt(maxTokens * 3)
+  }
+}
+
 async function thumbBlock(sessionId, file, width = 448) {
   const buffer = await sharp(path.join(sessionDir(sessionId), file)).resize({ width, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer()
   return { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: buffer.toString('base64') } }
@@ -277,17 +294,16 @@ router.post('/sessions/:id/detect', async (req, res) => {
 
     for (const image of images) {
       try {
-        const { text, usage } = await askStylistWithUsage({
+        const parsed = await askCheapJson({
+          sessionId: session.id,
           system: IMPORT_DETECTOR_SYSTEM,
-          messages: [{ role: 'user', content: [
+          content: [
             { type: 'text', text: `Detect the garments in this ${image.kind === 'worn_outfit' ? 'worn outfit photo' : 'garment photo'}.` },
             await thumbBlock(session.id, image.file, 1024)
-          ] }],
+          ],
           maxTokens: 1600,
-          model: IMPORT_CHEAP_MODEL
+          context: 'import garment detection'
         })
-        addSpend(session.id, usage)
-        const parsed = parseModelJson(text, { context: 'import garment detection' })
         for (const garment of parsed?.garments || []) {
           const category = IMPORT_CATEGORIES.has(garment?.category) ? garment.category : ''
           if (!category || !garment?.box) { cropsRejected++; continue }
@@ -297,6 +313,7 @@ router.post('/sessions/:id/detect', async (req, res) => {
           garmentsDetected++
         }
         markDetected.run(image.id)
+        bumpCounts(session.id, { imagesDetected: 1 })
       } catch (err) {
         console.warn('Import detect failed for image', image.id, err.message)
         failedImages++
@@ -358,9 +375,7 @@ router.post('/sessions/:id/cluster', async (req, res) => {
           content.push(await thumbBlock(session.id, sheet[i].crop_file))
         }
         try {
-          const { text, usage } = await askStylistWithUsage({ system: IMPORT_CLUSTER_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 1500, model: IMPORT_CHEAP_MODEL })
-          addSpend(session.id, usage)
-          const parsed = parseModelJson(text, { context: 'import clustering' })
+          const parsed = await askCheapJson({ sessionId: session.id, system: IMPORT_CLUSTER_SYSTEM, content, maxTokens: 1500, context: 'import clustering' })
           const seen = new Set()
           const groups = []
           for (const group of parsed?.groups || []) {
@@ -372,6 +387,7 @@ router.post('/sessions/:id/cluster', async (req, res) => {
           // Any index the model dropped becomes its own cluster (over-split, never lose).
           for (const member of sheet) if (!seen.has(member.id)) groups.push([member])
           for (const group of groups) await createCluster(group)
+          bumpCounts(session.id, { clusterSheetsDone: 1 })
         } catch (err) {
           console.warn('Import cluster sheet failed:', err.message)
           failedSheets++
@@ -426,9 +442,7 @@ router.post('/sessions/:id/match-existing', async (req, res) => {
             content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: buffer.toString('base64') } })
           }
           if (!usable.length) continue
-          const { text, usage } = await askStylistWithUsage({ system: IMPORT_MERGE_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 400, model: IMPORT_CHEAP_MODEL })
-          addSpend(session.id, usage)
-          const parsed = parseModelJson(text, { context: 'import merge matching' })
+          const parsed = await askCheapJson({ sessionId: session.id, system: IMPORT_MERGE_SYSTEM, content, maxTokens: 400, context: 'import merge matching' })
           const matchIndex = Number(parsed?.match_index)
           if (Number.isInteger(matchIndex) && matchIndex >= 1 && matchIndex <= usable.length) {
             setMerge.run(usable[matchIndex - 1].id, cluster.id)
@@ -436,6 +450,7 @@ router.post('/sessions/:id/match-existing', async (req, res) => {
             break
           }
         }
+        bumpCounts(session.id, { clustersMatched: 1 })
       } catch (err) {
         console.warn('Import match-existing failed for cluster', cluster.id, err.message)
         failedClusters++

@@ -165,3 +165,29 @@ test('merge-vs-existing: confident match proposes merge; unsure(null) leaves new
   const status = await (await fetch(`${baseUrl}/api/import/sessions/${sessionId}`)).json()
   assert.equal(status.status, 'matched')
 })
+
+test('truncated cluster sheet retries once at a higher cap instead of failing', async () => {
+  const { sessionId } = await createSession()
+  await uploadImages(sessionId, ['r1.jpg', 'r2.jpg'])
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [classifyAll('worn_outfit')]
+  await post(`/api/import/sessions/${sessionId}/classify`)
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [
+    () => ({ garments: [{ box: { x: 100, y: 100, w: 500, h: 600 }, category: 'top', color: 'grey', descriptor: 'grey tee A' }] }),
+    () => ({ garments: [{ box: { x: 100, y: 100, w: 500, h: 600 }, category: 'top', color: 'grey', descriptor: 'grey tee B' }] })
+  ]
+  await post(`/api/import/sessions/${sessionId}/detect`)
+
+  // First response: truncated JSON (string form so the harness passes it through raw).
+  // parseModelJson flags it as a token-cap truncation; the pipeline must retry once
+  // and use the second, valid response.
+  const caps = []
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [
+    ({ maxTokens }) => { caps.push(maxTokens); return '{"groups": [[1' },
+    ({ maxTokens }) => { caps.push(maxTokens); return { groups: [[1, 2]] } }
+  ]
+  const result = await post(`/api/import/sessions/${sessionId}/cluster`)
+  assert.equal(result.failedSheets, 0, JSON.stringify(result))
+  assert.equal(result.clustersCreated, 1, 'retry succeeded — both crops in one cluster')
+  assert.equal(caps.length, 2)
+  assert.ok(caps[1] > caps[0], 'retry runs at a higher token cap')
+})
