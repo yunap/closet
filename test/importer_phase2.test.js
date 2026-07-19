@@ -215,3 +215,25 @@ test('complete JSON followed by model chatter is salvaged without a retry call',
   assert.equal(result.clustersCreated, 1, 'salvaged grouping used — both crops one cluster')
   assert.equal(calls, 1, 'no retry consumed for a salvageable response')
 })
+
+test('crops failing verification fall back to the full photo everywhere', async () => {
+  const { sessionId } = await createSession()
+  await uploadImages(sessionId, ['v1.jpg'])
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [classifyAll('worn_outfit')]
+  await post(`/api/import/sessions/${sessionId}/classify`)
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = [
+    () => ({ garments: [{ box: { x: 100, y: 100, w: 300, h: 300 }, category: 'accessory', color: 'purple', descriptor: 'purple beaded bracelet' }] }),
+    // Verification pass: the crop does NOT show the bracelet (live-found: it showed trees).
+    () => ({ verdicts: [{ index: 1, shows_garment: false }] })
+  ]
+  const detect = await post(`/api/import/sessions/${sessionId}/detect`)
+  assert.equal(detect.cropsFallbackToFullPhoto, 1, JSON.stringify(detect))
+  const garment = db.prepare('SELECT * FROM import_garments WHERE session_id = ?').get(sessionId)
+  assert.equal(garment.crop_ok, 0)
+  const sourceImage = db.prepare('SELECT file FROM import_images WHERE id = ?').get(garment.image_id)
+
+  globalThis.__WARDROBE_AI_TEST_RESPONSES__ = []
+  await post(`/api/import/sessions/${sessionId}/cluster`)
+  const preflight = await (await fetch(`${baseUrl}/api/import/sessions/${sessionId}/preflight`)).json()
+  assert.ok(preflight.clusters[0].cropUrl.endsWith(sourceImage.file), 'review/preflight shows the full photo, not the bad crop')
+})

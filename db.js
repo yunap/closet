@@ -359,6 +359,7 @@ db.exec(`
     color       TEXT DEFAULT '',
     descriptor  TEXT DEFAULT '',
     cluster_id  INTEGER,
+    crop_ok     INTEGER DEFAULT 1,
     created_at  TEXT DEFAULT (datetime('now'))
   );
   CREATE TABLE IF NOT EXISTS import_clusters (
@@ -387,6 +388,9 @@ db.exec(`
 // Additive migrations for import_clusters (pre-existing scratch DBs).
 ;['tags_json TEXT DEFAULT NULL', 'result_piece_id INTEGER'].forEach(col => {
   try { db.exec(`ALTER TABLE import_clusters ADD COLUMN ${col}`) } catch {}
+})
+;['crop_ok INTEGER DEFAULT 1'].forEach(col => {
+  try { db.exec(`ALTER TABLE import_garments ADD COLUMN ${col}`) } catch {}
 })
 
 // ── Spec 32: style constitution + user profile storage ────────────────────────

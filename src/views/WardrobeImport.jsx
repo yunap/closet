@@ -77,6 +77,7 @@ export default function WardrobeImport() {
       const parts = []
       if (c.imagesClassified) parts.push(`${c.imagesClassified} classified`)
       if (c.imagesDetected) parts.push(`${c.imagesDetected} scanned for garments`)
+      if (c.cropsFallbackToFullPhoto) parts.push(`${c.cropsFallbackToFullPhoto} crops replaced with full photos`)
       if (c.clusterSheetsDone) parts.push(`${c.clusterSheetsDone} duplicate groups checked`)
       if (c.clustersMatched) parts.push(`${c.clustersMatched} checked against your wardrobe`)
       if (c.tagQueueTotal) parts.push(`${c.garmentsTagged || 0} of ${c.tagQueueTotal} tagged`)

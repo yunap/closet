@@ -1275,3 +1275,12 @@ Judge by exact color/shade, print details, construction, and texture — not by 
 
 JSON shape:
 { "match_index": 2 }   or   { "match_index": null }`
+
+export const IMPORT_CROP_VERIFY_SYSTEM = `You verify garment photo crops for a wardrobe import pipeline. Return ONLY valid JSON. No markdown.
+
+For each numbered crop you are told what garment it is CLAIMED to show. Answer whether the crop actually shows that garment clearly enough to serve as the garment's catalog photo — the garment (or most of it) is visible and recognizable.
+
+Answer false when the crop shows the wrong region: scenery, sky, a face, a different garment, or only an incidental sliver of the claimed one.
+
+JSON shape (every index exactly once):
+{ "verdicts": [ { "index": 1, "shows_garment": true } ] }`
