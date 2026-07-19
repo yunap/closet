@@ -350,6 +350,28 @@ db.exec(`
     meta_json   TEXT DEFAULT '{}',
     created_at  TEXT DEFAULT (datetime('now'))
   );
+  CREATE TABLE IF NOT EXISTS import_garments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER REFERENCES import_sessions(id) ON DELETE CASCADE,
+    image_id    INTEGER REFERENCES import_images(id) ON DELETE CASCADE,
+    crop_file   TEXT NOT NULL,
+    category    TEXT DEFAULT '',
+    color       TEXT DEFAULT '',
+    descriptor  TEXT DEFAULT '',
+    cluster_id  INTEGER,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS import_clusters (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id            INTEGER REFERENCES import_sessions(id) ON DELETE CASCADE,
+    canonical_garment_id  INTEGER,
+    category              TEXT DEFAULT '',
+    color                 TEXT DEFAULT '',
+    descriptor            TEXT DEFAULT '',
+    merge_target_piece_id INTEGER,
+    status                TEXT DEFAULT 'proposed',
+    created_at            TEXT DEFAULT (datetime('now'))
+  );
   CREATE TABLE IF NOT EXISTS piece_import_evidence (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     piece_id    INTEGER REFERENCES pieces(id) ON DELETE CASCADE,

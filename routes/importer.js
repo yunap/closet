@@ -15,7 +15,7 @@ import sharp from 'sharp'
 import AdmZip from 'adm-zip'
 import { db, uploadsDir, safeJsonParse } from '../db.js'
 import { askStylistWithUsage, estimateAiUsageCost, parseModelJson } from '../styling-engine/provider.js'
-import { IMPORT_CLASSIFIER_SYSTEM } from '../styling-engine/prompts.js'
+import { IMPORT_CLASSIFIER_SYSTEM, IMPORT_DETECTOR_SYSTEM, IMPORT_CLUSTER_SYSTEM, IMPORT_MERGE_SYSTEM } from '../styling-engine/prompts.js'
 
 const router = express.Router()
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 500 * 1024 * 1024 } })
@@ -226,6 +226,225 @@ router.post('/sessions/:id/classify', async (req, res) => {
     })
   } catch (err) {
     console.error('Import classify error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+
+// ── Phase 2: garment detection, crops, dedup clustering ──────────────────────
+
+const IMPORT_CATEGORIES = new Set(['top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory'])
+const CLUSTER_SHEET_SIZE = 12
+const MERGE_SHEET_SIZE = 10
+
+async function cropGarment(sessionId, imageFile, box) {
+  const dir = sessionDir(sessionId)
+  const srcPath = path.join(dir, imageFile)
+  const meta = await sharp(srcPath).metadata()
+  // Boxes arrive in per-mille coordinates. Reject slivers on the UNPADDED size —
+  // padding must never promote a garbage box past the minimum.
+  const rawW = Math.round((box.w / 1000) * meta.width)
+  const rawH = Math.round((box.h / 1000) * meta.height)
+  if (rawW < 40 || rawH < 40) return null
+  const pad = 0.04
+  const x = Math.max(0, Math.round(((box.x / 1000) - pad) * meta.width))
+  const y = Math.max(0, Math.round(((box.y / 1000) - pad) * meta.height))
+  const w = Math.min(meta.width - x, Math.round(((box.w / 1000) + 2 * pad) * meta.width))
+  const h = Math.min(meta.height - y, Math.round(((box.h / 1000) + 2 * pad) * meta.height))
+  const name = `crop-${Date.now()}-${Math.round(Math.random() * 1e9)}.jpg`
+  await sharp(srcPath).extract({ left: x, top: y, width: w, height: h }).jpeg({ quality: 88 }).toFile(path.join(dir, name))
+  return name
+}
+
+async function thumbBlock(sessionId, file, width = 448) {
+  const buffer = await sharp(path.join(sessionDir(sessionId), file)).resize({ width, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer()
+  return { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: buffer.toString('base64') } }
+}
+
+router.post('/sessions/:id/detect', async (req, res) => {
+  try {
+    const session = getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: 'Unknown import session' })
+    const images = db.prepare(
+      "SELECT * FROM import_images WHERE session_id = ? AND kind IN ('worn_outfit','garment_only') AND status = 'classified'"
+    ).all(session.id)
+    const insGarment = db.prepare('INSERT INTO import_garments (session_id, image_id, crop_file, category, color, descriptor) VALUES (?, ?, ?, ?, ?, ?)')
+    const markDetected = db.prepare("UPDATE import_images SET status = 'detected' WHERE id = ?")
+    let garmentsDetected = 0
+    let cropsRejected = 0
+    let failedImages = 0
+
+    for (const image of images) {
+      try {
+        const { text, usage } = await askStylistWithUsage({
+          system: IMPORT_DETECTOR_SYSTEM,
+          messages: [{ role: 'user', content: [
+            { type: 'text', text: `Detect the garments in this ${image.kind === 'worn_outfit' ? 'worn outfit photo' : 'garment photo'}.` },
+            await thumbBlock(session.id, image.file, 1024)
+          ] }],
+          maxTokens: 900,
+          model: IMPORT_CHEAP_MODEL
+        })
+        addSpend(session.id, usage)
+        const parsed = parseModelJson(text, { context: 'import garment detection' })
+        for (const garment of parsed?.garments || []) {
+          const category = IMPORT_CATEGORIES.has(garment?.category) ? garment.category : ''
+          if (!category || !garment?.box) { cropsRejected++; continue }
+          const cropFile = await cropGarment(session.id, image.file, garment.box)
+          if (!cropFile) { cropsRejected++; continue }
+          insGarment.run(session.id, image.id, cropFile, category, String(garment.color || '').toLowerCase(), String(garment.descriptor || '').slice(0, 120))
+          garmentsDetected++
+        }
+        markDetected.run(image.id)
+      } catch (err) {
+        console.warn('Import detect failed for image', image.id, err.message)
+        failedImages++
+      }
+    }
+    if (!failedImages && images.length) db.prepare("UPDATE import_sessions SET status = 'detected' WHERE id = ?").run(session.id)
+    res.json({ imagesProcessed: images.length - failedImages, failedImages, garmentsDetected, cropsRejected, spentUsd: getSession(session.id).spent_usd })
+  } catch (err) {
+    console.error('Import detect error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Transitive grouping happens per contact sheet; sheets are chunked per category+color
+// bucket. Cross-sheet duplicates are possible and ACCEPTED (over-split bias, owner
+// ruling: merging later is one click, un-merging is painful).
+router.post('/sessions/:id/cluster', async (req, res) => {
+  try {
+    const session = getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: 'Unknown import session' })
+    const garments = db.prepare('SELECT * FROM import_garments WHERE session_id = ? AND cluster_id IS NULL').all(session.id)
+    const buckets = new Map()
+    for (const garment of garments) {
+      const key = `${garment.category}|${garment.color}`
+      if (!buckets.has(key)) buckets.set(key, [])
+      buckets.get(key).push(garment)
+    }
+
+    const insCluster = db.prepare('INSERT INTO import_clusters (session_id, canonical_garment_id, category, color, descriptor) VALUES (?, ?, ?, ?, ?)')
+    const setClusterId = db.prepare('UPDATE import_garments SET cluster_id = ? WHERE id = ?')
+    const setCanonical = db.prepare('UPDATE import_clusters SET canonical_garment_id = ? WHERE id = ?')
+    let clustersCreated = 0
+    let failedSheets = 0
+
+    const createCluster = async (members) => {
+      // Canonical crop = largest area (best chance of construction detail).
+      let canonical = members[0]
+      let best = -1
+      for (const member of members) {
+        try {
+          const meta = await sharp(path.join(sessionDir(session.id), member.crop_file)).metadata()
+          const area = (meta.width || 0) * (meta.height || 0)
+          if (area > best) { best = area; canonical = member }
+        } catch {}
+      }
+      const info = insCluster.run(session.id, canonical.id, canonical.category, canonical.color, canonical.descriptor)
+      for (const member of members) setClusterId.run(info.lastInsertRowid, member.id)
+      setCanonical.run(canonical.id, info.lastInsertRowid)
+      clustersCreated++
+    }
+
+    for (const bucket of buckets.values()) {
+      for (let start = 0; start < bucket.length; start += CLUSTER_SHEET_SIZE) {
+        const sheet = bucket.slice(start, start + CLUSTER_SHEET_SIZE)
+        if (sheet.length === 1) { await createCluster(sheet); continue }
+        const content = [{ type: 'text', text: `Group these ${sheet.length} numbered ${sheet[0].category} crops by physical garment identity.` }]
+        for (let i = 0; i < sheet.length; i++) {
+          content.push({ type: 'text', text: `Crop ${i + 1}: ${sheet[i].descriptor}` })
+          content.push(await thumbBlock(session.id, sheet[i].crop_file))
+        }
+        try {
+          const { text, usage } = await askStylistWithUsage({ system: IMPORT_CLUSTER_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 400, model: IMPORT_CHEAP_MODEL })
+          addSpend(session.id, usage)
+          const parsed = parseModelJson(text, { context: 'import clustering' })
+          const seen = new Set()
+          const groups = []
+          for (const group of parsed?.groups || []) {
+            const members = (Array.isArray(group) ? group : [group])
+              .map(n => sheet[Number(n) - 1]).filter(m => m && !seen.has(m.id))
+            members.forEach(m => seen.add(m.id))
+            if (members.length) groups.push(members)
+          }
+          // Any index the model dropped becomes its own cluster (over-split, never lose).
+          for (const member of sheet) if (!seen.has(member.id)) groups.push([member])
+          for (const group of groups) await createCluster(group)
+        } catch (err) {
+          console.warn('Import cluster sheet failed:', err.message)
+          failedSheets++
+          for (const member of sheet) await createCluster([member])
+        }
+      }
+    }
+
+    if (!failedSheets) db.prepare("UPDATE import_sessions SET status = 'clustered' WHERE id = ?").run(session.id)
+    res.json({ clustersCreated, failedSheets, spentUsd: getSession(session.id).spent_usd })
+  } catch (err) {
+    console.error('Import cluster error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Merge-vs-existing: every cluster is adjudicated against same-category active wardrobe
+// pieces (spec 31 design principle 3 — dedup runs against the EXISTING wardrobe too).
+// Unsure = no match: a wrong merge corrupts a real piece permanently (no-undo ruling);
+// a missed merge just produces a reviewable new-piece proposal.
+router.post('/sessions/:id/match-existing', async (req, res) => {
+  try {
+    const session = getSession(req.params.id)
+    if (!session) return res.status(404).json({ error: 'Unknown import session' })
+    const clusters = db.prepare("SELECT * FROM import_clusters WHERE session_id = ? AND status = 'proposed' AND merge_target_piece_id IS NULL").all(session.id)
+    const setMerge = db.prepare('UPDATE import_clusters SET merge_target_piece_id = ? WHERE id = ?')
+    let mergeProposals = 0
+    let failedClusters = 0
+
+    for (const cluster of clusters) {
+      const candidates = db.prepare(
+        "SELECT id, name, photo, worn_photo FROM pieces WHERE status = 'active' AND category = ? AND (photo IS NOT NULL OR worn_photo IS NOT NULL)"
+      ).all(cluster.category)
+      if (!candidates.length) continue
+      const canonical = db.prepare('SELECT * FROM import_garments WHERE id = ?').get(cluster.canonical_garment_id)
+      if (!canonical) continue
+      try {
+        for (let start = 0; start < candidates.length; start += MERGE_SHEET_SIZE) {
+          const sheet = candidates.slice(start, start + MERGE_SHEET_SIZE)
+          const content = [
+            { type: 'text', text: `Candidate garment (${cluster.descriptor || cluster.category}):` },
+            await thumbBlock(session.id, canonical.crop_file)
+          ]
+          const usable = []
+          for (const piece of sheet) {
+            const photoFile = piece.worn_photo || piece.photo
+            const photoPath = path.join(uploadsDir, photoFile)
+            if (!fs.existsSync(photoPath)) continue
+            usable.push(piece)
+            const buffer = await sharp(photoPath).resize({ width: 448, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer()
+            content.push({ type: 'text', text: `Existing piece ${usable.length}: ${piece.name}` })
+            content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: buffer.toString('base64') } })
+          }
+          if (!usable.length) continue
+          const { text, usage } = await askStylistWithUsage({ system: IMPORT_MERGE_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 120, model: IMPORT_CHEAP_MODEL })
+          addSpend(session.id, usage)
+          const parsed = parseModelJson(text, { context: 'import merge matching' })
+          const matchIndex = Number(parsed?.match_index)
+          if (Number.isInteger(matchIndex) && matchIndex >= 1 && matchIndex <= usable.length) {
+            setMerge.run(usable[matchIndex - 1].id, cluster.id)
+            mergeProposals++
+            break
+          }
+        }
+      } catch (err) {
+        console.warn('Import match-existing failed for cluster', cluster.id, err.message)
+        failedClusters++
+      }
+    }
+
+    if (!failedClusters) db.prepare("UPDATE import_sessions SET status = 'matched' WHERE id = ?").run(session.id)
+    res.json({ clustersChecked: clusters.length - failedClusters, failedClusters, mergeProposals, spentUsd: getSession(session.id).spent_usd })
+  } catch (err) {
+    console.error('Import match-existing error:', err)
     res.status(500).json({ error: err.message })
   }
 })

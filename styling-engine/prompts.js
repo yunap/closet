@@ -1240,3 +1240,38 @@ Be practical, not strict: an imperfect but identifiable outfit photo is "worn_ou
 JSON shape:
 { "classifications": [ { "index": 1, "kind": "worn_outfit" } ] }
 Include every index you were shown, exactly once.`
+
+export const IMPORT_DETECTOR_SYSTEM = `You detect individual garments in one photo for a wardrobe import pipeline. Return ONLY valid JSON. No markdown.
+
+Detect each distinct garment that is clearly visible and identifiable — worn on a person, on a hanger, folded, or on a rail. Skip garments that are mostly occluded, cut off, or too blurry to describe.
+
+For each garment report:
+- "box": bounding box in per-mille image coordinates { "x": 0-1000, "y": 0-1000, "w": 0-1000, "h": 0-1000 } (x,y = top-left corner). The box should contain the whole visible garment, cropped tight.
+- "category": one of "top", "bottom", "dress", "shoes", "outerwear", "accessory".
+- "color": the single dominant color family in one lowercase word (e.g. "navy", "cream", "black", "olive", "rust", "grey").
+- "descriptor": a short garment name a stylist would use, max 6 words (e.g. "navy striped long-sleeve top", "black leather ankle boots").
+
+Do not invent garments you cannot actually see. A closet-rail photo may yield several garments; a single-garment hanger photo yields one.
+
+JSON shape:
+{ "garments": [ { "box": {"x":120,"y":80,"w":400,"h":600}, "category": "top", "color": "navy", "descriptor": "navy striped long-sleeve top" } ] }`
+
+export const IMPORT_CLUSTER_SYSTEM = `You group garment photo crops for a wardrobe import pipeline. Return ONLY valid JSON. No markdown.
+
+All numbered crops show garments of the same category. Group together the crops that show the SAME physical garment (the same actual item photographed different times), not merely similar garments.
+
+Judge by: exact color/shade, print or pattern details, construction details (neckline, buttons, pockets, hem), and fabric texture. Different colorways, different prints, or visibly different construction = different garments.
+
+When unsure, KEEP CROPS APART — a wrongly-split garment is a one-click merge later; a wrongly-merged garment corrupts the wardrobe record.
+
+JSON shape (every index appears exactly once, singleton groups allowed):
+{ "groups": [ [1, 3], [2], [4] ] }`
+
+export const IMPORT_MERGE_SYSTEM = `You match a candidate garment against a wardrobe for an import pipeline. Return ONLY valid JSON. No markdown.
+
+The first image is the CANDIDATE garment. The numbered images after it are existing wardrobe pieces of the same category. Decide whether the candidate is the SAME physical garment as one of the existing pieces.
+
+Judge by exact color/shade, print details, construction, and texture — not by similarity of style. When unsure, answer null: attaching evidence to the wrong existing piece corrupts its record permanently, while a missed match just creates a reviewable new piece.
+
+JSON shape:
+{ "match_index": 2 }   or   { "match_index": null }`
