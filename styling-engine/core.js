@@ -4,6 +4,7 @@ import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { buildWardrobeManifest } from '../src/utils/wardrobeAiContext.js'
+import { resolveOpenAiKey, hasOpenAiKey } from '../lib/apiKeys.js'
 
 import {
   prompts,
@@ -2009,7 +2010,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
   const sourcePath = outfit.photo ? imageUrlToUploadPath(outfit.photo) : null
 
-  if (photoPreservingVisualsEnabled() || !process.env.OPENAI_API_KEY) {
+  if (photoPreservingVisualsEnabled() || !hasOpenAiKey()) {
     const collageStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: 'Outfit alternatives',
@@ -2026,7 +2027,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
   }
 
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
     if (sourcePath) {
       const sourceStartedAt = Date.now()
@@ -2102,7 +2103,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     reason: outfit.reason || '',
   }
 
-  if ((!forceAi && photoPreservingVisualsEnabled()) || !process.env.OPENAI_API_KEY) {
+  if ((!forceAi && photoPreservingVisualsEnabled()) || !hasOpenAiKey()) {
     const collageStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
@@ -2118,7 +2119,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
   }
 
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
     const garmentStartedAt = Date.now()
     const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
@@ -2193,7 +2194,7 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
       .map(piece => [Number(piece.id), piece])
   ).values()]
 
-  if (photoPreservingVisualsEnabled() || !process.env.OPENAI_API_KEY) {
+  if (photoPreservingVisualsEnabled() || !hasOpenAiKey()) {
     const width = 1300
     const panelH = 310
     const height = 132 + shown.length * panelH
@@ -2223,7 +2224,7 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
   }
 
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = [{
       type: 'input_text',
       text: 'WARDROBE GARMENT REFERENCES — these are the saved pieces available for the outfit panels. Use each piece only in the panel where it is listed in the final prompt.'
@@ -2391,8 +2392,8 @@ export async function createIdealAdditionsComparisonSheetImage({
       return { imageUrl: `/uploads/${filename}`, timings, renderer: 'mock_gpt-4o' }
     }
 
-    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing')
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    if (!hasOpenAiKey()) throw new Error('OPENAI_API_KEY missing')
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
     if (garmentRef) {
       contentParts.push({
@@ -3137,7 +3138,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     return { imageUrl, timings, renderer: 'photo_preserving_collage' }
   }
  
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasOpenAiKey()) {
     const title  = escapeXml(direction.title || `Ideal direction ${index}`)
     const pieces = escapeXml((direction.missingPieces || []).join(' + '))
     const anchor = escapeXml(selectedPiece.name || 'selected item')
@@ -3196,7 +3197,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   }
  
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
     const { result: base64Result, usage } = await runGPT4oImageGeneration({
       client,
@@ -3215,7 +3216,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   }
  
   try {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const result = await runOpenAIImageGeneration({
       client, prompt, size: getOpenAIImageSize('generate'), kind: 'generate'
     })

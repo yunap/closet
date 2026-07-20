@@ -7,6 +7,7 @@ import { prompts, loadUserProfile, refreshPrompts } from '../styling-engine/prom
 import { CONSTITUTION_LAYER_KEYS, DEFAULT_CONSTITUTION } from '../styling-engine/prompts.js'
 import { DEMO_WARDROBE_PIECES, seedDemoWardrobe, demoWardrobeCount, removeDemoWardrobe } from '../demoWardrobe.js'
 import { collectPieceIdsFromSavedBoardRow } from '../styling-engine/rules.js'
+import { ownKeyStatus, setOwnKey } from '../lib/apiKeys.js'
 import {
   mergeWithManualOverrides,
   normalizeFormality,
@@ -1128,6 +1129,28 @@ router.put('/settings/home-location', (req, res) => {
     res.json({ homeLocation })
   } catch (err) {
     console.error('Error saving home location:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Spec 33 Part 4 — BYOK. Only ever reports whether a key is set, never the value itself.
+router.get('/settings/api-keys', (req, res) => {
+  try {
+    res.json(ownKeyStatus())
+  } catch (err) {
+    console.error('Error reading API key status:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.put('/settings/api-keys', (req, res) => {
+  try {
+    const { anthropicKey, openAiKey } = req.body || {}
+    if (anthropicKey !== undefined) setOwnKey('anthropic', String(anthropicKey).trim())
+    if (openAiKey !== undefined) setOwnKey('openai', String(openAiKey).trim())
+    res.json(ownKeyStatus())
+  } catch (err) {
+    console.error('Error saving API keys:', err)
     res.status(500).json({ error: err.message })
   }
 })
