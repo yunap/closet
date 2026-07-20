@@ -52,7 +52,15 @@ export function safeJsonFromModel(raw) {
   try { return JSON.parse(text) } catch {}
   const match = text.match(/\{[\s\S]*\}/)
   if (!match) throw new Error('Model did not return JSON')
-  return JSON.parse(match[0])
+  try {
+    return JSON.parse(match[0])
+  } catch (err) {
+    // Surface whether the response was truncated (hit maxTokens) or malformed
+    // (e.g. unescaped quote in a string value) — the parse position alone
+    // doesn't distinguish them.
+    console.error(`safeJsonFromModel: unparseable model JSON (${err.message}). Response length ${text.length}, tail: …${text.slice(-220)}`)
+    throw err
+  }
 }
 
 export function withTimeout(promise, ms, label = 'operation') {
@@ -2467,6 +2475,10 @@ export function uploadedOrSavedOutfitPhotoPath(outfitPhoto = '') {
   return path.join(userUploadsDir(), path.basename(s))
 }
 
+// Marker between the stylist-voice prose and the structured field dump in the
+// feedback text. The client splits on this exact line to collapse the details.
+export const CRITIQUE_DETAILS_DELIMITER = '--- Full structured read ---'
+
 export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', question = '', attachedImageInventory = [] }) {
   const directFollowup = responseMode === 'followup'
     ? String(parsed?.answer || parsed?.feedback || parsed?.reply || parsed?.response || '').trim()
@@ -2517,9 +2529,11 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
     roles.groundingPiece ? `Grounding: ${roles.groundingPiece}` : '',
     roles.possibleCompetingPiece ? `Tension point: ${roles.possibleCompetingPiece}` : '',
   ].filter(Boolean).join('\n')
-  const feedback = [
-    nestedEvaluation.summary || parsed.summary || 'Evaluation complete.',
-    verdict ? `Verdict: ${verdict}` : '',
+  const critiqueProse = typeof parsed?.critiqueProse === 'string' ? parsed.critiqueProse.trim() : ''
+  // Summary and verdict stay out of this block: when critiqueProse leads the
+  // feedback they sit right above the collapsed details, and the model tends to
+  // write summary as a copy of the prose anyway.
+  const structuredDetailParts = [
     intentText,
     factsText ? `Visible facts:\n${factsText}` : '',
     nestedEvaluation.tensionType || parsed.tensionType ? `Tension: ${nestedEvaluation.tensionType || parsed.tensionType}` : '',
@@ -2538,7 +2552,20 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
     (recommendationBlock.smallestAdjustment || typeof parsed.recommendation === 'string') ? `Next: ${recommendationBlock.smallestAdjustment || parsed.recommendation}` : '',
     recommendationBlock.avoidForNow ? `Avoid for now: ${recommendationBlock.avoidForNow}` : '',
     recommendationBlock.tryNext || parsed.tryNext ? `Try next: ${recommendationBlock.tryNext || parsed.tryNext}` : ''
+  ].filter(Boolean)
+  const structuredDetails = structuredDetailParts.join('\n\n')
+  const structuredRead = [
+    nestedEvaluation.summary || parsed.summary || 'Evaluation complete.',
+    verdict ? `Verdict: ${verdict}` : '',
+    structuredDetails
   ].filter(Boolean).join('\n\n')
+  const feedback = critiqueProse
+    ? [
+        critiqueProse,
+        verdict ? `Verdict: ${verdict}` : '',
+        structuredDetails ? `${CRITIQUE_DETAILS_DELIMITER}\n\n${structuredDetails}` : ''
+      ].filter(Boolean).join('\n\n')
+    : structuredRead
   const fallbackFollowupFeedback = [
     nestedEvaluation.summary || parsed.summary || '',
     nestedEvaluation.firstVisibleIssue ? `Updated read: ${nestedEvaluation.firstVisibleIssue}` : '',
@@ -2576,6 +2603,7 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
       recommendation: recommendationBlock.smallestAdjustment || (typeof parsed.recommendation === 'string' ? parsed.recommendation : ''),
       avoidForNow: recommendationBlock.avoidForNow || '',
       tryNext: recommendationBlock.tryNext || parsed.tryNext || '',
+      critiqueProse,
       saveableLearning: parsed.saveableLearning || ''
     }
   }
@@ -2692,12 +2720,15 @@ export async function evaluateOutfitThroughSharedPipeline({
 
   const raw = await withTimeout(askStylist({
     system: prompts.WHOLE_WARDROBE_EVALUATOR_SYSTEM,
-    maxTokens: 1400,
+    // Sized from observed truncation: with critiqueProse the full critique JSON
+    // reached ~7.9k chars (~2000 tokens) before being cut off, so 1400 and even
+    // 2000 truncated real responses mid-string. 3000 leaves headroom.
+    maxTokens: 3000,
     messages: [
       ...(history || []).map(h => ({ role: h.role, content: h.content })),
       { role: 'user', content }
     ]
-  }), 45000, 'Whole-wardrobe outfit evaluator')
+  }), 90000, 'Whole-wardrobe outfit evaluator')
   const parsed = safeJsonFromModel(raw)
   const formatted = formatSharedOutfitEvaluation({ parsed, responseMode, question, attachedImageInventory })
   return {
