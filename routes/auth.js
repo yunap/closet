@@ -11,7 +11,8 @@ import {
   listSessions,
   revokeSessionByHash,
   revokeOtherSessions,
-  consumeInvite
+  consumeInvite,
+  isAdmin
 } from '../lib/systemDb.js'
 import { getSessionToken, setSessionCookie, clearSessionCookie } from '../lib/cookies.js'
 
@@ -54,6 +55,12 @@ router.post('/login', (req, res) => {
   if (!user || !verifyPassword(String(password || ''), user.password_hash)) {
     return res.status(401).json({ error: 'Incorrect email or password' })
   }
+  // Owner ruling (spec 34): checked only AFTER the password verifies, so a disabled
+  // account doesn't leak its existence to someone guessing passwords. Once verified,
+  // the honest message is the kind one (friends-and-family trust model).
+  if (user.status && user.status !== 'active') {
+    return res.status(403).json({ error: 'This account has been disabled. Contact the operator.' })
+  }
   const rawToken = createSession(user.id, userAgentLabel(req))
   setSessionCookie(res, rawToken)
   res.json({ email: user.email })
@@ -70,7 +77,7 @@ router.post('/logout', (req, res) => {
 router.get('/me', (req, res) => {
   const session = currentSession(req)
   if (!session) return res.json({ authenticated: false })
-  res.json({ authenticated: true, userId: session.user_id })
+  res.json({ authenticated: true, userId: session.user_id, isAdmin: isAdmin(session.user_id) })
 })
 
 router.get('/sessions', (req, res) => {

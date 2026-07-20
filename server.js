@@ -3,9 +3,9 @@ import express from 'express'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { db, userUploadsDir } from './db.js'
-import { runWithUser, DEFAULT_USER_ID } from './lib/requestContext.js'
+import { runWithUser, getCurrentUserId, DEFAULT_USER_ID } from './lib/requestContext.js'
 import { getSessionToken } from './lib/cookies.js'
-import { resolveSession } from './lib/systemDb.js'
+import { resolveSession, isAdmin } from './lib/systemDb.js'
 import { executeTool } from './styling-engine/tools.js'
 import { contentToOpenAI } from './styling-engine/provider.js'
 import { tagPieceWithProvider } from './routes/ai.js'
@@ -13,6 +13,7 @@ import authRouter from './routes/auth.js'
 import crudRouter from './routes/crud.js'
 import importerRouter from './routes/importer.js'
 import aiRouter from './routes/ai.js'
+import adminRouter from './routes/admin.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -70,10 +71,21 @@ app.use('/uploads', (req, res, next) => {
   express.static(userUploadsDir())(req, res, next)
 })
 
+// Spec 34: admin routes get their own guard on top of the regular auth guard above —
+// every /api/admin/* request needs a valid session AND the is_admin flag. Non-admins get
+// a flat 403, same shape as the missing-session 401 above, not a 404 (a 404 would invite
+// probing for what routes exist; a 403 is the honest answer for an authenticated user
+// who simply isn't allowed here).
+app.use('/api/admin', (req, res, next) => {
+  if (!isAdmin(getCurrentUserId())) return res.status(403).json({ error: 'forbidden' })
+  next()
+})
+
 // Mount API Routers
 app.use('/api', crudRouter)
 app.use('/api/import', importerRouter)
 app.use('/api/ai', aiRouter)
+app.use('/api/admin', adminRouter)
 
 // Catch-all: serve the React app shell (production only). Unauthenticated requests get
 // the same shell as authenticated ones — no user data lives here — and the client-side
