@@ -112,7 +112,10 @@ export default function PieceInventory({ onSendToStylist }) {
     if (search)       params.set('search', search)
     if (favOnly)      params.set('favorites', 'true')
     const res  = await fetch(`/api/pieces?${params}`)
-    setPieces(await res.json())
+    // A 401 (or any error) returns {error} — storing that in pieces crashes the grid's
+    // .map and blanks the whole app before the auth redirect can run.
+    const data = await res.json().catch(() => null)
+    setPieces(Array.isArray(data) ? data : [])
     setLoading(false)
   }, [filterCat, filterOcc, filterSeason, filterColor, filterFabric, search, favOnly])
 
