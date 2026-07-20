@@ -10,6 +10,7 @@ import { executeTool } from './styling-engine/tools.js'
 import { contentToOpenAI } from './styling-engine/provider.js'
 import { tagPieceWithProvider } from './routes/ai.js'
 import authRouter from './routes/auth.js'
+import inviteRequestsRouter from './routes/inviteRequests.js'
 import crudRouter from './routes/crud.js'
 import importerRouter from './routes/importer.js'
 import aiRouter from './routes/ai.js'
@@ -29,6 +30,11 @@ app.use(express.urlencoded({ extended: true, limit: '25mb' }))
 // the auth guard below. (Its own /sessions* routes protect themselves individually,
 // since they share this router with the unauthenticated ones.)
 app.use('/api/auth', authRouter)
+
+// Spec 34 PR B: the public invite-request submission. Mounted here, before the /api
+// session guard, so an unauthenticated prospective user can ask for an invite. Only the
+// POST is public; the admin queue that reads these lives behind /api/admin.
+app.use('/api/invite-requests', inviteRequestsRouter)
 
 // Spec 33 Part 2: resolve the session cookie into a request-scoped user context. This is
 // the ONLY place a request's identity is established — no route handler, including

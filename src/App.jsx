@@ -10,6 +10,7 @@ import WardrobeImport from './views/WardrobeImport'
 import Login from './views/Login'
 import Register from './views/Register'
 import Admin from './views/Admin'
+import Landing from './views/Landing'
 import usePendingWardrobeTaskCount from './utils/usePendingWardrobeTaskCount'
 
 function NavIcon({ name }) {
@@ -78,6 +79,10 @@ export default function App() {
   const isStylistRoute = location.pathname === '/stylist' || location.pathname.startsWith('/stylist/')
   const isOnboardingRoute = location.pathname === '/onboarding'
   const isAuthRoute = location.pathname === '/login' || location.pathname === '/register'
+  // Spec 34 PR B: the public landing page. Like the auth routes, it needs no session and
+  // must never bounce an unauthenticated visitor away — it IS where they get bounced to.
+  const isLandingRoute = location.pathname === '/welcome'
+  const isPublicRoute = isAuthRoute || isLandingRoute
 
   // Spec 33 Part 2: same shape as the onboarding-redirect effect below — a fresh
   // /api/auth/me answer per route, never held state, sends an unauthenticated visitor to
@@ -90,20 +95,21 @@ export default function App() {
   // 401s (live-found: an uncaught crash in PieceInventory) since nothing has authenticated
   // yet. Once true, it never flips back to false on later navigations, so route changes
   // within an already-authenticated session don't show a loading flash.
-  const [authChecked, setAuthChecked] = useState(isAuthRoute)
+  const [authChecked, setAuthChecked] = useState(isPublicRoute)
   useEffect(() => {
-    if (isAuthRoute) { setAuthChecked(true); return }
+    if (isPublicRoute) { setAuthChecked(true); return }
     let cancelled = false
     fetch('/api/auth/me')
       .then(r => r.json())
       .then(status => {
         if (cancelled) return
         setAuthChecked(true)
-        if (!status?.authenticated) navigate('/login', { replace: true })
+        // Unauthenticated visitors meet the public front door, not a bare login form.
+        if (!status?.authenticated) navigate('/welcome', { replace: true })
       })
       .catch(() => { if (!cancelled) setAuthChecked(true) })
     return () => { cancelled = true }
-  }, [location.pathname, isAuthRoute, navigate])
+  }, [location.pathname, isPublicRoute, navigate])
 
   // Spec 32 Part 3: a fresh instance routes to the wizard until onboarding completes or is
   // skipped. Pre-existing (legacy-seeded) instances never see it — the server decides.
@@ -112,7 +118,7 @@ export default function App() {
   // user back into the wizard on the very navigation that completes it (live-found bug:
   // the reset-then-refetch variant still lost the race within a single effect flush).
   useEffect(() => {
-    if (isOnboardingRoute || isAuthRoute) return
+    if (isOnboardingRoute || isPublicRoute) return
     let cancelled = false
     fetch('/api/settings/onboarding-status')
       .then(r => r.json())
@@ -121,7 +127,7 @@ export default function App() {
       })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [location.pathname, isOnboardingRoute, isAuthRoute, navigate])
+  }, [location.pathname, isOnboardingRoute, isPublicRoute, navigate])
   const navItems = useMemo(() => ([
     { id: 'wardrobe', label: 'Wardrobe', icon: 'wardrobe', to: '/wardrobe', badgeCount: pendingTodoCount },
     { id: 'outfits', label: 'Outfits', icon: 'outfits', to: '/outfits' },
@@ -143,6 +149,12 @@ export default function App() {
   // Thread navigation from Lookbook / Visual Lab boards.
   const goToThread = (threadId) => {
     navigate('/stylist/' + threadId)
+  }
+
+  // The public landing page renders full-bleed, outside the constrained app shell and its
+  // navigation — it's the front door, not an in-app screen.
+  if (isLandingRoute) {
+    return <Landing />
   }
 
   return (
