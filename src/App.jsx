@@ -9,6 +9,7 @@ import StylistSettings from './views/StylistSettings'
 import WardrobeImport from './views/WardrobeImport'
 import Login from './views/Login'
 import Register from './views/Register'
+import Admin from './views/Admin'
 import usePendingWardrobeTaskCount from './utils/usePendingWardrobeTaskCount'
 
 function NavIcon({ name }) {
@@ -163,6 +164,7 @@ export default function App() {
             <Route path="/import"     element={<WardrobeImport />} />
             <Route path="/login"      element={<Login />} />
             <Route path="/register"   element={<Register />} />
+            <Route path="/admin"      element={<Admin />} />
           </Routes>
         ) : null}
       </main>

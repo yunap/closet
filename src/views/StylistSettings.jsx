@@ -39,6 +39,7 @@ export default function StylistSettings() {
   const [sessions, setSessions] = useState([])
   const [apiKeyStatus, setApiKeyStatus] = useState(null)
   const [apiKeyDrafts, setApiKeyDrafts] = useState({ anthropicKey: '', openAiKey: '' })
+  const [isAdmin, setIsAdmin] = useState(false)
   const [status, setStatus] = useState('')
 
   const load = async () => {
@@ -58,6 +59,8 @@ export default function StylistSettings() {
       setSessions(sessionData?.sessions || [])
       setApiKeyStatus(await fetch('/api/settings/api-keys').then(r => r.json()).catch(() => null))
       setApiKeyDrafts({ anthropicKey: '', openAiKey: '' })
+      const me = await fetch('/api/auth/me').then(r => r.json()).catch(() => null)
+      setIsAdmin(Boolean(me?.isAdmin))
     } catch (err) {
       setStatus(`Failed to load settings: ${err.message}`)
     }
@@ -314,6 +317,13 @@ export default function StylistSettings() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13.5, color: 'var(--text-muted)' }}>You're an admin on this instance.</span>
+          <Link to="/admin" style={{ ...primaryBtn, textDecoration: 'none', display: 'inline-block' }}>Open Administration</Link>
         </div>
       )}
 
