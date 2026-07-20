@@ -4721,6 +4721,20 @@ export default function StylistChat({
               )}
 
               {(() => {
+                // The canned opening line is always messages[0]. In the empty-chat state
+                // it's replaced entirely by the "Ask anything..." hero below; once a
+                // thread has real exchanges, that hero disappears and this line used to
+                // fall through to a plain chat bubble. Render it with the same heading +
+                // subheading treatment instead, so a loaded/continuing thread opens with
+                // the same considered intro as a brand-new one, not a stray greeting bubble.
+                if (i === 0 && m.role === 'assistant' && String(m.text || '').includes('personal stylist')) {
+                  return (
+                    <div className="stylist-empty-intro" style={{ marginBottom: 20 }}>
+                      <h2>Ask anything about your wardrobe</h2>
+                      <p>I can create outfits from your saved pieces or review an outfit photo.</p>
+                    </div>
+                  )
+                }
                 if (m.isError) {
                   return (
                     <div className="ai-message assistant error-bubble" style={{ padding: '12px 14px', background: 'rgba(219, 68, 85, 0.08)', border: '1px solid rgba(219, 68, 85, 0.25)', color: 'var(--text)', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
