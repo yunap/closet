@@ -240,6 +240,44 @@ const stylingContextFromMemory = (memory = null, fallbackActivity = 'none') => (
   activity: memory?.stylingContext?.activity ?? fallbackActivity,
 })
 
+// Must match CRITIQUE_DETAILS_DELIMITER in styling-engine/core.js.
+const CRITIQUE_DETAILS_DELIMITER = '--- Full structured read ---'
+
+const splitCritiqueText = (text = '') => {
+  const s = String(text || '')
+  const idx = s.indexOf(CRITIQUE_DETAILS_DELIMITER)
+  if (idx === -1) return { prose: s, details: '' }
+  return {
+    prose: s.slice(0, idx).trimEnd(),
+    details: s.slice(idx + CRITIQUE_DETAILS_DELIMITER.length).trim(),
+  }
+}
+
+// Renders critique feedback: stylist-voice prose as the message, with the
+// structured field dump (when present) collapsed behind a details toggle.
+const CritiqueBody = ({ text, fontSize = 13 }) => {
+  const { prose, details } = splitCritiqueText(text)
+  return (
+    <>
+      {prose.split('\n').filter(Boolean).map((line, j) => (
+        <p key={j} style={{ fontSize, lineHeight: 1.5, margin: '0 0 8px', color: 'var(--text)' }}>{line}</p>
+      ))}
+      {details && (
+        <details style={{ marginTop: 2 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--text-muted)', userSelect: 'none' }}>
+            Full structured read
+          </summary>
+          <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
+            {details.split('\n').filter(Boolean).map((line, j) => (
+              <p key={j} style={{ fontSize: 12, lineHeight: 1.45, margin: '0 0 6px', color: 'var(--text-muted)' }}>{line}</p>
+            ))}
+          </div>
+        </details>
+      )}
+    </>
+  )
+}
+
 const compactEvaluationMemory = (evaluation = null) => {
   if (!evaluation || typeof evaluation !== 'object') return ''
   const facts = evaluation.visibleFacts || {}
@@ -1236,6 +1274,21 @@ export default function StylistChat({
     { type: 'wrong_silhouette', label: 'Wrong silhouette' },
     { type: 'catalog_drift', label: 'Catalog drift' },
     { type: 'wrong_item_read', label: 'Wrong item read' },
+  ]
+
+  // Trimmed 2026-07-20 to the chips actually used on outfit critiques (per owner
+  // stylist_feedback counts). Only applies to critique messages (m.wardrobeEvaluation);
+  // general chat replies keep the full FEEDBACK_ACTIONS list above. Removed types still
+  // score via feedbackWeight for historical rows — they just can't be tapped from a
+  // critique anymore.
+  const CRITIQUE_FEEDBACK_ACTIONS = [
+    { type: 'signature', label: 'Signature' },
+    { type: 'works', label: 'Works' },
+    { type: 'almost', label: 'Almost' },
+    { type: 'not_me', label: 'Not me' },
+    { type: 'wrong_item_read', label: 'Wrong item read' },
+    { type: 'wrong_silhouette', label: 'Wrong silhouette' },
+    { type: 'catalog_drift', label: 'Catalog drift' },
   ]
 
   const isMultiOutfitResponse = (message) => {
@@ -2651,9 +2704,7 @@ export default function StylistChat({
                     🔍 View Outfit Critique
                   </summary>
                   <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
-                    {critiqueText.split('\n').filter(Boolean).map((line, j) => (
-                      <p key={j} style={{ fontSize: 13, lineHeight: 1.45, margin: '0 0 6px', color: 'var(--text)' }}>{line}</p>
-                    ))}
+                    <CritiqueBody text={critiqueText} />
                   </div>
                 </details>
               )}
@@ -2740,9 +2791,7 @@ export default function StylistChat({
                         🔍 View Outfit Critique
                       </summary>
                       <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
-                        {critiqueText.split('\n').filter(Boolean).map((line, j) => (
-                          <p key={j} style={{ fontSize: 13, lineHeight: 1.45, margin: '0 0 6px', color: 'var(--text)' }}>{line}</p>
-                        ))}
+                        <CritiqueBody text={critiqueText} />
                       </div>
                     </details>
                   )}
@@ -4699,9 +4748,7 @@ export default function StylistChat({
                           🔍 View Outfit Critique: {m.outfitName || 'Generated Outfit'}
                         </summary>
                         <div style={{ marginTop: 10, borderTop: '1px solid var(--border-light)', paddingTop: 10 }}>
-                          {m.text.split('\n').filter(Boolean).map((line, j) => (
-                            <p key={j} style={{ fontSize: 13, lineHeight: 1.5, margin: '0 0 8px', color: 'var(--text)' }}>{line}</p>
-                          ))}
+                          <CritiqueBody text={m.text} />
                         </div>
                       </details>
                     </div>
@@ -4783,7 +4830,9 @@ export default function StylistChat({
                 return (
                   <div className={`ai-message ${m.role}`}>
                     {m.role === 'assistant'
-                      ? <MarkdownMessage text={m.text} />
+                      ? (String(m.text || '').includes(CRITIQUE_DETAILS_DELIMITER)
+                          ? <CritiqueBody text={m.text} fontSize={14} />
+                          : <MarkdownMessage text={m.text} />)
                       : m.text.split('\n').filter(Boolean).map((line, j) => <p key={j}>{line}</p>)}
                   </div>
                 )
@@ -4829,7 +4878,7 @@ export default function StylistChat({
                         {boardLoadingIndex === i ? 'Generating boards...' : (boardResults[i]?.length ? 'Regenerate boards' : 'Generate visual boards')}
                       </button>
                     )}
-                    {!isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && FEEDBACK_ACTIONS.map(action => {
+                    {!isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && (m.wardrobeEvaluation ? CRITIQUE_FEEDBACK_ACTIONS : FEEDBACK_ACTIONS).map(action => {
                       const key = `message:${i}:${action.type}`
                       const isSaved = feedbackSaved.has(key)
                       return (

@@ -477,6 +477,7 @@ function mockAiHandler({ system, messages }) {
       works: ['garment placement is readable'],
       risks: [],
       recommendation: { smallestAdjustment: 'Keep the floor line visible.', avoidForNow: 'Do not over-layer.' },
+      critiqueProse: 'Mock stylist prose: the black top carries this outfit and the proportions read clearly. Keep the floor line visible.',
     }
   }
 
@@ -1412,7 +1413,8 @@ test('wardrobe outfit evaluator sends outfit and linked garment images', async (
   assert.equal(json.debug.outfitImageIncluded, true)
   assert.equal(json.debug.linkedPieceCount, 3)
   assert.ok(json.debug.imageCount >= 4)
-  assert.match(json.feedback, /Mock evaluation/)
+  assert.match(json.feedback, /^Mock stylist prose:/)
+  assert.doesNotMatch(json.feedback, /Mock evaluation/)
   assert.match(json.feedback, /Fit placement: garments sit naturally/)
   assert.match(json.feedback, /Proportion read: top length and pant rise create a readable proportion/)
   assert.match(json.feedback, /Idea viability: keep/)
@@ -1499,11 +1501,17 @@ test('saved outfit cards use the shared wardrobe evaluator with linked garment i
   assert.equal(json.debug.outfitImageIncluded, true)
   assert.equal(json.debug.linkedPieceCount, 3)
   assert.ok(json.debug.imageCount >= 4)
-  assert.match(json.feedback, /Mock evaluation/)
+  assert.match(json.feedback, /^Mock stylist prose:/)
+  assert.match(json.feedback, /--- Full structured read ---/)
+  assert.ok(json.feedback.indexOf('Mock stylist prose:') < json.feedback.indexOf('--- Full structured read ---'))
+  // The summary is deduped out of the details block when critiqueProse leads.
+  assert.doesNotMatch(json.feedback, /Mock evaluation/)
+  assert.equal(json.evaluation.summary, 'Mock evaluation')
   assert.match(json.feedback, /Fit placement: garments sit naturally/)
   assert.match(json.feedback, /Proportion read: top length and pant rise create a readable proportion/)
   assert.match(json.feedback, /Idea viability: keep/)
   assert.match(json.feedback, /Execution gap: minor floor-line watch only/)
+  assert.equal(json.evaluation.critiqueProse, 'Mock stylist prose: the black top carries this outfit and the proportions read clearly. Keep the floor line visible.')
 
   const lastCall = aiCalls.at(-1)
   assert.match(lastCall.system, /evaluating one proposed whole-wardrobe outfit/)
@@ -1529,7 +1537,9 @@ test('uploaded outfit feedback uses the shared wardrobe evaluator with uploaded 
   assert.equal(json.debug.outfitImageIncluded, true)
   assert.equal(json.debug.linkedPieceCount, 0)
   assert.equal(json.debug.imageCount, 1)
-  assert.match(json.feedback, /Mock evaluation/)
+  assert.match(json.feedback, /^Mock stylist prose:/)
+  assert.match(json.feedback, /--- Full structured read ---/)
+  assert.doesNotMatch(json.feedback, /Mock evaluation/)
   assert.match(json.feedback, /Fit placement: garments sit naturally/)
   assert.match(json.feedback, /Proportion read: top length and pant rise create a readable proportion/)
   assert.match(json.feedback, /Idea viability: keep/)
