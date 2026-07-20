@@ -87,6 +87,9 @@ export default function PieceInventory({ onSendToStylist }) {
   const [openFilterMenu, setOpenFilterMenu] = useState(null)
   const [fabricSearch, setFabricSearch] = useState('')
   const compactFilterRef = useRef(null)
+  const [showAddMenu, setShowAddMenu] = useState(false)
+  const addMenuRef = useRef(null)
+  const addMenuTriggerRef = useRef(null)
   const [availableColors, setAvailableColors]   = useState([])
   const [availableFabrics, setAvailableFabrics] = useState([])
   const pendingCount = usePendingWardrobeTaskCount()
@@ -121,6 +124,26 @@ export default function PieceInventory({ onSendToStylist }) {
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => { const t = setTimeout(fetchPieces, 300); return () => clearTimeout(t) }, [search])
+  const closeAddMenu = useCallback((restoreFocus = true) => {
+    setShowAddMenu(false)
+    if (restoreFocus) addMenuTriggerRef.current?.focus()
+  }, [])
+  useEffect(() => {
+    if (!showAddMenu) return undefined
+    addMenuRef.current?.querySelector('[role="menuitem"]')?.focus()
+    const handlePointerDown = (event) => {
+      if (!addMenuRef.current?.contains(event.target)) closeAddMenu(false)
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') closeAddMenu(true)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showAddMenu, closeAddMenu])
   useEffect(() => {
     if (!openFilterMenu) return undefined
     const handlePointerDown = (event) => {
@@ -157,6 +180,36 @@ export default function PieceInventory({ onSendToStylist }) {
   const visibleFabrics = availableFabrics.filter(fabric => fabric.toLowerCase().includes(fabricSearch.trim().toLowerCase()))
   const addPiece = () => { setEditPiece(null); setShowForm(true) }
 
+  const addMenuItems = [
+    {
+      key: 'single',
+      label: 'Add one piece',
+      description: 'Upload or enter one garment.',
+      onSelect: addPiece,
+    },
+    {
+      key: 'import',
+      label: 'Import pieces',
+      description: 'Bring pieces in through the existing import flow.',
+      onSelect: () => navigate('/import'),
+    },
+    {
+      key: 'batch',
+      label: 'Add paired hanger + worn photos',
+      description: 'Add multiple garments while matching each hanger photo to its worn photo.',
+      onSelect: () => setShowBatch(true),
+    },
+  ]
+  const handleAddMenuKeyDown = (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    const items = Array.from(addMenuRef.current?.querySelectorAll('[role="menuitem"]') || [])
+    const index = items.indexOf(document.activeElement)
+    const delta = event.key === 'ArrowDown' ? 1 : -1
+    const next = items[(index + delta + items.length) % items.length]
+    next?.focus()
+  }
+
   return (
     <div>
       {/* Header */}
@@ -167,25 +220,44 @@ export default function PieceInventory({ onSendToStylist }) {
             <div className="view-subtitle">{pieces.length} pieces{favOnly ? ' · favorites' : ''}</div>
           </div>
           <div className="wardrobe-header-actions">
-            <button className="chip wardrobe-add-piece" onClick={addPiece}>
-              Add piece
-            </button>
-            <button className="chip" onClick={() => navigate('/import')}>
-              Import
-            </button>
+            <div className="wardrobe-add-menu" ref={addMenuRef}>
+              <button
+                ref={addMenuTriggerRef}
+                className="chip wardrobe-add-piece wardrobe-add-menu-trigger"
+                onClick={() => setShowAddMenu(v => !v)}
+                aria-haspopup="menu"
+                aria-expanded={showAddMenu}
+              >
+                <span className="wardrobe-add-menu-icon" aria-hidden="true">+</span>
+                Add pieces
+                <span className="filter-menu-chevron" aria-hidden="true">⌄</span>
+              </button>
+              {showAddMenu && (
+                <div
+                  className="filter-menu-popover wardrobe-add-menu-popover"
+                  role="menu"
+                  onKeyDown={handleAddMenuKeyDown}
+                >
+                  {addMenuItems.map(item => (
+                    <button
+                      key={item.key}
+                      role="menuitem"
+                      className="wardrobe-add-menu-item"
+                      onClick={() => { closeAddMenu(true); item.onSelect() }}
+                    >
+                      <span className="wardrobe-add-menu-item-label">{item.label}</span>
+                      <span className="wardrobe-add-menu-item-desc">{item.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
-              className="chip"
+              className="chip wardrobe-tasks-btn"
               onClick={() => setShowTodo(true)}
               style={{ display: 'flex', alignItems: 'center', gap: 4 }}
             >
               📋 Tasks {pendingCount > 0 && <span className="badge-count">{pendingCount}</span>}
-            </button>
-            <button
-              className="chip"
-              onClick={() => setShowBatch(true)}
-              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-            >
-              ⊕ Batch
             </button>
           </div>
         </div>
