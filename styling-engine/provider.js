@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
+import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
 // waiting. If the model's final answer then describes that exact query text as a real, ownable
@@ -250,6 +251,9 @@ export function describeAiError(err) {
   const message = String(err?.message || '').toLowerCase()
   const isQuota = code.includes('insufficient_quota') || message.includes('quota') || message.includes('billing')
   const isRateLimit = status === 429 || code.includes('rate_limit') || message.includes('rate limit') || message.includes('overloaded')
+  if (code === 'no_api_key') {
+    return { status: 400, code: 'no_api_key', message: err.message }
+  }
   if (isQuota) {
     return { status: 429, message: 'The AI provider is reporting an exhausted usage quota — check your API billing/plan before trying again. This is not an app bug.' }
   }
@@ -368,11 +372,15 @@ export function estimateAiUsageCost(usage = null) {
 }
 
 export function assertProviderKey() {
-  if (AI_PROVIDER === 'openai' && !process.env.OPENAI_API_KEY) {
-    throw new Error('AI_PROVIDER=openai but no OPENAI_API_KEY set in .env')
+  if (AI_PROVIDER === 'openai' && !resolveOpenAiKey()) {
+    const err = new Error(noKeyErrorMessage('openai'))
+    err.code = 'no_api_key'
+    throw err
   }
-  if (AI_PROVIDER !== 'openai' && !process.env.ANTHROPIC_API_KEY) {
-    throw new Error('AI_PROVIDER=anthropic but no ANTHROPIC_API_KEY set in .env')
+  if (AI_PROVIDER !== 'openai' && !resolveAnthropicKey()) {
+    const err = new Error(noKeyErrorMessage('anthropic'))
+    err.code = 'no_api_key'
+    throw err
   }
 }
 
@@ -563,10 +571,13 @@ export async function askClaude({ system = prompts.STYLIST_SYSTEM, messages, max
 export async function askClaudeWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null }) {
   // Spec 31: an explicit per-call model override (the importer's cheap classification tier).
   const resolvedModel = model || ANTHROPIC_MODEL
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error('No ANTHROPIC_API_KEY set in .env')
+  const anthropicKey = resolveAnthropicKey()
+  if (!anthropicKey) {
+    const err = new Error(noKeyErrorMessage('anthropic'))
+    err.code = 'no_api_key'
+    throw err
   }
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const client = new Anthropic({ apiKey: anthropicKey })
   const sanitizedMessages = (Array.isArray(messages) ? messages : []).map(message => ({
     ...message,
     content: toAnthropicContentBlocks(message.content)
@@ -670,7 +681,7 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
   assertProviderKey()
 
   if (AI_PROVIDER === 'openai') {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const response = await client.chat.completions.create({
       model: OPENAI_MODEL,
       max_tokens: maxTokens,
@@ -725,7 +736,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   // for a single corrective bounce and live turns died with zero cards.
   for (let iter = 0; iter < 10; iter++) {
     if (AI_PROVIDER === 'openai') {
-      const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+      const client = new OpenAI({ apiKey: resolveOpenAiKey() })
       const response = await client.chat.completions.create({
         model: OPENAI_MODEL,
         max_tokens: maxTokens,
@@ -823,7 +834,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         return { answer: finalText, savedCorrections }
       }
     } else {
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+      const client = new Anthropic({ apiKey: resolveAnthropicKey() })
       
       const formattedMessages = withMovingCacheBreakpoint(currentMessages.map(m => {
         return { role: m.role, content: toAnthropicContentBlocks(m.content) }

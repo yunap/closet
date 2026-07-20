@@ -27,7 +27,9 @@ const DB_REACHING_PATTERNS = [
   /from\s+'[^']*\/server\.js'/,
   /import\('[^']*\/server\.js'\)/,
   /from\s+'[^']*scripts\/adopt-db\.js'/,
-  /import\('[^']*scripts\/adopt-db\.js'\)/
+  /import\('[^']*scripts\/adopt-db\.js'\)/,
+  /from\s+'[^']*\/lib\/apiKeys\.js'/,
+  /import\('[^']*\/lib\/apiKeys\.js'\)/
 ]
 
 test('every test file that can reach db.js isolates WARDROBE_DB_PATH or WARDROBE_USERS_DIR', () => {

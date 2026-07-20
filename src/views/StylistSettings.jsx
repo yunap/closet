@@ -37,6 +37,8 @@ export default function StylistSettings() {
   const [demo, setDemo] = useState(null)
   const [learningDrafts, setLearningDrafts] = useState({})
   const [sessions, setSessions] = useState([])
+  const [apiKeyStatus, setApiKeyStatus] = useState(null)
+  const [apiKeyDrafts, setApiKeyDrafts] = useState({ anthropicKey: '', openAiKey: '' })
   const [status, setStatus] = useState('')
 
   const load = async () => {
@@ -54,11 +56,21 @@ export default function StylistSettings() {
       setDemo(await fetch('/api/settings/demo-wardrobe').then(r => r.json()).catch(() => null))
       const sessionData = await fetch('/api/auth/sessions').then(r => r.json()).catch(() => null)
       setSessions(sessionData?.sessions || [])
+      setApiKeyStatus(await fetch('/api/settings/api-keys').then(r => r.json()).catch(() => null))
+      setApiKeyDrafts({ anthropicKey: '', openAiKey: '' })
     } catch (err) {
       setStatus(`Failed to load settings: ${err.message}`)
     }
   }
   useEffect(() => { load() }, [])
+
+  // value is explicit here (never read from possibly-untouched draft state) so a blank,
+  // never-typed-in draft can't silently wipe an already-saved key on an accidental click.
+  const saveApiKey = async (field, value) => {
+    const res = await fetch('/api/settings/api-keys', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: value }) })
+    if (res.ok) { flash(value ? 'Key saved.' : 'Key cleared — using the operator\'s key.'); load() }
+    else flash('Failed to save key')
+  }
 
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' })
@@ -255,6 +267,55 @@ export default function StylistSettings() {
           </div>
         </div>
       ))}
+
+      <h2 style={{ fontSize: 18, margin: '22px 0 10px' }}>API keys</h2>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 0 }}>
+        {apiKeyStatus?.hasOperatorKeyAccess
+          ? "Bring your own Anthropic and/or OpenAI keys — they're used for your requests instead of the operator's. Leave blank to keep using the operator's keys."
+          : "You don't have access to the operator's keys yet — add your own below, or ask the operator to approve your account."}
+      </p>
+      {apiKeyStatus && (
+        <div style={card}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 220px' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+                Anthropic key {apiKeyStatus.hasOwnAnthropicKey ? '(set)' : apiKeyStatus.hasOperatorKeyAccess ? '(using operator\'s)' : '(none — no operator access)'}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  style={inputStyle}
+                  type="password"
+                  placeholder={apiKeyStatus.hasOwnAnthropicKey ? '••••••••••••' : 'sk-ant-...'}
+                  value={apiKeyDrafts.anthropicKey}
+                  onChange={e => setApiKeyDrafts({ ...apiKeyDrafts, anthropicKey: e.target.value })}
+                />
+                <button style={quietBtn} disabled={!apiKeyDrafts.anthropicKey} onClick={() => saveApiKey('anthropicKey', apiKeyDrafts.anthropicKey)}>Save</button>
+                {apiKeyStatus.hasOwnAnthropicKey && (
+                  <button style={quietBtn} onClick={() => saveApiKey('anthropicKey', '')}>Clear</button>
+                )}
+              </div>
+            </div>
+            <div style={{ flex: '1 1 220px' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+                OpenAI key {apiKeyStatus.hasOwnOpenAiKey ? '(set)' : apiKeyStatus.hasOperatorKeyAccess ? '(using operator\'s)' : '(none — no operator access)'}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  style={inputStyle}
+                  type="password"
+                  placeholder={apiKeyStatus.hasOwnOpenAiKey ? '••••••••••••' : 'sk-...'}
+                  value={apiKeyDrafts.openAiKey}
+                  onChange={e => setApiKeyDrafts({ ...apiKeyDrafts, openAiKey: e.target.value })}
+                />
+                <button style={quietBtn} disabled={!apiKeyDrafts.openAiKey} onClick={() => saveApiKey('openAiKey', apiKeyDrafts.openAiKey)}>Save</button>
+                {apiKeyStatus.hasOwnOpenAiKey && (
+                  <button style={quietBtn} onClick={() => saveApiKey('openAiKey', '')}>Clear</button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <h2 style={{ fontSize: 18, margin: '22px 0 10px' }}>Account & sessions</h2>
       <div style={card}>
