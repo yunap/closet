@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
-import { resolveAnthropicKey, resolveOpenAiKey } from '../lib/apiKeys.js'
+import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
 // waiting. If the model's final answer then describes that exact query text as a real, ownable
@@ -373,12 +373,12 @@ export function estimateAiUsageCost(usage = null) {
 
 export function assertProviderKey() {
   if (AI_PROVIDER === 'openai' && !resolveOpenAiKey()) {
-    const err = new Error('No OpenAI API key available — add your own in Settings, or ask the operator to configure one.')
+    const err = new Error(noKeyErrorMessage('openai'))
     err.code = 'no_api_key'
     throw err
   }
   if (AI_PROVIDER !== 'openai' && !resolveAnthropicKey()) {
-    const err = new Error('No Anthropic API key available — add your own in Settings, or ask the operator to configure one.')
+    const err = new Error(noKeyErrorMessage('anthropic'))
     err.code = 'no_api_key'
     throw err
   }
@@ -573,7 +573,7 @@ export async function askClaudeWithUsage({ system = prompts.STYLIST_SYSTEM, mess
   const resolvedModel = model || ANTHROPIC_MODEL
   const anthropicKey = resolveAnthropicKey()
   if (!anthropicKey) {
-    const err = new Error('No Anthropic API key available — add your own in Settings, or ask the operator to configure one.')
+    const err = new Error(noKeyErrorMessage('anthropic'))
     err.code = 'no_api_key'
     throw err
   }

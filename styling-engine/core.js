@@ -4,7 +4,7 @@ import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { buildWardrobeManifest } from '../src/utils/wardrobeAiContext.js'
-import { resolveOpenAiKey, hasOpenAiKey } from '../lib/apiKeys.js'
+import { resolveOpenAiKey, hasOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 
 import {
   prompts,
@@ -2392,7 +2392,11 @@ export async function createIdealAdditionsComparisonSheetImage({
       return { imageUrl: `/uploads/${filename}`, timings, renderer: 'mock_gpt-4o' }
     }
 
-    if (!hasOpenAiKey()) throw new Error('OPENAI_API_KEY missing')
+    if (!hasOpenAiKey()) {
+      const err = new Error(noKeyErrorMessage('openai'))
+      err.code = 'no_api_key'
+      throw err
+    }
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
     if (garmentRef) {

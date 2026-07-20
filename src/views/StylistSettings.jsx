@@ -270,14 +270,16 @@ export default function StylistSettings() {
 
       <h2 style={{ fontSize: 18, margin: '22px 0 10px' }}>API keys</h2>
       <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 0 }}>
-        Bring your own Anthropic and/or OpenAI keys — they're used for your requests instead of the operator's. Leave blank to keep using the operator's keys.
+        {apiKeyStatus?.hasOperatorKeyAccess
+          ? "Bring your own Anthropic and/or OpenAI keys — they're used for your requests instead of the operator's. Leave blank to keep using the operator's keys."
+          : "You don't have access to the operator's keys yet — add your own below, or ask the operator to approve your account."}
       </p>
       {apiKeyStatus && (
         <div style={card}>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 220px' }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                Anthropic key {apiKeyStatus.hasOwnAnthropicKey ? '(set)' : '(using operator\'s)'}
+                Anthropic key {apiKeyStatus.hasOwnAnthropicKey ? '(set)' : apiKeyStatus.hasOperatorKeyAccess ? '(using operator\'s)' : '(none — no operator access)'}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <input
@@ -295,7 +297,7 @@ export default function StylistSettings() {
             </div>
             <div style={{ flex: '1 1 220px' }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                OpenAI key {apiKeyStatus.hasOwnOpenAiKey ? '(set)' : '(using operator\'s)'}
+                OpenAI key {apiKeyStatus.hasOwnOpenAiKey ? '(set)' : apiKeyStatus.hasOperatorKeyAccess ? '(using operator\'s)' : '(none — no operator access)'}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <input

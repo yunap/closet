@@ -16,9 +16,11 @@ process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 process.env.ANTHROPIC_API_KEY = 'operator-anthropic-key'
 process.env.OPENAI_API_KEY = 'operator-openai-key'
 
-const { resolveAnthropicKey, resolveOpenAiKey, hasAnthropicKey, setOwnKey, ownKeyStatus } = await import('../lib/apiKeys.js')
+const { resolveAnthropicKey, resolveOpenAiKey, hasAnthropicKey, hasOperatorKeyAccess, setOwnKey, ownKeyStatus, noKeyErrorMessage } = await import('../lib/apiKeys.js')
 const { assertProviderKey } = await import('../styling-engine/provider.js')
 const { app } = await import('../server.js')
+const { createUser, setOperatorKeyApproval } = await import('../lib/systemDb.js')
+const { runWithUser, DEFAULT_USER_ID } = await import('../lib/requestContext.js')
 
 const server = app.listen(0)
 await once(server, 'listening')
@@ -64,7 +66,7 @@ test('GET /api/settings/api-keys reports only booleans, never the stored key val
   setOwnKey('anthropic', 'super-secret-key-value')
   const res = await fetch(`${baseUrl}/api/settings/api-keys`)
   const body = await res.json()
-  assert.deepEqual(body, { hasOwnAnthropicKey: true, hasOwnOpenAiKey: false })
+  assert.deepEqual(body, { hasOwnAnthropicKey: true, hasOwnOpenAiKey: false, hasOperatorKeyAccess: true })
   assert.ok(!JSON.stringify(body).includes('super-secret-key-value'))
   setOwnKey('anthropic', '')
 })
@@ -76,7 +78,7 @@ test('PUT /api/settings/api-keys saves and clears keys, reflected in status', as
     body: JSON.stringify({ anthropicKey: 'a-real-looking-key', openAiKey: 'another-key' })
   })
   assert.equal(setRes.status, 200)
-  assert.deepEqual(await setRes.json(), { hasOwnAnthropicKey: true, hasOwnOpenAiKey: true })
+  assert.deepEqual(await setRes.json(), { hasOwnAnthropicKey: true, hasOwnOpenAiKey: true, hasOperatorKeyAccess: true })
   assert.equal(resolveAnthropicKey(), 'a-real-looking-key')
 
   const clearRes = await fetch(`${baseUrl}/api/settings/api-keys`, {
@@ -84,12 +86,59 @@ test('PUT /api/settings/api-keys saves and clears keys, reflected in status', as
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ anthropicKey: '', openAiKey: '' })
   })
-  assert.deepEqual(await clearRes.json(), { hasOwnAnthropicKey: false, hasOwnOpenAiKey: false })
+  assert.deepEqual(await clearRes.json(), { hasOwnAnthropicKey: false, hasOwnOpenAiKey: false, hasOperatorKeyAccess: true })
   assert.equal(resolveAnthropicKey(), 'operator-anthropic-key')
 })
 
 test('ownKeyStatus matches the route response shape', () => {
   setOwnKey('openai', 'x')
-  assert.deepEqual(ownKeyStatus(), { hasOwnAnthropicKey: false, hasOwnOpenAiKey: true })
+  assert.deepEqual(ownKeyStatus(), { hasOwnAnthropicKey: false, hasOwnOpenAiKey: true, hasOperatorKeyAccess: true })
   setOwnKey('openai', '')
+})
+
+// Owner ruling 2026-07-20 (follow-up): an invited user does NOT ride on the operator's
+// key by default — the operator has to approve them first.
+// Burns user #1 first: this file's system.db is fresh, so the first createUser() call
+// would otherwise land on id 1 — colliding with DEFAULT_USER_ID, which is exempt from
+// the approval check entirely and would make the "no access by default" assertion below
+// pass for the wrong reason.
+createUser('placeholder-burns-id-1@example.com', 'irrelevant-password')
+
+test('a newly invited user has no operator-key access by default, even though the operator key is configured', () => {
+  const { id, email } = createUser('needs-approval@example.com', 'longenoughpw')
+  assert.notEqual(id, DEFAULT_USER_ID, 'sanity: this is a real non-owner user')
+  runWithUser(id, () => {
+    assert.equal(hasOperatorKeyAccess(id), false)
+    assert.equal(resolveAnthropicKey(), null, 'no own key + no approval = no key, even though the operator has one configured')
+    assert.match(noKeyErrorMessage('anthropic', id), /don't have access.*approve/i)
+  })
+})
+
+test('approving a user grants operator-key fallback; revoking removes it again', () => {
+  const { id, email } = createUser('gets-approved@example.com', 'longenoughpw')
+  runWithUser(id, () => {
+    assert.equal(resolveAnthropicKey(), null)
+  })
+  setOperatorKeyApproval(email, true)
+  runWithUser(id, () => {
+    assert.equal(hasOperatorKeyAccess(id), true)
+    assert.equal(resolveAnthropicKey(), 'operator-anthropic-key')
+  })
+  setOperatorKeyApproval(email, false)
+  runWithUser(id, () => {
+    assert.equal(resolveAnthropicKey(), null, 'revoking access removes the fallback again')
+  })
+})
+
+test('the operator (DEFAULT_USER_ID) is always exempt from the approval check', () => {
+  assert.equal(hasOperatorKeyAccess(DEFAULT_USER_ID), true)
+})
+
+test('an approved user\'s own key still takes precedence over the operator key', () => {
+  const { id, email } = createUser('approved-with-own-key@example.com', 'longenoughpw')
+  setOperatorKeyApproval(email, true)
+  runWithUser(id, () => {
+    setOwnKey('anthropic', 'their-own-key', id)
+    assert.equal(resolveAnthropicKey(id), 'their-own-key')
+  })
 })
