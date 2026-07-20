@@ -3,6 +3,7 @@ import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
 import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
+import { getCurrentUserId } from '../lib/requestContext.js'
 
 // Spec 3 Part 0b: a named-garment search that returned zero results is a known-false claim in
 // waiting. If the model's final answer then describes that exact query text as a real, ownable
@@ -393,11 +394,18 @@ export async function prepareImageForClaude(filePath) {
   return { base64: buffer.toString('base64'), mime: 'image/jpeg' }
 }
 
-const wardrobeThumbCache = new Map() // key: `${pieceId}:${filename}:${maxPx}` -> { media_type, data }
+// key: `${userId}:${pieceId}:${filename}:${maxPx}` -> { media_type, data }. The userId
+// prefix is defense-in-depth, not a fix for an observed leak — piece ids restart at 1 for
+// every fresh per-user db, and while the caller-supplied cacheKey already includes the
+// upload filename (which carries enough entropy, Date.now()+random, that a genuine
+// cross-user collision is practically negligible), this cache is shared module-wide
+// across every concurrent request, so it shouldn't rely on filename entropy alone to stay
+// scoped to the right tenant.
+const wardrobeThumbCache = new Map()
 
 export async function prepareWardrobeThumb(filePath, cacheKey, { maxPx = 448 } = {}) {
   const normalizedMaxPx = Math.max(1, Math.min(1568, Number(maxPx) || 448))
-  const cacheKeyWithSize = cacheKey ? `${cacheKey}:${normalizedMaxPx}` : ''
+  const cacheKeyWithSize = cacheKey ? `${getCurrentUserId()}:${cacheKey}:${normalizedMaxPx}` : ''
   if (cacheKeyWithSize && wardrobeThumbCache.has(cacheKeyWithSize)) return wardrobeThumbCache.get(cacheKeyWithSize)
   const sharp = (await import('sharp')).default
   const buffer = await sharp(filePath)
