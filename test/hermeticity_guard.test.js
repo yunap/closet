@@ -25,7 +25,9 @@ const DB_REACHING_PATTERNS = [
   /from\s+'[^']*routes\/(ai|crud)\.js'/,
   /import\('[^']*routes\/(ai|crud)\.js'\)/,
   /from\s+'[^']*\/server\.js'/,
-  /import\('[^']*\/server\.js'\)/
+  /import\('[^']*\/server\.js'\)/,
+  /from\s+'[^']*scripts\/adopt-db\.js'/,
+  /import\('[^']*scripts\/adopt-db\.js'\)/
 ]
 
 test('every test file that can reach db.js isolates WARDROBE_DB_PATH or WARDROBE_USERS_DIR', () => {
@@ -51,7 +53,9 @@ const SYSTEM_DB_REACHING_PATTERNS = [
   /from\s+'[^']*\/lib\/systemDb\.js'/,
   /import\('[^']*\/lib\/systemDb\.js'\)/,
   /from\s+'[^']*routes\/auth\.js'/,
-  /import\('[^']*routes\/auth\.js'\)/
+  /import\('[^']*routes\/auth\.js'\)/,
+  /from\s+'[^']*scripts\/adopt-db\.js'/,
+  /import\('[^']*scripts\/adopt-db\.js'\)/
 ]
 
 test('every test file that can reach system.db isolates WARDROBE_SYSTEM_DB_PATH', () => {
