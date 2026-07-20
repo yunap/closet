@@ -1150,6 +1150,14 @@ export default function StylistChat({
       if (lastAutoOutfitActionRef.current === actionKey) return
       lastAutoOutfitActionRef.current = actionKey
       setTimeout(() => send({ outfit: initialOutfit, input: prompt }), 0)
+      // Live-found bug: router state (location.state.outfit) survives a full page
+      // reload — the browser restores it from history.state. lastAutoOutfitActionRef
+      // does NOT survive a reload (it's a fresh ref on remount), so without this, an
+      // F5 (or any full reload — including an HMR full-reload from an unrelated file
+      // change) resends this exact, already-answered request to the model. Replacing
+      // the history entry's state right after dispatch means a reload finds nothing
+      // to auto-send; :replace so it doesn't add a spare back-button stop.
+      navigate(location.pathname + location.search, { replace: true, state: null })
     }
   }, [initialOutfit])
 
@@ -1274,21 +1282,6 @@ export default function StylistChat({
     { type: 'wrong_silhouette', label: 'Wrong silhouette' },
     { type: 'catalog_drift', label: 'Catalog drift' },
     { type: 'wrong_item_read', label: 'Wrong item read' },
-  ]
-
-  // Trimmed 2026-07-20 to the chips actually used on outfit critiques (per owner
-  // stylist_feedback counts). Only applies to critique messages (m.wardrobeEvaluation);
-  // general chat replies keep the full FEEDBACK_ACTIONS list above. Removed types still
-  // score via feedbackWeight for historical rows — they just can't be tapped from a
-  // critique anymore.
-  const CRITIQUE_FEEDBACK_ACTIONS = [
-    { type: 'signature', label: 'Signature' },
-    { type: 'works', label: 'Works' },
-    { type: 'almost', label: 'Almost' },
-    { type: 'not_me', label: 'Not me' },
-    { type: 'wrong_item_read', label: 'Wrong item read' },
-    { type: 'wrong_silhouette', label: 'Wrong silhouette' },
-    { type: 'catalog_drift', label: 'Catalog drift' },
   ]
 
   const isMultiOutfitResponse = (message) => {
@@ -4878,7 +4871,7 @@ export default function StylistChat({
                         {boardLoadingIndex === i ? 'Generating boards...' : (boardResults[i]?.length ? 'Regenerate boards' : 'Generate visual boards')}
                       </button>
                     )}
-                    {!isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && (m.wardrobeEvaluation ? CRITIQUE_FEEDBACK_ACTIONS : FEEDBACK_ACTIONS).map(action => {
+                    {!isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && !m.wardrobeEvaluation && FEEDBACK_ACTIONS.map(action => {
                       const key = `message:${i}:${action.type}`
                       const isSaved = feedbackSaved.has(key)
                       return (
