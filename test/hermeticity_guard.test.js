@@ -42,6 +42,31 @@ test('every test file that can reach db.js isolates WARDROBE_DB_PATH or WARDROBE
     `These test files import db.js-reaching modules without isolating WARDROBE_DB_PATH/WARDROBE_USERS_DIR — they will run db.js migrations against the real wardrobe.db: ${offenders.join(', ')}`)
 })
 
+// Spec 33 Part 2: server.js now touches system.db (auth.js's session lookup) on every
+// single request, unconditionally — so any test that boots server.js reaches system.db
+// too, whether or not it exercises auth at all. Same bug class, separate file.
+const SYSTEM_DB_REACHING_PATTERNS = [
+  /from\s+'[^']*\/server\.js'/,
+  /import\('[^']*\/server\.js'\)/,
+  /from\s+'[^']*\/lib\/systemDb\.js'/,
+  /import\('[^']*\/lib\/systemDb\.js'\)/,
+  /from\s+'[^']*routes\/auth\.js'/,
+  /import\('[^']*routes\/auth\.js'\)/
+]
+
+test('every test file that can reach system.db isolates WARDROBE_SYSTEM_DB_PATH', () => {
+  const testDir = path.join(process.cwd(), 'test')
+  const offenders = []
+  for (const file of fs.readdirSync(testDir)) {
+    if (!file.endsWith('.test.js')) continue
+    const src = fs.readFileSync(path.join(testDir, file), 'utf8')
+    const reachesSystemDb = SYSTEM_DB_REACHING_PATTERNS.some(pattern => pattern.test(src))
+    if (reachesSystemDb && !src.includes('WARDROBE_SYSTEM_DB_PATH')) offenders.push(file)
+  }
+  assert.deepStrictEqual(offenders, [],
+    `These test files import system.db-reaching modules without isolating WARDROBE_SYSTEM_DB_PATH — they will create real accounts/sessions in the real system.db: ${offenders.join(', ')}`)
+})
+
 test('no test file references the real data/users/ multiuser directory directly', () => {
   const testDir = path.join(process.cwd(), 'test')
   const offenders = []

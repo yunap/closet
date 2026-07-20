@@ -3,7 +3,7 @@
 // product's core loop. Every save appends the prior text to constitution_history (the
 // ruling-archaeology log); the interviewable layers link back into the wizard for a re-run.
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 const LAYER_TITLES = {
   body_contract: 'Layer 1 — Body & Comfort Contract',
@@ -26,6 +26,7 @@ const primaryBtn = { padding: '7px 14px', borderRadius: 9, border: '1px solid va
 const quietBtn = { padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 12.5, cursor: 'pointer' }
 
 export default function StylistSettings() {
+  const navigate = useNavigate()
   const [profile, setProfile] = useState(null)
   const [homeLocation, setHomeLocation] = useState('')
   const [layers, setLayers] = useState([])
@@ -35,6 +36,7 @@ export default function StylistSettings() {
   const [learnings, setLearnings] = useState([])
   const [demo, setDemo] = useState(null)
   const [learningDrafts, setLearningDrafts] = useState({})
+  const [sessions, setSessions] = useState([])
   const [status, setStatus] = useState('')
 
   const load = async () => {
@@ -50,11 +52,31 @@ export default function StylistSettings() {
       const feedback = await fetch('/api/stylist-feedback?limit=200').then(r => r.json()).catch(() => [])
       setLearnings((Array.isArray(feedback) ? feedback : []).filter(row => LEARNING_TYPES.has(row.feedback_type)))
       setDemo(await fetch('/api/settings/demo-wardrobe').then(r => r.json()).catch(() => null))
+      const sessionData = await fetch('/api/auth/sessions').then(r => r.json()).catch(() => null)
+      setSessions(sessionData?.sessions || [])
     } catch (err) {
       setStatus(`Failed to load settings: ${err.message}`)
     }
   }
   useEffect(() => { load() }, [])
+
+  const logout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    navigate('/login', { replace: true })
+  }
+
+  const revokeSession = async (id) => {
+    const res = await fetch(`/api/auth/sessions/${id}`, { method: 'DELETE' })
+    if (!res.ok) return flash('Failed to revoke session')
+    const { revokedCurrent } = await res.json()
+    if (revokedCurrent) { navigate('/login', { replace: true }); return }
+    flash('Session revoked.'); load()
+  }
+
+  const revokeOtherSessions = async () => {
+    const res = await fetch('/api/auth/sessions/revoke-others', { method: 'POST' })
+    if (res.ok) { flash('Signed out everywhere else.'); load() }
+  }
 
   const flash = (msg) => { setStatus(msg); setTimeout(() => setStatus(''), 2500) }
 
@@ -233,6 +255,26 @@ export default function StylistSettings() {
           </div>
         </div>
       ))}
+
+      <h2 style={{ fontSize: 18, margin: '22px 0 10px' }}>Account & sessions</h2>
+      <div style={card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: sessions.length ? 12 : 0 }}>
+          <span style={{ fontSize: 13.5, color: 'var(--text-muted)' }}>Signed in on {sessions.length} {sessions.length === 1 ? 'device' : 'devices'}.</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {sessions.length > 1 && <button style={quietBtn} onClick={revokeOtherSessions}>Sign out other devices</button>}
+            <button style={quietBtn} onClick={logout}>Sign out</button>
+          </div>
+        </div>
+        {sessions.map(s => (
+          <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 13 }}>{s.userAgentLabel || 'Unknown device'} {s.isCurrent && <span style={{ color: 'var(--accent)', fontSize: 11.5 }}>· this device</span>}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>last seen {s.lastSeen}</div>
+            </div>
+            <button style={quietBtn} onClick={() => revokeSession(s.id)}>{s.isCurrent ? 'Sign out' : 'Revoke'}</button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

@@ -9,6 +9,7 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'saved-boards-visibility-t
 process.env.NODE_ENV = 'test'
 process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
+process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 
 const { app, db } = await import('../server.js')
 const { getSavedBoardMemory } = await import('../styling-engine/rules.js')

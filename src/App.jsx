@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import PieceInventory from './views/PieceInventory'
 import OutfitLookbook from './views/OutfitLookbook'
@@ -7,6 +7,8 @@ import VisualLab from './components/VisualLab'
 import Onboarding from './views/Onboarding'
 import StylistSettings from './views/StylistSettings'
 import WardrobeImport from './views/WardrobeImport'
+import Login from './views/Login'
+import Register from './views/Register'
 import usePendingWardrobeTaskCount from './utils/usePendingWardrobeTaskCount'
 
 function NavIcon({ name }) {
@@ -74,6 +76,33 @@ export default function App() {
   const pendingTodoCount = usePendingWardrobeTaskCount()
   const isStylistRoute = location.pathname === '/stylist' || location.pathname.startsWith('/stylist/')
   const isOnboardingRoute = location.pathname === '/onboarding'
+  const isAuthRoute = location.pathname === '/login' || location.pathname === '/register'
+
+  // Spec 33 Part 2: same shape as the onboarding-redirect effect below — a fresh
+  // /api/auth/me answer per route, never held state, sends an unauthenticated visitor to
+  // /login. Runs before the onboarding check would even matter (an unauthenticated user
+  // has no onboarding status to speak of).
+  //
+  // authChecked gates the FIRST render of the protected route tree specifically: without
+  // it, a route like PieceInventory mounts and fires its own /api/pieces fetch on the
+  // very first paint, before this effect's /api/auth/me call has resolved — that fetch
+  // 401s (live-found: an uncaught crash in PieceInventory) since nothing has authenticated
+  // yet. Once true, it never flips back to false on later navigations, so route changes
+  // within an already-authenticated session don't show a loading flash.
+  const [authChecked, setAuthChecked] = useState(isAuthRoute)
+  useEffect(() => {
+    if (isAuthRoute) { setAuthChecked(true); return }
+    let cancelled = false
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then(status => {
+        if (cancelled) return
+        setAuthChecked(true)
+        if (!status?.authenticated) navigate('/login', { replace: true })
+      })
+      .catch(() => { if (!cancelled) setAuthChecked(true) })
+    return () => { cancelled = true }
+  }, [location.pathname, isAuthRoute, navigate])
 
   // Spec 32 Part 3: a fresh instance routes to the wizard until onboarding completes or is
   // skipped. Pre-existing (legacy-seeded) instances never see it — the server decides.
@@ -82,7 +111,7 @@ export default function App() {
   // user back into the wizard on the very navigation that completes it (live-found bug:
   // the reset-then-refetch variant still lost the race within a single effect flush).
   useEffect(() => {
-    if (isOnboardingRoute) return
+    if (isOnboardingRoute || isAuthRoute) return
     let cancelled = false
     fetch('/api/settings/onboarding-status')
       .then(r => r.json())
@@ -91,7 +120,7 @@ export default function App() {
       })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [location.pathname, isOnboardingRoute, navigate])
+  }, [location.pathname, isOnboardingRoute, isAuthRoute, navigate])
   const navItems = useMemo(() => ([
     { id: 'wardrobe', label: 'Wardrobe', icon: 'wardrobe', to: '/wardrobe', badgeCount: pendingTodoCount },
     { id: 'outfits', label: 'Outfits', icon: 'outfits', to: '/outfits' },
@@ -118,23 +147,27 @@ export default function App() {
   return (
     <div className="app">
       <main className={`app-main${isStylistRoute ? ' stylist-app-main' : ''}`}>
-        <Routes>
-          <Route path="/" element={<Navigate to="/wardrobe" replace />} />
-          <Route path="/wardrobe"   element={<PieceInventory onSendToStylist={sendPieceToStylist} />} />
-          <Route path="/outfits"    element={<OutfitLookbook onSendToStylist={sendOutfitToStylist} onGoToThread={goToThread} />} />
-          {/* /stylist and /stylist/:threadId intentionally share the same <AskClaude /> element
-              with NO key prop — React reuses the same component instance when only the param
-              changes, preserving all thread state without a remount. */}
-          <Route path="/stylist"           element={<AskClaude />} />
-          <Route path="/stylist/:threadId" element={<AskClaude />} />
-          <Route path="/visual-lab" element={<VisualLab onGoToThread={goToThread} />} />
-          <Route path="/onboarding" element={<Onboarding />} />
-          <Route path="/settings"   element={<StylistSettings />} />
-          <Route path="/import"     element={<WardrobeImport />} />
-        </Routes>
+        {authChecked ? (
+          <Routes>
+            <Route path="/" element={<Navigate to="/wardrobe" replace />} />
+            <Route path="/wardrobe"   element={<PieceInventory onSendToStylist={sendPieceToStylist} />} />
+            <Route path="/outfits"    element={<OutfitLookbook onSendToStylist={sendOutfitToStylist} onGoToThread={goToThread} />} />
+            {/* /stylist and /stylist/:threadId intentionally share the same <AskClaude /> element
+                with NO key prop — React reuses the same component instance when only the param
+                changes, preserving all thread state without a remount. */}
+            <Route path="/stylist"           element={<AskClaude />} />
+            <Route path="/stylist/:threadId" element={<AskClaude />} />
+            <Route path="/visual-lab" element={<VisualLab onGoToThread={goToThread} />} />
+            <Route path="/onboarding" element={<Onboarding />} />
+            <Route path="/settings"   element={<StylistSettings />} />
+            <Route path="/import"     element={<WardrobeImport />} />
+            <Route path="/login"      element={<Login />} />
+            <Route path="/register"   element={<Register />} />
+          </Routes>
+        ) : null}
       </main>
 
-      {!isOnboardingRoute && <nav className="primary-nav" aria-label="Primary">
+      {authChecked && !isOnboardingRoute && !isAuthRoute && <nav className="primary-nav" aria-label="Primary">
         <ul className="primary-nav__list">
           {navItems.map(item => {
             const badgeCount = Number(item.badgeCount || 0)
