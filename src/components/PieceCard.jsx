@@ -47,45 +47,57 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
     e.stopPropagation()
     onFavorite(piece)
   }
-  const handleKeyDown = (event) => {
-    if (event.target.closest('button')) return
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      openPiece()
-    }
-  }
 
   return (
-    <div
-      className="piece-card"
-      onClick={openPiece}
-      onKeyDown={handleKeyDown}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open ${piece.name} wardrobe card`}
-    >
-      {/* Photo or placeholder */}
-      {piece.photo && !imageFailed ? (
-        <img
-          className="piece-photo"
-          src={`/uploads/${piece.photo}`}
-          alt={piece.name}
-          loading="lazy"
-          onError={() => setImageFailed(true)}
-        />
-      ) : (
-        <div className="piece-placeholder" style={{ background: bg }}>
-          <span className="piece-placeholder-letter">
-            {piece.name.charAt(0)}
-          </span>
-          {piece.photo && <span className="piece-placeholder-note">Photo unavailable</span>}
+    <div className="piece-card">
+      <button
+        type="button"
+        className="piece-card-hit"
+        onClick={openPiece}
+        aria-label={`Open ${piece.name} wardrobe card`}
+      >
+        {/* Photo or placeholder */}
+        {piece.photo && !imageFailed ? (
+          <img
+            className="piece-photo"
+            src={`/uploads/${piece.photo}`}
+            alt={piece.name}
+            loading="lazy"
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          <div className="piece-placeholder" style={{ background: bg }}>
+            <span className="piece-placeholder-letter">
+              {piece.name.charAt(0)}
+            </span>
+            {piece.photo && <span className="piece-placeholder-note">Photo unavailable</span>}
+          </div>
+        )}
+
+        {/* Info */}
+        <div className="piece-card-body">
+          <div className="piece-card-name">{piece.name}</div>
+          <div className="piece-card-meta">
+            <span className="piece-card-colors">
+              {piece.colors.slice(0, 2).join(' · ')}
+            </span>
+            <span className="piece-card-id">#{piece.id}</span>
+          </div>
         </div>
-      )}
+      </button>
 
       {/* Badges */}
       <div className="piece-card-badges">
         <span className="badge badge-category">{piece.category}</span>
-        {piece.tag_state === 'provisional' && <span className="badge">provisional</span>}
+        {piece.tag_state === 'provisional' && (
+          <span
+            className="badge badge-provisional"
+            title="Provisional — awaiting a worn photo to confirm the tag"
+            aria-label="Provisional: awaiting a worn photo to confirm the tag"
+          >
+            provisional
+          </span>
+        )}
         {piece.status === 'needs-repair' && <span className="badge badge-repair">repair</span>}
         {piece.status === 'consider-donating' && <span className="badge badge-donate">donate?</span>}
       </div>
@@ -94,17 +106,6 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
       <button className="fav-btn" onClick={handleFav} aria-label="Toggle favorite">
         {piece.favorite ? '♥' : '♡'}
       </button>
-
-      {/* Info */}
-      <div className="piece-card-body">
-        <div className="piece-card-name">{piece.name}</div>
-        <div className="piece-card-meta">
-          <span className="piece-card-colors">
-            {piece.colors.slice(0, 2).join(' · ')}
-          </span>
-          <span className="piece-card-id">#{piece.id}</span>
-        </div>
-      </div>
     </div>
   )
 }
