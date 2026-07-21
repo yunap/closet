@@ -314,10 +314,11 @@ export default function ThreadRail({
             <span className="subject-name" title={cluster.name}>{cluster.name}</span>
             <span className="subject-meta">
               <span>{cluster.typeLabel}</span>
+              <span>·</span>
               <span>{countLabel}</span>
             </span>
           </span>
-          {!isOpen && <span className="subject-latest-time">{latestLabel}</span>}
+          <span className={`subject-latest-time ${isOpen ? 'reveal-on-hover' : ''}`}>{latestLabel}</span>
         </button>
         {isOpen && (
           <div className="cluster-rows" role="list">
