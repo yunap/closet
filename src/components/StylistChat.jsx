@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import ThreadRail, { humanizeLabel, deriveBuilderTitle } from './ThreadRail'
 import MarkdownMessage from './MarkdownMessage.js'
 import PieceForm from './PieceForm.jsx'
+import InfoTooltip from './InfoTooltip.jsx'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -385,7 +386,6 @@ export default function StylistChat({
   const [homeLocationInput, setHomeLocationInput] = useState('')
   const [homeLocationOpen, setHomeLocationOpen] = useState(false)
   const [homeLocationSaving, setHomeLocationSaving] = useState(false)
-  const [styleDirectionInfoOpen, setStyleDirectionInfoOpen] = useState(false)
   const [savedIndices, setSavedIndices] = useState(new Set())
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
   const [feedbackIdsByKey, setFeedbackIdsByKey] = useState({})
@@ -409,8 +409,6 @@ export default function StylistChat({
   const wardrobeBuilderFirstFieldRef = useRef(null)
   const homeLocationButtonRef = useRef(null)
   const homeLocationPopoverRef = useRef(null)
-  const styleDirectionInfoButtonRef = useRef(null)
-  const styleDirectionInfoPopoverRef = useRef(null)
   const recentMemoryConfirmTimeoutRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
@@ -3632,23 +3630,6 @@ export default function StylistChat({
     }
   }, [homeLocationOpen])
 
-  useEffect(() => {
-    if (!styleDirectionInfoOpen) return
-    const handlePointerDown = (e) => {
-      if (styleDirectionInfoPopoverRef.current?.contains(e.target)) return
-      if (styleDirectionInfoButtonRef.current?.contains(e.target)) return
-      setStyleDirectionInfoOpen(false)
-    }
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') setStyleDirectionInfoOpen(false)
-    }
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [styleDirectionInfoOpen])
 
   const send = async (overrides = {}) => {
     const q = (overrides.input ?? input).trim()
@@ -4466,25 +4447,11 @@ export default function StylistChat({
         <div style={{ flex: '1.4 1 165px' }}>
           <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
             <span>Style direction</span>
-            <div className="field-info">
-              <button
-                ref={styleDirectionInfoButtonRef}
-                type="button"
-                className={`field-info-trigger ${styleDirectionInfoOpen ? 'active' : ''}`}
-                onClick={() => setStyleDirectionInfoOpen(v => !v)}
-                aria-expanded={styleDirectionInfoOpen}
-                aria-label="What the style direction options mean"
-              >
-                ⓘ
-              </button>
-              {styleDirectionInfoOpen && (
-                <div ref={styleDirectionInfoPopoverRef} className="filter-menu-popover field-info-popover" role="tooltip">
-                  {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
-                    <div key={label}><strong style={{ fontWeight: 650, color: 'var(--text)' }}>{label}</strong> — {desc}</div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <InfoTooltip label="What the style direction options mean" align="left" size="sm">
+              {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
+                <div key={label}><strong>{label}</strong> — {desc}</div>
+              ))}
+            </InfoTooltip>
           </div>
           <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
             <option value="mix">Mix of style directions</option>
