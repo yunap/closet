@@ -3033,7 +3033,7 @@ img { display: block; max-width: 100%; }
 }
 
 .thread-rail {
-  width: 260px;
+  width: 288px;
   height: 100%;
   background: var(--surface);
   border-right: 1px solid var(--border-light);
@@ -3649,9 +3649,9 @@ img { display: block; max-width: 100%; }
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 48px;
-  padding: 6px 12px 6px 6px;
+  gap: 10px;
+  min-height: 64px;
+  padding: 8px 12px 8px 6px;
   text-align: left;
   font-family: var(--font-sans);
   transition: background 0.15s ease;
@@ -3678,10 +3678,10 @@ img { display: block; max-width: 100%; }
 }
 
 .subject-thumb {
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  border-radius: 7px;
+  width: 64px;
+  height: 48px;
+  flex: 0 0 64px;
+  border-radius: 8px;
   overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border-light);
@@ -3697,8 +3697,8 @@ img { display: block; max-width: 100%; }
 }
 
 .subject-thumb-fallback {
-  font-size: 14px;
-  color: var(--accent);
+  font-size: 20px;
+  color: var(--text-muted);
 }
 
 .subject-header-text {
@@ -3710,10 +3710,10 @@ img { display: block; max-width: 100%; }
 
 .subject-name {
   min-width: 0;
-  font-size: 12.5px;
-  line-height: 1.15;
+  font-size: 13.5px;
+  line-height: 1.2;
   color: var(--text);
-  font-weight: 700;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3721,14 +3721,12 @@ img { display: block; max-width: 100%; }
 
 .subject-meta {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   color: color-mix(in srgb, var(--text-muted) 86%, var(--text));
-  font-size: 10px;
-  font-weight: 650;
-  line-height: 1.1;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.3;
 }
 
 .subject-latest-time {
@@ -3737,8 +3735,18 @@ img { display: block; max-width: 100%; }
   font-size: 11px;
 }
 
+.subject-latest-time.reveal-on-hover {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.subject-cluster-header:hover .subject-latest-time.reveal-on-hover,
+.subject-cluster-header:focus-visible .subject-latest-time.reveal-on-hover {
+  opacity: 1;
+}
+
 .cluster-rows {
-  margin-left: 36px;
+  margin-left: 96px;
   border-left: 1px solid rgba(139, 111, 82, 0.1);
 }
 
