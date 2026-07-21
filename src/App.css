@@ -529,6 +529,51 @@ img { display: block; max-width: 100%; }
   color: var(--text);
 }
 
+.field-info {
+  position: relative;
+  display: inline-flex;
+}
+
+.field-info-trigger {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #F5F0E9;
+  color: #8F7F70;
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.field-info-trigger:hover,
+.field-info-trigger.active {
+  color: var(--accent);
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+.field-info-trigger:focus-visible {
+  outline: 2px solid #1f6feb;
+  outline-offset: 2px;
+}
+
+.filter-menu-popover.field-info-popover {
+  left: 0;
+  right: auto;
+  width: 240px;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  display: grid;
+  gap: 6px;
+}
+
 .wardrobe-filter-menu .filter-menu-btn.active,
 .wardrobe-filter-menu .filter-menu-btn:hover {
   color: var(--accent);

@@ -63,13 +63,22 @@ const wardrobeBuilderControlStyle = {
 
 const wardrobeBuilderPanelBaseStyle = {
   padding: '10px 12px',
-  border: '1px solid color-mix(in srgb, var(--accent) 28%, var(--border))',
+  border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)',
-  background: '#F4EADF',
-  boxShadow: 'inset 3px 0 0 var(--accent), 0 8px 20px rgba(83, 62, 37, 0.08)',
+  background: 'var(--surface)',
+  boxShadow: '0 6px 16px rgba(0, 0, 0, 0.06)',
   display: 'grid',
   gap: 8,
 }
+
+const STYLE_DIRECTION_LEGEND = [
+  ['Controlled Print', 'One printed piece, kept in check by solids.'],
+  ['Monochrome Texture', 'Same tone throughout — texture does the work.'],
+  ['Structured + Soft', 'Pairs something tailored with something relaxed.'],
+  ['Color Anchor', 'Builds the outfit around one dominant color.'],
+  ['Unexpected Pairing', "Combines pieces that don't obviously go together."],
+  ['Soft Architecture', 'Precise shapes made in soft, fluid fabrics.'],
+]
 
 const formatMs = (ms) => {
   const n = Number(ms)
@@ -375,6 +384,7 @@ export default function StylistChat({
   const [homeLocationInput, setHomeLocationInput] = useState('')
   const [homeLocationOpen, setHomeLocationOpen] = useState(false)
   const [homeLocationSaving, setHomeLocationSaving] = useState(false)
+  const [styleDirectionInfoOpen, setStyleDirectionInfoOpen] = useState(false)
   const [savedIndices, setSavedIndices] = useState(new Set())
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
   const [feedbackIdsByKey, setFeedbackIdsByKey] = useState({})
@@ -398,6 +408,8 @@ export default function StylistChat({
   const wardrobeBuilderFirstFieldRef = useRef(null)
   const homeLocationButtonRef = useRef(null)
   const homeLocationPopoverRef = useRef(null)
+  const styleDirectionInfoButtonRef = useRef(null)
+  const styleDirectionInfoPopoverRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
   const suppressThreadLoadAutosaveRef = useRef(false)
@@ -3614,6 +3626,24 @@ export default function StylistChat({
     }
   }, [homeLocationOpen])
 
+  useEffect(() => {
+    if (!styleDirectionInfoOpen) return
+    const handlePointerDown = (e) => {
+      if (styleDirectionInfoPopoverRef.current?.contains(e.target)) return
+      if (styleDirectionInfoButtonRef.current?.contains(e.target)) return
+      setStyleDirectionInfoOpen(false)
+    }
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setStyleDirectionInfoOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [styleDirectionInfoOpen])
+
   const send = async (overrides = {}) => {
     const q = (overrides.input ?? input).trim()
     const outfitToSend = overrides.outfit ?? pendingOutfit
@@ -4385,7 +4415,7 @@ export default function StylistChat({
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 220, flex: '1 1 280px' }}>
           <h2 id="outfit-builder-composer-title" style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)', margin: 0 }}>Create outfits from my wardrobe</h2>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Choose the occasion, season, mood, and styling direction.</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Set the context, then generate five looks from pieces you own.</div>
         </div>
         <button
           type="button"
@@ -4398,8 +4428,8 @@ export default function StylistChat({
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 6 }}>
-        <div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
           <select ref={wardrobeBuilderFirstFieldRef} value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
             {OCCASION_OPTIONS.map(([val, label]) => (
@@ -4407,7 +4437,7 @@ export default function StylistChat({
             ))}
           </select>
         </div>
-        <div>
+        <div style={{ flex: '1.3 1 150px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Activity</div>
           <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
             {ACTIVITY_OPTIONS.map(([val, label]) => (
@@ -4415,7 +4445,7 @@ export default function StylistChat({
             ))}
           </select>
         </div>
-        <div>
+        <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Season</div>
           <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
             <option value="current season">Current season</option>
@@ -4427,8 +4457,29 @@ export default function StylistChat({
             <option value="cold weather">Very cold weather</option>
           </select>
         </div>
-        <div>
-          <div style={wardrobeBuilderFieldLabelStyle}>Style direction</div>
+        <div style={{ flex: '1.4 1 165px' }}>
+          <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span>Style direction</span>
+            <div className="field-info">
+              <button
+                ref={styleDirectionInfoButtonRef}
+                type="button"
+                className={`field-info-trigger ${styleDirectionInfoOpen ? 'active' : ''}`}
+                onClick={() => setStyleDirectionInfoOpen(v => !v)}
+                aria-expanded={styleDirectionInfoOpen}
+                aria-label="What the style direction options mean"
+              >
+                ⓘ
+              </button>
+              {styleDirectionInfoOpen && (
+                <div ref={styleDirectionInfoPopoverRef} className="filter-menu-popover field-info-popover" role="tooltip">
+                  {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
+                    <div key={label}><strong>{label}</strong> — {desc}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
           <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
             <option value="mix">Different style directions</option>
             <option value="controlled_print">Controlled Print</option>
@@ -4439,7 +4490,7 @@ export default function StylistChat({
             <option value="soft_architecture">Soft Architecture</option>
           </select>
         </div>
-        <div>
+        <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Mood</div>
           <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood" style={{ ...wardrobeBuilderControlStyle, width: '100%' }} />
         </div>
@@ -4635,7 +4686,10 @@ export default function StylistChat({
                   aria-expanded={homeLocationOpen}
                   aria-controls="home-location-popover"
                 >
-                  <span aria-hidden="true">📍</span>
+                  <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
                   <span>Weather location{homeLocation ? ` · ${homeLocation}` : ''}</span>
                   <span aria-hidden="true" style={{ display: 'inline-block', transition: 'transform 0.15s', transform: homeLocationOpen ? 'rotate(180deg)' : 'rotate(0deg)', fontSize: 10 }}>▾</span>
                 </button>
