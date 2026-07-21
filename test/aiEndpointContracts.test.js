@@ -1146,7 +1146,7 @@ test('whole-wardrobe outfit image button requests AI render instead of preview c
   assert.match(routeSrc, /renderMode = ''/)
   assert.match(routeSrc, /forceAi: renderMode === 'ai'/)
   assert.match(coreSrc, /forceAi = false/)
-  assert.match(coreSrc, /\(\(!forceAi && photoPreservingVisualsEnabled\(\)\) \|\| !hasOpenAiKey\(\)\)/)
+  assert.match(coreSrc, /mockAiEnabled\(\) \|\| \(!forceAi && photoPreservingVisualsEnabled\(\)\) \|\| !hasOpenAiKey\(\)/)
 })
 
 test('whole-wardrobe comparison sheet endpoint returns a preview board artifact', async () => {

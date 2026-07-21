@@ -20,6 +20,7 @@ import {
   AI_PROVIDER,
   ACTIVE_STYLIST_MODEL,
   PROMPT_CACHE_BREAKPOINT,
+  mockAiEnabled,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 
@@ -1723,7 +1724,9 @@ export function dedupeMissingAgainstOwned(missingPieces = [], ownedPieces = []) 
 }
 
 export function photoPreservingVisualsEnabled() {
-  return String(process.env.PHOTO_PRESERVING_VISUALS || 'false').toLowerCase() === 'true'
+  // WARDROBE_MOCK_AI implies photo-preserving (local collage) rendering too,
+  // so mock mode never triggers a billed OpenAI image-generation call.
+  return String(process.env.PHOTO_PRESERVING_VISUALS || 'false').toLowerCase() === 'true' || mockAiEnabled()
 }
 
 export async function makePhotoPanel(filePath, width, height, label = 'source photo') {
@@ -2111,7 +2114,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     reason: outfit.reason || '',
   }
 
-  if ((!forceAi && photoPreservingVisualsEnabled()) || !hasOpenAiKey()) {
+  if (mockAiEnabled() || (!forceAi && photoPreservingVisualsEnabled()) || !hasOpenAiKey()) {
     const collageStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
@@ -2386,7 +2389,7 @@ export async function createIdealAdditionsComparisonSheetImage({
   ].join('\n')
 
   try {
-    if (process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === 'test' || mockAiEnabled()) {
       const mockBuffer = await sharp({
         create: {
           width: 1024,

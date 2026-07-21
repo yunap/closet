@@ -7,7 +7,8 @@ import { runWithUser, getCurrentUserId, DEFAULT_USER_ID } from './lib/requestCon
 import { getSessionToken } from './lib/cookies.js'
 import { resolveSession, isAdmin } from './lib/systemDb.js'
 import { executeTool } from './styling-engine/tools.js'
-import { contentToOpenAI } from './styling-engine/provider.js'
+import { contentToOpenAI, mockAiEnabled } from './styling-engine/provider.js'
+import { installMockAiHandler } from './styling-engine/mockAiHandler.js'
 import { tagPieceWithProvider } from './routes/ai.js'
 import authRouter from './routes/auth.js'
 import crudRouter from './routes/crud.js'
@@ -95,6 +96,11 @@ if (process.env.NODE_ENV === 'production') {
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'))
   })
+}
+
+if (mockAiEnabled()) {
+  installMockAiHandler(db)
+  console.log('🧪 WARDROBE_MOCK_AI is on — stylist responses are canned, no billed AI calls will be made')
 }
 
 if (process.env.NODE_ENV !== 'test') {
