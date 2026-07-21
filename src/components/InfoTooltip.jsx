@@ -64,7 +64,10 @@ export default function InfoTooltip({
         aria-label={label}
         aria-controls={idRef.current}
       >
-        ⓘ
+        <svg viewBox="0 0 16 16" width="70%" height="70%" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="8" cy="4.9" r="1.05" fill="currentColor" />
+          <path d="M8 7.3V12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        </svg>
       </button>
       {open && (
         <div

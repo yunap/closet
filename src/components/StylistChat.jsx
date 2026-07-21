@@ -64,6 +64,39 @@ const wardrobeBuilderControlStyle = {
   minHeight: 34,
 }
 
+const backToChatButtonStyle = {
+  borderRadius: 8,
+  background: 'var(--surface)',
+}
+
+function capitalizeFirst(str) {
+  const s = String(str || '')
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+}
+
+const WardrobeOptionIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="4" y="3" width="16" height="18" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+    <path d="M12 3V21" stroke="currentColor" strokeWidth="1.6" />
+    <circle cx="10.3" cy="12" r="0.9" fill="currentColor" />
+    <circle cx="13.7" cy="12" r="0.9" fill="currentColor" />
+  </svg>
+)
+
+const NewPiecesOptionIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="5.3" r="1.1" stroke="currentColor" strokeWidth="1.4" />
+    <path d="M12 6.4V8.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    <path d="M12 8.3L4 14.3L6.2 16.3H17.8L20 14.3L12 8.3Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+const SparkleIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M8 1L9.4 6.1L14.5 7.5L9.4 8.9L8 14L6.6 8.9L1.5 7.5L6.6 6.1L8 1Z" />
+  </svg>
+)
+
 const wardrobeBuilderPanelBaseStyle = {
   padding: '20px 22px',
   border: '1px solid var(--border)',
@@ -4409,7 +4442,7 @@ export default function StylistChat({
           type="button"
           onClick={closeWardrobeBuilderComposer}
           className="chip"
-          style={{ marginTop: 0, background: 'var(--surface)', fontSize: 11, padding: '6px 10px' }}
+          style={{ marginTop: 0, fontSize: 11, padding: '6px 10px', ...backToChatButtonStyle }}
           aria-label="Back to chat"
         >
           Back to chat
@@ -4448,7 +4481,7 @@ export default function StylistChat({
         <div style={{ flex: '1.4 1 165px' }}>
           <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
             <span>Style direction</span>
-            <InfoTooltip label="What the style direction options mean" align="left" size="sm">
+            <InfoTooltip label="What the style direction options mean" align="right" size="sm">
               {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
                 <div key={label}><strong>{label}</strong> — {desc}</div>
               ))}
@@ -4736,29 +4769,25 @@ export default function StylistChat({
 
       {/* Chat thread */}
       <div className={`stylist-chat-scroll ${messages.length > 1 ? 'is-existing-chat' : 'is-empty-chat'} ${pending ? 'has-pending-action' : ''}`}>
-        {messages.length === 1 && (
+        {messages.length === 1 && !pending && (
           <div className="stylist-empty-state">
-            {!pending && (
-              <>
-                <div className="stylist-empty-intro">
-                  <h2>Ask anything about your wardrobe</h2>
-                  <p>I can create outfits from your saved pieces or review an outfit photo.</p>
+            <div className="stylist-empty-intro">
+              <h2>Ask anything about your wardrobe</h2>
+              <p>I can create outfits from your saved pieces or review an outfit photo.</p>
+            </div>
+            {renderComposerDock('is-empty-state')}
+            {!wardrobeBuilderOpen && (
+              <div className="stylist-suggestion-section">
+                <div className="stylist-suggestion-heading">Try asking</div>
+                <div className="stylist-suggestion-list">
+                  {SUGGESTIONS.map(s => (
+                    <button key={s} type="button" className="stylist-suggestion-btn" onClick={() => setInput(s)}>
+                      <span>{s}</span>
+                      <span className="stylist-suggestion-arrow" aria-hidden="true">→</span>
+                    </button>
+                  ))}
                 </div>
-                {renderComposerDock('is-empty-state')}
-                {!wardrobeBuilderOpen && (
-                  <div className="stylist-suggestion-section">
-                    <div className="stylist-suggestion-heading">Try asking</div>
-                    <div className="stylist-suggestion-list">
-                      {SUGGESTIONS.map(s => (
-                        <button key={s} type="button" className="stylist-suggestion-btn" onClick={() => setInput(s)}>
-                          <span>{s}</span>
-                          <span className="stylist-suggestion-arrow" aria-hidden="true">→</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
+              </div>
             )}
           </div>
         )}
@@ -5165,11 +5194,11 @@ export default function StylistChat({
               header={
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                    <div style={{ fontSize: 22, fontFamily: 'var(--font-serif)', color: 'var(--text)' }}>Work with this piece</div>
+                    <div style={{ fontSize: 22, fontFamily: 'var(--font-serif)', fontWeight: 650, color: 'var(--text)' }}>Work with this piece</div>
                     <button
                       type="button"
                       className="chip"
-                      style={{ color: 'var(--text)', fontWeight: 600, borderColor: 'var(--border)', flexShrink: 0 }}
+                      style={{ color: 'var(--text)', fontWeight: 600, borderColor: 'var(--border)', flexShrink: 0, ...backToChatButtonStyle }}
                       onClick={closePendingPiece}
                     >
                       Back to chat
@@ -5200,10 +5229,10 @@ export default function StylistChat({
                           onMouseEnter={e => { e.currentTarget.style.textDecorationColor = 'var(--border)' }}
                           onMouseLeave={e => { e.currentTarget.style.textDecorationColor = 'transparent' }}
                         >
-                          {pendingPiece.name}
+                          {capitalizeFirst(pendingPiece.name)}
                         </button>
                       ) : (
-                        <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text)' }}>{pendingPiece.name}</div>
+                        <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text)' }}>{capitalizeFirst(pendingPiece.name)}</div>
                       )}
                       <span style={{ display: 'inline-flex', marginTop: 5, padding: '3px 8px', borderRadius: 999, fontSize: 11, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-muted)' }}>Anchor piece</span>
                       {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
@@ -5215,7 +5244,8 @@ export default function StylistChat({
               sectionLabel="How would you like to proceed?"
               footer={
                 <>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <SparkleIcon />
                     {pendingPieceMode === 'wardrobe' ? "We'll create several distinct looks around your anchor piece." : "We'll suggest new pieces that pair well with this one."}
                   </div>
                   <button
@@ -5237,6 +5267,7 @@ export default function StylistChat({
               <div className="stylist-option-grid">
                 <OptionCard
                   variant="radio"
+                  icon={<WardrobeOptionIcon />}
                   selected={pendingPieceMode === 'wardrobe'}
                   title="Create outfits from my wardrobe"
                   description="Build several distinct looks around this piece using garments I already own."
@@ -5244,6 +5275,7 @@ export default function StylistChat({
                 />
                 <OptionCard
                   variant="radio"
+                  icon={<NewPiecesOptionIcon />}
                   selected={pendingPieceMode === 'ideal'}
                   title="Suggest new pieces"
                   description="Explore additions that would make this piece easier or more interesting to wear."
@@ -5252,7 +5284,7 @@ export default function StylistChat({
               </div>
 
               <div className="stylist-landing-section-label">Add context</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
                 <div style={{ flex: '1 1 120px' }}>
                   <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
                   <select value={generateOccasion} onChange={e => setGenerateOccasion(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
@@ -5286,7 +5318,7 @@ export default function StylistChat({
                 <div style={{ flex: '1.4 1 165px' }}>
                   <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span>Style direction</span>
-                    <InfoTooltip label="What the style direction options mean" align="left" size="sm">
+                    <InfoTooltip label="What the style direction options mean" align="right" size="sm">
                       {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
                         <div key={label}><strong>{label}</strong> — {desc}</div>
                       ))}
@@ -5326,60 +5358,62 @@ export default function StylistChat({
           <div ref={pendingActionRef}>
             <StylistLandingPanel
               header={
-                <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
-                  {pendingPhotoSrc && (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                    <div style={{ fontSize: 22, fontFamily: 'var(--font-serif)', fontWeight: 650, color: 'var(--text)' }}>Work with this outfit</div>
                     <button
                       type="button"
-                      onClick={() => setPreviewImage({
-                        src: pendingPhotoSrc,
-                        title: pendingOutfit.name || 'Outfit',
-                        meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
-                      })}
-                      style={{ padding: 0, border: 0, background: 'transparent', borderRadius: 8, overflow: 'hidden', cursor: 'zoom-in', display: 'block', width: 80, height: 96, flexShrink: 0 }}
-                      aria-label="Preview outfit photo"
+                      className="chip"
+                      style={{ color: 'var(--text)', fontWeight: 600, borderColor: 'var(--border)', flexShrink: 0, ...backToChatButtonStyle }}
+                      onClick={() => { setPendingOutfit(null); setInput('') }}
                     >
-                      <img src={pendingPhotoSrc} alt={pendingOutfit.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', background: 'var(--surface-2)' }} />
+                      Back to chat
                     </button>
-                  )}
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 11, fontWeight: 650, letterSpacing: '0.02em', color: 'var(--text-muted)' }}>Work with this outfit</div>
-                    {pendingOutfit.id ? (
+                  </div>
+                  <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 14 }}>
+                    {pendingPhotoSrc && (
                       <button
                         type="button"
-                        onClick={() => navigate(`/outfits?outfitId=${pendingOutfit.id}`)}
-                        title="Open this outfit's card in Lookbook"
-                        style={{ display: 'block', padding: 0, border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontSize: 22, fontFamily: 'var(--font-serif)', color: 'var(--text)', marginTop: 2, textDecoration: 'underline', textDecorationColor: 'transparent', textUnderlineOffset: 4, transition: 'text-decoration-color 0.15s' }}
-                        onMouseEnter={e => { e.currentTarget.style.textDecorationColor = 'var(--border)' }}
-                        onMouseLeave={e => { e.currentTarget.style.textDecorationColor = 'transparent' }}
+                        onClick={() => setPreviewImage({
+                          src: pendingPhotoSrc,
+                          title: pendingOutfit.name || 'Outfit',
+                          meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
+                        })}
+                        style={{ padding: 0, border: 0, background: 'transparent', borderRadius: 8, overflow: 'hidden', cursor: 'zoom-in', display: 'block', width: 80, height: 96, flexShrink: 0 }}
+                        aria-label="Preview outfit photo"
                       >
-                        {pendingOutfit.name}
+                        <img src={pendingPhotoSrc} alt={pendingOutfit.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', background: 'var(--surface-2)' }} />
                       </button>
-                    ) : (
-                      <div style={{ fontSize: 22, fontFamily: 'var(--font-serif)', color: 'var(--text)', marginTop: 2 }}>{pendingOutfit.name}</div>
                     )}
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
-                      {pieceCount} piece{pieceCount === 1 ? '' : 's'}
-                      {pendingOutfit.occasion ? ` · ${pendingOutfit.occasion.charAt(0).toUpperCase()}${pendingOutfit.occasion.slice(1)}` : ''}
-                      {pendingOutfit.season ? ` · ${pendingOutfit.season.charAt(0).toUpperCase()}${pendingOutfit.season.slice(1)}` : ''}
+                    <div style={{ minWidth: 0 }}>
+                      {pendingOutfit.id ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/outfits?outfitId=${pendingOutfit.id}`)}
+                          title="Open this outfit's card in Lookbook"
+                          style={{ display: 'block', padding: 0, border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontSize: 14, fontWeight: 650, color: 'var(--text)', textDecoration: 'underline', textDecorationColor: 'transparent', textUnderlineOffset: 3, transition: 'text-decoration-color 0.15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.textDecorationColor = 'var(--border)' }}
+                          onMouseLeave={e => { e.currentTarget.style.textDecorationColor = 'transparent' }}
+                        >
+                          {pendingOutfit.name}
+                        </button>
+                      ) : (
+                        <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text)' }}>{pendingOutfit.name}</div>
+                      )}
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+                        {pieceCount} piece{pieceCount === 1 ? '' : 's'}
+                        {pendingOutfit.occasion ? ` · ${pendingOutfit.occasion.charAt(0).toUpperCase()}${pendingOutfit.occasion.slice(1)}` : ''}
+                        {pendingOutfit.season ? ` · ${pendingOutfit.season.charAt(0).toUpperCase()}${pendingOutfit.season.slice(1)}` : ''}
+                      </div>
                     </div>
                   </div>
                 </div>
               }
               sectionLabel="What would you like to do?"
               footer={
-                <>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span aria-hidden="true">🛡</span> Your outfit and wardrobe stay private.
-                  </div>
-                  <button
-                    type="button"
-                    className="chip"
-                    style={{ color: 'var(--text)', fontWeight: 600, borderColor: 'var(--border)' }}
-                    onClick={() => { setPendingOutfit(null); setInput('') }}
-                  >
-                    Back to chat
-                  </button>
-                </>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span aria-hidden="true">🛡</span> Your outfit and wardrobe stay private.
+                </div>
               }
             >
               <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-muted)' }}>
