@@ -62,13 +62,13 @@ const wardrobeBuilderControlStyle = {
 }
 
 const wardrobeBuilderPanelBaseStyle = {
-  padding: '10px 12px',
+  padding: '20px 22px',
   border: '1px solid var(--border)',
   borderRadius: 'var(--radius-sm)',
   background: 'var(--surface)',
   boxShadow: '0 6px 16px rgba(0, 0, 0, 0.06)',
   display: 'grid',
-  gap: 8,
+  gap: 16,
 }
 
 const STYLE_DIRECTION_LEGEND = [
@@ -4375,13 +4375,13 @@ export default function StylistChat({
     if (!recentMemoryItemCount) {
       if (!recentMemoryConfirmation) return null
       return (
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{recentMemoryConfirmation}</div>
+        <div style={{ fontSize: 12, color: 'color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%)' }}>{recentMemoryConfirmation}</div>
       )
     }
     return (
       <div
         title="Recently shown wardrobe items are temporarily de-prioritized so new generated outfits do not repeat them too soon."
-        style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
+        style={{ fontSize: 12, color: 'color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%)', whiteSpace: 'nowrap' }}
       >
         Skipping {recentMemoryItemCount} recently used {recentMemoryItemCount === 1 ? 'piece' : 'pieces'}{' · '}
         <button
@@ -4414,14 +4414,14 @@ export default function StylistChat({
     })
   }, [wardrobeBuilderOpen])
 
-  const wardrobeBuilderFieldLabelStyle = { fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 3 }
+  const wardrobeBuilderFieldLabelStyle = { fontSize: 11.5, fontWeight: 600, color: 'color-mix(in srgb, var(--text) 68%, var(--text-muted) 32%)', marginBottom: 6 }
 
   const renderWardrobeBuilderPanel = (style = {}) => (
     <div style={{ ...wardrobeBuilderPanelBaseStyle, ...style }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 220, flex: '1 1 280px' }}>
           <h2 id="outfit-builder-composer-title" style={{ fontSize: 15.5, fontWeight: 650, color: 'var(--text)', margin: 0 }}>Create outfits from my wardrobe</h2>
-          <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--text-muted)', marginTop: 6, marginBottom: 4 }}>Create distinct outfit ideas from pieces you already own. Choose the occasion, season, and mood, then explore several ways to dress for it.</div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%)', marginTop: 6 }}>Create distinct outfit ideas from pieces you already own. Choose the occasion, season, and mood, then explore several ways to dress for it.</div>
         </div>
         <button
           type="button"
@@ -4434,7 +4434,7 @@ export default function StylistChat({
         </button>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
         <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
           <select ref={wardrobeBuilderFirstFieldRef} value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
