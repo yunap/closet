@@ -350,8 +350,6 @@ export default function StylistChat({
   const [renamingThreadId, setRenamingThreadId] = useState(null)
   const [renamingTitle, setRenamingTitle] = useState('')
   const [pendingPieceMode, setPendingPieceMode] = useState('wardrobe')
-  const [occasionMenuOpen, setOccasionMenuOpen] = useState(false)
-  const [seasonMenuOpen, setSeasonMenuOpen] = useState(false)
   const [imageFile, setImageFile] = useState(null)
   const [imagePrev, setImagePrev] = useState(null)
   const [pendingOutfit, setPendingOutfit] = useState(null)
@@ -372,8 +370,6 @@ export default function StylistChat({
   const [generateMission, setGenerateMission] = useState('mix')
   const [generateMood, setGenerateMood] = useState('')
   const [generateActivity, setGenerateActivity] = useState('none')
-  const [missionMenuOpen, setMissionMenuOpen] = useState(false)
-  const [activityMenuOpen, setActivityMenuOpen] = useState(false)
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
   const [wardrobeOutfitMood, setWardrobeOutfitMood] = useState('')
@@ -5154,405 +5150,168 @@ export default function StylistChat({
         <div ref={bottomRef} />
       </div>
 
-      {pendingPiece && (
-        <div ref={pendingActionRef} style={{ margin: '0 16px 8px', padding: '12px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          {pendingPhoto && (() => {
-            const pendingPhotoSrc = resolveUploadImageSrc(pendingPhoto)
-            return pendingPhotoSrc ? (
-            <button
-              type="button"
-              onClick={() => setPreviewImage({
-                src: pendingPhotoSrc,
-                title: pendingPiece.name || 'Piece',
-                meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
-              })}
-              style={{
-                padding: 0,
-                border: 0,
-                background: 'transparent',
-                borderRadius: 6,
-                overflow: 'hidden',
-                cursor: 'zoom-in',
-                display: 'block',
-                width: 48,
-                height: 48,
-                flexShrink: 0
-              }}
-              aria-label="Preview pending outfit photo"
-            >
-              <img src={pendingPhotoSrc} alt={pendingPiece.name} style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
-            </button>
-            ) : null
-          })()}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>Anchor piece</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pendingPiece.name}</div>
-            {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
-            {pendingPiece && (
-              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
-                  Using this as the anchor piece for the next styling request.
-                </div>
-                <div style={{ display: 'grid', gap: 5 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Context</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  <div className="custom-select-container">
+      {pendingPiece && (() => {
+        const pendingPhotoSrc = pendingPhoto ? resolveUploadImageSrc(pendingPhoto) : null
+        const closePendingPiece = () => { setPendingPiece(null); setGenerateOutfitMode(false); setEditorialVisualMode(false); setIdealOnlyMode(false); setInput('') }
+        return (
+          <div ref={pendingActionRef}>
+            <StylistLandingPanel
+              header={
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                    <div style={{ fontSize: 22, fontFamily: 'var(--font-serif)', color: 'var(--text)' }}>Work with this piece</div>
                     <button
                       type="button"
-                      className={`custom-select-btn ${occasionMenuOpen ? 'active' : ''}`}
-                      style={{
-                        height: 32,
-                        minWidth: '100%',
-                        borderRadius: 8,
-                        padding: '0 10px',
-                        fontSize: 12,
-                        border: '1px solid var(--border)',
-                        background: 'var(--surface)',
-                        color: 'var(--text)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOccasionMenuOpen(!occasionMenuOpen);
-                        setSeasonMenuOpen(false);
-                        setMissionMenuOpen(false);
-                        setActivityMenuOpen(false);
-                      }}
+                      className="chip"
+                      style={{ color: 'var(--text)', fontWeight: 600, borderColor: 'var(--border)', flexShrink: 0 }}
+                      onClick={closePendingPiece}
                     >
-                      <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
-                        {generateOccasion}
-                      </span>
-                      <span className="custom-select-arrow">▾</span>
+                      Back to chat
                     </button>
-                    {occasionMenuOpen && (
-                      <>
-                        <div className="custom-select-backdrop" onClick={() => setOccasionMenuOpen(false)} />
-                        <div className="custom-select-dropdown" style={{ minWidth: 150, fontSize: 12, left: 0, right: 'auto' }}>
-                          {OCCASION_OPTIONS.map(([val, label]) => (
-                            <button
-                              key={val}
-                              type="button"
-                              className={`custom-select-option ${generateOccasion === val ? 'active' : ''}`}
-                              style={{ textTransform: 'capitalize' }}
-                              onClick={() => {
-                                setGenerateOccasion(val);
-                                setOccasionMenuOpen(false);
-                              }}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
                   </div>
-
-                  <div className="custom-select-container">
-                    <button
-                      type="button"
-                      className={`custom-select-btn ${activityMenuOpen ? 'active' : ''}`}
-                      style={{
-                        height: 32,
-                        minWidth: '100%',
-                        borderRadius: 8,
-                        padding: '0 10px',
-                        fontSize: 12,
-                        border: '1px solid var(--border)',
-                        background: 'var(--surface)',
-                        color: 'var(--text)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActivityMenuOpen(!activityMenuOpen);
-                        setOccasionMenuOpen(false);
-                        setSeasonMenuOpen(false);
-                        setMissionMenuOpen(false);
-                      }}
-                    >
-                      <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
-                        {ACTIVITY_OPTIONS.find(opt => opt[0] === generateActivity)?.[1] || generateActivity}
-                      </span>
-                      <span className="custom-select-arrow">▾</span>
-                    </button>
-                    {activityMenuOpen && (
-                      <>
-                        <div className="custom-select-backdrop" onClick={() => setActivityMenuOpen(false)} />
-                        <div className="custom-select-dropdown" style={{ minWidth: 150, fontSize: 12, left: 0, right: 'auto' }}>
-                          {ACTIVITY_OPTIONS.map(([val, label]) => (
-                            <button
-                              key={val}
-                              type="button"
-                              className={`custom-select-option ${generateActivity === val ? 'active' : ''}`}
-                              onClick={() => {
-                                setGenerateActivity(val);
-                                setActivityMenuOpen(false);
-                              }}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </>
+                  <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 14 }}>
+                    {pendingPhotoSrc && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage({
+                          src: pendingPhotoSrc,
+                          title: pendingPiece.name || 'Piece',
+                          meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
+                        })}
+                        style={{ padding: 0, border: 0, background: 'transparent', borderRadius: 8, overflow: 'hidden', cursor: 'zoom-in', display: 'block', width: 80, height: 96, flexShrink: 0 }}
+                        aria-label="Preview piece photo"
+                      >
+                        <img src={pendingPhotoSrc} alt={pendingPiece.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', background: 'var(--surface-2)' }} />
+                      </button>
                     )}
-                  </div>
-
-                  <div className="custom-select-container">
-                    <button
-                      type="button"
-                      className={`custom-select-btn ${seasonMenuOpen ? 'active' : ''}`}
-                      style={{
-                        height: 32,
-                        minWidth: '100%',
-                        borderRadius: 8,
-                        padding: '0 10px',
-                        fontSize: 12,
-                        border: '1px solid var(--border)',
-                        background: 'var(--surface)',
-                        color: 'var(--text)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSeasonMenuOpen(!seasonMenuOpen);
-                        setOccasionMenuOpen(false);
-                        setMissionMenuOpen(false);
-                        setActivityMenuOpen(false);
-                      }}
-                    >
-                      <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
-                        {generateSeason.startsWith('early spring') ? 'Early spring' : generateSeason}
-                      </span>
-                      <span className="custom-select-arrow">▾</span>
-                    </button>
-                    {seasonMenuOpen && (
-                      <>
-                        <div className="custom-select-backdrop" onClick={() => setSeasonMenuOpen(false)} />
-                        <div className="custom-select-dropdown" style={{ minWidth: 165, fontSize: 12, left: 'auto', right: 0 }}>
-                          {[
-                            { value: 'current season', label: 'Current season' },
-                            { value: 'early spring / cool mild weather', label: 'Early spring' },
-                            { value: 'spring', label: 'Spring' },
-                            { value: 'summer', label: 'Summer' },
-                            { value: 'fall', label: 'Fall' },
-                            { value: 'winter', label: 'Winter' },
-                            { value: 'hot weather', label: 'Very hot weather' },
-                            { value: 'cold weather', label: 'Very cold weather' },
-                            { value: 'year-round', label: 'Year-round' }
-                          ].map(s => (
-                            <button
-                              key={s.value}
-                              type="button"
-                              className={`custom-select-option ${generateSeason === s.value ? 'active' : ''}`}
-                              onClick={() => {
-                                setGenerateSeason(s.value);
-                                setSeasonMenuOpen(false);
-                              }}
-                            >
-                              {s.label}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <div className="custom-select-container">
-                    <button
-                      type="button"
-                      className={`custom-select-btn ${missionMenuOpen ? 'active' : ''}`}
-                      style={{
-                        height: 32,
-                        minWidth: '100%',
-                        borderRadius: 8,
-                        padding: '0 10px',
-                        fontSize: 12,
-                        border: '1px solid var(--border)',
-                        background: 'var(--surface)',
-                        color: 'var(--text)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMissionMenuOpen(!missionMenuOpen);
-                        setOccasionMenuOpen(false);
-                        setSeasonMenuOpen(false);
-                        setActivityMenuOpen(false);
-                      }}
-                    >
-                      <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>
-                        {{
-                          mix: 'Mix of missions',
-                          controlled_print: 'Controlled Print',
-                          monochrome_texture: 'Monochrome Texture',
-                          structured_soft: 'Structured + Soft',
-                          color_anchor: 'Color Anchor',
-                          unexpected_pairing: 'Unexpected Pairing',
-                          soft_architecture: 'Soft Architecture'
-                        }[generateMission] || generateMission}
-                      </span>
-                      <span className="custom-select-arrow">▾</span>
-                    </button>
-                    {missionMenuOpen && (
-                      <>
-                        <div className="custom-select-backdrop" onClick={() => setMissionMenuOpen(false)} />
-                        <div className="custom-select-dropdown" style={{ minWidth: 165, fontSize: 12, left: 0, right: 'auto' }}>
-                          {[
-                            { value: 'mix', label: 'Mix of missions' },
-                            { value: 'controlled_print', label: 'Controlled Print' },
-                            { value: 'monochrome_texture', label: 'Monochrome Texture' },
-                            { value: 'structured_soft', label: 'Structured + Soft' },
-                            { value: 'color_anchor', label: 'Color Anchor' },
-                            { value: 'unexpected_pairing', label: 'Unexpected Pairing' },
-                            { value: 'soft_architecture', label: 'Soft Architecture' }
-                          ].map(m => (
-                            <button
-                              key={m.value}
-                              type="button"
-                              className={`custom-select-option ${generateMission === m.value ? 'active' : ''}`}
-                              onClick={() => {
-                                setGenerateMission(m.value);
-                                setMissionMenuOpen(false);
-                              }}
-                            >
-                              {m.label}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
+                    <div style={{ minWidth: 0 }}>
+                      {pendingPiece.id ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/wardrobe?pieceId=${pendingPiece.id}`)}
+                          title="Open this piece's card in the Wardrobe"
+                          style={{ display: 'block', padding: 0, border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontSize: 14, fontWeight: 650, color: 'var(--text)', textDecoration: 'underline', textDecorationColor: 'transparent', textUnderlineOffset: 3, transition: 'text-decoration-color 0.15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.textDecorationColor = 'var(--border)' }}
+                          onMouseLeave={e => { e.currentTarget.style.textDecorationColor = 'transparent' }}
+                        >
+                          {pendingPiece.name}
+                        </button>
+                      ) : (
+                        <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text)' }}>{pendingPiece.name}</div>
+                      )}
+                      <span style={{ display: 'inline-flex', marginTop: 5, padding: '3px 8px', borderRadius: 999, fontSize: 11, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-muted)' }}>Anchor piece</span>
+                      {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>Every outfit will include this piece.</div>
+                    </div>
                   </div>
                 </div>
-
-                <div style={{ display: 'grid', gap: 5 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Mood</div>
-                  <input
-                    type="text"
-                    value={generateMood}
-                    onChange={e => setGenerateMood(e.target.value)}
-                    placeholder="Optional mood: casual, polished, not too dressy..."
-                    style={{
-                      height: 34,
-                      width: '100%',
-                      borderRadius: 8,
-                      padding: '0 10px',
-                      fontSize: 12,
-                      border: '1px solid var(--border)',
-                      background: 'var(--surface)',
-                      color: 'var(--text)',
-                      fontFamily: 'var(--font-sans)',
-                      outline: 'none',
-                      boxSizing: 'border-box'
+              }
+              sectionLabel="How would you like to proceed?"
+              footer={
+                <>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {pendingPieceMode === 'wardrobe' ? "We'll create several distinct looks around your anchor piece." : "We'll suggest new pieces that pair well with this one."}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (pendingPieceMode === 'wardrobe') {
+                        send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false })
+                      } else {
+                        send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true })
+                      }
                     }}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gap: 5 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Mode</div>
-                  <div style={{
-                    display: 'flex',
-                    background: 'var(--surface-2)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 20,
-                    padding: 3,
-                    position: 'relative',
-                    width: '100%',
-                    userSelect: 'none'
-                  }}>
-                    <div style={{
-                      position: 'absolute',
-                      top: 3,
-                      bottom: 3,
-                      left: pendingPieceMode === 'wardrobe' ? 3 : 'calc(50% + 1px)',
-                      width: 'calc(50% - 4px)',
-                      background: 'var(--accent)',
-                      borderRadius: 17,
-                      zIndex: 1,
-                      transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                    }} />
-                    <button
-                      type="button"
-                      onClick={() => setPendingPieceMode('wardrobe')}
-                      style={{
-                        flex: 1,
-                        textAlign: 'center',
-                        padding: '7px 0',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        fontFamily: 'var(--font-sans)',
-                        color: pendingPieceMode === 'wardrobe' ? '#fff' : 'var(--text-muted)',
-                        background: 'transparent',
-                        border: 'none',
-                        cursor: 'pointer',
-                        zIndex: 2,
-                        transition: 'color 0.15s ease'
-                      }}
-                    >
-                      Style with wardrobe
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPendingPieceMode('ideal')}
-                      style={{
-                        flex: 1,
-                        textAlign: 'center',
-                        padding: '7px 0',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        fontFamily: 'var(--font-sans)',
-                        color: pendingPieceMode === 'ideal' ? '#fff' : 'var(--text-muted)',
-                        background: 'transparent',
-                        border: 'none',
-                        cursor: 'pointer',
-                        zIndex: 2,
-                        transition: 'color 0.15s ease'
-                      }}
-                    >
-                      Suggest new pieces
-                    </button>
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    if (pendingPieceMode === 'wardrobe') {
-                      send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false });
-                    } else {
-                      send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true });
-                    }
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '9px 12px',
-                    borderRadius: 8,
-                    border: '1px solid var(--accent)',
-                    background: 'var(--accent)',
-                    color: '#fff',
-                    fontSize: 12,
-                    fontWeight: 650,
-                    fontFamily: 'var(--font-sans)',
-                    cursor: 'pointer',
-                    textAlign: 'center',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  {pendingPieceMode === 'wardrobe' ? 'Create outfits with this piece' : 'Suggest new pieces for this item'}
-                </button>
+                    style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 650, cursor: 'pointer' }}
+                  >
+                    {pendingPieceMode === 'wardrobe' ? 'Generate outfits around this piece' : 'Suggest new pieces for this item'}
+                  </button>
+                </>
+              }
+            >
+              <div className="stylist-option-grid">
+                <OptionCard
+                  variant="radio"
+                  selected={pendingPieceMode === 'wardrobe'}
+                  title="Create outfits from my wardrobe"
+                  description="Build several distinct looks around this piece using garments I already own."
+                  onClick={() => setPendingPieceMode('wardrobe')}
+                />
+                <OptionCard
+                  variant="radio"
+                  selected={pendingPieceMode === 'ideal'}
+                  title="Suggest new pieces"
+                  description="Explore additions that would make this piece easier or more interesting to wear."
+                  onClick={() => setPendingPieceMode('ideal')}
+                />
               </div>
-            )}
+
+              <div className="stylist-landing-section-label">Add context</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                <div style={{ flex: '1 1 120px' }}>
+                  <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
+                  <select value={generateOccasion} onChange={e => setGenerateOccasion(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
+                    {OCCASION_OPTIONS.map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: '1.3 1 150px' }}>
+                  <div style={wardrobeBuilderFieldLabelStyle}>Activity</div>
+                  <select value={generateActivity} onChange={e => setGenerateActivity(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
+                    {ACTIVITY_OPTIONS.map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: '1 1 120px' }}>
+                  <div style={wardrobeBuilderFieldLabelStyle}>Season</div>
+                  <select value={generateSeason} onChange={e => setGenerateSeason(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
+                    <option value="current season">Current season</option>
+                    <option value="early spring / cool mild weather">Early spring</option>
+                    <option value="spring">Spring</option>
+                    <option value="summer">Summer</option>
+                    <option value="fall">Fall</option>
+                    <option value="winter">Winter</option>
+                    <option value="hot weather">Very hot weather</option>
+                    <option value="cold weather">Very cold weather</option>
+                    <option value="year-round">Year-round</option>
+                  </select>
+                </div>
+                <div style={{ flex: '1.4 1 165px' }}>
+                  <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span>Style direction</span>
+                    <InfoTooltip label="What the style direction options mean" align="left" size="sm">
+                      {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
+                        <div key={label}><strong>{label}</strong> — {desc}</div>
+                      ))}
+                    </InfoTooltip>
+                  </div>
+                  <select value={generateMission} onChange={e => setGenerateMission(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
+                    <option value="mix">Mix of style directions</option>
+                    <option value="controlled_print">Controlled Print</option>
+                    <option value="monochrome_texture">Monochrome Texture</option>
+                    <option value="structured_soft">Structured + Soft</option>
+                    <option value="color_anchor">Color Anchor</option>
+                    <option value="unexpected_pairing">Unexpected Pairing</option>
+                    <option value="soft_architecture">Soft Architecture</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <div style={wardrobeBuilderFieldLabelStyle}>Mood or styling request</div>
+                <input
+                  type="text"
+                  value={generateMood}
+                  onChange={e => setGenerateMood(e.target.value)}
+                  placeholder="Optional mood or styling note..."
+                  style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
+                />
+              </div>
+            </StylistLandingPanel>
           </div>
-          <button onClick={() => { setPendingPiece(null); setGenerateOutfitMode(false); setEditorialVisualMode(false); setIdealOnlyMode(false); setInput('') }} style={{ color: 'var(--text-muted)', fontSize: 16, flexShrink: 0 }}>✕</button>
-        </div>
-      )}
+        )
+      })()}
 
       {pendingOutfit && (() => {
         const pendingPhotoSrc = pendingPhoto ? resolveUploadImageSrc(pendingPhoto) : null
