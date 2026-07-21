@@ -2102,6 +2102,7 @@ img { display: block; max-width: 100%; }
 }
 .stylist-chat-scroll.has-pending-action {
   max-height: none;
+  padding-top: 8px;
 }
 
 .stylist-empty-state {
@@ -2281,7 +2282,7 @@ img { display: block; max-width: 100%; }
 }
 
 .stylist-landing-panel {
-  margin: 0 16px 8px;
+  margin: 44px 16px 8px;
   padding: 20px 22px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -2299,6 +2300,12 @@ img { display: block; max-width: 100%; }
   color: color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%);
 }
 
+.stylist-landing-section-label--divider {
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
 .stylist-landing-body {
   display: grid;
   gap: 12px;
@@ -2310,26 +2317,40 @@ img { display: block; max-width: 100%; }
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
 }
 
 .stylist-option-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .stylist-option-card {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
   text-align: left;
-  padding: 14px 16px;
+  padding: 18px 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.stylist-option-card.is-radio {
+  flex-direction: column;
+  padding: 22px 22px 26px;
+  min-height: 168px;
+}
+
+.stylist-option-card-top-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stylist-option-card.is-radio .stylist-option-card-text {
+  margin-left: 24px;
 }
 
 .stylist-option-card:hover {
@@ -2356,7 +2377,7 @@ img { display: block; max-width: 100%; }
 
 .stylist-option-card.is-radio.is-selected {
   border-color: var(--accent);
-  background: var(--accent-light);
+  box-shadow: 0 0 0 1px var(--accent) inset;
 }
 
 .stylist-option-card-radio {
@@ -2376,6 +2397,15 @@ img { display: block; max-width: 100%; }
 .stylist-option-card-icon {
   font-size: 18px;
   flex-shrink: 0;
+  display: flex;
+}
+
+.stylist-option-card-icon svg {
+  display: block;
+}
+
+.stylist-option-card-top-row .stylist-option-card-radio {
+  margin-top: 0;
 }
 
 .stylist-option-card-text {
@@ -2384,7 +2414,7 @@ img { display: block; max-width: 100%; }
 }
 
 .stylist-option-card-title {
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 650;
   color: var(--text);
 }

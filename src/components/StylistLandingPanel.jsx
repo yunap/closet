@@ -9,7 +9,7 @@ export default function StylistLandingPanel({ header, sectionLabel, children, fo
   return (
     <div className="stylist-landing-panel">
       {header && <div className="stylist-landing-header">{header}</div>}
-      {sectionLabel && <div className="stylist-landing-section-label">{sectionLabel}</div>}
+      {sectionLabel && <div className="stylist-landing-section-label stylist-landing-section-label--divider">{sectionLabel}</div>}
       <div className="stylist-landing-body">{children}</div>
       {footer && <div className="stylist-landing-footer">{footer}</div>}
     </div>
