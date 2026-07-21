@@ -487,18 +487,16 @@ img { display: block; max-width: 100%; }
   left: auto;
 }
 
-.wardrobe-sort-info {
+.info-tooltip {
   position: relative;
+  display: inline-flex;
 }
 
-.wardrobe-sort-info-trigger {
-  width: 28px;
-  height: 28px;
+.info-tooltip-trigger {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: #F5F0E9;
   color: #8F7F70;
-  font-size: 13px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -507,25 +505,62 @@ img { display: block; max-width: 100%; }
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.wardrobe-sort-info-trigger:hover,
-.wardrobe-sort-info-trigger.active {
+.info-tooltip-trigger.size-md {
+  width: 28px;
+  height: 28px;
+  font-size: 13px;
+}
+
+.info-tooltip-trigger.size-sm {
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+}
+
+.info-tooltip-trigger:hover,
+.info-tooltip-trigger.active {
   color: var(--accent);
   background: var(--accent-light);
   border-color: var(--accent);
 }
 
-.wardrobe-sort-info-trigger:focus-visible {
+.info-tooltip-trigger:focus-visible {
   outline: 2px solid #1f6feb;
   outline-offset: 2px;
 }
 
-.filter-menu-popover.wardrobe-sort-info-popover {
-  right: 0;
-  left: auto;
-  width: 260px;
+.info-tooltip-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 101;
   padding: 10px 12px;
   font-size: 12px;
+  font-weight: 400;
   line-height: 1.5;
+  color: var(--text);
+  background: rgba(254, 252, 249, 0.98);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  animation: dropdownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.info-tooltip-popover > div + div {
+  margin-top: 6px;
+}
+
+.info-tooltip-popover.align-right {
+  right: 0;
+  left: auto;
+}
+
+.info-tooltip-popover.align-left {
+  left: 0;
+  right: auto;
+}
+
+.info-tooltip-popover strong {
+  font-weight: 650;
   color: var(--text);
 }
 

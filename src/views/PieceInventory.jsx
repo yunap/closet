@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import PieceCard from '../components/PieceCard'
+import InfoTooltip from '../components/InfoTooltip'
 import PieceForm from '../components/PieceForm'
 import PieceDetail from '../components/PieceDetail'
 import BatchAdd from '../components/BatchAdd'
@@ -518,24 +519,16 @@ export default function PieceInventory({ onSendToStylist }) {
               )}
             </div>
 
-            <div className="wardrobe-sort-info">
-              <button
-                type="button"
-                className={`wardrobe-sort-info-trigger ${openFilterMenu === 'sortInfo' ? 'active' : ''}`}
-                onClick={() => setOpenFilterMenu(openFilterMenu === 'sortInfo' ? null : 'sortInfo')}
-                aria-expanded={openFilterMenu === 'sortInfo'}
-                aria-label="What Most worn and Recently used mean"
-              >
-                ⓘ
-              </button>
-              {openFilterMenu === 'sortInfo' && (
-                <div className="filter-menu-popover wardrobe-sort-info-popover" role="tooltip">
-                  <strong>Most worn</strong> and <strong>Recently used</strong> reflect pieces
-                  referenced in saved Visual Composer boards or Stylist chat outfits — not
-                  real-world wear, which the app has no way to track.
-                </div>
-              )}
-            </div>
+            <InfoTooltip
+              label="What Most worn and Recently used mean"
+              align="right"
+              open={openFilterMenu === 'sortInfo'}
+              onToggle={(next) => setOpenFilterMenu(next ? 'sortInfo' : null)}
+            >
+              <strong>Most worn</strong> and <strong>Recently used</strong> reflect pieces
+              referenced in saved Visual Composer boards or Stylist chat outfits — not
+              real-world wear, which the app has no way to track.
+            </InfoTooltip>
           </div>
         </div>
 
