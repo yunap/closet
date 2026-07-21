@@ -3798,6 +3798,7 @@ export default function StylistChat({
       let replyText
       let replyStructuredOutfits = null
       let replyWardrobeEvaluation = false
+      let replyEvaluationResponseMode = 'full'
       let replyOutfitName = null
       let replyDebug = null
       let replyMode = null
@@ -3898,7 +3899,9 @@ export default function StylistChat({
         const outfitPieceIds = Array.isArray(outfitToSend.pieces)
           ? outfitToSend.pieces.map(p => p?.id).filter(Boolean)
           : []
-        const priorEvaluationText = outfitToSend.threadMemory?.latestEvaluationText || ''
+        const priorEvaluationText = (threadMemory?.type === 'outfit' && String(threadMemory?.id) === String(outfitToSend.id))
+          ? (threadMemory.latestEvaluationText || '')
+          : ''
         const shouldAttachOutfitPhoto = outfitToSend.attachVisualContext !== false
         const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
           method: 'POST',
@@ -3919,6 +3922,7 @@ export default function StylistChat({
             season: outfitToSend.season || effectiveGenerateSeason,
             mood: wardrobeOutfitMood,
             previousEvaluation: priorEvaluationText,
+            responseMode: overrides.responseMode || 'full',
             question: q || 'Evaluate this outfit.'
           })
         })
@@ -3930,6 +3934,7 @@ export default function StylistChat({
           replyText = '⚠️ _Evaluated from outfit description only — no image was available for this board._\n\n' + replyText
         }
         replyWardrobeEvaluation = true
+        replyEvaluationResponseMode = overrides.responseMode || 'full'
         replyOutfitName = outfitToSend.name
         replyDebug = data.debug || null
         nextThreadMemory = {
@@ -4231,6 +4236,7 @@ export default function StylistChat({
         structuredOutfits: replyStructuredOutfits,
         wholeWardrobe: replyWholeWardrobe,
         wardrobeEvaluation: replyWardrobeEvaluation,
+        evaluationResponseMode: replyEvaluationResponseMode,
         textOnly: replyWardrobeEvaluation,
         outfitName: replyOutfitName,
         debug: replyDebug,
@@ -4829,7 +4835,7 @@ export default function StylistChat({
                 }
                 const multi = isMultiOutfitResponse(m)
                 const hasBoards = Boolean(boardResults[i]?.length)
-                if (m.role === 'assistant' && m.wardrobeEvaluation) {
+                if (m.role === 'assistant' && m.wardrobeEvaluation && m.evaluationResponseMode !== 'followup') {
                   return (
                     <div className={`ai-message ${m.role}`} style={{ padding: '12px 14px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
                       <details open={true} style={{ width: '100%' }}>
@@ -5384,7 +5390,7 @@ export default function StylistChat({
                   accent
                   title="Critique outfit"
                   description="Get feedback on what works, what could be improved, and why."
-                  onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.' })}
+                  onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', responseMode: 'full' })}
                 />
                 <OptionCard
                   title="Find similar"
@@ -5403,13 +5409,13 @@ export default function StylistChat({
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send() } }}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send({ responseMode: 'followup' }) } }}
                   placeholder="Ask about shoes, proportions, occasion, or how to change the look…"
                   style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-sans)' }}
                 />
                 <button
                   type="button"
-                  onClick={() => send()}
+                  onClick={() => send({ responseMode: 'followup' })}
                   disabled={loading || !input.trim()}
                   style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 650, cursor: loading || !input.trim() ? 'default' : 'pointer', opacity: loading || !input.trim() ? 0.65 : 1 }}
                 >
