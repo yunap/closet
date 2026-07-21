@@ -147,6 +147,21 @@ export default function PieceInventory({ onSendToStylist }) {
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => { const t = setTimeout(fetchPieces, 300); return () => clearTimeout(t) }, [search])
 
+  // Deep link from elsewhere in the app (e.g. the Stylist piece landing) straight
+  // into this piece's detail card. One-shot: the param is consumed and cleared so
+  // closing the modal and reloading doesn't reopen it.
+  useEffect(() => {
+    const pieceId = searchParams.get('pieceId')
+    if (!pieceId || !pieces.length) return
+    const match = pieces.find(p => String(p.id) === String(pieceId))
+    if (match) setDetailPiece(match)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('pieceId')
+      return next
+    }, { replace: true })
+  }, [pieces, searchParams, setSearchParams])
+
   // Sorting is applied client-side over the already-filtered `pieces` list —
   // the server keeps its own default order (favorite, date_added), and the
   // sort modes here are pure reorderings of that same result set. "Used"/"worn"
