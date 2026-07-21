@@ -4480,7 +4480,7 @@ export default function StylistChat({
               {styleDirectionInfoOpen && (
                 <div ref={styleDirectionInfoPopoverRef} className="filter-menu-popover field-info-popover" role="tooltip">
                   {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
-                    <div key={label}><strong>{label}</strong> — {desc}</div>
+                    <div key={label}><strong style={{ fontWeight: 650, color: 'var(--text)' }}>{label}</strong> — {desc}</div>
                   ))}
                 </div>
               )}
