@@ -18,7 +18,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "NODE_ENV=development PORT=3098 WARDROBE_DB_PATH=$HOME/.wardrobe-sandbox/legacy-wardrobe.db WARDROBE_SYSTEM_DB_PATH=$HOME/.wardrobe-sandbox/system.db WARDROBE_USERS_DIR=$HOME/.wardrobe-sandbox/users WARDROBE_UPLOADS_DIR=$HOME/.wardrobe-sandbox/legacy-uploads node server.js"
+        "NODE_ENV=development PORT=3098 WARDROBE_DB_PATH=$HOME/.wardrobe-sandbox/legacy-wardrobe.db WARDROBE_SYSTEM_DB_PATH=$HOME/.wardrobe-sandbox/system.db WARDROBE_USERS_DIR=$HOME/.wardrobe-sandbox/users WARDROBE_UPLOADS_DIR=$HOME/.wardrobe-sandbox/legacy-uploads WARDROBE_MOCK_AI=true node server.js"
       ],
       "port": 3098
     },

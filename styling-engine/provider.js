@@ -602,8 +602,17 @@ export async function askClaudeWithUsage({ system = prompts.STYLIST_SYSTEM, mess
   }
 }
 
+// Sandbox dev flag: when set, every stylist call short-circuits to canned
+// responses via the same hook the test suite uses (see takeTestAiResponse
+// below), so a dev sandbox can be UI-tested in a browser with no billed
+// provider calls. Never set in production; wardrobe-api's launch config
+// deliberately omits it.
+export function mockAiEnabled() {
+  return String(process.env.WARDROBE_MOCK_AI || 'false').toLowerCase() === 'true'
+}
+
 export function takeTestAiResponse({ system = '', messages = [], maxTokens = 1200 } = {}) {
-  if (process.env.NODE_ENV !== 'test') return null
+  if (process.env.NODE_ENV !== 'test' && !mockAiEnabled()) return null
   const queue = globalThis.__WARDROBE_AI_TEST_RESPONSES__
   if (Array.isArray(queue) && queue.length) {
     const next = queue.shift()
@@ -611,6 +620,10 @@ export function takeTestAiResponse({ system = '', messages = [], maxTokens = 120
   }
   const handler = globalThis.__WARDROBE_AI_TEST_HANDLER__
   if (typeof handler === 'function') return handler({ system, messages, maxTokens })
+  // Belt-and-suspenders: if the mock flag is on but no handler got installed
+  // (e.g. mockAiHandler.js failed to load), still never fall through to a
+  // real, billed provider call.
+  if (mockAiEnabled()) return 'Mock stylist answer (WARDROBE_MOCK_AI is on, no billed AI call was made).'
   return null
 }
 
