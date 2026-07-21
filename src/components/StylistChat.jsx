@@ -62,13 +62,13 @@ const wardrobeBuilderControlStyle = {
 }
 
 const wardrobeBuilderPanelBaseStyle = {
-  padding: 12,
+  padding: '10px 12px',
   border: '1px solid color-mix(in srgb, var(--accent) 28%, var(--border))',
   borderRadius: 'var(--radius-sm)',
   background: '#F4EADF',
   boxShadow: 'inset 3px 0 0 var(--accent), 0 8px 20px rgba(83, 62, 37, 0.08)',
   display: 'grid',
-  gap: 10,
+  gap: 8,
 }
 
 const formatMs = (ms) => {
@@ -396,6 +396,8 @@ export default function StylistChat({
   const textRef = useRef(null)
   const createOutfitsButtonRef = useRef(null)
   const wardrobeBuilderFirstFieldRef = useRef(null)
+  const homeLocationButtonRef = useRef(null)
+  const homeLocationPopoverRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
   const suppressThreadLoadAutosaveRef = useRef(false)
@@ -3579,13 +3581,38 @@ export default function StylistChat({
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Could not save home location')
       setHomeLocation(data.homeLocation || '')
-      setHomeLocationOpen(false)
+      closeHomeLocationPopover()
     } catch (err) {
       triggerToast(`Could not save home location: ${err.message}`)
     } finally {
       setHomeLocationSaving(false)
     }
   }
+
+  const closeHomeLocationPopover = () => {
+    setHomeLocationOpen(false)
+    requestAnimationFrame(() => {
+      homeLocationButtonRef.current?.focus()
+    })
+  }
+
+  useEffect(() => {
+    if (!homeLocationOpen) return
+    const handlePointerDown = (e) => {
+      if (homeLocationPopoverRef.current?.contains(e.target)) return
+      if (homeLocationButtonRef.current?.contains(e.target)) return
+      closeHomeLocationPopover()
+    }
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') closeHomeLocationPopover()
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [homeLocationOpen])
 
   const send = async (overrides = {}) => {
     const q = (overrides.input ?? input).trim()
@@ -4351,65 +4378,82 @@ export default function StylistChat({
     })
   }, [wardrobeBuilderOpen])
 
+  const wardrobeBuilderFieldLabelStyle = { fontSize: 10, color: 'var(--text-light)', marginBottom: 2 }
+
   const renderWardrobeBuilderPanel = (style = {}) => (
     <div style={{ ...wardrobeBuilderPanelBaseStyle, ...style }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 220, flex: '1 1 280px' }}>
           <h2 id="outfit-builder-composer-title" style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)', margin: 0 }}>Create outfits from my wardrobe</h2>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Choose the occasion, season, mood, and styling direction.</div>
-          <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 5 }}>
-            {pieces.length} pieces{chatHistory.length > 0 ? ` · ${Math.ceil(chatHistory.length / 2)} exchanges` : ''}
-          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Choose the occasion, season, mood, and styling direction.</div>
         </div>
         <button
           type="button"
           onClick={closeWardrobeBuilderComposer}
           className="chip"
           style={{ marginTop: 0, background: 'var(--surface)', fontSize: 11, padding: '6px 10px' }}
-          aria-label="Close outfit builder"
+          aria-label="Back to chat"
         >
-          Close
+          Back to chat
         </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))', gap: 6 }}>
-        <select ref={wardrobeBuilderFirstFieldRef} value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={wardrobeBuilderControlStyle}>
-          {OCCASION_OPTIONS.map(([val, label]) => (
-            <option key={val} value={val}>{label}</option>
-          ))}
-        </select>
-        <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={wardrobeBuilderControlStyle}>
-          {ACTIVITY_OPTIONS.map(([val, label]) => (
-            <option key={val} value={val}>{label}</option>
-          ))}
-        </select>
-        <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={wardrobeBuilderControlStyle}>
-          <option value="current season">Current season</option>
-          <option value="spring">Spring</option>
-          <option value="summer">Summer</option>
-          <option value="fall">Fall</option>
-          <option value="winter">Winter</option>
-          <option value="hot weather">Very hot weather</option>
-          <option value="cold weather">Very cold weather</option>
-        </select>
-        <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={wardrobeBuilderControlStyle}>
-          <option value="mix">Mix of missions</option>
-          <option value="controlled_print">Controlled Print</option>
-          <option value="monochrome_texture">Monochrome Texture</option>
-          <option value="structured_soft">Structured + Soft</option>
-          <option value="color_anchor">Color Anchor</option>
-          <option value="unexpected_pairing">Unexpected Pairing</option>
-          <option value="soft_architecture">Soft Architecture</option>
-        </select>
-        <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood" style={wardrobeBuilderControlStyle} />
+        <div>
+          <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
+          <select ref={wardrobeBuilderFirstFieldRef} value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
+            {OCCASION_OPTIONS.map(([val, label]) => (
+              <option key={val} value={val}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <div style={wardrobeBuilderFieldLabelStyle}>Activity</div>
+          <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
+            {ACTIVITY_OPTIONS.map(([val, label]) => (
+              <option key={val} value={val}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <div style={wardrobeBuilderFieldLabelStyle}>Season</div>
+          <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
+            <option value="current season">Current season</option>
+            <option value="spring">Spring</option>
+            <option value="summer">Summer</option>
+            <option value="fall">Fall</option>
+            <option value="winter">Winter</option>
+            <option value="hot weather">Very hot weather</option>
+            <option value="cold weather">Very cold weather</option>
+          </select>
+        </div>
+        <div>
+          <div style={wardrobeBuilderFieldLabelStyle}>Style direction</div>
+          <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
+            <option value="mix">Different style directions</option>
+            <option value="controlled_print">Controlled Print</option>
+            <option value="monochrome_texture">Monochrome Texture</option>
+            <option value="structured_soft">Structured + Soft</option>
+            <option value="color_anchor">Color Anchor</option>
+            <option value="unexpected_pairing">Unexpected Pairing</option>
+            <option value="soft_architecture">Soft Architecture</option>
+          </select>
+        </div>
+        <div>
+          <div style={wardrobeBuilderFieldLabelStyle}>Mood</div>
+          <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood" style={{ ...wardrobeBuilderControlStyle, width: '100%' }} />
+        </div>
       </div>
 
-      <input
-        value={wardrobeOutfitRequest}
-        onChange={e => setWardrobeOutfitRequest(e.target.value)}
-        placeholder="Styling request (e.g. more everyday, not dressy)"
-        style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
-      />
+      <div>
+        <div style={wardrobeBuilderFieldLabelStyle}>Styling request</div>
+        <input
+          value={wardrobeOutfitRequest}
+          onChange={e => setWardrobeOutfitRequest(e.target.value)}
+          placeholder="e.g. more everyday, not dressy"
+          style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
+        />
+      </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'grid', gap: 4 }}>
@@ -4581,38 +4625,52 @@ export default function StylistChat({
                   Learning{learningRows.length ? ` · ${learningRows.length}` : ''}
                 </button>
               )}
-              <button
-                className="chip"
-                style={{ marginTop: 4 }}
-                onClick={() => { setHomeLocationInput(homeLocation); setHomeLocationOpen(v => !v) }}
-                title="Used as the default location for weather when you don't name a place"
-              >
-                📍 {homeLocation || 'Set location'}
-              </button>
+              <div style={{ position: 'relative' }}>
+                <button
+                  ref={homeLocationButtonRef}
+                  className="chip"
+                  style={{ marginTop: 4, background: 'transparent', border: '1px solid transparent', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}
+                  onClick={() => { setHomeLocationInput(homeLocation); setHomeLocationOpen(v => !v) }}
+                  title="Used for local weather in outfit suggestions"
+                  aria-expanded={homeLocationOpen}
+                  aria-controls="home-location-popover"
+                >
+                  <span aria-hidden="true">📍</span>
+                  <span>Weather location{homeLocation ? ` · ${homeLocation}` : ''}</span>
+                  <span aria-hidden="true" style={{ display: 'inline-block', transition: 'transform 0.15s', transform: homeLocationOpen ? 'rotate(180deg)' : 'rotate(0deg)', fontSize: 10 }}>▾</span>
+                </button>
+                {homeLocationOpen && (
+                  <div
+                    ref={homeLocationPopoverRef}
+                    id="home-location-popover"
+                    role="dialog"
+                    aria-label="Weather location"
+                    style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, width: 260, padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)', display: 'grid', gap: 8, zIndex: 20 }}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Weather location</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Used for local weather in outfit suggestions when you do not name another place.
+                    </div>
+                    <input
+                      type="text"
+                      value={homeLocationInput}
+                      onChange={e => setHomeLocationInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveHomeLocation() }}
+                      placeholder="e.g. Seattle"
+                      style={{ fontSize: 13, padding: '7px 10px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: '100%' }}
+                    />
+                    <button
+                      onClick={saveHomeLocation}
+                      disabled={homeLocationSaving}
+                      style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: homeLocationSaving ? 'default' : 'pointer', opacity: homeLocationSaving ? 0.65 : 1, justifySelf: 'start' }}
+                    >
+                      {homeLocationSaving ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          {homeLocationOpen && (
-            <div style={{ marginTop: 8, padding: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', flex: '1 1 220px' }}>
-                Home location — used for weather when you ask something like "what should I wear today" without naming a place. Leave blank to fall back to a rough date-based guess instead of live weather.
-              </div>
-              <input
-                type="text"
-                value={homeLocationInput}
-                onChange={e => setHomeLocationInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') saveHomeLocation() }}
-                placeholder="e.g. Seattle"
-                style={{ fontSize: 13, padding: '7px 10px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', minWidth: 160 }}
-              />
-              <button
-                onClick={saveHomeLocation}
-                disabled={homeLocationSaving}
-                style={{ fontSize: 12, color: '#fff', padding: '7px 12px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: homeLocationSaving ? 'default' : 'pointer', opacity: homeLocationSaving ? 0.65 : 1 }}
-              >
-                {homeLocationSaving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          )}
         </div>
 
       {/* Learning Panel */}
@@ -4659,17 +4717,19 @@ export default function StylistChat({
                   <p>I can create outfits from your saved pieces or review an outfit photo.</p>
                 </div>
                 {renderComposerDock('is-empty-state')}
-                <div className="stylist-suggestion-section">
-                  <div className="stylist-suggestion-heading">Try asking</div>
-                  <div className="stylist-suggestion-list">
-                    {SUGGESTIONS.map(s => (
-                      <button key={s} type="button" className="stylist-suggestion-btn" onClick={() => setInput(s)}>
-                        <span>{s}</span>
-                        <span className="stylist-suggestion-arrow" aria-hidden="true">→</span>
-                      </button>
-                    ))}
+                {!wardrobeBuilderOpen && (
+                  <div className="stylist-suggestion-section">
+                    <div className="stylist-suggestion-heading">Try asking</div>
+                    <div className="stylist-suggestion-list">
+                      {SUGGESTIONS.map(s => (
+                        <button key={s} type="button" className="stylist-suggestion-btn" onClick={() => setInput(s)}>
+                          <span>{s}</span>
+                          <span className="stylist-suggestion-arrow" aria-hidden="true">→</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </>
             )}
           </div>
