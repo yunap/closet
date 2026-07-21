@@ -57,7 +57,7 @@ const wardrobeBuilderControlStyle = {
   border: '1px solid var(--border)',
   background: 'var(--surface)',
   color: 'var(--text)',
-  fontSize: 12,
+  fontSize: 13.5,
   minHeight: 34,
 }
 
@@ -4375,20 +4375,20 @@ export default function StylistChat({
     if (!recentMemoryItemCount) {
       if (!recentMemoryConfirmation) return null
       return (
-        <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{recentMemoryConfirmation}</div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{recentMemoryConfirmation}</div>
       )
     }
     return (
       <div
         title="Recently shown wardrobe items are temporarily de-prioritized so new generated outfits do not repeat them too soon."
-        style={{ fontSize: 11, color: 'var(--text-light)', whiteSpace: 'nowrap' }}
+        style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
       >
         Skipping {recentMemoryItemCount} recently used {recentMemoryItemCount === 1 ? 'piece' : 'pieces'}{' · '}
         <button
           onClick={resetWholeWardrobeSessionMemory}
           disabled={recentMemoryResetting || loading}
           title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
-          style={{ fontSize: 11, color: 'var(--text-muted)', padding: 0, border: 0, background: 'transparent', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1, textDecoration: 'underline', textUnderlineOffset: 3 }}
+          style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', padding: 0, border: 0, background: 'transparent', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1, textDecoration: 'underline', textUnderlineOffset: 3 }}
         >
           {recentMemoryResetting ? 'Including...' : 'Include them again'}
         </button>
@@ -4414,14 +4414,14 @@ export default function StylistChat({
     })
   }, [wardrobeBuilderOpen])
 
-  const wardrobeBuilderFieldLabelStyle = { fontSize: 10, color: 'var(--text-light)', marginBottom: 2 }
+  const wardrobeBuilderFieldLabelStyle = { fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 3 }
 
   const renderWardrobeBuilderPanel = (style = {}) => (
     <div style={{ ...wardrobeBuilderPanelBaseStyle, ...style }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 220, flex: '1 1 280px' }}>
-          <h2 id="outfit-builder-composer-title" style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)', margin: 0 }}>Create outfits from my wardrobe</h2>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Create distinct outfit ideas from pieces you already own. Choose the occasion, season, and mood, then explore several ways to dress for it.</div>
+          <h2 id="outfit-builder-composer-title" style={{ fontSize: 15.5, fontWeight: 650, color: 'var(--text)', margin: 0 }}>Create outfits from my wardrobe</h2>
+          <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--text-muted)', marginTop: 6, marginBottom: 4 }}>Create distinct outfit ideas from pieces you already own. Choose the occasion, season, and mood, then explore several ways to dress for it.</div>
         </div>
         <button
           type="button"
@@ -4512,11 +4512,11 @@ export default function StylistChat({
         />
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
         <div style={{ display: 'grid', gap: 4 }}>
           <RecentMemoryControls />
           {recentMemoryStatus && (
-            <div style={{ fontSize: 11, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-light)' }}>
+            <div style={{ fontSize: 12, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-muted)' }}>
               {recentMemoryStatus}
             </div>
           )}
@@ -4524,7 +4524,7 @@ export default function StylistChat({
         <button
           onClick={generateWholeWardrobeOutfits}
           disabled={loading}
-          style={{ fontSize: 12, color: '#fff', padding: '8px 14px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1, minHeight: 34 }}
+          style={{ fontSize: 13.5, fontWeight: 600, color: '#fff', padding: '8px 14px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1, minHeight: 34 }}
         >
           {loading ? 'Generating...' : 'Generate outfits'}
         </button>
