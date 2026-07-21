@@ -3527,7 +3527,7 @@ img { display: block; max-width: 100%; }
 }
 
 .thread-rail {
-  width: 260px;
+  width: 288px;
   height: 100%;
   background: var(--surface);
   border-right: 1px solid var(--border-light);
@@ -4288,10 +4288,10 @@ img { display: block; max-width: 100%; }
 }
 
 .subject-thumb {
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  border-radius: 7px;
+  width: 64px;
+  height: 48px;
+  flex: 0 0 64px;
+  border-radius: 10px;
   overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border-light);
@@ -4692,11 +4692,11 @@ img { display: block; max-width: 100%; }
 }
 
 .thread-rail.view-subject .subject-thumb {
-  width: 48px;
+  width: 64px;
   height: 48px;
-  flex-basis: 48px;
+  flex-basis: 64px;
   border: 0;
-  border-radius: 11px;
+  border-radius: 10px;
   box-shadow: inset 0 0 0 1px rgba(74, 54, 34, 0.08);
 }
 
