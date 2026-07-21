@@ -380,6 +380,7 @@ export default function StylistChat({
   const [recentMemoryStatus, setRecentMemoryStatus] = useState('')
   const [recentMemoryResetting, setRecentMemoryResetting] = useState(false)
   const [recentMemoryItemCount, setRecentMemoryItemCount] = useState(0)
+  const [recentMemoryConfirmation, setRecentMemoryConfirmation] = useState('')
   const [homeLocation, setHomeLocation] = useState('')
   const [homeLocationInput, setHomeLocationInput] = useState('')
   const [homeLocationOpen, setHomeLocationOpen] = useState(false)
@@ -410,6 +411,7 @@ export default function StylistChat({
   const homeLocationPopoverRef = useRef(null)
   const styleDirectionInfoButtonRef = useRef(null)
   const styleDirectionInfoPopoverRef = useRef(null)
+  const recentMemoryConfirmTimeoutRef = useRef(null)
   const loadingTimersRef = useRef([])
   const lastAutoOutfitActionRef = useRef('')
   const suppressThreadLoadAutosaveRef = useRef(false)
@@ -417,6 +419,10 @@ export default function StylistChat({
   useEffect(() => {
     currentThreadIdRef.current = currentThreadId
   }, [currentThreadId])
+
+  useEffect(() => () => {
+    if (recentMemoryConfirmTimeoutRef.current) clearTimeout(recentMemoryConfirmTimeoutRef.current)
+  }, [])
 
   const [toastMessage, setToastMessage] = useState('')
   const [showToast, setShowToast] = useState(false)
@@ -3564,16 +3570,16 @@ export default function StylistChat({
     if (recentMemoryResetting) return
     setRecentMemoryResetting(true)
     setRecentMemoryStatus('')
+    if (recentMemoryConfirmTimeoutRef.current) clearTimeout(recentMemoryConfirmTimeoutRef.current)
+    setRecentMemoryConfirmation('')
 
     try {
       const res = await fetch('/api/ai/whole-wardrobe-session-memory', { method: 'DELETE' })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Could not reset recent outfit memory')
-      const clearedCount = Number(data.clearedCount || 0)
       setRecentMemoryItemCount(Number(data.itemCount || 0))
-      setRecentMemoryStatus(clearedCount
-        ? `Cleared ${clearedCount} recent result ${clearedCount === 1 ? 'set' : 'sets'}.`
-        : 'Recent outfit memory is already clear.')
+      setRecentMemoryConfirmation('Recently used pieces are included again.')
+      recentMemoryConfirmTimeoutRef.current = setTimeout(() => setRecentMemoryConfirmation(''), 2500)
     } catch (err) {
       setRecentMemoryStatus(`Reset failed: ${err.message}`)
     } finally {
@@ -4365,30 +4371,30 @@ export default function StylistChat({
   const compareOutfit = compareOutfitId ? outfits.find(o => String(o.id) === String(compareOutfitId)) : null
   const compareConfidenceText = pendingOutfit && compareOutfit ? getCompareConfidenceText(pendingOutfit, compareOutfit) : ''
 
-  const recentMemoryLabel = recentMemoryItemCount
-    ? `${recentMemoryItemCount} ${recentMemoryItemCount === 1 ? 'item' : 'items'} resting`
-    : 'No items resting'
-  const recentMemoryTitle = recentMemoryItemCount
-    ? `${recentMemoryItemCount} recently shown wardrobe ${recentMemoryItemCount === 1 ? 'item is' : 'items are'} temporarily de-prioritized so new generated outfits do not repeat them too soon. Reset recent memory to put them back into normal rotation.`
-    : 'No recently shown wardrobe items are being de-prioritized right now.'
-  const RecentMemoryControls = () => (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-      <span
-        title={recentMemoryTitle}
-        style={{ fontSize: 11, color: recentMemoryItemCount ? 'var(--accent)' : 'var(--text-light)', whiteSpace: 'nowrap' }}
+  const RecentMemoryControls = () => {
+    if (!recentMemoryItemCount) {
+      if (!recentMemoryConfirmation) return null
+      return (
+        <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{recentMemoryConfirmation}</div>
+      )
+    }
+    return (
+      <div
+        title="Recently shown wardrobe items are temporarily de-prioritized so new generated outfits do not repeat them too soon."
+        style={{ fontSize: 11, color: 'var(--text-light)', whiteSpace: 'nowrap' }}
       >
-        {recentMemoryLabel}
-      </span>
-      <button
-        onClick={resetWholeWardrobeSessionMemory}
-        disabled={recentMemoryResetting || loading}
-        title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
-        style={{ fontSize: 11, color: 'var(--text-muted)', padding: 0, border: 0, background: 'transparent', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1, textDecoration: 'underline', textUnderlineOffset: 3 }}
-      >
-        {recentMemoryResetting ? 'Resetting...' : 'Reset memory'}
-      </button>
-    </div>
-  )
+        Skipping {recentMemoryItemCount} recently used {recentMemoryItemCount === 1 ? 'piece' : 'pieces'}{' · '}
+        <button
+          onClick={resetWholeWardrobeSessionMemory}
+          disabled={recentMemoryResetting || loading}
+          title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
+          style={{ fontSize: 11, color: 'var(--text-muted)', padding: 0, border: 0, background: 'transparent', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1, textDecoration: 'underline', textUnderlineOffset: 3 }}
+        >
+          {recentMemoryResetting ? 'Including...' : 'Include them again'}
+        </button>
+      </div>
+    )
+  }
 
   const openWardrobeBuilderComposer = () => {
     setWardrobeBuilderOpen(true)
@@ -4415,7 +4421,7 @@ export default function StylistChat({
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <div style={{ minWidth: 220, flex: '1 1 280px' }}>
           <h2 id="outfit-builder-composer-title" style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)', margin: 0 }}>Create outfits from my wardrobe</h2>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Set the context, then generate five looks from pieces you own.</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Create distinct outfit ideas from pieces you already own. Choose the occasion, season, and mood, then explore several ways to dress for it.</div>
         </div>
         <button
           type="button"
@@ -4481,7 +4487,7 @@ export default function StylistChat({
             </div>
           </div>
           <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-            <option value="mix">Different style directions</option>
+            <option value="mix">Mix of style directions</option>
             <option value="controlled_print">Controlled Print</option>
             <option value="monochrome_texture">Monochrome Texture</option>
             <option value="structured_soft">Structured + Soft</option>
