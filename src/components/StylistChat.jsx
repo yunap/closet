@@ -6,6 +6,7 @@ import PieceForm from './PieceForm.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
 import StylistLandingPanel from './StylistLandingPanel.jsx'
 import OptionCard from './OptionCard.jsx'
+import StylistSelect from './StylistSelect.jsx'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -52,6 +53,38 @@ const ACTIVITY_OPTIONS = [
   ['none', 'No special activity'],
   ['walking', 'Lots of walking'],
   ['hiking', 'Hiking / Outdoor active'],
+]
+
+const PIECE_SEASON_OPTIONS = [
+  ['current season', 'Current season'],
+  ['early spring / cool mild weather', 'Early spring'],
+  ['spring', 'Spring'],
+  ['summer', 'Summer'],
+  ['fall', 'Fall'],
+  ['winter', 'Winter'],
+  ['hot weather', 'Very hot weather'],
+  ['cold weather', 'Very cold weather'],
+  ['year-round', 'Year-round'],
+]
+
+const WARDROBE_SEASON_OPTIONS = [
+  ['current season', 'Current season'],
+  ['spring', 'Spring'],
+  ['summer', 'Summer'],
+  ['fall', 'Fall'],
+  ['winter', 'Winter'],
+  ['hot weather', 'Very hot weather'],
+  ['cold weather', 'Very cold weather'],
+]
+
+const STYLE_DIRECTION_OPTIONS = [
+  ['mix', 'Mix of style directions'],
+  ['controlled_print', 'Controlled Print'],
+  ['monochrome_texture', 'Monochrome Texture'],
+  ['structured_soft', 'Structured + Soft'],
+  ['color_anchor', 'Color Anchor'],
+  ['unexpected_pairing', 'Unexpected Pairing'],
+  ['soft_architecture', 'Soft Architecture'],
 ]
 
 const wardrobeBuilderControlStyle = {
@@ -4452,50 +4485,26 @@ export default function StylistChat({
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
         <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
-          <select ref={wardrobeBuilderFirstFieldRef} value={wardrobeOutfitOccasion} onChange={e => setWardrobeOutfitOccasion(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-            {OCCASION_OPTIONS.map(([val, label]) => (
-              <option key={val} value={val}>{label}</option>
-            ))}
-          </select>
+          <StylistSelect triggerRef={wardrobeBuilderFirstFieldRef} value={wardrobeOutfitOccasion} onChange={setWardrobeOutfitOccasion} options={OCCASION_OPTIONS} ariaLabel="Occasion" />
         </div>
         <div style={{ flex: '1.3 1 150px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Activity</div>
-          <select value={wardrobeOutfitActivity} onChange={e => setWardrobeOutfitActivity(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-            {ACTIVITY_OPTIONS.map(([val, label]) => (
-              <option key={val} value={val}>{label}</option>
-            ))}
-          </select>
+          <StylistSelect value={wardrobeOutfitActivity} onChange={setWardrobeOutfitActivity} options={ACTIVITY_OPTIONS} ariaLabel="Activity" />
         </div>
         <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Season</div>
-          <select value={wardrobeOutfitSeason} onChange={e => setWardrobeOutfitSeason(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-            <option value="current season">Current season</option>
-            <option value="spring">Spring</option>
-            <option value="summer">Summer</option>
-            <option value="fall">Fall</option>
-            <option value="winter">Winter</option>
-            <option value="hot weather">Very hot weather</option>
-            <option value="cold weather">Very cold weather</option>
-          </select>
+          <StylistSelect value={wardrobeOutfitSeason} onChange={setWardrobeOutfitSeason} options={WARDROBE_SEASON_OPTIONS} ariaLabel="Season" side="top" />
         </div>
         <div style={{ flex: '1.4 1 165px' }}>
           <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
             <span>Style direction</span>
-            <InfoTooltip label="What the style direction options mean" align="right" size="sm">
+            <InfoTooltip label="What the style direction options mean" align="right" side="top" size="sm">
               {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
-                <div key={label}><strong>{label}</strong> — {desc}</div>
+                <div key={label}><strong>{label}</strong><span>{desc}</span></div>
               ))}
             </InfoTooltip>
           </div>
-          <select value={wardrobeOutfitMission} onChange={e => setWardrobeOutfitMission(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-            <option value="mix">Mix of style directions</option>
-            <option value="controlled_print">Controlled Print</option>
-            <option value="monochrome_texture">Monochrome Texture</option>
-            <option value="structured_soft">Structured + Soft</option>
-            <option value="color_anchor">Color Anchor</option>
-            <option value="unexpected_pairing">Unexpected Pairing</option>
-            <option value="soft_architecture">Soft Architecture</option>
-          </select>
+          <StylistSelect value={wardrobeOutfitMission} onChange={setWardrobeOutfitMission} options={STYLE_DIRECTION_OPTIONS} ariaLabel="Style direction" side="top" />
         </div>
         <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Mood</div>
@@ -5189,22 +5198,24 @@ export default function StylistChat({
         const pendingPhotoSrc = pendingPhoto ? resolveUploadImageSrc(pendingPhoto) : null
         const closePendingPiece = () => { setPendingPiece(null); setGenerateOutfitMode(false); setEditorialVisualMode(false); setIdealOnlyMode(false); setInput('') }
         return (
-          <div ref={pendingActionRef}>
+          <div ref={pendingActionRef} className="piece-styling-workflow">
             <StylistLandingPanel
               header={
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                    <div style={{ fontSize: 22, fontFamily: 'var(--font-serif)', fontWeight: 650, color: 'var(--text)' }}>Work with this piece</div>
+                <div className="piece-styling-hero">
+                  <div className="piece-styling-heading-row">
+                    <div>
+                      <div className="piece-styling-eyebrow">Anchor styling</div>
+                      <div className="piece-styling-title">Build a look around this piece</div>
+                    </div>
                     <button
                       type="button"
-                      className="chip"
-                      style={{ color: 'var(--text)', fontWeight: 600, borderColor: 'var(--border)', flexShrink: 0, ...backToChatButtonStyle }}
+                      className="piece-styling-back"
                       onClick={closePendingPiece}
                     >
-                      Back to chat
+                      <span aria-hidden="true">←</span> Back to chat
                     </button>
                   </div>
-                  <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 14 }}>
+                  <div className="piece-styling-anchor">
                     {pendingPhotoSrc && (
                       <button
                         type="button"
@@ -5213,38 +5224,38 @@ export default function StylistChat({
                           title: pendingPiece.name || 'Piece',
                           meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
                         })}
-                        style={{ padding: 0, border: 0, background: 'transparent', borderRadius: 8, overflow: 'hidden', cursor: 'zoom-in', display: 'block', width: 80, height: 96, flexShrink: 0 }}
+                        className="piece-styling-photo-button"
                         aria-label="Preview piece photo"
                       >
-                        <img src={pendingPhotoSrc} alt={pendingPiece.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', background: 'var(--surface-2)' }} />
+                        <img src={pendingPhotoSrc} alt={pendingPiece.name} />
                       </button>
                     )}
-                    <div style={{ minWidth: 0 }}>
+                    <div className="piece-styling-anchor-copy">
+                      <span className="piece-styling-anchor-label">Your starting point</span>
                       {pendingPiece.id ? (
                         <button
                           type="button"
                           onClick={() => navigate(`/wardrobe?pieceId=${pendingPiece.id}`)}
                           title="Open this piece's card in the Wardrobe"
-                          style={{ display: 'block', padding: 0, border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontSize: 14, fontWeight: 650, color: 'var(--text)', textDecoration: 'underline', textDecorationColor: 'transparent', textUnderlineOffset: 3, transition: 'text-decoration-color 0.15s' }}
+                          className="piece-styling-piece-name"
                           onMouseEnter={e => { e.currentTarget.style.textDecorationColor = 'var(--border)' }}
                           onMouseLeave={e => { e.currentTarget.style.textDecorationColor = 'transparent' }}
                         >
                           {capitalizeFirst(pendingPiece.name)}
                         </button>
                       ) : (
-                        <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text)' }}>{capitalizeFirst(pendingPiece.name)}</div>
+                        <div className="piece-styling-piece-name">{capitalizeFirst(pendingPiece.name)}</div>
                       )}
-                      <span style={{ display: 'inline-flex', marginTop: 5, padding: '3px 8px', borderRadius: 999, fontSize: 11, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-muted)' }}>Anchor piece</span>
                       {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>Every outfit will include this piece.</div>
+                      <div className="piece-styling-anchor-note">It stays in every look; everything else is built in support of it.</div>
                     </div>
                   </div>
                 </div>
               }
-              sectionLabel="How would you like to proceed?"
+              sectionLabel="Choose a direction"
               footer={
                 <>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div className="piece-styling-footer-note">
                     <SparkleIcon />
                     {pendingPieceMode === 'wardrobe' ? "We'll create several distinct looks around your anchor piece." : "We'll suggest new pieces that pair well with this one."}
                   </div>
@@ -5257,9 +5268,9 @@ export default function StylistChat({
                         send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true })
                       }
                     }}
-                    style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 650, cursor: 'pointer' }}
+                    className="piece-styling-primary-action"
                   >
-                    {pendingPieceMode === 'wardrobe' ? 'Generate outfits around this piece' : 'Suggest new pieces for this item'}
+                    {pendingPieceMode === 'wardrobe' ? 'Create my outfits' : 'Explore new pieces'} <span aria-hidden="true">→</span>
                   </button>
                 </>
               }
@@ -5283,56 +5294,33 @@ export default function StylistChat({
                 />
               </div>
 
-              <div className="stylist-landing-section-label">Add context</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+              <div className="piece-styling-context-heading">
+                <span>Shape the brief</span>
+                <span>Optional — adjust only what matters today</span>
+              </div>
+              <div className="piece-styling-context-grid">
                 <div style={{ flex: '1 1 120px' }}>
                   <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
-                  <select value={generateOccasion} onChange={e => setGenerateOccasion(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-                    {OCCASION_OPTIONS.map(([val, label]) => (
-                      <option key={val} value={val}>{label}</option>
-                    ))}
-                  </select>
+                  <StylistSelect value={generateOccasion} onChange={setGenerateOccasion} options={OCCASION_OPTIONS} ariaLabel="Occasion" />
                 </div>
                 <div style={{ flex: '1.3 1 150px' }}>
                   <div style={wardrobeBuilderFieldLabelStyle}>Activity</div>
-                  <select value={generateActivity} onChange={e => setGenerateActivity(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-                    {ACTIVITY_OPTIONS.map(([val, label]) => (
-                      <option key={val} value={val}>{label}</option>
-                    ))}
-                  </select>
+                  <StylistSelect value={generateActivity} onChange={setGenerateActivity} options={ACTIVITY_OPTIONS} ariaLabel="Activity" />
                 </div>
                 <div style={{ flex: '1 1 120px' }}>
                   <div style={wardrobeBuilderFieldLabelStyle}>Season</div>
-                  <select value={generateSeason} onChange={e => setGenerateSeason(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-                    <option value="current season">Current season</option>
-                    <option value="early spring / cool mild weather">Early spring</option>
-                    <option value="spring">Spring</option>
-                    <option value="summer">Summer</option>
-                    <option value="fall">Fall</option>
-                    <option value="winter">Winter</option>
-                    <option value="hot weather">Very hot weather</option>
-                    <option value="cold weather">Very cold weather</option>
-                    <option value="year-round">Year-round</option>
-                  </select>
+                  <StylistSelect value={generateSeason} onChange={setGenerateSeason} options={PIECE_SEASON_OPTIONS} ariaLabel="Season" />
                 </div>
                 <div style={{ flex: '1.4 1 165px' }}>
                   <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span>Style direction</span>
-                    <InfoTooltip label="What the style direction options mean" align="right" size="sm">
+                    <InfoTooltip label="What the style direction options mean" align="right" side="top" size="sm">
                       {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
-                        <div key={label}><strong>{label}</strong> — {desc}</div>
+                        <div key={label}><strong>{label}</strong><span>{desc}</span></div>
                       ))}
                     </InfoTooltip>
                   </div>
-                  <select value={generateMission} onChange={e => setGenerateMission(e.target.value)} style={{ ...wardrobeBuilderControlStyle, width: '100%' }}>
-                    <option value="mix">Mix of style directions</option>
-                    <option value="controlled_print">Controlled Print</option>
-                    <option value="monochrome_texture">Monochrome Texture</option>
-                    <option value="structured_soft">Structured + Soft</option>
-                    <option value="color_anchor">Color Anchor</option>
-                    <option value="unexpected_pairing">Unexpected Pairing</option>
-                    <option value="soft_architecture">Soft Architecture</option>
-                  </select>
+                  <StylistSelect value={generateMission} onChange={setGenerateMission} options={STYLE_DIRECTION_OPTIONS} ariaLabel="Style direction" side="top" />
                 </div>
               </div>
 

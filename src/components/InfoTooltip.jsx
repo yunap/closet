@@ -15,6 +15,7 @@ export default function InfoTooltip({
   open: openProp,
   onToggle,
   align = 'right',
+  side = 'bottom',
   size = 'md',
   width = 260,
 }) {
@@ -73,7 +74,7 @@ export default function InfoTooltip({
         <div
           ref={popoverRef}
           id={idRef.current}
-          className={`info-tooltip-popover align-${align}`}
+          className={`info-tooltip-popover align-${align} side-${side}`}
           role="tooltip"
           style={{ width }}
         >
