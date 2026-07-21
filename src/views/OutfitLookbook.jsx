@@ -1132,55 +1132,10 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
             <section className="outfit-detail-section outfit-styling-actions" aria-label="Styling actions">
               <button
                 type="button"
-                className="outfit-action-primary"
-                onClick={() => onSendToStylist({
-                  ...outfit,
-                  pieces,
-                  main_piece_id: mainPieceId,
-                  autoSend: true,
-                  stylistPrompt: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.'
-                })}
-              >
-                Critique outfit
-              </button>
-              <div className="outfit-action-secondary-row">
-                <button
-                  type="button"
-                  className="outfit-action-secondary"
-                  onClick={() => onSendToStylist({
-                    ...outfit,
-                    pieces,
-                    main_piece_id: mainPieceId,
-                    autoSend: true,
-                    imageGenerationMode: true,
-                    variantMode: 'formula',
-                    stylistPrompt: 'Create formula-similar outfits from my wardrobe based on this saved look.'
-                  })}
-                >
-                  Similar variants
-                </button>
-                <button
-                  type="button"
-                  className="outfit-action-secondary"
-                  onClick={() => onSendToStylist({
-                    ...outfit,
-                    pieces,
-                    main_piece_id: mainPieceId,
-                    autoSend: true,
-                    imageGenerationMode: true,
-                    variantMode: 'creative',
-                    stylistPrompt: 'Generate creative alternatives from this saved outfit photo and linked garment references.'
-                  })}
-                >
-                  Creative alternatives
-                </button>
-              </div>
-              <button
-                type="button"
-                className="outfit-action-tertiary"
+                className="garment-ask-stylist"
                 onClick={() => onSendToStylist({ ...outfit, pieces, main_piece_id: mainPieceId })}
               >
-                ◇ Ask a custom question
+                ◇ Ask stylist about this outfit
               </button>
             </section>
           </div>
@@ -1518,6 +1473,22 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
     fetchOutfits()
     fetchSavedBoards()
   }, [])
+
+  // Deep link from elsewhere in the app (e.g. the Stylist outfit landing) straight
+  // into this outfit's detail card. One-shot: the param is consumed and cleared so
+  // closing the modal and reloading doesn't reopen it.
+  useEffect(() => {
+    const outfitId = searchParams.get('outfitId')
+    if (!outfitId || !outfits.length) return
+    const match = outfits.find(o => String(o.id) === String(outfitId))
+    if (match) setDetail(match)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('outfitId')
+      if (match) next.delete('view')
+      return next
+    }, { replace: true })
+  }, [outfits, searchParams, setSearchParams])
 
   const handleFav = async (outfit) => {
     await fetch(`/api/outfits/${outfit.id}/favorite`, { method: 'PATCH' })

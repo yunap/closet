@@ -4,6 +4,8 @@ import ThreadRail, { humanizeLabel, deriveBuilderTitle } from './ThreadRail'
 import MarkdownMessage from './MarkdownMessage.js'
 import PieceForm from './PieceForm.jsx'
 import InfoTooltip from './InfoTooltip.jsx'
+import StylistLandingPanel from './StylistLandingPanel.jsx'
+import OptionCard from './OptionCard.jsx'
 
 const SUGGESTIONS = [
   'What should I wear for a city dinner?',
@@ -1161,7 +1163,7 @@ export default function StylistChat({
     setEditorialVisualMode(false)
     setActiveContext({ type: 'outfit', id: initialOutfit.id, name: initialOutfit.name })
     const prompt = initialOutfit.stylistPrompt || 'What do you think of this outfit?'
-    setInput(shouldAutoSend ? '' : prompt)
+    setInput('')
     setImageFile(null); setImagePrev(null)
     if (shouldAutoSend) {
       const actionKey = `${initialOutfit.id || initialOutfit.name || 'outfit'}:${initialOutfit.imageGenerationMode ? `variants-${initialOutfit.variantMode || 'similar'}` : 'critique'}:${prompt}:${initialOutfit.actionId || ''}`
@@ -4346,11 +4348,8 @@ export default function StylistChat({
   }
 
   const pending = pendingPiece || pendingOutfit
-  const compareOptions = pendingOutfit ? outfits.filter(o => o.id !== pendingOutfit.id) : []
   const pendingPhoto = pendingPiece ? (pendingPiece.worn_photo || pendingPiece.photo) : pendingOutfit?.photo
   const pendingConfidence = pendingOutfit ? getOutfitConfidenceMode(pendingOutfit) : null
-  const compareOutfit = compareOutfitId ? outfits.find(o => String(o.id) === String(compareOutfitId)) : null
-  const compareConfidenceText = pendingOutfit && compareOutfit ? getCompareConfidenceText(pendingOutfit, compareOutfit) : ''
 
   const RecentMemoryControls = () => {
     if (!recentMemoryItemCount) {
@@ -5155,7 +5154,7 @@ export default function StylistChat({
         <div ref={bottomRef} />
       </div>
 
-      {pending && (
+      {pendingPiece && (
         <div ref={pendingActionRef} style={{ margin: '0 16px 8px', padding: '12px 14px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           {pendingPhoto && (() => {
             const pendingPhotoSrc = resolveUploadImageSrc(pendingPhoto)
@@ -5164,7 +5163,7 @@ export default function StylistChat({
               type="button"
               onClick={() => setPreviewImage({
                 src: pendingPhotoSrc,
-                title: pending.name || 'Outfit',
+                title: pendingPiece.name || 'Piece',
                 meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
               })}
               style={{
@@ -5181,13 +5180,13 @@ export default function StylistChat({
               }}
               aria-label="Preview pending outfit photo"
             >
-              <img src={pendingPhotoSrc} alt={pending.name} style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
+              <img src={pendingPhotoSrc} alt={pendingPiece.name} style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
             </button>
             ) : null
           })()}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>{pendingPiece ? 'Anchor piece' : 'Choose how to use this outfit'}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pending.name}</div>
+            <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--accent)', marginBottom: 1 }}>Anchor piece</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pendingPiece.name}</div>
             {pendingConfidence && <div style={{ marginTop: 6 }}><span style={confidenceBadgeStyle(pendingConfidence.tone)}>{pendingConfidence.label} {pendingConfidence.detail}</span></div>}
             {pendingPiece && (
               <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -5550,39 +5549,118 @@ export default function StylistChat({
                 </button>
               </div>
             )}
-            {pendingOutfit && (
-              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 }}>
-                  <button
-                    onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', compareOutfitId: '' })}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
-                  >
-                    Critique outfit
-                  </button>
-                  <button
-                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'formula' }, input: 'Create formula-similar outfits from my wardrobe based on this saved look.', compareOutfitId: '' })}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
-                  >
-                    Similar variants
-                  </button>
-                  <button
-                    onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'creative' }, input: 'Generate creative alternatives from this saved outfit photo and linked garment references.', compareOutfitId: '' })}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer', textAlign: 'center' }}
-                  >
-                    Creative alternatives
-                  </button>
-                </div>
-                <select value={compareOutfitId} onChange={e => { setCompareOutfitId(e.target.value); if (e.target.value && (!input.trim() || input === 'What do you think of this outfit?')) setInput('Which outfit works better for me?') }} style={{ width: '100%', padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
-                  <option value="">Compare with another outfit...</option>
-                  {compareOptions.map(o => <option key={o.id} value={o.id}>Compare with: {o.name}</option>)}
-                </select>
-                {compareOutfitId && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5 }}>{compareConfidenceText || 'Compare mode will use both outfit photos, linked garments, notes, and statuses.'}</div>}
-              </div>
-            )}
           </div>
-          <button onClick={() => { setPendingOutfit(null); setPendingPiece(null); setCompareOutfitId(''); setGenerateOutfitMode(false); setEditorialVisualMode(false); setIdealOnlyMode(false); setInput('') }} style={{ color: 'var(--text-muted)', fontSize: 16, flexShrink: 0 }}>✕</button>
+          <button onClick={() => { setPendingPiece(null); setGenerateOutfitMode(false); setEditorialVisualMode(false); setIdealOnlyMode(false); setInput('') }} style={{ color: 'var(--text-muted)', fontSize: 16, flexShrink: 0 }}>✕</button>
         </div>
       )}
+
+      {pendingOutfit && (() => {
+        const pendingPhotoSrc = pendingPhoto ? resolveUploadImageSrc(pendingPhoto) : null
+        const pieceCount = pendingOutfit.pieces?.length || 0
+        return (
+          <div ref={pendingActionRef}>
+            <StylistLandingPanel
+              header={
+                <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                  {pendingPhotoSrc && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage({
+                        src: pendingPhotoSrc,
+                        title: pendingOutfit.name || 'Outfit',
+                        meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
+                      })}
+                      style={{ padding: 0, border: 0, background: 'transparent', borderRadius: 8, overflow: 'hidden', cursor: 'zoom-in', display: 'block', width: 80, height: 96, flexShrink: 0 }}
+                      aria-label="Preview outfit photo"
+                    >
+                      <img src={pendingPhotoSrc} alt={pendingOutfit.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', background: 'var(--surface-2)' }} />
+                    </button>
+                  )}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 650, letterSpacing: '0.02em', color: 'var(--text-muted)' }}>Work with this outfit</div>
+                    {pendingOutfit.id ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/outfits?outfitId=${pendingOutfit.id}`)}
+                        title="Open this outfit's card in Lookbook"
+                        style={{ display: 'block', padding: 0, border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontSize: 22, fontFamily: 'var(--font-serif)', color: 'var(--text)', marginTop: 2, textDecoration: 'underline', textDecorationColor: 'transparent', textUnderlineOffset: 4, transition: 'text-decoration-color 0.15s' }}
+                        onMouseEnter={e => { e.currentTarget.style.textDecorationColor = 'var(--border)' }}
+                        onMouseLeave={e => { e.currentTarget.style.textDecorationColor = 'transparent' }}
+                      >
+                        {pendingOutfit.name}
+                      </button>
+                    ) : (
+                      <div style={{ fontSize: 22, fontFamily: 'var(--font-serif)', color: 'var(--text)', marginTop: 2 }}>{pendingOutfit.name}</div>
+                    )}
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+                      {pieceCount} piece{pieceCount === 1 ? '' : 's'}
+                      {pendingOutfit.occasion ? ` · ${pendingOutfit.occasion.charAt(0).toUpperCase()}${pendingOutfit.occasion.slice(1)}` : ''}
+                      {pendingOutfit.season ? ` · ${pendingOutfit.season.charAt(0).toUpperCase()}${pendingOutfit.season.slice(1)}` : ''}
+                    </div>
+                  </div>
+                </div>
+              }
+              sectionLabel="What would you like to do?"
+              footer={
+                <>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span aria-hidden="true">🛡</span> Your outfit and wardrobe stay private.
+                  </div>
+                  <button
+                    type="button"
+                    className="chip"
+                    style={{ color: 'var(--text)', fontWeight: 600, borderColor: 'var(--border)' }}
+                    onClick={() => { setPendingOutfit(null); setInput('') }}
+                  >
+                    Back to chat
+                  </button>
+                </>
+              }
+            >
+              <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-muted)' }}>
+                I can help you analyze this outfit, explore variations, or answer any questions about it.
+              </div>
+              <div className="stylist-option-grid">
+                <OptionCard
+                  accent
+                  title="Critique outfit"
+                  description="Get feedback on what works, what could be improved, and why."
+                  onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.' })}
+                />
+                <OptionCard
+                  title="Find similar"
+                  description="See similar outfit ideas using pieces you own."
+                  onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'formula' }, input: 'Create formula-similar outfits from my wardrobe based on this saved look.' })}
+                />
+                <OptionCard
+                  title="Restyle the main piece"
+                  description="Build different outfits around the key garment."
+                  onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'creative' }, input: 'Generate creative alternatives from this saved outfit photo and linked garment references.' })}
+                />
+              </div>
+              <div className="stylist-landing-section-label">Or ask something specific</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send() } }}
+                  placeholder="Ask about shoes, proportions, occasion, or how to change the look…"
+                  style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-sans)' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => send()}
+                  disabled={loading || !input.trim()}
+                  style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 650, cursor: loading || !input.trim() ? 'default' : 'pointer', opacity: loading || !input.trim() ? 0.65 : 1 }}
+                >
+                  Send
+                </button>
+              </div>
+            </StylistLandingPanel>
+          </div>
+        )
+      })()}
 
       {messages.length > 1 && renderComposerDock()}
       {previewImage && (
