@@ -490,31 +490,52 @@ export default function PieceInventory({ onSendToStylist }) {
             {favOnly ? '♥ Favorites' : '♡ Favorites'}
           </button>
 
-          <div className="wardrobe-filter-menu wardrobe-sort-menu">
-            <button
-              className={`filter-menu-btn ${openFilterMenu === 'sort' ? 'active' : ''}`}
-              onClick={() => setOpenFilterMenu(openFilterMenu === 'sort' ? null : 'sort')}
-              aria-expanded={openFilterMenu === 'sort'}
-              aria-haspopup="menu"
-            >
-              <span>Sort: {SORT_OPTIONS.find(o => o.value === sort)?.label}</span>
-              <span className="filter-menu-chevron">⌄</span>
-            </button>
-            {openFilterMenu === 'sort' && (
-              <div className="filter-menu-popover wardrobe-sort-popover" role="menu">
-                {SORT_OPTIONS.map(o => (
-                  <button
-                    key={o.value}
-                    className={`custom-select-option ${sort === o.value ? 'active' : ''}`}
-                    onClick={() => { setFilter({ sort: o.value === 'mix' ? '' : o.value }); setOpenFilterMenu(null) }}
-                    role="menuitem"
-                  >
-                    <span>{o.label}</span>
-                    {sort === o.value && <span aria-hidden="true">✓</span>}
-                  </button>
-                ))}
-              </div>
-            )}
+          <div className="wardrobe-sort-group">
+            <div className="wardrobe-filter-menu wardrobe-sort-menu">
+              <button
+                className={`filter-menu-btn ${openFilterMenu === 'sort' ? 'active' : ''}`}
+                onClick={() => setOpenFilterMenu(openFilterMenu === 'sort' ? null : 'sort')}
+                aria-expanded={openFilterMenu === 'sort'}
+                aria-haspopup="menu"
+              >
+                <span>Sort: {SORT_OPTIONS.find(o => o.value === sort)?.label}</span>
+                <span className="filter-menu-chevron">⌄</span>
+              </button>
+              {openFilterMenu === 'sort' && (
+                <div className="filter-menu-popover wardrobe-sort-popover" role="menu">
+                  {SORT_OPTIONS.map(o => (
+                    <button
+                      key={o.value}
+                      className={`custom-select-option ${sort === o.value ? 'active' : ''}`}
+                      onClick={() => { setFilter({ sort: o.value === 'mix' ? '' : o.value }); setOpenFilterMenu(null) }}
+                      role="menuitem"
+                    >
+                      <span>{o.label}</span>
+                      {sort === o.value && <span aria-hidden="true">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="wardrobe-sort-info">
+              <button
+                type="button"
+                className={`wardrobe-sort-info-trigger ${openFilterMenu === 'sortInfo' ? 'active' : ''}`}
+                onClick={() => setOpenFilterMenu(openFilterMenu === 'sortInfo' ? null : 'sortInfo')}
+                aria-expanded={openFilterMenu === 'sortInfo'}
+                aria-label="What Most worn and Recently used mean"
+              >
+                ⓘ
+              </button>
+              {openFilterMenu === 'sortInfo' && (
+                <div className="filter-menu-popover wardrobe-sort-info-popover" role="tooltip">
+                  <strong>Most worn</strong> and <strong>Recently used</strong> reflect pieces
+                  referenced in saved Visual Composer boards or Stylist chat outfits — not
+                  real-world wear, which the app has no way to track.
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
