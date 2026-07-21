@@ -58,6 +58,7 @@ export default function ThreadRail({
   const [renamingId, setRenamingId] = useState(null)
   const [renamingTitle, setRenamingTitle] = useState('')
   const [olderBuilderExpanded, setOlderBuilderExpanded] = useState(false)
+  const [pinnedShelfExpanded, setPinnedShelfExpanded] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [openMenuId, setOpenMenuId] = useState(null)
   const [openSubjectGroups, setOpenSubjectGroups] = useState({})
@@ -116,6 +117,7 @@ export default function ThreadRail({
   // Compute groupings
   const groups = groupThreadsByDate(unpinnedThreads, archivedView)
   const subjectGroups = clusterThreadsBySubject(unpinnedThreads)
+  const pinnedShelfOpen = pinnedShelfExpanded
 
   const formatChildTitleTime = (timestamp) => {
     const date = new Date(timestamp)
@@ -285,7 +287,6 @@ export default function ThreadRail({
     const key = `${cluster.type}_${cluster.id}`
     const isActiveGroup = cluster.threads.some(t => t.id === currentThreadId)
     const isOpen = isActiveGroup || Boolean(openSubjectGroups[key])
-    const latestLabel = getRelativeTimeLabel(cluster.maxTime)
     const countLabel = `${cluster.threads.length} ${cluster.threads.length === 1 ? 'chat' : 'chats'}`
     const childRows = getSubjectChildRows(cluster)
 
@@ -302,7 +303,11 @@ export default function ThreadRail({
           title={cluster.name}
           onClick={() => toggleSubjectGroup(key)}
         >
-          <span className="subject-disclosure">{isOpen ? '▾' : '▸'}</span>
+          <span className="subject-disclosure" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none">
+              <path d="m6 4 4 4-4 4" />
+            </svg>
+          </span>
           <span className="subject-thumb" aria-hidden="true">
             {cluster.photo ? (
               <img src={cluster.photo} alt="" />
@@ -313,12 +318,10 @@ export default function ThreadRail({
           <span className="subject-header-text">
             <span className="subject-name" title={cluster.name}>{cluster.name}</span>
             <span className="subject-meta">
-              <span>{cluster.typeLabel}</span>
-              <span>·</span>
-              <span>{countLabel}</span>
+              <span className="subject-type-label">{cluster.typeLabel}</span>
+              <span className="subject-count-label">{countLabel}</span>
             </span>
           </span>
-          <span className={`subject-latest-time ${isOpen ? 'reveal-on-hover' : ''}`}>{latestLabel}</span>
         </button>
         {isOpen && (
           <div className="cluster-rows" role="list">
@@ -337,16 +340,23 @@ export default function ThreadRail({
           className="rail-toggle-btn"
           onClick={() => setCollapsed(false)}
           title="Expand sidebar"
+          aria-label="Expand conversation history"
         >
-          ⟫
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M5.5 3.25 10.25 8 5.5 12.75" />
+          </svg>
         </button>
         {!archivedView && (
           <button
             className="rail-new-btn-collapsed"
             onClick={onNewThread}
             title="New chat"
+            aria-label="New chat"
           >
-            +
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4.25 11.75 5 9l6.1-6.1a1.35 1.35 0 0 1 1.9 1.9L6.9 10.9l-2.65.85Z" />
+              <path d="M9.85 4.15 11.75 6" />
+            </svg>
           </button>
         )}
       </div>
@@ -362,7 +372,13 @@ export default function ThreadRail({
           <div className="rail-archived-title">Archived Chats</div>
         ) : (
           <button className="rail-new-btn" onClick={onNewThread}>
-            + New Chat
+            <span className="rail-new-btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none">
+                <path d="M4.25 11.75 5 9l6.1-6.1a1.35 1.35 0 0 1 1.9 1.9L6.9 10.9l-2.65.85Z" />
+                <path d="M9.85 4.15 11.75 6" />
+              </svg>
+            </span>
+            <span>New chat</span>
           </button>
         )}
         {!isMobileDrawer && (
@@ -370,8 +386,11 @@ export default function ThreadRail({
             className="rail-toggle-btn"
             onClick={() => setCollapsed(true)}
             title="Collapse sidebar"
+            aria-label="Collapse conversation history"
           >
-            ⟪
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="m10.5 3.25-4.75 4.75 4.75 4.75" />
+            </svg>
           </button>
         )}
         {isMobileDrawer && onCloseDrawer && (
@@ -384,13 +403,19 @@ export default function ThreadRail({
       <div className="rail-view-toggle">
         <button
           className={`view-toggle-btn ${viewMode === 'recent' ? 'active' : ''}`}
-          onClick={() => setViewMode('recent')}
+          onClick={() => {
+            setOpenMenuId(null)
+            setViewMode('recent')
+          }}
         >
           Recent
         </button>
         <button
           className={`view-toggle-btn ${viewMode === 'subject' ? 'active' : ''}`}
-          onClick={() => setViewMode('subject')}
+          onClick={() => {
+            setOpenMenuId(null)
+            setViewMode('subject')
+          }}
         >
           By outfit/piece
         </button>
@@ -415,10 +440,31 @@ export default function ThreadRail({
 
       <div className="rail-scroll-container">
         {/* Pinned section at the very top (only when not in archivedView) */}
-        {!archivedView && pinnedThreads.length > 0 && (
+        {!archivedView && pinnedThreads.length > 0 && viewMode === 'recent' && (
           <div className="rail-group pinned-threads-group">
             <div className="rail-group-title">Pinned</div>
             {pinnedThreads.map(renderThreadRow)}
+          </div>
+        )}
+
+        {!archivedView && pinnedThreads.length > 0 && viewMode === 'subject' && (
+          <div className={`rail-group pinned-subject-shelf ${pinnedShelfOpen ? 'open' : ''}`}>
+            <button
+              type="button"
+              className="pinned-shelf-toggle"
+              aria-expanded={pinnedShelfOpen}
+              onClick={() => setPinnedShelfExpanded(current => !current)}
+            >
+              <span className="pinned-shelf-icon" aria-hidden="true">⌑</span>
+              <span>Pinned chats</span>
+              <span className="pinned-shelf-count">{pinnedThreads.length}</span>
+              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+            </button>
+            {pinnedShelfOpen && (
+              <div className="pinned-shelf-rows" role="list">
+                {pinnedThreads.map(renderThreadRow)}
+              </div>
+            )}
           </div>
         )}
 
@@ -494,7 +540,24 @@ export default function ThreadRail({
           className={`rail-archived-toggle-btn ${archivedView ? 'active' : ''}`}
           onClick={() => onToggleArchivedView(!archivedView)}
         >
-          {archivedView ? '← Back to Active Chats' : '📦 Archived Conversations'}
+          <span className="rail-archived-icon" aria-hidden="true">
+            {archivedView ? (
+              <svg viewBox="0 0 16 16" fill="none"><path d="m9.75 4-4 4 4 4" /></svg>
+            ) : (
+              <svg viewBox="0 0 16 16" fill="none">
+                <path d="M3 5.25h10v7.25H3z" />
+                <path d="M2.5 3h11v2.25h-11zM6.25 8h3.5" />
+              </svg>
+            )}
+          </span>
+          <span className="rail-archived-label">
+            {archivedView ? 'Back to conversations' : 'Archived conversations'}
+          </span>
+          {!archivedView && (
+            <svg className="rail-archived-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="m6 4 4 4-4 4" />
+            </svg>
+          )}
         </button>
       </div>
     </>
@@ -511,7 +574,7 @@ export default function ThreadRail({
   }
 
   return (
-    <div className="thread-rail">
+    <div className={`thread-rail view-${viewMode}`}>
       {railContent}
     </div>
   )
