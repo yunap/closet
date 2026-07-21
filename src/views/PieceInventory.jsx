@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import PieceCard from '../components/PieceCard'
 import PieceForm from '../components/PieceForm'
@@ -6,6 +6,7 @@ import PieceDetail from '../components/PieceDetail'
 import BatchAdd from '../components/BatchAdd'
 import TodoList from './TodoList'
 import usePendingWardrobeTaskCount from '../utils/usePendingWardrobeTaskCount'
+import { wardrobeMixSort } from '../utils/wardrobeMixSort'
 
 const CATEGORIES = [
   { value: '',          label: 'All' },
@@ -35,6 +36,15 @@ const SEASONS = [
   { value: 'year-round', label: 'Year-Round' },
 ]
 
+const SORT_OPTIONS = [
+  { value: 'mix',      label: 'Wardrobe mix' },
+  { value: 'added',    label: 'Recently added' },
+  { value: 'used',     label: 'Recently used' },
+  { value: 'worn',     label: 'Most worn' },
+  { value: 'rediscover', label: 'Ready to rediscover' },
+  { value: 'name',     label: 'Name A–Z' },
+]
+
 const COLOR_HEX_MAP = {
   black: '#2A2420', white: '#F5F2EC', cream: '#E8DFC8', beige: '#D6C3A3',
   taupe: '#9C8B78', grey: '#9A9A9A', charcoal: '#484848', navy: '#1E2D4A',
@@ -59,6 +69,7 @@ export default function PieceInventory({ onSendToStylist }) {
   const filterColor  = searchParams.get('color')    ?? ''
   const filterFabric = searchParams.get('fabric')   ?? ''
   const favOnly      = searchParams.get('fav') === '1'
+  const sort         = searchParams.get('sort')     || 'mix'
 
   // Helper: write one or more params, omitting defaults to keep URLs clean.
   // Always uses replace:true — filter changes are not history entries.
@@ -92,6 +103,7 @@ export default function PieceInventory({ onSendToStylist }) {
   const addMenuTriggerRef = useRef(null)
   const [availableColors, setAvailableColors]   = useState([])
   const [availableFabrics, setAvailableFabrics] = useState([])
+  const [usageStats, setUsageStats] = useState({})
   const pendingCount = usePendingWardrobeTaskCount()
 
   const fetchMeta = useCallback(async () => {
@@ -103,7 +115,16 @@ export default function PieceInventory({ onSendToStylist }) {
     } catch {}
   }, [])
 
+  const fetchUsageStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pieces/usage-stats')
+      const data = await res.json()
+      setUsageStats(data && typeof data === 'object' ? data : {})
+    } catch {}
+  }, [])
+
   useEffect(() => { fetchMeta() }, [fetchMeta])
+  useEffect(() => { fetchUsageStats() }, [fetchUsageStats])
 
   const fetchPieces = useCallback(async () => {
     const params = new URLSearchParams()
@@ -124,6 +145,36 @@ export default function PieceInventory({ onSendToStylist }) {
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => { const t = setTimeout(fetchPieces, 300); return () => clearTimeout(t) }, [search])
+
+  // Sorting is applied client-side over the already-filtered `pieces` list —
+  // the server keeps its own default order (favorite, date_added), and the
+  // sort modes here are pure reorderings of that same result set. "Used"/"worn"
+  // reflect usageStats (Visual Composer + Stylist chat references), not literal
+  // real-world wear — the app has no way to observe that.
+  const sortedPieces = useMemo(() => {
+    if (sort === 'name') return [...pieces].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    if (sort === 'added') return [...pieces].sort((a, b) => new Date(b.date_added || 0) - new Date(a.date_added || 0))
+    if (sort === 'used') {
+      return [...pieces].sort((a, b) => {
+        const at = usageStats[a.id]?.lastUsedAt || ''
+        const bt = usageStats[b.id]?.lastUsedAt || ''
+        return bt.localeCompare(at)
+      })
+    }
+    if (sort === 'worn') {
+      return [...pieces].sort((a, b) => (usageStats[b.id]?.count || 0) - (usageStats[a.id]?.count || 0))
+    }
+    if (sort === 'rediscover') {
+      return [...pieces].sort((a, b) => {
+        const countDiff = (usageStats[a.id]?.count || 0) - (usageStats[b.id]?.count || 0)
+        if (countDiff !== 0) return countDiff
+        const at = usageStats[a.id]?.lastUsedAt || ''
+        const bt = usageStats[b.id]?.lastUsedAt || ''
+        return at.localeCompare(bt)
+      })
+    }
+    return wardrobeMixSort(pieces, { usageStats })
+  }, [pieces, sort, usageStats])
   const closeAddMenu = useCallback((restoreFocus = true) => {
     setShowAddMenu(false)
     if (restoreFocus) addMenuTriggerRef.current?.focus()
@@ -173,10 +224,15 @@ export default function PieceInventory({ onSendToStylist }) {
   const handleSave = () => { setShowForm(false); setEditPiece(null); setDetailPiece(null); fetchPieces(); fetchMeta() }
   const handleDelete = async (piece) => { await fetch(`/api/pieces/${piece.id}`, { method: 'DELETE' }); setDetailPiece(null); fetchPieces(); fetchMeta() }
   const handleEdit = (piece) => { setDetailPiece(null); setEditPiece(piece); setShowForm(true) }
+  const occasionLabel = OCCASIONS.find(o => o.value === filterOcc)?.label
+  const seasonLabel   = SEASONS.find(s => s.value === filterSeason)?.label
   const activeCompactFilters = [
-    filterColor ? { key: 'color', label: filterColor, clear: () => setFilter({ color: '' }) } : null,
-    filterFabric ? { key: 'fabric', label: filterFabric, clear: () => setFilter({ fabric: '' }) } : null,
+    filterOcc    ? { key: 'occasion', label: occasionLabel, clear: () => setFilter({ occasion: '' }) } : null,
+    filterSeason ? { key: 'season',   label: seasonLabel,   clear: () => setFilter({ season: '' }) } : null,
+    filterColor  ? { key: 'color',    label: filterColor,   clear: () => setFilter({ color: '' }) } : null,
+    filterFabric ? { key: 'fabric',   label: filterFabric,  clear: () => setFilter({ fabric: '' }) } : null,
   ].filter(Boolean)
+  const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', color: '', fabric: '' })
   const visibleFabrics = availableFabrics.filter(fabric => fabric.toLowerCase().includes(fabricSearch.trim().toLowerCase()))
   const addPiece = () => { setEditPiece(null); setShowForm(true) }
 
@@ -276,25 +332,61 @@ export default function PieceInventory({ onSendToStylist }) {
           </div>
         </div>
 
-        <div className="wardrobe-filter-group">
-          <div className="wardrobe-filter-label">Occasion</div>
-          <div className="filter-row">
-            {OCCASIONS.map(o => (
-              <button key={o.value} className={`chip ${filterOcc === o.value ? 'active' : ''}`} onClick={() => setFilter({ occasion: o.value })}>{o.label}</button>
-            ))}
-          </div>
-        </div>
-
-        <div className="wardrobe-filter-group">
-          <div className="wardrobe-filter-label">Season</div>
-          <div className="filter-row">
-            {SEASONS.map(s => (
-              <button key={s.value} className={`chip ${filterSeason === s.value ? 'active' : ''}`} onClick={() => setFilter({ season: s.value })}>{s.label}</button>
-            ))}
-          </div>
-        </div>
-
         <div className="wardrobe-compact-filter-row" ref={compactFilterRef}>
+          <div className="wardrobe-filter-menu">
+            <button
+              className={`filter-menu-btn ${openFilterMenu === 'occasion' || filterOcc ? 'active' : ''}`}
+              onClick={() => setOpenFilterMenu(openFilterMenu === 'occasion' ? null : 'occasion')}
+              aria-expanded={openFilterMenu === 'occasion'}
+              aria-haspopup="menu"
+            >
+              <span>{filterOcc ? `Occasion: ${occasionLabel}` : 'Occasion'}</span>
+              <span className="filter-menu-chevron">⌄</span>
+            </button>
+            {openFilterMenu === 'occasion' && (
+              <div className="filter-menu-popover" role="menu">
+                {OCCASIONS.map(o => (
+                  <button
+                    key={o.value}
+                    className={`custom-select-option ${filterOcc === o.value ? 'active' : ''}`}
+                    onClick={() => { setFilter({ occasion: o.value }); setOpenFilterMenu(null) }}
+                    role="menuitem"
+                  >
+                    <span>{o.label}</span>
+                    {filterOcc === o.value && <span aria-hidden="true">✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="wardrobe-filter-menu">
+            <button
+              className={`filter-menu-btn ${openFilterMenu === 'season' || filterSeason ? 'active' : ''}`}
+              onClick={() => setOpenFilterMenu(openFilterMenu === 'season' ? null : 'season')}
+              aria-expanded={openFilterMenu === 'season'}
+              aria-haspopup="menu"
+            >
+              <span>{filterSeason ? `Season: ${seasonLabel}` : 'Season'}</span>
+              <span className="filter-menu-chevron">⌄</span>
+            </button>
+            {openFilterMenu === 'season' && (
+              <div className="filter-menu-popover" role="menu">
+                {SEASONS.map(s => (
+                  <button
+                    key={s.value}
+                    className={`custom-select-option ${filterSeason === s.value ? 'active' : ''}`}
+                    onClick={() => { setFilter({ season: s.value }); setOpenFilterMenu(null) }}
+                    role="menuitem"
+                  >
+                    <span>{s.label}</span>
+                    {filterSeason === s.value && <span aria-hidden="true">✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {availableColors.length > 0 && (
             <div className="wardrobe-filter-menu">
               <button
@@ -303,7 +395,7 @@ export default function PieceInventory({ onSendToStylist }) {
                 aria-expanded={openFilterMenu === 'color'}
                 aria-haspopup="menu"
               >
-                <span>{filterColor ? 'Color · 1' : 'Color'}</span>
+                <span>{filterColor ? `Color: ${filterColor}` : 'Color'}</span>
                 <span className="filter-menu-chevron">⌄</span>
               </button>
               {openFilterMenu === 'color' && (
@@ -349,7 +441,7 @@ export default function PieceInventory({ onSendToStylist }) {
                 aria-expanded={openFilterMenu === 'fabric'}
                 aria-haspopup="menu"
               >
-                <span>{filterFabric ? 'Fabric · 1' : 'Fabric'}</span>
+                <span>{filterFabric ? `Fabric: ${filterFabric}` : 'Fabric'}</span>
                 <span className="filter-menu-chevron">⌄</span>
               </button>
               {openFilterMenu === 'fabric' && (
@@ -397,6 +489,33 @@ export default function PieceInventory({ onSendToStylist }) {
           >
             {favOnly ? '♥ Favorites' : '♡ Favorites'}
           </button>
+
+          <div className="wardrobe-filter-menu wardrobe-sort-menu">
+            <button
+              className={`filter-menu-btn ${openFilterMenu === 'sort' ? 'active' : ''}`}
+              onClick={() => setOpenFilterMenu(openFilterMenu === 'sort' ? null : 'sort')}
+              aria-expanded={openFilterMenu === 'sort'}
+              aria-haspopup="menu"
+            >
+              <span>Sort: {SORT_OPTIONS.find(o => o.value === sort)?.label}</span>
+              <span className="filter-menu-chevron">⌄</span>
+            </button>
+            {openFilterMenu === 'sort' && (
+              <div className="filter-menu-popover wardrobe-sort-popover" role="menu">
+                {SORT_OPTIONS.map(o => (
+                  <button
+                    key={o.value}
+                    className={`custom-select-option ${sort === o.value ? 'active' : ''}`}
+                    onClick={() => { setFilter({ sort: o.value === 'mix' ? '' : o.value }); setOpenFilterMenu(null) }}
+                    role="menuitem"
+                  >
+                    <span>{o.label}</span>
+                    {sort === o.value && <span aria-hidden="true">✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {activeCompactFilters.length > 0 && (
@@ -407,7 +526,7 @@ export default function PieceInventory({ onSendToStylist }) {
               </button>
             ))}
             {activeCompactFilters.length >= 2 && (
-              <button className="clear-filters-btn" onClick={() => setFilter({ color: '', fabric: '' })}>
+              <button className="clear-filters-btn" onClick={clearAllCompactFilters}>
                 Clear all
               </button>
             )}
@@ -429,7 +548,7 @@ export default function PieceInventory({ onSendToStylist }) {
         </div>
       ) : (
         <div className="piece-grid">
-          {pieces.map(p => (
+          {sortedPieces.map(p => (
             <PieceCard key={p.id} piece={p} onTap={setDetailPiece} onFavorite={handleFavorite} />
           ))}
         </div>

@@ -570,6 +570,55 @@ export function collectPieceIdsFromSavedBoardRow(row) {
   return [...ids]
 }
 
+// Chat threads have no per-message table — the whole conversation lives in
+// payload.messages[]. Piece references show up as structuredOutfits[].pieceIds
+// (or .pieces[].id) on assistant messages proposing an outfit.
+export function collectPieceIdsFromChatThreadRow(row) {
+  const ids = new Set()
+  const payload = safeJsonParse(row?.payload, {})
+  const messages = Array.isArray(payload?.messages) ? payload.messages : []
+  for (const message of messages) {
+    const outfits = Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : []
+    for (const outfit of outfits) {
+      if (Array.isArray(outfit?.pieceIds)) {
+        outfit.pieceIds.forEach(id => { if (!Number.isNaN(Number(id))) ids.add(Number(id)) })
+      }
+      if (Array.isArray(outfit?.pieces)) {
+        outfit.pieces.forEach(p => { if (p?.id !== undefined && !Number.isNaN(Number(p.id))) ids.add(Number(p.id)) })
+      }
+    }
+  }
+  return [...ids]
+}
+
+// Per-piece usage signal for the Wardrobe "Most worn" / "Recently used" sort —
+// "used" means referenced by the Visual Composer (saved_boards) or a Stylist
+// chat recommendation (chat_threads), not literal real-world wear. Computed at
+// query time from existing timestamped rows rather than a persisted counter.
+export function getPieceUsageStats() {
+  const stats = new Map()
+  const bump = (pieceId, createdAt) => {
+    const entry = stats.get(pieceId) || { count: 0, lastUsedAt: null }
+    entry.count += 1
+    if (!entry.lastUsedAt || (createdAt && createdAt > entry.lastUsedAt)) entry.lastUsedAt = createdAt || entry.lastUsedAt
+    stats.set(pieceId, entry)
+  }
+  try {
+    const boardRows = db.prepare('SELECT pieces, payload, context_type, context_id, created_at FROM saved_boards WHERE COALESCE(archived,0) = 0').all()
+    for (const row of boardRows) {
+      for (const pieceId of collectPieceIdsFromSavedBoardRow(row)) bump(pieceId, row.created_at)
+    }
+  } catch {}
+  try {
+    const threadRows = db.prepare("SELECT payload, updated_at, created_at FROM chat_threads WHERE COALESCE(archived,0) = 0").all()
+    for (const row of threadRows) {
+      const timestamp = row.updated_at || row.created_at
+      for (const pieceId of collectPieceIdsFromChatThreadRow(row)) bump(pieceId, timestamp)
+    }
+  } catch {}
+  return Object.fromEntries(stats)
+}
+
 export function getSavedBoardInfluenceForPair(selectedPiece, candidatePiece) {
   if (!selectedPiece?.id || !candidatePiece?.id || typeof db === 'undefined') return null
   try {
