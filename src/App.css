@@ -463,9 +463,25 @@ img { display: block; max-width: 100%; }
 }
 
 .wardrobe-filter-menu .filter-menu-btn {
-  width: 132px;
+  min-width: 108px;
+  max-width: 168px;
   color: #7C6B5F;
   background: #F5F0E9;
+}
+
+.wardrobe-filter-menu .filter-menu-btn span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wardrobe-sort-menu {
+  margin-left: auto;
+}
+
+.wardrobe-sort-popover {
+  right: 0;
+  left: auto;
 }
 
 .wardrobe-filter-menu .filter-menu-btn.active,

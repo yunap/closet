@@ -6,7 +6,7 @@ import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
 import { prompts, loadUserProfile, refreshPrompts } from '../styling-engine/promptRuntime.js'
 import { CONSTITUTION_LAYER_KEYS, DEFAULT_CONSTITUTION } from '../styling-engine/prompts.js'
 import { DEMO_WARDROBE_PIECES, seedDemoWardrobe, demoWardrobeCount, removeDemoWardrobe } from '../demoWardrobe.js'
-import { collectPieceIdsFromSavedBoardRow } from '../styling-engine/rules.js'
+import { collectPieceIdsFromSavedBoardRow, getPieceUsageStats } from '../styling-engine/rules.js'
 import { ownKeyStatus, setOwnKey } from '../lib/apiKeys.js'
 import {
   mergeWithManualOverrides,
@@ -95,6 +95,13 @@ router.get('/pieces/meta', (req, res) => {
     colors: Array.from(colorsSet).sort(),
     fabrics: Array.from(fabricsSet).sort()
   })
+})
+
+// Per-piece usage, for the Wardrobe "Most worn" / "Recently used" sort — "used"
+// means referenced by a saved Visual Composer board or a Stylist chat
+// recommendation, not literal real-world wear (the app has no way to know that).
+router.get('/pieces/usage-stats', (req, res) => {
+  res.json(getPieceUsageStats())
 })
 
 router.get('/pieces/:id', (req, res) => {
