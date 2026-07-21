@@ -1869,48 +1869,6 @@ img { display: block; max-width: 100%; }
   gap: 9px;
 }
 
-.outfit-action-primary,
-.outfit-action-secondary,
-.outfit-action-tertiary {
-  min-height: 42px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.outfit-action-primary {
-  background: var(--accent);
-  color: #fff;
-  border: 1px solid var(--accent);
-}
-
-.outfit-action-primary:hover {
-  background: var(--accent-hover);
-}
-
-.outfit-action-secondary-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.outfit-action-secondary {
-  background: var(--surface);
-  color: var(--accent);
-  border: 1px solid var(--accent);
-}
-
-.outfit-action-secondary:hover,
-.outfit-action-tertiary:hover {
-  background: var(--accent-light);
-}
-
-.outfit-action-tertiary {
-  background: var(--surface-2);
-  color: var(--accent);
-  border: 1px solid var(--border);
-}
-
 /* ── Empty State ───────────────────────────────────────────────── */
 .empty-state {
   text-align: center;
@@ -2320,6 +2278,121 @@ img { display: block; max-width: 100%; }
 }
 .stylist-builder-composer-shell > div {
   box-shadow: var(--shadow);
+}
+
+.stylist-landing-panel {
+  margin: 0 16px 8px;
+  padding: 20px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+  display: grid;
+  gap: 12px;
+}
+
+.stylist-landing-section-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%);
+}
+
+.stylist-landing-body {
+  display: grid;
+  gap: 12px;
+}
+
+.stylist-landing-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.stylist-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.stylist-option-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.stylist-option-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.stylist-option-card:focus-visible {
+  outline: 2px solid #1f6feb;
+  outline-offset: 2px;
+}
+
+.stylist-option-card.is-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.stylist-option-card.is-accent:hover {
+  background: var(--accent-hover);
+}
+.stylist-option-card.is-accent .stylist-option-card-title,
+.stylist-option-card.is-accent .stylist-option-card-desc {
+  color: #fff;
+}
+
+.stylist-option-card.is-radio.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.stylist-option-card-radio {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.stylist-option-card.is-selected .stylist-option-card-radio {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 40%, transparent 44%);
+}
+
+.stylist-option-card-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.stylist-option-card-text {
+  display: grid;
+  gap: 3px;
+}
+
+.stylist-option-card-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.stylist-option-card-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
 }
 .ai-input {
   flex: 1;
