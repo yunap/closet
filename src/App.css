@@ -475,13 +475,58 @@ img { display: block; max-width: 100%; }
   white-space: nowrap;
 }
 
-.wardrobe-sort-menu {
+.wardrobe-sort-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
 }
 
-.wardrobe-sort-popover {
+.filter-menu-popover.wardrobe-sort-popover {
   right: 0;
   left: auto;
+}
+
+.wardrobe-sort-info {
+  position: relative;
+}
+
+.wardrobe-sort-info-trigger {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #F5F0E9;
+  color: #8F7F70;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.wardrobe-sort-info-trigger:hover,
+.wardrobe-sort-info-trigger.active {
+  color: var(--accent);
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+.wardrobe-sort-info-trigger:focus-visible {
+  outline: 2px solid #1f6feb;
+  outline-offset: 2px;
+}
+
+.filter-menu-popover.wardrobe-sort-info-popover {
+  right: 0;
+  left: auto;
+  width: 260px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
 }
 
 .wardrobe-filter-menu .filter-menu-btn.active,
