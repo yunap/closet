@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { getColorSwatch } from '../utils/colors'
 
 function OutfitThumb({ outfit, onPreview }) {
@@ -17,7 +18,7 @@ function OutfitThumb({ outfit, onPreview }) {
     >
       <div className="garment-relation-thumb outfit-relation-thumb">
         {outfit.photo
-          ? <img src={`/uploads/${outfit.photo}`} alt={outfit.name} />
+          ? <img src={outfit.thumbnail_url || `/uploads/${outfit.photo}`} alt={outfit.name} loading="lazy" decoding="async" />
           : <div className="garment-relation-empty">✦</div>
         }
       </div>
@@ -45,7 +46,7 @@ function SavedBoardThumb({ board, onPreview }) {
       title={title}
     >
       <div className="garment-relation-thumb saved-board-thumb">
-        <img src={board.image_url} alt={title} />
+        <img src={board.thumbnail_url || board.image_url} alt={title} loading="lazy" decoding="async" />
       </div>
       <div className="garment-relation-label">
         {title}
@@ -139,7 +140,7 @@ export default function PieceDetail({
               onClick={() => activePhoto && setPreviewImage({ src: `/uploads/${activePhoto}`, title: piece.name, meta: activePhotoLabel })}
               aria-label={`Open larger ${activePhotoLabel.toLowerCase()} for ${piece.name}`}
             >
-              <img className="detail-photo" src={`/uploads/${activePhoto}`} alt={piece.name} />
+              <img className="detail-photo" src={uploadThumbnailSrc(`/uploads/${activePhoto}`, 'garment-display')} alt={piece.name} decoding="async" />
             </button>
           </div>
         ) : (

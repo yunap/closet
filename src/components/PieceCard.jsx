@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { getColorSwatch } from '../utils/colors'
+import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 
 function getPlaceholderBg(colors = []) {
   return getColorSwatch(colors[0], '#9A8A78')
@@ -29,9 +30,10 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
           {piece.photo && !imageFailed ? (
             <img
               className="piece-photo"
-              src={`/uploads/${piece.photo}`}
+              src={uploadThumbnailSrc(`/uploads/${piece.photo}`, 'garment-display')}
               alt={piece.name}
               loading="lazy"
+              decoding="async"
               onLoad={(event) => {
                 const { naturalWidth, naturalHeight } = event.currentTarget
                 setPhotoOrientation(naturalHeight > naturalWidth * 1.08 ? 'portrait' : 'landscape')

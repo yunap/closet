@@ -18,6 +18,13 @@ import {
   tagStateForPhotos
 } from '../styling-engine/taggerMerge.js'
 import { applySoftScoreFloors } from '../styling-engine/softScoreFloors.js'
+import { compactChatThreadMemory } from '../lib/chatThreadMetadata.js'
+import {
+  cachedThumbnailUrl,
+  cachedThumbnailUrlForUpload,
+  ensureCachedThumbnail,
+  subjectThumbnailUrl
+} from '../lib/subjectThumbnails.js'
 
 const router = express.Router()
 
@@ -31,9 +38,32 @@ const storage = multer.diskStorage({
 })
 const upload = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 } })
 
+function prepareUploadedThumbnails(variants) {
+  return async (req, res, next) => {
+    const files = [
+      ...(req.files?.photo || []),
+      ...(req.files?.worn_photo || []),
+      ...(req.file ? [req.file] : [])
+    ]
+    try {
+      await Promise.all(files.flatMap(file => (
+        variants.map(variant => ensureCachedThumbnail(file.filename, userUploadsDir(), variant))
+      )))
+      next()
+    } catch (err) {
+      next(err)
+    }
+  }
+}
+
+const preparePieceThumbnails = prepareUploadedThumbnails(['subject'])
+const prepareOutfitThumbnails = prepareUploadedThumbnails(['subject', 'relationship-outfit'])
+const prepareCalibrationThumbnails = prepareUploadedThumbnails(['visual-reference'])
+
 function normalizeCalibrationRow(row) {
   return {
     ...row,
+    thumbnail_url: cachedThumbnailUrlForUpload(row.image_url, 'visual-reference'),
     favorite: Boolean(row.favorite),
     archived: Boolean(row.archived),
     labels: safeJsonParse(row.labels, []) || []
@@ -110,7 +140,7 @@ router.get('/pieces/:id', (req, res) => {
   res.json(parsePiece(p))
 })
 
-router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), (req, res) => {
+router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), preparePieceThumbnails, (req, res) => {
   const { name, category, colors, occasions, season, notes, status,
     recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
@@ -151,7 +181,7 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
   res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(r.lastInsertRowid)))
 })
 
-router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), (req, res) => {
+router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), preparePieceThumbnails, (req, res) => {
   const existing = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
   if (!existing) return res.status(404).json({ error: 'Not found' })
   const { name, category, colors, occasions, season, notes, status, favorite, clear_photo, clear_worn_photo,
@@ -296,7 +326,7 @@ router.get('/outfits', (req, res) => {
   res.json(result)
 })
 
-router.post('/outfits', upload.single('photo'), (req, res) => {
+router.post('/outfits', upload.single('photo'), prepareOutfitThumbnails, (req, res) => {
   const { name, occasion, season, notes, status, pieceIds, mainPieceId } = req.body
   const photo = req.file?.filename || null
   const linkedIds = pieceIds ? JSON.parse(pieceIds).map(Number).filter(Boolean) : []
@@ -313,7 +343,7 @@ router.post('/outfits', upload.single('photo'), (req, res) => {
   res.json({ ...o, favorite: Boolean(o.favorite), pieces: [] })
 })
 
-router.put('/outfits/:id', upload.single('photo'), (req, res) => {
+router.put('/outfits/:id', upload.single('photo'), prepareOutfitThumbnails, (req, res) => {
   const existing = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
   if (!existing) return res.status(404).json({ error: 'Not found' })
   const { name, occasion, season, notes, status, favorite, pieceIds, mainPieceId } = req.body
@@ -356,7 +386,11 @@ router.get('/pieces/:id/outfits', (req, res) => {
     WHERE op.piece_id = ?
     ORDER BY o.date_added DESC
   `).all(req.params.id)
-  res.json(outfits.map(o => ({ ...o, favorite: Boolean(o.favorite) })))
+  res.json(outfits.map(o => ({
+    ...o,
+    favorite: Boolean(o.favorite),
+    thumbnail_url: o.photo ? cachedThumbnailUrl(o.photo, 'relationship-outfit') : ''
+  })))
 })
 
 router.put('/outfits/:id/pieces', (req, res) => {
@@ -515,7 +549,7 @@ router.delete('/stylist-feedback/:id', (req, res) => {
 })
 
 // ── Renderer calibration image library API ───────────────────────────────────
-router.post('/calibration-images', upload.single('photo'), (req, res) => {
+router.post('/calibration-images', upload.single('photo'), prepareCalibrationThumbnails, (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'photo is required' })
     const kind = String(req.body.kind || 'good_reference')
@@ -587,7 +621,24 @@ router.delete('/calibration-images/:id', (req, res) => {
 })
 
 // ── Saved outfit/editorial boards API ─────────────────────────────────────────
-router.post('/saved-boards', (req, res) => {
+function indexSavedBoardPieceLinks(row) {
+  const linkedIds = collectPieceIdsFromSavedBoardRow(row)
+  const replaceLinks = db.transaction(() => {
+    db.prepare('DELETE FROM saved_board_pieces WHERE board_id = ?').run(row.id)
+    const insert = db.prepare('INSERT OR IGNORE INTO saved_board_pieces (board_id, piece_id) VALUES (?, ?)')
+    linkedIds.forEach(pieceId => insert.run(row.id, pieceId))
+    db.prepare('UPDATE saved_boards SET links_indexed = 1 WHERE id = ?').run(row.id)
+  })
+  replaceLinks()
+  return linkedIds
+}
+
+function backfillSavedBoardPieceLinks() {
+  const pending = db.prepare('SELECT * FROM saved_boards WHERE COALESCE(links_indexed, 0) = 0').all()
+  pending.forEach(indexSavedBoardPieceLinks)
+}
+
+router.post('/saved-boards', async (req, res) => {
   try {
     const {
       boardType = 'wardrobe',
@@ -606,6 +657,11 @@ router.post('/saved-boards', (req, res) => {
     } = req.body || {}
 
     if (!imageUrl) return res.status(400).json({ error: 'imageUrl is required' })
+    const boardThumbnailUrl = cachedThumbnailUrlForUpload(imageUrl, 'relationship-board')
+    const boardSourceRelative = boardThumbnailUrl ? imageUrl.slice('/uploads/'.length) : ''
+    if (boardSourceRelative && fs.existsSync(path.join(userUploadsDir(), boardSourceRelative))) {
+      await ensureCachedThumbnail(boardSourceRelative, userUploadsDir(), 'relationship-board')
+    }
 
     const result = db.prepare(`
       INSERT INTO saved_boards
@@ -627,7 +683,9 @@ router.post('/saved-boards', (req, res) => {
       hidden_from_lookbook ? 1 : 0
     )
 
-    const saved = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(result.lastInsertRowid)
+    let saved = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(result.lastInsertRowid)
+    indexSavedBoardPieceLinks(saved)
+    saved = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(result.lastInsertRowid)
     res.json({
       ...saved,
       favorite: Boolean(saved.favorite),
@@ -635,7 +693,8 @@ router.post('/saved-boards', (req, res) => {
       hidden_from_lookbook: Boolean(saved.hidden_from_lookbook),
       pieces: safeJsonParse(saved.pieces, []),
       missing_pieces: safeJsonParse(saved.missing_pieces, []),
-      payload: safeJsonParse(saved.payload, {})
+      payload: safeJsonParse(saved.payload, {}),
+      thumbnail_url: boardThumbnailUrl
     })
   } catch (err) {
     console.error('Save board error:', err)
@@ -650,10 +709,15 @@ router.get('/saved-boards', (req, res) => {
     const params = []
     if (contextType) { clauses.push('context_type = ?'); params.push(contextType) }
     if (contextId) { clauses.push('context_id = ?'); params.push(Number(contextId)) }
+    if (pieceId) {
+      backfillSavedBoardPieceLinks()
+      clauses.push('EXISTS (SELECT 1 FROM saved_board_pieces sbp WHERE sbp.board_id = saved_boards.id AND sbp.piece_id = ?)')
+      params.push(Number(pieceId))
+    }
     if (includeArchived !== 'true') clauses.push('COALESCE(archived,0) = 0')
     if (excludeHidden === 'true') clauses.push('COALESCE(hidden_from_lookbook,0) = 0')
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
-    const rowLimit = pieceId ? Math.max(Number(limit), 500) : Number(limit)
+    const rowLimit = Number(limit)
     const rows = db.prepare(`
       SELECT * FROM saved_boards
       ${where}
@@ -685,12 +749,10 @@ router.get('/saved-boards', (req, res) => {
         missing_pieces: safeJsonParse(row.missing_pieces, []),
         payload,
         linked_piece_ids,
+        thumbnail_url: cachedThumbnailUrlForUpload(row.image_url, 'relationship-board'),
       }
     })
-    const filtered = pieceId
-      ? normalized.filter(row => row.linked_piece_ids.includes(Number(pieceId)))
-      : normalized
-    res.json(filtered)
+    res.json(normalized)
   } catch (err) {
     console.error('List saved boards error:', err)
     res.status(500).json({ error: err.message })
@@ -841,7 +903,9 @@ router.get('/chat-threads', (req, res) => {
                END,
                ''
              ) as subjectPhoto,
-             json_extract(payload, '$.threadMemory') as threadMemory,
+             json_extract(payload, '$.threadMemory.source') as memorySource,
+             json_extract(payload, '$.threadMemory.stylingContext') as stylingContext,
+             json_extract(payload, '$.threadMemory.latestOutfits') as latestOutfits,
              COALESCE(
                json_extract(payload, '$.chatHistory[0].content'),
                json_extract(payload, '$.messages[1].text'),
@@ -852,17 +916,20 @@ router.get('/chat-threads', (req, res) => {
       WHERE COALESCE(archived, 0) = ?
       ORDER BY pinned DESC, updated_at DESC
     `).all(showArchived)
-    res.json(rows.map(r => ({
-      ...r,
-      user_renamed: Boolean(r.user_renamed),
-      pinned: Boolean(r.pinned),
-      archived: Boolean(r.archived),
-      activeContext: safeJsonParse(r.activeContext),
-      subjectType: r.subjectType || '',
-      subjectPhoto: r.subjectPhoto ? `/uploads/${r.subjectPhoto}` : '',
-      threadMemory: safeJsonParse(r.threadMemory),
-      originalFirstMessage: r.originalFirstMessage || ''
-    })))
+    res.json(rows.map(r => {
+      const { memorySource, stylingContext, latestOutfits, ...metadata } = r
+      return {
+        ...metadata,
+        user_renamed: Boolean(r.user_renamed),
+        pinned: Boolean(r.pinned),
+        archived: Boolean(r.archived),
+        activeContext: safeJsonParse(r.activeContext),
+        subjectType: r.subjectType || '',
+        subjectPhoto: subjectThumbnailUrl(r.subjectPhoto),
+        threadMemory: compactChatThreadMemory({ memorySource, stylingContext, latestOutfits }),
+        originalFirstMessage: r.originalFirstMessage || ''
+      }
+    }))
   } catch (err) {
     console.error('Error fetching chat threads:', err)
     res.status(500).json({ error: err.message })
