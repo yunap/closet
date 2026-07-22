@@ -9,10 +9,10 @@ import OptionCard from './OptionCard.jsx'
 import StylistSelect from './StylistSelect.jsx'
 
 const SUGGESTIONS = [
-  'What should I wear for a city dinner?',
-  'Help me style my cream wide-leg pants',
-  'What outfit would work for a smart casual event?',
-  'I\'m going hiking this weekend — what should I wear?',
+  { label: 'Occasion', prompt: 'What should I wear for a city dinner?' },
+  { label: 'Style a piece', prompt: 'Help me style my cream wide-leg pants' },
+  { label: 'Dress code', prompt: 'What outfit would work for a smart casual event?' },
+  { label: 'Weekend', prompt: 'I\'m going hiking this weekend — what should I wear?' },
 ]
 
 
@@ -130,17 +130,37 @@ const SparkleIcon = () => (
   </svg>
 )
 
-const wardrobeBuilderPanelBaseStyle = {
-  padding: '20px 22px',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-sm)',
-  background: 'var(--surface)',
-  boxShadow: '0 6px 16px rgba(0, 0, 0, 0.06)',
-  display: 'grid',
-  gap: 16,
-}
+const WardrobeComposerIcon = () => (
+  <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+    <rect x="9" y="5" width="30" height="38" rx="2" stroke="currentColor" strokeWidth="1.4" />
+    <path d="M24 5v38M12.5 10h23M12.5 38h23" stroke="currentColor" strokeWidth="1.15" />
+    <path d="M17 15c-2 2.6-3 5.4-3 8.5s1 5.9 3 8.5M20 15c2 2.6 3 5.4 3 8.5s-1 5.9-3 8.5M31 15c-2 2.6-3 5.4-3 8.5s1 5.9 3 8.5M34 15c2 2.6 3 5.4 3 8.5s-1 5.9-3 8.5" stroke="currentColor" strokeWidth="1" />
+    <circle cx="21.5" cy="26" r=".8" fill="currentColor" />
+    <circle cx="26.5" cy="26" r=".8" fill="currentColor" />
+  </svg>
+)
+
+const HistoryClockIcon = () => (
+  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+    <circle cx="10" cy="10" r="7.25" stroke="currentColor" strokeWidth="1.35" />
+    <path d="M10 6v4.25l2.75 1.6M4.1 5.4H1.75V3.05" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+const ReviewOutfitIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5.5h16M4 12h10M4 18.5h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/><path d="m16.5 17 1.8 1.8 3.2-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+)
+
+const SimilarLooksIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="5" width="10" height="13" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M10.5 3.5h8A2 2 0 0 1 20.5 5.5v11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+)
+
+const RestyleOutfitIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8.4 7.2A5.8 5.8 0 0 1 18 9l1.7-1.7M19.7 7.3v4.2h-4.2M15.6 16.8A5.8 5.8 0 0 1 6 15l-1.7 1.7M4.3 16.7v-4.2h4.2" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" strokeLinejoin="round"/></svg>
+)
 
 const STYLE_DIRECTION_LEGEND = [
+  ['Mix of style directions', 'Explore a balanced mix of distinct styling approaches.'],
   ['Controlled Print', 'One printed piece, kept in check by solids.'],
   ['Monochrome Texture', 'Same tone throughout — texture does the work.'],
   ['Structured + Soft', 'Pairs something tailored with something relaxed.'],
@@ -4428,18 +4448,22 @@ export default function StylistChat({
     }
     return (
       <div
+        className="wardrobe-builder-memory"
         title="Recently shown wardrobe items are temporarily de-prioritized so new generated outfits do not repeat them too soon."
-        style={{ fontSize: 12, color: 'color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%)', whiteSpace: 'nowrap' }}
+        style={{ fontSize: 12, color: 'color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%)' }}
       >
-        Skipping {recentMemoryItemCount} recently used {recentMemoryItemCount === 1 ? 'piece' : 'pieces'}{' · '}
-        <button
-          onClick={resetWholeWardrobeSessionMemory}
-          disabled={recentMemoryResetting || loading}
-          title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
-          style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', padding: 0, border: 0, background: 'transparent', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1, textDecoration: 'underline', textUnderlineOffset: 3 }}
-        >
-          {recentMemoryResetting ? 'Including...' : 'Include them again'}
-        </button>
+        <HistoryClockIcon />
+        <span>
+          Skipping {recentMemoryItemCount} recently used {recentMemoryItemCount === 1 ? 'piece' : 'pieces'}{' · '}
+          <button
+            onClick={resetWholeWardrobeSessionMemory}
+            disabled={recentMemoryResetting || loading}
+            title="Clears recently shown generated-card memory only. Saved feedback and learning stay intact."
+            style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', padding: 0, border: 0, background: 'transparent', cursor: recentMemoryResetting || loading ? 'default' : 'pointer', opacity: recentMemoryResetting || loading ? 0.65 : 1, textDecoration: 'underline', textUnderlineOffset: 3 }}
+          >
+            {recentMemoryResetting ? 'Including...' : 'Include them again'}
+          </button>
+        </span>
       </div>
     )
   }
@@ -4463,26 +4487,47 @@ export default function StylistChat({
   }, [wardrobeBuilderOpen])
 
   const wardrobeBuilderFieldLabelStyle = { fontSize: 11.5, fontWeight: 600, color: 'color-mix(in srgb, var(--text) 68%, var(--text-muted) 32%)', marginBottom: 6 }
+  const selectedStyleDirectionLabel = STYLE_DIRECTION_OPTIONS.find(([value]) => value === wardrobeOutfitMission)?.[1] || STYLE_DIRECTION_OPTIONS[0][1]
+  const selectedStyleDirectionDescription = STYLE_DIRECTION_LEGEND.find(([label]) => label === selectedStyleDirectionLabel)?.[1] || 'Explore a balanced mix of distinct styling approaches.'
+  const selectedPieceStyleDirectionLabel = STYLE_DIRECTION_OPTIONS.find(([value]) => value === generateMission)?.[1] || STYLE_DIRECTION_OPTIONS[0][1]
 
-  const renderWardrobeBuilderPanel = (style = {}) => (
-    <div style={{ ...wardrobeBuilderPanelBaseStyle, ...style }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 220, flex: '1 1 280px' }}>
-          <h2 id="outfit-builder-composer-title" style={{ fontSize: 15.5, fontWeight: 650, color: 'var(--text)', margin: 0 }}>Create outfits from my wardrobe</h2>
-          <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%)', marginTop: 6 }}>Create distinct outfit ideas from pieces you already own. Choose the occasion, season, and mood, then explore several ways to dress for it.</div>
+  const renderWardrobeBuilderPanel = ({ compact = false } = {}) => (
+    <StylistLandingPanel
+      className={`wardrobe-builder-entry ${compact ? 'is-compact' : ''}`.trim()}
+      header={
+        <div className="wardrobe-builder-hero">
+          <div className="wardrobe-builder-hero-content">
+            <div className="wardrobe-builder-hero-icon"><WardrobeComposerIcon /></div>
+            <div>
+              <div className="piece-styling-eyebrow">Visual composer</div>
+              <h2 id="outfit-builder-composer-title">Create outfits from my wardrobe</h2>
+              <p>Shape a brief, then explore several complete looks made from pieces you already own.</p>
+              <div className="wardrobe-builder-piece-count">{pieces.length} pieces available in your wardrobe</div>
+            </div>
+          </div>
+          <button type="button" onClick={closeWardrobeBuilderComposer} className="piece-styling-back" aria-label="Back to chat">
+            <span aria-hidden="true">←</span> Back to chat
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={closeWardrobeBuilderComposer}
-          className="chip"
-          style={{ marginTop: 0, fontSize: 11, padding: '6px 10px', ...backToChatButtonStyle }}
-          aria-label="Back to chat"
-        >
-          Back to chat
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+      }
+      sectionLabel="Shape the brief"
+      footer={
+        <>
+          <div style={{ display: 'grid', gap: 4 }}>
+            <RecentMemoryControls />
+            {recentMemoryStatus && (
+              <div style={{ fontSize: 12, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-muted)' }}>
+                {recentMemoryStatus}
+              </div>
+            )}
+          </div>
+          <button onClick={generateWholeWardrobeOutfits} disabled={loading} className="piece-styling-primary-action">
+            {loading ? 'Generating...' : 'Create my outfits'} <span aria-hidden="true">→</span>
+          </button>
+        </>
+      }
+    >
+      <div className="wardrobe-builder-fields">
         <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
           <StylistSelect triggerRef={wardrobeBuilderFirstFieldRef} value={wardrobeOutfitOccasion} onChange={setWardrobeOutfitOccasion} options={OCCASION_OPTIONS} ariaLabel="Occasion" />
@@ -4498,48 +4543,38 @@ export default function StylistChat({
         <div style={{ flex: '1.4 1 165px' }}>
           <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
             <span>Style direction</span>
-            <InfoTooltip label="What the style direction options mean" align="right" side="top" size="sm">
+            <InfoTooltip className="style-direction-tooltip" label="What the style direction options mean" align="right" side="bottom" size="sm" width={310}>
               {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
-                <div key={label}><strong>{label}</strong><span>{desc}</span></div>
+                <div key={label} className={label === selectedStyleDirectionLabel ? 'is-selected' : ''}><strong>{label}</strong><span>{desc}</span></div>
               ))}
             </InfoTooltip>
           </div>
           <StylistSelect value={wardrobeOutfitMission} onChange={setWardrobeOutfitMission} options={STYLE_DIRECTION_OPTIONS} ariaLabel="Style direction" side="top" />
-        </div>
-        <div style={{ flex: '1 1 120px' }}>
-          <div style={wardrobeBuilderFieldLabelStyle}>Mood</div>
-          <input value={wardrobeOutfitMood} onChange={e => setWardrobeOutfitMood(e.target.value)} placeholder="Aesthetic mood" style={{ ...wardrobeBuilderControlStyle, width: '100%' }} />
+          <div className="wardrobe-builder-direction-help">{selectedStyleDirectionDescription}</div>
         </div>
       </div>
 
-      <div>
-        <div style={wardrobeBuilderFieldLabelStyle}>Styling request</div>
+      <div className="wardrobe-builder-mood">
+        <div style={wardrobeBuilderFieldLabelStyle}>Mood</div>
         <input
-          value={wardrobeOutfitRequest}
-          onChange={e => setWardrobeOutfitRequest(e.target.value)}
-          placeholder="e.g. more everyday, not dressy"
+          value={wardrobeOutfitMood}
+          onChange={e => setWardrobeOutfitMood(e.target.value)}
+          placeholder="e.g. relaxed, artful, quietly bold"
           style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
         />
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
-        <div style={{ display: 'grid', gap: 4 }}>
-          <RecentMemoryControls />
-          {recentMemoryStatus && (
-            <div style={{ fontSize: 12, color: recentMemoryStatus.startsWith('Reset failed') ? '#a64b4b' : 'var(--text-muted)' }}>
-              {recentMemoryStatus}
-            </div>
-          )}
-        </div>
-        <button
-          onClick={generateWholeWardrobeOutfits}
-          disabled={loading}
-          style={{ fontSize: 13.5, fontWeight: 600, color: '#fff', padding: '8px 14px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--accent)', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1, minHeight: 34 }}
-        >
-          {loading ? 'Generating...' : 'Generate outfits'}
-        </button>
+      <div className="wardrobe-builder-request">
+        <div style={wardrobeBuilderFieldLabelStyle}>Styling request</div>
+        <textarea
+          value={wardrobeOutfitRequest}
+          onChange={e => setWardrobeOutfitRequest(e.target.value)}
+          placeholder="e.g. more everyday, less dressy, good for travel"
+          rows={2}
+          style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
+        />
       </div>
-    </div>
+    </StylistLandingPanel>
   )
 
 
@@ -4556,7 +4591,7 @@ export default function StylistChat({
             if (e.key === 'Escape') closeWardrobeBuilderComposer()
           }}
         >
-          {renderWardrobeBuilderPanel()}
+          {renderWardrobeBuilderPanel({ compact: true })}
         </div>
       ) : (
         <>
@@ -4576,24 +4611,39 @@ export default function StylistChat({
                 <>
                   <label className={`ai-upload-btn ${imagePrev ? 'has-image' : ''}`} title="Attach photo">
                     <input key={fileInputKey} type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
-                    📷
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                      <path d="M6.25 5.25 7.4 3.75h5.2l1.15 1.5H16a1.75 1.75 0 0 1 1.75 1.75v7.25A1.75 1.75 0 0 1 16 16H4a1.75 1.75 0 0 1-1.75-1.75V7A1.75 1.75 0 0 1 4 5.25h2.25Z" />
+                      <circle cx="10" cy="10.5" r="3" />
+                    </svg>
                   </label>
                   <textarea ref={textRef} className="ai-input" placeholder="Ask about your wardrobe..." value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
-                  <button
-                    ref={createOutfitsButtonRef}
-                    type="button"
-                    className="composer-create-outfits-btn"
-                    onClick={openWardrobeBuilderComposer}
-                    aria-expanded={wardrobeBuilderOpen}
-                    aria-controls="outfit-builder-composer"
-                  >
-                    Create outfits
-                  </button>
                   <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
                 </>
               )}
             </div>
           </div>
+          {!pending && (
+            <button
+              ref={createOutfitsButtonRef}
+              type="button"
+              className="composer-outfit-pathway"
+              onClick={openWardrobeBuilderComposer}
+              aria-expanded={wardrobeBuilderOpen}
+              aria-controls="outfit-builder-composer"
+            >
+              <span className="composer-outfit-pathway-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none">
+                  <path d="M7.25 4.25A2.75 2.75 0 0 1 10 1.5a2.75 2.75 0 0 1 2.75 2.75c0 1.2-.78 2.22-1.86 2.6v1.02" />
+                  <path d="m10.9 7.85 6.35 4.3a1.3 1.3 0 0 1-.73 2.38H3.48a1.3 1.3 0 0 1-.73-2.38l6.35-4.3" />
+                </svg>
+              </span>
+              <span className="composer-outfit-pathway-copy">
+                <strong>Create outfits from my wardrobe</strong>
+                <span>Shape a brief and explore several complete looks.</span>
+              </span>
+              <span className="composer-outfit-pathway-arrow" aria-hidden="true">→</span>
+            </button>
+          )}
         </>
       )}
     </div>
@@ -4778,27 +4828,34 @@ export default function StylistChat({
 
       {/* Chat thread */}
       <div className={`stylist-chat-scroll ${messages.length > 1 ? 'is-existing-chat' : 'is-empty-chat'} ${pending ? 'has-pending-action' : ''}`}>
-        {messages.length === 1 && !pending && (
-          <div className="stylist-empty-state">
-            <div className="stylist-empty-intro">
-              <h2>Ask anything about your wardrobe</h2>
-              <p>I can create outfits from your saved pieces or review an outfit photo.</p>
-            </div>
-            {renderComposerDock('is-empty-state')}
-            {!wardrobeBuilderOpen && (
-              <div className="stylist-suggestion-section">
+        {messages.length === 1 && !pending && wardrobeBuilderOpen && renderWardrobeBuilderPanel()}
+        {messages.length === 1 && !pending && !wardrobeBuilderOpen && (
+          <StylistLandingPanel
+            variant="plain"
+            className="stylist-empty-state"
+            header={
+              <div className="stylist-empty-intro">
+                <h2>Ask anything about your wardrobe</h2>
+                <p>Ask for styling advice, explore your saved pieces, or share an outfit photo.</p>
+              </div>
+            }
+            primary={renderComposerDock('is-empty-state')}
+          >
+            <div className="stylist-suggestion-section">
                 <div className="stylist-suggestion-heading">Try asking</div>
                 <div className="stylist-suggestion-list">
-                  {SUGGESTIONS.map(s => (
-                    <button key={s} type="button" className="stylist-suggestion-btn" onClick={() => setInput(s)}>
-                      <span>{s}</span>
+                  {SUGGESTIONS.map(suggestion => (
+                    <button key={suggestion.prompt} type="button" className="stylist-suggestion-btn" onClick={() => setInput(suggestion.prompt)}>
+                      <span className="stylist-suggestion-copy">
+                        <span className="stylist-suggestion-label">{suggestion.label}</span>
+                        <span>{suggestion.prompt}</span>
+                      </span>
                       <span className="stylist-suggestion-arrow" aria-hidden="true">→</span>
                     </button>
                   ))}
                 </div>
               </div>
-            )}
-          </div>
+          </StylistLandingPanel>
         )}
 
         <div className="chat-thread">
@@ -5314,9 +5371,9 @@ export default function StylistChat({
                 <div style={{ flex: '1.4 1 165px' }}>
                   <div style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span>Style direction</span>
-                    <InfoTooltip label="What the style direction options mean" align="right" side="top" size="sm">
+                    <InfoTooltip className="style-direction-tooltip" label="What the style direction options mean" align="right" side="bottom" size="sm" width={310}>
                       {STYLE_DIRECTION_LEGEND.map(([label, desc]) => (
-                        <div key={label}><strong>{label}</strong><span>{desc}</span></div>
+                        <div key={label} className={label === selectedPieceStyleDirectionLabel ? 'is-selected' : ''}><strong>{label}</strong><span>{desc}</span></div>
                       ))}
                     </InfoTooltip>
                   </div>
@@ -5343,22 +5400,25 @@ export default function StylistChat({
         const pendingPhotoSrc = pendingPhoto ? resolveUploadImageSrc(pendingPhoto) : null
         const pieceCount = pendingOutfit.pieces?.length || 0
         return (
-          <div ref={pendingActionRef}>
+          <div ref={pendingActionRef} className="outfit-styling-workflow">
             <StylistLandingPanel
+              className="outfit-styling-entry"
               header={
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                    <div style={{ fontSize: 22, fontFamily: 'var(--font-serif)', fontWeight: 650, color: 'var(--text)' }}>Work with this outfit</div>
+                <div className="outfit-styling-hero">
+                  <div className="outfit-styling-heading-row">
+                    <div>
+                      <div className="piece-styling-eyebrow">Outfit styling</div>
+                      <div className="outfit-styling-title">Work with this outfit</div>
+                    </div>
                     <button
                       type="button"
-                      className="chip"
-                      style={{ color: 'var(--text)', fontWeight: 600, borderColor: 'var(--border)', flexShrink: 0, ...backToChatButtonStyle }}
+                      className="piece-styling-back"
                       onClick={() => { setPendingOutfit(null); setInput('') }}
                     >
-                      Back to chat
+                      <span aria-hidden="true">←</span> Back to chat
                     </button>
                   </div>
-                  <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 14 }}>
+                  <div className="outfit-styling-anchor">
                     {pendingPhotoSrc && (
                       <button
                         type="button"
@@ -5367,82 +5427,86 @@ export default function StylistChat({
                           title: pendingOutfit.name || 'Outfit',
                           meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
                         })}
-                        style={{ padding: 0, border: 0, background: 'transparent', borderRadius: 8, overflow: 'hidden', cursor: 'zoom-in', display: 'block', width: 80, height: 96, flexShrink: 0 }}
+                        className="outfit-styling-photo-button"
                         aria-label="Preview outfit photo"
                       >
-                        <img src={pendingPhotoSrc} alt={pendingOutfit.name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', background: 'var(--surface-2)' }} />
+                        <img src={pendingPhotoSrc} alt={pendingOutfit.name} />
                       </button>
                     )}
-                    <div style={{ minWidth: 0 }}>
+                    <div className="outfit-styling-anchor-copy">
+                      <span className="piece-styling-anchor-label">Your starting point</span>
                       {pendingOutfit.id ? (
                         <button
                           type="button"
                           onClick={() => navigate(`/outfits?outfitId=${pendingOutfit.id}`)}
                           title="Open this outfit's card in Lookbook"
-                          style={{ display: 'block', padding: 0, border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontSize: 14, fontWeight: 650, color: 'var(--text)', textDecoration: 'underline', textDecorationColor: 'transparent', textUnderlineOffset: 3, transition: 'text-decoration-color 0.15s' }}
+                          className="outfit-styling-outfit-name"
                           onMouseEnter={e => { e.currentTarget.style.textDecorationColor = 'var(--border)' }}
                           onMouseLeave={e => { e.currentTarget.style.textDecorationColor = 'transparent' }}
                         >
                           {pendingOutfit.name}
                         </button>
                       ) : (
-                        <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--text)' }}>{pendingOutfit.name}</div>
+                        <div className="outfit-styling-outfit-name">{pendingOutfit.name}</div>
                       )}
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+                      <div className="outfit-styling-meta">
                         {pieceCount} piece{pieceCount === 1 ? '' : 's'}
                         {pendingOutfit.occasion ? ` · ${pendingOutfit.occasion.charAt(0).toUpperCase()}${pendingOutfit.occasion.slice(1)}` : ''}
                         {pendingOutfit.season ? ` · ${pendingOutfit.season.charAt(0).toUpperCase()}${pendingOutfit.season.slice(1)}` : ''}
                       </div>
+                      <div className="outfit-styling-anchor-note">Use this look as the reference point for feedback, variations, or a new direction.</div>
                     </div>
                   </div>
                 </div>
               }
-              sectionLabel="What would you like to do?"
+              sectionLabel="Choose a direction"
               footer={
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span aria-hidden="true">🛡</span> Your outfit and wardrobe stay private.
                 </div>
               }
             >
-              <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-muted)' }}>
-                I can help you analyze this outfit, explore variations, or answer any questions about it.
-              </div>
-              <div className="stylist-option-grid">
+              <div className="stylist-option-grid outfit-styling-options">
                 <OptionCard
-                  accent
-                  title="Critique outfit"
+                  icon={<ReviewOutfitIcon />}
+                  title="Review this outfit"
                   description="Get feedback on what works, what could be improved, and why."
                   onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', responseMode: 'full' })}
                 />
                 <OptionCard
-                  title="Find similar"
+                  icon={<SimilarLooksIcon />}
+                  title="Find similar looks"
                   description="See similar outfit ideas using pieces you own."
                   onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'formula' }, input: 'Create formula-similar outfits from my wardrobe based on this saved look.' })}
                 />
                 <OptionCard
+                  icon={<RestyleOutfitIcon />}
                   title="Restyle the main piece"
                   description="Build different outfits around the key garment."
                   onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'creative' }, input: 'Generate creative alternatives from this saved outfit photo and linked garment references.' })}
                 />
               </div>
-              <div className="stylist-landing-section-label">Or ask something specific</div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="outfit-question-section">
+                <div className="stylist-landing-section-label">Ask something specific</div>
+                <div className="outfit-question-shell">
                 <input
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send({ responseMode: 'followup' }) } }}
                   placeholder="Ask about shoes, proportions, occasion, or how to change the look…"
-                  style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--font-sans)' }}
+                  className="outfit-question-input"
                 />
                 <button
                   type="button"
                   onClick={() => send({ responseMode: 'followup' })}
                   disabled={loading || !input.trim()}
-                  style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 650, cursor: loading || !input.trim() ? 'default' : 'pointer', opacity: loading || !input.trim() ? 0.65 : 1 }}
+                  className="outfit-question-send"
+                  aria-label="Send outfit question"
                 >
-                  Send
+                  <span aria-hidden="true">→</span>
                 </button>
+                </div>
               </div>
             </StylistLandingPanel>
           </div>

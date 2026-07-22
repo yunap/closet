@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
+import { getColorSwatch, sortColorNames } from '../utils/colors'
 
 const OCCASIONS = [
   { value: '',             label: 'All Occasions' },
@@ -37,16 +38,15 @@ const SORT_OPTIONS = [
 const OCCASION_ICONS = {
   casual: '☀', city: '◈', evening: '◇', 'smart-casual': '✦', outdoor: '◎', home: '○', walking: '👣'
 }
-const COLOR_BG = {
-  'black': '#2A2420', 'white': '#F0EDE8', 'navy': '#1E2D4A', 'cream': '#E8DFC8',
-  'grey': '#8A8A8A', 'brown': '#7A5A3A', 'tan': '#C0A070', 'oatmeal': '#D8C8B0',
-  'plum': '#5A3060', 'olive': '#5A6030', 'green': '#3A6A3A', 'orange': '#C86030',
-  'red': '#A83A2A', 'mustard': '#B89020', 'charcoal': '#404040', 'amber': '#B07820',
-  'mauve': '#A7798A', 'lavender': '#A99AC2', 'lilac': '#C4B2D8',
-  'turquoise': '#2A8080', 'light blue': '#7AADCC', 'periwinkle': '#8888CC', 'multi': '#8A6848', 'dark blue': '#1A2040',
-  'dark grey': '#484848', 'light grey': '#B0B0B0', 'pink': '#C07080',
+
+const markOutfitImageOrientation = (event) => {
+  const image = event.currentTarget
+  image.classList.toggle('is-landscape', image.naturalWidth > image.naturalHeight * 1.08)
 }
 
+const formatGeneratedOutfitType = (value) => String(value || 'AI generated')
+  .replace(/_board$/i, '')
+  .replaceAll('_', ' ')
 const FEEDBACK_LABELS_MAP = {
   signature: 'Signature',
   works: 'Works',
@@ -127,9 +127,9 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
   })
 
   // Colors available in the fetched pieces list
-  const availableColors = Array.from(
+  const availableColors = sortColorNames(Array.from(
     new Set(allPieces.flatMap(p => p.colors || []))
-  ).filter(Boolean)
+  ).filter(Boolean))
 
   const filtered = allPieces.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -159,12 +159,12 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
   const getSwatchBg = (p) => {
     if (!p) return '#9A8A78'
     const color = p.colors?.[0] || ''
-    return COLOR_BG[color.toLowerCase()] || '#9A8A78'
+    return getColorSwatch(color, '#9A8A78')
   }
 
   return (
     <div className="modal-overlay" style={{ zIndex: 300 }}>
-      <div className="modal-sheet" onClick={e => e.stopPropagation()} style={{ maxHeight: '92dvh', display: 'flex', flexDirection: 'column' }}>
+      <div className="modal-sheet outfit-piece-selector" onClick={e => e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-header">
           <span className="modal-title">Link pieces</span>
@@ -172,7 +172,7 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
         </div>
 
         {/* Filters Panel */}
-        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-light)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="outfit-piece-selector-filters">
           <div className="search-bar" style={{ marginBottom: 0 }}>
             <span className="search-icon">◎</span>
             <input
@@ -185,14 +185,13 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
 
           {/* Categories - Hide if locked to one via singleSelect */}
           {!singleSelect && (
-            <div className="filter-row" style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, margin: 0 }}>
+            <div className="filter-row outfit-piece-categories">
               {CATEGORIES.map(c => (
                 <button
                   key={c.value}
                   type="button"
                   className={`chip ${filterCat === c.value ? 'active' : ''}`}
                   onClick={() => setFilterCat(c.value)}
-                  style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap' }}
                 >
                   {c.label}
                 </button>
@@ -202,50 +201,26 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
 
           {/* Colors */}
           {availableColors.length > 0 && (
-            <div className="filter-row" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: 0 }}>
-              <span style={{ fontSize: 9, color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.05em', minWidth: 42, flexShrink: 0 }}>Colors:</span>
+            <div className="outfit-piece-colors" aria-label="Filter pieces by color">
               <button
                 type="button"
-                className={`chip ${!filterColor ? 'active' : ''}`}
+                className={`outfit-color-filter ${!filterColor ? 'active' : ''}`}
                 onClick={() => setFilterColor('')}
-                style={{ fontSize: 10, padding: '2px 6px' }}
               >
-                All
+                Any color
               </button>
               {availableColors.map(color => {
-                const hex = COLOR_BG[color.toLowerCase()] || '#ccc'
+                const hex = getColorSwatch(color)
                 const active = filterColor === color
-                const isLight = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac'].includes(color.toLowerCase())
                 return (
                   <button
                     key={color}
                     type="button"
+                    className={`outfit-color-filter ${active ? 'active' : ''}`}
                     onClick={() => setFilterColor(active ? '' : color)}
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: '50%',
-                      background: hex,
-                      border: active ? '2px solid var(--accent)' : '1px solid rgba(0,0,0,0.15)',
-                      boxShadow: active ? '0 0 0 1px var(--accent-light)' : 'none',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: 0,
-                      position: 'relative',
-                      transition: 'all 0.15s ease'
-                    }}
-                    title={color}
                   >
-                    {active && (
-                      <span style={{
-                        color: isLight ? '#333' : '#fff',
-                        fontSize: 9,
-                        fontWeight: 'bold',
-                        lineHeight: 1
-                      }}>✓</span>
-                    )}
+                    <span className="outfit-color-swatch" style={{ background: hex }} aria-hidden="true" />
+                    <span>{color}</span>
                   </button>
                 )
               })}
@@ -254,14 +229,14 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
         </div>
 
         {/* Scrollable Grid View */}
-        <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px' }}>
+        <div className="outfit-piece-selector-body">
           {/* Linked Section */}
           {linkedPieces.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+            <div className="outfit-linked-selection">
+              <div className="outfit-selector-section-title">
                 Linked Pieces ({linkedPieces.length})
               </div>
-              <div className="piece-grid" style={{ gap: 12, padding: 0 }}>
+              <div className="piece-grid outfit-selector-grid">
                 {linkedPieces.map(piece => {
                   const bg = getSwatchBg(piece)
                   const pieceId = Number(piece.id)
@@ -331,7 +306,7 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
                             }}
                             title={isMain ? 'Main piece for variants' : 'Use as main piece for variants'}
                           >
-                            Main
+                            {isMain ? 'Main piece' : 'Make main'}
                           </button>
                         )}
                       </div>
@@ -347,7 +322,7 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
 
           {/* All Pieces Section */}
           <div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+            <div className="outfit-selector-section-title">
               All Pieces ({filtered.length})
             </div>
             {filtered.length === 0 ? (
@@ -355,7 +330,7 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
                 No pieces match the current filters.
               </div>
             ) : (
-              <div className="piece-grid" style={{ gap: 12, padding: 0 }}>
+              <div className="piece-grid outfit-selector-grid">
                 {filtered.map(piece => {
                   const isSelected = selected.has(Number(piece.id))
                   const bg = getSwatchBg(piece)
@@ -414,7 +389,7 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
           </div>
         </div>
 
-        <div className="form-actions" style={{ borderTop: '1px solid var(--border-light)', paddingTop: 16 }}>
+        <div className="form-actions outfit-piece-selector-actions">
           <button className="btn-secondary" onClick={onCancel}>Cancel</button>
           <button className="btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : singleSelect ? 'Link selected piece' : `Save ${selected.size} ${selected.size === 1 ? 'piece' : 'pieces'}`}
@@ -513,7 +488,7 @@ function ExtractedPieceRow({ piece, actionState, wardrobePieces, onChange }) {
   const getSwatchBg = (p) => {
     if (!p) return '#9A8A78'
     const color = p.colors?.[0] || ''
-    return COLOR_BG[color.toLowerCase()] || '#9A8A78'
+    return getColorSwatch(color, '#9A8A78')
   }
 
   const isLinkActive = action === 'link'
@@ -853,10 +828,15 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
           <span className="modal-title" id="outfit-form-title">{isEdit ? 'Edit outfit' : 'Add outfit'}</span>
           <button className="modal-close" onClick={onCancel} aria-label="Close outfit form">✕</button>
         </div>
-        <div className="form-body">
+        <div className="form-body outfit-form-layout">
+          <div className="outfit-form-media-column">
           {preview ? (
             <div className="photo-preview outfit-form-preview">
               <img src={preview} alt="Outfit preview" />
+              <label className="outfit-photo-replace">
+                <input type="file" accept="image/*" onChange={handlePhoto} />
+                {photoFile ? 'Choose another' : 'Replace photo'}
+              </label>
               {photoFile && (
                 <button className="photo-preview-remove" onClick={() => { setPhotoFile(null); setPreview(outfit?.photo ? `/uploads/${outfit.photo}` : null); setExtracted([]); setExtractedActions([]) }}>✕</button>
               )}
@@ -886,6 +866,17 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
               {scanError && <div style={{ fontSize: 11, color: 'var(--repair)', marginTop: 4 }}>{scanError}</div>}
             </div>
           )}
+          <div className="outfit-form-photo-guidance">
+            <span>Photo guidance</span>
+            Full-length, evenly lit photos make the outfit easier to recognize later.
+          </div>
+          </div>
+
+          <div className="outfit-form-fields-column">
+          <div className="outfit-form-section-intro">
+            <span>{isEdit ? 'Outfit details' : 'Describe the look'}</span>
+            {isEdit ? 'Keep the details that make this outfit useful to find again.' : 'Add just enough context to make this look easy to revisit.'}
+          </div>
 
           {extracted.length > 0 && (
             <div>
@@ -931,7 +922,6 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
           <div className="form-group">
             <div className="form-field-heading">
               <label className="form-label">Occasion</label>
-              <span className="form-helper">Choose one</span>
             </div>
             <div className="chip-grid">
               {OCCASIONS.filter(o => o.value).map(o => (
@@ -942,7 +932,6 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
           <div className="form-group">
             <div className="form-field-heading">
               <label className="form-label">Season</label>
-              <span className="form-helper">Choose one</span>
             </div>
             <div className="radio-row">
               {OUTFIT_SEASONS.map(s => (
@@ -953,15 +942,18 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
           <div className="form-group">
             <div className="form-field-heading">
               <label className="form-label">Status</label>
-              <span className="form-helper">Choose one</span>
             </div>
             <div className="chip-grid">
               {['confirmed','trying','archived'].map(s => <button key={s} className={`chip-toggle ${status === s ? 'active' : ''}`} onClick={() => setStatus(s)} style={{ textTransform: 'capitalize' }}>{s}</button>)}
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Styling notes</label>
+            <div className="form-field-heading">
+              <label className="form-label">Styling notes</label>
+              <span className="form-helper">Optional</span>
+            </div>
             <textarea className="form-textarea" placeholder="e.g. Works best with the amber pendant…" value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
           </div>
         </div>
         <div className="form-actions">
@@ -1014,6 +1006,8 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
           >
             ✕
           </button>
+          <div className="outfit-detail-layout">
+          <div className="outfit-detail-visual">
           {outfit.photo ? (
             <button
               type="button"
@@ -1028,8 +1022,10 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
               <img className="detail-photo" src={`/uploads/${outfit.photo}`} alt={outfit.name} />
             </button>
           ) : (
-            <div className="outfit-placeholder" style={{ height: 260, aspectRatio: 'auto', borderRadius: 0 }}>{OCCASION_ICONS[outfit.occasion] || '✦'}</div>
+            <div className="outfit-placeholder outfit-detail-placeholder">{OCCASION_ICONS[outfit.occasion] || '✦'}</div>
           )}
+          <span className="outfit-photo-hint">Open full photo</span>
+          </div>
           <div className="detail-body outfit-detail-body">
             <section className="outfit-detail-section outfit-identity-section" aria-label="Outfit identity">
               <div className="outfit-identity-header">
@@ -1099,7 +1095,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
               {pieces.length > 0 && (
                 <div className="outfit-linked-pieces">
                   {pieces.map(p => {
-                    const bg = p.colors?.[0] ? (COLOR_BG[p.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
+                    const bg = getColorSwatch(p.colors?.[0], '#9A8A78')
                     return (
                       <div key={p.id} className="outfit-linked-piece">
                         <button
@@ -1122,6 +1118,9 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
                         <div className="outfit-linked-piece-name">
                           {p.name}
                         </div>
+                        {Number(p.id) === Number(mainPieceId) && (
+                          <div className="outfit-linked-piece-role">Main piece</div>
+                        )}
                       </div>
                     )
                   })}
@@ -1138,6 +1137,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
                 ◇ Ask stylist about this outfit
               </button>
             </section>
+          </div>
           </div>
         </div>
       </div>
@@ -1187,15 +1187,25 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
   return (
     <>
       <div className="modal-overlay" onClick={onClose}>
-        <div className="modal-sheet" onClick={e => e.stopPropagation()}>
+        <div className="modal-sheet board-detail-sheet" onClick={e => e.stopPropagation()}>
           <div className="modal-handle" />
+          <button
+            type="button"
+            className="outfit-detail-close"
+            onClick={onClose}
+            aria-label="Close generated outfit details"
+          >
+            ✕
+          </button>
+          <div className="board-detail-layout">
+          <div className="board-detail-visual">
           {boardImageSrc ? (
             <button
               type="button"
               className="detail-photo-button"
               onClick={() => setPreviewImage({
                 src: boardImageSrc,
-                title: board.title || 'Saved board',
+                title: board.title || 'Generated outfit',
                 meta: board.context_name || ''
               })}
               aria-label={`Open larger photo for ${board.title}`}
@@ -1203,44 +1213,51 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
               <img className="detail-photo" src={boardImageSrc} alt={board.title} />
             </button>
           ) : (
-            <div className="outfit-placeholder" style={{ height: 260, aspectRatio: 'auto', borderRadius: 0 }}>✦</div>
+            <div className="outfit-placeholder board-detail-placeholder">✦</div>
           )}
-          <div className="detail-body">
-            <div className="detail-title">{board.title}</div>
-            {board.context_name && (
-              <div className="detail-category" style={{ textTransform: 'capitalize' }}>
-                Context: {board.context_name}
+          <span className="outfit-photo-hint">Open full image</span>
+          </div>
+          <div className="detail-body board-detail-body">
+            <section className="board-detail-section board-identity-section" aria-label="Generated outfit identity">
+              <div className="detail-title">{board.title}</div>
+              {board.context_name && (
+                <div className="detail-category board-context">
+                  {board.context_name}
+                </div>
+              )}
+              <div className="detail-tags board-status-tags">
+                <span className="detail-tag">{formatGeneratedOutfitType(board.board_type)}</span>
+                {board.favorite && <span className="detail-tag" style={{ color: 'var(--accent)' }}>♥ Favorite</span>}
               </div>
-            )}
-            <div className="detail-tags">
-              <span className="detail-tag" style={{ textTransform: 'capitalize' }}>{board.board_type || 'AI Generated'}</span>
-              {board.favorite && <span className="detail-tag" style={{ color: 'var(--accent)' }}>♥ Favorite</span>}
-            </div>
-            {board.reason && <div className="detail-notes">{board.reason}</div>}
+              {board.reason && (
+                <div className="board-story">
+                  <div className="board-section-eyebrow">Why this works</div>
+                  <div className="board-story-copy">{board.reason}</div>
+                </div>
+              )}
+            </section>
 
             {board.watch_for && (
-              <div style={{ marginBottom: 16 }}>
-                <div className="form-label" style={{ color: 'var(--repair)', marginBottom: 8 }}>
-                  ⚠ Cautions / Watch-outs
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--repair)', background: 'var(--repair-bg)', padding: '8px 12px', borderRadius: 8, borderLeft: '3px solid var(--repair)', lineHeight: 1.4 }}>
+              <section className="board-detail-section board-watch-section" aria-label="Things to watch for">
+                <div className="board-section-eyebrow">Keep an eye on</div>
+                <div className="board-watch-copy">
                   {board.watch_for}
                 </div>
-              </div>
+              </section>
             )}
 
             {/* Pieces section */}
             {board.pieces?.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div className="form-label" style={{ marginBottom: 10 }}>
+              <section className="board-detail-section board-pieces-section" aria-label="Garment references">
+                <div className="board-section-eyebrow">
                   {board.pieces.length} {board.pieces.length === 1 ? 'garment reference' : 'garment references'}
                 </div>
-                <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
+                <div className="board-piece-list">
                   {board.pieces.map((p, idx) => {
-                    const bg = p.colors?.[0] ? (COLOR_BG[p.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
+                    const bg = getColorSwatch(p.colors?.[0], '#9A8A78')
                     const photoPath = p.photo ? `/uploads/${p.photo}` : null
                     return (
-                      <div key={p.id || idx} style={{ flexShrink: 0, width: 64 }}>
+                      <div key={p.id || idx} className="board-piece-card">
                         <button
                           type="button"
                           disabled={!photoPath}
@@ -1249,112 +1266,80 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
                             title: p.name || 'Garment',
                             meta: p.category || ''
                           })}
-                          style={{
-                            width: 64,
-                            height: 84,
-                            borderRadius: 8,
-                            overflow: 'hidden',
-                            border: '1px solid var(--border-light)',
-                            background: bg,
-                            padding: 0,
-                            cursor: photoPath ? 'zoom-in' : 'default',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}
+                          className="board-piece-photo"
+                          style={{ background: bg }}
                           aria-label={photoPath ? `Open preview for ${p.name}` : undefined}
                         >
                           {photoPath
-                            ? <img src={photoPath} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                            : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-serif)', fontSize: 22, fontStyle: 'italic', opacity: 0.5, color: 'rgba(255,255,255,0.9)' }}>{(p.name || '').charAt(0)}</div>
+                            ? <img src={photoPath} alt={p.name} />
+                            : <div className="outfit-linked-piece-initial">{(p.name || '').charAt(0)}</div>
                           }
                         </button>
-                        <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 3, textAlign: 'center', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                        <div className="board-piece-name">
                           {p.name}
                         </div>
                       </div>
                     )
                   })}
                 </div>
-              </div>
+              </section>
             )}
 
             {/* Missing pieces section */}
             {board.missing_pieces?.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div className="form-label" style={{ color: 'var(--repair)', marginBottom: 8 }}>
-                  + Ideal Additions / Missing Pieces
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <section className="board-detail-section">
+                <div className="board-section-eyebrow">Ideal additions</div>
+                <div className="board-addition-list">
                   {board.missing_pieces.map((p, idx) => (
-                    <span key={idx} className="detail-tag" style={{ border: '1px solid rgba(184, 107, 42, 0.3)', background: 'var(--repair-bg)', color: 'var(--repair)' }}>
+                    <span key={idx} className="detail-tag board-addition-tag">
                       + {p}
                     </span>
                   ))}
                 </div>
-              </div>
+              </section>
             )}
 
             {/* Stylist feedback tags */}
             {board.payload?.feedback_labels?.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div className="form-label" style={{ marginBottom: 8 }}>Stylist feedback tags</div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <section className="board-detail-section">
+                <div className="board-section-eyebrow">Stylist feedback</div>
+                <div className="board-feedback-list">
                   {board.payload.feedback_labels.map(lbl => (
-                    <span key={lbl} className="detail-tag" style={{ background: 'var(--accent-light)', color: 'var(--accent)', borderColor: 'transparent' }}>
+                    <span key={lbl} className="detail-tag board-feedback-tag">
                       {FEEDBACK_LABELS_MAP[lbl] || lbl}
                     </span>
                   ))}
                 </div>
-              </div>
+              </section>
             )}
 
-            {board.payload?.threadId && board.payload.threadId !== 'new_chat' && (
-              <div style={{ marginBottom: 16 }}>
-                <div className="form-label" style={{ marginBottom: 8 }}>Source conversation</div>
+            <section className="board-detail-section board-actions-section" aria-label="Generated outfit actions">
+              <button type="button" onClick={() => onSendToStylist(board)} className="garment-ask-stylist board-stylist-action">
+                ◇ Ask stylist about this outfit
+              </button>
+
+              <div className="board-utility-actions">
+                {board.payload?.threadId && board.payload.threadId !== 'new_chat' && (
                 <button
                   type="button"
                   onClick={() => {
                     onClose?.()
                     onGoToThread?.(board.payload.threadId)
                   }}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    fontSize: 12,
-                    color: 'var(--accent)',
-                    background: 'var(--accent-light)',
-                    border: '1px solid var(--accent)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: '6px 12px',
-                    cursor: 'pointer',
-                    fontWeight: 500
-                  }}
+                  className="board-source-action"
                 >
-                  💬 View generating chat
+                  View source chat →
                 </button>
-              </div>
-            )}
-
-            <button onClick={() => onSendToStylist(board)} style={{
-              width: '100%', padding: '12px', marginBottom: 12,
-              background: 'var(--accent)', color: '#fff',
-              border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)',
-              fontSize: 13, fontWeight: 500,
-            }}>
-              Critique board
-            </button>
-
-            <div className="detail-actions">
-              <button className="btn-danger" onClick={() => {
-                if (confirm(`Remove "${board.title || 'this board'}" from Lookbook?`)) onDelete(board)
+                )}
+                <button className="board-remove-action" onClick={() => {
+                if (confirm(`Remove "${board.title || 'this generated outfit'}" from Lookbook?`)) onDelete(board)
               }}>Remove</button>
-              <button className="btn-secondary" onClick={onClose}>Close</button>
-            </div>
+              </div>
+            </section>
+          </div>
+          </div>
           </div>
         </div>
-      </div>
 
       {previewImage && createPortal(
         <div
@@ -1694,8 +1679,8 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
 
   return (
     <div>
-      <div className="view-header sticky-header">
-        <div className="view-header-top">
+      <div className="view-header sticky-header lookbook-view-header">
+        <div className="view-header-top lookbook-header-primary">
           <div>
             <div className="view-title">Lookbook</div>
             <div className="view-subtitle">
@@ -1705,27 +1690,21 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                   : `${filteredAndSorted.length} of ${outfits.length} outfits`
               ) : (
                 filteredAndSortedBoards.length === savedBoards.length
-                  ? `${savedBoards.length} boards`
-                  : `${filteredAndSortedBoards.length} of ${savedBoards.length} boards`
+                  ? `${savedBoards.length} generated outfits`
+                  : `${filteredAndSortedBoards.length} of ${savedBoards.length} generated outfits`
               )}
             </div>
           </div>
-          <div className="lookbook-pin-toggle" aria-label="Favorite sorting preference">
+          {activeSubTab === 'my-outfits' && (
             <button
               type="button"
-              className={!pinFavs ? 'active' : ''}
-              onClick={() => setFilter({ pin: false })}
+              className="lookbook-add-outfit"
+              onClick={() => { setEditOutfit(null); setShowForm(true) }}
             >
-              All outfits
+              <span className="lookbook-add-icon" aria-hidden="true">+</span>
+              <span>Add outfit</span>
             </button>
-            <button
-              type="button"
-              className={pinFavs ? 'active' : ''}
-              onClick={() => setFilter({ pin: true })}
-            >
-              Pinned
-            </button>
-          </div>
+          )}
         </div>
 
         <div className="subtab-container">
@@ -1747,7 +1726,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
           </button>
         </div>
 
-        <div className="search-sort-row">
+        <div className="search-sort-row lookbook-search-row">
           <div className="search-bar search-bar-lookbook">
             <span className="search-icon">◎</span>
             <input 
@@ -1788,7 +1767,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
           </div>
         </div>
 
-        <div className="lookbook-filter-toolbar">
+        <div className="lookbook-filter-toolbar" aria-label="Outfit filters">
           <div className="lookbook-filter-menu">
             <button
               type="button"
@@ -1857,6 +1836,26 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
               </>
             )}
           </div>
+
+          <div className="lookbook-pin-toggle" aria-label="Pinned outfit filter">
+            <button
+              type="button"
+              className={!pinFavs ? 'active' : ''}
+              onClick={() => setFilter({ pin: false })}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              className={pinFavs ? 'active' : ''}
+              onClick={() => setFilter({ pin: true })}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 20.2 4.6 13a4.8 4.8 0 0 1 6.8-6.8l.6.6.6-.6a4.8 4.8 0 0 1 6.8 6.8L12 20.2Z" />
+              </svg>
+              Pinned
+            </button>
+          </div>
         </div>
 
         {activeFilterChips.length > 0 && (
@@ -1908,7 +1907,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                 aria-label={`Open ${o.name || 'outfit'} outfit`}
               >
                 {o.photo
-                  ? <img className="outfit-photo" src={`/uploads/${o.photo}`} alt={o.name} loading="lazy" />
+                  ? <img className="outfit-photo" src={`/uploads/${o.photo}`} alt={o.name} loading="lazy" onLoad={markOutfitImageOrientation} />
                   : <div className="outfit-placeholder">{OCCASION_ICONS[o.occasion] || '✦'}</div>
                 }
                 <button
@@ -1916,8 +1915,11 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                   className="outfit-card-fav"
                   onClick={e => { e.stopPropagation(); handleFav(o) }}
                   aria-label={`${o.favorite ? 'Remove' : 'Add'} ${o.name || 'outfit'} ${o.favorite ? 'from' : 'to'} favorites`}
+                  aria-pressed={Boolean(o.favorite)}
                 >
-                  {o.favorite ? '♥' : '♡'}
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20.2 4.6 13a4.8 4.8 0 0 1 6.8-6.8l.6.6.6-.6a4.8 4.8 0 0 1 6.8 6.8L12 20.2Z" />
+                  </svg>
                 </button>
                 <div className="outfit-card-body">
                   <div className="outfit-card-name">{o.name}</div>
@@ -1932,11 +1934,11 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
         )
       ) : (
         loadingBoards ? (
-          <div className="loading">Loading boards…</div>
+          <div className="loading">Loading generated outfits…</div>
         ) : filteredAndSortedBoards.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">✦</div>
-            <div className="empty-state-title">No boards found</div>
+            <div className="empty-state-title">No generated outfits found</div>
             <div className="empty-state-text">Try adjusting your filters or search terms</div>
           </div>
         ) : (
@@ -1950,10 +1952,10 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                 onKeyDown={event => handleCardKeyDown(event, () => setBoardDetail(b))}
                 role="button"
                 tabIndex={0}
-                aria-label={`Open ${b.title || 'saved board'} board`}
+                aria-label={`Open ${b.title || 'generated outfit'}`}
               >
                 {resolveUploadImageSrc(b.image_url) ? (
-                  <img className="outfit-photo" src={resolveUploadImageSrc(b.image_url)} alt={b.title} loading="lazy" style={{ objectFit: 'cover' }} />
+                  <img className="outfit-photo" src={resolveUploadImageSrc(b.image_url)} alt={b.title} loading="lazy" onLoad={markOutfitImageOrientation} />
                 ) : (
                   <div className="outfit-placeholder">✦</div>
                 )}
@@ -1961,12 +1963,15 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                   type="button"
                   className="outfit-card-fav"
                   onClick={e => { e.stopPropagation(); handleBoardFav(b) }}
-                  aria-label={`${b.favorite ? 'Remove' : 'Add'} ${b.title || 'saved board'} ${b.favorite ? 'from' : 'to'} favorites`}
+                  aria-label={`${b.favorite ? 'Remove' : 'Add'} ${b.title || 'generated outfit'} ${b.favorite ? 'from' : 'to'} favorites`}
+                  aria-pressed={Boolean(b.favorite)}
                 >
-                  {b.favorite ? '♥' : '♡'}
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20.2 4.6 13a4.8 4.8 0 0 1 6.8-6.8l.6.6.6-.6a4.8 4.8 0 0 1 6.8 6.8L12 20.2Z" />
+                  </svg>
                 </button>
                 <div className="outfit-card-body">
-                  <div className="outfit-card-name">{b.title || 'Saved board'}</div>
+                  <div className="outfit-card-name">{b.title || 'Generated outfit'}</div>
                   <div className="outfit-card-occasion">
                     {b.context_name || 'AI Composition'}
                     {b.pieces?.length > 0 && ` · ${b.pieces.length} ${b.pieces.length === 1 ? 'piece' : 'pieces'}`}
@@ -1978,9 +1983,6 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
         )
       )}
  
-      {activeSubTab === 'my-outfits' && (
-        <button className="fab" onClick={() => { setEditOutfit(null); setShowForm(true) }}>+</button>
-      )}
       {showForm && <OutfitForm outfit={editOutfit} onSave={handleSave} onCancel={() => { setShowForm(false); setEditOutfit(null) }} />}
       {detail && (
         <OutfitDetail

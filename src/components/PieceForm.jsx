@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { GATE_CRITICAL_FIELDS, missingGateFields } from '../../styling-engine/attributes.js'
+import { COLOR_OPTIONS, LIGHT_COLORS } from '../utils/colors.js'
 
 const CATEGORIES  = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
@@ -35,27 +36,6 @@ const STATUSES    = [
   { value: 'consider-donating', label: '◌ Consider donating' },
   { value: 'donated',           label: '✓ Donated' },
 ]
-const COLOR_OPTIONS = [
-  { name: 'black', hex: '#2A2420' }, { name: 'white', hex: '#F5F2EC' },
-  { name: 'cream', hex: '#E8DFC8' }, { name: 'beige', hex: '#D6C3A3' },
-  { name: 'taupe', hex: '#9C8B78' }, { name: 'grey', hex: '#9A9A9A' },
-  { name: 'charcoal', hex: '#484848' }, { name: 'navy', hex: '#1E2D4A' },
-  { name: 'denim', hex: '#4F6F8F' }, { name: 'brown', hex: '#7A5A3A' },
-  { name: 'tan', hex: '#C0A070' }, { name: 'oatmeal', hex: '#D8C8B0' },
-  { name: 'amber', hex: '#B07820' }, { name: 'mustard', hex: '#B89020' },
-  { name: 'yellow', hex: '#EAD870' }, { name: 'orange', hex: '#C86030' },
-  { name: 'rust', hex: '#A85A3A' }, { name: 'red', hex: '#A83A2A' },
-  { name: 'burgundy', hex: '#6B2D3A' }, { name: 'pink', hex: '#C07080' },
-  { name: 'mauve', hex: '#A7798A' }, { name: 'lavender', hex: '#A99AC2' },
-  { name: 'lilac', hex: '#C4B2D8' }, { name: 'plum', hex: '#5A3060' },
-  { name: 'green', hex: '#3A6A3A' }, { name: 'sage', hex: '#96A08A' },
-  { name: 'olive', hex: '#5A6030' }, { name: 'turquoise', hex: '#2A8080' },
-  { name: 'light blue', hex: '#7AADCC' }, { name: 'periwinkle', hex: '#8888CC' },
-  { name: 'dark blue', hex: '#1A2040' }, { name: 'dark grey', hex: '#484848' },
-  { name: 'light grey', hex: '#B8B8B8' }, { name: 'multi', hex: '#8A6848' },
- ]
-const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac', 'yellow', 'sage']
-
 const OPACITY_OPTIONS = [
   { value: 'opaque', label: 'opaque' },
   { value: 'semi_sheer', label: 'semi-sheer' },
@@ -361,6 +341,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [fitNoting,   setFitNoting]   = useState(false)
   const [photoPreviewSize, setPhotoPreviewSize] = useState(180)
   const [previewImage, setPreviewImage] = useState(null)
+  const [styleReadExpanded, setStyleReadExpanded] = useState(false)
 
   const markManualOverride = (path) => {
     setManualOverrides(paths => paths.includes(path) ? paths : [...paths, path])
@@ -580,27 +561,43 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     const sLower = styleRisk.toLowerCase().trim()
     return !sLower.includes(rLower) && !rLower.includes(sLower)
   })
+  const pairingRequirements = profileList(garmentIntel.pairing_requirements)
+  const formulaCompatibility = profileList(garmentIntel.formula_compatibility)
+  const doNotPairRules = profileList(garmentIntel.do_not_pair_rules)
+  const styleReadPreview = (values) => (styleReadExpanded ? values : values.slice(0, 3)).join('; ')
+  const hasMoreStyleRead = [
+    pairingRequirements,
+    filteredFailureRisks,
+    formulaCompatibility,
+    doNotPairRules,
+  ].some(values => values.length > 3)
   const intelRows = [
     garmentIntel.auto_use_trust && ['Auto-use', prettyProfileLabel(garmentIntel.auto_use_trust)],
     garmentIntel.best_outfit_role && ['Best role', prettyProfileLabel(garmentIntel.best_outfit_role)],
-    profileList(garmentIntel.pairing_requirements).length && ['Needs', profileList(garmentIntel.pairing_requirements).slice(0, 3).join('; ')],
-    filteredFailureRisks.length > 0 && ['Risks', filteredFailureRisks.slice(0, 3).join('; ')],
-    profileList(garmentIntel.formula_compatibility).length && ['Formulas', profileList(garmentIntel.formula_compatibility).slice(0, 3).join('; ')],
-    profileList(garmentIntel.do_not_pair_rules).length && ['Avoid', profileList(garmentIntel.do_not_pair_rules).slice(0, 3).join('; ')],
+    pairingRequirements.length > 0 && ['Needs', styleReadPreview(pairingRequirements)],
+    filteredFailureRisks.length > 0 && ['Risks', styleReadPreview(filteredFailureRisks)],
+    formulaCompatibility.length > 0 && ['Formulas', styleReadPreview(formulaCompatibility)],
+    doNotPairRules.length > 0 && ['Avoid', styleReadPreview(doNotPairRules)],
   ].filter(Boolean)
   const realWearRows = Object.entries(garmentIntel.real_wear_notes || {}).filter(([, value]) => value)
   const occasionRows = Object.entries(garmentIntel.occasion_confidence || {}).filter(([, value]) => value)
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal-sheet" onClick={e => e.stopPropagation()}>
-        <div className="modal-handle" />
+      <div className="modal-sheet piece-form-sheet" onClick={e => e.stopPropagation()}>
+        <div className="modal-handle piece-form-handle" />
         <div className="modal-header">
           <span className="modal-title">{isEdit ? `Edit piece #${piece.id}` : 'Add piece'}</span>
           <button className="modal-close" onClick={onCancel}>✕</button>
         </div>
 
-        <div className="form-body">
+        <div className="form-body piece-form-layout">
+
+          <aside className="piece-form-media-column">
+            <div className="piece-form-section-intro">
+              <span>Piece photos</span>
+              Keep the garment visible and evenly lit. A worn photo adds useful fit context.
+            </div>
 
           {/* ── Photos ──────────────────────────────────────────────── */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -655,6 +652,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               {tagError && <div style={{ fontSize: 11, color: 'var(--repair)', marginTop: 4 }}>{tagError}</div>}
             </div>
           )}
+
+          </aside>
+
+          <div className="piece-form-fields-column">
+            <div className="piece-form-section-intro">
+              <span>{isEdit ? 'Piece details' : 'Describe the piece'}</span>
+              Start with the essentials, then refine fit, material, and styling intelligence as needed.
+            </div>
 
           {/* ── Basics ──────────────────────────────────────────────── */}
           <Section label="Basics" />
@@ -795,6 +800,17 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                   <strong style={{ color: 'var(--text)' }}>{label}:</strong> {value}
                 </div>
               ))}
+              {hasMoreStyleRead && (
+                <button
+                  type="button"
+                  className="piece-style-read-toggle"
+                  onClick={() => setStyleReadExpanded(expanded => !expanded)}
+                  aria-expanded={styleReadExpanded}
+                >
+                  {styleReadExpanded ? 'Show less' : 'Show all AI insights'}
+                  <span aria-hidden="true">{styleReadExpanded ? '↑' : '↓'}</span>
+                </button>
+              )}
               {realWearRows.length > 0 && (
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
                   <strong style={{ color: 'var(--text)' }}>Real wear:</strong> {realWearRows.map(([key, value]) => `${prettyProfileLabel(key)}: ${value}`).join('; ')}
@@ -1056,6 +1072,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               {fitNoting && <span style={{ color: 'var(--accent)', fontSize: 10, fontStyle: 'italic' }}>◌ evaluating fit…</span>}
             </label>
             <textarea className="form-textarea" placeholder="Anything you've learned about how to wear this piece…" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ minHeight: 100 }} />
+          </div>
+
           </div>
 
         </div>

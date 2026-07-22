@@ -18,6 +18,7 @@ export default function InfoTooltip({
   side = 'bottom',
   size = 'md',
   width = 260,
+  className = '',
 }) {
   const isControlled = openProp !== undefined
   const [internalOpen, setInternalOpen] = useState(false)
@@ -55,7 +56,7 @@ export default function InfoTooltip({
   }, [isControlled, open])
 
   return (
-    <div className="info-tooltip">
+    <div className={`info-tooltip ${className}`.trim()}>
       <button
         ref={buttonRef}
         type="button"

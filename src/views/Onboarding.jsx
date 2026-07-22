@@ -61,7 +61,12 @@ function toggleIn(list, value) {
 export default function Onboarding() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const returnTo = searchParams.get('return') === 'settings' ? '/settings' : null
+  const returnTarget = searchParams.get('return')
+  const returnTo = returnTarget === 'settings'
+    ? '/settings'
+    : returnTarget === 'visual-lab'
+      ? '/visual-lab?section=profile'
+      : null
   const initialStep = STEPS.includes(searchParams.get('step')) ? searchParams.get('step') : 'welcome'
   const [step, setStep] = useState(initialStep)
   const [saving, setSaving] = useState(false)

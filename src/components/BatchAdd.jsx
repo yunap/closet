@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { GATE_CRITICAL_FIELDS } from '../../styling-engine/attributes.js'
 import { confidenceMapForPiece, intakeReviewSummary, intakeReviewSummaryText } from '../utils/intakeReview.js'
+import { COLOR_OPTIONS, LIGHT_COLORS } from '../utils/colors.js'
 
 const CATEGORIES = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS  = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
@@ -62,27 +63,6 @@ const REVIEW_CONSTRUCTION_CONFIG = {
     lengthOptions: ['open','closed','ankle','mid-calf','knee','over-knee'],
   }
 }
-
-const COLOR_OPTIONS = [
-  { name: 'black', hex: '#2A2420' }, { name: 'white', hex: '#F5F2EC' },
-  { name: 'cream', hex: '#E8DFC8' }, { name: 'beige', hex: '#D6C3A3' },
-  { name: 'taupe', hex: '#9C8B78' }, { name: 'grey', hex: '#9A9A9A' },
-  { name: 'charcoal', hex: '#484848' }, { name: 'navy', hex: '#1E2D4A' },
-  { name: 'denim', hex: '#4F6F8F' }, { name: 'brown', hex: '#7A5A3A' },
-  { name: 'tan', hex: '#C0A070' }, { name: 'oatmeal', hex: '#D8C8B0' },
-  { name: 'amber', hex: '#B07820' }, { name: 'mustard', hex: '#B89020' },
-  { name: 'yellow', hex: '#EAD870' }, { name: 'orange', hex: '#C86030' },
-  { name: 'rust', hex: '#A85A3A' }, { name: 'red', hex: '#A83A2A' },
-  { name: 'burgundy', hex: '#6B2D3A' }, { name: 'pink', hex: '#C07080' },
-  { name: 'mauve', hex: '#A7798A' }, { name: 'lavender', hex: '#A99AC2' },
-  { name: 'lilac', hex: '#C4B2D8' }, { name: 'plum', hex: '#5A3060' },
-  { name: 'green', hex: '#3A6A3A' }, { name: 'sage', hex: '#96A08A' },
-  { name: 'olive', hex: '#5A6030' }, { name: 'turquoise', hex: '#2A8080' },
-  { name: 'light blue', hex: '#7AADCC' }, { name: 'periwinkle', hex: '#8888CC' },
-  { name: 'dark blue', hex: '#1A2040' }, { name: 'dark grey', hex: '#484848' },
-  { name: 'light grey', hex: '#B8B8B8' }, { name: 'multi', hex: '#8A6848' },
-]
-const LIGHT_COLORS = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'lavender', 'lilac', 'yellow', 'sage']
 
 function emptyForm() {
   return {

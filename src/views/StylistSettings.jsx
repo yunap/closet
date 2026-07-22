@@ -14,18 +14,70 @@ const LAYER_TITLES = {
   editorial_subject: 'Image Generation — Subject',
   editorial_shoes: 'Image Generation — Shoe Rules'
 }
+const LAYER_META = {
+  body_contract: ['Foundation', 'Comfort, fit, movement, and maintenance requirements.'],
+  proven_formulas: ['What works', 'Outfit formulas earned from looks you have confirmed.'],
+  aesthetic_gravity: ['Preferences', 'The visual qualities you tend to favor, without limiting your range.'],
+  lane_neutrality: ['Style range', 'How the stylist explores different moods without drifting into caricature.'],
+  working_style: ['Collaboration', 'How you want the stylist to communicate, ask, and respond.'],
+  editorial_subject: ['Rendered person', 'How you should appear in generated outfit imagery.'],
+  editorial_shoes: ['Rendered footwear', 'How footwear should be handled in generated imagery.'],
+}
+const PERSONAL_STYLE_LAYERS = new Set(['body_contract', 'proven_formulas', 'aesthetic_gravity', 'lane_neutrality', 'working_style'])
+const IMAGE_STYLE_LAYERS = new Set(['editorial_subject', 'editorial_shoes'])
 const INTERVIEW_STEPS = { body_contract: 'comfort', aesthetic_gravity: 'aesthetic', working_style: 'working' }
 // The durable learned classes: rules the stylist stored from conversations
 // (store_user_correction → owner_rule; persisted preference reactions). Card-level
 // taste feedback stays in the chat's context-scoped Learning panel.
 const LEARNING_TYPES = new Set(['owner_rule', 'preference_reaction', 'correction'])
 
-const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px', marginBottom: 16 }
+const card = { background: 'var(--surface)', border: '1px solid var(--border-light)', borderRadius: 16, padding: '20px 22px', marginBottom: 16, boxShadow: '0 10px 28px rgba(64, 47, 29, 0.045)' }
 const inputStyle = { width: '100%', padding: '9px 11px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 14, boxSizing: 'border-box' }
 const primaryBtn = { padding: '7px 14px', borderRadius: 9, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }
 const quietBtn = { padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 12.5, cursor: 'pointer' }
 
-export default function StylistSettings() {
+function friendlySessionName(userAgent = '') {
+  const ua = String(userAgent)
+  const browser = /Claude\//i.test(ua)
+    ? 'Claude'
+    : /Edg\//i.test(ua)
+      ? 'Edge'
+      : /Firefox\//i.test(ua)
+        ? 'Firefox'
+        : /Chrome\//i.test(ua)
+          ? 'Chrome'
+          : /Safari\//i.test(ua)
+            ? 'Safari'
+            : 'Browser'
+  const platform = /iPhone|iPad/i.test(ua)
+    ? 'iPhone or iPad'
+    : /Android/i.test(ua)
+      ? 'Android'
+      : /Macintosh|Mac OS X/i.test(ua)
+        ? 'Mac'
+        : /Windows/i.test(ua)
+          ? 'Windows'
+          : /Linux/i.test(ua)
+            ? 'Linux'
+            : 'unknown device'
+  return `${browser} on ${platform}`
+}
+
+function relativeSessionTime(value) {
+  if (!value) return 'Activity time unavailable'
+  const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value.replace(' ', 'T')}Z`
+  const timestamp = new Date(normalized).getTime()
+  if (!Number.isFinite(timestamp)) return `Last active ${value}`
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000))
+  if (minutes < 2) return 'Active just now'
+  if (minutes < 60) return `Active ${minutes} minutes ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `Active ${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
+  const days = Math.round(hours / 24)
+  return `Active ${days} ${days === 1 ? 'day' : 'days'} ago`
+}
+
+export default function StylistSettings({ mode = 'account', embedded = false } = {}) {
   const navigate = useNavigate()
   const [profile, setProfile] = useState(null)
   const [homeLocation, setHomeLocation] = useState('')
@@ -37,6 +89,7 @@ export default function StylistSettings() {
   const [demo, setDemo] = useState(null)
   const [learningDrafts, setLearningDrafts] = useState({})
   const [sessions, setSessions] = useState([])
+  const [sessionsExpanded, setSessionsExpanded] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState(null)
   const [apiKeyDrafts, setApiKeyDrafts] = useState({ anthropicKey: '', openAiKey: '' })
   const [isAdmin, setIsAdmin] = useState(false)
@@ -137,15 +190,69 @@ export default function StylistSettings() {
     setHistoryFor(layer)
   }
 
+  const currentSession = sessions.find(session => session.isCurrent)
+  const otherSessions = sessions.filter(session => !session.isCurrent)
+
+  const renderStyleLayer = ({ layer, body, updatedAt, isDefault }) => {
+    const [eyebrow, description] = LAYER_META[layer] || ['Guidance', 'Working guidance used by your stylist.']
+    const hasChanges = drafts[layer] !== undefined && drafts[layer] !== body
+    return (
+      <details key={layer} className="style-profile-card" defaultOpen={layer === 'body_contract'}>
+        <summary>
+          <div className="style-profile-card-summary">
+            <span className="style-profile-card-eyebrow">{eyebrow}</span>
+            <strong>{LAYER_TITLES[layer] || layer}</strong>
+            <span className="style-profile-card-description">{description}</span>
+          </div>
+          <span className={`style-profile-card-status ${isDefault ? 'is-default' : ''}`}>
+            {isDefault ? 'Not personalized' : 'Personalized'}
+          </span>
+        </summary>
+        <div className="style-profile-card-body">
+          <textarea
+            className="style-profile-editor"
+            value={drafts[layer] ?? body}
+            onChange={e => setDrafts({ ...drafts, [layer]: e.target.value })}
+          />
+          <div className="style-profile-card-meta">
+            <span>{!isDefault && updatedAt ? `Last updated ${updatedAt}` : 'Using the default guidance'}</span>
+            <div className="style-profile-card-actions">
+              {INTERVIEW_STEPS[layer] && (
+                <Link to={`/onboarding?step=${INTERVIEW_STEPS[layer]}&return=visual-lab`} className="btn-secondary">Redo interview</Link>
+              )}
+              {!isDefault && <button className="btn-secondary" onClick={() => showHistory(layer)}>{historyFor === layer ? 'Hide history' : 'View history'}</button>}
+              {hasChanges && <button className="btn-primary" onClick={() => saveLayer(layer)}>Save changes</button>}
+            </div>
+          </div>
+          {historyFor === layer && (
+            <div className="style-profile-history">
+              {historyRows.length === 0 && <div className="style-profile-history-empty">No history yet.</div>}
+              {historyRows.map(row => (
+                <div key={row.id} className="style-profile-history-entry">
+                  <strong>{row.created_at} · {row.source}</strong>
+                  <pre>{row.prior_body ?? '(no prior text — first write)'}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </details>
+    )
+  }
+
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 60px' }}>
-      <h1 style={{ fontSize: 24, margin: '0 0 4px' }}>Stylist Settings</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 0 }}>
-        This is everything your stylist believes about you — plain text, yours to correct.
+    <div className={`settings-page ${mode === 'style' ? 'settings-page--style' : 'settings-page--account'}`} style={{ maxWidth: mode === 'style' ? 820 : 860, margin: '0 auto', padding: embedded ? '8px 0 48px' : '38px 28px 72px' }}>
+      <div className="settings-page-header">
+      <h1 className="settings-page-title">{mode === 'style' ? 'Style profile' : 'Settings'}</h1>
+      <p className="settings-page-intro">
+        {mode === 'style'
+          ? 'This is your stylist’s working understanding of you — plain text, yours to correct.'
+          : `Manage your profile, AI provider keys, ${isAdmin ? 'administration, ' : ''}and account security.`}
       </p>
+      </div>
       {status && <div style={{ padding: '8px 12px', borderRadius: 9, background: 'var(--donate-bg)', color: 'var(--donate)', fontSize: 13, marginBottom: 12 }}>{status}</div>}
 
-      {profile && (
+      {mode !== 'style' && profile && (
         <div style={card}>
           <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Profile</h3>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -175,49 +282,41 @@ export default function StylistSettings() {
         </div>
       )}
 
-      <h2 style={{ fontSize: 18, margin: '22px 0 10px' }}>Style constitution</h2>
-      {layers.map(({ layer, body, updatedAt, isDefault }) => (
-        <div key={layer} style={card}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <h3 style={{ margin: 0, fontSize: 15 }}>{LAYER_TITLES[layer] || layer}</h3>
-            <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
-              {isDefault ? 'default — not yet personalized' : (updatedAt ? `updated ${updatedAt}` : '')}
-            </div>
+      {mode === 'style' && <>
+      <section className="style-profile-section">
+        <div className="style-profile-section-heading">
+          <div>
+            <span>Personal guidance</span>
+            <h2>How your stylist understands you</h2>
           </div>
-          <textarea
-            style={{ ...inputStyle, minHeight: 120, marginTop: 10, fontFamily: 'monospace', fontSize: 12.5 }}
-            value={drafts[layer] ?? body}
-            onChange={e => setDrafts({ ...drafts, [layer]: e.target.value })}
-          />
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {INTERVIEW_STEPS[layer] && (
-                <Link to={`/onboarding?step=${INTERVIEW_STEPS[layer]}&return=settings`} style={{ ...quietBtn, textDecoration: 'none', display: 'inline-block' }}>Redo interview</Link>
-              )}
-              {!isDefault && <button style={quietBtn} onClick={() => showHistory(layer)}>{historyFor === layer ? 'Hide history' : 'History'}</button>}
-            </div>
-            {drafts[layer] !== undefined && drafts[layer] !== body && (
-              <button style={primaryBtn} onClick={() => saveLayer(layer)}>Save layer</button>
-            )}
-          </div>
-          {historyFor === layer && (
-            <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10, display: 'grid', gap: 8 }}>
-              {historyRows.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No history yet.</div>}
-              {historyRows.map(row => (
-                <div key={row.id} style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  <div style={{ fontWeight: 600 }}>{row.created_at} · {row.source}</div>
-                  <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0 0', fontSize: 11.5, background: 'var(--surface-2)', padding: 8, borderRadius: 8 }}>{row.prior_body ?? '(no prior text — first write)'}</pre>
-                </div>
-              ))}
-            </div>
-          )}
+          <p>These layers guide every recommendation. Expand any one to review or correct it.</p>
         </div>
-      ))}
+        <div className="style-profile-card-list">
+          {layers.filter(({ layer }) => PERSONAL_STYLE_LAYERS.has(layer)).map(renderStyleLayer)}
+        </div>
+      </section>
 
-      {demo && (
-        <div style={card}>
-          <h3 style={{ margin: '0 0 6px', fontSize: 15 }}>Demo wardrobe</h3>
-          {demo.count > 0 ? (
+      <section className="style-profile-section">
+        <div className="style-profile-section-heading">
+          <div>
+            <span>Visual generation</span>
+            <h2>How generated looks represent you</h2>
+          </div>
+          <p>Rendering guidance affects imagery only; it does not limit outfit recommendations.</p>
+        </div>
+        <div className="style-profile-card-list">
+          {layers.filter(({ layer }) => IMAGE_STYLE_LAYERS.has(layer)).map(renderStyleLayer)}
+        </div>
+      </section>
+      </>}
+
+      {mode !== 'style' && demo?.count > 0 && (
+        <details style={{ ...card, padding: 0, overflow: 'hidden' }}>
+          <summary style={{ padding: '16px 20px', cursor: 'pointer', fontSize: 15, fontWeight: 700 }}>
+            Data & maintenance
+          </summary>
+          <div style={{ padding: '0 20px 18px', borderTop: '1px solid var(--border-light)' }}>
+            <h3 style={{ margin: '16px 0 6px', fontSize: 14 }}>Sample wardrobe</h3>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>{demo.count} demo pieces are in your wardrobe.</span>
               <button
@@ -228,28 +327,21 @@ export default function StylistSettings() {
                 }}
               >Remove all demo pieces</button>
             </div>
-          ) : (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Explore the stylist with {demo.available} sample pieces — removable any time.</span>
-              <button
-                style={quietBtn}
-                onClick={async () => {
-                  const res = await fetch('/api/settings/demo-wardrobe', { method: 'POST' })
-                  if (res.ok) { flash('Demo wardrobe loaded.'); load() }
-                }}
-              >Load demo wardrobe</button>
-            </div>
-          )}
-        </div>
+          </div>
+        </details>
       )}
 
-      <h2 style={{ fontSize: 18, margin: '22px 0 4px' }}>Learned rules & preferences</h2>
-      <p style={{ ...{ color: 'var(--text-muted)', fontSize: 13 }, marginTop: 0 }}>
-        Durable rules your stylist stored from conversations ("I don't wear…", weather corrections).
-        These live alongside the constitution and every future styling turn respects them.
-      </p>
+      {mode === 'style' && <>
+      <section className="style-profile-section style-profile-learnings">
+      <div className="style-profile-section-heading">
+        <div>
+          <span>Conversation memory</span>
+          <h2>Learned rules & preferences</h2>
+        </div>
+        <p>Durable corrections learned in chat, such as what you do not wear or weather-specific needs.</p>
+      </div>
       {learnings.length === 0 && (
-        <div style={card}><div style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Nothing learned yet — corrections you give in chat land here.</div></div>
+        <div className="style-profile-empty">Nothing learned yet. Corrections you give the stylist in chat will appear here.</div>
       )}
       {learnings.map(row => (
         <div key={row.id} style={{ ...card, padding: '12px 16px' }}>
@@ -270,8 +362,11 @@ export default function StylistSettings() {
           </div>
         </div>
       ))}
+      </section>
+      </>}
 
-      <h2 style={{ fontSize: 18, margin: '22px 0 10px' }}>API keys</h2>
+      {mode !== 'style' && <>
+      <h2>AI provider keys</h2>
       <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 0 }}>
         {apiKeyStatus?.hasOperatorKeyAccess
           ? "Bring your own Anthropic and/or OpenAI keys — they're used for your requests instead of the operator's. Leave blank to keep using the operator's keys."
@@ -321,31 +416,65 @@ export default function StylistSettings() {
       )}
 
       {isAdmin && (
+        <>
+        <h2>Administration</h2>
         <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 13.5, color: 'var(--text-muted)' }}>You're an admin on this instance.</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>Manage this installation</div>
+            <div style={{ marginTop: 3, fontSize: 12.5, color: 'var(--text-muted)' }}>Manage users, access, invites, and operator settings.</div>
+          </div>
           <Link to="/admin" style={{ ...primaryBtn, textDecoration: 'none', display: 'inline-block' }}>Open Administration</Link>
         </div>
+        </>
       )}
 
-      <h2 style={{ fontSize: 18, margin: '22px 0 10px' }}>Account & sessions</h2>
+      <h2>Security & sessions</h2>
       <div style={card}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: sessions.length ? 12 : 0 }}>
-          <span style={{ fontSize: 13.5, color: 'var(--text-muted)' }}>Signed in on {sessions.length} {sessions.length === 1 ? 'device' : 'devices'}.</span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {sessions.length > 1 && <button style={quietBtn} onClick={revokeOtherSessions}>Sign out other devices</button>}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>
+              {currentSession ? friendlySessionName(currentSession.userAgentLabel) : 'Current session'}
+              <span style={{ color: 'var(--accent)', fontSize: 11.5, fontWeight: 600 }}> · this session</span>
+            </div>
+            <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-muted)' }}>
+              {currentSession ? relativeSessionTime(currentSession.lastSeen) : 'Currently signed in'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {otherSessions.length > 0 && <button style={quietBtn} onClick={revokeOtherSessions}>Sign out other sessions</button>}
             <button style={quietBtn} onClick={logout}>Sign out</button>
           </div>
         </div>
-        {sessions.map(s => (
-          <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontSize: 13 }}>{s.userAgentLabel || 'Unknown device'} {s.isCurrent && <span style={{ color: 'var(--accent)', fontSize: 11.5 }}>· this device</span>}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>last seen {s.lastSeen}</div>
-            </div>
-            <button style={quietBtn} onClick={() => revokeSession(s.id)}>{s.isCurrent ? 'Sign out' : 'Revoke'}</button>
+
+        {otherSessions.length > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <button
+              type="button"
+              onClick={() => setSessionsExpanded(open => !open)}
+              aria-expanded={sessionsExpanded}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, color: 'var(--accent)', fontSize: 12.5, fontWeight: 700, textAlign: 'left' }}
+            >
+              <span>{sessionsExpanded ? 'Hide' : 'View'} {otherSessions.length} other {otherSessions.length === 1 ? 'session' : 'sessions'}</span>
+              <span aria-hidden="true">{sessionsExpanded ? '↑' : '↓'}</span>
+            </button>
+
+            {sessionsExpanded && (
+              <div style={{ marginTop: 8 }}>
+                {otherSessions.map(session => (
+                  <div key={session.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '11px 0', borderTop: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{friendlySessionName(session.userAgentLabel)}</div>
+                      <div style={{ marginTop: 2, fontSize: 11.5, color: 'var(--text-muted)' }}>{relativeSessionTime(session.lastSeen)}</div>
+                    </div>
+                    <button style={quietBtn} onClick={() => revokeSession(session.id)}>Revoke session</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
+        )}
       </div>
+      </>}
     </div>
   )
 }
