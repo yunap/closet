@@ -8,6 +8,7 @@ import BatchAdd from '../components/BatchAdd'
 import TodoList from './TodoList'
 import usePendingWardrobeTaskCount from '../utils/usePendingWardrobeTaskCount'
 import { wardrobeMixSort } from '../utils/wardrobeMixSort'
+import { getColorSwatch, sortColorNames } from '../utils/colors'
 
 const CATEGORIES = [
   { value: '',          label: 'All' },
@@ -45,17 +46,6 @@ const SORT_OPTIONS = [
   { value: 'rediscover', label: 'Ready to rediscover' },
   { value: 'name',     label: 'Name A–Z' },
 ]
-
-const COLOR_HEX_MAP = {
-  black: '#2A2420', white: '#F5F2EC', cream: '#E8DFC8', beige: '#D6C3A3',
-  taupe: '#9C8B78', grey: '#9A9A9A', charcoal: '#484848', navy: '#1E2D4A',
-  denim: '#4F6F8F', brown: '#7A5A3A', tan: '#C0A070', oatmeal: '#D8C8B0',
-  amber: '#B07820', mustard: '#B89020', orange: '#C86030', red: '#A83A2A',
-  pink: '#C07080', mauve: '#A7798A', lavender: '#A99AC2', lilac: '#C4B2D8',
-  plum: '#5A3060', green: '#3A6A3A', olive: '#5A6030', turquoise: '#2A8080',
-  'light blue': '#7AADCC', periwinkle: '#8888CC', 'dark blue': '#1A2040',
-  'dark grey': '#484848', 'light grey': '#B8B8B8', multi: '#8A6848'
-}
 
 export default function PieceInventory({ onSendToStylist }) {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -105,13 +95,15 @@ export default function PieceInventory({ onSendToStylist }) {
   const [availableColors, setAvailableColors]   = useState([])
   const [availableFabrics, setAvailableFabrics] = useState([])
   const [usageStats, setUsageStats] = useState({})
+  const [demoWardrobe, setDemoWardrobe] = useState(null)
+  const [demoLoading, setDemoLoading] = useState(false)
   const pendingCount = usePendingWardrobeTaskCount()
 
   const fetchMeta = useCallback(async () => {
     try {
       const res = await fetch('/api/pieces/meta')
       const data = await res.json()
-      setAvailableColors(data.colors || [])
+      setAvailableColors(sortColorNames(data.colors || []))
       setAvailableFabrics(data.fabrics || [])
     } catch {}
   }, [])
@@ -146,6 +138,27 @@ export default function PieceInventory({ onSendToStylist }) {
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => { const t = setTimeout(fetchPieces, 300); return () => clearTimeout(t) }, [search])
+
+  const isUnfilteredWardrobe = !search && !filterCat && !filterOcc && !filterSeason && !filterColor && !filterFabric && !favOnly
+
+  useEffect(() => {
+    if (loading || pieces.length > 0 || !isUnfilteredWardrobe) return
+    fetch('/api/settings/demo-wardrobe')
+      .then(res => res.json())
+      .then(data => setDemoWardrobe(data))
+      .catch(() => setDemoWardrobe(null))
+  }, [loading, pieces.length, isUnfilteredWardrobe])
+
+  const loadDemoWardrobe = async () => {
+    setDemoLoading(true)
+    try {
+      const res = await fetch('/api/settings/demo-wardrobe', { method: 'POST' })
+      if (!res.ok) return
+      await Promise.all([fetchPieces(), fetchMeta()])
+    } finally {
+      setDemoLoading(false)
+    }
+  }
 
   // Deep link from elsewhere in the app (e.g. the Stylist piece landing) straight
   // into this piece's detail card. One-shot: the param is consumed and cleared so
@@ -285,11 +298,15 @@ export default function PieceInventory({ onSendToStylist }) {
   return (
     <div>
       {/* Header */}
-      <div className="view-header">
-        <div className="view-header-top">
-          <div>
+      <div className="view-header wardrobe-view-header">
+        <div className="view-header-top wardrobe-header-primary">
+          <div className="wardrobe-header-title">
             <div className="view-title">The Wardrobe Room</div>
             <div className="view-subtitle">{pieces.length} pieces{favOnly ? ' · favorites' : ''}</div>
+          </div>
+          <div className="search-bar wardrobe-header-search">
+            <span className="search-icon" aria-hidden="true">◎</span>
+            <input aria-label="Search wardrobe" type="search" placeholder="Search pieces by name, tags, or ID…" value={search} onChange={e => setFilter({ q: e.target.value })} />
           </div>
           <div className="wardrobe-header-actions">
             <div className="wardrobe-add-menu" ref={addMenuRef}>
@@ -327,21 +344,19 @@ export default function PieceInventory({ onSendToStylist }) {
             <button
               className="chip wardrobe-tasks-btn"
               onClick={() => setShowTodo(true)}
-              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
             >
-              📋 Tasks {pendingCount > 0 && <span className="badge-count">{pendingCount}</span>}
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <rect x="4" y="4" width="12" height="13" rx="2" />
+                <path d="M7.5 4V2.75h5V4M7 8h6M7 11h6M7 14h3.5" />
+              </svg>
+              <span>Tasks</span>
+              {pendingCount > 0 && <span className="badge-count">{pendingCount}</span>}
             </button>
           </div>
         </div>
 
-        <div className="search-bar">
-          <span className="search-icon">◎</span>
-          <input type="search" placeholder="Search pieces by name, tags, or ID…" value={search} onChange={e => setFilter({ q: e.target.value })} />
-        </div>
-
         <div className="wardrobe-filter-group">
-          <div className="wardrobe-filter-label">Category</div>
-          <div className="filter-row">
+          <div className="filter-row" aria-label="Wardrobe categories">
             {CATEGORIES.map(c => (
               <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value })}>{c.label}</button>
             ))}
@@ -417,29 +432,29 @@ export default function PieceInventory({ onSendToStylist }) {
               {openFilterMenu === 'color' && (
                 <div className="filter-menu-popover wardrobe-color-popover" role="menu">
                   <button
-                    className={`custom-select-option ${!filterColor ? 'active' : ''}`}
+                    className={`wardrobe-color-any ${!filterColor ? 'active' : ''}`}
                     onClick={() => { setFilter({ color: '' }); setOpenFilterMenu(null) }}
                     role="menuitem"
                   >
-                    <span>All</span>
-                    {!filterColor && <span aria-hidden="true">✓</span>}
+                    <span>Any color</span>
+                    {!filterColor && <span className="wardrobe-filter-check" aria-hidden="true">✓</span>}
                   </button>
-                  <div className="wardrobe-color-grid">
+                  <div className="wardrobe-color-list">
                     {availableColors.map(color => {
-                      const hex = COLOR_HEX_MAP[color] || '#ccc'
+                      const hex = getColorSwatch(color)
                       const active = filterColor === color
-                      const isLight = ['white', 'cream', 'beige', 'oatmeal', 'light grey', 'light blue', 'lavender', 'lilac'].includes(color)
                       return (
                         <button
                           key={color}
-                          className={`wardrobe-color-swatch ${active ? 'active' : ''}`}
+                          className={`wardrobe-color-option ${active ? 'active' : ''}`}
                           onClick={() => { setFilter({ color: active ? '' : color }); setOpenFilterMenu(null) }}
-                          style={{ background: hex }}
                           title={color}
                           aria-label={`${active ? 'Clear' : 'Filter by'} ${color}`}
                           role="menuitem"
                         >
-                          {active && <span style={{ color: isLight ? '#333' : '#fff' }}>✓</span>}
+                          <span className="wardrobe-color-swatch" style={{ background: hex }} aria-hidden="true" />
+                          <span className="wardrobe-color-name">{color}</span>
+                          {active && <span className="wardrobe-filter-check" aria-hidden="true">✓</span>}
                         </button>
                       )
                     })}
@@ -535,8 +550,10 @@ export default function PieceInventory({ onSendToStylist }) {
             </div>
 
             <InfoTooltip
+              className="style-direction-tooltip wardrobe-sort-info"
               label="What Most worn and Recently used mean"
               align="right"
+              side="bottom"
               open={openFilterMenu === 'sortInfo'}
               onToggle={(next) => setOpenFilterMenu(next ? 'sortInfo' : null)}
             >
@@ -574,6 +591,11 @@ export default function PieceInventory({ onSendToStylist }) {
           <div className="empty-state-text">
             {search || filterCat || filterOcc || filterSeason || filterColor || filterFabric ? 'Try adjusting your filters' : 'Tap + to add a piece, or use Batch to add many at once'}
           </div>
+          {isUnfilteredWardrobe && demoWardrobe?.count === 0 && (
+            <button className="btn-secondary wardrobe-demo-cta" onClick={loadDemoWardrobe} disabled={demoLoading}>
+              {demoLoading ? 'Adding sample wardrobe…' : `Explore with ${demoWardrobe.available || ''} sample pieces`}
+            </button>
+          )}
         </div>
       ) : (
         <div className="piece-grid">

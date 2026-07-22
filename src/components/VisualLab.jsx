@@ -1,10 +1,19 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import StylistSettings from '../views/StylistSettings'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CALIBRATION_LABELS = [
+const POSITIVE_REFERENCE_LABELS = [
   ['most_like_me', 'Most like me'],
+  ['right_energy', 'Right energy'],
+  ['strong_silhouette', 'Strong silhouette'],
+  ['right_proportions', 'Right proportions'],
+  ['grounded', 'Grounded'],
+  ['artistic', 'Artistic'],
+]
+
+const DRIFT_REFERENCE_LABELS = [
   ['close_but_off', 'Close but off'],
   ['wrong_energy', 'Wrong energy'],
   ['looks_older_than_me', 'Looks older than me'],
@@ -20,6 +29,36 @@ const CALIBRATION_LABELS = [
   ['wrong_proportions', 'Wrong proportions'],
   ['wrong_silhouette', 'Wrong silhouette'],
 ]
+
+const REAL_PHOTO_LABELS = [
+  ['most_like_me', 'Feels like me'],
+  ['right_energy', 'Right energy'],
+  ['strong_silhouette', 'Silhouette works'],
+  ['right_proportions', 'Proportions work'],
+  ['close_but_off', 'Close but off'],
+  ['wrong_proportions', 'Proportions feel off'],
+  ['wrong_silhouette', 'Silhouette feels off'],
+]
+
+const CALIBRATION_LABELS_BY_KIND = {
+  good_reference: POSITIVE_REFERENCE_LABELS,
+  bad_reference: DRIFT_REFERENCE_LABELS,
+  real_photo: REAL_PHOTO_LABELS,
+}
+
+const ALL_CALIBRATION_LABELS = Array.from(new Map(
+  [...POSITIVE_REFERENCE_LABELS, ...DRIFT_REFERENCE_LABELS, ...REAL_PHOTO_LABELS]
+    .map(option => [option[0], option])
+).values())
+
+const calibrationLabelsForKind = (kind, selected = []) => {
+  const contextual = CALIBRATION_LABELS_BY_KIND[kind] || POSITIVE_REFERENCE_LABELS
+  const contextualValues = new Set(contextual.map(([value]) => value))
+  const legacySelected = ALL_CALIBRATION_LABELS.filter(([value]) =>
+    selected.includes(value) && !contextualValues.has(value)
+  )
+  return [...contextual, ...legacySelected]
+}
 
 const SAVED_BOARD_FEEDBACK_LABELS = [
   ['signature', 'Signature'],
@@ -64,9 +103,10 @@ export default function VisualLab({ onGoToThread } = {}) {
   const [savedBoards, setSavedBoards]                       = useState([])
   const [savedBoardsLoading, setSavedBoardsLoading]         = useState(false)
   const [previewImage, setPreviewImage]                     = useState(null)
+  const [selectedBoard, setSelectedBoard]                   = useState(null)
   const [searchParams, setSearchParams] = useSearchParams()
   // activeSection is URL-backed (survives tab switches); sub-filters stay local.
-  const VALID_SECTIONS = ['references', 'saved', 'upload']
+  const VALID_SECTIONS = ['references', 'saved', 'profile', 'upload']
   const rawSection  = searchParams.get('section')
   const activeSection = VALID_SECTIONS.includes(rawSection) ? rawSection : 'references'
   const setActiveSection = (section) => {
@@ -141,6 +181,18 @@ export default function VisualLab({ onGoToThread } = {}) {
     setCalibrationEditLabels(prev =>
       prev.includes(label) ? prev.filter(x => x !== label) : [...prev, label]
     )
+  }
+
+  const changeCalibrationKind = (kind) => {
+    const allowed = new Set((CALIBRATION_LABELS_BY_KIND[kind] || []).map(([value]) => value))
+    setCalibrationKind(kind)
+    setCalibrationLabels(prev => prev.filter(label => allowed.has(label)))
+  }
+
+  const changeCalibrationEditKind = (kind) => {
+    const allowed = new Set((CALIBRATION_LABELS_BY_KIND[kind] || []).map(([value]) => value))
+    setCalibrationEditKind(kind)
+    setCalibrationEditLabels(prev => prev.filter(label => allowed.has(label)))
   }
 
   const saveCalibrationImage = async () => {
@@ -224,6 +276,7 @@ export default function VisualLab({ onGoToThread } = {}) {
     const updated = await res.json().catch(() => null)
     if (updated?.id) {
       setSavedBoards(prev => prev.map(b => String(b.id) === String(updated.id) ? updated : b))
+      setSelectedBoard(prev => String(prev?.id) === String(updated.id) ? updated : prev)
     } else {
       await loadSavedBoards()
     }
@@ -237,6 +290,7 @@ export default function VisualLab({ onGoToThread } = {}) {
       })
       if (!res.ok) throw new Error(await res.text())
       setSavedBoards(prev => prev.filter(b => b.id !== id))
+      setSelectedBoard(prev => String(prev?.id) === String(id) ? null : prev)
     } catch (err) {
       alert(`Could not delete board: ${err.message}`)
     }
@@ -258,137 +312,180 @@ export default function VisualLab({ onGoToThread } = {}) {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div>
-      <div className="view-header sticky-header">
+    <div className="visual-lab-page">
+      <div className="view-header sticky-header visual-lab-header">
         <div className="view-header-top">
           <div>
             <div className="view-title">Visual Lab</div>
             <div className="view-subtitle">
-              {activeSection === 'references' && `${calibrationImages.length} references`}
-              {activeSection === 'saved' && `${savedBoards.length} saved boards`}
+              {activeSection === 'references' && 'Teach the stylist what feels like you — and what does not.'}
+              {activeSection === 'saved' && 'Review generated boards as evidence for future styling.'}
+              {activeSection === 'profile' && 'Review the working guidance your stylist uses.'}
               {activeSection === 'upload' && 'Upload new reference photo'}
               {!activeSection && 'Curate visual references and calibration boards'}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="chip active" onClick={refresh}>Refresh</button>
-          </div>
+          <button
+            className={`chip ${activeSection === 'upload' ? 'visual-lab-back-reference' : 'visual-lab-add-reference'}`}
+            onClick={() => setActiveSection(activeSection === 'upload' ? 'references' : 'upload')}
+          >
+            {activeSection === 'upload' ? '← Back to references' : '+ Add reference'}
+          </button>
         </div>
 
-        <div className="filter-row" style={{ marginBottom: 0 }}>
+        {activeSection !== 'upload' && <div className="filter-row visual-lab-tabs" style={{ marginBottom: 0 }}>
           {[
-            ['references', 'References'],
-            ['saved', 'Saved boards'],
-            ['upload', 'Upload Reference'],
-          ].map(([value, label]) => (
+            ['references', 'References', 'Images and real outfits'],
+            ['saved', 'Calibration boards', 'Feedback from generated looks'],
+            ['profile', 'Style profile', 'Rules and working guidance'],
+          ].map(([value, label, description]) => (
             <button
               key={value}
               className={`chip ${activeSection === value ? 'active' : ''}`}
               onClick={() => setActiveSection(value)}
+              aria-pressed={activeSection === value}
             >
-              {label}
+              <strong>{label}</strong>
+              <span>{description}</span>
             </button>
           ))}
-        </div>
+        </div>}
       </div>
 
-      <div style={{ padding: '16px 20px 24px' }}>
+      <div className="visual-lab-content">
 
       {/* Upload row */}
       {activeSection === 'upload' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 14, alignItems: 'start', marginBottom: 12, padding: 12, background: 'var(--surface-2)', border: '1px solid var(--border-light)', borderRadius: 10 }}>
-          <label style={{ width: 120, height: 150, border: '1px dashed var(--border)', borderRadius: 10, background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
+        <div className="visual-reference-create">
+          <div className="visual-reference-create-heading">
+            <div className="visual-reference-create-eyebrow">Calibration reference</div>
+            <h2>Add a visual reference</h2>
+            <p>Show the stylist what feels right, what drifts, or how an outfit looks on you in real life.</p>
+          </div>
+
+          <div className="visual-reference-create-layout">
+          <label className="visual-reference-dropzone">
             {calibrationUploadPrev ? (
-              <img src={calibrationUploadPrev} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img src={calibrationUploadPrev} alt="Preview" />
             ) : (
-              <span style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>Upload reference</span>
+              <span>
+                <strong>Choose a reference image</strong>
+                <small>Portraits, outfit photos, and inspiration boards all work.</small>
+              </span>
             )}
             <input type="file" accept="image/*" onChange={handleUploadFile} style={{ display: 'none' }} />
           </label>
-          <div style={{ display: 'grid', gap: 8 }}>
-            <select value={calibrationKind} onChange={e => setCalibrationKind(e.target.value)}
-              style={{ padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}>
-              <option value="good_reference">Good reference</option>
-              <option value="bad_reference">Bad / drift reference</option>
-              <option value="real_photo">Real outfit photo</option>
-            </select>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-              {CALIBRATION_LABELS.map(([value, label]) => (
+          <div className="visual-reference-create-fields">
+            <div className="form-group">
+              <label className="form-label">What kind of reference is this?</label>
+              <div className="visual-reference-kind-options">
+                {[
+                  ['good_reference', 'Good reference', 'Something to move toward'],
+                  ['bad_reference', 'Drift reference', 'Something to avoid'],
+                  ['real_photo', 'Real outfit photo', 'How it looks on me'],
+                ].map(([value, label, description]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={calibrationKind === value ? 'active' : ''}
+                    onClick={() => changeCalibrationKind(value)}
+                  >
+                    <strong>{label}</strong>
+                    <span>{description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">What should the stylist notice?</label>
+              <div className="visual-reference-signal-options">
+              {calibrationLabelsForKind(calibrationKind).map(([value, label]) => (
                 <button key={value} type="button" onClick={() => toggleLabel(value)}
-                  style={{
-                    fontSize: 10, padding: '3px 8px', borderRadius: 12, cursor: 'pointer',
-                    border: calibrationLabels.includes(value) ? '1px solid var(--accent)' : '1px solid var(--border)',
-                    background: calibrationLabels.includes(value) ? 'var(--accent-light)' : 'var(--surface)',
-                    color: calibrationLabels.includes(value) ? 'var(--accent)' : 'var(--text-muted)',
-                  }}
+                  className={calibrationLabels.includes(value) ? 'active' : ''}
                 >{label}</button>
               ))}
+              </div>
             </div>
-            <textarea value={calibrationNotes} onChange={e => setCalibrationNotes(e.target.value)}
-              placeholder="Short note: why this feels right/wrong…" rows={2}
-              style={{ width: '100%', resize: 'vertical', padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 12 }}
-            />
-            <button className="chip" onClick={saveCalibrationImage}
-              disabled={!calibrationUploadFile || calibrationUploading}
-              style={{ justifySelf: 'start' }}>
-              {calibrationUploading ? 'Saving…' : 'Save calibration image'}
+
+            <div className="form-group">
+              <label className="form-label">Why does this feel right or wrong?</label>
+              <textarea className="form-textarea" value={calibrationNotes} onChange={e => setCalibrationNotes(e.target.value)}
+                placeholder="Add a short note in your own words…" rows={3}
+              />
+            </div>
+          </div>
+          </div>
+
+          <div className="visual-reference-create-actions">
+            <button className="btn-secondary" onClick={() => setActiveSection('references')}>Cancel</button>
+            <button className="btn-primary" onClick={saveCalibrationImage}
+              disabled={!calibrationUploadFile || calibrationUploading}>
+              {calibrationUploading ? 'Saving…' : 'Save reference'}
             </button>
           </div>
         </div>
       )}
 
+      {activeSection === 'profile' && (
+        <StylistSettings mode="style" embedded />
+      )}
+
       {/* Reference images grid */}
       {activeSection === 'references' && (
         <>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-          {[
-            ['active', 'Active'],
-            ['strong', 'Use strongly'],
-            ['good_reference', 'Good'],
-            ['bad_reference', 'Bad / drift'],
-            ['real_photo', 'Real photos'],
-            ['ignored', 'Ignored'],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              className="chip"
-              onClick={() => setCalibrationFilter(value)}
-              style={{
-                fontSize: 11,
-                background: calibrationFilter === value ? 'var(--accent-light)' : undefined,
-                color: calibrationFilter === value ? 'var(--accent)' : undefined,
-                borderColor: calibrationFilter === value ? 'var(--accent)' : undefined,
-              }}
-            >{label}</button>
-          ))}
+        <div className="visual-reference-toolbar">
+          <div className="visual-reference-toolbar-copy">
+            <h2>Reference library</h2>
+            <span>{calibrationImages.length} {calibrationImages.length === 1 ? 'reference' : 'references'} shown</span>
+          </div>
+          <div className="visual-lab-reference-filters" aria-label="Filter references">
+            <span className="visual-reference-filter-label">Show</span>
+            {[
+              ['active', 'All active'],
+              ['strong', 'Use strongly'],
+              ['good_reference', 'Good'],
+              ['bad_reference', 'Drift'],
+              ['real_photo', 'Real photos'],
+              ['ignored', 'Ignored'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                className={`chip ${calibrationFilter === value ? 'active' : ''}`}
+                onClick={() => setCalibrationFilter(value)}
+                aria-pressed={calibrationFilter === value}
+              >{label}</button>
+            ))}
+          </div>
         </div>
         {!calibrationImages.length ? (
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No calibration images in this filter.</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 12 }}>
+          <div className="visual-lab-reference-grid">
           {calibrationImages.map(row => {
             const isEditing = calibrationEditingId === row.id
             return (
-              <div key={row.id} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: row.archived ? 'rgba(120,120,120,0.08)' : 'var(--surface-2)', opacity: row.archived ? 0.68 : 1 }}>
+              <div key={row.id} className={`visual-reference-card ${row.archived ? 'is-archived' : ''}`}>
                 <button
                   type="button"
+                  className="visual-reference-image"
                   onClick={() => setPreviewImage({ src: row.image_url, title: row.kind?.replaceAll('_', ' ') || 'Calibration image', meta: row.notes || '' })}
                   style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'zoom-in' }}
                   aria-label="Open calibration image preview"
                 >
-                  <img src={row.image_url} alt="Calibration" style={{ width: '100%', height: 170, objectFit: 'cover', display: 'block' }} />
+                  <img src={row.image_url} alt="Calibration" />
                 </button>
-                <div style={{ padding: 8, display: 'grid', gap: 6 }}>
+                <div className="visual-reference-body">
                   {isEditing ? (
                     <>
-                      <select value={calibrationEditKind} onChange={e => setCalibrationEditKind(e.target.value)}
+                      <select value={calibrationEditKind} onChange={e => changeCalibrationEditKind(e.target.value)}
                         style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 11 }}>
                         <option value="good_reference">Good reference</option>
                         <option value="bad_reference">Bad / drift reference</option>
                         <option value="real_photo">Real outfit photo</option>
                       </select>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {CALIBRATION_LABELS.map(([value, label]) => (
+                        {calibrationLabelsForKind(calibrationEditKind, calibrationEditLabels).map(([value, label]) => (
                           <button key={value} type="button" onClick={() => toggleEditLabel(value)}
                             style={{
                               fontSize: 9, padding: '2px 6px', borderRadius: 12, cursor: 'pointer',
@@ -409,23 +506,24 @@ export default function VisualLab({ onGoToThread } = {}) {
                     </>
                   ) : (
                     <>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'center' }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: row.kind === 'bad_reference' ? '#9b4a3f' : 'var(--accent)' }}>
+                      <div className="visual-reference-heading">
+                        <div className={`visual-reference-kind ${row.kind === 'bad_reference' ? 'is-negative' : ''}`}>
                           {row.favorite ? '★ ' : ''}{row.kind?.replaceAll('_', ' ')}
                         </div>
                         {row.archived && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>ignored</span>}
                       </div>
                       {!!row.labels?.length && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {row.labels.slice(0, 6).map(label => (
-                            <span key={label} style={{ fontSize: 9, color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 10, padding: '1px 6px' }}>
+                        <div className="visual-reference-tags">
+                          {row.labels.slice(0, 3).map(label => (
+                            <span key={label}>
                               {label.replaceAll('_', ' ')}
                             </span>
                           ))}
+                          {row.labels.length > 3 && <span>+{row.labels.length - 3}</span>}
                         </div>
                       )}
-                      {row.notes && <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.35 }}>{row.notes}</div>}
-                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                      {row.notes && <div className="visual-reference-note">{row.notes}</div>}
+                      <div className="visual-reference-actions">
                         <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => toggleFavorite(row)}>
                           {row.favorite ? 'Use normal' : 'Use strongly'}
                         </button>
@@ -449,156 +547,121 @@ export default function VisualLab({ onGoToThread } = {}) {
 
       {/* ── Saved boards sub-section ─────────────────────────────────────────── */}
       {activeSection === 'saved' && (
-      <div style={{ marginTop: 4 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+      <div className="calibration-board-library">
+        <div className="calibration-board-library-heading">
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Saved visual boards</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              Saved boards are calibration references too. Star the ones that should strongly guide future styling/rendering.
-            </div>
+            <h2>Calibration boards</h2>
+            <p>Review generated looks and record what should—or should not—guide future styling.</p>
           </div>
-          <button className="chip" onClick={loadSavedBoards} disabled={savedBoardsLoading}>
-            {savedBoardsLoading ? 'Loading…' : 'Refresh boards'}
-          </button>
+          <span>{savedBoards.length} {savedBoards.length === 1 ? 'board' : 'boards'}</span>
         </div>
 
         {!savedBoards.length ? (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            No saved boards yet.
-          </div>
+          <div className="style-profile-empty">No calibration boards saved yet.</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 12 }}>
-            {savedBoards.map(board => (
-              <div key={board.id} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: board.archived ? 'rgba(120,120,120,0.08)' : 'var(--surface-2)', opacity: board.archived ? 0.65 : 1 }}>
-                {board.image_url && (
-                  <button
-                    type="button"
-                    onClick={() => setPreviewImage({ src: board.image_url, title: board.title || 'Saved board', meta: board.context_name || '' })}
-                    style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'zoom-in' }}
-                    aria-label="Open saved board preview"
-                  >
-                    <img src={board.image_url} alt={board.title || 'Saved board'} style={{ width: '100%', height: 190, objectFit: 'cover', display: 'block' }} />
-                  </button>
-                )}
-                <div style={{ padding: 8, display: 'grid', gap: 6 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, alignItems: 'start' }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: board.favorite ? 'var(--accent)' : 'var(--text)' }}>
-                        {board.favorite ? '★ ' : ''}{board.title || 'Saved board'}
-                      </div>
-                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                        {board.board_type || 'board'}{board.context_name ? ` · ${board.context_name}` : ''}
-                      </div>
-                    </div>
-                    {board.archived && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>ignored</span>}
-                  </div>
-                  {Array.isArray(board.pieces) && board.pieces.length > 0 && (
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.35 }}>
-                      {board.pieces.slice(0, 4).map(p => p?.name).filter(Boolean).join(' + ')}
-                    </div>
-                  )}
-                  {board.reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.35 }}>{board.reason}</div>}
-                  {board.payload?.threadId && board.payload.threadId !== 'new_chat' && (
-                    <button
-                      onClick={() => onGoToThread?.(board.payload.threadId)}
-                      style={{
-                        fontSize: 10,
-                        color: 'var(--accent)',
-                        background: 'transparent',
-                        border: 'none',
-                        padding: '2px 0',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        textDecoration: 'underline',
-                        justifySelf: 'start',
-                        marginTop: 2,
-                        marginBottom: 2
-                      }}
-                    >
-                      💬 View generating chat
-                    </button>
-                  )}
-                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                    <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }}
-                      onClick={() => patchSavedBoard(board, { favorite: !board.favorite })}>
-                      {board.favorite ? 'Use normal' : 'Use strongly'}
-                    </button>
-                    {board.archived ? (
-                      <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }}
-                        onClick={() => patchSavedBoard(board, { archived: false })}>Restore</button>
-                    ) : (
-                      <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }}
-                        onClick={() => patchSavedBoard(board, { archived: true })}>Ignore</button>
-                    )}
-                    <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }}
-                      onClick={() => patchSavedBoard(board, { hidden_from_lookbook: !board.hidden_from_lookbook })}>
-                      {board.hidden_from_lookbook ? 'Show in Lookbook' : 'Hide from Lookbook'}
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
-                    {SAVED_BOARD_FEEDBACK_LABELS.map(([label, text]) => {
-                      const active = Array.isArray(board?.payload?.feedback_labels) && board.payload.feedback_labels.includes(label)
-                      return (
-                        <button key={label} className="chip"
-                          onClick={() => toggleBoardFeedback(board, label)}
-                          title="Save this board feedback as calibration memory"
-                          style={{
-                            fontSize: 9, padding: '2px 6px',
-                            borderColor: active ? 'var(--accent)' : 'var(--border)',
-                            background: active ? 'var(--accent)' : 'var(--surface)',
-                            color: active ? '#fff' : 'var(--text-muted)',
-                            fontWeight: active ? 800 : 500,
-                            boxShadow: active ? '0 0 0 1px rgba(122,86,43,0.25)' : undefined,
-                          }}
-                        >{text}</button>
-                      )
-                    })}
-                  </div>
-                  {Array.isArray(board?.payload?.feedback_labels) && board.payload.feedback_labels.length > 0 && (
-                    <div style={{ fontSize: 9, color: 'var(--accent)', fontWeight: 700, marginTop: 2 }}>
-                      Selected: {board.payload.feedback_labels.map(label => {
-                        const found = SAVED_BOARD_FEEDBACK_LABELS.find(([v]) => v === label)
-                        return found ? found[1] : label
-                      }).join(', ')}
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, paddingTop: 6, borderTop: '1px solid var(--border-light)' }}>
-                    <button
-                      className="btn-danger"
-                      style={{
-                        padding: '4px 10px',
-                        fontSize: 10,
-                        borderRadius: 'var(--radius-sm)',
-                        background: 'var(--danger-bg)',
-                        color: 'var(--danger)',
-                        border: '1px solid rgba(168,64,64,0.15)',
-                        cursor: 'pointer',
-                        fontWeight: 500,
-                      }}
-                      onClick={async () => {
-                        if (confirm(`Delete "${board.title || 'this board'}" from everywhere?`)) {
-                          await deleteSavedBoard(board.id)
-                        }
-                      }}
-                    >
-                      Delete Board
-                    </button>
+          <div className="calibration-board-grid">
+            {savedBoards.map(board => {
+              const feedback = Array.isArray(board?.payload?.feedback_labels) ? board.payload.feedback_labels : []
+              return (
+              <button key={board.id} type="button" className={`calibration-board-card ${board.archived ? 'is-archived' : ''}`} onClick={() => setSelectedBoard(board)}>
+                <div className="calibration-board-image">
+                  {board.image_url && <img src={board.image_url} alt={board.title || 'Saved board'} />}
+                  <div className="calibration-board-badges">
+                    {board.favorite && <span>★ Use strongly</span>}
+                    {board.archived && <span>Ignored</span>}
+                    {board.hidden_from_lookbook && <span>Hidden</span>}
                   </div>
                 </div>
-              </div>
-            ))}
+                <div className="calibration-board-card-body">
+                  <strong>{board.title || 'Saved board'}</strong>
+                  <span>{board.context_name || board.board_type?.replaceAll('_', ' ') || 'Visual board'}</span>
+                  {!!feedback.length && (
+                    <div className="calibration-board-feedback-summary">
+                      {feedback.slice(0, 2).map(label => {
+                        const found = SAVED_BOARD_FEEDBACK_LABELS.find(([value]) => value === label)
+                        return <span key={label}>{found ? found[1] : label}</span>
+                      })}
+                      {feedback.length > 2 && <span>+{feedback.length - 2}</span>}
+                    </div>
+                  )}
+                  <span className="calibration-board-open">Review board →</span>
+                </div>
+              </button>
+            )})}
           </div>
         )}
       </div>
       )}
       </div>
 
+      {selectedBoard && (
+        <div className="modal-overlay calibration-board-detail-overlay" role="dialog" aria-modal="true" onClick={() => setSelectedBoard(null)}>
+          <div className="calibration-board-detail" onClick={e => e.stopPropagation()}>
+            <button className="modal-close calibration-board-detail-close" onClick={() => setSelectedBoard(null)} aria-label="Close board details">×</button>
+            <div className="calibration-board-detail-media">
+              {selectedBoard.image_url && (
+                <button type="button" onClick={() => setPreviewImage({ src: selectedBoard.image_url, title: selectedBoard.title || 'Saved board', meta: selectedBoard.context_name || '' })}>
+                  <img src={selectedBoard.image_url} alt={selectedBoard.title || 'Saved board'} />
+                  <span>Open full image</span>
+                </button>
+              )}
+            </div>
+            <div className="calibration-board-detail-content">
+              <div className="calibration-board-detail-heading">
+                <span>Calibration board</span>
+                <h2>{selectedBoard.title || 'Saved board'}</h2>
+                <p>{selectedBoard.context_name || selectedBoard.board_type?.replaceAll('_', ' ')}</p>
+              </div>
+
+              {Array.isArray(selectedBoard.pieces) && selectedBoard.pieces.length > 0 && (
+                <div className="calibration-board-detail-section">
+                  <h3>Pieces</h3>
+                  <p>{selectedBoard.pieces.map(piece => piece?.name).filter(Boolean).join(' + ')}</p>
+                </div>
+              )}
+              {selectedBoard.reason && (
+                <div className="calibration-board-detail-section">
+                  <h3>Why this look</h3>
+                  <p>{selectedBoard.reason}</p>
+                </div>
+              )}
+
+              <div className="calibration-board-detail-section">
+                <h3>Your feedback</h3>
+                <p>Select everything the stylist should remember about this board.</p>
+                <div className="calibration-board-feedback-options">
+                  {SAVED_BOARD_FEEDBACK_LABELS.map(([label, text]) => {
+                    const active = Array.isArray(selectedBoard?.payload?.feedback_labels) && selectedBoard.payload.feedback_labels.includes(label)
+                    return <button key={label} type="button" className={active ? 'active' : ''} onClick={() => toggleBoardFeedback(selectedBoard, label)}>{text}</button>
+                  })}
+                </div>
+              </div>
+
+              <div className="calibration-board-detail-controls">
+                <button className="btn-secondary" onClick={() => patchSavedBoard(selectedBoard, { favorite: !selectedBoard.favorite })}>{selectedBoard.favorite ? 'Use normally' : 'Use strongly'}</button>
+                <button className="btn-secondary" onClick={() => patchSavedBoard(selectedBoard, { hidden_from_lookbook: !selectedBoard.hidden_from_lookbook })}>{selectedBoard.hidden_from_lookbook ? 'Show in Lookbook' : 'Hide from Lookbook'}</button>
+                <button className="btn-secondary" onClick={() => patchSavedBoard(selectedBoard, { archived: !selectedBoard.archived })}>{selectedBoard.archived ? 'Restore board' : 'Ignore board'}</button>
+              </div>
+
+              <div className="calibration-board-detail-footer">
+                {selectedBoard.payload?.threadId && selectedBoard.payload.threadId !== 'new_chat' && (
+                  <button className="btn-secondary" onClick={() => onGoToThread?.(selectedBoard.payload.threadId)}>View generating chat</button>
+                )}
+                <button className="btn-danger" onClick={async () => {
+                  if (confirm(`Delete "${selectedBoard.title || 'this board'}" from everywhere?`)) await deleteSavedBoard(selectedBoard.id)
+                }}>Delete board</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {previewImage && (
         <div
           role="dialog"
           aria-modal="true"
           onClick={() => setPreviewImage(null)}
-          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(20,18,16,0.82)', display: 'grid', placeItems: 'center', padding: 20 }}
+          style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(20,18,16,0.82)', display: 'grid', placeItems: 'center', padding: 20 }}
         >
           <div
             onClick={e => e.stopPropagation()}

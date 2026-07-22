@@ -1,15 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-
-const COLOR_BG = {
-  'black': '#2A2420', 'white': '#F0EDE8', 'navy': '#1E2D4A', 'cream': '#E8DFC8',
-  'grey': '#8A8A8A', 'brown': '#7A5A3A', 'tan': '#C0A070', 'oatmeal': '#D8C8B0',
-  'plum': '#5A3060', 'olive': '#5A6030', 'green': '#3A6A3A', 'orange': '#C86030',
-  'red': '#A83A2A', 'mustard': '#B89020', 'charcoal': '#404040', 'amber': '#B07820',
-  'mauve': '#A7798A', 'lavender': '#A99AC2', 'lilac': '#C4B2D8',
-  'turquoise': '#2A8080', 'light blue': '#7AADCC', 'periwinkle': '#8888CC', 'multi': '#8A6848', 'dark blue': '#1A2040',
-  'dark grey': '#484848', 'light grey': '#B0B0B0', 'pink': '#C07080',
-}
+import { getColorSwatch } from '../utils/colors'
 
 function OutfitThumb({ outfit, onPreview }) {
   return (
@@ -40,7 +31,7 @@ function OutfitThumb({ outfit, onPreview }) {
 function SavedBoardThumb({ board, onPreview }) {
   if (!board?.image_url) return null
   const pieces = Array.isArray(board.pieces) ? board.pieces.map(p => p?.name).filter(Boolean) : []
-  const title = board.title || 'Saved board'
+  const title = board.title || 'Generated outfit'
   return (
     <button
       className="garment-relation-tile saved-board-tile"
@@ -48,9 +39,9 @@ function SavedBoardThumb({ board, onPreview }) {
       onClick={() => onPreview({
         src: board.image_url,
         title,
-        meta: pieces.length ? pieces.slice(0, 4).join(' + ') : (board.context_name || 'Saved board'),
+        meta: pieces.length ? pieces.slice(0, 4).join(' + ') : (board.context_name || 'Generated outfit'),
       })}
-      aria-label={`Open saved board ${title}`}
+      aria-label={`Open generated outfit ${title}`}
       title={title}
     >
       <div className="garment-relation-thumb saved-board-thumb">
@@ -73,7 +64,7 @@ export default function PieceDetail({
   showDeleteAction = showManagementActions,
   showEditAction = showManagementActions
 }) {
-  const bg = piece.colors[0] ? (COLOR_BG[piece.colors[0].toLowerCase()] || '#9A8A78') : '#9A8A78'
+  const bg = getColorSwatch(piece.colors[0], '#9A8A78')
   const [photoTab, setPhotoTab] = useState(piece.photo ? 'hanger' : piece.worn_photo ? 'worn' : null)
   const [previewImage, setPreviewImage] = useState(null)
   const [outfits,  setOutfits]  = useState([])
@@ -122,6 +113,9 @@ export default function PieceDetail({
       >
         <button className="garment-detail-close" onClick={onClose} aria-label="Close garment detail">✕</button>
 
+        <div className="piece-detail-layout">
+        <div className="piece-detail-visual">
+
         {/* Photo */}
         {hasEither ? (
           <div className="garment-photo-section">
@@ -149,20 +143,23 @@ export default function PieceDetail({
             </button>
           </div>
         ) : (
-          <div className="detail-placeholder" style={{ background: bg }}>
+          <div className="detail-placeholder piece-detail-placeholder" style={{ background: bg }}>
             <span className="detail-placeholder-letter">{piece.name.charAt(0)}</span>
           </div>
         )}
+        <span className="outfit-photo-hint">Open full photo</span>
+        </div>
 
-        <div className="detail-body">
-          <div className="garment-identity">
+        <div className="detail-body piece-detail-body">
+          <div className="piece-detail-scroll-content">
+          <section className="piece-detail-section garment-identity" aria-label="Garment identity">
             <div className="detail-title" id="garment-detail-title">
               {piece.name}
             </div>
             <div className="detail-category">#{piece.id} · {formattedCategory}</div>
-          </div>
+          </section>
 
-          <div className="garment-meta-groups" aria-label="Garment metadata">
+          <section className="piece-detail-section garment-meta-groups" aria-label="Garment metadata">
             <div className="garment-meta-group">
               <div className="form-label">Colors</div>
               <div className="garment-meta-values">{piece.colors?.length ? piece.colors.join(' · ') : 'Not set'}</div>
@@ -175,7 +172,7 @@ export default function PieceDetail({
               <div className="form-label">Season</div>
               <div className="garment-meta-values">{piece.season || 'Not set'}</div>
             </div>
-          </div>
+          </section>
 
           <div className="detail-tags garment-status-tags">
             {piece.status !== 'active' && (
@@ -196,7 +193,12 @@ export default function PieceDetail({
             </div>
           )}
 
-          {piece.notes && <div className="detail-notes">{piece.notes}</div>}
+          {piece.notes && (
+            <section className="piece-detail-section piece-fit-section" aria-label="Fit and wear notes">
+              <div className="garment-section-heading">Fit & wear</div>
+              <div className="detail-notes">{piece.notes}</div>
+            </section>
+          )}
 
           {/* Styling rules */}
           {piece.styling_rules_learned?.length > 0 && (
@@ -204,7 +206,7 @@ export default function PieceDetail({
               <div className="form-label" style={{ marginBottom: 8 }}>Styling rules</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {piece.styling_rules_learned.map((rule, i) => (
-                  <div key={i} style={{ fontSize: 12, color: 'var(--accent)', background: 'var(--accent-light)', padding: '5px 10px', borderRadius: 8, borderLeft: '3px solid var(--accent)', lineHeight: 1.4 }}>
+                  <div key={i} style={{ fontSize: 12, color: 'var(--accent)', background: 'var(--accent-light)', padding: '5px 10px', borderRadius: 8, lineHeight: 1.4 }}>
                     {rule}
                   </div>
                 ))}
@@ -217,18 +219,18 @@ export default function PieceDetail({
               <div className="form-label" style={{ marginBottom: 8, color: 'var(--repair)' }}>Tried & rejected</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {piece.tried_and_rejected.map((rule, i) => (
-                  <div key={i} style={{ fontSize: 12, color: 'var(--repair)', background: 'var(--repair-bg)', padding: '5px 10px', borderRadius: 8, borderLeft: '3px solid var(--repair)', lineHeight: 1.4 }}>
+                  <div key={i} style={{ fontSize: 12, color: 'var(--repair)', background: 'var(--repair-bg)', padding: '5px 10px', borderRadius: 8, lineHeight: 1.4 }}>
                     {rule}
                   </div>
                 ))}
               </div>
             </div>
           )}
-          <section className="garment-relationships" aria-label="Saved boards and linked outfits">
+          <section className="piece-detail-section garment-relationships" aria-label="Generated and linked outfits">
             {savedBoards.length > 0 && (
               <div className="garment-relationship-block">
                 <div className="garment-section-heading">
-                  Saved boards · {savedBoards.length}
+                  Generated outfits · {savedBoards.length}
                 </div>
                 <div className="garment-relation-strip">
                   {visibleSavedBoards.map(board => (
@@ -239,7 +241,7 @@ export default function PieceDetail({
                       className="garment-relation-more"
                       type="button"
                       onClick={() => setShowAllBoards(true)}
-                      aria-label={`Show ${remainingSavedBoards} more saved boards`}
+                      aria-label={`Show ${remainingSavedBoards} more generated outfits`}
                     >
                       +{remainingSavedBoards}
                       <span>more</span>
@@ -269,23 +271,26 @@ export default function PieceDetail({
               </div>
             )}
           </section>
+          </div>
 
-          {/* Ask Stylist */}
-          {onSendToStylist && (
-            <button
-              className="garment-ask-stylist"
-              onClick={() => onSendToStylist(piece)}
-            >
-              ◇ Ask stylist about this piece
-            </button>
-          )}
+          <div className="piece-detail-action-dock">
+            {onSendToStylist && (
+              <button
+                className="garment-ask-stylist"
+                onClick={() => onSendToStylist(piece)}
+              >
+                ◇ Ask stylist about this piece
+              </button>
+            )}
 
-          {(showDeleteAction || showEditAction) && (
-            <div className="detail-actions">
-              {showDeleteAction && <button className="btn-danger" onClick={handleDelete}>Delete</button>}
-              {showEditAction && <button className="btn-primary" onClick={() => onEdit(piece)}>Edit</button>}
-            </div>
-          )}
+            {(showDeleteAction || showEditAction) && (
+              <div className="detail-actions piece-detail-actions">
+                {showDeleteAction && <button className="piece-delete-action" onClick={handleDelete}>Delete piece</button>}
+                {showEditAction && <button className="btn-primary" onClick={() => onEdit(piece)}>Edit piece</button>}
+              </div>
+            )}
+          </div>
+        </div>
         </div>
       </div>
       {previewImage && (
