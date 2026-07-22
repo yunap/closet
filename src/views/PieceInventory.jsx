@@ -550,16 +550,24 @@ export default function PieceInventory({ onSendToStylist }) {
             </div>
 
             <InfoTooltip
-              className="style-direction-tooltip wardrobe-sort-info"
+              className="wardrobe-sort-info"
               label="What Most worn and Recently used mean"
               align="right"
               side="bottom"
+              width={276}
               open={openFilterMenu === 'sortInfo'}
               onToggle={(next) => setOpenFilterMenu(next ? 'sortInfo' : null)}
             >
-              <strong>Most worn</strong> and <strong>Recently used</strong> reflect pieces
-              referenced in saved Visual Composer boards or Stylist chat outfits — not
-              real-world wear, which the app has no way to track.
+              <div className="wardrobe-sort-info-title">Usage in Closet</div>
+              <div className="wardrobe-sort-info-row">
+                <strong>Most worn</strong>
+                <span>Pieces used most often in saved outfits and boards.</span>
+              </div>
+              <div className="wardrobe-sort-info-row">
+                <strong>Recently used</strong>
+                <span>Pieces most recently used there.</span>
+              </div>
+              <div className="wardrobe-sort-info-note">Closet does not track real-world wear.</div>
             </InfoTooltip>
           </div>
         </div>

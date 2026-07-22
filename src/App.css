@@ -918,7 +918,63 @@ img { display: block; max-width: 100%; }
 .wardrobe-favorite-filter { min-height: 38px; border-radius: 11px; }
 
 .wardrobe-sort-info .info-tooltip-popover {
-  width: 300px !important;
+  top: calc(100% + 8px);
+  padding: 12px;
+  border-color: color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 98%, transparent);
+  box-shadow: 0 12px 30px rgba(49, 35, 21, 0.12), 0 2px 6px rgba(49, 35, 21, 0.05);
+}
+
+.wardrobe-sort-info .info-tooltip-popover::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: 8px;
+  width: 9px;
+  height: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  background: var(--surface);
+  transform: rotate(45deg);
+}
+
+.wardrobe-sort-info-title {
+  margin-bottom: 9px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wardrobe-sort-info-row {
+  display: grid;
+  gap: 2px;
+  padding: 8px 9px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-2) 62%, var(--surface));
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.wardrobe-sort-info-row + .wardrobe-sort-info-row {
+  margin-top: 6px;
+}
+
+.wardrobe-sort-info-row strong {
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.wardrobe-sort-info-note {
+  margin-top: 9px;
+  padding: 0 2px;
+  color: var(--text-light);
+  font-size: 10.5px;
+  line-height: 1.4;
 }
 
 .wardrobe-add-piece {
