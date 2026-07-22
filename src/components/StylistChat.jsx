@@ -8,6 +8,7 @@ import StylistLandingPanel from './StylistLandingPanel.jsx'
 import OptionCard from './OptionCard.jsx'
 import StylistSelect from './StylistSelect.jsx'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
+import { getCachedChatThread, loadChatThread } from '../utils/chatThreadCache.js'
 
 const SUGGESTIONS = [
   { label: 'Occasion', prompt: 'What should I wear for a city dinner?' },
@@ -38,6 +39,9 @@ const OUTFIT_FEEDBACK_LABELS = [
   ['works', 'More like this'],
   ['not_me', 'Not for me'],
 ]
+
+const INITIAL_SAVED_MESSAGE_COUNT = 8
+const INITIAL_SAVED_OUTFIT_COUNT = 4
 
 // Occasion = social register only (activities removed)
 const OCCASION_OPTIONS = [
@@ -417,6 +421,8 @@ export default function StylistChat({
   const [loadingThread, setLoadingThread] = useState(false)
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
   const [expandedFeedbackCards, setExpandedFeedbackCards] = useState(new Set())
+  const [visibleMessageStart, setVisibleMessageStart] = useState(0)
+  const [collapsedStructuredResults, setCollapsedStructuredResults] = useState(new Set())
 
   const [messages, setMessages] = useState([
     { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' }
@@ -700,6 +706,8 @@ export default function StylistChat({
       setSavedIndices(new Set())
       setFeedbackIdsByKey({})
       setBoardFeedbackLabels({})
+      setVisibleMessageStart(0)
+      setCollapsedStructuredResults(new Set())
       setCurrentThreadId('new_chat')
       setActiveThreadMetadata(null)
       try {
@@ -708,21 +716,17 @@ export default function StylistChat({
       return
     }
 
-    setLoadingThread(true)
-    try {
-      const res = await fetch(`/api/chat-threads/${threadId}`)
-      if (!res.ok) {
-        alert('This chat thread is no longer available (it may have been deleted).')
-        setCurrentThreadId('new_chat')
-        setActiveThreadMetadata(null)
-        setLoadingThread(false)
-        return
-      }
-      const thread = await res.json()
-      
+    const applyLoadedThread = (thread) => {
+      const loadedMessages = thread.payload.messages || []
       suppressThreadLoadAutosaveRef.current = true
       suppressNextMessageScrollRef.current = true
-      setMessages(thread.payload.messages || [])
+      setMessages(loadedMessages)
+      setVisibleMessageStart(Math.max(0, loadedMessages.length - INITIAL_SAVED_MESSAGE_COUNT))
+      setCollapsedStructuredResults(new Set(
+        loadedMessages
+          .map((message, index) => (message?.structuredOutfits?.length > INITIAL_SAVED_OUTFIT_COUNT ? index : null))
+          .filter(index => index !== null)
+      ))
       setChatHistory(thread.payload.chatHistory || [])
       setThreadMemory(thread.payload.threadMemory || null)
       setActiveContext(thread.payload.activeContext || null)
@@ -750,8 +754,21 @@ export default function StylistChat({
       try {
         localStorage.setItem('stylist_current_thread_id', threadId)
       } catch {}
+    }
+
+    setLoadingThread(true)
+    const cachedThread = getCachedChatThread(threadId)
+    if (cachedThread) applyLoadedThread(cachedThread)
+    try {
+      const thread = await loadChatThread(threadId, { refresh: Boolean(cachedThread) })
+      applyLoadedThread(thread)
     } catch (err) {
       console.error('Error switching thread:', err)
+      if (!cachedThread) {
+        alert('This chat thread is no longer available (it may have been deleted).')
+        setCurrentThreadId('new_chat')
+        setActiveThreadMetadata(null)
+      }
     } finally {
       setLoadingThread(false)
     }
@@ -1822,7 +1839,9 @@ export default function StylistChat({
   }
 
   const renderStructuredAdvice = (message, messageIndex) => {
-    const outfits = Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : []
+    const allOutfits = Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : []
+    const hasDeferredOutfits = collapsedStructuredResults.has(messageIndex) && allOutfits.length > INITIAL_SAVED_OUTFIT_COUNT
+    const outfits = hasDeferredOutfits ? allOutfits.slice(0, INITIAL_SAVED_OUTFIT_COUNT) : allOutfits
     if (!outfits.length) return null
     const messageResultKey = message?.resultId || messageIndex
 
@@ -3131,6 +3150,19 @@ export default function StylistChat({
             })}
           </section>
         ))}
+        {hasDeferredOutfits && (
+          <button
+            type="button"
+            className="stylist-history-reveal"
+            onClick={() => setCollapsedStructuredResults(previous => {
+              const next = new Set(previous)
+              next.delete(messageIndex)
+              return next
+            })}
+          >
+            Show {allOutfits.length - INITIAL_SAVED_OUTFIT_COUNT} more outfit {allOutfits.length - INITIAL_SAVED_OUTFIT_COUNT === 1 ? 'result' : 'results'}
+          </button>
+        )}
       </div>
     )
   }
@@ -4881,7 +4913,18 @@ export default function StylistChat({
         )}
 
         <div className="chat-thread">
-          {messages.length > 1 && messages.map((m, i) => {
+          {messages.length > 1 && visibleMessageStart > 0 && (
+            <button
+              type="button"
+              className="stylist-history-reveal"
+              onClick={() => setVisibleMessageStart(previous => Math.max(0, previous - INITIAL_SAVED_MESSAGE_COUNT))}
+            >
+              Show {Math.min(INITIAL_SAVED_MESSAGE_COUNT, visibleMessageStart)} earlier messages
+            </button>
+          )}
+          {messages.length > 1 && messages.slice(visibleMessageStart).map((m, visibleIndex) => {
+            const i = visibleMessageStart + visibleIndex
+            const prioritizeContextPhoto = visibleIndex < 2 || i >= messages.length - 2
             if (m.contextName === 'Whole wardrobe evaluation') {
               return null
             }
@@ -4918,7 +4961,14 @@ export default function StylistChat({
                       }}
                       aria-label="Open outfit photo preview"
                     >
-                      <img src={resolveUploadThumbnailSrc(messageImageSrc, 'chat-attachment')} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
+                      <img
+                        src={resolveUploadThumbnailSrc(messageImageSrc, 'chat-attachment')}
+                        alt=""
+                        loading={prioritizeContextPhoto ? 'eager' : 'lazy'}
+                        decoding="async"
+                        fetchPriority={prioritizeContextPhoto ? 'high' : 'auto'}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }}
+                      />
                     </button>
                     ) : null
                   })()}

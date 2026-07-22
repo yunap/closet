@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 import {
   humanizeLabel,
@@ -11,6 +11,9 @@ import {
   getThreadOriginalFirstMessage,
   getThreadSubjectChildTitle
 } from '../utils/threadGrouping.js'
+import { prefetchChatThread } from '../utils/chatThreadCache.js'
+
+const SUBJECT_THUMB_PRELOAD_COUNT = 12
 
 export {
   humanizeLabel,
@@ -62,6 +65,7 @@ export default function ThreadRail({
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [openMenuId, setOpenMenuId] = useState(null)
   const [openSubjectGroups, setOpenSubjectGroups] = useState({})
+  const threadPrefetchTimer = useRef(null)
 
   useEffect(() => {
     if (!isMobileDrawer) {
@@ -76,6 +80,30 @@ export default function ThreadRail({
       localStorage.setItem('stylist_rail_view_mode', viewMode)
     } catch {}
   }, [viewMode])
+
+  useEffect(() => () => clearTimeout(threadPrefetchTimer.current), [])
+
+  const queueThreadPrefetch = (threadId) => {
+    clearTimeout(threadPrefetchTimer.current)
+    threadPrefetchTimer.current = setTimeout(() => prefetchChatThread(threadId), 120)
+  }
+
+  const cancelThreadPrefetch = () => clearTimeout(threadPrefetchTimer.current)
+
+  useEffect(() => {
+    if (typeof Image === 'undefined' || !threads.length) return
+    const preloadUrls = clusterThreadsBySubject(threads.filter(thread => !thread.pinned))
+      .clusters
+      .slice(0, SUBJECT_THUMB_PRELOAD_COUNT)
+      .map(cluster => cluster.photo)
+      .filter(Boolean)
+
+    preloadUrls.forEach(src => {
+      const image = new Image()
+      image.decoding = 'async'
+      image.src = src
+    })
+  }, [threads])
 
   const handleRenameSubmit = (id) => {
     if (renamingTitle.trim()) {
@@ -203,6 +231,9 @@ export default function ThreadRail({
               aria-current={isActive ? 'page' : undefined}
               aria-label={`Open chat: ${fullLabel}`}
               title={originalFirstMessage || fullLabel}
+              onMouseEnter={() => queueThreadPrefetch(t.id)}
+              onMouseLeave={cancelThreadPrefetch}
+              onFocus={() => prefetchChatThread(t.id)}
               onClick={() => {
                 setOpenMenuId(null)
                 onSelectThread(t.id)
@@ -283,12 +314,13 @@ export default function ThreadRail({
     setOpenSubjectGroups(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
-  const renderSubjectCluster = (cluster) => {
+  const renderSubjectCluster = (cluster, clusterIndex) => {
     const key = `${cluster.type}_${cluster.id}`
     const isActiveGroup = cluster.threads.some(t => t.id === currentThreadId)
     const isOpen = isActiveGroup || Boolean(openSubjectGroups[key])
     const countLabel = `${cluster.threads.length} ${cluster.threads.length === 1 ? 'chat' : 'chats'}`
     const childRows = getSubjectChildRows(cluster)
+    const prioritizeThumbnail = clusterIndex < SUBJECT_THUMB_PRELOAD_COUNT
 
     return (
       <div
@@ -310,7 +342,13 @@ export default function ThreadRail({
           </span>
           <span className="subject-thumb" aria-hidden="true">
             {cluster.photo ? (
-              <img src={cluster.photo} alt="" loading="lazy" decoding="async" />
+              <img
+                src={cluster.photo}
+                alt=""
+                loading={prioritizeThumbnail ? 'eager' : 'lazy'}
+                decoding="async"
+                fetchPriority={prioritizeThumbnail ? 'high' : 'auto'}
+              />
             ) : (
               <span className="subject-thumb-fallback">{cluster.icon}</span>
             )}

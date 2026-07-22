@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getColorSwatch } from '../utils/colors'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
+import { prefetchGarmentRelationships } from '../utils/garmentRelationships.js'
 
 function getPlaceholderBg(colors = []) {
   return getColorSwatch(colors[0], '#9A8A78')
@@ -10,6 +11,16 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
   const bg = getPlaceholderBg(piece.colors)
   const [imageFailed, setImageFailed] = useState(false)
   const [photoOrientation, setPhotoOrientation] = useState('landscape')
+  const relationshipPrefetchTimer = useRef(null)
+
+  useEffect(() => () => clearTimeout(relationshipPrefetchTimer.current), [])
+
+  const queueRelationshipPrefetch = () => {
+    clearTimeout(relationshipPrefetchTimer.current)
+    relationshipPrefetchTimer.current = setTimeout(() => prefetchGarmentRelationships(piece.id), 120)
+  }
+
+  const cancelRelationshipPrefetch = () => clearTimeout(relationshipPrefetchTimer.current)
 
   const openPiece = () => onTap(piece)
   const handleFav = (e) => {
@@ -23,6 +34,9 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
         type="button"
         className="piece-card-hit"
         onClick={openPiece}
+        onMouseEnter={queueRelationshipPrefetch}
+        onMouseLeave={cancelRelationshipPrefetch}
+        onFocus={() => prefetchGarmentRelationships(piece.id)}
         aria-label={`Open ${piece.name} wardrobe card`}
       >
         {/* Photo or placeholder */}
