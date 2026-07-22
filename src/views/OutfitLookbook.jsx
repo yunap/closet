@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { getColorSwatch, sortColorNames } from '../utils/colors'
+import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 
 const OCCASIONS = [
   { value: '',             label: 'All Occasions' },
@@ -76,6 +77,8 @@ const resolveUploadImageSrc = (photo) => {
   if (value.startsWith('/')) return value
   return `/uploads/${value}`
 }
+
+const resolveUploadThumbnailSrc = (photo, variant) => uploadThumbnailSrc(resolveUploadImageSrc(photo), variant)
 
 // ── Piece Selector Modal ───────────────────────────────────────────────────────
 // ── Piece Selector Modal ───────────────────────────────────────────────────────
@@ -254,7 +257,7 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
                       }}
                     >
                       {piece.photo ? (
-                        <img src={`/uploads/${piece.photo}`} className="piece-photo" alt="" loading="lazy" />
+                        <img src={resolveUploadThumbnailSrc(piece.photo, 'outfit-piece')} className="piece-photo" alt="" loading="lazy" decoding="async" />
                       ) : (
                         <div className="piece-placeholder" style={{ background: bg }}>
                           <span className="piece-placeholder-letter">{piece.name.charAt(0)}</span>
@@ -348,7 +351,7 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
                       }}
                     >
                       {piece.photo ? (
-                        <img src={`/uploads/${piece.photo}`} className="piece-photo" alt="" loading="lazy" />
+                        <img src={resolveUploadThumbnailSrc(piece.photo, 'outfit-piece')} className="piece-photo" alt="" loading="lazy" decoding="async" />
                       ) : (
                         <div className="piece-placeholder" style={{ background: bg }}>
                           <span className="piece-placeholder-letter">{piece.name.charAt(0)}</span>
@@ -597,8 +600,10 @@ function ExtractedPieceRow({ piece, actionState, wardrobePieces, onChange }) {
           }}>
             {currentLinkedPiece?.photo && (
               <img
-                src={`/uploads/${currentLinkedPiece.photo}`}
+                src={resolveUploadThumbnailSrc(currentLinkedPiece.photo, 'outfit-piece')}
                 alt=""
+                loading="lazy"
+                decoding="async"
                 style={{ width: '100%', height: '100%', objectFit: 'contain' }}
               />
             )}
@@ -832,7 +837,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
           <div className="outfit-form-media-column">
           {preview ? (
             <div className="photo-preview outfit-form-preview">
-              <img src={preview} alt="Outfit preview" />
+              <img src={photoFile ? preview : resolveUploadThumbnailSrc(preview, 'lookbook-display')} alt="Outfit preview" decoding="async" />
               <label className="outfit-photo-replace">
                 <input type="file" accept="image/*" onChange={handlePhoto} />
                 {photoFile ? 'Choose another' : 'Replace photo'}
@@ -1019,7 +1024,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
               })}
               aria-label={`Open larger photo for ${outfit.name}`}
             >
-              <img className="detail-photo" src={`/uploads/${outfit.photo}`} alt={outfit.name} />
+              <img className="detail-photo" src={resolveUploadThumbnailSrc(outfit.photo, 'lookbook-display')} alt={outfit.name} decoding="async" />
             </button>
           ) : (
             <div className="outfit-placeholder outfit-detail-placeholder">{OCCASION_ICONS[outfit.occasion] || '✦'}</div>
@@ -1111,7 +1116,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
                           aria-label={p.photo ? `Open preview for ${p.name}` : p.name}
                         >
                           {p.photo
-                            ? <img src={`/uploads/${p.photo}`} alt={p.name} />
+                            ? <img src={resolveUploadThumbnailSrc(p.photo, 'outfit-piece')} alt={p.name} loading="lazy" decoding="async" />
                             : <div className="outfit-linked-piece-initial">{p.name.charAt(0)}</div>
                           }
                         </button>
@@ -1210,7 +1215,7 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
               })}
               aria-label={`Open larger photo for ${board.title}`}
             >
-              <img className="detail-photo" src={boardImageSrc} alt={board.title} />
+              <img className="detail-photo" src={resolveUploadThumbnailSrc(boardImageSrc, 'lookbook-display')} alt={board.title} decoding="async" />
             </button>
           ) : (
             <div className="outfit-placeholder board-detail-placeholder">✦</div>
@@ -1271,7 +1276,7 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
                           aria-label={photoPath ? `Open preview for ${p.name}` : undefined}
                         >
                           {photoPath
-                            ? <img src={photoPath} alt={p.name} />
+                            ? <img src={resolveUploadThumbnailSrc(photoPath, 'outfit-piece')} alt={p.name} loading="lazy" decoding="async" />
                             : <div className="outfit-linked-piece-initial">{(p.name || '').charAt(0)}</div>
                           }
                         </button>
@@ -1907,7 +1912,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                 aria-label={`Open ${o.name || 'outfit'} outfit`}
               >
                 {o.photo
-                  ? <img className="outfit-photo" src={`/uploads/${o.photo}`} alt={o.name} loading="lazy" onLoad={markOutfitImageOrientation} />
+                  ? <img className="outfit-photo" src={resolveUploadThumbnailSrc(o.photo, 'lookbook-display')} alt={o.name} loading="lazy" decoding="async" onLoad={markOutfitImageOrientation} />
                   : <div className="outfit-placeholder">{OCCASION_ICONS[o.occasion] || '✦'}</div>
                 }
                 <button
@@ -1955,7 +1960,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
                 aria-label={`Open ${b.title || 'generated outfit'}`}
               >
                 {resolveUploadImageSrc(b.image_url) ? (
-                  <img className="outfit-photo" src={resolveUploadImageSrc(b.image_url)} alt={b.title} loading="lazy" onLoad={markOutfitImageOrientation} />
+                  <img className="outfit-photo" src={resolveUploadThumbnailSrc(b.image_url, 'lookbook-display')} alt={b.title} loading="lazy" decoding="async" onLoad={markOutfitImageOrientation} />
                 ) : (
                   <div className="outfit-placeholder">✦</div>
                 )}

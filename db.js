@@ -136,8 +136,17 @@ function initDb(dbPath) {
       favorite        INTEGER DEFAULT 0,
       archived        INTEGER DEFAULT 0,
       hidden_from_lookbook INTEGER DEFAULT 0,
+      links_indexed   INTEGER DEFAULT 0,
       created_at      TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS saved_board_pieces (
+      board_id INTEGER NOT NULL REFERENCES saved_boards(id) ON DELETE CASCADE,
+      piece_id INTEGER NOT NULL,
+      PRIMARY KEY (board_id, piece_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_saved_board_pieces_piece_id
+      ON saved_board_pieces(piece_id, board_id);
 
     CREATE TABLE IF NOT EXISTS calibration_images (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -280,7 +289,8 @@ function initDb(dbPath) {
   })
 
   ;[
-    'hidden_from_lookbook INTEGER DEFAULT 0'
+    'hidden_from_lookbook INTEGER DEFAULT 0',
+    'links_indexed INTEGER DEFAULT 0'
   ].forEach(col => {
     try { db.exec(`ALTER TABLE saved_boards ADD COLUMN ${col}`) } catch {}
   })

@@ -7,6 +7,7 @@ import InfoTooltip from './InfoTooltip.jsx'
 import StylistLandingPanel from './StylistLandingPanel.jsx'
 import OptionCard from './OptionCard.jsx'
 import StylistSelect from './StylistSelect.jsx'
+import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 
 const SUGGESTIONS = [
   { label: 'Occasion', prompt: 'What should I wear for a city dinner?' },
@@ -278,6 +279,8 @@ const resolveUploadImageSrc = (photo) => {
   return `/uploads/${value}`
 }
 
+const resolveUploadThumbnailSrc = (photo, variant) => uploadThumbnailSrc(resolveUploadImageSrc(photo), variant)
+
 const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
 const OUTFIT_FOLLOWUP_PATTERN = /\b(this|it|outfit|idea|look|piece|pieces|make|change|swap|instead|sharper|stronger|softer|better|work|works|risk|risky|why|how|what)\b/i
 
@@ -438,8 +441,12 @@ export default function StylistChat({
   const [pendingPieceMode, setPendingPieceMode] = useState('wardrobe')
   const [imageFile, setImageFile] = useState(null)
   const [imagePrev, setImagePrev] = useState(null)
-  const [pendingOutfit, setPendingOutfit] = useState(null)
-  const [pendingPiece, setPendingPiece] = useState(null)
+  // Router handoffs should render on the first pass so their small hero image can
+  // start loading immediately. The effects below still synchronize later handoffs.
+  const [pendingOutfit, setPendingOutfit] = useState(() => (
+    initialOutfit?.autoSend === true ? null : (initialOutfit || null)
+  ))
+  const [pendingPiece, setPendingPiece] = useState(() => initialPiece || null)
   const [loading, setLoading] = useState(false)
   const [loadingStatus, setLoadingStatus] = useState('')
   const [imageStatusByKey, setImageStatusByKey] = useState({})
@@ -937,21 +944,22 @@ export default function StylistChat({
   useEffect(() => {
     async function initAndMigrate() {
       try {
-        const res = await fetch('/api/chat-threads')
-        let serverThreads = res.ok ? await res.json() : []
-
-        const archivedRes = await fetch('/api/chat-threads?archived=true')
-        let serverArchivedThreads = archivedRes.ok ? await archivedRes.json() : []
-
         let localThreads = []
         try {
           const saved = localStorage.getItem('stylist_chat_threads')
           if (saved) {
             localThreads = JSON.parse(saved) || []
+            if (Array.isArray(localThreads) && localThreads.length) {
+              setThreads(localThreads)
+            }
           }
         } catch (e) {
           console.error('Failed to parse stylist_chat_threads from localStorage:', e)
         }
+
+        const res = await fetch('/api/chat-threads')
+        let serverThreads = res.ok ? await res.json() : []
+        const serverArchivedThreads = []
 
         let legacyThread = null
         try {
@@ -1087,10 +1095,6 @@ export default function StylistChat({
           if (refetchRes.ok) {
             serverThreads = await refetchRes.json()
           }
-          const refetchArchivedRes = await fetch('/api/chat-threads?archived=true')
-          if (refetchArchivedRes.ok) {
-            serverArchivedThreads = await refetchArchivedRes.json()
-          }
         }
 
         try {
@@ -1098,7 +1102,6 @@ export default function StylistChat({
         } catch {}
 
         setThreads(serverThreads)
-        setArchivedThreads(serverArchivedThreads)
 
         const isLaunchingAction = initialOutfit || initialPiece
         if (!isLaunchingAction) {
@@ -1121,6 +1124,25 @@ export default function StylistChat({
 
     initAndMigrate()
   }, [])
+
+  useEffect(() => {
+    if (!archivedView) return undefined
+    let cancelled = false
+
+    async function loadArchivedThreads() {
+      try {
+        const res = await fetch('/api/chat-threads?archived=true')
+        if (!res.ok) throw new Error('Could not load archived conversations')
+        const rows = await res.json()
+        if (!cancelled) setArchivedThreads(rows)
+      } catch (err) {
+        if (!cancelled) console.error('Failed to load archived chat threads:', err)
+      }
+    }
+
+    loadArchivedThreads()
+    return () => { cancelled = true }
+  }, [archivedView])
 
   const debounceTimerRef = useRef(null)
 
@@ -2261,7 +2283,7 @@ export default function StylistChat({
                             </div>
                           )}
                           <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
-                            <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
+                            <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label || 'Comparison sheet'} className="generated-visual-image" loading="lazy" decoding="async" />
                           </button>
                           <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
                           
@@ -2366,7 +2388,7 @@ export default function StylistChat({
                               </div>
                             )}
                             <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
-                              <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Comparison sheet'} className="generated-visual-image" />
+                              <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label || 'Comparison sheet'} className="generated-visual-image" loading="lazy" decoding="async" />
                             </button>
                             <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
                             
@@ -2645,7 +2667,7 @@ export default function StylistChat({
                           aria-label={photo ? `Open ${piece?.name || 'garment'} preview` : undefined}
                         >
                           {photo ? (
-                            <img src={`/uploads/${photo}`} alt={piece?.name || 'Garment'} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                            <img src={resolveUploadThumbnailSrc(photo, 'chat-garment')} alt={piece?.name || 'Garment'} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                           ) : (
                             <span style={{ fontSize: 9, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.1, padding: 4 }}>
                               <span style={{ display: 'block', color: 'var(--accent)', fontWeight: 650 }}>needs photo</span>
@@ -2919,7 +2941,7 @@ export default function StylistChat({
                               </div>
                             )}
                             <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || outfit.label || 'Generated visual', meta: board.reason || outfit.reason || '' })} aria-label="Open generated visual preview">
-                              <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label} className="generated-visual-image" />
+                              <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label} className="generated-visual-image" loading="lazy" decoding="async" />
                             </button>
                             <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
                             
@@ -4896,7 +4918,7 @@ export default function StylistChat({
                       }}
                       aria-label="Open outfit photo preview"
                     >
-                      <img src={messageImageSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
+                      <img src={resolveUploadThumbnailSrc(messageImageSrc, 'chat-attachment')} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }} />
                     </button>
                     ) : null
                   })()}
@@ -5039,7 +5061,7 @@ export default function StylistChat({
                           <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>✓ Saved board</div>
                         )}
                         <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Outfit preview', meta: board.reason || '' })} aria-label="Open outfit preview">
-                          <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label || 'Outfit preview'} className="generated-visual-image" />
+                          <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label || 'Outfit preview'} className="generated-visual-image" loading="lazy" decoding="async" />
                         </button>
                         <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
                         {!isRenderSaved && (
@@ -5094,7 +5116,7 @@ export default function StylistChat({
                                   </div>
                                 )}
                                 <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(visual.imageUrl), title: visual.label || 'Generated visual', meta: visual.reason || '' })} aria-label="Open generated visual preview">
-                                  <img src={resolveUploadImageSrc(visual.imageUrl)} alt={visual.label} className="generated-visual-image" />
+                                  <img src={resolveUploadThumbnailSrc(visual.imageUrl, 'chat-display')} alt={visual.label} className="generated-visual-image" loading="lazy" decoding="async" />
                                 </button>
                                 <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{visual.label}</div>
                                 {Array.isArray(visual.missingPieces) && visual.missingPieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>Suggested additions: {visual.missingPieces.join(' + ')}</div>}
@@ -5200,7 +5222,7 @@ export default function StylistChat({
                                   </div>
                                 )}
                                 <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Generated board', meta: board.reason || '' })} aria-label="Open generated board preview">
-                                  <img src={resolveUploadImageSrc(board.imageUrl)} alt={board.label} className="generated-visual-image" />
+                                  <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label} className="generated-visual-image" loading="lazy" decoding="async" />
                                 </button>
                                 <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
                                 
@@ -5284,7 +5306,7 @@ export default function StylistChat({
                         className="piece-styling-photo-button"
                         aria-label="Preview piece photo"
                       >
-                        <img src={pendingPhotoSrc} alt={pendingPiece.name} />
+                        <img src={resolveUploadThumbnailSrc(pendingPhotoSrc, 'outfit-piece')} alt={pendingPiece.name} decoding="async" fetchPriority="high" />
                       </button>
                     )}
                     <div className="piece-styling-anchor-copy">
@@ -5430,7 +5452,7 @@ export default function StylistChat({
                         className="outfit-styling-photo-button"
                         aria-label="Preview outfit photo"
                       >
-                        <img src={pendingPhotoSrc} alt={pendingOutfit.name} />
+                        <img src={resolveUploadThumbnailSrc(pendingPhotoSrc, 'outfit-piece')} alt={pendingOutfit.name} decoding="async" fetchPriority="high" />
                       </button>
                     )}
                     <div className="outfit-styling-anchor-copy">

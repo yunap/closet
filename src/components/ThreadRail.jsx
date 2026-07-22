@@ -310,7 +310,7 @@ export default function ThreadRail({
           </span>
           <span className="subject-thumb" aria-hidden="true">
             {cluster.photo ? (
-              <img src={cluster.photo} alt="" />
+              <img src={cluster.photo} alt="" loading="lazy" decoding="async" />
             ) : (
               <span className="subject-thumb-fallback">{cluster.icon}</span>
             )}

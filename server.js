@@ -8,6 +8,7 @@ import { getSessionToken } from './lib/cookies.js'
 import { resolveSession, isAdmin } from './lib/systemDb.js'
 import { executeTool } from './styling-engine/tools.js'
 import { contentToOpenAI, mockAiEnabled } from './styling-engine/provider.js'
+import { ensureCachedThumbnail, sourcePathFromCachedThumbnail } from './lib/subjectThumbnails.js'
 import { installMockAiHandler } from './styling-engine/mockAiHandler.js'
 import { tagPieceWithProvider } from './routes/ai.js'
 import authRouter from './routes/auth.js'
@@ -67,6 +68,18 @@ app.use('/api', (req, res, next) => {
 // Photos are private per-user data. 404 (not 401) so an unauthenticated probe can't even
 // confirm a file exists. No fallback to any default user's uploads dir is possible here —
 // userUploadsDir() is only ever called once req.wardrobeSession has already gated entry.
+app.get('/uploads/.thumbnails/:variant/*', async (req, res) => {
+  if (!req.wardrobeSession) return res.status(404).end()
+  const sourcePath = sourcePathFromCachedThumbnail(req.params[0])
+  if (!sourcePath) return res.status(404).end()
+  try {
+    const thumbnailPath = await ensureCachedThumbnail(sourcePath, userUploadsDir(), req.params.variant)
+    return res.sendFile(thumbnailPath)
+  } catch {
+    return res.status(404).end()
+  }
+})
+
 app.use('/uploads', (req, res, next) => {
   if (!req.wardrobeSession) return res.status(404).end()
   express.static(userUploadsDir())(req, res, next)

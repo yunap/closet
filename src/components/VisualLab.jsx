@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import StylistSettings from '../views/StylistSettings'
+import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -473,7 +474,7 @@ export default function VisualLab({ onGoToThread } = {}) {
                   style={{ display: 'block', width: '100%', border: 0, padding: 0, background: 'transparent', cursor: 'zoom-in' }}
                   aria-label="Open calibration image preview"
                 >
-                  <img src={row.image_url} alt="Calibration" />
+                  <img src={row.thumbnail_url || uploadThumbnailSrc(row.image_url, 'visual-reference')} alt="Calibration" loading="lazy" decoding="async" />
                 </button>
                 <div className="visual-reference-body">
                   {isEditing ? (
@@ -565,7 +566,7 @@ export default function VisualLab({ onGoToThread } = {}) {
               return (
               <button key={board.id} type="button" className={`calibration-board-card ${board.archived ? 'is-archived' : ''}`} onClick={() => setSelectedBoard(board)}>
                 <div className="calibration-board-image">
-                  {board.image_url && <img src={board.image_url} alt={board.title || 'Saved board'} />}
+                  {board.image_url && <img src={uploadThumbnailSrc(board.image_url, 'lookbook-display')} alt={board.title || 'Saved board'} loading="lazy" decoding="async" />}
                   <div className="calibration-board-badges">
                     {board.favorite && <span>★ Use strongly</span>}
                     {board.archived && <span>Ignored</span>}
@@ -601,7 +602,7 @@ export default function VisualLab({ onGoToThread } = {}) {
             <div className="calibration-board-detail-media">
               {selectedBoard.image_url && (
                 <button type="button" onClick={() => setPreviewImage({ src: selectedBoard.image_url, title: selectedBoard.title || 'Saved board', meta: selectedBoard.context_name || '' })}>
-                  <img src={selectedBoard.image_url} alt={selectedBoard.title || 'Saved board'} />
+                  <img src={uploadThumbnailSrc(selectedBoard.image_url, 'lookbook-display')} alt={selectedBoard.title || 'Saved board'} decoding="async" />
                   <span>Open full image</span>
                 </button>
               )}

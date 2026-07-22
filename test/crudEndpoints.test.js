@@ -253,7 +253,26 @@ test('CRUD operations for /api/chat-threads', async () => {
       { role: 'assistant', text: 'Hi' },
       { role: 'user', text: 'Hello' }
     ],
-    activeContext: { type: 'piece', id: pieceId, name: 'chat subject blouse' }
+    activeContext: { type: 'piece', id: pieceId, name: 'chat subject blouse' },
+    threadMemory: {
+      source: 'whole_wardrobe',
+      stylingContext: {
+        occasion: 'smart-casual',
+        activity: 'walking',
+        season: 'warm',
+        mood: 'relaxed',
+        request: 'city outfits',
+        unusedLargeField: 'do not return this'
+      },
+      latestOutfits: [{
+        title: 'City Walk',
+        label: 'Everyday City',
+        bestFor: 'walking',
+        previewOnly: true,
+        pieces: [{ id: 1, embeddedPayload: 'do not return this' }]
+      }],
+      unusedLargeField: 'do not return this'
+    }
   }
 
   // Create/Upsert Thread
@@ -282,7 +301,24 @@ test('CRUD operations for /api/chat-threads', async () => {
   assert.equal(found.title, 'Test Thread')
   assert.equal(found.message_count, 2)
   assert.equal(found.subjectType, 'piece')
-  assert.equal(found.subjectPhoto, '/uploads/chat-subject.jpg')
+  assert.equal(found.subjectPhoto, '/uploads/.thumbnails/subject/chat-subject.jpg.webp')
+  assert.deepEqual(found.threadMemory, {
+    source: 'whole_wardrobe',
+    stylingContext: {
+      occasion: 'smart-casual',
+      activity: 'walking',
+      season: 'warm',
+      mood: 'relaxed',
+      request: 'city outfits'
+    },
+    latestOutfits: [{
+      title: 'City Walk',
+      label: 'Everyday City',
+      bestFor: 'walking',
+      previewOnly: true
+    }]
+  })
+  assert.ok(!JSON.stringify(found).includes('do not return this'))
 
   // Get Single Thread Detail
   const getRes = await fetch(`${baseUrl}/api/chat-threads/${threadId}`)
