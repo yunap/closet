@@ -35,15 +35,17 @@ export default function InfoTooltip({
   }
 
   useEffect(() => {
-    if (isControlled || !open) return undefined
+    if (!open) return undefined
     const handlePointerDown = (e) => {
       if (popoverRef.current?.contains(e.target)) return
       if (buttonRef.current?.contains(e.target)) return
-      setInternalOpen(false)
+      if (onToggle) onToggle(false)
+      if (!isControlled) setInternalOpen(false)
     }
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        setInternalOpen(false)
+        if (onToggle) onToggle(false)
+        if (!isControlled) setInternalOpen(false)
         buttonRef.current?.focus()
       }
     }
@@ -53,7 +55,7 @@ export default function InfoTooltip({
       document.removeEventListener('mousedown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isControlled, open])
+  }, [isControlled, onToggle, open])
 
   return (
     <div className={`info-tooltip ${className}`.trim()}>
