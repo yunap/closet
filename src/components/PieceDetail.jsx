@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
+import { getCachedGarmentRelationships, loadGarmentRelationships } from '../utils/garmentRelationships.js'
 import { getColorSwatch } from '../utils/colors'
 
-function OutfitThumb({ outfit, onPreview }) {
+function OutfitThumb({ outfit, onPreview, prioritize = false }) {
   return (
     <button
       className="garment-relation-tile outfit-relation-tile"
@@ -18,7 +19,7 @@ function OutfitThumb({ outfit, onPreview }) {
     >
       <div className="garment-relation-thumb outfit-relation-thumb">
         {outfit.photo
-          ? <img src={outfit.thumbnail_url || `/uploads/${outfit.photo}`} alt={outfit.name} loading="lazy" decoding="async" />
+          ? <img src={outfit.thumbnail_url || `/uploads/${outfit.photo}`} alt={outfit.name} loading={prioritize ? 'eager' : 'lazy'} decoding="async" fetchPriority={prioritize ? 'high' : 'auto'} />
           : <div className="garment-relation-empty">✦</div>
         }
       </div>
@@ -29,7 +30,7 @@ function OutfitThumb({ outfit, onPreview }) {
   )
 }
 
-function SavedBoardThumb({ board, onPreview }) {
+function SavedBoardThumb({ board, onPreview, prioritize = false }) {
   if (!board?.image_url) return null
   const pieces = Array.isArray(board.pieces) ? board.pieces.map(p => p?.name).filter(Boolean) : []
   const title = board.title || 'Generated outfit'
@@ -46,7 +47,7 @@ function SavedBoardThumb({ board, onPreview }) {
       title={title}
     >
       <div className="garment-relation-thumb saved-board-thumb">
-        <img src={board.thumbnail_url || board.image_url} alt={title} loading="lazy" decoding="async" />
+        <img src={board.thumbnail_url || board.image_url} alt={title} loading={prioritize ? 'eager' : 'lazy'} decoding="async" fetchPriority={prioritize ? 'high' : 'auto'} />
       </div>
       <div className="garment-relation-label">
         {title}
@@ -68,21 +69,30 @@ export default function PieceDetail({
   const bg = getColorSwatch(piece.colors[0], '#9A8A78')
   const [photoTab, setPhotoTab] = useState(piece.photo ? 'hanger' : piece.worn_photo ? 'worn' : null)
   const [previewImage, setPreviewImage] = useState(null)
-  const [outfits,  setOutfits]  = useState([])
-  const [savedBoards, setSavedBoards] = useState([])
+  const cachedRelationships = getCachedGarmentRelationships(piece.id)
+  const [outfits, setOutfits] = useState(() => cachedRelationships?.outfits || [])
+  const [savedBoards, setSavedBoards] = useState(() => cachedRelationships?.savedBoards || [])
   const [showAllBoards, setShowAllBoards] = useState(false)
   const sheetRef = useRef(null)
 
   useEffect(() => {
-    fetch(`/api/pieces/${piece.id}/outfits`)
-      .then(r => r.json()).then(setOutfits).catch(() => {})
-  }, [piece.id])
-
-  useEffect(() => {
-    fetch(`/api/saved-boards?pieceId=${piece.id}&limit=80`)
-      .then(r => r.json())
-      .then(rows => setSavedBoards(Array.isArray(rows) ? rows.filter(row => row.image_url) : []))
-      .catch(() => setSavedBoards([]))
+    let cancelled = false
+    const cached = getCachedGarmentRelationships(piece.id)
+    setOutfits(cached?.outfits || [])
+    setSavedBoards(cached?.savedBoards || [])
+    loadGarmentRelationships(piece.id, { refresh: Boolean(cached) })
+      .then(relationships => {
+        if (cancelled) return
+        setOutfits(relationships.outfits)
+        setSavedBoards(relationships.savedBoards)
+      })
+      .catch(() => {
+        if (!cancelled && !cached) {
+          setOutfits([])
+          setSavedBoards([])
+        }
+      })
+    return () => { cancelled = true }
   }, [piece.id])
 
   useEffect(() => {
@@ -234,8 +244,8 @@ export default function PieceDetail({
                   Generated outfits · {savedBoards.length}
                 </div>
                 <div className="garment-relation-strip">
-                  {visibleSavedBoards.map(board => (
-                    <SavedBoardThumb key={board.id} board={board} onPreview={setPreviewImage} />
+                  {visibleSavedBoards.map((board, index) => (
+                    <SavedBoardThumb key={board.id} board={board} onPreview={setPreviewImage} prioritize={index < 4} />
                   ))}
                   {remainingSavedBoards > 0 && (
                     <button
@@ -258,7 +268,7 @@ export default function PieceDetail({
                   Linked outfits · {outfits.length}
                 </div>
                 <div className="garment-relation-strip">
-                  {outfits.map(o => <OutfitThumb key={o.id} outfit={o} onPreview={setPreviewImage} />)}
+                  {outfits.map((outfit, index) => <OutfitThumb key={outfit.id} outfit={outfit} onPreview={setPreviewImage} prioritize={index < 4} />)}
                 </div>
               </div>
             ) : (

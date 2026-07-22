@@ -257,7 +257,8 @@ test('opening a saved thread does not rewrite thread recency metadata', () => {
   assert.match(source, /!skipSaveCurrent\s*&&\s*debounceTimerRef\.current\s*&&\s*currentThreadId/)
   assert.match(source, /suppressThreadLoadAutosaveRef\.current\s*=\s*true/)
   assert.match(source, /suppressNextMessageScrollRef\.current\s*=\s*true/)
-  assert.match(source, /setMessages\(thread\.payload\.messages/)
+  assert.match(source, /const\s+loadedMessages\s*=\s*thread\.payload\.messages/)
+  assert.match(source, /setMessages\(loadedMessages\)/)
   assert.match(source, /if\s*\(suppressThreadLoadAutosaveRef\.current\)\s*\{\s*suppressThreadLoadAutosaveRef\.current\s*=\s*false\s*return\s*\}/)
 })
 
