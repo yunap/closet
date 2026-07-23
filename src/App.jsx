@@ -140,6 +140,11 @@ export default function App() {
     navigate('/stylist', { state: { outfit: outfit ? { ...outfit, actionId: Date.now() } : null, piece: null } })
   }
 
+  // Whole-wardrobe Visual Composer entry from outfit-oriented surfaces.
+  const openVisualComposer = () => {
+    navigate('/stylist?compose=wardrobe')
+  }
+
   // Thread navigation from Lookbook / Visual Lab boards.
   const goToThread = (threadId) => {
     navigate('/stylist/' + threadId)
@@ -152,7 +157,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/wardrobe" replace />} />
             <Route path="/wardrobe"   element={<PieceInventory onSendToStylist={sendPieceToStylist} />} />
-            <Route path="/outfits"    element={<OutfitLookbook onSendToStylist={sendOutfitToStylist} onGoToThread={goToThread} />} />
+            <Route path="/outfits"    element={<OutfitLookbook onSendToStylist={sendOutfitToStylist} onGoToThread={goToThread} onOpenVisualComposer={openVisualComposer} />} />
             {/* /stylist and /stylist/:threadId intentionally share the same <AskClaude /> element
                 with NO key prop — React reuses the same component instance when only the param
                 changes, preserving all thread state without a remount. */}

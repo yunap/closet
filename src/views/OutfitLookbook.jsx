@@ -1387,7 +1387,7 @@ function Toast({ message, onDone }) {
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
-export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
+export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVisualComposer }) {
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Filter/tab state — URL-backed so state survives tab switches.
@@ -1726,6 +1726,16 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
             >
               <span className="lookbook-add-icon" aria-hidden="true">+</span>
               <span>Add outfit</span>
+            </button>
+          )}
+          {activeSubTab === 'generated-outfits' && (
+            <button
+              type="button"
+              className="lookbook-add-outfit lookbook-create-outfits"
+              onClick={onOpenVisualComposer}
+            >
+              <span className="lookbook-add-icon" aria-hidden="true">✦</span>
+              <span>Create outfits</span>
             </button>
           )}
         </div>

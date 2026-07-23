@@ -10,7 +10,8 @@ import StylistChat from '../components/StylistChat'
 
 export default function AskClaude() {
   const { threadId } = useParams()         // undefined on /stylist, string on /stylist/:threadId
-  const { state } = useLocation()          // { outfit, piece } set by sendOutfitToStylist / sendPieceToStylist
+  const { state, search } = useLocation()  // { outfit, piece } set by sendOutfitToStylist / sendPieceToStylist
+  const openVisualComposer = new URLSearchParams(search).get('compose') === 'wardrobe'
   const [activeContext, setActiveContext] = useState(null)
 
   return (
@@ -18,6 +19,7 @@ export default function AskClaude() {
       <StylistChat
         initialOutfit={state?.outfit ?? null}
         initialPiece={state?.piece ?? null}
+        initialOpenVisualComposer={openVisualComposer}
         initialThreadId={threadId ?? null}
         activeContext={activeContext}
         onContextChange={setActiveContext}

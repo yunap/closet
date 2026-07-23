@@ -384,23 +384,23 @@ const splitCritiqueText = (text = '') => {
 const CritiqueBody = ({ text, fontSize = 13 }) => {
   const { prose, details } = splitCritiqueText(text)
   return (
-    <>
+    <div className="stylist-critique-body">
       {prose.split('\n').filter(Boolean).map((line, j) => (
-        <p key={j} style={{ fontSize, lineHeight: 1.5, margin: '0 0 8px', color: 'var(--text)' }}>{line}</p>
+        <p key={j} style={{ fontSize }}>{line}</p>
       ))}
       {details && (
-        <details style={{ marginTop: 2 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--text-muted)', userSelect: 'none' }}>
+        <details className="stylist-critique-details">
+          <summary>
             Full structured read
           </summary>
-          <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
+          <div className="stylist-critique-details-body">
             {details.split('\n').filter(Boolean).map((line, j) => (
-              <p key={j} style={{ fontSize: 12, lineHeight: 1.45, margin: '0 0 6px', color: 'var(--text-muted)' }}>{line}</p>
+              <p key={j}>{line}</p>
             ))}
           </div>
         </details>
       )}
-    </>
+    </div>
   )
 }
 
@@ -427,6 +427,7 @@ const compactEvaluationMemory = (evaluation = null) => {
 export default function StylistChat({
   initialOutfit,
   initialPiece,
+  initialOpenVisualComposer = false,
   initialThreadId,
   activeContext: externalActiveContext,
   onContextChange,
@@ -496,7 +497,7 @@ export default function StylistChat({
   const [outfits, setOutfits] = useState([])
   const [compareOutfitId, setCompareOutfitId] = useState('')
   const [generateOutfitMode, setGenerateOutfitMode] = useState(false)
-  const [wardrobeBuilderOpen, setWardrobeBuilderOpen] = useState(false)
+  const [wardrobeBuilderOpen, setWardrobeBuilderOpen] = useState(Boolean(initialOpenVisualComposer))
   const [includeMissingPieces, setIncludeMissingPieces] = useState(false)
   const [idealOnlyMode, setIdealOnlyMode] = useState(false)
   const [editorialVisualMode, setEditorialVisualMode] = useState(false)
@@ -1154,7 +1155,7 @@ export default function StylistChat({
 
         setThreads(serverThreads)
 
-        const isLaunchingAction = initialOutfit || initialPiece
+        const isLaunchingAction = initialOutfit || initialPiece || initialOpenVisualComposer
         if (!isLaunchingAction) {
           let activeId = 'new_chat'
           const savedActiveId = localStorage.getItem('stylist_current_thread_id')
@@ -1354,6 +1355,14 @@ export default function StylistChat({
     if (!initialThreadId) return
     openThread(initialThreadId)
   }, [initialThreadId])
+
+  useEffect(() => {
+    if (!initialOpenVisualComposer) return
+    setPendingPiece(null)
+    setPendingOutfit(null)
+    setActiveContext(null)
+    setWardrobeBuilderOpen(true)
+  }, [initialOpenVisualComposer])
 
   useEffect(() => {
     const openingWithAction = initialPiece || (initialOutfit && initialOutfit.autoSend !== true) || pendingPiece || pendingOutfit
@@ -2589,20 +2598,14 @@ export default function StylistChat({
           )
 
           return (
-            <div key={idx} style={{
-              padding: '10px 12px',
-              background: isBrokenCard ? 'var(--repair-bg)' : (isRankedCard ? 'var(--surface)' : 'var(--surface-2)'),
-              borderRadius: 12,
-              border: isBrokenCard ? '1px solid var(--repair)' : (isRankedCard ? '1px solid var(--accent)' : '1px solid var(--border)'),
-              boxShadow: isRankedCard ? '0 2px 8px rgba(0,0,0,0.04)' : 'none',
-              display: 'flex',
-              gap: 12,
-              alignItems: 'flex-start'
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{cardDisplayTitle}</div>
-                  <div style={{ fontSize: 10, color: isBrokenCard ? 'var(--repair)' : (isRankedCard ? 'var(--accent)' : 'var(--text-muted)'), textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
+            <div
+              key={idx}
+              className={`stylist-outfit-result-card ${isBrokenCard ? 'is-broken' : ''} ${isRankedCard ? 'is-ranked' : ''}`.trim()}
+            >
+              <div className="stylist-outfit-result-body">
+                <div className="stylist-outfit-result-heading">
+                  <div className="stylist-outfit-result-title">{cardDisplayTitle}</div>
+                  <div className="stylist-outfit-result-strength">{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
                 </div>
                 {getCardAuthorLabel(outfit) && (
                   <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, letterSpacing: '0.02em', marginTop: 2 }}>{getCardAuthorLabel(outfit)}</div>
@@ -2664,7 +2667,7 @@ export default function StylistChat({
                 })()}
                 {showOutfitSketch && renderOutfitSketch(outfit)}
               {((!isTripCard && (outfit.missionLabel || outfit.dominantDirection || outfit.silhouette)) || outfit.bestFor) && (
-                <div style={{ display: 'grid', gap: 2, marginTop: 6, fontSize: 13, color: 'var(--text-light)', lineHeight: 1.45 }}>
+                <div className="stylist-outfit-result-meta">
                   {!isTripCard && outfit.missionLabel && <div><strong>Mission:</strong> {outfit.missionLabel}</div>}
                   {!isTripCard && outfit.dominantDirection && <div><strong>Direction:</strong> {outfit.dominantDirection}</div>}
                   {!isTripCard && outfit.silhouette && <div><strong>Silhouette:</strong> {outfit.silhouette}</div>}
@@ -2677,23 +2680,24 @@ export default function StylistChat({
                   <strong>Suggested additions:</strong> {outfit.missingPieces.join(' + ')}
                 </div>
               )}
-              {pieces.length > 0 && (
+              {pieces.length > 0 && !(Array.isArray(outfit.pieces) && outfit.pieces.length > 0) && (
                 <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 7, lineHeight: 1.45 }}>
                   <strong>Pieces:</strong> {pieces.join(' + ')}
                 </div>
               )}
               {Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
-                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 8 }}>
+                <div className="stylist-outfit-piece-list">
                   {outfit.pieces.map((rawPiece, pieceIdx) => {
                     const piece = hydrateDisplayPiece(rawPiece)
                     const photo = piece?.photo || piece?.worn_photo
                     return (
-                      <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} style={{ width: 72, display: 'grid', gap: 4 }}>
+                      <div key={`${piece?.id || pieceIdx}-${pieceIdx}`} title={piece?.name || 'Garment'} className="stylist-outfit-piece">
                         <button
                           type="button"
                           disabled={!photo}
                           onClick={() => photo && setPreviewImage({ src: `/uploads/${photo}`, title: piece?.name || 'Garment', meta: piece?.category || '', pieceId: piece?.id || null })}
-                          style={{ width: 72, height: 72, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: photo ? 'zoom-in' : 'default' }}
+                          className="stylist-outfit-piece-photo"
+                          style={{ cursor: photo ? 'zoom-in' : 'default' }}
                           aria-label={photo ? `Open ${piece?.name || 'garment'} preview` : undefined}
                         >
                           {photo ? (
@@ -2705,7 +2709,7 @@ export default function StylistChat({
                             </span>
                           )}
                         </button>
-                        <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.15, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{piece?.name || 'Garment'}</div>
+                        <div className="stylist-outfit-piece-name">{piece?.name || 'Garment'}</div>
                         {piece?.id && !piece?.unresolved && (message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (() => {
                             const swapKey = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`
                             const isSwapped = feedbackSaved.has(swapKey)
@@ -2781,11 +2785,11 @@ export default function StylistChat({
                 </div>
               )}
               {outfit.reason && !isTripCard && (
-                <details style={{ marginTop: 8, border: '1px solid var(--border-light)', borderRadius: 8, background: 'var(--surface-2)', padding: '6px 10px' }}>
-                  <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--accent)', userSelect: 'none' }}>
+                <details className="stylist-outfit-reason">
+                  <summary>
                     Why this outfit
                   </summary>
-                  <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
+                  <div className="stylist-outfit-reason-body">
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                       {outfit.reason}
                     </div>
@@ -2858,7 +2862,7 @@ export default function StylistChat({
 
               {!canRenderStructuredOutfit && (message?.wholeWardrobe || (activeContext?.type !== 'piece' && !outfit.pieceId && Array.isArray(outfit.pieces) && outfit.pieces.length > 0)) && (
                 <>
-                  <div style={{ marginTop: 9, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div className="stylist-outfit-actions">
                     <button
                       onClick={() => generateWholeWardrobeImage(boardKey, outfit)}
                       disabled={isRendering}
@@ -2880,7 +2884,7 @@ export default function StylistChat({
 
               {canRenderStructuredOutfit && (
                 <>
-                  <div style={{ marginTop: 9, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div className="stylist-outfit-actions">
                     {isPreview ? (
                       // Preview mode: render this single direction on demand
                       <button
@@ -2926,22 +2930,6 @@ export default function StylistChat({
                     )}
                     {!isPreview && renderOutfitFeedbackButtons({ fontSize: 12, padding: '3px 9px', borderRadius: 12 })}
                   </div>
-                  {isEvaluating && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--accent)', marginTop: 8 }}>
-                      <span className="typing-dots"><span /><span /></span>
-                      <span>Evaluating this outfit...</span>
-                    </div>
-                  )}
-                  {hasCritique && (
-                    <details defaultOpen={true} style={{ width: '100%', marginTop: 8, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface-2)' }}>
-                      <summary style={{ cursor: 'pointer', fontWeight: 650, color: 'var(--accent)', fontSize: 12, userSelect: 'none' }}>
-                        🔍 View Outfit Critique
-                      </summary>
-                      <div style={{ marginTop: 6, borderTop: '1px solid var(--border-light)', paddingTop: 6 }}>
-                        <CritiqueBody text={critiqueText} />
-                      </div>
-                    </details>
-                  )}
                 </>
               )}
 
@@ -3645,7 +3633,7 @@ export default function StylistChat({
     
     const initialPayload = {
       messages: [
-        { role: 'user', text: userText }
+        { role: 'user', text: userText, contextType: 'wardrobe' }
       ],
       chatHistory: [
         { role: 'user', content: userText }
@@ -3865,6 +3853,7 @@ export default function StylistChat({
     const userMessage = {
       role: 'user', text: q, imagePrev: displayPrev, contextName: userContextName,
       contextMode: compareOutfit && outfitToSend ? getCompareConfidenceText(outfitToSend, compareOutfit) : (outfitToSend ? `${getOutfitConfidenceMode(outfitToSend)?.label} · ${getOutfitConfidenceMode(outfitToSend)?.detail}` : ''),
+      contextType: outfitToSend ? 'outfit' : (pieceToSend || shouldGenerateActiveEditorialVisuals ? 'piece' : null),
     }
 
     let targetThreadId = currentThreadId
@@ -4730,7 +4719,7 @@ export default function StylistChat({
               )}
             </div>
           </div>
-          {!pending && (
+          {!pending && messages.length === 1 && (
             <button
               ref={createOutfitsButtonRef}
               type="button"
@@ -4941,19 +4930,18 @@ export default function StylistChat({
           {messages.length > 1 && messages.slice(visibleMessageStart).map((m, visibleIndex) => {
             const i = visibleMessageStart + visibleIndex
             const prioritizeContextPhoto = visibleIndex < 2 || i >= messages.length - 2
+            const isWardrobeSessionMessage = m.contextType === 'wardrobe'
+              || (!m.imagePrev && (
+                /^use my wardrobe$/i.test(String(m.contextName || '').trim())
+                || /^use my wardrobe to create outfits\b/i.test(String(m.text || '').trim())
+              ))
             if (m.contextName === 'Whole wardrobe evaluation') {
               return null
             }
             return (
               <div key={i}>
-              {(m.imagePrev || m.contextName) && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4, gap: 8, alignItems: 'flex-end' }}>
-                  {(m.contextName || m.contextMode) && (
-                    <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                      {m.contextName && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{m.contextName}</span>}
-                      {m.contextMode && <span style={{ fontSize: 10, color: 'var(--text-light)' }}>{m.contextMode}</span>}
-                    </span>
-                  )}
+              {!isWardrobeSessionMessage && (m.imagePrev || m.contextName) && (
+                <div className="stylist-conversation-subject">
                   {m.imagePrev && (() => {
                     const messageImageSrc = resolveUploadImageSrc(m.imagePrev)
                     return messageImageSrc ? (
@@ -4964,17 +4952,7 @@ export default function StylistChat({
                         title: m.contextName || 'Outfit photo',
                         meta: m.contextMode || ''
                       })}
-                      style={{
-                        padding: 0,
-                        border: 0,
-                        background: 'transparent',
-                        borderRadius: 'var(--radius)',
-                        overflow: 'hidden',
-                        cursor: 'zoom-in',
-                        display: 'block',
-                        maxWidth: 140,
-                        flexShrink: 0
-                      }}
+                      className="stylist-conversation-subject-photo"
                       aria-label="Open outfit photo preview"
                     >
                       <img
@@ -4983,11 +4961,23 @@ export default function StylistChat({
                         loading={prioritizeContextPhoto ? 'eager' : 'lazy'}
                         decoding="async"
                         fetchPriority={prioritizeContextPhoto ? 'high' : 'auto'}
-                        style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'var(--surface-2)' }}
                       />
                     </button>
                     ) : null
                   })()}
+                  {(m.contextName || m.contextMode) && (
+                    <div className="stylist-conversation-subject-copy">
+                      <span className="stylist-conversation-subject-label">
+                        {m.contextType === 'wardrobe'
+                          ? 'Wardrobe'
+                          : m.contextType === 'outfit' || (!m.contextType && m.contextMode)
+                            ? 'Outfit'
+                            : 'Piece'}
+                      </span>
+                      {m.contextName && <strong>{m.contextName}</strong>}
+                      {m.contextMode && <span>{m.contextMode}</span>}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -4999,12 +4989,7 @@ export default function StylistChat({
                 // subheading treatment instead, so a loaded/continuing thread opens with
                 // the same considered intro as a brand-new one, not a stray greeting bubble.
                 if (i === 0 && m.role === 'assistant' && String(m.text || '').includes('personal stylist')) {
-                  return (
-                    <div className="stylist-empty-intro" style={{ marginBottom: 20 }}>
-                      <h2>Ask anything about your wardrobe</h2>
-                      <p>I can create outfits from your saved pieces or review an outfit photo.</p>
-                    </div>
-                  )
+                  return null
                 }
                 if (m.isError) {
                   return (
@@ -5020,12 +5005,13 @@ export default function StylistChat({
                 const hasBoards = Boolean(boardResults[i]?.length)
                 if (m.role === 'assistant' && m.wardrobeEvaluation && m.evaluationResponseMode !== 'followup') {
                   return (
-                    <div className={`ai-message ${m.role}`} style={{ padding: '12px 14px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
-                      <details open={true} style={{ width: '100%' }}>
-                        <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--accent)', fontSize: 13, userSelect: 'none' }}>
-                          🔍 View Outfit Critique: {m.outfitName || 'Generated Outfit'}
+                    <div className={`ai-message ${m.role} outfit-critique-message`}>
+                      <details open={true}>
+                        <summary className="outfit-critique-summary">
+                          <span>Outfit critique</span>
+                          <strong>{m.outfitName || 'Generated outfit'}</strong>
                         </summary>
-                        <div style={{ marginTop: 10, borderTop: '1px solid var(--border-light)', paddingTop: 10 }}>
+                        <div className="outfit-critique-content">
                           <CritiqueBody text={m.text} />
                         </div>
                       </details>
