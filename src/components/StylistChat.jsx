@@ -381,12 +381,12 @@ const splitCritiqueText = (text = '') => {
 
 // Renders critique feedback: stylist-voice prose as the message, with the
 // structured field dump (when present) collapsed behind a details toggle.
-const CritiqueBody = ({ text, fontSize = 13 }) => {
+const CritiqueBody = ({ text }) => {
   const { prose, details } = splitCritiqueText(text)
   return (
     <div className="stylist-critique-body">
       {prose.split('\n').filter(Boolean).map((line, j) => (
-        <p key={j} style={{ fontSize }}>{line}</p>
+        <p key={j}>{line}</p>
       ))}
       {details && (
         <details className="stylist-critique-details">
@@ -2211,9 +2211,9 @@ export default function StylistChat({
               const swatch = getSwatchStyle(piece)
               const role = piece.isAnchor ? 'anchor' : piece.category
               return (
-                <div key={`${piece.id}-${piece.category}`} style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 10.5, color: 'var(--text-muted)' }}>
+                <div key={`${piece.id}-${piece.category}`} style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 12, lineHeight: 1.4, color: 'var(--text-muted)' }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: swatch.background, border: '1px solid rgba(0,0,0,0.12)', flex: '0 0 auto' }} />
-                  <span style={{ color: piece.isAnchor ? 'var(--accent)' : 'var(--text-light)', fontWeight: piece.isAnchor ? 700 : 600, textTransform: 'uppercase', fontSize: 9 }}>{role}</span>
+                  <span style={{ color: piece.isAnchor ? 'var(--accent)' : 'var(--text-light)', fontWeight: piece.isAnchor ? 700 : 600, textTransform: 'uppercase', fontSize: 12 }}>{role}</span>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{piece.name}</span>
                 </div>
               )
@@ -2317,7 +2317,7 @@ export default function StylistChat({
                       ) : (
                         <>
                           {isSaved && (
-                            <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                            <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
                               ✓ Saved preview board
                             </div>
                           )}
@@ -2328,10 +2328,10 @@ export default function StylistChat({
                           
                           {board.reason && (
                             <details className="rationale-details" style={{ marginTop: 4 }}>
-                              <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+                              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
                                 {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
                               </summary>
-                              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
                                 {board.reason}
                               </div>
                             </details>
@@ -2341,7 +2341,7 @@ export default function StylistChat({
                             const cost = calculateOpenAICost(board.debug.timings)
                             const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
                             return (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--text-light)', marginTop: 4 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}>
                                 {costStr && <span>Cost: {costStr}</span>}
                                 <details className="telemetry-details" style={{ display: 'inline' }}>
                                   <summary style={{ cursor: 'pointer', listStyle: 'none', userSelect: 'none' }} title="Click for render details">
@@ -2368,7 +2368,7 @@ export default function StylistChat({
                                 boardIndex: boardIdx,
                                 contextOverride: { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
                               })}
-                              style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', marginTop: 7 }}
+                              style={{ fontSize: 12, color: 'var(--accent)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', marginTop: 7 }}
                             >
                               Save preview board
                             </button>
@@ -2422,7 +2422,7 @@ export default function StylistChat({
                         ) : (
                           <>
                             {isSaved && (
-                              <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                              <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
                                 ✓ Saved preview board
                               </div>
                             )}
@@ -2433,10 +2433,10 @@ export default function StylistChat({
                             
                             {board.reason && (
                               <details className="rationale-details" style={{ marginTop: 4 }}>
-                                <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+                                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
                                   {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
                                 </summary>
-                                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
                                   {board.reason}
                                 </div>
                               </details>
@@ -2446,7 +2446,7 @@ export default function StylistChat({
                               const cost = calculateOpenAICost(board.debug.timings)
                               const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
                               return (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--text-light)', marginTop: 4 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}>
                                   {costStr && <span>Cost: {costStr}</span>}
                                   <details className="telemetry-details" style={{ display: 'inline' }}>
                                     <summary style={{ cursor: 'pointer', listStyle: 'none', userSelect: 'none' }} title="Click for render details">
@@ -2608,7 +2608,7 @@ export default function StylistChat({
                   <div className="stylist-outfit-result-strength">{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
                 </div>
                 {getCardAuthorLabel(outfit) && (
-                  <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.6, letterSpacing: '0.02em', marginTop: 2 }}>{getCardAuthorLabel(outfit)}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.4, letterSpacing: '0.02em', marginTop: 2 }}>{getCardAuthorLabel(outfit)}</div>
                 )}
                 {isBrokenCard && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45, fontWeight: 600 }}>
@@ -2686,7 +2686,10 @@ export default function StylistChat({
                 </div>
               )}
               {Array.isArray(outfit.pieces) && outfit.pieces.length > 0 && (
-                <div className="stylist-outfit-piece-list">
+                <div
+                  className="stylist-outfit-piece-list"
+                  aria-label={`Pieces in ${cardDisplayTitle}`}
+                >
                   {outfit.pieces.map((rawPiece, pieceIdx) => {
                     const piece = hydrateDisplayPiece(rawPiece)
                     const photo = piece?.photo || piece?.worn_photo
@@ -2703,7 +2706,7 @@ export default function StylistChat({
                           {photo ? (
                             <img src={resolveUploadThumbnailSrc(photo, 'chat-garment')} alt={piece?.name || 'Garment'} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                           ) : (
-                            <span style={{ fontSize: 9, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.1, padding: 4 }}>
+                            <span style={{ fontSize: 12, color: 'var(--text-light)', textAlign: 'center', lineHeight: 1.2, padding: 4 }}>
                               <span style={{ display: 'block', color: 'var(--accent)', fontWeight: 650 }}>needs photo</span>
                               <span style={{ display: 'block', marginTop: 2 }}>{piece?.category || 'piece'}</span>
                             </span>
@@ -2828,10 +2831,11 @@ export default function StylistChat({
                           marginTop: 8,
                           paddingTop: 6,
                           borderTop: '1px dashed var(--border-light)',
-                          fontSize: 10.5,
+                          fontSize: 12,
                           color: 'var(--text-light)',
                           display: 'grid',
-                          gap: 2
+                          gap: 3,
+                          lineHeight: 1.45
                         }}>
                           <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Styling Engine Trace:</div>
                           <div>Activity: {resolvedAct} ({actSrc}) · Walkable: {isWalk} · Ceiling: {regCeil}</div>
@@ -2844,7 +2848,7 @@ export default function StylistChat({
               )}
 
               {isEvaluating && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--accent)', marginTop: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--accent)', marginTop: 8 }}>
                   <span className="typing-dots"><span /><span /></span>
                   <span>Evaluating this outfit...</span>
                 </div>
@@ -2866,14 +2870,14 @@ export default function StylistChat({
                     <button
                       onClick={() => generateWholeWardrobeImage(boardKey, outfit)}
                       disabled={isRendering}
-                      style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
+                      style={{ fontSize: 12, color: 'var(--accent)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isRendering ? 'default' : 'pointer', opacity: isRendering ? 0.65 : 1 }}
                     >
                       {isRendering ? 'Generating image...' : (hasRendered ? 'Regenerate outfit image' : 'Generate outfit image')}
                     </button>
                     <button
                       onClick={() => evaluateWholeWardrobeOutfit(boardKey, outfit)}
                       disabled={isEvaluating}
-                      style={{ fontSize: 10, color: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--surface-2)' : 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer' }}
+                      style={{ fontSize: 12, color: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--donate)' : 'var(--text-muted)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--border)', background: (evaluatedKeys.has(boardKey) || hasCritique) ? 'var(--surface-2)' : 'var(--surface)', cursor: isEvaluating ? 'default' : 'pointer' }}
                     >
                       {isEvaluating ? 'Evaluating...' : ((evaluatedKeys.has(boardKey) || hasCritique) ? '✓ Evaluated' : 'Evaluate outfit')}
                     </button>
@@ -2954,7 +2958,7 @@ export default function StylistChat({
                         ) : (
                           <>
                             {isBoardSaved && (
-                              <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                              <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
                                 ✓ Saved board
                               </div>
                             )}
@@ -2965,10 +2969,10 @@ export default function StylistChat({
                             
                             {board.reason && (
                               <details className="rationale-details" style={{ marginTop: 4 }}>
-                                <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
+                                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 650, color: 'var(--accent)', userSelect: 'none' }}>
                                   {getTeaserText(board.reason)} <span style={{ fontWeight: 'normal', color: 'var(--text-light)' }}>(more ▾)</span>
                                 </summary>
-                                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
                                   {board.reason}
                                 </div>
                               </details>
@@ -2978,7 +2982,7 @@ export default function StylistChat({
                               const cost = calculateOpenAICost(board.debug.timings)
                               const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
                               return (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: 'var(--text-light)', marginTop: 4 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}>
                                   {costStr && <span>Cost: {costStr}</span>}
                                   <details className="telemetry-details" style={{ display: 'inline' }}>
                                     <summary style={{ cursor: 'pointer', listStyle: 'none', userSelect: 'none' }} title="Click for render details">
@@ -3002,7 +3006,7 @@ export default function StylistChat({
                                   <button
                                     onClick={() => exploreIdealAdditionsFromBoard({ board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx })}
                                     disabled={isExploring}
-                                    style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isExploring ? 'default' : 'pointer', opacity: isExploring ? 0.65 : 1, marginBottom: 4 }}
+                                    style={{ fontSize: 12, color: 'var(--accent)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--surface)', cursor: isExploring ? 'default' : 'pointer', opacity: isExploring ? 0.65 : 1, marginBottom: 4 }}
                                   >
                                     {isExploring ? 'Exploring...' : 'Explore ideal additions'}
                                   </button>
@@ -3029,7 +3033,7 @@ export default function StylistChat({
                                             return null
                                           })()
                                     })}
-                                    style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}
+                                    style={{ fontSize: 12, color: 'var(--accent)', padding: '4px 9px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}
                                   >
                                     Save board
                                   </button>
@@ -5095,7 +5099,7 @@ export default function StylistChat({
                   <div className={`ai-message ${m.role}`}>
                     {m.role === 'assistant'
                       ? (String(m.text || '').includes(CRITIQUE_DETAILS_DELIMITER)
-                          ? <CritiqueBody text={m.text} fontSize={14} />
+                          ? <CritiqueBody text={m.text} />
                           : <MarkdownMessage text={m.text} />)
                       : m.text.split('\n').filter(Boolean).map((line, j) => <p key={j}>{line}</p>)}
                   </div>

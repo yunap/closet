@@ -38,9 +38,26 @@ test('generated outfit results use the styling worksheet hierarchy', () => {
   assert.match(cssSource, /\.stylist-outfit-result-card\s*\{[\s\S]*background:\s*var\(--surface\)/)
 })
 
+test('outfit directions prioritize comparison-scale garment imagery and readable support text', () => {
+  assert.match(chatSource, /aria-label=\{`Pieces in \$\{cardDisplayTitle\}`\}/)
+  assert.match(cssSource, /\.stylist-outfit-piece\s*\{[\s\S]*width:\s*112px/)
+  assert.match(cssSource, /\.stylist-outfit-piece-photo\s*\{[\s\S]*width:\s*112px;[\s\S]*height:\s*124px/)
+  assert.match(cssSource, /\.stylist-outfit-piece-name\s*\{[\s\S]*font-size:\s*var\(--type-meta\)/)
+  assert.match(cssSource, /\.stylist-outfit-result-meta\s*\{[\s\S]*font-size:\s*13px/)
+  assert.match(chatSource, /resolveUploadThumbnailSrc\(photo, 'chat-garment'\)/)
+  assert.match(chatSource, /loading="lazy" decoding="async"/)
+})
+
 test('generated outfit evaluation renders one loading state and one inline critique', () => {
   assert.equal((chatSource.match(/Evaluating this outfit\.\.\./g) || []).length, 1)
   assert.equal(chatSource.split('<CritiqueBody text={critiqueText} />').length - 1, 1)
+})
+
+test('critique prose uses the shared readable body scale and a controlled line length', () => {
+  assert.match(chatSource, /const CritiqueBody = \(\{ text \}\)/)
+  assert.doesNotMatch(chatSource, /<CritiqueBody[^>]*fontSize=/)
+  assert.match(cssSource, /\.stylist-critique-body p\s*\{[\s\S]*max-width:\s*68ch;[\s\S]*font-size:\s*var\(--type-body\)/)
+  assert.match(cssSource, /\.stylist-critique-details-body p\s*\{[\s\S]*max-width:\s*68ch;[\s\S]*color:\s*var\(--text\);[\s\S]*font-family:\s*var\(--font-reading\);[\s\S]*font-size:\s*var\(--type-body\) !important;[\s\S]*line-height:\s*1\.65/)
 })
 
 test('established chat composer stays pinned without covering the final result', () => {
