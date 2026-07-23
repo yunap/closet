@@ -6,8 +6,8 @@
   --border:       #E0D8CE;
   --border-light: #EDE7DF;
   --text:         #26201A;
-  --text-muted:   #9A8A78;
-  --text-light:   #B8A898;
+  --text-muted:   #6F5F4D;
+  --text-light:   #9C8B76;
   --accent:       #7C5F3C;
   --accent-hover: #6A5030;
   --accent-light: #EDE5D8;
@@ -22,7 +22,7 @@
   --radius:       12px;
   --radius-sm:    8px;
   --radius-lg:    18px;
-  --shadow:       0 2px 12px rgba(80, 60, 40, 0.08);
+  --shadow:       0 1px 4px rgba(80, 60, 40, 0.06);
   --shadow-lg:    0 8px 32px rgba(80, 60, 40, 0.14);
   --nav-h:        68px;
   --primary-nav-width: 176px;
@@ -79,7 +79,7 @@ img { display: block; max-width: 100%; }
   body { background: #EDE7DE; }
 
   .app {
-    max-width: 1360px;
+    max-width: 1720px;
     flex-direction: row;
     min-height: 100dvh;
     box-shadow: 0 0 60px rgba(80,60,40,0.12);
@@ -97,8 +97,8 @@ img { display: block; max-width: 100%; }
     overflow: hidden;
   }
 
-  .piece-grid { grid-template-columns: repeat(3, 1fr); }
-  .outfit-grid { grid-template-columns: repeat(3, 1fr); }
+  .piece-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  .outfit-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 
   .fab { position: fixed; bottom: 32px; right: 32px; }
 
@@ -374,7 +374,7 @@ img { display: block; max-width: 100%; }
   letter-spacing: -0.02em;
 }
 .view-subtitle {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
   margin-top: 2px;
   letter-spacing: 0.02em;
@@ -426,7 +426,7 @@ img { display: block; max-width: 100%; }
   flex-shrink: 0;
   padding: 6px 14px;
   border-radius: 20px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   background: var(--surface-2);
   color: var(--text-muted);
@@ -596,24 +596,37 @@ img { display: block; max-width: 100%; }
   .wardrobe-header-search { grid-row: 3; }
 }
 
+/* Category row reads as one segmented control, visually distinct from the
+   facet dropdowns below it — categories are navigation, not filters. */
+.wardrobe-filter-group .filter-row {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  gap: 2px;
+  background: color-mix(in srgb, var(--surface-2) 80%, var(--surface));
+  border-radius: 999px;
+}
+
 .wardrobe-filter-group .chip {
-  min-height: 32px;
+  min-height: 30px;
   padding-inline: 14px;
-  background: color-mix(in srgb, var(--surface-2) 66%, var(--surface));
-  border-color: color-mix(in srgb, var(--border) 76%, transparent);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-weight: 550;
 }
 
 .wardrobe-filter-group .chip:hover {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
   color: var(--text);
 }
 
 .wardrobe-filter-group .chip.active {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
-  background: color-mix(in srgb, var(--accent-light) 58%, var(--surface));
-  color: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent) inset;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 650;
+  box-shadow: 0 1px 3px rgba(49, 35, 21, 0.1);
 }
 
 .wardrobe-filter-label {
@@ -636,15 +649,17 @@ img { display: block; max-width: 100%; }
   position: relative;
 }
 
+/* Facet dropdowns are quiet text controls — no box until interaction. */
 .wardrobe-filter-menu .filter-menu-btn {
-  min-width: 112px;
+  min-width: 0;
   max-width: 182px;
-  min-height: 38px;
-  padding: 8px 11px 8px 13px;
-  color: color-mix(in srgb, var(--text-muted) 86%, var(--text));
-  background: color-mix(in srgb, var(--surface-2) 54%, var(--surface));
-  border-color: color-mix(in srgb, var(--border) 78%, transparent);
-  border-radius: 11px;
+  min-height: 36px;
+  padding: 7px 9px 7px 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border-color: transparent;
+  border-radius: 9px;
+  font-weight: 550;
   transition: border-color 150ms ease, background 150ms ease, color 150ms ease, box-shadow 150ms ease;
 }
 
@@ -748,8 +763,12 @@ img { display: block; max-width: 100%; }
   color: var(--text);
 }
 
-.wardrobe-filter-menu .filter-menu-btn.active,
 .wardrobe-filter-menu .filter-menu-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-2) 74%, var(--surface));
+}
+
+.wardrobe-filter-menu .filter-menu-btn.active {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
   background: color-mix(in srgb, var(--accent-light) 46%, var(--surface));
@@ -910,12 +929,17 @@ img { display: block; max-width: 100%; }
 }
 
 .wardrobe-favorite-filter:not(.active) {
-  color: color-mix(in srgb, var(--text-muted) 86%, var(--text));
-  background: color-mix(in srgb, var(--surface-2) 54%, var(--surface));
-  border-color: color-mix(in srgb, var(--border) 78%, transparent);
+  color: var(--text-muted);
+  background: transparent;
+  border-color: transparent;
 }
 
-.wardrobe-favorite-filter { min-height: 38px; border-radius: 11px; }
+.wardrobe-favorite-filter:not(.active):hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-2) 74%, var(--surface));
+}
+
+.wardrobe-favorite-filter { min-height: 36px; border-radius: 9px; font-weight: 550; }
 
 .wardrobe-sort-info .info-tooltip-popover {
   top: calc(100% + 8px);
@@ -1119,8 +1143,7 @@ img { display: block; max-width: 100%; }
 }
 
 .piece-card-body {
-  min-height: 112px;
-  padding: 14px 48px 14px 14px;
+  padding: 12px 48px 12px 14px;
   background: var(--surface);
 }
 .piece-card-heading {
@@ -1131,31 +1154,20 @@ img { display: block; max-width: 100%; }
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  font-size: 13.5px;
+  font-size: 14.5px;
   font-weight: 650;
   color: var(--text);
   line-height: 1.28;
-  margin-bottom: 9px;
+  margin-bottom: 6px;
 }
 .piece-card-meta {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 7px 9px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   text-transform: capitalize;
-}
-.piece-card-category {
-  padding: 3px 7px;
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-2) 54%, var(--surface));
-  color: color-mix(in srgb, var(--text-muted) 82%, var(--text));
-  font-size: 9.5px;
-  font-weight: 650;
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
 }
 .piece-card-colors {
   display: inline-flex;
@@ -1177,20 +1189,6 @@ img { display: block; max-width: 100%; }
   border-radius: 50%;
 }
 .piece-card-swatches > span + span { margin-left: -3px; }
-.piece-card-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: color-mix(in srgb, var(--text-muted) 86%, var(--accent));
-  font-size: 10px;
-  text-transform: none;
-}
-.piece-card-status > span {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 68%, var(--text-muted));
-}
 
 .piece-card-badges {
   position: absolute;
@@ -1226,7 +1224,7 @@ img { display: block; max-width: 100%; }
 
 .fav-btn {
   position: absolute;
-  bottom: 68px;
+  bottom: 14px;
   right: 12px;
   width: 32px;
   height: 32px;
@@ -4583,7 +4581,7 @@ img { display: block; max-width: 100%; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--danger);
+  background: var(--accent);
   color: #fff;
   font-size: 10px;
   font-weight: 600;
@@ -6050,14 +6048,22 @@ button.outfit-styling-outfit-name { cursor: pointer; }
     display: none;
   }
 
-  .piece-grid,
-  .outfit-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  .piece-grid {
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)) !important;
     gap: 14px;
     padding: 16px 20px 24px;
   }
 
-  .piece-card-body,
+  .outfit-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)) !important;
+    gap: 14px;
+    padding: 16px 20px 24px;
+  }
+
+  .piece-card-body {
+    padding: 11px 44px 13px 12px;
+  }
+
   .outfit-card-body {
     padding: 11px 12px 13px;
   }

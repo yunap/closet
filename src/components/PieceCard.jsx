@@ -70,7 +70,6 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
             <div className="piece-card-name">{piece.name}</div>
           </div>
           <div className="piece-card-meta">
-            <span className="piece-card-category">{piece.category}</span>
             {!!piece.colors?.length && (
               <span className="piece-card-colors">
                 <span className="piece-card-swatches" aria-hidden="true">
@@ -79,7 +78,6 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
                 {piece.colors.slice(0, 2).join(' · ')}
               </span>
             )}
-            {piece.tag_state === 'provisional' && <span className="piece-card-status"><span aria-hidden="true" />Needs worn photo</span>}
           </div>
         </div>
       </button>
