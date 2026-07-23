@@ -2189,7 +2189,7 @@ test('Wardrobe page keeps primary filters visible and collapses color and fabric
   assert.match(inventory, /className="wardrobe-color-list"/)
   assert.match(inventory, /className="wardrobe-color-name"/)
   assert.match(inventory, />Any color<\/span>/)
-  assert.match(inventory, /className="style-direction-tooltip wardrobe-sort-info"/)
+  assert.match(inventory, /className="wardrobe-sort-info"/)
   assert.match(inventory, /className="wardrobe-fabric-search"/)
   assert.match(inventory, /document\.addEventListener\('pointerdown', handlePointerDown\)/)
   assert.match(inventory, /event\.key === 'Escape'/)
@@ -2206,9 +2206,11 @@ test('Wardrobe page keeps primary filters visible and collapses color and fabric
   assert.match(pieceCard, /aria-label=\{`Open \$\{piece\.name\} wardrobe card`\}/)
   assert.match(pieceCard, /className=\{`piece-photo-stage is-\$\{photoOrientation\}`\}/)
   assert.match(pieceCard, /naturalHeight > naturalWidth \* 1\.08 \? 'portrait' : 'landscape'/)
-  assert.match(pieceCard, /className="piece-card-category"/)
+  // Grid cards deliberately omit the category pill (redundant under category
+  // filters) and the "Needs worn photo" nag (lives in the Tasks surface).
+  assert.doesNotMatch(pieceCard, /className="piece-card-category"/)
   assert.match(pieceCard, /className="piece-card-swatches"/)
-  assert.match(pieceCard, /className="piece-card-status"/)
+  assert.doesNotMatch(pieceCard, /className="piece-card-status"/)
   assert.match(pieceCard, /aria-pressed=\{Boolean\(piece\.favorite\)\}/)
   assert.doesNotMatch(pieceCard, /className="piece-card-id"/)
   assert.match(css, /\.wardrobe-filter-group/)
