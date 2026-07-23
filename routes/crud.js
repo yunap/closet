@@ -70,6 +70,34 @@ function normalizeCalibrationRow(row) {
   }
 }
 
+function retagSuggestionsForPieces(pieceIds = []) {
+  const ids = [...new Set(pieceIds.map(Number).filter(Boolean))]
+  if (!ids.length) return new Map()
+  const placeholders = ids.map(() => '?').join(',')
+  const rows = db.prepare(`
+    SELECT * FROM todos
+    WHERE completed = 0 AND type = 'retag-suggestion'
+      AND linked_piece_id IN (${placeholders})
+    ORDER BY id DESC
+  `).all(...ids)
+  const byPiece = new Map()
+  for (const row of rows) {
+    const suggestion = { ...row, payload: safeJsonParse(row.payload, {}) || {} }
+    const list = byPiece.get(Number(row.linked_piece_id)) || []
+    list.push(suggestion)
+    byPiece.set(Number(row.linked_piece_id), list)
+  }
+  return byPiece
+}
+
+function withRetagSuggestions(piece, suggestionsByPiece = null) {
+  const parsed = parsePiece(piece)
+  const suggestions = suggestionsByPiece
+    ? (suggestionsByPiece.get(Number(piece.id)) || [])
+    : (retagSuggestionsForPieces([piece.id]).get(Number(piece.id)) || [])
+  return { ...parsed, retag_suggestions: suggestions }
+}
+
 // ── Pieces API ─────────────────────────────────────────────────────────────────
 router.get('/pieces', (req, res) => {
   const { category, occasion, season, status, search, favorites, color, fabric } = req.query
@@ -103,7 +131,9 @@ router.get('/pieces', (req, res) => {
   if (fabric)    { q += ' AND fabric_category = ?';       params.push(fabric) }
   if (favorites === 'true') { q += ' AND favorite = 1' }
   q += ' ORDER BY favorite DESC, date_added DESC'
-  res.json(db.prepare(q).all(...params).map(parsePiece))
+  const rows = db.prepare(q).all(...params)
+  const suggestions = retagSuggestionsForPieces(rows.map(row => row.id))
+  res.json(rows.map(row => withRetagSuggestions(row, suggestions)))
 })
 
 router.get('/pieces/meta', (req, res) => {
@@ -137,7 +167,7 @@ router.get('/pieces/usage-stats', (req, res) => {
 router.get('/pieces/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
   if (!p) return res.status(404).json({ error: 'Not found' })
-  res.json(parsePiece(p))
+  res.json(withRetagSuggestions(p))
 })
 
 router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), preparePieceThumbnails, (req, res) => {
@@ -191,7 +221,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
     fit_on_body, tuck_behavior, waistband_type,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
-    tag_state, manual_overrides } = req.body
+    tag_state, manual_overrides, resolved_retag_suggestion_ids } = req.body
   const photo      = req.files?.photo?.[0]?.filename      || (clear_photo      === 'true' ? null : existing.photo)
   const worn_photo = req.files?.worn_photo?.[0]?.filename  || (clear_worn_photo === 'true' ? null : existing.worn_photo)
   const final_tagger_version = tagger_version === undefined ? existing.tagger_version : tagger_version
@@ -232,7 +262,13 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null,
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile),
     final_tagger_version, finalTagState, JSON.stringify(finalManualOverrides), req.params.id)
-  res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)))
+  const resolvedSuggestionIds = safeJsonParse(resolved_retag_suggestion_ids, []).map(Number).filter(Boolean)
+  if (resolvedSuggestionIds.length) {
+    const placeholders = resolvedSuggestionIds.map(() => '?').join(',')
+    db.prepare(`UPDATE todos SET completed = 1 WHERE type = 'retag-suggestion' AND linked_piece_id = ? AND id IN (${placeholders})`)
+      .run(Number(req.params.id), ...resolvedSuggestionIds)
+  }
+  res.json(withRetagSuggestions(db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)))
 })
 
 router.delete('/pieces/:id', (req, res) => {
@@ -426,6 +462,164 @@ router.patch('/outfits/:id/append-note', (req, res) => {
 })
 
 // ── Stylist feedback / learning API ───────────────────────────────────────────
+function feedbackBoardImage(rowOrPayload) {
+  const payload = typeof rowOrPayload?.payload === 'string'
+    ? safeJsonParse(rowOrPayload.payload, {})
+    : (rowOrPayload?.payload || rowOrPayload || {})
+  return payload?.board?.imageUrl || payload?.board?.image_url || ''
+}
+
+function setSavedBoardFeedbackLabel(imageUrl, feedbackType, enabled) {
+  if (!imageUrl || !feedbackType) return
+  const boards = db.prepare('SELECT id, payload FROM saved_boards WHERE image_url = ?').all(imageUrl)
+  for (const board of boards) {
+    const payload = safeJsonParse(board.payload, {}) || {}
+    const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+    const nextLabels = enabled
+      ? [...new Set([...labels, feedbackType])]
+      : labels.filter(label => label !== feedbackType)
+    const reasonRows = db.prepare(`
+      SELECT feedback_type, payload FROM stylist_feedback
+      WHERE target_type = 'generated_visual_board' AND COALESCE(archived, 0) = 0
+        AND json_extract(payload, '$.board.imageUrl') = ?
+        AND feedback_type IN ('style_direction','shape_balance','wrong_length')
+    `).all(imageUrl)
+    const feedbackDetails = { ...(payload.feedback_details || {}) }
+    for (const category of ['style_direction', 'shape_balance']) {
+      feedbackDetails[category] = [...new Set(reasonRows
+        .filter(reasonRow => reasonRow.feedback_type === category)
+        .map(reasonRow => safeJsonParse(reasonRow.payload, {})?.feedback_reason)
+        .filter(Boolean))]
+    }
+    feedbackDetails.wrong_length = reasonRows
+      .filter(reasonRow => reasonRow.feedback_type === 'wrong_length')
+      .map(reasonRow => safeJsonParse(reasonRow.payload, {})?.length_correction)
+      .filter(correction => Number(correction?.piece_id) && correction?.issue)
+    db.prepare('UPDATE saved_boards SET payload = ? WHERE id = ?')
+      .run(JSON.stringify({ ...payload, feedback_labels: nextLabels, feedback_details: feedbackDetails }), board.id)
+  }
+}
+
+function syncSavedBoardFromFeedback(row) {
+  const imageUrl = feedbackBoardImage(row)
+  if (!imageUrl) return
+  const otherActive = db.prepare(`
+    SELECT id FROM stylist_feedback
+    WHERE id != ? AND feedback_type = ? AND target_type = 'generated_visual_board'
+      AND COALESCE(archived, 0) = 0
+      AND json_extract(payload, '$.board.imageUrl') = ?
+    LIMIT 1
+  `).get(row.id || 0, row.feedback_type, imageUrl)
+  setSavedBoardFeedbackLabel(imageUrl, row.feedback_type, !row.archived || Boolean(otherActive))
+}
+
+function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
+  const previous = new Set(previousLabels)
+  const next = new Set(nextLabels)
+  const imageUrl = row.image_url
+  const boardPayload = safeJsonParse(row.payload, {}) || {}
+  const feedbackPayload = { board: boardPayload.board || { imageUrl, label: row.title, pieces: safeJsonParse(row.pieces, []) } }
+  const findRows = db.prepare(`
+    SELECT * FROM stylist_feedback
+    WHERE feedback_type = ? AND target_type = 'generated_visual_board'
+      AND json_extract(payload, '$.board.imageUrl') = ?
+    ORDER BY id DESC
+  `)
+
+  for (const label of new Set([...previous, ...next])) {
+    const matches = findRows.all(label, imageUrl)
+    if (next.has(label)) {
+      const existing = matches[0]
+      if (existing) {
+        if (existing.archived) db.prepare('UPDATE stylist_feedback SET archived = 0 WHERE id = ?').run(existing.id)
+      } else {
+        db.prepare(`
+          INSERT INTO stylist_feedback
+          (feedback_type, target_type, context_type, context_id, context_name, label, note, payload, is_gold, archived)
+          VALUES (?, 'generated_visual_board', ?, ?, ?, ?, ?, ?, ?, 0)
+        `).run(
+          label,
+          row.context_type || 'wardrobe',
+          row.context_id || null,
+          row.context_name || 'Whole wardrobe',
+          row.title || '',
+          row.reason || '',
+          JSON.stringify(feedbackPayload),
+          label === 'signature' ? 1 : 0
+        )
+      }
+    } else if (previous.has(label)) {
+      matches.forEach(match => db.prepare('UPDATE stylist_feedback SET archived = 1 WHERE id = ?').run(match.id))
+    }
+  }
+}
+
+const RETAG_ISSUE_LABELS = {
+  sleeves_too_long: 'Sleeves rendered too long',
+  sleeves_too_short: 'Sleeves rendered too short',
+  upper_hem_too_long: 'Top or jacket hem rendered too long',
+  upper_hem_too_short: 'Top or jacket hem rendered too short',
+  lower_hem_too_long: 'Pants, skirt, or dress rendered too long',
+  lower_hem_too_short: 'Pants, skirt, or dress rendered too short',
+}
+
+function syncRetagSuggestionsFromSavedBoard(row) {
+  const payload = safeJsonParse(row.payload, {}) || {}
+  const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+  const corrections = labels.includes('wrong_length') && Array.isArray(payload.feedback_details?.wrong_length)
+    ? payload.feedback_details.wrong_length
+    : []
+  const completedKeys = new Set(db.prepare(`
+    SELECT linked_piece_id, payload FROM todos
+    WHERE type = 'retag-suggestion' AND source_type = 'saved_board' AND source_id = ? AND completed = 1
+  `).all(Number(row.id)).map(todo => {
+    const todoPayload = safeJsonParse(todo.payload, {}) || {}
+    return `${Number(todo.linked_piece_id)}:${todoPayload.issue || ''}`
+  }))
+  db.prepare(`
+    DELETE FROM todos
+    WHERE type = 'retag-suggestion' AND source_type = 'saved_board' AND source_id = ? AND completed = 0
+  `).run(Number(row.id))
+  const insert = db.prepare(`
+    INSERT INTO todos (type, description, linked_piece_id, completed, field, source_type, source_id, payload)
+    VALUES ('retag-suggestion', ?, ?, 0, ?, 'saved_board', ?, ?)
+  `)
+  for (const correction of corrections) {
+    const pieceId = Number(correction?.piece_id)
+    const issue = String(correction?.issue || '')
+    const issueLabel = RETAG_ISSUE_LABELS[issue]
+    if (!pieceId || !issueLabel) continue
+    if (completedKeys.has(`${pieceId}:${issue}`)) continue
+    const field = issue.startsWith('sleeves_') ? 'sleeve_type' : 'length_hits_at'
+    const pieceName = correction.piece_name || db.prepare('SELECT name FROM pieces WHERE id = ?').get(pieceId)?.name || `Piece ${pieceId}`
+    insert.run(
+      `Retag suggested for ${pieceName}: ${issueLabel}. Review the garment metadata; no tags were changed automatically.`,
+      pieceId,
+      field,
+      Number(row.id),
+      JSON.stringify({ board_id: Number(row.id), board_title: row.title || '', piece_id: pieceId, piece_name: pieceName, issue, issue_label: issueLabel })
+    )
+  }
+}
+
+function referencedThreadForFeedback(row, payload) {
+  if (payload?.threadId && payload.threadId !== 'new_chat') return payload.threadId
+  if (row.feedback_type !== 'not_me' || row.target_type === 'generated_visual_board' || feedbackBoardImage(payload)) return null
+  const label = String(row.label || '').trim()
+  if (!label || !row.created_at) return null
+  const candidates = db.prepare(`
+    SELECT id, ABS(strftime('%s', updated_at) - strftime('%s', ?)) AS seconds_away
+    FROM chat_threads
+    WHERE payload LIKE ?
+      AND ABS(strftime('%s', updated_at) - strftime('%s', ?)) <= 900
+    ORDER BY seconds_away ASC
+    LIMIT 2
+  `).all(row.created_at, `%${label}%`, row.created_at)
+  if (!candidates.length) return null
+  if (candidates.length > 1 && Number(candidates[1].seconds_away) - Number(candidates[0].seconds_away) < 60) return null
+  return candidates[0].id
+}
+
 router.post('/stylist-feedback', (req, res) => {
   try {
     const {
@@ -457,6 +651,9 @@ router.post('/stylist-feedback', (req, res) => {
       JSON.stringify(payload || {}),
       feedbackType === 'signature' ? 1 : 0
     )
+
+    const insertedFeedback = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(result.lastInsertRowid)
+    syncSavedBoardFromFeedback(insertedFeedback)
 
     if (appendToPiece && contextType === 'piece' && contextId) {
       const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(contextId)
@@ -490,7 +687,13 @@ router.post('/stylist-feedback', (req, res) => {
       weak_structure: 'Learning saved: requiring stronger structure next time.',
       weak_contrast: 'Learning saved: requiring clearer contrast/tension next time.',
       bad_grounding: 'Learning saved: improving shoe/grounding logic next time.',
-      bad_reference: 'Learning saved: using this as a negative reference.'
+      bad_reference: 'Learning saved: using this as a negative reference.',
+      style_direction: 'Learning saved: correcting this part of the outfit’s overall feel.',
+      shape_balance: 'Learning saved: correcting this fit or shape issue.',
+      wrong_garment_details: 'Rendering correction saved: preserve the garment details.',
+      body_proportions_drift: 'Rendering correction saved: preserve body proportions.',
+      identity_drift: 'Rendering correction saved: preserve identity and resemblance.',
+      wrong_length: 'Rendering correction saved: preserve garment length.'
     }
 
     res.json({ success: true, id: result.lastInsertRowid, learningMessage: learningMessages[feedbackType] || 'Learning saved.' })
@@ -514,7 +717,18 @@ router.get('/stylist-feedback', (req, res) => {
     ORDER BY COALESCE(is_gold,0) DESC, id DESC
     LIMIT ?
   `).all(...params, Number(limit))
-  res.json(rows.map(r => ({ ...r, is_gold: Boolean(r.is_gold), archived: Boolean(r.archived), payload: safeJsonParse(r.payload, {}) })))
+  const boardIdsByImage = new Map(db.prepare('SELECT id, image_url FROM saved_boards WHERE image_url IS NOT NULL AND image_url != ?').all('').map(row => [row.image_url, row.id]))
+  res.json(rows.map(r => {
+    const payload = safeJsonParse(r.payload, {})
+    return {
+      ...r,
+      is_gold: Boolean(r.is_gold),
+      archived: Boolean(r.archived),
+      payload,
+      referenced_board_id: boardIdsByImage.get(feedbackBoardImage(payload)) || null,
+      referenced_thread_id: referencedThreadForFeedback(r, payload),
+    }
+  }))
 })
 
 router.patch('/stylist-feedback/:id', (req, res) => {
@@ -531,6 +745,7 @@ router.patch('/stylist-feedback/:id', (req, res) => {
     db.prepare('UPDATE stylist_feedback SET is_gold = ?, archived = ?, note = ?, label = ? WHERE id = ?')
       .run(next.is_gold, next.archived, next.note, next.label, req.params.id)
     const updated = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
+    syncSavedBoardFromFeedback(updated)
     res.json({ ...updated, is_gold: Boolean(updated.is_gold), archived: Boolean(updated.archived), payload: safeJsonParse(updated.payload, {}) })
   } catch (err) {
     console.error('Update stylist feedback error:', err)
@@ -541,6 +756,8 @@ router.patch('/stylist-feedback/:id', (req, res) => {
 router.delete('/stylist-feedback/:id', (req, res) => {
   try {
     db.prepare('UPDATE stylist_feedback SET archived = 1 WHERE id = ?').run(req.params.id)
+    const updated = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
+    if (updated) syncSavedBoardFromFeedback(updated)
     res.json({ success: true })
   } catch (err) {
     console.error('Archive stylist feedback error:', err)
@@ -663,6 +880,35 @@ router.post('/saved-boards', async (req, res) => {
       await ensureCachedThumbnail(boardSourceRelative, userUploadsDir(), 'relationship-board')
     }
 
+    const existingFeedbackLabels = db.prepare(`
+      SELECT DISTINCT feedback_type FROM stylist_feedback
+      WHERE target_type = 'generated_visual_board' AND COALESCE(archived, 0) = 0
+        AND json_extract(payload, '$.board.imageUrl') = ?
+    `).all(imageUrl).map(row => row.feedback_type)
+    const existingFeedbackReasonRows = db.prepare(`
+      SELECT feedback_type, payload FROM stylist_feedback
+      WHERE target_type = 'generated_visual_board' AND COALESCE(archived, 0) = 0
+        AND json_extract(payload, '$.board.imageUrl') = ?
+        AND feedback_type IN ('style_direction','shape_balance','wrong_length')
+    `).all(imageUrl)
+    const suppliedFeedbackLabels = Array.isArray(payload?.feedback_labels) ? payload.feedback_labels : []
+    const syncedFeedbackDetails = { ...(payload?.feedback_details || {}) }
+    for (const category of ['style_direction', 'shape_balance']) {
+      syncedFeedbackDetails[category] = [...new Set(existingFeedbackReasonRows
+        .filter(row => row.feedback_type === category)
+        .map(row => safeJsonParse(row.payload, {})?.feedback_reason)
+        .filter(Boolean))]
+    }
+    syncedFeedbackDetails.wrong_length = existingFeedbackReasonRows
+      .filter(row => row.feedback_type === 'wrong_length')
+      .map(row => safeJsonParse(row.payload, {})?.length_correction)
+      .filter(correction => Number(correction?.piece_id) && correction?.issue)
+    const syncedPayload = {
+      ...(payload || {}),
+      feedback_labels: [...new Set([...suppliedFeedbackLabels, ...existingFeedbackLabels])],
+      feedback_details: syncedFeedbackDetails,
+    }
+
     const result = db.prepare(`
       INSERT INTO saved_boards
       (board_type, context_type, context_id, context_name, title, image_url, pieces, missing_pieces, reason, watch_for, payload, favorite, hidden_from_lookbook)
@@ -678,7 +924,7 @@ router.post('/saved-boards', async (req, res) => {
       JSON.stringify(missingPieces || []),
       reason || '',
       watchFor || '',
-      JSON.stringify(payload || {}),
+      JSON.stringify(syncedPayload),
       favorite ? 1 : 0,
       hidden_from_lookbook ? 1 : 0
     )
@@ -759,11 +1005,32 @@ router.get('/saved-boards', (req, res) => {
   }
 })
 
+router.get('/saved-boards/:id', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Saved board not found' })
+    res.json({
+      ...row,
+      favorite: Boolean(row.favorite),
+      archived: Boolean(row.archived),
+      hidden_from_lookbook: Boolean(row.hidden_from_lookbook),
+      pieces: safeJsonParse(row.pieces, []),
+      missing_pieces: safeJsonParse(row.missing_pieces, []),
+      payload: safeJsonParse(row.payload, {}),
+      linked_piece_ids: collectPieceIdsFromSavedBoardRow(row),
+      thumbnail_url: cachedThumbnailUrlForUpload(row.image_url, 'relationship-board'),
+    })
+  } catch (err) {
+    console.error('Get saved board error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.patch('/saved-boards/:id', (req, res) => {
   try {
     const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(req.params.id)
     if (!row) return res.status(404).json({ error: 'Saved board not found' })
-    const { favorite, archived, title, reason, watchFor, feedbackLabel, feedbackLabels, hidden_from_lookbook } = req.body || {}
+    const { favorite, archived, title, reason, watchFor, feedbackLabel, feedbackLabels, feedbackDetails, hidden_from_lookbook } = req.body || {}
     const payload = safeJsonParse(row.payload, {}) || {}
     let nextFeedbackLabels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
     if (Array.isArray(feedbackLabels)) {
@@ -774,7 +1041,10 @@ router.patch('/saved-boards/:id', (req, res) => {
         ? nextFeedbackLabels.filter(x => x !== label)
         : [...nextFeedbackLabels, label]
     }
-    const nextPayload = { ...payload, feedback_labels: nextFeedbackLabels }
+    const nextFeedbackDetails = feedbackDetails && typeof feedbackDetails === 'object' && !Array.isArray(feedbackDetails)
+      ? feedbackDetails
+      : (payload.feedback_details || {})
+    const nextPayload = { ...payload, feedback_labels: nextFeedbackLabels, feedback_details: nextFeedbackDetails }
     const next = {
       favorite: typeof favorite === 'boolean' ? (favorite ? 1 : 0) : row.favorite || 0,
       archived: typeof archived === 'boolean' ? (archived ? 1 : 0) : row.archived || 0,
@@ -790,6 +1060,10 @@ router.patch('/saved-boards/:id', (req, res) => {
     db.prepare('UPDATE saved_boards SET favorite = ?, archived = ?, hidden_from_lookbook = ?, title = ?, reason = ?, watch_for = ?, payload = ? WHERE id = ?')
       .run(next.favorite, next.archived, next.hidden_from_lookbook, next.title, next.reason, next.watch_for, next.payload, req.params.id)
     const updated = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(req.params.id)
+    if (Array.isArray(feedbackLabels) || (typeof feedbackLabel === 'string' && feedbackLabel.trim())) {
+      syncFeedbackFromSavedBoard(updated, Array.isArray(payload.feedback_labels) ? payload.feedback_labels : [], nextFeedbackLabels)
+    }
+    syncRetagSuggestionsFromSavedBoard(updated)
     res.json({
       ...updated,
       favorite: Boolean(updated.favorite),

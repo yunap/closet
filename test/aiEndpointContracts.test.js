@@ -2800,6 +2800,71 @@ test('saved boards endpoint returns boards linked to piece context_id', async ()
   assert.equal(found.title, 'Editorial Blue Board')
 })
 
+test('generated-board feedback stays synchronized with the editable Visual Lab board', async () => {
+  const imageUrl = '/uploads/generated-boards/feedback-sync-test.png'
+  const boardPayload = {
+    board: {
+      imageUrl,
+      label: 'Feedback sync board',
+      reason: 'A test styling rationale.',
+      pieces: [{ id: seeded.pieceId, name: 'Test piece', category: 'top' }],
+      wholeWardrobe: true,
+    },
+    feedback_labels: [],
+  }
+  const boardResult = db.prepare(`
+    INSERT INTO saved_boards (board_type, context_type, context_name, title, image_url, pieces, reason, payload)
+    VALUES ('whole_wardrobe_board', 'wardrobe', 'Whole wardrobe', 'Feedback sync board', ?, ?, ?, ?)
+  `).run(imageUrl, JSON.stringify(boardPayload.board.pieces), boardPayload.board.reason, JSON.stringify(boardPayload))
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/api/stylist-feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        feedbackType: 'wrong_silhouette',
+        targetType: 'generated_visual_board',
+        contextType: 'wardrobe',
+        contextName: 'Whole wardrobe',
+        label: boardPayload.board.label,
+        note: boardPayload.board.reason,
+        payload: { board: boardPayload.board },
+      }),
+    })
+    assert.equal(createResponse.status, 200)
+    const created = await createResponse.json()
+
+    let saved = db.prepare('SELECT payload FROM saved_boards WHERE id = ?').get(boardResult.lastInsertRowid)
+    assert.deepEqual(JSON.parse(saved.payload).feedback_labels, ['wrong_silhouette'])
+
+    const listing = await fetch(`${baseUrl}/api/stylist-feedback?limit=1000`).then(response => response.json())
+    assert.equal(listing.find(row => Number(row.id) === Number(created.id))?.referenced_board_id, Number(boardResult.lastInsertRowid))
+
+    const directBoardResponse = await fetch(`${baseUrl}/api/saved-boards/${boardResult.lastInsertRowid}`)
+    assert.equal(directBoardResponse.status, 200)
+    assert.equal((await directBoardResponse.json()).title, 'Feedback sync board')
+
+    const removeResponse = await fetch(`${baseUrl}/api/saved-boards/${boardResult.lastInsertRowid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedbackLabels: [] }),
+    })
+    assert.equal(removeResponse.status, 200)
+    assert.equal(db.prepare('SELECT archived FROM stylist_feedback WHERE id = ?').get(created.id).archived, 1)
+
+    const restoreResponse = await fetch(`${baseUrl}/api/saved-boards/${boardResult.lastInsertRowid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedbackLabels: ['wrong_silhouette'] }),
+    })
+    assert.equal(restoreResponse.status, 200)
+    assert.equal(db.prepare('SELECT archived FROM stylist_feedback WHERE id = ?').get(created.id).archived, 0)
+  } finally {
+    db.prepare(`DELETE FROM stylist_feedback WHERE json_extract(payload, '$.board.imageUrl') = ?`).run(imageUrl)
+    db.prepare('DELETE FROM saved_boards WHERE id = ?').run(boardResult.lastInsertRowid)
+  }
+})
+
 test('getCalibrationReferenceImagesForGeneration priority-starred random rotation logic', async () => {
   const { getCalibrationReferenceImagesForGeneration } = await import('../styling-engine/core.js')
 

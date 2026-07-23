@@ -41,7 +41,7 @@ test('app shell wires the wizard: routes, first-run redirect, settings nav', () 
 test('settings surface exposes per-layer editing, history, and interview re-runs', () => {
   const src = read('src/views/StylistSettings.jsx')
   assert.match(src, /constitution\/\$\{layer\}\/history/)
-  assert.match(src, /\/onboarding\?step=\$\{INTERVIEW_STEPS\[layer\]\}&return=settings/)
+  assert.match(src, /\/onboarding\?step=\$\{INTERVIEW_STEPS\[layer\]\}&return=visual-lab/)
   for (const layer of ['body_contract', 'proven_formulas', 'aesthetic_gravity', 'lane_neutrality', 'working_style', 'editorial_subject', 'editorial_shoes']) {
     assert.ok(src.includes(layer), `settings lists ${layer}`)
   }
@@ -55,4 +55,28 @@ test('settings surfaces learned rules globally: durable types listed, editable, 
   }
   assert.match(src, /archived: true/, 'learnings can be retired (archived), never silently deleted')
   assert.match(src, /stylist-feedback\?limit/, 'reads the un-scoped feedback listing')
+})
+
+test('style profile makes contextual outfit and garment feedback searchable by name', () => {
+  const src = read('src/views/StylistSettings.jsx')
+  assert.match(src, /Outfit &amp; garment feedback/)
+  assert.match(src, /Search by outfit, garment, feedback, or note/)
+  assert.match(src, /row\.context_name, row\.label, row\.note, row\.feedback_type/)
+  assert.match(src, /navigate\(`\/outfits\?outfitId=\$\{row\.context_id\}`\)/)
+  assert.match(src, /navigate\(`\/wardrobe\?pieceId=\$\{row\.context_id\}`\)/)
+  assert.match(src, /Open board/)
+  assert.match(src, /section=profile&boardId=\$\{existingBoardId\}/)
+  assert.match(src, /feedbackBoards\.find\(board => board\.image_url === imageUrl\)/)
+  assert.match(src, /method: 'POST'[\s\S]*boardType: board\.wholeWardrobe/)
+  assert.match(src, /Open garment/)
+  assert.match(src, /Open source chat/)
+  assert.match(src, /row\?\.payload\?\.pieceId \|\| row\?\.payload\?\.piece\?\.id/)
+  assert.match(src, /onGoToThread\(row\.referenced_thread_id\)/)
+  assert.doesNotMatch(src, />\{row\.context_id\}</)
+})
+
+test('whole-wardrobe generated-board feedback does not inherit the open outfit context', () => {
+  const src = read('src/components/StylistChat.jsx')
+  assert.match(src, /message\?\.wholeWardrobe \|\| board\?\.wholeWardrobe \|\| outfit\?\.wholeWardrobe/)
+  assert.match(src, /return \{ type: 'wardrobe', id: null, name: 'Whole wardrobe' \}/)
 })

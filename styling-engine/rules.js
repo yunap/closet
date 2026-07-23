@@ -5,6 +5,7 @@ import { autoStylingTrustDecision, buildWardrobePieceTruthText } from '../src/ut
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
+import { FEEDBACK_REASON_LABELS } from '../lib/feedbackTaxonomy.js'
 
 import {
   fabricWeight,
@@ -476,6 +477,8 @@ export function feedbackWeight(feedbackType) {
   return weights[feedbackType] || 0
 }
 
+const IMAGE_FIDELITY_FEEDBACK_TYPES = new Set(['wrong_length', 'wrong_garment_details', 'body_proportions_drift', 'identity_drift', 'bad_reference'])
+
 export function getFeedbackInfluenceForPair(selectedPiece, candidatePiece) {
   if (!selectedPiece?.id || !candidatePiece?.id || typeof db === 'undefined') return null
   try {
@@ -492,6 +495,7 @@ export function getFeedbackInfluenceForPair(selectedPiece, candidatePiece) {
     const candidateName = String(candidatePiece.name || '').toLowerCase()
 
     for (const row of rows) {
+      if (row.target_type === 'generated_visual_board' && IMAGE_FIDELITY_FEEDBACK_TYPES.has(row.feedback_type)) continue
       const weight = feedbackWeight(row.feedback_type)
       if (!weight) continue
       const ids = collectPieceIdsFromFeedbackPayload(row.payload)
@@ -632,10 +636,19 @@ export function getSavedBoardInfluenceForPair(selectedPiece, candidatePiece) {
     let score = 0
     const reasons = []
     for (const row of rows) {
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+      const stylingLabels = labels.filter(label => !IMAGE_FIDELITY_FEEDBACK_TYPES.has(String(label)))
+      const isAlmost = stylingLabels.includes('almost')
+      const isRejected = stylingLabels.includes('not_me')
+      const hasPositiveFeedback = stylingLabels.some(label => /^(signature|works|almost)$/.test(String(label)))
+      const hasCorrection = stylingLabels.some(label => /^(style_direction|shape_balance|too_safe|too_boho|too_polished|too_soft|too_generic|wrong_proportions|wrong_silhouette|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_drift)$/.test(String(label)))
+      if (isRejected || (!isAlmost && hasCorrection) || (!row.favorite && !hasPositiveFeedback)) continue
       const ids = collectPieceIdsFromSavedBoardRow(row)
       if (!ids.includes(Number(selectedPiece.id)) || !ids.includes(Number(candidatePiece.id))) continue
-      score += row.favorite ? 45 : 18
-      reasons.push(row.favorite ? 'saved board marked Use strongly' : 'saved board memory')
+      const boardScore = isAlmost ? 6 : (row.favorite ? 45 : 18)
+      score += boardScore
+      reasons.push(isAlmost ? 'saved board marked Almost right' : (row.favorite ? 'saved board marked Use strongly' : 'saved board has positive feedback'))
     }
     if (!score) return null
     return { score: Math.max(0, Math.min(70, score)), reasons: [...new Set(reasons)].slice(0, 3) }
@@ -653,29 +666,200 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
     const rows = db.prepare(`
       SELECT * FROM saved_boards
       WHERE ${clauses.join(' AND ')}
+        AND (COALESCE(favorite,0) = 1 OR COALESCE(json_array_length(json_extract(payload, '$.feedback_labels')), 0) > 0)
       ORDER BY COALESCE(favorite,0) DESC, id DESC
       LIMIT ?
     `).all(...params, Number(limit))
     if (!rows.length) return ''
     const positiveLabels = /signature|works|strong|most_like_me|grounded|artistic|modern/i
-    const negativeLabels = /almost|not_me|too_safe|too_boho|too_polished|too_soft|too_generic|wrong_proportions|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_drift|ignore|bad|drift/i
+    const negativeLabels = /not_me|style_direction|shape_balance|too_safe|too_boho|too_polished|too_soft|too_generic|wrong_proportions|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_drift|ignore|bad|drift/i
     const positives = []
+    const close = []
     const negatives = []
+    const silhouetteReasonLabels = {
+      too_much_volume: 'too much overall volume',
+      shape_lost: 'waist or shape was lost',
+      unbalanced_proportions: 'top and bottom felt unbalanced',
+      layer_too_long: 'top or layer was too long',
+      competing_hemlines: 'hem lengths competed',
+      too_columnar: 'too narrow or columnar',
+      too_fitted: 'too fitted',
+    }
+    const tooSoftReasonLabels = {
+      needs_structure: 'needs more structure',
+      needs_contrast: 'needs stronger contrast',
+      needs_grounding: 'needs better grounding',
+      too_delicate: 'too delicate or romantic',
+      too_blended: 'too visually blended',
+    }
+    const wrongEnergyReasonLabels = {
+      too_formal: 'too formal',
+      too_casual: 'too casual',
+      too_severe: 'too severe',
+      too_youthful: 'too youthful',
+      too_sporty: 'too sporty',
+      too_subdued: 'too subdued',
+      too_polished: 'too polished',
+    }
+    const styleDirectionReasonLabels = {
+      too_safe: 'too safe',
+      too_polished: 'too polished',
+      too_soft: 'too soft',
+      too_generic: 'too generic',
+      too_formal: 'too formal',
+      too_casual: 'too casual',
+      too_severe: 'too severe',
+      too_youthful: 'too youthful',
+      too_sporty: 'too sporty',
+      too_subdued: 'too subdued',
+      costume_like: 'costume-like',
+      catalog_like: 'catalog-like',
+    }
     for (const row of rows) {
       const pieces = safeJsonParse(row.pieces, []).map(p => p?.name).filter(Boolean).join(' + ')
       const payload = safeJsonParse(row.payload, {}) || {}
       const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
-      const labelText = labels.length ? ` [${labels.join(', ')}]` : ''
+      const stylingLabels = labels.filter(label => !IMAGE_FIDELITY_FEEDBACK_TYPES.has(String(label)))
+      const labelText = stylingLabels.length ? ` [${stylingLabels.join(', ')}]` : ''
+      const silhouetteReasons = Array.isArray(payload.feedback_details?.wrong_silhouette)
+        ? payload.feedback_details.wrong_silhouette.map(value => silhouetteReasonLabels[value]).filter(Boolean)
+        : []
+      const tooSoftReasons = Array.isArray(payload.feedback_details?.too_soft)
+        ? payload.feedback_details.too_soft.map(value => tooSoftReasonLabels[value]).filter(Boolean)
+        : []
+      const wrongEnergyReasons = Array.isArray(payload.feedback_details?.wrong_energy)
+        ? payload.feedback_details.wrong_energy.map(value => wrongEnergyReasonLabels[value]).filter(Boolean)
+        : []
+      const styleDirectionReasons = Array.isArray(payload.feedback_details?.style_direction)
+        ? payload.feedback_details.style_direction.map(value => styleDirectionReasonLabels[value]).filter(Boolean)
+        : []
+      const shapeBalanceReasons = Array.isArray(payload.feedback_details?.shape_balance)
+        ? payload.feedback_details.shape_balance.map(value => silhouetteReasonLabels[value]).filter(Boolean)
+        : []
+      const detailParts = [
+        silhouetteReasons.length ? `silhouette issue: ${silhouetteReasons.join('; ')}` : '',
+        tooSoftReasons.length ? `softness issue: ${tooSoftReasons.join('; ')}` : '',
+        wrongEnergyReasons.length ? `energy issue: ${wrongEnergyReasons.join('; ')}` : '',
+        styleDirectionReasons.length ? `style direction issue: ${styleDirectionReasons.join('; ')}` : '',
+        shapeBalanceReasons.length ? `shape and balance issue: ${shapeBalanceReasons.join('; ')}` : '',
+      ].filter(Boolean)
+      const detailText = detailParts.length ? ` | ${detailParts.join(' | ')}` : ''
       const reason = row.reason ? ` — ${String(row.reason).slice(0, 240)}` : ''
-      const line = `- ${row.title || 'Untitled board'}${labelText}${pieces ? ` | pieces: ${pieces}` : ''}${reason}`
-      if (row.favorite || labels.some(l => positiveLabels.test(String(l)))) positives.push(line)
-      if (labels.some(l => negativeLabels.test(String(l)))) negatives.push(line)
-      if (!row.favorite && !labels.length) positives.push(`- Saved board: ${line.slice(2)}`)
+      const line = `- ${row.title || 'Untitled board'}${labelText}${pieces ? ` | pieces: ${pieces}` : ''}${detailText}${reason}`
+      const hasNegativeFeedback = stylingLabels.some(label => negativeLabels.test(String(label)))
+      const hasPositiveFeedback = stylingLabels.some(label => positiveLabels.test(String(label)))
+      const isAlmost = stylingLabels.includes('almost')
+      if (isAlmost) {
+        close.push(line)
+        continue
+      }
+      if (!hasNegativeFeedback && (row.favorite || hasPositiveFeedback)) positives.push(line)
+      if (hasNegativeFeedback) negatives.push(line)
     }
     const parts = []
     if (positives.length) parts.push(`Saved visual board positive memory. Bias future outfit suggestions toward these successful formulas:\n${positives.slice(0, 10).join('\n')}`)
+    if (close.length) parts.push(`Saved visual board close-but-not-finished memory. Preserve the core outfit formula because it was marked Almost right, then correct the listed issues rather than avoiding the outfit entirely:\n${close.slice(0, 10).join('\n')}`)
     if (negatives.length) parts.push(`Saved visual board negative memory. Avoid repeating these drift/problem patterns:\n${negatives.slice(0, 10).join('\n')}`)
     return parts.join('\n\n')
+  } catch {
+    return ''
+  }
+}
+
+export function getSavedBoardRendererMemory(pieceIds = [], limit = 24) {
+  try {
+    const requestedIds = new Set((Array.isArray(pieceIds) ? pieceIds : []).map(Number).filter(Boolean))
+    const rows = db.prepare(`
+      SELECT * FROM saved_boards
+      WHERE COALESCE(archived,0) = 0
+        AND COALESCE(json_array_length(json_extract(payload, '$.feedback_labels')), 0) > 0
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(Number(limit))
+    const corrections = new Set()
+    let bodyProportionsDrift = false
+    let identityDrift = false
+    const lengthIssueLabels = {
+      sleeves_too_long: 'sleeves rendered too long',
+      sleeves_too_short: 'sleeves rendered too short',
+      upper_hem_too_long: 'top or jacket hem rendered too long',
+      upper_hem_too_short: 'top or jacket hem rendered too short',
+      lower_hem_too_long: 'pants, skirt, or dress rendered too long',
+      lower_hem_too_short: 'pants, skirt, or dress rendered too short',
+    }
+
+    for (const row of rows) {
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+      const boardPieceIds = collectPieceIdsFromSavedBoardRow(row)
+      const overlaps = requestedIds.size === 0 || boardPieceIds.some(id => requestedIds.has(Number(id)))
+      if (labels.includes('body_proportions_drift')) bodyProportionsDrift = true
+      if (labels.includes('identity_drift')) identityDrift = true
+      if (!overlaps) continue
+
+      const boardPieces = safeJsonParse(row.pieces, [])
+      const relevantNames = boardPieces
+        .filter(piece => requestedIds.size === 0 || requestedIds.has(Number(piece?.id)))
+        .map(piece => piece?.name)
+        .filter(Boolean)
+
+      if (labels.includes('wrong_garment_details') && relevantNames.length) {
+        corrections.add(`Preserve the exact construction, color, print, neckline, sleeves, and other visible details of: ${relevantNames.join(', ')}.`)
+      }
+
+      const lengthCorrections = Array.isArray(payload.feedback_details?.wrong_length)
+        ? payload.feedback_details.wrong_length
+        : []
+      for (const correction of lengthCorrections) {
+        const correctionPieceId = Number(correction?.piece_id)
+        if (requestedIds.size && !requestedIds.has(correctionPieceId)) continue
+        const issue = lengthIssueLabels[correction?.issue]
+        if (issue) corrections.add(`${correction?.piece_name || `Garment ${correctionPieceId}`}: prior render had ${issue}; match the saved garment reference length.`)
+      }
+    }
+
+    const feedbackRows = db.prepare(`
+      SELECT * FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0
+        AND target_type = 'generated_visual_board'
+        AND feedback_type IN ('wrong_length','wrong_garment_details','body_proportions_drift','identity_drift')
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(Number(limit))
+    for (const row of feedbackRows) {
+      const feedbackPayload = safeJsonParse(row.payload, {}) || {}
+      const ids = collectPieceIdsFromFeedbackPayload(row.payload)
+      const overlaps = requestedIds.size === 0 || ids.some(id => requestedIds.has(Number(id)))
+      if (row.feedback_type === 'body_proportions_drift') bodyProportionsDrift = true
+      if (row.feedback_type === 'identity_drift') identityDrift = true
+      if (!overlaps) continue
+      const payloadNames = Array.isArray(feedbackPayload?.board?.pieces)
+        ? feedbackPayload.board.pieces
+          .filter(piece => requestedIds.size === 0 || requestedIds.has(Number(piece?.id)))
+          .map(piece => piece?.name)
+          .filter(Boolean)
+        : []
+      const names = payloadNames.length
+        ? payloadNames
+        : (ids.length ? db.prepare(`SELECT name FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(piece => piece.name).filter(Boolean) : [])
+      if (row.feedback_type === 'wrong_garment_details' && names.length) {
+        corrections.add(`Preserve the exact construction, color, print, neckline, sleeves, and other visible details of: ${names.join(', ')}.`)
+      }
+      if (row.feedback_type === 'wrong_length' && names.length) {
+        const lengthCorrection = feedbackPayload.length_correction
+        const issue = lengthIssueLabels[lengthCorrection?.issue]
+        if (issue && Number(lengthCorrection?.piece_id)) {
+          corrections.add(`${lengthCorrection.piece_name || `Garment ${lengthCorrection.piece_id}`}: prior render had ${issue}; match the saved garment reference length.`)
+        } else {
+          corrections.add(`Match the saved reference lengths for: ${names.join(', ')}; a prior generated board rendered a garment at the wrong length.`)
+        }
+      }
+    }
+
+    if (bodyProportionsDrift) corrections.add('Keep the person’s body proportions consistent with the supplied real-photo calibration references; do not elongate, narrow, or reshape the body.')
+    if (identityDrift) corrections.add('Preserve the person’s facial identity and resemblance from the supplied real-photo calibration references; do not substitute a generic model.')
+    if (!corrections.size) return ''
+    return `Renderer-only corrections from prior generated boards:\n${[...corrections].slice(0, 12).map(line => `- ${line}`).join('\n')}`
   } catch {
     return ''
   }
@@ -1077,7 +1261,13 @@ function isOwnerRuleRow(row = {}) {
 
 export function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 16) {
   try {
-    const clauses = []
+    const clauses = [`NOT (
+      target_type = 'generated_visual_board'
+      AND EXISTS (
+        SELECT 1 FROM saved_boards
+        WHERE saved_boards.image_url = json_extract(stylist_feedback.payload, '$.board.imageUrl')
+      )
+    )`]
     const params = []
     if (contextType) { clauses.push('context_type = ?'); params.push(contextType) }
     if (contextId) { clauses.push('context_id = ?'); params.push(Number(contextId)) }
@@ -1108,6 +1298,13 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
       const target = r.target_type ? `${r.target_type}` : 'item'
       const label = r.label ? ` — ${r.label}` : ''
       const note = r.note ? `: ${String(r.note).slice(0, 280)}` : ''
+      const feedbackPayload = safeJsonParse(r.payload, {}) || {}
+      const feedbackReason = FEEDBACK_REASON_LABELS[feedbackPayload.feedback_reason]
+      if ((r.feedback_type === 'style_direction' || r.feedback_type === 'shape_balance') && feedbackReason) {
+        const category = r.feedback_type === 'style_direction' ? 'style direction' : 'fit and shape'
+        reactionLines.push(`- ${category} issue on ${target}${label}: ${feedbackReason}${note} — scoped to this board; correct this issue without turning it into a universal ban.`)
+        continue
+      }
       if (r.feedback_type === 'wrong_silhouette') {
         reactionLines.push(`- wrong_silhouette on ${target}${label}${note} — scoped to this selected garment/board; do NOT globally avoid this silhouette family.`)
         continue
@@ -2397,11 +2594,12 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   const feedbackScores = new Map()
   try {
     const feedbackRows = db.prepare(`
-      SELECT id, feedback_type, context_type, context_id, payload, is_gold
+      SELECT id, feedback_type, target_type, context_type, context_id, payload, is_gold
       FROM stylist_feedback
       WHERE COALESCE(archived,0) = 0
     `).all()
     for (const row of feedbackRows) {
+      if (row.target_type === 'generated_visual_board' && IMAGE_FIDELITY_FEEDBACK_TYPES.has(row.feedback_type)) continue
       const weight = feedbackWeight(row.feedback_type)
       if (!weight) continue
       const signedWeight = weight + (row.is_gold ? Math.sign(weight) * 18 : 0)

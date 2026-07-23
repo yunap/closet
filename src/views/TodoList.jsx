@@ -5,6 +5,7 @@ const TYPE_META = {
   donate:   { label: 'Donate?',  color: 'var(--donate)',   bg: 'var(--donate-bg)',   dot: '#6B8C6B', icon: '◌' },
   shopping: { label: 'Shopping', color: 'var(--shopping)', bg: 'var(--shopping-bg)', dot: '#5A6E8A', icon: '◎' },
   metadata: { label: 'Tagging gaps', color: 'var(--metadata, #8A6D3B)', bg: 'var(--metadata-bg, #F5EFE3)', dot: '#8A6D3B', icon: '◆' },
+  'retag-suggestion': { label: 'Retag suggestions', color: 'var(--accent)', bg: 'var(--accent-light)', dot: '#7C5F3C', icon: '◇' },
 }
 
 export default function TodoList({ isModal, onClose, onPieceClick }) {
@@ -55,7 +56,7 @@ export default function TodoList({ isModal, onClose, onPieceClick }) {
     }
   }
 
-  const grouped = ['repair', 'donate', 'shopping', 'metadata'].reduce((acc, type) => {
+  const grouped = ['repair', 'donate', 'shopping', 'metadata', 'retag-suggestion'].reduce((acc, type) => {
     acc[type] = todos.filter(t => t.type === type)
     return acc
   }, {})
@@ -86,7 +87,7 @@ export default function TodoList({ isModal, onClose, onPieceClick }) {
           <span className={`todo-text ${t.completed ? 'done' : ''}`}>{t.description}</span>
           <button className="todo-delete" onClick={() => remove(t.id)}>✕</button>
         </div>
-        {t.type === 'metadata' && (
+        {(t.type === 'metadata' || t.type === 'retag-suggestion') && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 32, marginTop: -2 }}>
             {isActivePiece ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -143,7 +144,7 @@ export default function TodoList({ isModal, onClose, onPieceClick }) {
           <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', gap: 6 }}>
               {Object.entries(TYPE_META).map(([k, v]) => {
-                if (k === 'metadata') return null // Do not allow manual addition of metadata todos
+                if (k === 'metadata' || k === 'retag-suggestion') return null // Generated review tasks cannot be added manually
                 return (
                   <button
                     key={k}

@@ -47,3 +47,10 @@ test('large saved chats progressively reveal older messages and outfit results',
   assert.match(stylistSource, /allOutfits\.slice\(0, INITIAL_SAVED_OUTFIT_COUNT\)/)
   assert.match(stylistSource, /Show \{Math\.min\(INITIAL_SAVED_MESSAGE_COUNT, visibleMessageStart\)\} earlier messages/)
 })
+
+test('chat keeps feedback on result cards and leaves memory management to Visual Lab', () => {
+  assert.doesNotMatch(chatSource, /Feedback memory/)
+  assert.doesNotMatch(chatSource, /loadLearningRows/)
+  assert.match(chatSource, /saveStylistFeedback/)
+  assert.match(chatSource, /GENERATED_BOARD_FEEDBACK_LABELS/)
+})
