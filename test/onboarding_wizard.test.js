@@ -57,10 +57,10 @@ test('settings surfaces learned rules globally: durable types listed, editable, 
   assert.match(src, /stylist-feedback\?limit/, 'reads the un-scoped feedback listing')
 })
 
-test('style profile makes contextual outfit and garment feedback searchable by name', () => {
+test('style profile makes contextual outfit and styling feedback searchable by name', () => {
   const src = read('src/views/StylistSettings.jsx')
-  assert.match(src, /Outfit &amp; garment feedback/)
-  assert.match(src, /Search by outfit, garment, feedback, or note/)
+  assert.match(src, /Outfit &amp; styling feedback/)
+  assert.match(src, /Search by outfit, styling feedback, or note/)
   assert.match(src, /row\.context_name, row\.label, row\.note, row\.feedback_type/)
   assert.match(src, /navigate\(`\/outfits\?outfitId=\$\{row\.context_id\}`\)/)
   assert.match(src, /navigate\(`\/wardrobe\?pieceId=\$\{row\.context_id\}`\)/)

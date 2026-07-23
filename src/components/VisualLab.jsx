@@ -606,30 +606,22 @@ export default function VisualLab({ onGoToThread } = {}) {
                 <div className="visual-reference-body">
                   {isEditing ? (
                     <>
-                      <select value={calibrationEditKind} onChange={e => changeCalibrationEditKind(e.target.value)}
-                        style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 11 }}>
+                      <select className="visual-reference-edit-select" value={calibrationEditKind} onChange={e => changeCalibrationEditKind(e.target.value)}>
                         <option value="good_reference">Good reference</option>
                         <option value="bad_reference">Bad / drift reference</option>
                         <option value="real_photo">Real outfit photo</option>
                       </select>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      <div className="visual-reference-edit-signals">
                         {calibrationLabelsForKind(calibrationEditKind, calibrationEditLabels).map(([value, label]) => (
                           <button key={value} type="button" onClick={() => toggleEditLabel(value)}
-                            style={{
-                              fontSize: 9, padding: '2px 6px', borderRadius: 12, cursor: 'pointer',
-                              border: calibrationEditLabels.includes(value) ? '1px solid var(--accent)' : '1px solid var(--border)',
-                              background: calibrationEditLabels.includes(value) ? 'var(--accent-light)' : 'var(--surface)',
-                              color: calibrationEditLabels.includes(value) ? 'var(--accent)' : 'var(--text-muted)',
-                            }}
+                            className={calibrationEditLabels.includes(value) ? 'active' : ''}
                           >{label}</button>
                         ))}
                       </div>
-                      <textarea value={calibrationEditNotes} onChange={e => setCalibrationEditNotes(e.target.value)} rows={3}
-                        style={{ width: '100%', resize: 'vertical', padding: '7px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 11 }}
-                      />
-                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => saveEdit(row.id)}>Save</button>
-                        <button className="chip" style={{ fontSize: 10, padding: '2px 7px' }} onClick={cancelEdit}>Cancel</button>
+                      <textarea className="visual-reference-edit-note" value={calibrationEditNotes} onChange={e => setCalibrationEditNotes(e.target.value)} rows={3} />
+                      <div className="visual-reference-edit-actions">
+                        <button className="btn-primary" onClick={() => saveEdit(row.id)}>Save changes</button>
+                        <button className="btn-secondary" onClick={cancelEdit}>Cancel</button>
                       </div>
                     </>
                   ) : (

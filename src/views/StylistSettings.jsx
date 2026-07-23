@@ -30,11 +30,27 @@ const INTERVIEW_STEPS = { body_contract: 'comfort', aesthetic_gravity: 'aestheti
 // (store_user_correction → owner_rule; persisted preference reactions). Card-level
 // taste feedback stays in the chat's context-scoped Learning panel.
 const LEARNING_TYPES = new Set(['owner_rule', 'preference_reaction', 'correction'])
+const CONTEXT_FILTERS = [
+  ['all', 'All'],
+  ['outfit', 'Outfits'],
+  ['board', 'Generated boards'],
+]
+const FEEDBACK_PAGE_SIZE = 40
 
-const card = { background: 'var(--surface)', border: '1px solid var(--border-light)', borderRadius: 16, padding: '20px 22px', marginBottom: 16, boxShadow: '0 10px 28px rgba(64, 47, 29, 0.045)' }
-const inputStyle = { width: '100%', padding: '9px 11px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 14, boxSizing: 'border-box' }
-const primaryBtn = { padding: '7px 14px', borderRadius: 9, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }
-const quietBtn = { padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 12.5, cursor: 'pointer' }
+function feedbackContextKind(row) {
+  if (row?.target_type === 'generated_visual_board' || row?.referenced_board_id || row?.payload?.board?.imageUrl || row?.payload?.board?.image_url) return 'board'
+  // A piece context records where styling began; the feedback is still about
+  // the resulting outfit or styling direction rather than the garment itself.
+  return 'outfit'
+}
+
+function readableFeedbackNote(value) {
+  return String(value || '')
+    .replace(/\[([^\]]+)\]\((?:sandbox:\/|\/?uploads\/|generated-boards\/)[^)]+\)/gi, '$1')
+    .replace(/^\s*\(?(?:sandbox:\/|\/?uploads\/|generated-boards\/)\S+\)?\s*$/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
 
 function friendlySessionName(userAgent = '') {
   const ua = String(userAgent)
@@ -90,8 +106,12 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const [feedbackBoards, setFeedbackBoards] = useState([])
   const [feedbackLoading, setFeedbackLoading] = useState(true)
   const [feedbackSearch, setFeedbackSearch] = useState('')
+  const [feedbackContextFilter, setFeedbackContextFilter] = useState('all')
+  const [feedbackTypeFilter, setFeedbackTypeFilter] = useState('all')
+  const [feedbackVisibleCount, setFeedbackVisibleCount] = useState(FEEDBACK_PAGE_SIZE)
   const [demo, setDemo] = useState(null)
   const [learningDrafts, setLearningDrafts] = useState({})
+  const [editingLearningId, setEditingLearningId] = useState(null)
   const [sessions, setSessions] = useState([])
   const [sessionsExpanded, setSessionsExpanded] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState(null)
@@ -186,6 +206,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     const res = await fetch(`/api/stylist-feedback/${row.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) })
     if (res.ok) {
       const next = { ...learningDrafts }; delete next[row.id]; setLearningDrafts(next)
+      setEditingLearningId(null)
       flash('Learning updated.'); load()
     } else flash('Failed to update learning')
   }
@@ -207,11 +228,14 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const otherSessions = sessions.filter(session => !session.isCurrent)
   const normalizedFeedbackSearch = feedbackSearch.trim().toLowerCase()
   const matchingContextualFeedback = contextualFeedback.filter(row => {
+    if (feedbackContextFilter !== 'all' && feedbackContextKind(row) !== feedbackContextFilter) return false
+    if (feedbackTypeFilter !== 'all' && row.feedback_type !== feedbackTypeFilter) return false
     if (!normalizedFeedbackSearch) return true
     return [row.context_name, row.label, row.note, row.feedback_type]
       .some(value => String(value || '').toLowerCase().includes(normalizedFeedbackSearch))
   })
-  const visibleContextualFeedback = matchingContextualFeedback.slice(0, 40)
+  const visibleContextualFeedback = matchingContextualFeedback.slice(0, feedbackVisibleCount)
+  const contextualFeedbackTypes = [...new Set(contextualFeedback.map(row => row.feedback_type).filter(Boolean))].sort()
 
   const feedbackBoardImage = row => row?.payload?.board?.imageUrl || row?.payload?.board?.image_url || ''
   const matchedFeedbackBoard = row => {
@@ -315,8 +339,9 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   }
 
   return (
-    <div className={`settings-page ${mode === 'style' ? 'settings-page--style' : 'settings-page--account'}`} style={{ maxWidth: mode === 'style' ? 820 : 860, margin: '0 auto', padding: embedded ? '8px 0 48px' : '38px 28px 72px' }}>
+    <div className={`settings-page ${mode === 'style' ? 'settings-page--style' : 'settings-page--account'}`} style={{ maxWidth: mode === 'style' ? 820 : 940, margin: '0 auto', padding: embedded ? '8px 0 48px' : '38px 28px 72px' }}>
       <div className="settings-page-header">
+      {mode !== 'style' && <span className="settings-page-eyebrow">Account &amp; application</span>}
       <h1 className="settings-page-title">{mode === 'style' ? 'Style profile' : 'Settings'}</h1>
       <p className="settings-page-intro">
         {mode === 'style'
@@ -324,36 +349,57 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           : `Manage your profile, AI provider keys, ${isAdmin ? 'administration, ' : ''}and account security.`}
       </p>
       </div>
-      {status && <div style={{ padding: '8px 12px', borderRadius: 9, background: 'var(--donate-bg)', color: 'var(--donate)', fontSize: 13, marginBottom: 12 }}>{status}</div>}
+      {status && <div className="settings-status" role="status">{status}</div>}
 
       {mode !== 'style' && profile && (
-        <div style={card}>
-          <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Profile</h3>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ flex: '1 1 180px' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Name</div>
-              <input style={inputStyle} value={profile.displayName} onChange={e => setProfile({ ...profile, displayName: e.target.value })} />
+        <section className="account-settings-section">
+          <div className="account-settings-heading">
+            <div>
+              <span>Personal details</span>
+              <h2>Profile &amp; location</h2>
             </div>
-            <div style={{ flex: '1 1 90px' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Pronouns (subject/object/possessive)</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input style={inputStyle} value={profile.pronouns.subject} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, subject: e.target.value, plural: e.target.value.trim() === 'they' } })} />
-                <input style={inputStyle} value={profile.pronouns.object} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, object: e.target.value } })} />
-                <input style={inputStyle} value={profile.pronouns.possessive} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, possessive: e.target.value } })} />
+            <p>Your name and pronouns shape how the stylist addresses you. Location supplies live weather context.</p>
+          </div>
+          <div className="account-settings-card">
+            <div className="account-settings-grid">
+              <div className="account-settings-field">
+                <label htmlFor="settings-display-name">Name</label>
+                <input id="settings-display-name" value={profile.displayName} onChange={e => setProfile({ ...profile, displayName: e.target.value })} />
+              </div>
+              <fieldset className="account-settings-field account-settings-pronouns">
+                <legend>Pronouns</legend>
+                <div className="account-settings-pronoun-inputs">
+                  <div>
+                    <label htmlFor="settings-pronoun-subject">Subject</label>
+                    <input id="settings-pronoun-subject" value={profile.pronouns.subject} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, subject: e.target.value, plural: e.target.value.trim() === 'they' } })} />
+                  </div>
+                  <div>
+                    <label htmlFor="settings-pronoun-object">Object</label>
+                    <input id="settings-pronoun-object" value={profile.pronouns.object} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, object: e.target.value } })} />
+                  </div>
+                  <div>
+                    <label htmlFor="settings-pronoun-possessive">Possessive</label>
+                    <input id="settings-pronoun-possessive" value={profile.pronouns.possessive} onChange={e => setProfile({ ...profile, pronouns: { ...profile.pronouns, possessive: e.target.value } })} />
+                  </div>
+                </div>
+              </fieldset>
+            </div>
+            <div className="account-settings-location">
+              <div className="account-settings-field">
+                <label htmlFor="settings-home-location">Home location</label>
+                <span className="account-settings-field-hint">Used for live weather when you ask for outfit advice.</span>
+                <div className="account-settings-inline-control">
+                  <input id="settings-home-location" value={homeLocation} onChange={e => setHomeLocation(e.target.value)} />
+                  <button className="btn-secondary" onClick={saveHomeLocation}>Save location</button>
+                </div>
               </div>
             </div>
-          </div>
-          <div style={{ marginTop: 10 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Home location (live weather)</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input style={inputStyle} value={homeLocation} onChange={e => setHomeLocation(e.target.value)} />
-              <button style={quietBtn} onClick={saveHomeLocation}>Save</button>
+            <div className="account-settings-card-footer">
+              <span>Changes to your profile affect future stylist conversations.</span>
+              <button className="btn-primary" onClick={saveProfile}>Save profile</button>
             </div>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-            <button style={primaryBtn} onClick={saveProfile}>Save profile</button>
-          </div>
-        </div>
+        </section>
       )}
 
       {mode === 'style' && <>
@@ -385,16 +431,21 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       </>}
 
       {mode !== 'style' && demo?.count > 0 && (
-        <details style={{ ...card, padding: 0, overflow: 'hidden' }}>
-          <summary style={{ padding: '16px 20px', cursor: 'pointer', fontSize: 15, fontWeight: 700 }}>
-            Data & maintenance
+        <details className="account-settings-disclosure">
+          <summary>
+            <span>
+              <strong>Data &amp; maintenance</strong>
+              <small>Manage sample content stored in this wardrobe.</small>
+            </span>
           </summary>
-          <div style={{ padding: '0 20px 18px', borderTop: '1px solid var(--border-light)' }}>
-            <h3 style={{ margin: '16px 0 6px', fontSize: 14 }}>Sample wardrobe</h3>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>{demo.count} demo pieces are in your wardrobe.</span>
+          <div className="account-settings-disclosure-body">
+            <div className="account-settings-action-row">
+              <div>
+                <strong>Sample wardrobe</strong>
+                <span>{demo.count} demo pieces are in your wardrobe.</span>
+              </div>
               <button
-                style={quietBtn}
+                className="btn-secondary"
                 onClick={async () => {
                   const res = await fetch('/api/settings/demo-wardrobe', { method: 'DELETE' })
                   if (res.ok) { flash('Demo wardrobe removed.'); load() }
@@ -418,208 +469,329 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       {!feedbackLoading && learnings.length === 0 && (
         <div className="style-profile-empty">Nothing learned yet. Corrections you give the stylist in chat will appear here.</div>
       )}
+      <div className="style-memory-list">
       {learnings.map(row => (
-        <div key={row.id} style={{ ...card, padding: '12px 16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{row.feedback_type.replace('_', ' ')}</span>
-            <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{row.created_at}</span>
+        <div key={row.id} className="style-memory-row style-memory-row--editable">
+          <div className="style-memory-row-heading">
+            <span className="style-memory-kind">{row.feedback_type.replace('_', ' ')}</span>
+            <span className="style-memory-date">{row.created_at}</span>
           </div>
-          <textarea
-            style={{ ...inputStyle, minHeight: 48, marginTop: 8, fontSize: 13 }}
-            value={learningDrafts[row.id] ?? row.note}
-            onChange={e => setLearningDrafts({ ...learningDrafts, [row.id]: e.target.value })}
-          />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-            <button style={quietBtn} onClick={() => archiveLearning(row)}>Retire</button>
-            {learningDrafts[row.id] !== undefined && learningDrafts[row.id] !== row.note && (
-              <button style={primaryBtn} onClick={() => saveLearning(row)}>Save</button>
-            )}
-          </div>
+          {editingLearningId === row.id ? (
+            <>
+              <textarea
+                className="style-memory-editor"
+                value={learningDrafts[row.id] ?? row.note}
+                onChange={e => setLearningDrafts({ ...learningDrafts, [row.id]: e.target.value })}
+                autoFocus
+              />
+              <div className="style-memory-actions">
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
+                    const next = { ...learningDrafts }
+                    delete next[row.id]
+                    setLearningDrafts(next)
+                    setEditingLearningId(null)
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn-primary"
+                  disabled={(learningDrafts[row.id] ?? row.note) === row.note}
+                  onClick={() => saveLearning(row)}
+                >
+                  Save changes
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="style-memory-read-layout">
+              <div className="style-memory-rule">{row.note}</div>
+              <div className="style-memory-actions style-memory-actions--read">
+                <button
+                  className="btn-secondary"
+                  onClick={() => {
+                    setLearningDrafts({ ...learningDrafts, [row.id]: row.note })
+                    setEditingLearningId(row.id)
+                  }}
+                >
+                  Edit
+                </button>
+                <button className="style-memory-retire" onClick={() => archiveLearning(row)}>Retire</button>
+              </div>
+            </div>
+          )}
         </div>
       ))}
+      </div>
       </section>
 
       <section className="style-profile-section style-profile-learnings">
         <div className="style-profile-section-heading">
           <div>
             <span>Contextual memory</span>
-            <h2>Outfit &amp; garment feedback</h2>
+            <h2>Outfit &amp; styling feedback</h2>
           </div>
-          <p>Feedback tied to a particular outfit, garment, or generated result. It does not become a global style rule.</p>
+          <p>Feedback tied to a particular outfit, styling result, or generated board. It does not become a global style rule.</p>
         </div>
-        <input
-          type="search"
-          style={{ ...inputStyle, marginBottom: 12 }}
-          value={feedbackSearch}
-          onChange={event => setFeedbackSearch(event.target.value)}
-          placeholder="Search by outfit, garment, feedback, or note…"
-          aria-label="Search outfit and garment feedback"
-        />
+        <div className="style-memory-toolbar">
+          <input
+            type="search"
+            className="style-memory-search"
+            value={feedbackSearch}
+            onChange={event => {
+              setFeedbackSearch(event.target.value)
+              setFeedbackVisibleCount(FEEDBACK_PAGE_SIZE)
+            }}
+            placeholder="Search by outfit, styling feedback, or note…"
+            aria-label="Search outfit and styling feedback"
+          />
+          <div className="style-memory-filter-row" aria-label="Filter feedback by context">
+            {CONTEXT_FILTERS.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={`style-memory-filter ${feedbackContextFilter === value ? 'active' : ''}`}
+                onClick={() => {
+                  setFeedbackContextFilter(value)
+                  setFeedbackVisibleCount(FEEDBACK_PAGE_SIZE)
+                }}
+              >
+                {label}
+              </button>
+            ))}
+            <select
+              className="style-memory-type-filter"
+              value={feedbackTypeFilter}
+              onChange={event => {
+                setFeedbackTypeFilter(event.target.value)
+                setFeedbackVisibleCount(FEEDBACK_PAGE_SIZE)
+              }}
+              aria-label="Filter by feedback type"
+            >
+              <option value="all">All feedback types</option>
+              {contextualFeedbackTypes.map(type => (
+                <option key={type} value={type}>{type.replaceAll('_', ' ')}</option>
+              ))}
+            </select>
+          </div>
+        </div>
         {matchingContextualFeedback.length > visibleContextualFeedback.length && (
-          <div style={{ margin: '-4px 0 12px', fontSize: 11.5, color: 'var(--text-muted)' }}>
-            Showing the first {visibleContextualFeedback.length} of {matchingContextualFeedback.length} matches. Refine the search to narrow the list.
+          <div className="style-memory-results-note">
+            Showing {visibleContextualFeedback.length} of {matchingContextualFeedback.length} matches.
           </div>
         )}
         {feedbackLoading && (
-          <div className="style-profile-empty">Loading outfit and garment feedback…</div>
+          <div className="style-profile-empty">Loading outfit and styling feedback…</div>
         )}
         {!feedbackLoading && visibleContextualFeedback.length === 0 && (
           <div className="style-profile-empty">
-            {feedbackSearch.trim() ? 'No contextual feedback matches this search.' : 'No outfit or garment feedback saved yet.'}
+            {feedbackSearch.trim() ? 'No contextual feedback matches this search.' : 'No outfit feedback saved yet.'}
           </div>
         )}
+        <div className="style-memory-list">
         {visibleContextualFeedback.map(row => {
           const contextLabel = row.context_name || (row.context_type === 'wardrobe' ? 'Whole wardrobe' : '') || row.label || 'Saved styling result'
+          const readableNote = readableFeedbackNote(row.note) || 'No note saved.'
+          const hasTechnicalDetails = readableNote !== String(row.note || '').trim()
+            || Boolean(row.target_type || row.context_id || row.referenced_board_id || row.referenced_thread_id)
           const canOpenContext = ['outfit', 'piece'].includes(row.context_type) && row.context_id
           const canOpenBoard = Boolean(row.referenced_board_id || matchedFeedbackBoard(row) || (row.target_type === 'generated_visual_board' && feedbackBoardImage(row)))
           const canOpenGarment = row.feedback_type === 'wrong_item_read' && Boolean(row?.payload?.pieceId || row?.payload?.piece?.id)
           const canOpenThread = !canOpenBoard && !canOpenGarment && Boolean(row.referenced_thread_id && onGoToThread)
           return (
-            <div key={row.id} style={{ ...card, padding: '12px 16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <div style={{ minWidth: 0, flex: '1 1 360px' }}>
-                  <div style={{ fontSize: 11, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <div key={row.id} className="style-memory-row style-memory-row--context">
+              <div className="style-memory-context-layout">
+                <div className="style-memory-copy">
+                  <div className="style-memory-kind">
                     {row.feedback_type.replaceAll('_', ' ')}{row.is_gold ? ' · Gold' : ''}
                   </div>
-                  <div style={{ marginTop: 4, fontSize: 14, fontWeight: 650, color: 'var(--text)' }}>{contextLabel}</div>
-                  {row.label && row.label !== contextLabel && <div style={{ marginTop: 2, fontSize: 12, color: 'var(--text-muted)' }}>{row.label}</div>}
-                  <div style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.45, color: 'var(--text-muted)' }}>{row.note || 'No note saved.'}</div>
+                  <div className="style-memory-context-title">{contextLabel}</div>
+                  {row.label && row.label !== contextLabel && <div className="style-memory-label">{row.label}</div>}
+                  <div className="style-memory-note">{readableNote}</div>
+                  {hasTechnicalDetails && (
+                    <details className="style-memory-technical">
+                      <summary>Technical details</summary>
+                      <dl>
+                        {row.target_type && <><dt>Target</dt><dd>{row.target_type}</dd></>}
+                        {row.context_type && <><dt>Context</dt><dd>{row.context_type}{row.context_id ? ` · ${row.context_id}` : ''}</dd></>}
+                        {row.referenced_board_id && <><dt>Board</dt><dd>{row.referenced_board_id}</dd></>}
+                        {row.referenced_thread_id && <><dt>Source chat</dt><dd>{row.referenced_thread_id}</dd></>}
+                        {readableNote !== String(row.note || '').trim() && <><dt>Raw note</dt><dd>{row.note}</dd></>}
+                      </dl>
+                    </details>
+                  )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{row.created_at}</span>
+                <div className="style-memory-context-actions">
+                  <span className="style-memory-date">{row.created_at}</span>
                   {canOpenContext && !canOpenBoard && !canOpenGarment && !canOpenThread && (
-                    <button style={quietBtn} onClick={() => openFeedbackContext(row)}>
+                    <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>
                       Open {row.context_type === 'outfit' ? 'outfit' : 'garment'}
                     </button>
                   )}
                   {canOpenBoard && (
-                    <button style={quietBtn} onClick={() => openFeedbackContext(row)}>
+                    <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>
                       Open board
                     </button>
                   )}
                   {canOpenGarment && (
-                    <button style={quietBtn} onClick={() => openFeedbackContext(row)}>Open garment</button>
+                    <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>Open garment</button>
                   )}
                   {canOpenThread && (
-                    <button style={quietBtn} onClick={() => openFeedbackContext(row)}>Open source chat</button>
+                    <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>Open source chat</button>
                   )}
                 </div>
               </div>
             </div>
           )
         })}
+        </div>
+        {matchingContextualFeedback.length > visibleContextualFeedback.length && (
+          <button
+            type="button"
+            className="style-memory-show-more"
+            onClick={() => setFeedbackVisibleCount(count => count + FEEDBACK_PAGE_SIZE)}
+          >
+            Show {Math.min(FEEDBACK_PAGE_SIZE, matchingContextualFeedback.length - visibleContextualFeedback.length)} more
+          </button>
+        )}
       </section>
       </>}
 
       {mode !== 'style' && <>
-      <h2>AI provider keys</h2>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 0 }}>
-        {apiKeyStatus?.hasOperatorKeyAccess
-          ? "Bring your own Anthropic and/or OpenAI keys — they're used for your requests instead of the operator's. Leave blank to keep using the operator's keys."
-          : "You don't have access to the operator's keys yet — add your own below, or ask the operator to approve your account."}
-      </p>
-      {apiKeyStatus && (
-        <div style={card}>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ flex: '1 1 220px' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                Anthropic key {apiKeyStatus.hasOwnAnthropicKey ? '(set)' : apiKeyStatus.hasOperatorKeyAccess ? '(using operator\'s)' : '(none — no operator access)'}
+      <section className="account-settings-section">
+        <div className="account-settings-heading">
+          <div>
+            <span>AI access</span>
+            <h2>Provider keys</h2>
+          </div>
+          <p>
+            {apiKeyStatus?.hasOperatorKeyAccess
+              ? "Optional personal keys are used instead of this installation's shared keys."
+              : "Add a personal key, or ask the operator to approve access to the installation's shared keys."}
+          </p>
+        </div>
+        {apiKeyStatus && (
+          <div className="account-settings-card account-settings-provider-list">
+            <div className="account-settings-provider">
+              <div className="account-settings-provider-copy">
+                <strong>Anthropic</strong>
+                <span className="account-settings-provider-status">
+                  {apiKeyStatus.hasOwnAnthropicKey ? 'Personal key saved' : apiKeyStatus.hasOperatorKeyAccess ? 'Using installation key' : 'No key available'}
+                </span>
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div className="account-settings-provider-control">
                 <input
-                  style={inputStyle}
                   type="password"
+                  aria-label="Anthropic API key"
                   placeholder={apiKeyStatus.hasOwnAnthropicKey ? '••••••••••••' : 'sk-ant-...'}
                   value={apiKeyDrafts.anthropicKey}
                   onChange={e => setApiKeyDrafts({ ...apiKeyDrafts, anthropicKey: e.target.value })}
                 />
-                <button style={quietBtn} disabled={!apiKeyDrafts.anthropicKey} onClick={() => saveApiKey('anthropicKey', apiKeyDrafts.anthropicKey)}>Save</button>
+                <button className="btn-secondary" disabled={!apiKeyDrafts.anthropicKey} onClick={() => saveApiKey('anthropicKey', apiKeyDrafts.anthropicKey)}>Save</button>
                 {apiKeyStatus.hasOwnAnthropicKey && (
-                  <button style={quietBtn} onClick={() => saveApiKey('anthropicKey', '')}>Clear</button>
+                  <button className="account-settings-clear-key" onClick={() => saveApiKey('anthropicKey', '')}>Clear</button>
                 )}
               </div>
             </div>
-            <div style={{ flex: '1 1 220px' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                OpenAI key {apiKeyStatus.hasOwnOpenAiKey ? '(set)' : apiKeyStatus.hasOperatorKeyAccess ? '(using operator\'s)' : '(none — no operator access)'}
+            <div className="account-settings-provider">
+              <div className="account-settings-provider-copy">
+                <strong>OpenAI</strong>
+                <span className="account-settings-provider-status">
+                  {apiKeyStatus.hasOwnOpenAiKey ? 'Personal key saved' : apiKeyStatus.hasOperatorKeyAccess ? 'Using installation key' : 'No key available'}
+                </span>
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div className="account-settings-provider-control">
                 <input
-                  style={inputStyle}
                   type="password"
+                  aria-label="OpenAI API key"
                   placeholder={apiKeyStatus.hasOwnOpenAiKey ? '••••••••••••' : 'sk-...'}
                   value={apiKeyDrafts.openAiKey}
                   onChange={e => setApiKeyDrafts({ ...apiKeyDrafts, openAiKey: e.target.value })}
                 />
-                <button style={quietBtn} disabled={!apiKeyDrafts.openAiKey} onClick={() => saveApiKey('openAiKey', apiKeyDrafts.openAiKey)}>Save</button>
+                <button className="btn-secondary" disabled={!apiKeyDrafts.openAiKey} onClick={() => saveApiKey('openAiKey', apiKeyDrafts.openAiKey)}>Save</button>
                 {apiKeyStatus.hasOwnOpenAiKey && (
-                  <button style={quietBtn} onClick={() => saveApiKey('openAiKey', '')}>Clear</button>
+                  <button className="account-settings-clear-key" onClick={() => saveApiKey('openAiKey', '')}>Clear</button>
                 )}
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </section>
 
       {isAdmin && (
-        <>
-        <h2>Administration</h2>
-        <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>Manage this installation</div>
-            <div style={{ marginTop: 3, fontSize: 12.5, color: 'var(--text-muted)' }}>Manage users, access, invites, and operator settings.</div>
+        <section className="account-settings-section">
+          <div className="account-settings-heading">
+            <div>
+              <span>Operator tools</span>
+              <h2>Administration</h2>
+            </div>
           </div>
-          <Link to="/admin" style={{ ...primaryBtn, textDecoration: 'none', display: 'inline-block' }}>Open Administration</Link>
-        </div>
-        </>
+          <div className="account-settings-card account-settings-action-row">
+            <div>
+              <strong>Manage this installation</strong>
+              <span>Manage users, access, invites, and operator settings.</span>
+            </div>
+            <Link to="/admin" className="btn-primary account-settings-admin-link">Open administration</Link>
+          </div>
+        </section>
       )}
 
-      <h2>Security & sessions</h2>
-      <div style={card}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+      <section className="account-settings-section">
+        <div className="account-settings-heading">
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              {currentSession ? friendlySessionName(currentSession.userAgentLabel) : 'Current session'}
-              <span style={{ color: 'var(--accent)', fontSize: 11.5, fontWeight: 600 }}> · this session</span>
-            </div>
-            <div style={{ marginTop: 3, fontSize: 11.5, color: 'var(--text-muted)' }}>
-              {currentSession ? relativeSessionTime(currentSession.lastSeen) : 'Currently signed in'}
-            </div>
+            <span>Account access</span>
+            <h2>Security &amp; sessions</h2>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {otherSessions.length > 0 && <button style={quietBtn} onClick={revokeOtherSessions}>Sign out other sessions</button>}
-            <button style={quietBtn} onClick={logout}>Sign out</button>
-          </div>
+          <p>Review where your account is signed in and close sessions you no longer use.</p>
         </div>
-
-        {otherSessions.length > 0 && (
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-            <button
-              type="button"
-              onClick={() => setSessionsExpanded(open => !open)}
-              aria-expanded={sessionsExpanded}
-              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, color: 'var(--accent)', fontSize: 12.5, fontWeight: 700, textAlign: 'left' }}
-            >
-              <span>{sessionsExpanded ? 'Hide' : 'View'} {otherSessions.length} other {otherSessions.length === 1 ? 'session' : 'sessions'}</span>
-              <span aria-hidden="true">{sessionsExpanded ? '↑' : '↓'}</span>
-            </button>
-
-            {sessionsExpanded && (
-              <div style={{ marginTop: 8 }}>
-                {otherSessions.map(session => (
-                  <div key={session.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '11px 0', borderTop: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{friendlySessionName(session.userAgentLabel)}</div>
-                      <div style={{ marginTop: 2, fontSize: 11.5, color: 'var(--text-muted)' }}>{relativeSessionTime(session.lastSeen)}</div>
-                    </div>
-                    <button style={quietBtn} onClick={() => revokeSession(session.id)}>Revoke session</button>
-                  </div>
-                ))}
-              </div>
-            )}
+        <div className="account-settings-card">
+          <div className="account-settings-session-current">
+            <div className="account-settings-session-copy">
+              <span className="account-settings-current-badge">Current session</span>
+              <strong>
+              {currentSession ? friendlySessionName(currentSession.userAgentLabel) : 'Current session'}
+              </strong>
+              <span>
+              {currentSession ? relativeSessionTime(currentSession.lastSeen) : 'Currently signed in'}
+              </span>
+            </div>
+            <div className="account-settings-session-actions">
+              {otherSessions.length > 0 && <button className="btn-secondary" onClick={revokeOtherSessions}>Sign out other sessions</button>}
+              <button className="btn-secondary" onClick={logout}>Sign out</button>
+            </div>
           </div>
-        )}
-      </div>
+
+          {otherSessions.length > 0 && (
+            <div className="account-settings-other-sessions">
+              <button
+                type="button"
+                className="account-settings-session-toggle"
+                onClick={() => setSessionsExpanded(open => !open)}
+                aria-expanded={sessionsExpanded}
+              >
+                <span>{sessionsExpanded ? 'Hide' : 'View'} {otherSessions.length} other {otherSessions.length === 1 ? 'session' : 'sessions'}</span>
+                <span aria-hidden="true">{sessionsExpanded ? '↑' : '↓'}</span>
+              </button>
+
+              {sessionsExpanded && (
+                <div className="account-settings-session-list">
+                  {otherSessions.map(session => (
+                    <div key={session.id} className="account-settings-session-row">
+                      <div className="account-settings-session-copy">
+                        <strong>{friendlySessionName(session.userAgentLabel)}</strong>
+                        <span>{relativeSessionTime(session.lastSeen)}</span>
+                      </div>
+                      <button className="btn-secondary" onClick={() => revokeSession(session.id)}>Revoke session</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
       </>}
     </div>
   )

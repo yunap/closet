@@ -3,11 +3,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
-const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '28px 26px', maxWidth: 360, margin: '80px auto 0' }
-const label = { display: 'block', fontSize: 13, fontWeight: 650, color: 'var(--text)', margin: '14px 0 6px' }
-const inputStyle = { width: '100%', padding: '9px 11px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 14, boxSizing: 'border-box' }
-const primaryBtn = { width: '100%', padding: '10px 18px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginTop: 18 }
-
 export default function Register() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
@@ -37,22 +32,49 @@ export default function Register() {
   }
 
   return (
-    <div style={card}>
-      <h1 style={{ fontSize: 22, margin: '0 0 4px' }}>Create your wardrobe</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13.5, marginTop: 0 }}>Invite-only for now — you'll need a code.</p>
-      <form onSubmit={submit}>
-        <label style={label} htmlFor="register-invite">Invite code</label>
-        <input id="register-invite" style={inputStyle} required value={inviteCode} onChange={e => setInviteCode(e.target.value)} />
-        <label style={label} htmlFor="register-email">Email</label>
-        <input id="register-email" style={inputStyle} type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} />
-        <label style={label} htmlFor="register-password">Password</label>
-        <input id="register-password" style={inputStyle} type="password" autoComplete="new-password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} />
-        {error && <div style={{ color: 'var(--donate)', fontSize: 13, marginTop: 10 }}>{error}</div>}
-        <button style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }} type="submit" disabled={submitting}>{submitting ? 'Creating account…' : 'Create account'}</button>
-      </form>
-      <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 16, textAlign: 'center' }}>
-        Already have an account? <Link to="/login">Sign in</Link>
-      </p>
+    <div className="auth-page">
+      <div className="auth-shell">
+        <section className="auth-introduction" aria-labelledby="auth-product-name">
+          <div className="auth-brand">
+            <span className="auth-brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 4.25a2.25 2.25 0 1 1 2.25 2.25L12 8.25" />
+                <path d="m4.5 17 6.2-6.1a1.85 1.85 0 0 1 2.6 0l6.2 6.1" />
+                <path d="M4.5 17h15" />
+              </svg>
+            </span>
+            <span id="auth-product-name">Wardrobe</span>
+          </div>
+          <div className="auth-introduction-copy">
+            <p className="auth-eyebrow">A wardrobe built around real life</p>
+            <h1>Make more of the clothes you own.</h1>
+            <p>Organize your wardrobe, explore complete outfits, and build styling guidance that becomes more useful as you use it.</p>
+          </div>
+          <p className="auth-privacy-note">Your wardrobe and styling history stay private to your account.</p>
+        </section>
+
+        <section className="auth-form-panel auth-form-panel--register" aria-labelledby="register-heading">
+          <div className="auth-form-heading">
+            <p className="auth-eyebrow">Invite only</p>
+            <h2 id="register-heading">Create your account</h2>
+            <p className="auth-form-description">Enter the invitation code you received to begin.</p>
+          </div>
+          <form className="auth-form" onSubmit={submit}>
+            <label htmlFor="register-invite">Invite code</label>
+            <input id="register-invite" autoComplete="one-time-code" required value={inviteCode} onChange={e => setInviteCode(e.target.value)} />
+            <label htmlFor="register-email">Email</label>
+            <input id="register-email" type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} />
+            <label htmlFor="register-password">Password</label>
+            <input id="register-password" type="password" autoComplete="new-password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} />
+            <p className="auth-field-hint">Use at least 8 characters.</p>
+            {error && <div className="auth-error" role="alert">{error}</div>}
+            <button className="auth-submit" type="submit" disabled={submitting}>{submitting ? 'Creating account…' : 'Create account'}</button>
+          </form>
+          <p className="auth-account-link">
+            Already have an account? <Link to="/login">Sign in</Link>
+          </p>
+        </section>
+      </div>
     </div>
   )
 }

@@ -197,7 +197,7 @@ function ProcessingPhase({ items, thumbnailSize }) {
             <div style={{
               position: 'absolute', inset: 0,
               background: item.status === 'ready'  ? 'rgba(90,122,90,0.35)' :
-                          item.status === 'tagging' ? 'rgba(124,95,60,0.2)' :
+                          item.status === 'tagging' ? 'rgba(104,77,98,0.2)' :
                           item.status === 'error'   ? 'rgba(168,64,64,0.35)' : 'rgba(38,32,26,0.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 18, color: '#fff',
@@ -464,13 +464,13 @@ function GroupingPhase({ items, onLink, onUnlink, onStart, onAddFiles, onCancel,
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            background: 'rgba(124, 95, 60, 0.02)',
+            background: 'rgba(104, 77, 98, 0.02)',
             transition: 'all 0.15s ease',
             padding: 10,
             gap: 8,
           }}
           onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--accent-light)' }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'rgba(124, 95, 60, 0.02)' }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'rgba(104, 77, 98, 0.02)' }}
         >
           <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => handleFiles(e.target.files)} />
           <span style={{ fontSize: 24 }}>➕</span>
@@ -814,7 +814,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
         </div>
 
         {detailsExpanded && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '14px', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', background: 'rgba(124, 95, 60, 0.02)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '14px', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', background: 'rgba(104, 77, 98, 0.02)' }}>
             
             {/* Pattern Type */}
             <div className="form-group">

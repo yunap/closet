@@ -5,7 +5,7 @@ const TYPE_META = {
   donate:   { label: 'Donate?',  color: 'var(--donate)',   bg: 'var(--donate-bg)',   dot: '#6B8C6B', icon: '◌' },
   shopping: { label: 'Shopping', color: 'var(--shopping)', bg: 'var(--shopping-bg)', dot: '#5A6E8A', icon: '◎' },
   metadata: { label: 'Tagging gaps', color: 'var(--metadata, #8A6D3B)', bg: 'var(--metadata-bg, #F5EFE3)', dot: '#8A6D3B', icon: '◆' },
-  'retag-suggestion': { label: 'Retag suggestions', color: 'var(--accent)', bg: 'var(--accent-light)', dot: '#7C5F3C', icon: '◇' },
+  'retag-suggestion': { label: 'Retag suggestions', color: 'var(--accent)', bg: 'var(--accent-light)', dot: '#684D62', icon: '◇' },
 }
 
 export default function TodoList({ isModal, onClose, onPieceClick }) {

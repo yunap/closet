@@ -3,11 +3,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
-const card = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '28px 26px', maxWidth: 360, margin: '80px auto 0' }
-const label = { display: 'block', fontSize: 13, fontWeight: 650, color: 'var(--text)', margin: '14px 0 6px' }
-const inputStyle = { width: '100%', padding: '9px 11px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: 14, boxSizing: 'border-box' }
-const primaryBtn = { width: '100%', padding: '10px 18px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginTop: 18 }
-
 export default function Login() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
@@ -36,20 +31,45 @@ export default function Login() {
   }
 
   return (
-    <div style={card}>
-      <h1 style={{ fontSize: 22, margin: '0 0 4px' }}>Welcome back</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13.5, marginTop: 0 }}>Sign in to your wardrobe.</p>
-      <form onSubmit={submit}>
-        <label style={label} htmlFor="login-email">Email</label>
-        <input id="login-email" style={inputStyle} type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} />
-        <label style={label} htmlFor="login-password">Password</label>
-        <input id="login-password" style={inputStyle} type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} />
-        {error && <div style={{ color: 'var(--donate)', fontSize: 13, marginTop: 10 }}>{error}</div>}
-        <button style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }} type="submit" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}</button>
-      </form>
-      <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 16, textAlign: 'center' }}>
-        Have an invite code? <Link to="/register">Create an account</Link>
-      </p>
+    <div className="auth-page">
+      <div className="auth-shell">
+        <section className="auth-introduction" aria-labelledby="auth-product-name">
+          <div className="auth-brand">
+            <span className="auth-brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 4.25a2.25 2.25 0 1 1 2.25 2.25L12 8.25" />
+                <path d="m4.5 17 6.2-6.1a1.85 1.85 0 0 1 2.6 0l6.2 6.1" />
+                <path d="M4.5 17h15" />
+              </svg>
+            </span>
+            <span id="auth-product-name">Wardrobe</span>
+          </div>
+          <div className="auth-introduction-copy">
+            <p className="auth-eyebrow">Your personal wardrobe workspace</p>
+            <h1>Your clothes, made more useful.</h1>
+            <p>Keep track of what you own, work through outfit questions, and teach your stylist what genuinely works for you.</p>
+          </div>
+          <p className="auth-privacy-note">Your wardrobe and styling history stay private to your account.</p>
+        </section>
+
+        <section className="auth-form-panel" aria-labelledby="login-heading">
+          <div className="auth-form-heading">
+            <p className="auth-eyebrow">Welcome back</p>
+            <h2 id="login-heading">Sign in to your wardrobe</h2>
+          </div>
+          <form className="auth-form" onSubmit={submit}>
+            <label htmlFor="login-email">Email</label>
+            <input id="login-email" type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} />
+            <label htmlFor="login-password">Password</label>
+            <input id="login-password" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} />
+            {error && <div className="auth-error" role="alert">{error}</div>}
+            <button className="auth-submit" type="submit" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}</button>
+          </form>
+          <p className="auth-account-link">
+            Have an invite code? <Link to="/register">Create an account</Link>
+          </p>
+        </section>
+      </div>
     </div>
   )
 }
