@@ -22,6 +22,11 @@ test('history preloads the first subject thumbnails and leaves the remainder laz
   assert.match(railSource, /new Image\(\)/)
   assert.match(railSource, /loading=\{prioritizeThumbnail \? 'eager' : 'lazy'\}/)
   assert.match(railSource, /fetchPriority=\{prioritizeThumbnail \? 'high' : 'auto'\}/)
+  // Rail subject thumbnails must resolve to the sized 'subject' webp variant,
+  // both when rendered and when preloaded — never the full-resolution source.
+  assert.match(railSource, /src=\{uploadThumbnailSrc\(cluster\.photo, 'subject'\)\}/)
+  assert.match(railSource, /image\.src = uploadThumbnailSrc\(src, 'subject'\)/)
+  assert.doesNotMatch(railSource, /src=\{cluster\.photo\}/)
 })
 
 test('saved chats prefetch detail payloads and warm only recent rendered images', () => {

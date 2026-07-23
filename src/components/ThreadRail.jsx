@@ -12,6 +12,7 @@ import {
   getThreadSubjectChildTitle
 } from '../utils/threadGrouping.js'
 import { prefetchChatThread } from '../utils/chatThreadCache.js'
+import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 
 const SUBJECT_THUMB_PRELOAD_COUNT = 12
 
@@ -101,7 +102,7 @@ export default function ThreadRail({
     preloadUrls.forEach(src => {
       const image = new Image()
       image.decoding = 'async'
-      image.src = src
+      image.src = uploadThumbnailSrc(src, 'subject')
     })
   }, [threads])
 
@@ -343,7 +344,7 @@ export default function ThreadRail({
           <span className="subject-thumb" aria-hidden="true">
             {cluster.photo ? (
               <img
-                src={cluster.photo}
+                src={uploadThumbnailSrc(cluster.photo, 'subject')}
                 alt=""
                 loading={prioritizeThumbnail ? 'eager' : 'lazy'}
                 decoding="async"
