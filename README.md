@@ -140,6 +140,11 @@ The backend has been modularized to separate database concerns, Express routes, 
 
 ## Main Workflows
 
+Before making visual or interaction changes, read the
+[UI V1 design and readability handoff](docs/ui-v1-design-handoff.md). It records the ratified
+visual direction, typography and color roles, expert-review criteria, implemented scope, and
+remaining audit work.
+
 Use **Wardrobe** to add and maintain pieces, including hanger and worn photos.
 
 Use **Outfits** to save looks, link them to wardrobe pieces, and send them to the stylist.
