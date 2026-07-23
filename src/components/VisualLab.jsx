@@ -464,10 +464,10 @@ export default function VisualLab({ onGoToThread } = {}) {
 
         {activeSection !== 'upload' && <div className="filter-row visual-lab-tabs" style={{ marginBottom: 0 }}>
           {[
-            ['references', 'References', 'Images and real outfits'],
-            ['saved', 'Calibration boards', 'Feedback from generated looks'],
-            ['profile', 'Style profile', 'Rules and working guidance'],
-          ].map(([value, label, description]) => (
+            ['references', 'References'],
+            ['saved', 'Calibration boards'],
+            ['profile', 'Style profile'],
+          ].map(([value, label]) => (
             <button
               key={value}
               className={`chip ${activeSection === value ? 'active' : ''}`}
@@ -475,7 +475,6 @@ export default function VisualLab({ onGoToThread } = {}) {
               aria-pressed={activeSection === value}
             >
               <strong>{label}</strong>
-              <span>{description}</span>
             </button>
           ))}
         </div>}
