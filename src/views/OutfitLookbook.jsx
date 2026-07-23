@@ -1700,6 +1700,24 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
               )}
             </div>
           </div>
+          <div className="subtab-container">
+            <button
+              type="button"
+              className={`subtab-btn ${activeSubTab === 'my-outfits' ? 'active' : ''}`}
+              onClick={() => setFilter({ view: 'my-outfits' })}
+            >
+              <span>My Outfits</span>
+              <span className="subtab-count">{outfits.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`subtab-btn ${activeSubTab === 'generated-outfits' ? 'active' : ''}`}
+              onClick={() => setFilter({ view: 'generated-outfits' })}
+            >
+              <span>Generated Outfits</span>
+              <span className="subtab-count">{savedBoards.length}</span>
+            </button>
+          </div>
           {activeSubTab === 'my-outfits' && (
             <button
               type="button"
@@ -1712,67 +1730,17 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
           )}
         </div>
 
-        <div className="subtab-container">
-          <button
-            type="button"
-            className={`subtab-btn ${activeSubTab === 'my-outfits' ? 'active' : ''}`}
-            onClick={() => setFilter({ view: 'my-outfits' })}
-          >
-            <span>My Outfits</span>
-            <span className="subtab-count">{outfits.length}</span>
-          </button>
-          <button
-            type="button"
-            className={`subtab-btn ${activeSubTab === 'generated-outfits' ? 'active' : ''}`}
-            onClick={() => setFilter({ view: 'generated-outfits' })}
-          >
-            <span>Generated Outfits</span>
-            <span className="subtab-count">{savedBoards.length}</span>
-          </button>
-        </div>
-
-        <div className="search-sort-row lookbook-search-row">
+        <div className="lookbook-filter-toolbar" aria-label="Outfit filters">
           <div className="search-bar search-bar-lookbook">
             <span className="search-icon">◎</span>
-            <input 
-              type="search" 
-              placeholder="Search outfits..." 
-              value={search} 
+            <input
+              type="search"
+              placeholder="Search outfits..."
+              value={search}
               onChange={e => setFilter({ q: e.target.value })}
             />
           </div>
 
-          <div className="custom-select-container">
-            <button 
-              className={`custom-select-btn ${isSortOpen ? 'active' : ''}`} 
-              onClick={(e) => { e.stopPropagation(); setIsSortOpen(!isSortOpen); }}
-            >
-              <span>⇅ {SORT_OPTIONS.find(o => o.value === sortBy)?.label}</span>
-              <span className="custom-select-arrow">▾</span>
-            </button>
-            {isSortOpen && (
-              <>
-                <div className="custom-select-backdrop" onClick={() => setIsSortOpen(false)} />
-                <div className="custom-select-dropdown">
-                  {SORT_OPTIONS.map(opt => (
-                    <button
-                      key={opt.value}
-                      className={`custom-select-option ${sortBy === opt.value ? 'active' : ''}`}
-                      onClick={() => {
-                        setFilter({ sort: opt.value })
-                        setIsSortOpen(false)
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="lookbook-filter-toolbar" aria-label="Outfit filters">
           <div className="lookbook-filter-menu">
             <button
               type="button"
@@ -1860,6 +1828,35 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread }) {
               </svg>
               Pinned
             </button>
+          </div>
+
+          <div className="custom-select-container">
+            <button
+              className={`custom-select-btn ${isSortOpen ? 'active' : ''}`}
+              onClick={(e) => { e.stopPropagation(); setIsSortOpen(!isSortOpen); }}
+            >
+              <span>⇅ {SORT_OPTIONS.find(o => o.value === sortBy)?.label}</span>
+              <span className="custom-select-arrow">▾</span>
+            </button>
+            {isSortOpen && (
+              <>
+                <div className="custom-select-backdrop" onClick={() => setIsSortOpen(false)} />
+                <div className="custom-select-dropdown">
+                  {SORT_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      className={`custom-select-option ${sortBy === opt.value ? 'active' : ''}`}
+                      onClick={() => {
+                        setFilter({ sort: opt.value })
+                        setIsSortOpen(false)
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
