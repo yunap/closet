@@ -6103,7 +6103,13 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 
 .lookbook-header-primary {
   align-items: center;
+  justify-content: flex-start;
+  gap: 18px;
   margin-bottom: 13px;
+}
+
+.lookbook-header-primary .lookbook-add-outfit {
+  margin-left: auto;
 }
 
 .lookbook-add-outfit {
@@ -6141,20 +6147,9 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   font-weight: 500;
 }
 
-/* Row containing Search & Custom Sort select */
-.search-sort-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin: 12px 16px 10px;
-}
-
-.lookbook-search-row {
-  margin: 10px 0 8px;
-}
-
 .search-bar-lookbook {
-  flex: 1;
+  flex: 1 1 260px;
+  min-width: 200px;
   margin-bottom: 0 !important; /* Override standard search-bar margin */
 }
 
@@ -6331,12 +6326,41 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 .lookbook-filter-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin: 0;
+  margin: 10px 0 0;
 }
 
 .lookbook-filter-menu {
   position: relative;
+}
+
+/* Quiet toolbar controls — same language as the wardrobe facet dropdowns:
+   no box until hover/active. Search stays the single boxed primary. */
+.lookbook-filter-toolbar .filter-menu-btn,
+.lookbook-filter-toolbar .custom-select-btn {
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 9px 7px 11px;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 9px;
+  color: var(--text-muted);
+  font-weight: 550;
+}
+
+.lookbook-filter-toolbar .filter-menu-btn:hover,
+.lookbook-filter-toolbar .custom-select-btn:hover {
+  background: color-mix(in srgb, var(--surface-2) 74%, var(--surface));
+  border-color: transparent;
+  color: var(--text);
+}
+
+.lookbook-filter-toolbar .filter-menu-btn.active,
+.lookbook-filter-toolbar .custom-select-btn.active {
+  background: color-mix(in srgb, var(--accent-light) 46%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  color: var(--accent);
 }
 
 .filter-menu-btn {
@@ -6490,14 +6514,17 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 }
 
 /* ── Sub-Tabs Navigation (Lookbook) ────────────────────────────── */
+/* Collection switch — same segmented-control language as the wardrobe
+   category row: one pill container, no per-button borders. */
 .subtab-container {
-  display: flex;
-  background: var(--surface-2);
-  border-radius: var(--radius);
-  padding: 4px;
-  gap: 4px;
-  margin: 0 0 8px;
-  border: 1px solid var(--border-light);
+  display: inline-flex;
+  width: fit-content;
+  background: color-mix(in srgb, var(--surface-2) 80%, var(--surface));
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+  margin: 0;
+  border: none;
 }
 
 .lookbook-view-header .active-filter-row {
@@ -6518,13 +6545,14 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 }
 
 .subtab-btn {
-  flex: 1;
-  padding: 8px 12px;
-  border-radius: calc(var(--radius) - 2px);
+  flex: none;
+  padding: 6px 14px;
+  min-height: 30px;
+  border-radius: 999px;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 550;
   color: var(--text-muted);
-  transition: all 0.2s ease;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
   text-align: center;
   background: transparent;
   border: 0;
@@ -6535,11 +6563,16 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   gap: 7px;
 }
 
+.subtab-btn:hover {
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--text);
+}
+
 .subtab-btn.active {
   background: var(--surface);
-  color: var(--accent);
-  box-shadow: var(--shadow);
-  font-weight: 600;
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(49, 35, 21, 0.1);
+  font-weight: 650;
 }
 
 .subtab-count {
