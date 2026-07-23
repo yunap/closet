@@ -77,7 +77,7 @@ function relativeSessionTime(value) {
   return `Active ${days} ${days === 1 ? 'day' : 'days'} ago`
 }
 
-export default function StylistSettings({ mode = 'account', embedded = false } = {}) {
+export default function StylistSettings({ mode = 'account', embedded = false, onGoToThread = null } = {}) {
   const navigate = useNavigate()
   const [profile, setProfile] = useState(null)
   const [homeLocation, setHomeLocation] = useState('')
@@ -86,6 +86,10 @@ export default function StylistSettings({ mode = 'account', embedded = false } =
   const [historyFor, setHistoryFor] = useState(null)
   const [historyRows, setHistoryRows] = useState([])
   const [learnings, setLearnings] = useState([])
+  const [contextualFeedback, setContextualFeedback] = useState([])
+  const [feedbackBoards, setFeedbackBoards] = useState([])
+  const [feedbackLoading, setFeedbackLoading] = useState(true)
+  const [feedbackSearch, setFeedbackSearch] = useState('')
   const [demo, setDemo] = useState(null)
   const [learningDrafts, setLearningDrafts] = useState({})
   const [sessions, setSessions] = useState([])
@@ -96,6 +100,7 @@ export default function StylistSettings({ mode = 'account', embedded = false } =
   const [status, setStatus] = useState('')
 
   const load = async () => {
+    setFeedbackLoading(true)
     try {
       const [p, h, c] = await Promise.all([
         fetch('/api/settings/profile').then(r => r.json()),
@@ -105,8 +110,14 @@ export default function StylistSettings({ mode = 'account', embedded = false } =
       setProfile(p)
       setHomeLocation(h.homeLocation || '')
       setLayers(c.layers || [])
-      const feedback = await fetch('/api/stylist-feedback?limit=200').then(r => r.json()).catch(() => [])
-      setLearnings((Array.isArray(feedback) ? feedback : []).filter(row => LEARNING_TYPES.has(row.feedback_type)))
+      const [feedback, savedBoards] = await Promise.all([
+        fetch('/api/stylist-feedback?limit=1000').then(r => r.json()).catch(() => []),
+        fetch('/api/saved-boards?limit=500').then(r => r.json()).catch(() => []),
+      ])
+      const feedbackRows = Array.isArray(feedback) ? feedback : []
+      setLearnings(feedbackRows.filter(row => LEARNING_TYPES.has(row.feedback_type)))
+      setContextualFeedback(feedbackRows.filter(row => !LEARNING_TYPES.has(row.feedback_type)))
+      setFeedbackBoards(Array.isArray(savedBoards) ? savedBoards : [])
       setDemo(await fetch('/api/settings/demo-wardrobe').then(r => r.json()).catch(() => null))
       const sessionData = await fetch('/api/auth/sessions').then(r => r.json()).catch(() => null)
       setSessions(sessionData?.sessions || [])
@@ -116,6 +127,8 @@ export default function StylistSettings({ mode = 'account', embedded = false } =
       setIsAdmin(Boolean(me?.isAdmin))
     } catch (err) {
       setStatus(`Failed to load settings: ${err.message}`)
+    } finally {
+      setFeedbackLoading(false)
     }
   }
   useEffect(() => { load() }, [])
@@ -192,6 +205,67 @@ export default function StylistSettings({ mode = 'account', embedded = false } =
 
   const currentSession = sessions.find(session => session.isCurrent)
   const otherSessions = sessions.filter(session => !session.isCurrent)
+  const normalizedFeedbackSearch = feedbackSearch.trim().toLowerCase()
+  const matchingContextualFeedback = contextualFeedback.filter(row => {
+    if (!normalizedFeedbackSearch) return true
+    return [row.context_name, row.label, row.note, row.feedback_type]
+      .some(value => String(value || '').toLowerCase().includes(normalizedFeedbackSearch))
+  })
+  const visibleContextualFeedback = matchingContextualFeedback.slice(0, 40)
+
+  const feedbackBoardImage = row => row?.payload?.board?.imageUrl || row?.payload?.board?.image_url || ''
+  const matchedFeedbackBoard = row => {
+    const imageUrl = feedbackBoardImage(row)
+    return imageUrl ? feedbackBoards.find(board => board.image_url === imageUrl) : null
+  }
+
+  const openFeedbackContext = async (row) => {
+    const matchedBoard = matchedFeedbackBoard(row)
+    const existingBoardId = row.referenced_board_id || matchedBoard?.id
+    if (existingBoardId) {
+      navigate(`/visual-lab?section=profile&boardId=${existingBoardId}`)
+      return
+    }
+    const board = row?.payload?.board
+    if (row.target_type === 'generated_visual_board' && board?.imageUrl) {
+      const response = await fetch('/api/saved-boards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boardType: board.wholeWardrobe ? 'whole_wardrobe_board' : 'editorial_direction',
+          contextType: row.context_type || 'wardrobe',
+          contextId: row.context_id || null,
+          contextName: row.context_name || 'Whole wardrobe',
+          title: board.label || row.label || 'Generated styling result',
+          imageUrl: board.imageUrl,
+          pieces: board.pieces || row?.payload?.outfit?.pieces || [],
+          missingPieces: row?.payload?.outfit?.missingPieces || [],
+          reason: board.reason || row.note || '',
+          watchFor: board.watchFor || '',
+          payload: { ...row.payload, feedback_labels: [row.feedback_type] },
+        }),
+      })
+      const saved = await response.json().catch(() => null)
+      if (response.ok && saved?.id) {
+        setFeedbackBoards(previous => [...previous, saved])
+        navigate(`/visual-lab?section=profile&boardId=${saved.id}`)
+      } else {
+        flash('Could not open this generated board.')
+      }
+      return
+    }
+    const referencedPieceId = row?.payload?.pieceId || row?.payload?.piece?.id
+    if (row.feedback_type === 'wrong_item_read' && referencedPieceId) {
+      navigate(`/wardrobe?pieceId=${referencedPieceId}`)
+      return
+    }
+    if (row.referenced_thread_id && onGoToThread) {
+      onGoToThread(row.referenced_thread_id)
+      return
+    }
+    if (row.context_type === 'outfit' && row.context_id) navigate(`/outfits?outfitId=${row.context_id}`)
+    if (row.context_type === 'piece' && row.context_id) navigate(`/wardrobe?pieceId=${row.context_id}`)
+  }
 
   const renderStyleLayer = ({ layer, body, updatedAt, isDefault }) => {
     const [eyebrow, description] = LAYER_META[layer] || ['Guidance', 'Working guidance used by your stylist.']
@@ -340,7 +414,8 @@ export default function StylistSettings({ mode = 'account', embedded = false } =
         </div>
         <p>Durable corrections learned in chat, such as what you do not wear or weather-specific needs.</p>
       </div>
-      {learnings.length === 0 && (
+      {feedbackLoading && <div className="style-profile-empty">Loading learned rules and preferences…</div>}
+      {!feedbackLoading && learnings.length === 0 && (
         <div className="style-profile-empty">Nothing learned yet. Corrections you give the stylist in chat will appear here.</div>
       )}
       {learnings.map(row => (
@@ -362,6 +437,77 @@ export default function StylistSettings({ mode = 'account', embedded = false } =
           </div>
         </div>
       ))}
+      </section>
+
+      <section className="style-profile-section style-profile-learnings">
+        <div className="style-profile-section-heading">
+          <div>
+            <span>Contextual memory</span>
+            <h2>Outfit &amp; garment feedback</h2>
+          </div>
+          <p>Feedback tied to a particular outfit, garment, or generated result. It does not become a global style rule.</p>
+        </div>
+        <input
+          type="search"
+          style={{ ...inputStyle, marginBottom: 12 }}
+          value={feedbackSearch}
+          onChange={event => setFeedbackSearch(event.target.value)}
+          placeholder="Search by outfit, garment, feedback, or note…"
+          aria-label="Search outfit and garment feedback"
+        />
+        {matchingContextualFeedback.length > visibleContextualFeedback.length && (
+          <div style={{ margin: '-4px 0 12px', fontSize: 11.5, color: 'var(--text-muted)' }}>
+            Showing the first {visibleContextualFeedback.length} of {matchingContextualFeedback.length} matches. Refine the search to narrow the list.
+          </div>
+        )}
+        {feedbackLoading && (
+          <div className="style-profile-empty">Loading outfit and garment feedback…</div>
+        )}
+        {!feedbackLoading && visibleContextualFeedback.length === 0 && (
+          <div className="style-profile-empty">
+            {feedbackSearch.trim() ? 'No contextual feedback matches this search.' : 'No outfit or garment feedback saved yet.'}
+          </div>
+        )}
+        {visibleContextualFeedback.map(row => {
+          const contextLabel = row.context_name || (row.context_type === 'wardrobe' ? 'Whole wardrobe' : '') || row.label || 'Saved styling result'
+          const canOpenContext = ['outfit', 'piece'].includes(row.context_type) && row.context_id
+          const canOpenBoard = Boolean(row.referenced_board_id || matchedFeedbackBoard(row) || (row.target_type === 'generated_visual_board' && feedbackBoardImage(row)))
+          const canOpenGarment = row.feedback_type === 'wrong_item_read' && Boolean(row?.payload?.pieceId || row?.payload?.piece?.id)
+          const canOpenThread = !canOpenBoard && !canOpenGarment && Boolean(row.referenced_thread_id && onGoToThread)
+          return (
+            <div key={row.id} style={{ ...card, padding: '12px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0, flex: '1 1 360px' }}>
+                  <div style={{ fontSize: 11, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    {row.feedback_type.replaceAll('_', ' ')}{row.is_gold ? ' · Gold' : ''}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 14, fontWeight: 650, color: 'var(--text)' }}>{contextLabel}</div>
+                  {row.label && row.label !== contextLabel && <div style={{ marginTop: 2, fontSize: 12, color: 'var(--text-muted)' }}>{row.label}</div>}
+                  <div style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.45, color: 'var(--text-muted)' }}>{row.note || 'No note saved.'}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{row.created_at}</span>
+                  {canOpenContext && !canOpenBoard && !canOpenGarment && !canOpenThread && (
+                    <button style={quietBtn} onClick={() => openFeedbackContext(row)}>
+                      Open {row.context_type === 'outfit' ? 'outfit' : 'garment'}
+                    </button>
+                  )}
+                  {canOpenBoard && (
+                    <button style={quietBtn} onClick={() => openFeedbackContext(row)}>
+                      Open board
+                    </button>
+                  )}
+                  {canOpenGarment && (
+                    <button style={quietBtn} onClick={() => openFeedbackContext(row)}>Open garment</button>
+                  )}
+                  {canOpenThread && (
+                    <button style={quietBtn} onClick={() => openFeedbackContext(row)}>Open source chat</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })}
       </section>
       </>}
 

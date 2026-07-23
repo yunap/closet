@@ -834,7 +834,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "hem_finish": "straight_loose (only standard flat, horizontal straight hem)|banded_elastic|ribbed|design_hem (high-low, curved, side-slits, vented, or decorative hem meant to be worn over/untucked)",
   "neckline": "V|scoop|crew|boat|mock|cowl|off-shoulder|square|wrap|other|none",
   "sleeve_type": "sleeveless|cap|short|3/4|long|bell|bishop|none",
-  "length_hits_at": "crop|waist|hip|mid-thigh|knee|midi|maxi|full-length",
+  "length_hits_at": "crop|waist|hip|mid-thigh|above-knee|knee|below-knee|midi|maxi|ankle|full-length",
   "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",

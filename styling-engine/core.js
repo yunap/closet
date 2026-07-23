@@ -34,6 +34,7 @@ import {
   categoryConstraintForSelectedPiece,
   getWholeWardrobeFeedbackMemory,
   getSavedBoardMemory,
+  getSavedBoardRendererMemory,
   wholeWardrobeMoodProfile,
   pieceTextBlob,
   selectDiverseWholeWardrobeCandidates,
@@ -46,6 +47,12 @@ import {
   sortByStylisticStrength,
   weatherProfileFromContext
 } from './rules.js'
+
+function withSavedBoardRendererMemory(prompt, pieces = []) {
+  const pieceIds = (Array.isArray(pieces) ? pieces : []).map(piece => Number(piece?.id)).filter(Boolean)
+  const memory = getSavedBoardRendererMemory(pieceIds, 24)
+  return memory ? `${prompt}\n\n${memory}` : prompt
+}
 
 // ── Basic helper/utility functions ───────────────────────────────────────────
 export function safeJsonFromModel(raw) {
@@ -312,7 +319,7 @@ export function getCalibrationMemoryForStylist(limit = 32) {
 
   const normalized = rows.map(normalizeCalibrationRow)
   const positiveLabels = /most_like_me|signature|works|good|strong|real|use_strongly|relaxed_structure|grounded|modern|minimal|artistic/i
-  const negativeLabels = /too_safe|too_boho|wrong_proportions|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|catalog_drift|not_me|ignore|bad|drift|too_polished|too_generic|too_soft/i
+  const negativeLabels = /style_direction|shape_balance|too_safe|too_boho|wrong_proportions|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|catalog_drift|not_me|ignore|bad|drift|too_polished|too_generic|too_soft/i
 
   const positives = []
   const negatives = []
@@ -2068,7 +2075,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
       contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion calibration reference.' : 'Taste calibration reference.' })
     }
 
-    contentParts.push({ type: 'input_text', text: savedOutfitImagePrompt({ outfit, pieces, occasion, season, variantMode, currentDate }) })
+    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(savedOutfitImagePrompt({ outfit, pieces, occasion, season, variantMode, currentDate }), pieces) })
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
       model: 'gpt-4o',
@@ -2156,7 +2163,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
       contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches listed wardrobe pieces.' : 'Taste calibration reference only.' })
     }
 
-    contentParts.push({ type: 'input_text', text: wholeWardrobeImagePrompt({ outfit, pieces, occasion, season }) })
+    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeImagePrompt({ outfit, pieces, occasion, season }), pieces) })
 
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
@@ -2256,7 +2263,7 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
       contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches a listed panel.' : 'Taste calibration reference only.' })
     }
 
-    contentParts.push({ type: 'input_text', text: wholeWardrobeComparisonSheetPrompt({ outfits: shown, piecesById, occasion, season, mood }) })
+    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeComparisonSheetPrompt({ outfits: shown, piecesById, occasion, season, mood }), uniquePieces) })
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
       model: 'gpt-4o',
@@ -2417,7 +2424,12 @@ export async function createIdealAdditionsComparisonSheetImage({
       })
       contentParts.push({ type: 'input_text', text: `Reference photo: ${garmentRef.label}. This exact garment appears on every figure.` })
     }
-    contentParts.push({ type: 'input_text', text: promptText })
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    for (const img of calibrationRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only.' : 'Taste calibration reference only.' })
+    }
+    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(promptText, [selectedPiece]) })
 
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
@@ -3157,7 +3169,10 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
 export async function createEditorialConceptImage({ selectedPiece, direction, index, occasion, season }) {
   const startedAt = Date.now()
   const timings = {}
-  const prompt = editorialImagePrompt({ selectedPiece, direction, occasion, season })
+  const prompt = withSavedBoardRendererMemory(
+    editorialImagePrompt({ selectedPiece, direction, occasion, season }),
+    [selectedPiece]
+  )
   const filename = `generated-boards/editorial-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
   const outPath = path.join(userUploadsDir(), filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })

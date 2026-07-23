@@ -238,7 +238,10 @@ function initDb(dbPath) {
 
   // Migrate todos to add field column
   ;[
-    'field TEXT'
+    'field TEXT',
+    'source_type TEXT',
+    'source_id INTEGER',
+    "payload TEXT DEFAULT '{}'"
   ].forEach(col => {
     try { db.exec(`ALTER TABLE todos ADD COLUMN ${col}`) } catch {}
   })

@@ -87,7 +87,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     silhouetteLabel: 'Bottom shape',
     silhouetteOptions: ['straight leg','wide leg','bootcut','flare','tapered','barrel','A-line skirt','pencil skirt','full skirt','slip skirt','relaxed','structured'],
     lengthLabel: 'Length',
-    lengthOptions: ['short','above-knee','knee','midi','maxi','ankle','full-length','cropped'],
+    lengthOptions: ['short','above-knee','knee','below-knee','midi','maxi','ankle','full-length','cropped'],
     hemLabel: 'Hem / leg opening',
     hemOptions: [
       { value: 'straight_loose', label: 'straight/open' },
@@ -106,7 +106,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     silhouetteLabel: 'Dress shape',
     silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
     lengthLabel: 'Length',
-    lengthOptions: ['mini','above-knee','knee','midi','maxi'],
+    lengthOptions: ['mini','above-knee','knee','below-knee','midi','maxi'],
   },
   outerwear: {
     sectionLabel: 'Construction',
@@ -342,6 +342,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [fitNoting,   setFitNoting]   = useState(false)
   const [previewImage, setPreviewImage] = useState(null)
   const [styleReadExpanded, setStyleReadExpanded] = useState(false)
+  const retagSuggestions = Array.isArray(piece?.retag_suggestions) ? piece.retag_suggestions : []
+  const suggestedFields = new Set(retagSuggestions.map(suggestion => suggestion.field).filter(Boolean))
 
   const markManualOverride = (path) => {
     setManualOverrides(paths => paths.includes(path) ? paths : [...paths, path])
@@ -506,6 +508,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
     })
     fd.append('manual_overrides', JSON.stringify(manualOverrides))
+    fd.append('resolved_retag_suggestion_ids', JSON.stringify(retagSuggestions.map(suggestion => suggestion.id)))
     if (hangerFile)   fd.append('photo', hangerFile)
     else if (clearHanger) fd.append('clear_photo', 'true')
     if (wornFile)     fd.append('worn_photo', wornFile)
@@ -645,6 +648,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               <span>{isEdit ? 'Piece details' : 'Describe the piece'}</span>
               Start with the essentials, then refine fit, material, and styling intelligence as needed.
             </div>
+
+          {retagSuggestions.length > 0 && (
+            <div className="piece-form-retag-banner">
+              <strong>Retag suggested</strong>
+              <span>Review the highlighted garment fields. Saving resolves these suggestions; no values have been changed automatically.</span>
+              {retagSuggestions.map(suggestion => <small key={suggestion.id}>{suggestion.description}</small>)}
+            </div>
+          )}
 
           {/* ── Basics ──────────────────────────────────────────────── */}
           <Section label="Basics" />
@@ -860,8 +871,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               )}
 
               {constructionConfig.showSleeve && (
-                <div className="form-group">
-                  <label className="form-label">Sleeve</label>
+                <div className={`form-group ${suggestedFields.has('sleeve_type') ? 'retag-field-highlight' : ''}`}>
+                  <label className="form-label">Sleeve {suggestedFields.has('sleeve_type') && <span className="retag-review-marker">Review suggested</span>}</label>
                   <ChipRow options={['sleeveless','cap','short','3/4','long','bell','bishop']} value={form.sleeve_type} onChange={v => set('sleeve_type', v)} />
                 </div>
               )}
@@ -871,8 +882,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 <ChipRow options={constructionConfig.silhouetteOptions} value={form.silhouette} onChange={v => set('silhouette', v)} />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">{constructionConfig.lengthLabel}</label>
+              <div className={`form-group ${suggestedFields.has('length_hits_at') ? 'retag-field-highlight' : ''}`}>
+                <label className="form-label">{constructionConfig.lengthLabel} {suggestedFields.has('length_hits_at') && <span className="retag-review-marker">Review suggested</span>}</label>
                 <ChipRow options={constructionConfig.lengthOptions} value={form.length_hits_at} onChange={v => set('length_hits_at', v)} />
               </div>
 

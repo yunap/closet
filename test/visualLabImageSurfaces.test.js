@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
 const source = fs.readFileSync(new URL('../src/components/VisualLab.jsx', import.meta.url), 'utf8')
+const coreSource = fs.readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
+const taxonomySource = fs.readFileSync(new URL('../lib/feedbackTaxonomy.js', import.meta.url), 'utf8')
 
 test('Visual Lab uses display-sized derivatives while full previews retain originals', () => {
   assert.match(source, /row\.thumbnail_url \|\| uploadThumbnailSrc\(row\.image_url, 'visual-reference'\)/)
@@ -15,4 +17,67 @@ test('Visual Lab uses display-sized derivatives while full previews retain origi
 test('Visual Lab defers off-screen grid decoding', () => {
   assert.match(source, /alt="Calibration" loading="lazy" decoding="async"/)
   assert.match(source, /alt=\{board\.title \|\| 'Saved board'\} loading="lazy" decoding="async"/)
+})
+
+test('Visual Lab deep-links directly to boards outside the initial grid page', () => {
+  assert.match(source, /fetch\(`\/api\/saved-boards\/\$\{encodeURIComponent\(requestedBoardId\)\}`\)/)
+  assert.match(source, /setSelectedBoard\(board\)/)
+})
+
+test('Visual Lab uses a mutually exclusive verdict and structured issue groups', () => {
+  assert.match(taxonomySource, /This feels exactly like me/)
+  assert.match(taxonomySource, /Looks good/)
+  assert.match(source, /selectOverallVerdict\(selectedBoard, label\)/)
+  assert.match(source, /verdictValues = new Set\(OVERALL_VERDICT_LABELS/)
+  assert.match(source, /What feels wrong\?/)
+  assert.match(source, /Fit and shape/)
+  assert.match(taxonomySource, /Looks too bulky/)
+  assert.match(taxonomySource, /My shape disappears/)
+  assert.match(taxonomySource, /Looks too straight up and down/)
+  assert.match(taxonomySource, /Feels too delicate/)
+  assert.match(taxonomySource, /Too formal/)
+  assert.match(taxonomySource, /Feels too quiet or dull/)
+  assert.match(source, /toggleStructuredFeedbackReason\(selectedBoard, 'style_direction', reason\)/)
+  assert.match(source, /toggleStructuredFeedbackReason\(selectedBoard, 'shape_balance', reason\)/)
+})
+
+test('Visual Lab humanizes legacy flat feedback labels on board cards', () => {
+  assert.match(source, /const SAVED_BOARD_FEEDBACK_DISPLAY_LABELS = \[/)
+  assert.match(source, /\.\.\.STYLE_DIRECTION_REASONS/)
+  assert.match(source, /\.\.\.SHAPE_BALANCE_REASONS/)
+  assert.match(source, /\['wrong_energy', 'The overall feel is wrong'\]/)
+})
+
+test('Calibration boards provide client-side search and meaningful feedback filters', () => {
+  assert.match(source, /const \[savedBoardFilter, setSavedBoardFilter\]/)
+  assert.match(source, /const filteredSavedBoards = useMemo/)
+  assert.match(source, /Search boards, pieces, or feedback/)
+  assert.match(source, /\['review', 'Needs review'\]/)
+  assert.match(source, /\['image', 'Image issues'\]/)
+  assert.match(source, /filteredSavedBoards\.map/)
+  assert.match(source, /includeArchived: 'true'/)
+})
+
+test('Visual Lab separates styling diagnosis from image fidelity review', () => {
+  assert.match(source, /Problems in the generated image/)
+  assert.match(taxonomySource, /My body proportions look wrong/)
+  assert.match(taxonomySource, /This does not look like me/)
+  assert.match(source, /Which garment was rendered at the wrong length\?/)
+  assert.match(source, /feedbackDetails: \{ \.\.\.details, wrong_length: next \}/)
+
+  const fidelityControls = taxonomySource.match(/const IMAGE_FIDELITY_FEEDBACK_LABELS = \[([\s\S]*?)\n\]/)?.[1] || ''
+  assert.match(fidelityControls, /wrong_length/)
+  assert.match(fidelityControls, /wrong_garment_details/)
+  assert.match(fidelityControls, /body_proportions_drift/)
+  assert.match(fidelityControls, /identity_drift/)
+  assert.doesNotMatch(fidelityControls, /bad_reference/)
+  assert.match(source, /SAVED_BOARD_FEEDBACK_DISPLAY_LABELS[\s\S]*\['bad_reference', 'Bad reference'\]/)
+})
+
+test('all AI outfit-rendering surfaces include saved-board renderer corrections', () => {
+  assert.match(coreSource, /withSavedBoardRendererMemory\(savedOutfitImagePrompt/)
+  assert.match(coreSource, /withSavedBoardRendererMemory\(wholeWardrobeImagePrompt/)
+  assert.match(coreSource, /withSavedBoardRendererMemory\(wholeWardrobeComparisonSheetPrompt/)
+  assert.match(coreSource, /withSavedBoardRendererMemory\(promptText, \[selectedPiece\]\)/)
+  assert.match(coreSource, /withSavedBoardRendererMemory\([\s\S]*editorialImagePrompt/)
 })

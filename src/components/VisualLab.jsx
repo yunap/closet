@@ -1,7 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import StylistSettings from '../views/StylistSettings'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
+import {
+  OVERALL_VERDICT_LABELS,
+  STYLE_DIRECTION_REASONS,
+  SHAPE_BALANCE_REASONS,
+  IMAGE_FIDELITY_FEEDBACK_LABELS,
+  WRONG_LENGTH_REASONS,
+} from '../../lib/feedbackTaxonomy.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -61,24 +68,17 @@ const calibrationLabelsForKind = (kind, selected = []) => {
   return [...contextual, ...legacySelected]
 }
 
-const SAVED_BOARD_FEEDBACK_LABELS = [
-  ['signature', 'Signature'],
-  ['works', 'Works'],
-  ['almost', 'Almost'],
-  ['not_me', 'Not me'],
-  ['too_safe', 'Too safe'],
-  ['too_boho', 'Costume drift'],
-  ['too_polished', 'Too polished'],
-  ['too_soft', 'Too soft'],
-  ['too_generic', 'Too generic'],
-  ['wrong_proportions', 'Wrong styling proportions'],
-  ['body_proportions_drift', 'Body proportions drift'],
-  ['wrong_silhouette', 'Wrong silhouette'],
-  ['wrong_length', 'Wrong length (hem/sleeves)'],
-  ['wrong_energy', 'Wrong energy'],
-  ['catalog_drift', 'Catalog drift'],
+const SAVED_BOARD_FEEDBACK_DISPLAY_LABELS = [
+  ...OVERALL_VERDICT_LABELS,
+  ...STYLE_DIRECTION_REASONS,
+  ...SHAPE_BALANCE_REASONS,
+  ['wrong_energy', 'The overall feel is wrong'],
+  ['style_direction', 'Style direction'],
+  ['shape_balance', 'Shape and balance'],
+  ...IMAGE_FIDELITY_FEEDBACK_LABELS,
   ['bad_reference', 'Bad reference'],
 ]
+
 
 // ─── VisualLab ────────────────────────────────────────────────────────────────
 // The calibration library panel, a standalone tab. Manages:
@@ -103,12 +103,20 @@ export default function VisualLab({ onGoToThread } = {}) {
   const [calibrationEditNotes, setCalibrationEditNotes]     = useState('')
   const [savedBoards, setSavedBoards]                       = useState([])
   const [savedBoardsLoading, setSavedBoardsLoading]         = useState(false)
+  const [retagPieceId, setRetagPieceId]                     = useState(null)
   const [previewImage, setPreviewImage]                     = useState(null)
   const [selectedBoard, setSelectedBoard]                   = useState(null)
+  const [savedBoardFilter, setSavedBoardFilter]             = useState('all')
+  const [savedBoardSearch, setSavedBoardSearch]             = useState('')
   const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    const firstPieceId = (selectedBoard?.pieces || []).find(piece => Number(piece?.id))?.id
+    setRetagPieceId(firstPieceId ? Number(firstPieceId) : null)
+  }, [selectedBoard?.id])
   // activeSection is URL-backed (survives tab switches); sub-filters stay local.
   const VALID_SECTIONS = ['references', 'saved', 'profile', 'upload']
   const rawSection  = searchParams.get('section')
+  const requestedBoardId = searchParams.get('boardId')
   const activeSection = VALID_SECTIONS.includes(rawSection) ? rawSection : 'references'
   const setActiveSection = (section) => {
     setSearchParams(prev => {
@@ -141,10 +149,11 @@ export default function VisualLab({ onGoToThread } = {}) {
   const loadSavedBoards = async () => {
     setSavedBoardsLoading(true)
     try {
-      const params = new URLSearchParams({ limit: '80' })
+      const params = new URLSearchParams({ limit: '200', includeArchived: 'true' })
       const res = await fetch(`/api/saved-boards?${params.toString()}`)
       const rows = await res.json()
-      setSavedBoards(Array.isArray(rows) ? rows : [])
+      const list = Array.isArray(rows) ? rows : []
+      setSavedBoards(list)
     } catch {
       setSavedBoards([])
     } finally {
@@ -158,6 +167,69 @@ export default function VisualLab({ onGoToThread } = {}) {
 
   // Refresh when panel opens or filter changes
   useEffect(() => { refresh() }, [calibrationFilter])
+
+  useEffect(() => {
+    if (!requestedBoardId) return
+    const requested = savedBoards.find(board => String(board.id) === String(requestedBoardId))
+    if (requested) {
+      setSelectedBoard(requested)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/saved-boards/${encodeURIComponent(requestedBoardId)}`)
+      .then(async response => response.ok ? response.json() : null)
+      .then(board => {
+        if (cancelled || !board?.id) return
+        setSavedBoards(previous => previous.some(row => String(row.id) === String(board.id)) ? previous : [...previous, board])
+        setSelectedBoard(board)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [requestedBoardId, savedBoards])
+
+  const closeSelectedBoard = () => {
+    setSelectedBoard(null)
+    if (!requestedBoardId) return
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous)
+      next.delete('boardId')
+      return next
+    }, { replace: true })
+  }
+
+  const filteredSavedBoards = useMemo(() => {
+    const imageIssueValues = new Set(IMAGE_FIDELITY_FEEDBACK_LABELS.map(([value]) => value))
+    const positiveValues = new Set(['signature', 'works'])
+    const reviewValues = new Set([
+      'almost', 'not_me', 'style_direction', 'shape_balance',
+      ...STYLE_DIRECTION_REASONS.map(([value]) => value),
+      ...SHAPE_BALANCE_REASONS.map(([value]) => value),
+      'wrong_energy', 'wrong_silhouette', 'wrong_proportions', 'catalog_drift',
+    ])
+    const query = savedBoardSearch.trim().toLowerCase()
+    return savedBoards.filter(board => {
+      const labels = Array.isArray(board?.payload?.feedback_labels) ? board.payload.feedback_labels : []
+      const matchesFilter = (() => {
+        if (savedBoardFilter === 'ignored') return board.archived
+        if (board.archived) return false
+        if (savedBoardFilter === 'positive') return labels.some(label => positiveValues.has(label))
+        if (savedBoardFilter === 'review') return labels.some(label => reviewValues.has(label))
+        if (savedBoardFilter === 'image') return labels.some(label => imageIssueValues.has(label))
+        if (savedBoardFilter === 'strong') return board.favorite
+        if (savedBoardFilter === 'hidden') return board.hidden_from_lookbook
+        return true
+      })()
+      if (!matchesFilter || !query) return matchesFilter
+      const searchable = [
+        board.title,
+        board.context_name,
+        board.reason,
+        ...(board.pieces || []).map(piece => piece?.name),
+        ...labels.map(label => SAVED_BOARD_FEEDBACK_DISPLAY_LABELS.find(([value]) => value === label)?.[1] || label),
+      ].filter(Boolean).join(' ').toLowerCase()
+      return searchable.includes(query)
+    })
+  }, [savedBoards, savedBoardFilter, savedBoardSearch])
 
 
 
@@ -303,11 +375,67 @@ export default function VisualLab({ onGoToThread } = {}) {
     const isAdding = !current.includes(label)
     const nextLabels = isAdding ? [...current, label] : current.filter(x => x !== label)
     const patch = { feedbackLabels: nextLabels }
-    if (label === 'signature' && isAdding) patch.favorite = true
-    if (['not_me', 'bad_reference', 'catalog_drift', 'wrong_proportions', 'body_proportions_drift', 'wrong_silhouette', 'wrong_length', 'wrong_energy'].includes(label) && isAdding) {
+    if (label === 'wrong_length' && !isAdding) {
+      patch.feedbackDetails = { ...(payload.feedback_details || {}), wrong_length: [] }
+    }
+    if (['body_proportions_drift', 'wrong_length', 'wrong_garment_details', 'identity_drift'].includes(label) && isAdding) {
       patch.favorite = false
     }
     await patchSavedBoard(row, patch)
+  }
+
+  const selectOverallVerdict = async (row, label) => {
+    const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {}
+    const current = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+    const verdictValues = new Set(OVERALL_VERDICT_LABELS.map(([value]) => value))
+    const isActive = current.includes(label)
+    const wasSignature = current.includes('signature')
+    const nextLabels = current.filter(value => !verdictValues.has(value))
+    if (!isActive) nextLabels.push(label)
+    await patchSavedBoard(row, {
+      feedbackLabels: nextLabels,
+      favorite: label === 'signature' && !isActive
+        ? true
+        : ((wasSignature || ['almost', 'not_me'].includes(label)) && !isActive ? false : undefined),
+    })
+  }
+
+  const toggleStructuredFeedbackReason = async (row, label, reason) => {
+    const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {}
+    const details = payload.feedback_details && typeof payload.feedback_details === 'object'
+      ? payload.feedback_details
+      : {}
+    const current = Array.isArray(details[label]) ? details[label] : []
+    const next = current.includes(reason) ? current.filter(value => value !== reason) : [...current, reason]
+    const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+    const nextLabels = next.length
+      ? (labels.includes(label) ? labels : [...labels, label])
+      : labels.filter(value => value !== label)
+    await patchSavedBoard(row, {
+      feedbackLabels: nextLabels,
+      feedbackDetails: { ...details, [label]: next },
+      favorite: false,
+    })
+  }
+
+  const toggleWrongLengthReason = async (row, issue) => {
+    const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {}
+    const details = payload.feedback_details && typeof payload.feedback_details === 'object' ? payload.feedback_details : {}
+    const current = Array.isArray(details.wrong_length) ? details.wrong_length : []
+    const pieces = Array.isArray(row?.pieces) ? row.pieces.filter(piece => Number(piece?.id)) : []
+    const pieceId = Number(retagPieceId || pieces[0]?.id)
+    const piece = pieces.find(candidate => Number(candidate.id) === pieceId)
+    if (!pieceId || !piece) return
+    const exists = current.some(correction => Number(correction?.piece_id) === pieceId && correction?.issue === issue)
+    const next = exists
+      ? current.filter(correction => !(Number(correction?.piece_id) === pieceId && correction?.issue === issue))
+      : [...current, { piece_id: pieceId, piece_name: piece.name || `Piece ${pieceId}`, issue }]
+    const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+    await patchSavedBoard(row, {
+      feedbackLabels: labels.includes('wrong_length') ? labels : [...labels, 'wrong_length'],
+      feedbackDetails: { ...details, wrong_length: next },
+      favorite: false,
+    })
   }
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -429,7 +557,7 @@ export default function VisualLab({ onGoToThread } = {}) {
       )}
 
       {activeSection === 'profile' && (
-        <StylistSettings mode="style" embedded />
+        <StylistSettings mode="style" embedded onGoToThread={onGoToThread} />
       )}
 
       {/* Reference images grid */}
@@ -554,14 +682,39 @@ export default function VisualLab({ onGoToThread } = {}) {
             <h2>Calibration boards</h2>
             <p>Review generated looks and record what should—or should not—guide future styling.</p>
           </div>
-          <span>{savedBoards.length} {savedBoards.length === 1 ? 'board' : 'boards'}</span>
+          <span>{filteredSavedBoards.length} {filteredSavedBoards.length === 1 ? 'board' : 'boards'}</span>
+        </div>
+
+        <div className="calibration-board-filters" aria-label="Filter calibration boards">
+          <input
+            type="search"
+            value={savedBoardSearch}
+            onChange={event => setSavedBoardSearch(event.target.value)}
+            placeholder="Search boards, pieces, or feedback…"
+            aria-label="Search calibration boards"
+          />
+          <div className="calibration-board-filter-chips">
+            {[
+              ['all', 'All'],
+              ['positive', 'Positive'],
+              ['review', 'Needs review'],
+              ['image', 'Image issues'],
+              ['strong', 'Use strongly'],
+              ['hidden', 'Hidden'],
+              ['ignored', 'Ignored'],
+            ].map(([value, label]) => (
+              <button key={value} type="button" className={`chip ${savedBoardFilter === value ? 'active' : ''}`} onClick={() => setSavedBoardFilter(value)}>{label}</button>
+            ))}
+          </div>
         </div>
 
         {!savedBoards.length ? (
           <div className="style-profile-empty">No calibration boards saved yet.</div>
+        ) : !filteredSavedBoards.length ? (
+          <div className="style-profile-empty">No boards match these filters.</div>
         ) : (
           <div className="calibration-board-grid">
-            {savedBoards.map(board => {
+            {filteredSavedBoards.map(board => {
               const feedback = Array.isArray(board?.payload?.feedback_labels) ? board.payload.feedback_labels : []
               return (
               <button key={board.id} type="button" className={`calibration-board-card ${board.archived ? 'is-archived' : ''}`} onClick={() => setSelectedBoard(board)}>
@@ -579,7 +732,7 @@ export default function VisualLab({ onGoToThread } = {}) {
                   {!!feedback.length && (
                     <div className="calibration-board-feedback-summary">
                       {feedback.slice(0, 2).map(label => {
-                        const found = SAVED_BOARD_FEEDBACK_LABELS.find(([value]) => value === label)
+                        const found = SAVED_BOARD_FEEDBACK_DISPLAY_LABELS.find(([value]) => value === label)
                         return <span key={label}>{found ? found[1] : label}</span>
                       })}
                       {feedback.length > 2 && <span>+{feedback.length - 2}</span>}
@@ -596,9 +749,9 @@ export default function VisualLab({ onGoToThread } = {}) {
       </div>
 
       {selectedBoard && (
-        <div className="modal-overlay calibration-board-detail-overlay" role="dialog" aria-modal="true" onClick={() => setSelectedBoard(null)}>
+        <div className="modal-overlay calibration-board-detail-overlay" role="dialog" aria-modal="true" onClick={closeSelectedBoard}>
           <div className="calibration-board-detail" onClick={e => e.stopPropagation()}>
-            <button className="modal-close calibration-board-detail-close" onClick={() => setSelectedBoard(null)} aria-label="Close board details">×</button>
+            <button className="modal-close calibration-board-detail-close" onClick={closeSelectedBoard} aria-label="Close board details">×</button>
             <div className="calibration-board-detail-media">
               {selectedBoard.image_url && (
                 <button type="button" onClick={() => setPreviewImage({ src: selectedBoard.image_url, title: selectedBoard.title || 'Saved board', meta: selectedBoard.context_name || '' })}>
@@ -630,12 +783,57 @@ export default function VisualLab({ onGoToThread } = {}) {
               <div className="calibration-board-detail-section">
                 <h3>Your feedback</h3>
                 <p>Select everything the stylist should remember about this board.</p>
+                <h4 className="calibration-board-feedback-group-title">Overall</h4>
                 <div className="calibration-board-feedback-options">
-                  {SAVED_BOARD_FEEDBACK_LABELS.map(([label, text]) => {
+                  {OVERALL_VERDICT_LABELS.map(([label, text]) => {
+                    const active = Array.isArray(selectedBoard?.payload?.feedback_labels) && selectedBoard.payload.feedback_labels.includes(label)
+                    return <button key={label} type="button" className={active ? 'active' : ''} onClick={() => selectOverallVerdict(selectedBoard, label)}>{text}</button>
+                  })}
+                </div>
+                <h4 className="calibration-board-feedback-group-title">What feels wrong?</h4>
+                <div className="calibration-board-feedback-options">
+                  {STYLE_DIRECTION_REASONS.map(([reason, text]) => {
+                    const selected = selectedBoard?.payload?.feedback_details?.style_direction
+                    const active = Array.isArray(selected) && selected.includes(reason)
+                    return <button key={reason} type="button" className={active ? 'active' : ''} onClick={() => toggleStructuredFeedbackReason(selectedBoard, 'style_direction', reason)}>{text}</button>
+                  })}
+                </div>
+                <h4 className="calibration-board-feedback-group-title">Fit and shape</h4>
+                <div className="calibration-board-feedback-options">
+                  {SHAPE_BALANCE_REASONS.map(([reason, text]) => {
+                    const selected = selectedBoard?.payload?.feedback_details?.shape_balance
+                    const active = Array.isArray(selected) && selected.includes(reason)
+                    return <button key={reason} type="button" className={active ? 'active' : ''} onClick={() => toggleStructuredFeedbackReason(selectedBoard, 'shape_balance', reason)}>{text}</button>
+                  })}
+                </div>
+                <h4 className="calibration-board-feedback-group-title">Problems in the generated image</h4>
+                <div className="calibration-board-feedback-options">
+                  {IMAGE_FIDELITY_FEEDBACK_LABELS.map(([label, text]) => {
                     const active = Array.isArray(selectedBoard?.payload?.feedback_labels) && selectedBoard.payload.feedback_labels.includes(label)
                     return <button key={label} type="button" className={active ? 'active' : ''} onClick={() => toggleBoardFeedback(selectedBoard, label)}>{text}</button>
                   })}
                 </div>
+                {Array.isArray(selectedBoard?.payload?.feedback_labels) && selectedBoard.payload.feedback_labels.includes('wrong_length') && (
+                  <div className="calibration-board-feedback-detail">
+                    <h4>Which garment was rendered at the wrong length?</h4>
+                    <p>This creates a review suggestion; it does not change the garment automatically.</p>
+                    <div className="calibration-board-feedback-options">
+                      {(selectedBoard.pieces || []).filter(piece => Number(piece?.id)).map((piece, index) => {
+                        const chosenId = Number(retagPieceId || (selectedBoard.pieces || []).find(candidate => Number(candidate?.id))?.id)
+                        return <button key={piece.id} type="button" className={chosenId === Number(piece.id) ? 'active' : ''} onClick={() => setRetagPieceId(Number(piece.id))}>{piece.name || `Piece ${index + 1}`}</button>
+                      })}
+                    </div>
+                    <h4 className="calibration-board-feedback-detail-question">What was wrong?</h4>
+                    <div className="calibration-board-feedback-options">
+                      {WRONG_LENGTH_REASONS.map(([issue, text]) => {
+                        const pieceId = Number(retagPieceId || (selectedBoard.pieces || []).find(piece => Number(piece?.id))?.id)
+                        const corrections = selectedBoard?.payload?.feedback_details?.wrong_length
+                        const active = Array.isArray(corrections) && corrections.some(correction => Number(correction?.piece_id) === pieceId && correction?.issue === issue)
+                        return <button key={issue} type="button" className={active ? 'active' : ''} onClick={() => toggleWrongLengthReason(selectedBoard, issue)}>{text}</button>
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="calibration-board-detail-controls">

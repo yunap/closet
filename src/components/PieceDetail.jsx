@@ -285,6 +285,12 @@ export default function PieceDetail({
           </div>
 
           <div className="piece-detail-action-dock">
+            {!!piece.retag_suggestions?.length && (
+              <div className="piece-retag-suggestion">
+                <strong>Retag suggested</strong>
+                {piece.retag_suggestions.map(suggestion => <span key={suggestion.id}>{suggestion.description}</span>)}
+              </div>
+            )}
             {onSendToStylist && (
               <button
                 className="garment-ask-stylist"

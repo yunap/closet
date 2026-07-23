@@ -86,6 +86,7 @@ export default function PieceCard({ piece, onTap, onFavorite }) {
 
       {/* Badges */}
       <div className="piece-card-badges">
+        {!!piece.retag_suggestions?.length && <span className="badge badge-retag">Retag suggested</span>}
         {piece.status === 'needs-repair' && <span className="badge badge-repair">repair</span>}
         {piece.status === 'consider-donating' && <span className="badge badge-donate">donate?</span>}
       </div>
