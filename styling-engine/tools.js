@@ -1176,6 +1176,19 @@ async function executeToolInternal(name, args, toolContext = {}) {
         toolContext.season = resolvedSeason
         toolContext.activity = resolvedActivity
         const anchorPieceIds = resolved.filter(p => p.anchor).map(p => Number(p.id))
+        const proposedPieceIds = resolved.map(p => Number(p.id))
+        const proposedPieceKey = proposedPieceIds.slice().sort((a, b) => a - b).join('|')
+        const existingOutfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
+        // A retry that corrects an earlier rejected attempt (e.g. re-proposing the exact same
+        // pieces with anchor:true after a hard-gate rejection) is a duplicate of that attempt,
+        // not a competing direction — don't render both as separate "Direction" cards. Drop the
+        // superseded broken card and carry its rejection forward as an honest note on the
+        // surviving card instead of silently discarding it.
+        const supersededBroken = existingOutfits.find(outfit =>
+          outfit?.broken &&
+          Array.isArray(outfit.pieceIds) &&
+          outfit.pieceIds.slice().sort((a, b) => a - b).join('|') === proposedPieceKey
+        )
         const proposedOutfit = {
           label: label || 'Outfit',
           ...(anchorPieceIds.length ? { anchorPieceIds } : {}),
@@ -1184,16 +1197,19 @@ async function executeToolInternal(name, args, toolContext = {}) {
           occasionContext: occasion_context || '',
           why: why_it_works || '',
           reason: why_it_works || '',
-          pieceIds: resolved.map(p => Number(p.id)),
+          pieceIds: proposedPieceIds,
           pieces: resolved,
           missingPieces: Array.isArray(missing_gaps) ? missing_gaps.filter(Boolean).map(String) : [],
           source: 'proposed',
           activity: resolvedActivity,
           debug: outfitDebug,
-          previewOnly: true
+          previewOnly: true,
+          ...(supersededBroken ? { engineNote: `Approved with an exception: ${supersededBroken.rejectionReason}` } : {})
         }
-        const existingOutfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
-        toolContext.generatedOutfits = [...existingOutfits, proposedOutfit]
+        toolContext.generatedOutfits = [
+          ...existingOutfits.filter(outfit => outfit !== supersededBroken),
+          proposedOutfit
+        ]
         bumpFreeformDiagnostic(toolContext, 'proposeCalls')
         return {
           status: "success",
