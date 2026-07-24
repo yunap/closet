@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { getColorSwatch, sortColorNames } from '../utils/colors'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
+import { SAVED_BOARD_FEEDBACK_DISPLAY_LABELS } from '../../lib/feedbackTaxonomy.js'
 
 const OCCASIONS = [
   { value: '',             label: 'All Occasions' },
@@ -33,8 +34,8 @@ const SORT_OPTIONS = [
   { value: 'oldest',       label: 'Oldest First' },
   { value: 'a-z',          label: 'Alphabetical (A-Z)' },
   { value: 'z-a',          label: 'Alphabetical (Z-A)' },
-  { value: 'most-pieces',  label: 'Wardrobe Density (High)' },
-  { value: 'least-pieces', label: 'Wardrobe Density (Low)' },
+  { value: 'most-pieces',  label: 'Most pieces' },
+  { value: 'least-pieces', label: 'Fewest pieces' },
 ]
 const OCCASION_ICONS = {
   casual: '☀', city: '◈', evening: '◇', 'smart-casual': '✦', outdoor: '◎', home: '○', walking: '👣'
@@ -48,19 +49,31 @@ const markOutfitImageOrientation = (event) => {
 const formatGeneratedOutfitType = (value) => String(value || 'AI generated')
   .replace(/_board$/i, '')
   .replaceAll('_', ' ')
-const FEEDBACK_LABELS_MAP = {
-  signature: 'Signature',
-  works: 'Works',
-  not_me: 'Not Me',
-  too_safe: 'Too Safe',
-  too_soft: 'Too Soft',
-  too_generic: 'Too Generic',
-  wrong_proportions: 'Wrong Proportions',
-  wrong_silhouette: 'Wrong Silhouette',
-  catalog_drift: 'Catalog Drift',
-  weak_structure: 'Weak Structure',
-  weak_contrast: 'Weak Contrast',
-  bad_grounding: 'Bad Grounding',
+const FEEDBACK_LABELS_MAP = Object.fromEntries(SAVED_BOARD_FEEDBACK_DISPLAY_LABELS)
+const formatFeedbackLabel = label => FEEDBACK_LABELS_MAP[label]
+  || String(label || '').replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase())
+
+const generatedBoardScope = (board) => {
+  if (board?.board_type === 'render_preview') return 'Single generated look'
+  if (board?.context_type === 'piece') return 'Direction around a piece'
+  if (board?.context_type === 'wardrobe') return 'Whole-wardrobe direction'
+  if (board?.context_type === 'outfit') return 'Direction from an outfit'
+  return formatGeneratedOutfitType(board?.board_type)
+}
+
+const generatedBoardMediaKind = (board) => {
+  const type = String(board?.board_type || '')
+  return /(?:preview_sheet|comparison)/i.test(type) || type === 'whole_wardrobe_board'
+    ? 'document'
+    : 'look'
+}
+
+const generatedBoardReviewState = (board) => {
+  const labels = Array.isArray(board?.payload?.feedback_labels) ? board.payload.feedback_labels : []
+  if (labels.includes('signature')) return 'Signature'
+  if (labels.includes('works')) return 'Works'
+  if (labels.length > 0) return 'Needs review'
+  return 'Not reviewed'
 }
 
 const resolveUploadImageSrc = (photo) => {
@@ -949,7 +962,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
               <label className="form-label">Status</label>
             </div>
             <div className="chip-grid">
-              {['confirmed','trying','archived'].map(s => <button key={s} className={`chip-toggle ${status === s ? 'active' : ''}`} onClick={() => setStatus(s)} style={{ textTransform: 'capitalize' }}>{s}</button>)}
+              {['confirmed','trying'].map(s => <button key={s} className={`chip-toggle ${status === s ? 'active' : ''}`} onClick={() => setStatus(s)} style={{ textTransform: 'capitalize' }}>{s}</button>)}
             </div>
           </div>
           <div className="form-group">
@@ -979,7 +992,21 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
   const [mainPieceId, setMainPieceId] = useState(outfit.main_piece_id || null)
   const [showSelector, setShowSelector] = useState(false)
   const [previewImage, setPreviewImage] = useState(null)
-  const [isMoreOpen, setIsMoreOpen] = useState(false)
+  const dialogRef = useRef(null)
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    const appScroller = dialog?.closest('.app-main')
+    const previousAppOverflow = appScroller?.style.overflow
+    const previousBodyOverflow = document.body.style.overflow
+    if (appScroller) appScroller.style.overflow = 'hidden'
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      if (appScroller) appScroller.style.overflow = previousAppOverflow || ''
+      document.body.style.overflow = previousBodyOverflow
+    }
+  }, [])
 
   const handleDelete = () => {
     if (confirm(`Delete "${outfit.name}"?`)) onDelete(outfit)
@@ -1000,8 +1027,15 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
 
   return (
     <>
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal-sheet outfit-detail-sheet" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay outfit-detail-overlay" onClick={onClose}>
+        <div
+          ref={dialogRef}
+          className="modal-sheet outfit-detail-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="outfit-detail-title"
+          onClick={e => e.stopPropagation()}
+        >
           <div className="modal-handle" />
           <button
             type="button"
@@ -1035,45 +1069,8 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
             <section className="outfit-detail-section outfit-identity-section" aria-label="Outfit identity">
               <div className="outfit-identity-header">
                 <div>
-                  <div className="detail-title">{outfit.name}</div>
+                  <div className="detail-title" id="outfit-detail-title">{outfit.name}</div>
                   <div className="detail-category" style={{ textTransform: 'capitalize' }}>{outfit.occasion} · {outfit.season}</div>
-                </div>
-                <div className="outfit-overflow">
-                  <button
-                    type="button"
-                    className="outfit-overflow-btn"
-                    onClick={() => setIsMoreOpen(open => !open)}
-                    aria-haspopup="menu"
-                    aria-expanded={isMoreOpen}
-                    aria-label="More outfit actions"
-                  >
-                    ⋯
-                  </button>
-                  {isMoreOpen && (
-                    <div className="outfit-overflow-menu" role="menu">
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setIsMoreOpen(false)
-                          onEdit({ ...outfit, pieces, main_piece_id: mainPieceId })
-                        }}
-                      >
-                        Edit outfit
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="danger"
-                        onClick={() => {
-                          setIsMoreOpen(false)
-                          handleDelete()
-                        }}
-                      >
-                        Delete outfit
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
               <div className="detail-tags outfit-status-tags">
@@ -1084,17 +1081,8 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
             </section>
 
             <section className="outfit-detail-section outfit-composition-section" aria-label="Outfit composition">
-              <div className="outfit-section-header">
-                <div className="form-label">
-                  {pieces.length > 0 ? `${pieces.length} linked ${pieces.length === 1 ? 'piece' : 'pieces'}` : 'No pieces linked'}
-                </div>
-                <button
-                  type="button"
-                  className="outfit-text-action"
-                  onClick={() => setShowSelector(true)}
-                >
-                  {pieces.length > 0 ? 'Edit pieces' : '+ Link pieces'}
-                </button>
+              <div className="form-label">
+                {pieces.length > 0 ? `${pieces.length} linked ${pieces.length === 1 ? 'piece' : 'pieces'}` : 'No pieces linked'}
               </div>
 
               {pieces.length > 0 && (
@@ -1131,6 +1119,13 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
                   })}
                 </div>
               )}
+              <button
+                type="button"
+                className="outfit-composition-action"
+                onClick={() => setShowSelector(true)}
+              >
+                {pieces.length > 0 ? 'Edit linked pieces' : '+ Link wardrobe pieces'}
+              </button>
             </section>
 
             <section className="outfit-detail-section outfit-styling-actions" aria-label="Styling actions">
@@ -1141,6 +1136,22 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
               >
                 ◇ Ask stylist about this outfit
               </button>
+              <div className="outfit-management-actions" aria-label="Outfit management">
+                <button
+                  type="button"
+                  className="outfit-edit-action"
+                  onClick={() => onEdit({ ...outfit, pieces, main_piece_id: mainPieceId })}
+                >
+                  Edit outfit
+                </button>
+                <button
+                  type="button"
+                  className="outfit-delete-action"
+                  onClick={handleDelete}
+                >
+                  Delete outfit
+                </button>
+              </div>
             </section>
           </div>
           </div>
@@ -1185,14 +1196,104 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
 }
 
 // ── Board Detail ──────────────────────────────────────────────────────────────
-function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }) {
+function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread, onCreateVariation }) {
   const [previewImage, setPreviewImage] = useState(null)
   const boardImageSrc = resolveUploadImageSrc(board.image_url)
+  const dialogRef = useRef(null)
+  const previewDialogRef = useRef(null)
+  const previewTriggerRef = useRef(null)
+  const titleId = `generated-outfit-title-${board.id}`
+  const previewTitleId = `generated-outfit-preview-title-${board.id}`
+
+  const closePreview = useCallback(() => {
+    setPreviewImage(null)
+    requestAnimationFrame(() => previewTriggerRef.current?.focus())
+  }, [])
+  const openPreview = useCallback((event, image) => {
+    previewTriggerRef.current = event.currentTarget
+    setPreviewImage(image)
+  }, [])
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return undefined
+    const appScroller = dialog.closest('.app-main')
+    const previousAppOverflow = appScroller?.style.overflow
+    const previousBodyOverflow = document.body.style.overflow
+    if (appScroller) appScroller.style.overflow = 'hidden'
+    document.body.style.overflow = 'hidden'
+    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const focusable = () => Array.from(dialog.querySelectorAll(focusableSelector))
+    focusable()[0]?.focus()
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const controls = focusable()
+      if (!controls.length) return
+      const first = controls[0]
+      const last = controls[controls.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    dialog.addEventListener('keydown', handleKeyDown)
+    return () => {
+      dialog.removeEventListener('keydown', handleKeyDown)
+      if (appScroller) appScroller.style.overflow = previousAppOverflow || ''
+      document.body.style.overflow = previousBodyOverflow
+    }
+  }, [onClose])
+
+  useEffect(() => {
+    if (!previewImage) return undefined
+    const dialog = previewDialogRef.current
+    if (!dialog) return undefined
+    const focusableSelector = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+    const focusable = () => Array.from(dialog.querySelectorAll(focusableSelector))
+    focusable()[0]?.focus()
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closePreview()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const controls = focusable()
+      if (!controls.length) return
+      const first = controls[0]
+      const last = controls[controls.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    dialog.addEventListener('keydown', handleKeyDown)
+    return () => dialog.removeEventListener('keydown', handleKeyDown)
+  }, [previewImage, closePreview])
 
   return (
     <>
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal-sheet board-detail-sheet" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay board-detail-overlay" onClick={onClose}>
+        <div
+          ref={dialogRef}
+          className="modal-sheet board-detail-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          onClick={e => e.stopPropagation()}
+        >
           <div className="modal-handle" />
           <button
             type="button"
@@ -1208,7 +1309,7 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
             <button
               type="button"
               className="detail-photo-button"
-              onClick={() => setPreviewImage({
+              onClick={event => openPreview(event, {
                 src: boardImageSrc,
                 title: board.title || 'Generated outfit',
                 meta: board.context_name || ''
@@ -1224,19 +1325,21 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
           </div>
           <div className="detail-body board-detail-body">
             <section className="board-detail-section board-identity-section" aria-label="Generated outfit identity">
-              <div className="detail-title">{board.title}</div>
+              <div className="board-generated-label">Generated idea</div>
+              <div className="detail-title" id={titleId}>{board.title}</div>
               {board.context_name && (
                 <div className="detail-category board-context">
                   {board.context_name}
                 </div>
               )}
               <div className="detail-tags board-status-tags">
-                <span className="detail-tag">{formatGeneratedOutfitType(board.board_type)}</span>
-                {board.favorite && <span className="detail-tag" style={{ color: 'var(--accent)' }}>♥ Favorite</span>}
+                <span className="detail-tag">{generatedBoardScope(board)}</span>
+                <span className="detail-tag">{generatedBoardReviewState(board)}</span>
+                {board.favorite && <span className="detail-tag" style={{ color: 'var(--accent)' }}>♥ Pinned</span>}
               </div>
               {board.reason && (
                 <div className="board-story">
-                  <div className="board-section-eyebrow">Why this works</div>
+                  <div className="board-section-eyebrow">Why it was suggested</div>
                   <div className="board-story-copy">{board.reason}</div>
                 </div>
               )}
@@ -1255,7 +1358,7 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
             {board.pieces?.length > 0 && (
               <section className="board-detail-section board-pieces-section" aria-label="Garment references">
                 <div className="board-section-eyebrow">
-                  {board.pieces.length} {board.pieces.length === 1 ? 'garment reference' : 'garment references'}
+                  {board.pieces.length} wardrobe {board.pieces.length === 1 ? 'piece' : 'pieces'}
                 </div>
                 <div className="board-piece-list">
                   {board.pieces.map((p, idx) => {
@@ -1266,7 +1369,7 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
                         <button
                           type="button"
                           disabled={!photoPath}
-                          onClick={() => photoPath && setPreviewImage({
+                          onClick={event => photoPath && openPreview(event, {
                             src: photoPath,
                             title: p.name || 'Garment',
                             meta: p.category || ''
@@ -1307,11 +1410,11 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
             {/* Stylist feedback tags */}
             {board.payload?.feedback_labels?.length > 0 && (
               <section className="board-detail-section">
-                <div className="board-section-eyebrow">Stylist feedback</div>
+                <div className="board-section-eyebrow">Your feedback</div>
                 <div className="board-feedback-list">
                   {board.payload.feedback_labels.map(lbl => (
                     <span key={lbl} className="detail-tag board-feedback-tag">
-                      {FEEDBACK_LABELS_MAP[lbl] || lbl}
+                      {formatFeedbackLabel(lbl)}
                     </span>
                   ))}
                 </div>
@@ -1321,6 +1424,16 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
             <section className="board-detail-section board-actions-section" aria-label="Generated outfit actions">
               <button type="button" onClick={() => onSendToStylist(board)} className="garment-ask-stylist board-stylist-action">
                 ◇ Ask stylist about this outfit
+              </button>
+              <button
+                type="button"
+                className="board-variation-action"
+                onClick={() => {
+                  onClose?.()
+                  onCreateVariation?.()
+                }}
+              >
+                Start a new outfit brief
               </button>
 
               <div className="board-utility-actions">
@@ -1350,19 +1463,20 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
         <div
           role="dialog"
           aria-modal="true"
+          aria-labelledby={previewTitleId}
           className="image-preview-overlay"
           onClick={e => {
             e.stopPropagation()
-            setPreviewImage(null)
+            closePreview()
           }}
         >
-          <div className="image-preview-dialog" onClick={e => e.stopPropagation()}>
+          <div ref={previewDialogRef} className="image-preview-dialog" onClick={e => e.stopPropagation()}>
             <div className="image-preview-header">
               <div style={{ minWidth: 0 }}>
-                <div className="image-preview-title">{previewImage.title}</div>
+                <div id={previewTitleId} className="image-preview-title">{previewImage.title}</div>
                 {previewImage.meta && <div className="image-preview-meta">{previewImage.meta}</div>}
               </div>
-              <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+              <button className="chip" onClick={closePreview}>Close</button>
             </div>
             <img className="image-preview-img" src={previewImage.src} alt={previewImage.title} />
           </div>
@@ -1377,7 +1491,7 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread }
 function Toast({ message, onDone }) {
   useEffect(() => { const t = setTimeout(onDone, 3000); return () => clearTimeout(t) }, [])
   return (
-    <div style={{
+    <div role="status" aria-live="polite" style={{
       position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
       background: 'var(--text)', color: '#fff', padding: '10px 20px',
       borderRadius: 24, fontSize: 13, fontWeight: 500, zIndex: 400,
@@ -1433,10 +1547,15 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
   const [editOutfit, setEditOutfit]     = useState(null)
   const [detail, setDetail]             = useState(null)
   const outfitCardFocusRef              = useRef(null)
+  const boardCardFocusRef               = useRef(null)
+  const occasionFilterRef               = useRef(null)
+  const seasonFilterRef                 = useRef(null)
+  const sortButtonRef                   = useRef(null)
   const [toast, setToast]               = useState(null)
 
   const [savedBoards, setSavedBoards]   = useState([])
   const [loadingBoards, setLoadingBoards] = useState(false)
+  const [boardsError, setBoardsError]   = useState('')
   const [boardDetail, setBoardDetail]   = useState(null)
 
   const fetchOutfits = async () => {
@@ -1448,12 +1567,15 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
 
   const fetchSavedBoards = async () => {
     setLoadingBoards(true)
+    setBoardsError('')
     try {
       const res = await fetch('/api/saved-boards?limit=100&excludeHidden=true')
+      if (!res.ok) throw new Error(`Request failed (${res.status})`)
       const data = await res.json()
       setSavedBoards(Array.isArray(data) ? data : [])
     } catch (err) {
       console.error('Error fetching saved boards:', err)
+      setBoardsError('Generated outfits could not be loaded. Your saved ideas are still safe.')
     } finally {
       setLoadingBoards(false)
     }
@@ -1463,6 +1585,23 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
     fetchOutfits()
     fetchSavedBoards()
   }, [])
+
+  useEffect(() => {
+    if (!openFilterMenu && !isSortOpen) return undefined
+    const handleEscape = event => {
+      if (event.key !== 'Escape') return
+      const trigger = isSortOpen
+        ? sortButtonRef.current
+        : openFilterMenu === 'occasion'
+          ? occasionFilterRef.current
+          : seasonFilterRef.current
+      setOpenFilterMenu(null)
+      setIsSortOpen(false)
+      requestAnimationFrame(() => trigger?.focus())
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [openFilterMenu, isSortOpen])
 
   // Deep link from elsewhere in the app (e.g. the Stylist outfit landing) straight
   // into this outfit's detail card. One-shot: the param is consumed and cleared so
@@ -1492,12 +1631,19 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
   }
 
   const handleBoardFav = async (board) => {
-    await fetch(`/api/saved-boards/${board.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ favorite: !board.favorite })
-    })
-    fetchSavedBoards()
+    try {
+      const response = await fetch(`/api/saved-boards/${board.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorite: !board.favorite })
+      })
+      if (!response.ok) throw new Error(`Request failed (${response.status})`)
+      setToast(board.favorite ? 'Generated outfit unpinned' : 'Generated outfit pinned')
+      fetchSavedBoards()
+    } catch (error) {
+      console.error('Error updating generated outfit pin:', error)
+      setToast('Could not update this pin. Please try again.')
+    }
   }
 
   const handleBoardDelete = async (board) => {
@@ -1510,14 +1656,6 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
     fetchSavedBoards()
   }
 
-  const handleCardKeyDown = (event, openDetail) => {
-    if (event.target !== event.currentTarget) return
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      openDetail()
-    }
-  }
-
   const openOutfitDetail = (outfit, event) => {
     outfitCardFocusRef.current = event?.currentTarget || null
     setDetail(outfit)
@@ -1526,6 +1664,16 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
   const closeOutfitDetail = () => {
     setDetail(null)
     requestAnimationFrame(() => outfitCardFocusRef.current?.focus?.())
+  }
+
+  const openBoardDetail = (board, event) => {
+    boardCardFocusRef.current = event?.currentTarget || null
+    setBoardDetail(board)
+  }
+
+  const closeBoardDetail = () => {
+    setBoardDetail(null)
+    requestAnimationFrame(() => boardCardFocusRef.current?.focus?.())
   }
 
   const handleSave = (outfit, piecesAdded) => {
@@ -1601,32 +1749,11 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
     return 0
   })
 
+  const generatedSortBy = ['most-pieces', 'least-pieces'].includes(sortBy) ? 'newest' : sortBy
   const filteredAndSortedBoards = savedBoards.filter(b => {
     if (b.hidden_from_lookbook) return false
-    // 1. Occasion Filter
-    if (filterOcc) {
-      const qOcc = filterOcc.toLowerCase().replace(/[-_]+/g, ' ')
-      const titleMatch = b.title?.toLowerCase().includes(qOcc)
-      const reasonMatch = b.reason?.toLowerCase().includes(qOcc)
-      const watchMatch = b.watch_for?.toLowerCase().includes(qOcc)
-      const contextMatch = b.context_name?.toLowerCase().includes(qOcc)
-      const piecesMatch = b.pieces?.some(p => 
-        Array.isArray(p.occasions) && p.occasions.some(occ => occ.toLowerCase().replace(/[-_]+/g, ' ').includes(qOcc))
-      )
-      if (!titleMatch && !reasonMatch && !watchMatch && !contextMatch && !piecesMatch) return false
-    }
-
-    // 2. Climate / Season Filter
-    if (filterSeason) {
-      const qSeason = filterSeason.toLowerCase()
-      const titleMatch = b.title?.toLowerCase().includes(qSeason)
-      const reasonMatch = b.reason?.toLowerCase().includes(qSeason)
-      const watchMatch = b.watch_for?.toLowerCase().includes(qSeason)
-      const piecesMatch = b.pieces?.some(p => seasonMatchesFilter(p.season, filterSeason))
-      if (!titleMatch && !reasonMatch && !watchMatch && !piecesMatch) return false
-    }
-
-    // 3. Garment-Aware Search
+    // Generated-board briefs do not consistently persist occasion/season yet.
+    // Search only fields the board explicitly owns; do not infer its brief from garment metadata.
     if (search.trim()) {
       const q = search.toLowerCase().trim()
       const matchTitle = b.title?.toLowerCase().includes(q)
@@ -1654,23 +1781,17 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
     }
 
     // 2. Chosen sort key
-    if (sortBy === 'newest') {
+    if (generatedSortBy === 'newest') {
       return b.id - a.id
     }
-    if (sortBy === 'oldest') {
+    if (generatedSortBy === 'oldest') {
       return a.id - b.id
     }
-    if (sortBy === 'a-z') {
+    if (generatedSortBy === 'a-z') {
       return (a.title || '').localeCompare(b.title || '')
     }
-    if (sortBy === 'z-a') {
+    if (generatedSortBy === 'z-a') {
       return (b.title || '').localeCompare(a.title || '')
-    }
-    if (sortBy === 'most-pieces') {
-      return (b.pieces?.length || 0) - (a.pieces?.length || 0)
-    }
-    if (sortBy === 'least-pieces') {
-      return (a.pieces?.length || 0) - (b.pieces?.length || 0)
     }
     return 0
   })
@@ -1688,7 +1809,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
         <div className="view-header-top lookbook-header-primary">
           <div>
             <div className="view-title">Lookbook</div>
-            <div className="view-subtitle">
+            <div className="view-subtitle" role="status" aria-live="polite">
               {activeSubTab === 'my-outfits' ? (
                 filteredAndSorted.length === outfits.length
                   ? `${outfits.length} outfits`
@@ -1705,6 +1826,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
               type="button"
               className={`subtab-btn ${activeSubTab === 'my-outfits' ? 'active' : ''}`}
               onClick={() => setFilter({ view: 'my-outfits' })}
+              aria-pressed={activeSubTab === 'my-outfits'}
             >
               <span>My Outfits</span>
               <span className="subtab-count">{outfits.length}</span>
@@ -1712,7 +1834,8 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
             <button
               type="button"
               className={`subtab-btn ${activeSubTab === 'generated-outfits' ? 'active' : ''}`}
-              onClick={() => setFilter({ view: 'generated-outfits' })}
+              onClick={() => setFilter({ view: 'generated-outfits', occasion: '', season: '' })}
+              aria-pressed={activeSubTab === 'generated-outfits'}
             >
               <span>Generated Outfits</span>
               <span className="subtab-count">{savedBoards.length}</span>
@@ -1745,16 +1868,20 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
             <span className="search-icon">◎</span>
             <input
               type="search"
-              placeholder="Search outfits..."
+              aria-label={activeSubTab === 'my-outfits' ? 'Search outfits or linked pieces' : 'Search generated ideas or wardrobe pieces'}
+              placeholder={activeSubTab === 'my-outfits' ? 'Search outfits or pieces…' : 'Search generated ideas or pieces…'}
               value={search}
               onChange={e => setFilter({ q: e.target.value })}
             />
           </div>
 
-          <div className="lookbook-filter-menu">
+          {activeSubTab === 'my-outfits' && <div className="lookbook-filter-menu">
             <button
+              ref={occasionFilterRef}
               type="button"
               className={`filter-menu-btn ${filterOcc ? 'active' : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={openFilterMenu === 'occasion'}
               onClick={e => {
                 e.stopPropagation()
                 setOpenFilterMenu(openFilterMenu === 'occasion' ? null : 'occasion')
@@ -1766,12 +1893,14 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
             {openFilterMenu === 'occasion' && (
               <>
                 <div className="custom-select-backdrop" onClick={() => setOpenFilterMenu(null)} />
-                <div className="filter-menu-popover">
+                <div className="filter-menu-popover" role="menu" aria-label="Filter by occasion">
                   {OCCASIONS.map(o => (
                     <button
                       key={o.value}
                       type="button"
                       className={`custom-select-option ${filterOcc === o.value ? 'active' : ''}`}
+                      role="menuitemradio"
+                      aria-checked={filterOcc === o.value}
                       onClick={() => {
                         setFilter({ occasion: o.value })
                         setOpenFilterMenu(null)
@@ -1784,12 +1913,15 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
                 </div>
               </>
             )}
-          </div>
+          </div>}
 
-          <div className="lookbook-filter-menu">
+          {activeSubTab === 'my-outfits' && <div className="lookbook-filter-menu">
             <button
+              ref={seasonFilterRef}
               type="button"
               className={`filter-menu-btn ${filterSeason ? 'active' : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={openFilterMenu === 'season'}
               onClick={e => {
                 e.stopPropagation()
                 setOpenFilterMenu(openFilterMenu === 'season' ? null : 'season')
@@ -1801,12 +1933,14 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
             {openFilterMenu === 'season' && (
               <>
                 <div className="custom-select-backdrop" onClick={() => setOpenFilterMenu(null)} />
-                <div className="filter-menu-popover">
+                <div className="filter-menu-popover" role="menu" aria-label="Filter by season">
                   {SEASONS.map(s => (
                     <button
                       key={s.value}
                       type="button"
                       className={`custom-select-option ${filterSeason === s.value ? 'active' : ''}`}
+                      role="menuitemradio"
+                      aria-checked={filterSeason === s.value}
                       onClick={() => {
                         setFilter({ season: s.value })
                         setOpenFilterMenu(null)
@@ -1818,13 +1952,14 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
                 </div>
               </>
             )}
-          </div>
+          </div>}
 
           <div className="lookbook-pin-toggle" aria-label="Pinned outfit filter">
             <button
               type="button"
               className={!pinFavs ? 'active' : ''}
               onClick={() => setFilter({ pin: false })}
+              aria-pressed={!pinFavs}
             >
               All
             </button>
@@ -1832,30 +1967,39 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
               type="button"
               className={pinFavs ? 'active' : ''}
               onClick={() => setFilter({ pin: true })}
+              aria-pressed={pinFavs}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 20.2 4.6 13a4.8 4.8 0 0 1 6.8-6.8l.6.6.6-.6a4.8 4.8 0 0 1 6.8 6.8L12 20.2Z" />
               </svg>
-              Pinned
+              Pinned first
             </button>
           </div>
 
           <div className="custom-select-container">
             <button
+              ref={sortButtonRef}
               className={`custom-select-btn ${isSortOpen ? 'active' : ''}`}
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={isSortOpen}
               onClick={(e) => { e.stopPropagation(); setIsSortOpen(!isSortOpen); }}
             >
-              <span>⇅ {SORT_OPTIONS.find(o => o.value === sortBy)?.label}</span>
+              <span>⇅ {SORT_OPTIONS.find(o => o.value === (activeSubTab === 'generated-outfits' ? generatedSortBy : sortBy))?.label}</span>
               <span className="custom-select-arrow">▾</span>
             </button>
             {isSortOpen && (
               <>
                 <div className="custom-select-backdrop" onClick={() => setIsSortOpen(false)} />
-                <div className="custom-select-dropdown">
-                  {SORT_OPTIONS.map(opt => (
+                <div className="custom-select-dropdown" role="menu" aria-label="Sort outfits">
+                  {SORT_OPTIONS
+                    .filter(opt => activeSubTab === 'my-outfits' || !['most-pieces', 'least-pieces'].includes(opt.value))
+                    .map(opt => (
                     <button
                       key={opt.value}
-                      className={`custom-select-option ${sortBy === opt.value ? 'active' : ''}`}
+                      className={`custom-select-option ${(activeSubTab === 'generated-outfits' ? generatedSortBy : sortBy) === opt.value ? 'active' : ''}`}
+                      role="menuitemradio"
+                      aria-checked={(activeSubTab === 'generated-outfits' ? generatedSortBy : sortBy) === opt.value}
                       onClick={() => {
                         setFilter({ sort: opt.value })
                         setIsSortOpen(false)
@@ -1902,94 +2046,151 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
         ) : filteredAndSorted.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">✦</div>
-            <div className="empty-state-title">No outfits found</div>
-            <div className="empty-state-text">Try adjusting your filters or search terms</div>
+            <div className="empty-state-title">{outfits.length === 0 ? 'Your saved outfits will appear here' : 'No outfits match these filters'}</div>
+            <div className="empty-state-text">
+              {outfits.length === 0 ? 'Save a complete look so you can remember and reuse it.' : 'Clear the search and filters to return to your collection.'}
+            </div>
+            <button
+              type="button"
+              className="btn-primary empty-state-action"
+              onClick={() => {
+                if (outfits.length === 0) {
+                  setEditOutfit(null)
+                  setShowForm(true)
+                } else {
+                  setFilter({ q: '', occasion: '', season: '', pin: false })
+                }
+              }}
+            >
+              {outfits.length === 0 ? 'Add your first outfit' : 'Show all outfits'}
+            </button>
           </div>
         ) : (
           <div className="outfit-grid animate-grid">
             {filteredAndSorted.map(o => (
-              <div
+              <article
                 key={o.id}
                 className="outfit-card"
                 style={{ position: 'relative' }}
-                onClick={event => openOutfitDetail(o, event)}
-                onKeyDown={event => handleCardKeyDown(event, () => openOutfitDetail(o, event))}
-                role="button"
-                tabIndex={0}
-                aria-label={`Open ${o.name || 'outfit'} outfit`}
               >
-                {o.photo
-                  ? <img className="outfit-photo" src={resolveUploadThumbnailSrc(o.photo, 'lookbook-display')} alt={o.name} loading="lazy" decoding="async" onLoad={markOutfitImageOrientation} />
-                  : <div className="outfit-placeholder">{OCCASION_ICONS[o.occasion] || '✦'}</div>
-                }
+                <button
+                  type="button"
+                  className="outfit-card-open"
+                  onClick={event => openOutfitDetail(o, event)}
+                  aria-label={`Open ${o.name || 'outfit'} outfit`}
+                >
+                  {o.photo
+                    ? <img className="outfit-photo" src={resolveUploadThumbnailSrc(o.photo, 'lookbook-display')} alt="" loading="lazy" decoding="async" />
+                    : <span className="outfit-placeholder" aria-hidden="true">{OCCASION_ICONS[o.occasion] || '✦'}</span>
+                  }
+                  <span className="outfit-card-body">
+                    <span className="outfit-card-name">{o.name}</span>
+                    <span className="outfit-card-occasion">
+                      {[o.occasion, o.season].filter(Boolean).join(' · ')}
+                    </span>
+                    <span className="outfit-card-working-state">
+                      {o.status === 'trying' && <span className="outfit-card-status">Trying</span>}
+                      <span>{o.pieces?.length > 0
+                        ? `${o.pieces.length} linked ${o.pieces.length === 1 ? 'piece' : 'pieces'}`
+                        : 'No pieces linked'}</span>
+                    </span>
+                  </span>
+                </button>
                 <button
                   type="button"
                   className="outfit-card-fav"
                   onClick={e => { e.stopPropagation(); handleFav(o) }}
-                  aria-label={`${o.favorite ? 'Remove' : 'Add'} ${o.name || 'outfit'} ${o.favorite ? 'from' : 'to'} favorites`}
+                  aria-label={`${o.favorite ? 'Unpin' : 'Pin'} ${o.name || 'outfit'}`}
                   aria-pressed={Boolean(o.favorite)}
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 20.2 4.6 13a4.8 4.8 0 0 1 6.8-6.8l.6.6.6-.6a4.8 4.8 0 0 1 6.8 6.8L12 20.2Z" />
                   </svg>
                 </button>
-                <div className="outfit-card-body">
-                  <div className="outfit-card-name">{o.name}</div>
-                  <div className="outfit-card-occasion">
-                    {o.occasion}
-                    {o.pieces?.length > 0 && ` · ${o.pieces.length} ${o.pieces.length === 1 ? 'piece' : 'pieces'}`}
-                  </div>
-                </div>
-              </div>
+              </article>
             ))}
           </div>
         )
       ) : (
         loadingBoards ? (
-          <div className="loading">Loading generated outfits…</div>
+          <div className="loading" role="status" aria-live="polite">Loading generated outfits…</div>
+        ) : boardsError ? (
+          <div className="empty-state" role="alert">
+            <div className="empty-state-icon">!</div>
+            <div className="empty-state-title">Generated outfits are unavailable</div>
+            <div className="empty-state-text">{boardsError}</div>
+            <button type="button" className="btn-primary empty-state-action" onClick={fetchSavedBoards}>
+              Try again
+            </button>
+          </div>
         ) : filteredAndSortedBoards.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">✦</div>
-            <div className="empty-state-title">No generated outfits found</div>
-            <div className="empty-state-text">Try adjusting your filters or search terms</div>
+            <div className="empty-state-title">
+              {savedBoards.length === 0 ? 'Your generated outfit ideas will appear here' : 'No generated ideas match this search'}
+            </div>
+            <div className="empty-state-text">
+              {savedBoards.length === 0
+                ? 'Create several directions from your wardrobe, then save the ones you want to revisit.'
+                : 'Clear the search to return to all of your generated ideas.'}
+            </div>
+            <button
+              type="button"
+              className="btn-primary empty-state-action"
+              onClick={() => savedBoards.length === 0 ? onOpenVisualComposer?.() : setFilter({ q: '', pin: false })}
+            >
+              {savedBoards.length === 0 ? 'Create outfits' : 'Show all generated outfits'}
+            </button>
           </div>
         ) : (
           <div className="outfit-grid animate-grid">
             {filteredAndSortedBoards.map(b => (
-              <div
+              <article
                 key={b.id}
                 className="outfit-card"
                 style={{ position: 'relative' }}
-                onClick={() => setBoardDetail(b)}
-                onKeyDown={event => handleCardKeyDown(event, () => setBoardDetail(b))}
-                role="button"
-                tabIndex={0}
-                aria-label={`Open ${b.title || 'generated outfit'}`}
               >
-                {resolveUploadImageSrc(b.image_url) ? (
-                  <img className="outfit-photo" src={resolveUploadThumbnailSrc(b.image_url, 'lookbook-display')} alt={b.title} loading="lazy" decoding="async" onLoad={markOutfitImageOrientation} />
-                ) : (
-                  <div className="outfit-placeholder">✦</div>
-                )}
+                <button
+                  type="button"
+                  className="outfit-card-open"
+                  onClick={event => openBoardDetail(b, event)}
+                  aria-label={`Open ${b.title || 'generated outfit'}`}
+                >
+                  <span className={`generated-outfit-media generated-outfit-media-${generatedBoardMediaKind(b)}`}>
+                    {resolveUploadImageSrc(b.image_url) ? (
+                      <img className="outfit-photo" src={resolveUploadThumbnailSrc(b.image_url, 'lookbook-display')} alt="" loading="lazy" decoding="async" onLoad={markOutfitImageOrientation} />
+                    ) : (
+                      <span className="outfit-placeholder" aria-hidden="true">✦</span>
+                    )}
+                  </span>
+                  <span className="outfit-card-body">
+                    <span className="outfit-card-name">{b.title || 'Generated outfit'}</span>
+                    <span className="generated-outfit-card-state">
+                      <span>{generatedBoardReviewState(b)}</span>
+                      <span>{generatedBoardScope(b)}</span>
+                    </span>
+                    <span className="outfit-card-occasion">
+                      {b.pieces?.length > 0
+                        ? `${b.pieces.length} wardrobe ${b.pieces.length === 1 ? 'piece' : 'pieces'}`
+                        : b.context_type === 'piece' && b.context_name
+                          ? `Starting from ${b.context_name}`
+                          : 'No wardrobe pieces linked'}
+                      {b.missing_pieces?.length > 0 && ` · +${b.missing_pieces.length} ideal ${b.missing_pieces.length === 1 ? 'addition' : 'additions'}`}
+                    </span>
+                  </span>
+                </button>
                 <button
                   type="button"
                   className="outfit-card-fav"
                   onClick={e => { e.stopPropagation(); handleBoardFav(b) }}
-                  aria-label={`${b.favorite ? 'Remove' : 'Add'} ${b.title || 'generated outfit'} ${b.favorite ? 'from' : 'to'} favorites`}
+                  aria-label={`${b.favorite ? 'Unpin' : 'Pin'} ${b.title || 'generated outfit'}`}
                   aria-pressed={Boolean(b.favorite)}
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 20.2 4.6 13a4.8 4.8 0 0 1 6.8-6.8l.6.6.6-.6a4.8 4.8 0 0 1 6.8 6.8L12 20.2Z" />
                   </svg>
                 </button>
-                <div className="outfit-card-body">
-                  <div className="outfit-card-name">{b.title || 'Generated outfit'}</div>
-                  <div className="outfit-card-occasion">
-                    {b.context_name || 'AI Composition'}
-                    {b.pieces?.length > 0 && ` · ${b.pieces.length} ${b.pieces.length === 1 ? 'piece' : 'pieces'}`}
-                  </div>
-                </div>
-              </div>
+              </article>
             ))}
           </div>
         )
@@ -2009,9 +2210,10 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
       {boardDetail && (
         <BoardDetail
           board={boardDetail}
-          onClose={() => setBoardDetail(null)}
+          onClose={closeBoardDetail}
           onDelete={handleBoardDelete}
           onGoToThread={onGoToThread}
+          onCreateVariation={onOpenVisualComposer}
           onSendToStylist={board => {
             setBoardDetail(null)
             // Extract real piece IDs from board.pieces (shape: {id, name, category, missing}).
