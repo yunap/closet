@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields } from '../../styling-engine/attributes.js'
 import { COLOR_OPTIONS, LIGHT_COLORS } from '../utils/colors.js'
@@ -213,18 +213,23 @@ function Section({ label }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0 -4px' }}>
       <div style={{ flex: 1, height: 1, background: 'var(--border-light)' }} />
-      <span style={{ fontSize: 10, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-light)', whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-light)', whiteSpace: 'nowrap' }}>{label}</span>
       <div style={{ flex: 1, height: 1, background: 'var(--border-light)' }} />
     </div>
   )
 }
 
 // ── Photo slot ─────────────────────────────────────────────────────────────────
-function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview }) {
+function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview, pendingRemoval = false, onRestore }) {
   return (
     <div className="form-group">
-      <label className="form-label" style={{ fontSize: 10 }}>{label}</label>
-      {preview ? (
+      <div className="form-label piece-form-photo-label">{label}</div>
+      {pendingRemoval ? (
+        <div className="piece-form-photo-removal">
+          <span>{label} will be removed when you save.</span>
+          <button type="button" className="btn-secondary" onClick={onRestore}>Restore</button>
+        </div>
+      ) : preview ? (
         <div className="photo-preview">
           <button
             type="button"
@@ -234,14 +239,14 @@ function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview }) {
           >
             <img src={uploadThumbnailSrc(preview, 'garment-display')} alt={label} decoding="async" />
           </button>
-          <button className="photo-preview-remove" onClick={onClear}>✕</button>
+          <button type="button" className="photo-preview-remove" onClick={onClear} aria-label={`Remove ${label.toLowerCase()}`}>✕</button>
         </div>
       ) : (
         <label className="photo-upload">
           <input type="file" accept="image/*" onChange={onChange} />
           <div className="photo-upload-icon" style={{ fontSize: 22, marginBottom: 4 }}>📷</div>
           <div className="photo-upload-text" style={{ fontSize: 12 }}>{label}</div>
-          <div className="photo-upload-hint" style={{ fontSize: 10 }}>{hint}</div>
+          <div className="photo-upload-hint" style={{ fontSize: 12 }}>{hint}</div>
         </label>
       )}
     </div>
@@ -249,9 +254,9 @@ function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview }) {
 }
 
 // ── Chip row helper ─────────────────────────────────────────────────────────────
-function ChipRow({ options, value, onChange, multi = false }) {
+function ChipRow({ options, value, onChange, multi = false, label, labelledBy }) {
   return (
-    <div className="chip-grid">
+    <div className="chip-grid" role="group" aria-label={label} aria-labelledby={labelledBy}>
       {options.map(opt => {
         const val  = typeof opt === 'string' ? opt : opt.value
         const lbl  = typeof opt === 'string' ? opt : opt.label
@@ -259,7 +264,9 @@ function ChipRow({ options, value, onChange, multi = false }) {
         return (
           <button
             key={val}
+            type="button"
             className={`chip-toggle ${active ? 'active' : ''}`}
+            aria-pressed={active}
             onClick={() => multi
               ? onChange(active ? value.filter(v => v !== val) : [...(value||[]), val])
               : onChange(val === value ? null : val)
@@ -342,6 +349,15 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [fitNoting,   setFitNoting]   = useState(false)
   const [previewImage, setPreviewImage] = useState(null)
   const [styleReadExpanded, setStyleReadExpanded] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [saveError, setSaveError] = useState(null)
+  const [aiUpdateSummary, setAiUpdateSummary] = useState(null)
+  const dialogRef = useRef(null)
+  const stylistControlsRef = useRef(null)
+  const garmentCharacterRef = useRef(null)
+  const dirtyRef = useRef(false)
+  const savingRef = useRef(false)
+  const titleId = `piece-form-title-${piece?.id || 'new'}`
   const retagSuggestions = Array.isArray(piece?.retag_suggestions) ? piece.retag_suggestions : []
   const suggestedFields = new Set(retagSuggestions.map(suggestion => suggestion.field).filter(Boolean))
 
@@ -365,10 +381,12 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     setManualOverrides(paths => paths.filter(p => p !== path))
   }
   const set = (k, v) => {
+    setDirty(true)
     markManualOverride(k)
     setForm(f => ({ ...f, [k]: v }))
   }
   const toggleArr = (k, val) => {
+    setDirty(true)
     markManualOverride(k)
     setForm(f => ({
       ...f,
@@ -422,6 +440,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       }
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
+      let changedCount = 0
       setForm(f => {
         const next = { ...f }
         applyTagValue(next, 'category', tags.category)
@@ -447,12 +466,20 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'formality', tags.formality)
         applyTagValue(next, 'heel_height', tags.heel_height)
         applyTagValue(next, 'walk_support', tags.walk_support)
+        applyTagValue(next, 'stretch', tags.stretch)
+        applyTagValue(next, 'tuck_behavior', tags.tuck_behavior)
+        applyTagValue(next, 'waistband_type', tags.waistband_type)
         next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
         if (tags.fit_on_body && tags.fit_on_body !== 'none') applyTagValue(next, 'fit_on_body', tags.fit_on_body)
         applyTagValue(next, 'tagger_version', tags.tagger_version)
         applyTagValue(next, 'tag_state', tags.tag_state || (wornFile || piece?.worn_photo ? 'fully_tagged' : 'provisional'))
+        changedCount = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(f[key])).length
         return next
       })
+      setDirty(true)
+      setAiUpdateSummary(changedCount
+        ? `AI updated ${changedCount} ${changedCount === 1 ? 'detail' : 'details'}. Review the fields before saving.`
+        : 'AI found no new details to apply. Your protected edits were preserved.')
       // Set confidence flags for medium/low fields
       const tagConfidence = tags.style_profile_json?._confidence || tags._confidence
       if (tagConfidence) {
@@ -462,12 +489,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         })
         setConfidenceFlags(flags)
       }
-    } catch { setTagError('Tagging failed — fill in manually') }
+    } catch { setTagError('AI could not update the details. Your current edits are unchanged.') }
     finally { setTagging(false) }
   }
 
   // Combined evaluation from worn photo — routes through the same tagger as hanger photos.
   const handleWornPhoto = async (file) => {
+    setDirty(true)
+    setTagError(null)
     setWornFile(file); setWornPrev(URL.createObjectURL(file)); setClearWorn(false)
     setFitNoting(true)
     try {
@@ -476,7 +505,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       if (hangerFile) fd.append('photo', hangerFile)
       const res = await fetch(isEdit ? `/api/ai/tag-piece-existing/${piece.id}` : '/api/ai/tag-piece', { method: 'POST', body: fd })
       const tags = await res.json()
-      if (tags.error) return
+      if (tags.error) throw new Error(tags.error)
+      let changedCount = 0
       setForm(f => {
         const next = { ...f }
         ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_type','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','tagger_version'].forEach(field => {
@@ -486,8 +516,12 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         if (!f.notes) applyTagValue(next, 'notes', tags.notes_suggestion || tags.notes, '')
         next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
         applyTagValue(next, 'tag_state', tags.tag_state || 'fully_tagged')
+        changedCount = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(f[key])).length
         return next
       })
+      setAiUpdateSummary(changedCount
+        ? `Worn-photo analysis updated ${changedCount} ${changedCount === 1 ? 'detail' : 'details'}. Review them before saving.`
+        : 'Worn-photo analysis did not change any garment details.')
       const confidence = tags.style_profile_json?._confidence || tags._confidence
       if (confidence) {
         const flags = {}
@@ -496,12 +530,16 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         })
         setConfidenceFlags(flags)
       }
-    } catch {}
+    } catch { setTagError('The worn photo was added, but fit analysis failed. You can still review and save it.') }
     finally { setFitNoting(false) }
   }
 
   const handleSubmit = async () => {
-    if (!form.name.trim()) return
+    if (!form.name.trim() || tagging || fitNoting) {
+      if (!form.name.trim()) setSaveError('Add a name before saving.')
+      return
+    }
+    setSaveError(null)
     setSaving(true)
     const fd = new FormData()
     Object.entries(form).forEach(([k, v]) => {
@@ -517,21 +555,68 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       const res = await fetch(isEdit ? `/api/pieces/${piece.id}` : '/api/pieces', {
         method: isEdit ? 'PUT' : 'POST', body: fd
       })
-      onSave(await res.json())
+      const payload = await res.json()
+      if (!res.ok || payload?.error) throw new Error(payload?.error || 'Save failed')
+      setDirty(false)
+      onSave(payload)
+    } catch {
+      setSaveError('Changes could not be saved. Nothing was discarded; please try again.')
     } finally { setSaving(false) }
   }
 
+  const requestClose = () => {
+    if (savingRef.current) return
+    if (!dirtyRef.current || window.confirm('Discard your unsaved changes?')) onCancel()
+  }
+
+  useEffect(() => { dirtyRef.current = dirty }, [dirty])
+  useEffect(() => { savingRef.current = saving }, [saving])
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return undefined
+    const previousFocus = document.activeElement
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const focusables = () => [...dialog.querySelectorAll(focusableSelector)]
+    const initial = dialog.querySelector('[data-piece-form-initial-focus]') || focusables()[0]
+    initial?.focus()
+    const onKeyDown = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        requestClose()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = focusables()
+      if (!items.length) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    dialog.addEventListener('keydown', onKeyDown)
+    return () => {
+      dialog.removeEventListener('keydown', onKeyDown)
+      previousFocus?.focus?.()
+    }
+  }, [])
+
   // Helper: field label with confidence indicator
-  const FieldLabel = ({ field, children }) => {
+  const FieldLabel = ({ field, children, id }) => {
     const conf = confidenceFlags[field]
     const isGate = GATE_CRITICAL_FIELDS.includes(field)
     return (
-      <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <div id={id} className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         {children}
         {isGate && <span title="Gate-critical field" style={{ fontSize: 9, background: 'var(--accent-light)', color: 'var(--accent)', padding: '1px 6px', borderRadius: 8 }}>gate</span>}
         {conf === 'low'    && <span title="AI unsure" style={{ fontSize: 9, background: '#E8A020', color: '#fff', padding: '1px 6px', borderRadius: 8, letterSpacing: '0.04em' }}>AI unsure</span>}
         {conf === 'medium' && <span style={{ fontSize: 9, background: 'var(--border)', color: 'var(--text-muted)', padding: '1px 6px', borderRadius: 8 }}>review</span>}
-      </label>
+      </div>
     )
   }
 
@@ -541,6 +626,25 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const showFitFields = CLOTHING_CATEGORIES.includes(cat)
   const showFormality = cat !== 'accessory'
   const missingGates = missingGateFields(form)
+  const actionableMissingGates = missingGates.filter(field => field !== 'formality' || showFormality)
+  const missingGateLabels = {
+    formality: 'Formality',
+    fabric_weight: 'Fabric weight',
+    fiber_content: 'Fiber content',
+    occasions: 'Occasions',
+    heel_height: 'Heel height',
+    walk_support: 'Walk support',
+  }
+  const revealMissingField = (field) => {
+    const group = dialogRef.current?.querySelector(`[data-piece-field="${field}"]`)
+    const disclosure = group?.closest('details')
+    if (disclosure) disclosure.open = true
+    requestAnimationFrame(() => {
+      const target = dialogRef.current?.querySelector(`[data-piece-field="${field}"]`)
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      target?.querySelector('button, input, select, textarea')?.focus()
+    })
+  }
   const styleProfile = typeof form.style_profile_json === 'string'
     ? (() => { try { return JSON.parse(form.style_profile_json) || {} } catch { return {} } })()
     : (form.style_profile_json || {})
@@ -586,12 +690,23 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const occasionRows = Object.entries(garmentIntel.occasion_confidence || {}).filter(([, value]) => value)
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal-sheet piece-form-sheet" onClick={e => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={requestClose}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="modal-sheet piece-form-sheet"
+        onClick={e => e.stopPropagation()}
+      >
         <div className="modal-handle piece-form-handle" />
         <div className="modal-header">
-          <span className="modal-title">{isEdit ? `Edit piece #${piece.id}` : 'Add piece'}</span>
-          <button className="modal-close" onClick={onCancel}>✕</button>
+          <div>
+            <div id={titleId} className="modal-title">{isEdit ? `Edit ${form.name || 'piece'}` : 'Add a piece'}</div>
+            {isEdit && <div className="piece-form-header-meta">Piece #{piece.id} · {form.category}</div>}
+            {!isEdit && <div className="piece-form-header-meta">Start with a photo or the details you already know.</div>}
+          </div>
+          <button type="button" className="modal-close" onClick={requestClose} aria-label="Close piece editor">✕</button>
         </div>
 
         <div className="form-body piece-form-layout">
@@ -599,45 +714,62 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           <aside className="piece-form-media-column">
             <div className="piece-form-section-intro">
               <span>Piece photos</span>
-              Keep the garment visible and evenly lit. A worn photo adds useful fit context.
+              {isEdit
+                ? 'Keep the garment visible and evenly lit. A worn photo adds useful fit context.'
+                : 'A clear hanger photo gives the stylist the best start. A worn photo is optional.'}
             </div>
 
           {/* ── Photos ──────────────────────────────────────────────── */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
-            <PhotoSlot
-              label="Hanger photo"
-              hint="Auto-tags on upload"
-              preview={hangerPrev}
-              onChange={e => { const f = e.target.files[0]; if (f) { setHangerFile(f); setHangerPrev(URL.createObjectURL(f)); setClearHanger(false) } }}
-              onClear={() => { setHangerFile(null); setHangerPrev(null); setClearHanger(true) }}
-              onPreview={() => hangerPrev && setPreviewImage({ src: hangerPrev, title: form.name || 'Piece', meta: 'Hanger photo' })}
-            />
+          <div className="piece-form-photo-grid">
+            <div className="piece-form-primary-photo">
+              <PhotoSlot
+                label="Hanger photo"
+                hint={isEdit ? 'Ready to update with AI' : 'AI can fill the first draft'}
+                preview={hangerPrev}
+                onChange={e => { const f = e.target.files[0]; if (f) { setDirty(true); setHangerFile(f); setHangerPrev(URL.createObjectURL(f)); setClearHanger(false) } }}
+                onClear={() => { setDirty(true); setHangerFile(null); setClearHanger(true) }}
+                pendingRemoval={clearHanger}
+                onRestore={() => { setClearHanger(false); setHangerPrev(piece?.photo ? `/uploads/${piece.photo}` : null) }}
+                onPreview={() => hangerPrev && setPreviewImage({ src: hangerPrev, title: form.name || 'Piece', meta: 'Hanger photo' })}
+              />
+              {!isEdit && hangerFile && (
+                <div className="piece-form-ai-action">
+                  <button type="button" onClick={handleTagThis} disabled={tagging || fitNoting || saving} className="piece-form-ai-button">
+                    {tagging
+                      ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Tagging…</>
+                      : '◇ Fill details with AI'}
+                  </button>
+                  <div className="piece-form-ai-help">AI prepares a first draft from your photo. Review it before adding the piece.</div>
+                  {tagError && <div className="piece-form-status piece-form-status-error" role="alert">{tagError}</div>}
+                  {aiUpdateSummary && <div className="piece-form-status" role="status">{aiUpdateSummary}</div>}
+                </div>
+              )}
+            </div>
             <PhotoSlot
               label="Worn photo"
               hint={fitNoting ? '◌ Evaluating…' : 'Auto-generates fit note'}
               preview={wornPrev}
               onChange={e => { const f = e.target.files[0]; if (f) handleWornPhoto(f) }}
-              onClear={() => { setWornFile(null); setWornPrev(null); setClearWorn(true) }}
+              onClear={() => { setDirty(true); setWornFile(null); setClearWorn(true) }}
+              pendingRemoval={clearWorn}
+              onRestore={() => { setClearWorn(false); setWornPrev(piece?.worn_photo ? `/uploads/${piece.worn_photo}` : null) }}
               onPreview={() => wornPrev && setPreviewImage({ src: wornPrev, title: form.name || 'Piece', meta: 'Worn photo' })}
             />
           </div>
 
           {/* Tag This button */}
-          {(hangerFile || (isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn)))) && (
+          {isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn) || hangerFile) && (
             <div>
-              <button onClick={handleTagThis} disabled={tagging} style={{
-                width: '100%', padding: '11px',
-                background: tagging ? 'var(--surface-2)' : 'var(--accent-light)',
-                color: 'var(--accent)', border: '1px solid var(--accent)',
-                borderRadius: 'var(--radius-sm)', fontSize: 13, fontWeight: 500,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                cursor: tagging ? 'default' : 'pointer', transition: 'all 0.15s',
-              }}>
+              <button type="button" onClick={handleTagThis} disabled={tagging || fitNoting || saving} className="piece-form-ai-button">
                 {tagging
                   ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Tagging…</>
-                  : (hangerFile ? '◇ Tag this with AI' : '◇ Retag existing photo with AI')}
+                  : '◇ Update details with AI'}
               </button>
-              {tagError && <div style={{ fontSize: 11, color: 'var(--repair)', marginTop: 4 }}>{tagError}</div>}
+              <div className="piece-form-ai-help">
+                AI suggestions remain reviewable until you save. Owner-edited fields stay protected.
+              </div>
+              {tagError && <div className="piece-form-status piece-form-status-error" role="alert">{tagError}</div>}
+              {aiUpdateSummary && <div className="piece-form-status" role="status">{aiUpdateSummary}</div>}
             </div>
           )}
 
@@ -646,7 +778,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           <div className="piece-form-fields-column">
             <div className="piece-form-section-intro">
               <span>{isEdit ? 'Piece details' : 'Describe the piece'}</span>
-              Start with the essentials, then refine fit, material, and styling intelligence as needed.
+              {isEdit
+                ? 'Start with what you know. Add only what helps your stylist use this piece well.'
+                : 'Name it, place it in your wardrobe, and refine only what matters today.'}
             </div>
 
           {retagSuggestions.length > 0 && (
@@ -660,29 +794,45 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           {/* ── Basics ──────────────────────────────────────────────── */}
           <Section label="Basics" />
 
-          {missingGates.length > 0 && (
-            <div className="form-group">
-              <div style={{ display: 'inline-flex', padding: '5px 10px', borderRadius: 999, background: 'var(--repair-bg)', color: 'var(--repair)', border: '1px solid var(--border-light)', fontSize: 11 }}>
-                Gate fields missing: {missingGates.join(', ')}
+          {isEdit && actionableMissingGates.length > 0 && (
+            <div className="piece-form-completeness" role="status">
+              <span>Add for better outfit suggestions:</span>
+              <div className="piece-form-completeness-links">
+                {actionableMissingGates.map(field => (
+                  <button type="button" key={field} onClick={() => revealMissingField(field)}>
+                    {missingGateLabels[field] || field.replace(/_/g, ' ')}
+                  </button>
+                ))}
               </div>
             </div>
           )}
 
           <div className="form-group">
-            <label className="form-label">Name</label>
-            <input className="form-input" placeholder="e.g. Bold multicolor floral knit top" value={form.name} onChange={e => set('name', e.target.value)} />
+            <label className="form-label" htmlFor="piece-form-name">Name</label>
+            <input
+              id="piece-form-name"
+              data-piece-form-initial-focus
+              className="form-input"
+              aria-required="true"
+              aria-invalid={Boolean(saveError && !form.name.trim())}
+              aria-describedby={!isEdit ? 'piece-form-name-help' : undefined}
+              placeholder="e.g. Bold multicolor floral knit top"
+              value={form.name}
+              onChange={e => set('name', e.target.value)}
+            />
+            {!isEdit && <div id="piece-form-name-help" className="piece-form-field-help">Required to add this garment.</div>}
           </div>
 
           <div className="form-group">
-            <label className="form-label">Category</label>
-            <ChipRow options={CATEGORIES} value={form.category} onChange={v => set('category', v || form.category)} />
+            <div id="piece-form-category-label" className="form-label">Category</div>
+            <ChipRow labelledBy="piece-form-category-label" options={CATEGORIES} value={form.category} onChange={v => set('category', v || form.category)} />
           </div>
 
           <div className="form-group">
-            <label className="form-label">Colors</label>
-            <div className="chip-grid">
+            <div id="piece-form-colors-label" className="form-label">Colors</div>
+            <div className="chip-grid" role="group" aria-labelledby="piece-form-colors-label">
               {COLOR_OPTIONS.map(c => (
-                <button key={c.name} className={`color-chip ${form.colors.includes(c.name) ? 'active' : ''}`} style={{ background: c.hex }} title={c.name} onClick={() => toggleArr('colors', c.name)}>
+                <button type="button" key={c.name} aria-label={c.name} aria-pressed={form.colors.includes(c.name)} className={`color-chip ${form.colors.includes(c.name) ? 'active' : ''}`} style={{ background: c.hex }} title={c.name} onClick={() => toggleArr('colors', c.name)}>
                   {form.colors.includes(c.name) && <span className="color-chip-check" style={{ color: LIGHT_COLORS.includes(c.name) ? '#666' : '#fff' }}>✓</span>}
                 </button>
               ))}
@@ -690,31 +840,38 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Background color <span style={{ fontSize: 10, color: 'var(--text-light)', fontStyle: 'italic', fontWeight: 400 }}>literal base color of the garment</span></label>
-            <input className="form-input" placeholder="e.g. black, navy, cream" value={form.background_color} onChange={e => set('background_color', e.target.value)} />
+            <label className="form-label" htmlFor="piece-form-background-color">Background color <span style={{ fontSize: 12, color: 'var(--text-light)', fontStyle: 'italic', fontWeight: 400 }}>literal base color of the garment</span></label>
+            <input id="piece-form-background-color" className="form-input" placeholder="e.g. black, navy, cream" value={form.background_color} onChange={e => set('background_color', e.target.value)} />
+          </div>
+
+          <div className="form-group" data-piece-field="occasions">
+            <FieldLabel id="piece-form-occasions-label" field="occasions">Occasions</FieldLabel>
+            <ChipRow labelledBy="piece-form-occasions-label" options={OCCASIONS} value={form.occasions} onChange={v => set('occasions', v)} multi />
           </div>
 
           <div className="form-group">
-            <FieldLabel field="occasions">Occasions</FieldLabel>
-            <ChipRow options={OCCASIONS} value={form.occasions} onChange={v => set('occasions', v)} multi />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Season</label>
-            <div className="radio-row">
-              {SEASONS.map(s => <button key={s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
+            <div id="piece-form-season-label" className="form-label">Season</div>
+            <div className="radio-row" role="group" aria-labelledby="piece-form-season-label">
+              {SEASONS.map(s => <button type="button" key={s} aria-pressed={form.season === s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
             </div>
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Status</label>
-            <select className="form-select" value={form.status} onChange={e => set('status', e.target.value)}>
-              {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </div>
+          {isEdit && (
+            <div className="form-group">
+              <label className="form-label">Status</label>
+              <select className="form-select" value={form.status} onChange={e => set('status', e.target.value)}>
+                {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+          )}
 
-          {/* ── Recommendation Trust ───────────────────────────────── */}
-          <Section label="Recommendation Trust" />
+          {/* ── Stylist controls ───────────────────────────────────── */}
+          {isEdit && <details ref={stylistControlsRef} className="piece-form-disclosure">
+            <summary>
+              <span>Stylist controls</span>
+              <small>Advanced recommendation behavior and AI interpretation</small>
+            </summary>
+            <div className="piece-form-disclosure-body">
 
           <div className="form-group">
             <label className="form-label">Auto-recommendation status</label>
@@ -729,7 +886,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           </div>
 
           {showFormality && (
-            <div className="form-group">
+            <div className="form-group" data-piece-field="formality">
               <FieldLabel field="formality">Formality</FieldLabel>
               <ChipRow options={FORMALITY_OPTIONS} value={form.formality} onChange={v => set('formality', v)} />
             </div>
@@ -828,8 +985,16 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               )}
             </div>
           )}
+            </div>
+          </details>}
 
           {/* ── Pattern & Visual ─────────────────────────────────────── */}
+          <details ref={garmentCharacterRef} className="piece-form-disclosure">
+            <summary>
+              <span>{isEdit ? 'Garment character' : 'Refine garment details'}</span>
+              <small>{isEdit ? 'Pattern, construction, material, and silhouette' : 'Optional pattern, material, and silhouette details'}</small>
+            </summary>
+            <div className="piece-form-disclosure-body">
           <Section label="Pattern & Visual" />
 
           <div className="form-group">
@@ -911,7 +1076,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <ChipRow options={fabricConfig.fabricOptions} value={form.fabric_category} onChange={v => set('fabric_category', v)} />
           </div>
 
-          <div className="form-group">
+          <div className="form-group" data-piece-field="fabric_weight">
             <FieldLabel field="fabric_weight">{fabricConfig.weightLabel}</FieldLabel>
             <ChipRow options={fabricConfig.weightOptions} value={form.fabric_weight} onChange={v => set('fabric_weight', v)} />
           </div>
@@ -923,7 +1088,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             </div>
           )}
 
-          <div className="form-group">
+          <div className="form-group" data-piece-field="fiber_content">
             <FieldLabel field="fiber_content">Fiber content</FieldLabel>
             <ChipRow options={FIBER_OPTIONS} value={form.fiber_content} onChange={v => set('fiber_content', v)} multi />
           </div>
@@ -937,20 +1102,22 @@ export default function PieceForm({ piece, onSave, onCancel }) {
 
           {cat === 'shoes' && (
             <>
-              <div className="form-group">
+              <div className="form-group" data-piece-field="heel_height">
                 <FieldLabel field="heel_height">Heel height</FieldLabel>
                 <ChipRow options={HEEL_HEIGHT_OPTIONS} value={form.heel_height} onChange={v => set('heel_height', v)} />
               </div>
 
-              <div className="form-group">
+              <div className="form-group" data-piece-field="walk_support">
                 <FieldLabel field="walk_support">Walk support</FieldLabel>
                 <ChipRow options={WALK_SUPPORT_OPTIONS} value={form.walk_support} onChange={v => set('walk_support', v)} />
               </div>
             </>
           )}
+            </div>
+          </details>
 
           {/* ── Fit ──────────────────────────────────────────────────── */}
-          {showFitFields && (
+          {showFitFields && (isEdit ? (
             <>
               <Section label="Fit on body" />
 
@@ -1002,10 +1169,69 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 </div>
               )}
             </>
-          )}
+          ) : (
+            <details className="piece-form-disclosure">
+              <summary>
+                <span>Fit and wear</span>
+                <small>Optional details that help the stylist combine it well</small>
+              </summary>
+              <div className="piece-form-disclosure-body">
+                <div className="form-group">
+                  <label className="form-label">How does it fit?</label>
+                  <ChipRow
+                    options={[
+                      { value: 'clings_stretchy', label: 'clings (stretchy)' },
+                      { value: 'clings_drapey',   label: 'clings (drapey)' },
+                      { value: 'skims',           label: 'skims' },
+                      { value: 'hangs_straight',  label: 'hangs straight' },
+                      { value: 'drapes',           label: 'drapes/flowy' },
+                      { value: 'structured',       label: 'structured' },
+                    ]}
+                    value={form.fit_on_body}
+                    onChange={v => set('fit_on_body', v)}
+                  />
+                </div>
+                {isTop(cat) && (
+                  <div className="form-group">
+                    <label className="form-label">Tuck behavior</label>
+                    <ChipRow
+                      options={[
+                        { value: 'tucks_anywhere', label: 'tucks freely' },
+                        { value: 'tucks_with_structure', label: 'needs structured waist/belt' },
+                        { value: 'wear_over_only', label: 'wear over only' },
+                      ]}
+                      value={form.tuck_behavior}
+                      onChange={v => set('tuck_behavior', v)}
+                    />
+                  </div>
+                )}
+                {isBottom(cat) && (
+                  <div className="form-group">
+                    <label className="form-label">Waistband</label>
+                    <ChipRow
+                      options={[
+                        { value: 'structured_high_waist', label: 'structured high' },
+                        { value: 'structured_mid_waist', label: 'structured mid' },
+                        { value: 'soft_elastic_pull_on', label: 'soft elastic' },
+                        { value: 'tight_no_room', label: 'tight - no tuck' },
+                        { value: 'drawstring_relaxed', label: 'drawstring' },
+                      ]}
+                      value={form.waistband_type}
+                      onChange={v => set('waistband_type', v)}
+                    />
+                  </div>
+                )}
+              </div>
+            </details>
+          ))}
 
           {/* ── Styling Rules ────────────────────────────────────────── */}
-          <Section label="Styling Rules" />
+          {isEdit && <details className="piece-form-disclosure">
+            <summary>
+              <span>What the stylist should remember</span>
+              <small>What works, what does not, and protected owner corrections</small>
+            </summary>
+            <div className="piece-form-disclosure-body">
 
           <div className="form-group">
             <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1058,25 +1284,50 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               </div>
             </div>
           )}
+            </div>
+          </details>}
 
           {/* ── Notes ────────────────────────────────────────────────── */}
-          <Section label="Notes" />
-
-          <div className="form-group">
-            <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-              Styling notes
-              {fitNoting && <span style={{ color: 'var(--accent)', fontSize: 10, fontStyle: 'italic' }}>◌ evaluating fit…</span>}
-            </label>
-            <textarea className="form-textarea" placeholder="Anything you've learned about how to wear this piece…" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ minHeight: 100 }} />
-          </div>
+          {isEdit ? (
+            <>
+              <Section label="Notes" />
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  Styling notes
+                  {fitNoting && <span style={{ color: 'var(--accent)', fontSize: 10, fontStyle: 'italic' }}>◌ evaluating fit…</span>}
+                </label>
+                <textarea className="form-textarea" placeholder="Anything you've learned about how to wear this piece…" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ minHeight: 100 }} />
+              </div>
+            </>
+          ) : (
+            <details className="piece-form-disclosure">
+              <summary>
+                <span>Add a note</span>
+                <small>Optional context the photo cannot show</small>
+              </summary>
+              <div className="piece-form-disclosure-body">
+                <div className="form-group">
+                  <label className="form-label">Styling notes</label>
+                  <textarea className="form-textarea" placeholder="Anything useful to remember about wearing this piece…" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ minHeight: 100 }} />
+                </div>
+              </div>
+            </details>
+          )}
 
           </div>
 
         </div>
 
         <div className="form-actions">
-          <button className="btn-secondary" onClick={onCancel}>Cancel</button>
-          <button className="btn-primary" onClick={handleSubmit} disabled={saving || !form.name.trim()}>
+          <div className="piece-form-save-state" role="status">
+            {saveError || (!isEdit && !form.name.trim()
+              ? 'Add a name to continue'
+              : !isEdit
+                ? 'Ready to add'
+                : dirty ? 'Unsaved changes' : 'No unsaved changes')}
+          </div>
+          <button type="button" className="btn-secondary" onClick={requestClose} disabled={saving}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={handleSubmit} disabled={saving || tagging || fitNoting || !form.name.trim()}>
             {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add piece'}
           </button>
         </div>

@@ -39,10 +39,10 @@ const SEASONS = [
 ]
 
 const SORT_OPTIONS = [
-  { value: 'mix',      label: 'Wardrobe mix' },
+  { value: 'mix',      label: 'Balanced mix' },
   { value: 'added',    label: 'Recently added' },
-  { value: 'used',     label: 'Recently used' },
-  { value: 'worn',     label: 'Most worn' },
+  { value: 'used',     label: 'Recently styled' },
+  { value: 'worn',     label: 'Most styled' },
   { value: 'rediscover', label: 'Ready to rediscover' },
   { value: 'name',     label: 'Name A–Z' },
 ]
@@ -80,6 +80,7 @@ export default function PieceInventory({ onSendToStylist }) {
 
   const [pieces, setPieces]           = useState([])
   const [loading, setLoading]         = useState(true)
+  const [loadError, setLoadError]     = useState(false)
   // showTodo is a modal-open flag — intentionally NOT URL-backed (modal should open fresh each visit)
   const [showTodo, setShowTodo]       = useState(false)
   const [showForm, setShowForm]       = useState(false)
@@ -97,6 +98,8 @@ export default function PieceInventory({ onSendToStylist }) {
   const [usageStats, setUsageStats] = useState({})
   const [demoWardrobe, setDemoWardrobe] = useState(null)
   const [demoLoading, setDemoLoading] = useState(false)
+  const [debouncedSearch, setDebouncedSearch] = useState(search)
+  const piecesRequestRef = useRef({ controller: null, id: 0 })
   const pendingCount = usePendingWardrobeTaskCount()
 
   const fetchMeta = useCallback(async () => {
@@ -120,24 +123,44 @@ export default function PieceInventory({ onSendToStylist }) {
   useEffect(() => { fetchUsageStats() }, [fetchUsageStats])
 
   const fetchPieces = useCallback(async () => {
+    piecesRequestRef.current.controller?.abort()
+    const controller = new AbortController()
+    const requestId = piecesRequestRef.current.id + 1
+    piecesRequestRef.current = { controller, id: requestId }
     const params = new URLSearchParams()
     if (filterCat)    params.set('category', filterCat)
     if (filterOcc)    params.set('occasion', filterOcc)
     if (filterSeason) params.set('season', filterSeason)
     if (filterColor)  params.set('color', filterColor)
     if (filterFabric) params.set('fabric', filterFabric)
-    if (search)       params.set('search', search)
+    if (debouncedSearch) params.set('search', debouncedSearch)
     if (favOnly)      params.set('favorites', 'true')
-    const res  = await fetch(`/api/pieces?${params}`)
-    // A 401 (or any error) returns {error} — storing that in pieces crashes the grid's
-    // .map and blanks the whole app before the auth redirect can run.
-    const data = await res.json().catch(() => null)
-    setPieces(Array.isArray(data) ? data : [])
-    setLoading(false)
-  }, [filterCat, filterOcc, filterSeason, filterColor, filterFabric, search, favOnly])
+    setLoading(true)
+    setLoadError(false)
+    try {
+      const res = await fetch(`/api/pieces?${params}`, { signal: controller.signal })
+      // A 401 (or any error) returns {error} — storing that in pieces crashes the grid's
+      // .map and blanks the whole app before the auth redirect can run.
+      const data = await res.json().catch(() => null)
+      if (piecesRequestRef.current.id !== requestId) return
+      if (!res.ok || !Array.isArray(data)) {
+        setLoadError(true)
+        return
+      }
+      setPieces(data)
+    } catch (error) {
+      if (error?.name !== 'AbortError' && piecesRequestRef.current.id === requestId) setLoadError(true)
+    } finally {
+      if (piecesRequestRef.current.id === requestId) setLoading(false)
+    }
+  }, [filterCat, filterOcc, filterSeason, filterColor, filterFabric, debouncedSearch, favOnly])
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
-  useEffect(() => { const t = setTimeout(fetchPieces, 300); return () => clearTimeout(t) }, [search])
+  useEffect(() => () => piecesRequestRef.current.controller?.abort(), [])
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => clearTimeout(timer)
+  }, [search])
 
   const isUnfilteredWardrobe = !search && !filterCat && !filterOcc && !filterSeason && !filterColor && !filterFabric && !favOnly
 
@@ -226,6 +249,11 @@ export default function PieceInventory({ onSendToStylist }) {
   }, [showAddMenu, closeAddMenu])
   useEffect(() => {
     if (!openFilterMenu) return undefined
+    const menu = compactFilterRef.current?.querySelector(`[data-filter-menu="${openFilterMenu}"]`)
+    const initialTarget = openFilterMenu === 'fabric'
+      ? menu?.querySelector('input')
+      : menu?.querySelector('[role="option"]')
+    initialTarget?.focus()
     const handlePointerDown = (event) => {
       if (!compactFilterRef.current?.contains(event.target)) {
         setOpenFilterMenu(null)
@@ -234,8 +262,10 @@ export default function PieceInventory({ onSendToStylist }) {
     }
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
+        const trigger = compactFilterRef.current?.querySelector(`[data-filter-trigger="${openFilterMenu}"]`)
         setOpenFilterMenu(null)
         setFabricSearch('')
+        trigger?.focus()
       }
     }
     document.addEventListener('pointerdown', handlePointerDown)
@@ -262,6 +292,21 @@ export default function PieceInventory({ onSendToStylist }) {
     filterFabric ? { key: 'fabric',   label: filterFabric,  clear: () => setFilter({ fabric: '' }) } : null,
   ].filter(Boolean)
   const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', color: '', fabric: '' })
+  const hasActiveFilters = Boolean(search || filterCat || filterOcc || filterSeason || filterColor || filterFabric || favOnly)
+  const clearWardrobeFilters = () => setFilter({
+    q: '',
+    category: '',
+    occasion: '',
+    season: '',
+    color: '',
+    fabric: '',
+    fav: false,
+  })
+  const resultLabel = loading || search !== debouncedSearch
+    ? 'Updating pieces…'
+    : hasActiveFilters
+      ? `${pieces.length} matching ${pieces.length === 1 ? 'piece' : 'pieces'}`
+      : `${pieces.length} ${pieces.length === 1 ? 'piece' : 'pieces'}`
   const visibleFabrics = availableFabrics.filter(fabric => fabric.toLowerCase().includes(fabricSearch.trim().toLowerCase()))
   const addPiece = () => { setEditPiece(null); setShowForm(true) }
 
@@ -294,19 +339,45 @@ export default function PieceInventory({ onSendToStylist }) {
     const next = items[(index + delta + items.length) % items.length]
     next?.focus()
   }
+  const handleFilterMenuKeyDown = (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    const menu = event.currentTarget
+    const items = Array.from(menu.querySelectorAll('[role="option"]'))
+    if (!items.length) return
+    const index = items.indexOf(document.activeElement)
+    const delta = event.key === 'ArrowDown' ? 1 : -1
+    const nextIndex = index < 0
+      ? (delta > 0 ? 0 : items.length - 1)
+      : (index + delta + items.length) % items.length
+    items[nextIndex]?.focus()
+  }
+  const selectFilterOption = (menuName, updates, { clearFabric = false } = {}) => {
+    setFilter(updates)
+    setOpenFilterMenu(null)
+    if (clearFabric) setFabricSearch('')
+    requestAnimationFrame(() => {
+      compactFilterRef.current?.querySelector(`[data-filter-trigger="${menuName}"]`)?.focus()
+    })
+  }
 
   return (
-    <div>
+    <div aria-busy={loading}>
       {/* Header */}
       <div className="view-header wardrobe-view-header">
         <div className="view-header-top wardrobe-header-primary">
           <div className="wardrobe-header-title">
             <div className="view-title">The Wardrobe Room</div>
-            <div className="view-subtitle">{pieces.length} pieces{favOnly ? ' · favorites' : ''}</div>
+            <div className="view-subtitle" aria-live="polite">{resultLabel}</div>
           </div>
           <div className="search-bar wardrobe-header-search">
             <span className="search-icon" aria-hidden="true">◎</span>
-            <input aria-label="Search wardrobe" type="search" placeholder="Search pieces by name, tags, or ID…" value={search} onChange={e => setFilter({ q: e.target.value })} />
+            <input aria-label="Search wardrobe" type="search" placeholder="Search by name, color, fabric, or shape…" value={search} onChange={e => setFilter({ q: e.target.value })} />
+            {search && (
+              <button type="button" className="wardrobe-search-clear" onClick={() => setFilter({ q: '' })} aria-label="Clear wardrobe search">
+                ×
+              </button>
+            )}
           </div>
           <div className="wardrobe-header-actions">
             <div className="wardrobe-add-menu" ref={addMenuRef}>
@@ -358,7 +429,7 @@ export default function PieceInventory({ onSendToStylist }) {
         <div className="wardrobe-filter-group">
           <div className="filter-row" aria-label="Wardrobe categories">
             {CATEGORIES.map(c => (
-              <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value })}>{c.label}</button>
+              <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value })} aria-pressed={filterCat === c.value}>{c.label}</button>
             ))}
           </div>
         </div>
@@ -369,19 +440,21 @@ export default function PieceInventory({ onSendToStylist }) {
               className={`filter-menu-btn ${openFilterMenu === 'occasion' || filterOcc ? 'active' : ''}`}
               onClick={() => setOpenFilterMenu(openFilterMenu === 'occasion' ? null : 'occasion')}
               aria-expanded={openFilterMenu === 'occasion'}
-              aria-haspopup="menu"
+              aria-haspopup="listbox"
+              data-filter-trigger="occasion"
             >
               <span>{filterOcc ? `Occasion: ${occasionLabel}` : 'Occasion'}</span>
               <span className="filter-menu-chevron">⌄</span>
             </button>
             {openFilterMenu === 'occasion' && (
-              <div className="filter-menu-popover" role="menu">
+              <div className="filter-menu-popover" role="listbox" aria-label="Occasion" data-filter-menu="occasion" onKeyDown={handleFilterMenuKeyDown}>
                 {OCCASIONS.map(o => (
                   <button
                     key={o.value}
                     className={`custom-select-option ${filterOcc === o.value ? 'active' : ''}`}
-                    onClick={() => { setFilter({ occasion: o.value }); setOpenFilterMenu(null) }}
-                    role="menuitem"
+                    onClick={() => selectFilterOption('occasion', { occasion: o.value })}
+                    role="option"
+                    aria-selected={filterOcc === o.value}
                   >
                     <span>{o.label}</span>
                     {filterOcc === o.value && <span aria-hidden="true">✓</span>}
@@ -396,19 +469,21 @@ export default function PieceInventory({ onSendToStylist }) {
               className={`filter-menu-btn ${openFilterMenu === 'season' || filterSeason ? 'active' : ''}`}
               onClick={() => setOpenFilterMenu(openFilterMenu === 'season' ? null : 'season')}
               aria-expanded={openFilterMenu === 'season'}
-              aria-haspopup="menu"
+              aria-haspopup="listbox"
+              data-filter-trigger="season"
             >
               <span>{filterSeason ? `Season: ${seasonLabel}` : 'Season'}</span>
               <span className="filter-menu-chevron">⌄</span>
             </button>
             {openFilterMenu === 'season' && (
-              <div className="filter-menu-popover" role="menu">
+              <div className="filter-menu-popover" role="listbox" aria-label="Season" data-filter-menu="season" onKeyDown={handleFilterMenuKeyDown}>
                 {SEASONS.map(s => (
                   <button
                     key={s.value}
                     className={`custom-select-option ${filterSeason === s.value ? 'active' : ''}`}
-                    onClick={() => { setFilter({ season: s.value }); setOpenFilterMenu(null) }}
-                    role="menuitem"
+                    onClick={() => selectFilterOption('season', { season: s.value })}
+                    role="option"
+                    aria-selected={filterSeason === s.value}
                   >
                     <span>{s.label}</span>
                     {filterSeason === s.value && <span aria-hidden="true">✓</span>}
@@ -424,17 +499,19 @@ export default function PieceInventory({ onSendToStylist }) {
                 className={`filter-menu-btn ${openFilterMenu === 'color' || filterColor ? 'active' : ''}`}
                 onClick={() => { setFabricSearch(''); setOpenFilterMenu(openFilterMenu === 'color' ? null : 'color') }}
                 aria-expanded={openFilterMenu === 'color'}
-                aria-haspopup="menu"
+                aria-haspopup="listbox"
+                data-filter-trigger="color"
               >
                 <span>{filterColor ? `Color: ${filterColor}` : 'Color'}</span>
                 <span className="filter-menu-chevron">⌄</span>
               </button>
               {openFilterMenu === 'color' && (
-                <div className="filter-menu-popover wardrobe-color-popover" role="menu">
+                <div className="filter-menu-popover wardrobe-color-popover" role="listbox" aria-label="Color" data-filter-menu="color" onKeyDown={handleFilterMenuKeyDown}>
                   <button
                     className={`wardrobe-color-any ${!filterColor ? 'active' : ''}`}
-                    onClick={() => { setFilter({ color: '' }); setOpenFilterMenu(null) }}
-                    role="menuitem"
+                    onClick={() => selectFilterOption('color', { color: '' })}
+                    role="option"
+                    aria-selected={!filterColor}
                   >
                     <span>Any color</span>
                     {!filterColor && <span className="wardrobe-filter-check" aria-hidden="true">✓</span>}
@@ -447,10 +524,11 @@ export default function PieceInventory({ onSendToStylist }) {
                         <button
                           key={color}
                           className={`wardrobe-color-option ${active ? 'active' : ''}`}
-                          onClick={() => { setFilter({ color: active ? '' : color }); setOpenFilterMenu(null) }}
+                          onClick={() => selectFilterOption('color', { color: active ? '' : color })}
                           title={color}
                           aria-label={`${active ? 'Clear' : 'Filter by'} ${color}`}
-                          role="menuitem"
+                          role="option"
+                          aria-selected={active}
                         >
                           <span className="wardrobe-color-swatch" style={{ background: hex }} aria-hidden="true" />
                           <span className="wardrobe-color-name">{color}</span>
@@ -470,42 +548,48 @@ export default function PieceInventory({ onSendToStylist }) {
                 className={`filter-menu-btn ${openFilterMenu === 'fabric' || filterFabric ? 'active' : ''}`}
                 onClick={() => setOpenFilterMenu(openFilterMenu === 'fabric' ? null : 'fabric')}
                 aria-expanded={openFilterMenu === 'fabric'}
-                aria-haspopup="menu"
+                aria-haspopup="listbox"
+                data-filter-trigger="fabric"
               >
                 <span>{filterFabric ? `Fabric: ${filterFabric}` : 'Fabric'}</span>
                 <span className="filter-menu-chevron">⌄</span>
               </button>
               {openFilterMenu === 'fabric' && (
-                <div className="filter-menu-popover wardrobe-fabric-popover" role="menu">
+                <div className="filter-menu-popover wardrobe-fabric-popover" data-filter-menu="fabric" onKeyDown={handleFilterMenuKeyDown}>
                   <div className="wardrobe-fabric-search-shell">
                     <input
                       className="wardrobe-fabric-search"
                       type="search"
                       placeholder="Search fabrics..."
+                      aria-label="Search fabrics"
                       value={fabricSearch}
                       onChange={event => setFabricSearch(event.target.value)}
                     />
                   </div>
-                  <button
-                    className={`custom-select-option ${!filterFabric ? 'active' : ''}`}
-                    onClick={() => { setFilter({ fabric: '' }); setOpenFilterMenu(null); setFabricSearch('') }}
-                    role="menuitem"
-                  >
-                    <span>All</span>
-                    {!filterFabric && <span aria-hidden="true">✓</span>}
-                  </button>
-                  {visibleFabrics.map(fabric => (
+                  <div role="listbox" aria-label="Fabric">
                     <button
-                      key={fabric}
-                      className={`custom-select-option ${filterFabric === fabric ? 'active' : ''}`}
-                      onClick={() => { setFilter({ fabric: filterFabric === fabric ? '' : fabric }); setOpenFilterMenu(null); setFabricSearch('') }}
-                      role="menuitem"
-                      style={{ textTransform: 'capitalize' }}
+                      className={`custom-select-option ${!filterFabric ? 'active' : ''}`}
+                      onClick={() => selectFilterOption('fabric', { fabric: '' }, { clearFabric: true })}
+                      role="option"
+                      aria-selected={!filterFabric}
                     >
-                      <span>{fabric}</span>
-                      {filterFabric === fabric && <span aria-hidden="true">✓</span>}
+                      <span>All</span>
+                      {!filterFabric && <span aria-hidden="true">✓</span>}
                     </button>
-                  ))}
+                    {visibleFabrics.map(fabric => (
+                      <button
+                        key={fabric}
+                        className={`custom-select-option ${filterFabric === fabric ? 'active' : ''}`}
+                        onClick={() => selectFilterOption('fabric', { fabric: filterFabric === fabric ? '' : fabric }, { clearFabric: true })}
+                        role="option"
+                        aria-selected={filterFabric === fabric}
+                        style={{ textTransform: 'capitalize' }}
+                      >
+                        <span>{fabric}</span>
+                        {filterFabric === fabric && <span aria-hidden="true">✓</span>}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -527,19 +611,21 @@ export default function PieceInventory({ onSendToStylist }) {
                 className={`filter-menu-btn ${openFilterMenu === 'sort' ? 'active' : ''}`}
                 onClick={() => setOpenFilterMenu(openFilterMenu === 'sort' ? null : 'sort')}
                 aria-expanded={openFilterMenu === 'sort'}
-                aria-haspopup="menu"
+                aria-haspopup="listbox"
+                data-filter-trigger="sort"
               >
                 <span>Sort: {SORT_OPTIONS.find(o => o.value === sort)?.label}</span>
                 <span className="filter-menu-chevron">⌄</span>
               </button>
               {openFilterMenu === 'sort' && (
-                <div className="filter-menu-popover wardrobe-sort-popover" role="menu">
+                <div className="filter-menu-popover wardrobe-sort-popover" role="listbox" aria-label="Sort wardrobe" data-filter-menu="sort" onKeyDown={handleFilterMenuKeyDown}>
                   {SORT_OPTIONS.map(o => (
                     <button
                       key={o.value}
                       className={`custom-select-option ${sort === o.value ? 'active' : ''}`}
-                      onClick={() => { setFilter({ sort: o.value === 'mix' ? '' : o.value }); setOpenFilterMenu(null) }}
-                      role="menuitem"
+                      onClick={() => selectFilterOption('sort', { sort: o.value === 'mix' ? '' : o.value })}
+                      role="option"
+                      aria-selected={sort === o.value}
                     >
                       <span>{o.label}</span>
                       {sort === o.value && <span aria-hidden="true">✓</span>}
@@ -551,23 +637,26 @@ export default function PieceInventory({ onSendToStylist }) {
 
             <InfoTooltip
               className="wardrobe-sort-info"
-              label="What Most worn and Recently used mean"
+              label="How wardrobe activity affects sorting"
               align="right"
               side="bottom"
               width={276}
               open={openFilterMenu === 'sortInfo'}
               onToggle={(next) => setOpenFilterMenu(next ? 'sortInfo' : null)}
             >
-              <div className="wardrobe-sort-info-title">Usage in Closet</div>
+              <div className="wardrobe-sort-info-title">Styling activity in Closet</div>
               <div className="wardrobe-sort-info-row">
-                <strong>Most worn</strong>
+                <strong>Most styled</strong>
                 <span>Pieces used most often in saved outfits and boards.</span>
               </div>
               <div className="wardrobe-sort-info-row">
-                <strong>Recently used</strong>
+                <strong>Recently styled</strong>
                 <span>Pieces most recently used there.</span>
               </div>
-              <div className="wardrobe-sort-info-note">Closet does not track real-world wear.</div>
+              <div className="wardrobe-sort-info-row">
+                <strong>Ready to rediscover</strong>
+                <span>Pieces used least often in saved outfits and boards.</span>
+              </div>
             </InfoTooltip>
           </div>
         </div>
@@ -591,14 +680,26 @@ export default function PieceInventory({ onSendToStylist }) {
 
       {/* Grid */}
       {loading ? (
-        <div className="loading">Loading your wardrobe…</div>
-      ) : pieces.length === 0 ? (
-        <div className="empty-state">
+        <div className="loading" aria-live="polite">Loading your wardrobe…</div>
+      ) : loadError ? (
+        <div className="empty-state wardrobe-empty-state" role="alert">
           <div className="empty-state-icon">◈</div>
-          <div className="empty-state-title">Nothing here yet</div>
+          <div className="empty-state-title">Wardrobe could not load</div>
+          <div className="empty-state-text">Your pieces are still here. Check the connection and try again.</div>
+          <button className="btn-secondary wardrobe-clear-empty" onClick={fetchPieces}>Try again</button>
+        </div>
+      ) : pieces.length === 0 ? (
+        <div className="empty-state wardrobe-empty-state">
+          <div className="empty-state-icon">◈</div>
+          <div className="empty-state-title">{hasActiveFilters ? 'No matching pieces' : 'Your wardrobe is ready for its first piece'}</div>
           <div className="empty-state-text">
-            {search || filterCat || filterOcc || filterSeason || filterColor || filterFabric ? 'Try adjusting your filters' : 'Tap + to add a piece, or use Batch to add many at once'}
+            {hasActiveFilters ? 'Try another search or clear the current filters.' : 'Add one piece, import existing pieces, or add several at once.'}
           </div>
+          {hasActiveFilters && (
+            <button className="btn-secondary wardrobe-clear-empty" onClick={clearWardrobeFilters}>
+              Clear filters
+            </button>
+          )}
           {isUnfilteredWardrobe && demoWardrobe?.count === 0 && (
             <button className="btn-secondary wardrobe-demo-cta" onClick={loadDemoWardrobe} disabled={demoLoading}>
               {demoLoading ? 'Adding sample wardrobe…' : `Explore with ${demoWardrobe.available || ''} sample pieces`}
@@ -614,7 +715,7 @@ export default function PieceInventory({ onSendToStylist }) {
       )}
 
       {/* FAB */}
-      <button className="fab wardrobe-mobile-fab" onClick={addPiece}>+</button>
+      <button className="fab wardrobe-mobile-fab" onClick={addPiece} aria-label="Add one piece">+</button>
 
       {/* Modals */}
       {showForm && <PieceForm piece={editPiece} onSave={handleSave} onCancel={() => { setShowForm(false); setEditPiece(null) }} />}

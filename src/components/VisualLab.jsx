@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import StylistSettings from '../views/StylistSettings'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
@@ -8,6 +8,7 @@ import {
   SHAPE_BALANCE_REASONS,
   IMAGE_FIDELITY_FEEDBACK_LABELS,
   WRONG_LENGTH_REASONS,
+  SAVED_BOARD_FEEDBACK_DISPLAY_LABELS,
 } from '../../lib/feedbackTaxonomy.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -68,17 +69,17 @@ const calibrationLabelsForKind = (kind, selected = []) => {
   return [...contextual, ...legacySelected]
 }
 
-const SAVED_BOARD_FEEDBACK_DISPLAY_LABELS = [
-  ...OVERALL_VERDICT_LABELS,
-  ...STYLE_DIRECTION_REASONS,
-  ...SHAPE_BALANCE_REASONS,
-  ['wrong_energy', 'The overall feel is wrong'],
-  ['style_direction', 'Style direction'],
-  ['shape_balance', 'Shape and balance'],
-  ...IMAGE_FIDELITY_FEEDBACK_LABELS,
-  ['bad_reference', 'Bad reference'],
-]
-
+const savedBoardReviewState = (board) => {
+  const labels = Array.isArray(board?.payload?.feedback_labels) ? board.payload.feedback_labels : []
+  const imageIssueValues = new Set(IMAGE_FIDELITY_FEEDBACK_LABELS.map(([value]) => value))
+  const verdict = OVERALL_VERDICT_LABELS.find(([value]) => labels.includes(value))
+  const hasImageIssue = labels.some(label => imageIssueValues.has(label))
+  return {
+    value: verdict?.[0] || 'unreviewed',
+    label: verdict?.[1] || 'Not reviewed',
+    hasImageIssue,
+  }
+}
 
 // ─── VisualLab ────────────────────────────────────────────────────────────────
 // The calibration library panel, a standalone tab. Manages:
@@ -107,8 +108,20 @@ export default function VisualLab({ onGoToThread } = {}) {
   const [previewImage, setPreviewImage]                     = useState(null)
   const [selectedBoard, setSelectedBoard]                   = useState(null)
   const [savedBoardFilter, setSavedBoardFilter]             = useState('all')
+  const [savedBoardStatusFilter, setSavedBoardStatusFilter] = useState('all')
   const [savedBoardSearch, setSavedBoardSearch]             = useState('')
+  const [savedBoardsError, setSavedBoardsError]             = useState('')
+  const [savedBoardPending, setSavedBoardPending]           = useState(false)
+  const [savedBoardNotice, setSavedBoardNotice]             = useState('')
+  const [specificFeedbackOpen, setSpecificFeedbackOpen]     = useState(false)
+  const boardDialogRef = useRef(null)
+  const boardCloseRef = useRef(null)
+  const previewDialogRef = useRef(null)
+  const previewImageRef = useRef(null)
+  const boardReturnFocusRef = useRef(null)
+  const previewReturnFocusRef = useRef(null)
   const [searchParams, setSearchParams] = useSearchParams()
+  previewImageRef.current = previewImage
   useEffect(() => {
     const firstPieceId = (selectedBoard?.pieces || []).find(piece => Number(piece?.id))?.id
     setRetagPieceId(firstPieceId ? Number(firstPieceId) : null)
@@ -148,14 +161,16 @@ export default function VisualLab({ onGoToThread } = {}) {
 
   const loadSavedBoards = async () => {
     setSavedBoardsLoading(true)
+    setSavedBoardsError('')
     try {
       const params = new URLSearchParams({ limit: '200', includeArchived: 'true' })
       const res = await fetch(`/api/saved-boards?${params.toString()}`)
+      if (!res.ok) throw new Error(`Request failed (${res.status})`)
       const rows = await res.json()
       const list = Array.isArray(rows) ? rows : []
       setSavedBoards(list)
     } catch {
-      setSavedBoards([])
+      setSavedBoardsError('Calibration boards could not be loaded. Your saved feedback is still safe.')
     } finally {
       setSavedBoardsLoading(false)
     }
@@ -197,6 +212,64 @@ export default function VisualLab({ onGoToThread } = {}) {
     }, { replace: true })
   }
 
+  useEffect(() => {
+    if (!selectedBoard) return undefined
+    const labels = Array.isArray(selectedBoard?.payload?.feedback_labels) ? selectedBoard.payload.feedback_labels : []
+    const hasSpecificFeedback = labels.some(label =>
+      ['style_direction', 'shape_balance', ...IMAGE_FIDELITY_FEEDBACK_LABELS.map(([value]) => value)].includes(label)
+    )
+    setSpecificFeedbackOpen(hasSpecificFeedback || labels.some(label => ['almost', 'not_me'].includes(label)))
+    setSavedBoardNotice('')
+
+    const main = document.querySelector('.app-main')
+    const previousBodyOverflow = document.body.style.overflow
+    const previousMainOverflow = main?.style?.overflow
+    document.body.style.overflow = 'hidden'
+    if (main) main.style.overflow = 'hidden'
+    requestAnimationFrame(() => boardCloseRef.current?.focus())
+
+    const handleDialogKeyDown = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        if (previewImageRef.current) closePreviewImage()
+        else closeSelectedBoard()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const scope = previewImageRef.current ? previewDialogRef.current : boardDialogRef.current
+      const focusable = [...(scope?.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+      ) || [])]
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleDialogKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleDialogKeyDown)
+      document.body.style.overflow = previousBodyOverflow
+      if (main) main.style.overflow = previousMainOverflow || ''
+      boardReturnFocusRef.current?.focus?.()
+    }
+  }, [selectedBoard?.id])
+
+  useEffect(() => {
+    if (!previewImage) return
+    requestAnimationFrame(() => previewDialogRef.current?.querySelector('button')?.focus())
+  }, [previewImage])
+
+  const closePreviewImage = () => {
+    setPreviewImage(null)
+    requestAnimationFrame(() => previewReturnFocusRef.current?.focus?.())
+  }
+
   const filteredSavedBoards = useMemo(() => {
     const imageIssueValues = new Set(IMAGE_FIDELITY_FEEDBACK_LABELS.map(([value]) => value))
     const positiveValues = new Set(['signature', 'works'])
@@ -210,16 +283,21 @@ export default function VisualLab({ onGoToThread } = {}) {
     return savedBoards.filter(board => {
       const labels = Array.isArray(board?.payload?.feedback_labels) ? board.payload.feedback_labels : []
       const matchesFilter = (() => {
-        if (savedBoardFilter === 'ignored') return board.archived
-        if (board.archived) return false
+        if (board.archived && savedBoardStatusFilter !== 'ignored') return false
+        const state = savedBoardReviewState(board)
+        if (savedBoardFilter === 'unreviewed') return state.value === 'unreviewed'
         if (savedBoardFilter === 'positive') return labels.some(label => positiveValues.has(label))
         if (savedBoardFilter === 'review') return labels.some(label => reviewValues.has(label))
         if (savedBoardFilter === 'image') return labels.some(label => imageIssueValues.has(label))
-        if (savedBoardFilter === 'strong') return board.favorite
-        if (savedBoardFilter === 'hidden') return board.hidden_from_lookbook
         return true
       })()
-      if (!matchesFilter || !query) return matchesFilter
+      const matchesStatus = (() => {
+        if (savedBoardStatusFilter === 'strong') return board.favorite
+        if (savedBoardStatusFilter === 'hidden') return board.hidden_from_lookbook
+        if (savedBoardStatusFilter === 'ignored') return board.archived
+        return !board.archived
+      })()
+      if (!matchesFilter || !matchesStatus || !query) return matchesFilter && matchesStatus
       const searchable = [
         board.title,
         board.context_name,
@@ -229,7 +307,7 @@ export default function VisualLab({ onGoToThread } = {}) {
       ].filter(Boolean).join(' ').toLowerCase()
       return searchable.includes(query)
     })
-  }, [savedBoards, savedBoardFilter, savedBoardSearch])
+  }, [savedBoards, savedBoardFilter, savedBoardStatusFilter, savedBoardSearch])
 
 
 
@@ -340,20 +418,30 @@ export default function VisualLab({ onGoToThread } = {}) {
   // ── Saved board actions ───────────────────────────────────────────────────────
 
   const patchSavedBoard = async (row, patch) => {
-    const res = await fetch(`/api/saved-boards/${row.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    })
-    if (!res.ok) return null
-    const updated = await res.json().catch(() => null)
-    if (updated?.id) {
-      setSavedBoards(prev => prev.map(b => String(b.id) === String(updated.id) ? updated : b))
-      setSelectedBoard(prev => String(prev?.id) === String(updated.id) ? updated : prev)
-    } else {
-      await loadSavedBoards()
+    setSavedBoardPending(true)
+    setSavedBoardNotice('')
+    try {
+      const res = await fetch(`/api/saved-boards/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!res.ok) throw new Error(`Request failed (${res.status})`)
+      const updated = await res.json().catch(() => null)
+      if (updated?.id) {
+        setSavedBoards(prev => prev.map(b => String(b.id) === String(updated.id) ? updated : b))
+        setSelectedBoard(prev => String(prev?.id) === String(updated.id) ? updated : prev)
+      } else {
+        await loadSavedBoards()
+      }
+      setSavedBoardNotice('Feedback saved')
+      return updated
+    } catch (error) {
+      setSavedBoardNotice('Could not save this change. Please try again.')
+      return null
+    } finally {
+      setSavedBoardPending(false)
     }
-    return updated
   }
 
   const deleteSavedBoard = async (id) => {
@@ -684,31 +772,64 @@ export default function VisualLab({ onGoToThread } = {}) {
             placeholder="Search boards, pieces, or feedback…"
             aria-label="Search calibration boards"
           />
-          <div className="calibration-board-filter-chips">
+          <div className="calibration-board-filter-groups">
+          <div className="calibration-board-filter-group" role="group" aria-label="Review status">
+            <span>Review</span>
+            <div className="calibration-board-filter-chips">
             {[
               ['all', 'All'],
+              ['unreviewed', 'Not reviewed'],
               ['positive', 'Positive'],
               ['review', 'Needs review'],
               ['image', 'Image issues'],
-              ['strong', 'Use strongly'],
-              ['hidden', 'Hidden'],
-              ['ignored', 'Ignored'],
             ].map(([value, label]) => (
-              <button key={value} type="button" className={`chip ${savedBoardFilter === value ? 'active' : ''}`} onClick={() => setSavedBoardFilter(value)}>{label}</button>
+              <button key={value} type="button" className={`chip ${savedBoardFilter === value ? 'active' : ''}`} aria-pressed={savedBoardFilter === value} onClick={() => setSavedBoardFilter(value)}>{label}</button>
             ))}
+            </div>
+          </div>
+          <div className="calibration-board-filter-group" role="group" aria-label="Board status">
+            <span>Status</span>
+            <div className="calibration-board-filter-chips">
+              {[
+                ['all', 'All'],
+                ['strong', 'Use strongly'],
+                ['hidden', 'Hidden'],
+                ['ignored', 'Ignored'],
+              ].map(([value, label]) => (
+                <button key={value} type="button" className={`chip ${savedBoardStatusFilter === value ? 'active' : ''}`} aria-pressed={savedBoardStatusFilter === value} onClick={() => setSavedBoardStatusFilter(value)}>{label}</button>
+              ))}
+            </div>
+          </div>
           </div>
         </div>
 
-        {!savedBoards.length ? (
+        {savedBoardsLoading ? (
+          <div className="style-profile-empty" role="status">Loading calibration boards…</div>
+        ) : savedBoardsError ? (
+          <div className="style-profile-empty calibration-board-error" role="alert">
+            <span>{savedBoardsError}</span>
+            <button type="button" className="btn-secondary" onClick={loadSavedBoards}>Try again</button>
+          </div>
+        ) : !savedBoards.length ? (
           <div className="style-profile-empty">No calibration boards saved yet.</div>
         ) : !filteredSavedBoards.length ? (
-          <div className="style-profile-empty">No boards match these filters.</div>
+          <div className="style-profile-empty calibration-board-error">
+            <span>No boards match these filters.</span>
+            <button type="button" className="btn-secondary" onClick={() => {
+              setSavedBoardSearch('')
+              setSavedBoardFilter('all')
+              setSavedBoardStatusFilter('all')
+            }}>Clear filters</button>
+          </div>
         ) : (
           <div className="calibration-board-grid">
             {filteredSavedBoards.map(board => {
-              const feedback = Array.isArray(board?.payload?.feedback_labels) ? board.payload.feedback_labels : []
+              const reviewState = savedBoardReviewState(board)
               return (
-              <button key={board.id} type="button" className={`calibration-board-card ${board.archived ? 'is-archived' : ''}`} onClick={() => setSelectedBoard(board)}>
+              <button key={board.id} type="button" className={`calibration-board-card ${board.archived ? 'is-archived' : ''}`} onClick={event => {
+                boardReturnFocusRef.current = event.currentTarget
+                setSelectedBoard(board)
+              }}>
                 <div className="calibration-board-image">
                   {board.image_url && <img src={uploadThumbnailSrc(board.image_url, 'lookbook-display')} alt={board.title || 'Saved board'} loading="lazy" decoding="async" />}
                   <div className="calibration-board-badges">
@@ -720,15 +841,10 @@ export default function VisualLab({ onGoToThread } = {}) {
                 <div className="calibration-board-card-body">
                   <strong>{board.title || 'Saved board'}</strong>
                   <span>{board.context_name || board.board_type?.replaceAll('_', ' ') || 'Visual board'}</span>
-                  {!!feedback.length && (
-                    <div className="calibration-board-feedback-summary">
-                      {feedback.slice(0, 2).map(label => {
-                        const found = SAVED_BOARD_FEEDBACK_DISPLAY_LABELS.find(([value]) => value === label)
-                        return <span key={label}>{found ? found[1] : label}</span>
-                      })}
-                      {feedback.length > 2 && <span>+{feedback.length - 2}</span>}
-                    </div>
-                  )}
+                  <div className="calibration-board-feedback-summary">
+                    <span className={`is-${reviewState.value}`}>{reviewState.label}</span>
+                    {reviewState.hasImageIssue && <span className="is-image-issue">Image issue</span>}
+                  </div>
                   <span className="calibration-board-open">Review board →</span>
                 </div>
               </button>
@@ -740,12 +856,15 @@ export default function VisualLab({ onGoToThread } = {}) {
       </div>
 
       {selectedBoard && (
-        <div className="modal-overlay calibration-board-detail-overlay" role="dialog" aria-modal="true" onClick={closeSelectedBoard}>
-          <div className="calibration-board-detail" onClick={e => e.stopPropagation()}>
-            <button className="modal-close calibration-board-detail-close" onClick={closeSelectedBoard} aria-label="Close board details">×</button>
+        <div className="modal-overlay calibration-board-detail-overlay" onClick={closeSelectedBoard}>
+          <div ref={boardDialogRef} className="calibration-board-detail" role="dialog" aria-modal="true" aria-labelledby="calibration-board-detail-title" onClick={e => e.stopPropagation()}>
+            <button ref={boardCloseRef} className="modal-close calibration-board-detail-close" onClick={closeSelectedBoard} aria-label="Close board details">×</button>
             <div className="calibration-board-detail-media">
               {selectedBoard.image_url && (
-                <button type="button" onClick={() => setPreviewImage({ src: selectedBoard.image_url, title: selectedBoard.title || 'Saved board', meta: selectedBoard.context_name || '' })}>
+                <button type="button" onClick={event => {
+                  previewReturnFocusRef.current = event.currentTarget
+                  setPreviewImage({ src: selectedBoard.image_url, title: selectedBoard.title || 'Saved board', meta: selectedBoard.context_name || '' })
+                }}>
                   <img src={uploadThumbnailSrc(selectedBoard.image_url, 'lookbook-display')} alt={selectedBoard.title || 'Saved board'} decoding="async" />
                   <span>Open full image</span>
                 </button>
@@ -754,7 +873,7 @@ export default function VisualLab({ onGoToThread } = {}) {
             <div className="calibration-board-detail-content">
               <div className="calibration-board-detail-heading">
                 <span>Calibration board</span>
-                <h2>{selectedBoard.title || 'Saved board'}</h2>
+                <h2 id="calibration-board-detail-title">{selectedBoard.title || 'Saved board'}</h2>
                 <p>{selectedBoard.context_name || selectedBoard.board_type?.replaceAll('_', ' ')}</p>
               </div>
 
@@ -766,43 +885,55 @@ export default function VisualLab({ onGoToThread } = {}) {
               )}
               {selectedBoard.reason && (
                 <div className="calibration-board-detail-section">
-                  <h3>Why this look</h3>
+                  <h3>Why it was suggested</h3>
                   <p>{selectedBoard.reason}</p>
                 </div>
               )}
 
               <div className="calibration-board-detail-section">
                 <h3>Your feedback</h3>
-                <p>Select everything the stylist should remember about this board.</p>
-                <h4 className="calibration-board-feedback-group-title">Overall</h4>
-                <div className="calibration-board-feedback-options">
+                <p>Start with the outfit direction. Report rendering problems separately—they do not mean the outfit idea is wrong.</p>
+                <div className="calibration-board-feedback-group" role="group" aria-labelledby="calibration-overall-label">
+                <h4 id="calibration-overall-label" className="calibration-board-feedback-group-title">Outfit direction</h4>
+                <div className="calibration-board-feedback-options calibration-board-verdict-options">
                   {OVERALL_VERDICT_LABELS.map(([label, text]) => {
                     const active = Array.isArray(selectedBoard?.payload?.feedback_labels) && selectedBoard.payload.feedback_labels.includes(label)
-                    return <button key={label} type="button" className={active ? 'active' : ''} onClick={() => selectOverallVerdict(selectedBoard, label)}>{text}</button>
+                    return <button key={label} type="button" className={active ? 'active' : ''} aria-pressed={active} disabled={savedBoardPending} onClick={() => selectOverallVerdict(selectedBoard, label)}>{text}</button>
                   })}
                 </div>
-                <h4 className="calibration-board-feedback-group-title">What feels wrong?</h4>
+                </div>
+
+                <details className="calibration-board-specific-feedback" open={specificFeedbackOpen} onToggle={event => setSpecificFeedbackOpen(event.currentTarget.open)}>
+                  <summary>Add specific feedback</summary>
+                <div className="calibration-board-feedback-group" role="group" aria-labelledby="calibration-style-label">
+                <h4 id="calibration-style-label" className="calibration-board-feedback-group-title">What feels wrong?</h4>
                 <div className="calibration-board-feedback-options">
                   {STYLE_DIRECTION_REASONS.map(([reason, text]) => {
                     const selected = selectedBoard?.payload?.feedback_details?.style_direction
                     const active = Array.isArray(selected) && selected.includes(reason)
-                    return <button key={reason} type="button" className={active ? 'active' : ''} onClick={() => toggleStructuredFeedbackReason(selectedBoard, 'style_direction', reason)}>{text}</button>
+                    return <button key={reason} type="button" className={active ? 'active' : ''} aria-pressed={active} disabled={savedBoardPending} onClick={() => toggleStructuredFeedbackReason(selectedBoard, 'style_direction', reason)}>{text}</button>
                   })}
                 </div>
-                <h4 className="calibration-board-feedback-group-title">Fit and shape</h4>
+                </div>
+                <div className="calibration-board-feedback-group" role="group" aria-labelledby="calibration-shape-label">
+                <h4 id="calibration-shape-label" className="calibration-board-feedback-group-title">Fit and shape</h4>
                 <div className="calibration-board-feedback-options">
                   {SHAPE_BALANCE_REASONS.map(([reason, text]) => {
                     const selected = selectedBoard?.payload?.feedback_details?.shape_balance
                     const active = Array.isArray(selected) && selected.includes(reason)
-                    return <button key={reason} type="button" className={active ? 'active' : ''} onClick={() => toggleStructuredFeedbackReason(selectedBoard, 'shape_balance', reason)}>{text}</button>
+                    return <button key={reason} type="button" className={active ? 'active' : ''} aria-pressed={active} disabled={savedBoardPending} onClick={() => toggleStructuredFeedbackReason(selectedBoard, 'shape_balance', reason)}>{text}</button>
                   })}
                 </div>
-                <h4 className="calibration-board-feedback-group-title">Problems in the generated image</h4>
+                </div>
+                <div className="calibration-board-feedback-group calibration-board-image-feedback" role="group" aria-labelledby="calibration-image-label">
+                <h4 id="calibration-image-label" className="calibration-board-feedback-group-title">Problems in the generated image</h4>
+                <p>These report rendering accuracy only. The outfit direction can still be useful.</p>
                 <div className="calibration-board-feedback-options">
                   {IMAGE_FIDELITY_FEEDBACK_LABELS.map(([label, text]) => {
                     const active = Array.isArray(selectedBoard?.payload?.feedback_labels) && selectedBoard.payload.feedback_labels.includes(label)
-                    return <button key={label} type="button" className={active ? 'active' : ''} onClick={() => toggleBoardFeedback(selectedBoard, label)}>{text}</button>
+                    return <button key={label} type="button" className={active ? 'active' : ''} aria-pressed={active} disabled={savedBoardPending} onClick={() => toggleBoardFeedback(selectedBoard, label)}>{text}</button>
                   })}
+                </div>
                 </div>
                 {Array.isArray(selectedBoard?.payload?.feedback_labels) && selectedBoard.payload.feedback_labels.includes('wrong_length') && (
                   <div className="calibration-board-feedback-detail">
@@ -811,7 +942,10 @@ export default function VisualLab({ onGoToThread } = {}) {
                     <div className="calibration-board-feedback-options">
                       {(selectedBoard.pieces || []).filter(piece => Number(piece?.id)).map((piece, index) => {
                         const chosenId = Number(retagPieceId || (selectedBoard.pieces || []).find(candidate => Number(candidate?.id))?.id)
-                        return <button key={piece.id} type="button" className={chosenId === Number(piece.id) ? 'active' : ''} onClick={() => setRetagPieceId(Number(piece.id))}>{piece.name || `Piece ${index + 1}`}</button>
+                        // Choosing which garment to annotate is local UI navigation, not a save.
+                        // It must stay tappable while a feedback write is in flight, or a quick
+                        // switch after selecting a reason gets swallowed and appears not to persist.
+                        return <button key={piece.id} type="button" className={chosenId === Number(piece.id) ? 'active' : ''} aria-pressed={chosenId === Number(piece.id)} onClick={() => setRetagPieceId(Number(piece.id))}>{piece.name || `Piece ${index + 1}`}</button>
                       })}
                     </div>
                     <h4 className="calibration-board-feedback-detail-question">What was wrong?</h4>
@@ -820,17 +954,19 @@ export default function VisualLab({ onGoToThread } = {}) {
                         const pieceId = Number(retagPieceId || (selectedBoard.pieces || []).find(piece => Number(piece?.id))?.id)
                         const corrections = selectedBoard?.payload?.feedback_details?.wrong_length
                         const active = Array.isArray(corrections) && corrections.some(correction => Number(correction?.piece_id) === pieceId && correction?.issue === issue)
-                        return <button key={issue} type="button" className={active ? 'active' : ''} onClick={() => toggleWrongLengthReason(selectedBoard, issue)}>{text}</button>
+                        return <button key={issue} type="button" className={active ? 'active' : ''} aria-pressed={active} disabled={savedBoardPending} onClick={() => toggleWrongLengthReason(selectedBoard, issue)}>{text}</button>
                       })}
                     </div>
                   </div>
                 )}
+                </details>
+                <div className="calibration-board-save-status" role="status" aria-live="polite">{savedBoardPending ? 'Saving…' : savedBoardNotice}</div>
               </div>
 
               <div className="calibration-board-detail-controls">
-                <button className="btn-secondary" onClick={() => patchSavedBoard(selectedBoard, { favorite: !selectedBoard.favorite })}>{selectedBoard.favorite ? 'Use normally' : 'Use strongly'}</button>
-                <button className="btn-secondary" onClick={() => patchSavedBoard(selectedBoard, { hidden_from_lookbook: !selectedBoard.hidden_from_lookbook })}>{selectedBoard.hidden_from_lookbook ? 'Show in Lookbook' : 'Hide from Lookbook'}</button>
-                <button className="btn-secondary" onClick={() => patchSavedBoard(selectedBoard, { archived: !selectedBoard.archived })}>{selectedBoard.archived ? 'Restore board' : 'Ignore board'}</button>
+                <button className="btn-secondary" disabled={savedBoardPending} onClick={() => patchSavedBoard(selectedBoard, { favorite: !selectedBoard.favorite })}>{selectedBoard.favorite ? 'Use normally' : 'Use strongly'}</button>
+                <button className="btn-secondary" disabled={savedBoardPending} onClick={() => patchSavedBoard(selectedBoard, { hidden_from_lookbook: !selectedBoard.hidden_from_lookbook })}>{selectedBoard.hidden_from_lookbook ? 'Show in Lookbook' : 'Hide from Lookbook'}</button>
+                <button className="btn-secondary" disabled={savedBoardPending} onClick={() => patchSavedBoard(selectedBoard, { archived: !selectedBoard.archived })}>{selectedBoard.archived ? 'Restore board' : 'Ignore board'}</button>
               </div>
 
               <div className="calibration-board-detail-footer">
@@ -848,9 +984,11 @@ export default function VisualLab({ onGoToThread } = {}) {
 
       {previewImage && (
         <div
+          ref={previewDialogRef}
           role="dialog"
           aria-modal="true"
-          onClick={() => setPreviewImage(null)}
+          aria-labelledby="calibration-preview-title"
+          onClick={closePreviewImage}
           style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(20,18,16,0.82)', display: 'grid', placeItems: 'center', padding: 20 }}
         >
           <div
@@ -859,10 +997,10 @@ export default function VisualLab({ onGoToThread } = {}) {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', color: '#fff' }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>{previewImage.title}</div>
+                <div id="calibration-preview-title" style={{ fontSize: 14, fontWeight: 700 }}>{previewImage.title}</div>
                 {previewImage.meta && <div style={{ fontSize: 12, opacity: 0.78 }}>{previewImage.meta}</div>}
               </div>
-              <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+              <button className="chip" onClick={closePreviewImage}>Close</button>
             </div>
             <img
               src={previewImage.src}
