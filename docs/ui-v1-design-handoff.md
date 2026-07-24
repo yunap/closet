@@ -545,6 +545,7 @@ node server.js
 ```bash
 VITE_PORT=5174 \
 VITE_API_PROXY_TARGET=http://localhost:3098 \
+VITE_STYLIST_DEBUG=true \
 npx vite
 ```
 
@@ -787,3 +788,543 @@ for two to four boards, using uncropped images and a compact decision table. It 
 owner answer “which direction is better and why?” and must not become a moodboard or portfolio
 layout. Also defer bulk review, keyboard shortcuts beyond dialog behavior, and new feedback
 taxonomy until the current workflow has been used enough to reveal a real need.
+
+## Stylist pages — panel findings and owner ruling
+
+**Status:** panel diagnosis completed 2026-07-24 (product-design, UX/accessibility, and
+fashion-product reviewers, live in the sandbox at 1440/1024/768px, across all four entry points
+and every output type). Nothing has been changed yet. The owner ruled on the debug/diagnostic-
+card question (theme A) the same day; implementation scope and sequencing are still open — see
+**Open questions** below before starting work.
+
+### What the panel reviewed
+
+All four Stylist entry points (new-chat landing, Generated Outfits → Visual Composer, `Ask
+stylist about this outfit`, `Ask stylist about this piece`) and every output type (chat prose,
+outfit-direction cards, critiques, structured reads, diagnostic/"needs review" cards, the
+comparison sheet) were inspected live, not from static mocks. The three reviews were
+complementary rather than conflicting and converged strongly on two consensus themes.
+
+### Consensus theme A — engine internals were leaking onto the styling surface
+
+Independently the top finding for two reviewers and a blocking item for the third:
+
+- an ungated debug trace appended to "Why this outfit" rationales and critique structured
+  reads (`Styling Engine Trace: Activity: none · Walkable: false · Register Ceiling: elevated
+  · Roster: tops: 2, dresss: 2, shoess: 4`), rendered whenever debug is present with no flag
+  (`StylistChat.jsx:2818`);
+- a real typo from naive pluralization — `dresss` / `shoess` (`StylistChat.jsx:2827`);
+- "Needs review" diagnostic cards rendering raw console/gate vocabulary (`source:
+  model-rejected`, `Rejected reason: structural: missing bottom`), sometimes as a near-duplicate
+  competing with the real answer (two identical cards for the same look);
+- cost-bearing actions (`Generate image ~$0.07`) offered on those broken/rejected cards;
+- a provider-name leak ("One GPT-4o call generated…") and a Telemetry chip sitting inside the
+  semantic filter-chip row.
+
+The existence of diagnostic/"needs review" cards is itself deliberate — it is the advisor-mode
+"we don't repair, we show the rejected proposal" behavior already documented in
+`docs/flows/use-my-wardrobe.md`. The panel was not asking to delete them; it was flagging that
+the *register and execution* fail: raw gate vocabulary, an ungated debug payload, a
+pluralization typo, and paid actions offered on invalid cards.
+
+**Owner ruling (2026-07-24):**
+
+- The debug trace exists on purpose — it was left on for prototype testing. It's time to clean
+  it up: gate it behind an explicit dev-only env flag rather than relying on debug simply being
+  absent in production.
+- Time/tokens-to-complete stays something the owner wants to see, but it goes behind that same
+  dev flag rather than rendering on the default surface.
+- The typo (`dresss` / `shoess`) is a plain bug and must be fixed regardless of the flag — not
+  a design question.
+- Keep the "needs review" diagnostic card concept, but change its composition: show the card
+  the model actually produced, *plus* a separate disclaimer from the engine explaining why it
+  was flagged — in plain language, not raw gate vocabulary — so the owner can still use it to
+  tune the model or the engine. This engine disclaimer can also live behind the dev flag.
+
+Not yet explicitly ruled on by the owner (carry forward from the panel's diagnosis, treat as
+open until confirmed): the provider-name leak, cost-bearing actions on rejected/broken cards,
+and the Telemetry chip's placement inside the semantic filter-chip row.
+
+### Consensus theme B — feedback/calibration controls (blocking for UX, high severity for fashion)
+
+The "teach the stylist what works" mechanism is the weakest cluster on the surface, all tracing
+to one class-less, inline-styled feedback layer:
+
+- 10px chips at 17–19px height — below the ratified 12px type floor and well under touch-target
+  minimums; unusable at 768px (UX, blocking);
+- no `aria-pressed`, no accent focus ring — selected verdict is conveyed by color alone;
+- three disjoint vocabularies that don't nest: un-rendered cards get 2 options (`More like
+  this` / `Not for me`), rendered boards get 4 verdicts + disclosure, saved boards get ~16 flat
+  chips — and the richest vocabulary only appears after the owner pays to render (fashion);
+- asymmetric depth: rich negative vocabulary, blunt positive (`Signature` / `Works`) — the model
+  learns dislikes precisely and loves coarsely.
+
+Componentizing this into one tokenized, accessible, consistent control (in the spirit of the
+Calibration Boards Review/Status filter work above) would resolve multiple findings at once.
+
+**Owner ruling (2026-07-24):**
+
+- Keep the vocabulary staged, do not unify it into one universal control. Richness legitimately
+  scales with what's visible at each stage — some judgments (silhouette, structure, grounding)
+  can only be made once the image is actually rendered. What needs to change is that each
+  stage's control is standardized: proper size (12px floor, real touch targets), accessible
+  (`aria-pressed`, focus rings), and visually grouped rather than a flat chip-wrap.
+  Scope explicitly includes the freeform chat's own rendered/saved-board feedback row (the
+  `Signature` / `saved Works` / `Almost` / `Not me` + ~10 reason-chip row that appears under a
+  generated image inside a Stylist chat thread), not only Visual Lab's Saved Boards page.
+- Do **not** expand positive feedback to match the negative vocabulary's specificity right now.
+  Held for a more important reason surfaced during this review: negative feedback captured via
+  these chips does not always reach the model even today — the capture/delivery pipeline itself
+  may be unreliable, which matters more than chip design and would make new positive vocabulary
+  premature. The owner explicitly deferred investigating that pipeline gap for now ("not now") —
+  it is a **known open issue**, not scoped into PR B. Do not start a diagnosis of it without the
+  owner asking.
+
+### Consensus-adjacent blockers (single reviewer, high severity)
+
+- The async chat is silent to assistive tech — zero `aria-live`/`role="status"` anywhere; a
+  screen-reader user gets no signal the stylist is working or that a reply/card/render arrived
+  (UX, blocking).
+- The image preview lightbox: Escape doesn't close it, no focus trap, no focus return —
+  diverges from the dialog management already ratified on sibling surfaces (garment detail,
+  Lookbook, Calibration Boards) (UX, blocking).
+
+### Other findings (not blocking)
+
+- Critique buries the answer — action guidance ("what to change first") renders last, after a
+  dozen diagnostic/score rows (fashion).
+- After `Create outfits`, the pane shows the generic empty/start-over state instead of a
+  contextual generating state (product).
+- Editorial shop-the-gap directions are only comparable-on-silhouette once the owner pays to
+  render each one (fashion).
+- Comparison sheet: baked-in caption text is illegible, and a `Saved` pill overlaps a column
+  label (fashion).
+- Smaller items: post-send focus drops to `<body>`; `Suggested additions` text sits at 4.48:1
+  contrast (marginal); the mobile history drawer lacks dialog semantics; the send (↑) and
+  remove-image (✕) controls are unlabeled; "N looks" counts are unstable; thread-rail subtitles
+  are lossy.
+
+### What is working (do not undo)
+
+- The four entry points are legibly distinct and form a coherent wayfinding system.
+- The anchor panel's compose-vs-explore fork is excellent.
+- Result cards convey complete, imaginable looks with real photos at comparison scale.
+- The per-piece `…` menu (`Replace this piece` / `Exclude`) is exactly right for a workspace.
+- Prose voice is on-brand.
+- Cost is always labeled and opt-in.
+- V1 tokens and serif-for-identity are respected.
+- Responsive layout holds at 768px without shrinking type.
+
+### Open questions
+
+1. ~~Priority/scope~~ — **decided 2026-07-24:** separate PRs by theme, not one combined pass:
+   - **PR A:** de-leak engine internals behind the dev flag + fix the `dresss`/`shoess` typo +
+     rework the diagnostic card (model's card + engine disclaimer), per the owner ruling above.
+   - **PR B:** rebuild the feedback/calibration control (theme B).
+   - **PR C:** chat `aria-live` + lightbox focus management (consensus-adjacent blockers).
+2. Confirm the still-open theme-A items above (provider-name leak, paid actions on
+   rejected/broken cards, Telemetry chip placement) before or alongside implementing PR A.
+3. ~~Theme B~~ — **decided 2026-07-24:** ruled on, see above. PR B scope is standardizing each
+   staged control's size/accessibility/grouping, not unifying vocabulary or expanding positive
+   feedback. The consensus-adjacent blockers (chat `aria-live`, lightbox focus / PR C) still have
+   not been ruled on — they carry the panel's severity ratings (blocking for UX) but need an
+   explicit owner decision before PR C per the `AGENTS.md` panel protocol.
+4. **Known open issue, not scoped into PR B:** negative feedback captured via these chips does
+   not always reach the model. Owner-deferred ("not now") — do not investigate or fix without
+   being asked.
+
+### PR A — implemented 2026-07-24
+
+All items the owner ruled on, plus two additional theme-A items confirmed with the owner
+before implementation (provider-name leak: fix now; Telemetry placement: separate it; cost on
+broken cards: explicitly left as-is for now, not yet decided):
+
+- Added `STYLIST_DEBUG_ENABLED` (`import.meta.env.VITE_STYLIST_DEBUG === 'true'`) in
+  `StylistChat.jsx`. It gates the "Styling Engine Trace" block under `Why this outfit`, the raw
+  rejection reason/resolution note and rejected-pieces list and debug trace on "needs review"
+  cards, and the generation timing/token `Dev telemetry` disclosure. Off by default (real dev
+  pair `wardrobe-web`); on by default for `sandbox-web` via `.claude/launch.json` and documented
+  in `CLAUDE.md`'s sandbox section.
+- Fixed the `dresss`/`shoess` naive-pluralization typo with a `ROSTER_CATEGORY_PLURAL_LABELS`
+  map (`pluralizeRosterCategory`), applied at both roster-count call sites, unconditionally
+  (not gated by the dev flag).
+- Reworked the "needs review" diagnostic card: removed the raw "Broken diagnostic card: shown
+  to inspect a rejected model proposal." line and the raw `Rejected reason:` / `Rejected
+  pieces:` / debug-trace content from the default view. Regular users now see the model's card
+  as-is plus one honest, plain-language engine disclaimer ("This direction didn't clear one of
+  the engine's structural checks, so it's shown here for review rather than as a validated
+  suggestion."). The raw rejection reason, resolution note, rejected-pieces list, and debug
+  trace are still available, labelled `Dev:`, behind `STYLIST_DEBUG_ENABLED`.
+- Genericized the provider-name leak: image-generation loading status copy
+  ("Sending direction details to GPT-4o...", etc.) now reads "...to the image model...", and
+  the saved-outfit variant summary in `routes/ai.js` now reads "One image-generation call
+  produced..." instead of "One GPT-4o call generated...".
+- Moved the `Dev telemetry` disclosure out of the semantic filter-chip row into its own
+  dashed-top-border container (`.stylist-response-dev-telemetry`) so it doesn't read as one of
+  the response chips when the dev flag is on.
+- Left as-is, not yet decided: cost-bearing `Generate outfit image` / `Evaluate outfit` actions
+  are still offered on broken/"needs review" cards.
+
+Verified live in the authenticated sandbox (`VITE_STYLIST_DEBUG=true`) against a real
+whole-wardrobe generation that reproduced the panel's exact "Butter and Black" near-duplicate
+broken-card scenario: the "needs review" card showed the plain-language disclaimer plus,
+correctly gated, `Dev: rejected reason: navy wool blazer: hot weather: insulating fiber` and
+`Dev: styling engine debug trace`; the `Dev telemetry` pill rendered visibly separated below
+the semantic chip row. `npm run build` passed. `test/aiEndpointContracts.test.js`,
+`test/typographySystem.test.js`, and `test/outfitChatLayout.test.js` passed (the 6 pre-existing
+`aiEndpointContracts.test.js` failures are unrelated to this change — confirmed present on the
+pre-change baseline). A regression test
+(`StylistChat gates raw engine internals behind the STYLIST_DEBUG_ENABLED dev flag`) was added
+alongside an update to the pre-existing broken-card test to match the new copy.
+
+Not yet done: full `npm test` in a server-capable environment (this environment's
+server-binding tests fail with `listen EPERM 0.0.0.0`, a known environment limitation, not
+evidence either way — see Verification performed above).
+
+### PR A follow-on — broken/corrected duplicate-card dedup (2026-07-24)
+
+Live testing surfaced a second, related bug in the same "needs review" surface, still open
+after the above: when the model calls `propose_outfit`, gets hard-gate-rejected, and then
+correctly retries with the same pieces (e.g. adding `anchor:true` after the tool's own
+remediation instructions), **both** the failed attempt and the corrected retry rendered as
+separate competing "Direction" cards for the same outfit — this is the exact "two identical
+'Butter and Black' cards" case from the original panel diagnosis, not something the earlier
+theme-A ruling had addressed (that ruling covered the broken card's *content*, not whether a
+superseded retry should still surface as its own card).
+
+**Owner ruling:** if it's a duplicate, show only one card, and carry the engine's notes forward
+onto the surviving card.
+
+**Implemented:**
+
+- `styling-engine/tools.js`'s `propose_outfit` handler now checks, before pushing a successful
+  proposal into `toolContext.generatedOutfits`, whether an earlier `broken` entry in the same
+  turn has the identical (sorted) piece-ID set. If so, that broken entry is dropped rather than
+  rendered as a second card, and its `rejectionReason` carries forward onto the surviving card
+  as `engineNote` (e.g. "Approved with an exception: navy wool blazer: hot weather: insulating
+  fiber").
+- `StylistChat.jsx` renders `outfit.engineNote` as a small italic, always-visible note (not
+  gated by `STYLIST_DEBUG_ENABLED` — this is the "engine's notes" the owner asked to keep
+  visible on the surviving card, distinct from the raw dev-only internals).
+- A dedup only fires on an exact piece-ID-set match — a retry that changes pieces (a genuinely
+  different attempt, not a correction of the same one) still renders as its own card.
+
+**Verification status:** a new regression test,
+`test/aiEndpointContracts.test.js`'s "a corrected retry with the same pieces supersedes its own
+earlier rejected attempt instead of duplicating the card", exercises the exact reject-then-
+anchor-retry sequence directly against `executeTool` (no model/network call) and passes,
+alongside the full existing suite with no new failures. **Live browser verification in the
+sandbox was not completed**: the mock AI handler (`styling-engine/mockAiHandler.js`) has no
+scripted response for the freeform tool-calling loop — `askStylistWithTools` treats any mock
+response as a final answer and never dispatches `propose_outfit` under
+`WARDROBE_MOCK_AI=true`, so this scenario cannot be reproduced live without a real, billed model
+call. Given the owner's low-token-budget constraint, that live check was deferred; the owner
+verified by hand later.
+
+**Owner-verified 2026-07-24.** Live in the sandbox, a real turn produced two directions
+("Rust Wrap — Evening Sharp" and "Rust Wrap — Relaxed Evening"), each of which hard-gate-
+rejected its layer piece on the first `propose_outfit` attempt (navy wool blazer / tan cotton
+trench coat, both flagged for hot weather) and succeeded on retry. Both rendered as a single
+card each — no duplicate "needs review" card alongside the corrected one — with the plain-
+language `engineNote` ("Approved with an exception: navy wool blazer: hot weather: insulating
+fiber" / "...tan cotton trench coat with belt: hot weather: insulating piece") visible on the
+surviving card. This fix is now owner-ratified.
+
+## PR B — Stylist feedback control standardization (implemented 2026-07-24)
+
+Scope per the owner ruling above: standardize each staged feedback control's size,
+accessibility, and grouping. Do not unify vocabulary across stages, do not expand positive
+feedback vocabulary (that's held on the separate "feedback doesn't always reach the model"
+open issue).
+
+**Shared CSS** (`src/App.css`): a new `.stylist-feedback-*` class set — `.stylist-feedback-row`,
+`.stylist-feedback-chip` (34px min-height, `var(--type-caption)` = 12px, pill-shaped,
+`[aria-pressed='true']` selected state), `.stylist-feedback-chip.is-quiet` (the text-style
+disclosure toggle), `.stylist-feedback-group-title`, `.stylist-feedback-disclosure`. Selected
+state and hover are handled by the class; keyboard focus relies on the existing global
+`:focus-visible` foundation (`src/App.css:64`) rather than a redundant chip-local rule.
+
+**Three surfaces standardized in `StylistChat.jsx`:**
+
+1. **Un-rendered direction cards** (`OUTFIT_FEEDBACK_LABELS`, `renderOutfitFeedbackButtons`) —
+   swapped inline styles for the shared class, added `aria-pressed`. No structural change; this
+   stage's 2-option vocabulary (`More like this` / `Not for me`) is unchanged.
+2. **Plain-text assistant replies** (`FEEDBACK_ACTIONS`, now split into
+   `FEEDBACK_PRIMARY_ACTIONS` and `FEEDBACK_REASON_ACTIONS`) — this was the flat, ungrouped
+   14-chip row from the owner's screenshot. Restructured to verdict-first + progressive
+   disclosure: the 4 primary verdicts (`Signature`/`Works`/`Almost`/`Not me`) plus a
+   `More feedback` toggle are always visible; the 10 reason chips render behind that toggle,
+   auto-expanded if one is already saved. Reuses the existing `expandedFeedbackCards` /
+   `collapsedFeedbackCards` / `toggleFeedbackCardExpansion` state (already used by the rendered-
+   board surface below) with a `message-feedback:${i}` key — no new state mechanism.
+3. **Rendered/saved boards** (`GENERATED_BOARD_FEEDBACK_LABELS`, two call sites — editorial-idea
+   boards and freeform-chat visual boards) — already had verdict-first + progressive disclosure
+   structurally; swapped inline styles for the shared class and added `aria-pressed`/
+   `aria-expanded`. No logic changes (verdict computation, key schemes, and `contextOverride`
+   resolution were left untouched to avoid risk in the two independent closures).
+
+**Not touched:** the "Save as styling rule" / "Generate visual boards" / "Save board" action
+buttons adjacent to these controls (not feedback vocabulary, out of scope); the `boardResults[i]`
+("wardrobe-board") surface, which has no verdict/feedback chips at all today — not flagged by the
+panel, and adding new feedback capability there would be scope creep beyond "standardize what
+exists."
+
+**Verification:** `npm run build` passed. `test/aiEndpointContracts.test.js`,
+`test/chatFeedbackTaxonomy.test.js`, `test/typographySystem.test.js`, and
+`test/outfitChatLayout.test.js` passed with no new failures (same 6 pre-existing, unrelated
+`aiEndpointContracts.test.js` failures as the PR A baseline). Live-verified in the authenticated
+sandbox against real thread data: confirmed 12px/34px sizing on both the message-level and
+board-level controls (previously 10px/17-19px), `aria-pressed` and `aria-expanded` reflect state
+correctly, the disclosure toggle expands/collapses the reason-chip group, and real keyboard Tab
+navigation produces the global focus ring (2px solid accent) on the new chips. No new console
+errors (the one observed `fetchPriority` warning is pre-existing and unrelated).
+
+### PR B follow-on, deferred: two post-render board surfaces use different taxonomies
+
+Discovered 2026-07-24 while explaining the staged-vocabulary ruling to the owner using two
+screenshots from the same thread (`stylist/thread_1784839837475`). Traced live in the DOM
+(not from code reading alone):
+
+- A board rendered from a **structured Direction card** (one of a multi-direction proposal, e.g.
+  "3 ways to style X") lives in `.stylist-outfit-result-card` → `.generated-visual-grid` and uses
+  the shared `lib/feedbackTaxonomy.js` taxonomy (`STYLE_DIRECTION_REASONS` +
+  `SHAPE_BALANCE_REASONS`, grouped under real headers `What feels wrong?` / `Fit and shape` /
+  `Problems in the generated image`) — the same taxonomy Visual Lab's Calibration Boards use.
+- A board generated **ad hoc from a plain conversational reply** (via the `Generate visual
+  boards` button under ordinary chat prose) renders directly in the chat thread, outside any
+  result-card wrapper, and uses `StylistChat.jsx`'s own separate, flat, ungrouped vocabulary
+  (`FEEDBACK_PRIMARY_ACTIONS`/`FEEDBACK_REASON_ACTIONS` — `Too safe`, `Weak structure`, etc.,
+  never wired to the shared taxonomy).
+
+Both boards are already fully rendered photos by the time feedback is being given — so the
+"some judgments need the image" reasoning behind keeping vocabulary staged (see the theme-B
+ruling above) does not actually explain why *these two* differ. The real split is which flow
+produced the image (structured multi-direction proposal vs. ad hoc conversational board), not
+render stage. This is a real inconsistency, distinct from PR A/B's scope. **Deferred — not
+scheduled, needs an owner decision on whether/how to unify these two post-render surfaces onto
+one taxonomy before any implementation.**
+
+## Generating-state fix — "Create outfits" showed the empty/start-over state (implemented 2026-07-24)
+
+From the panel's "Other findings (not blocking)" list: "After `Create outfits`, the pane shows
+the generic empty/start-over state instead of a contextual generating state (product)."
+
+**Root cause:** the pane's only signal for "is this an empty new chat?" was `messages.length ===
+1`. Submitting the wardrobe-builder brief, the piece-styling panel, or the outfit-styling panel
+all immediately cleared the panel's own open/pending state (`wardrobeBuilderOpen` /
+`pendingPiece` / `pendingOutfit`) and pushed the user's message (bringing `messages.length` to 1)
+*before* the async generation call resolved. That's the exact condition that renders the full
+"Ask anything about your wardrobe" empty-state hero — headline, "Try asking" suggestions, and the
+same entry button just clicked — for the whole duration of the request (composer calls have run
+close to 40s elsewhere in this session). It reads as the app losing the request, not as it being
+in progress.
+
+**Owner-ruled fix (approach A — "keep the panel open, but generating"):** applies to all three
+Visual Composer entry landing panels, not just the wardrobe builder.
+
+- `generateWholeWardrobeOutfits` and `send()` no longer clear `wardrobeBuilderOpen` /
+  `pendingPiece` / `pendingOutfit` at the start of the request — clearing moved to each
+  function's `finally` block, once the request actually settles (success or error).
+- Each panel's fields/option-cards are wrapped in `<fieldset disabled={loading}>` (propagates
+  disabled state to all nested `<button>`/`<input>`/`<select>` controls natively, no changes
+  needed to `OptionCard`/`StylistSelect`).
+- Wardrobe-builder and piece-styling panels each have one primary action button, which already
+  had (wardrobe-builder) or now has (piece-styling) a `{loading ? 'Generating...' : ...}` label
+  swap plus `disabled={loading}`.
+- Outfit-styling has three independent `OptionCard` triggers plus a question input. A new
+  `pendingOutfitAction` state (`'review' | 'similar' | 'restyle' | 'question'`) is set right
+  before each trigger fires, so the specific card that was clicked swaps its own title to a
+  present-tense label ("Reviewing…", "Finding similar looks…", "Restyling…") while the fieldset
+  disables the other two.
+- Each panel shows a contextual status line while generating (`loadingStatus` if the timed
+  status sequence has one queued, else a static fallback naming what's being composed and, for
+  the piece panel, the anchor piece's name).
+- "Back to chat" remains enabled during generation on all three panels as a deliberate escape
+  hatch — closing early re-exposes the empty-state hero, but only as a result of the user's own
+  choice to navigate away, not as the default behavior.
+
+**Verification:** `npm run build` passed; full relevant suite passed with no new failures (same
+6 pre-existing, unrelated `aiEndpointContracts.test.js` failures). Live-verified in the sandbox,
+following the corrected restart procedure above (killed and relaunched both servers, confirmed
+`WARDROBE_MOCK_AI=true` on the running process before testing):
+
+- Wardrobe-builder: fields disabled, button read "Generating...", contextual status shown, clean
+  transition to real results.
+- Piece-styling (Green jacket): same, confirmed start-to-finish under a real call before the
+  mock-flag issue below was caught.
+- Outfit-styling (Dad's sweater, "Review this outfit"): confirmed under `WARDROBE_MOCK_AI=true`
+  — generating state renders correctly and transitions cleanly to the critique reply.
+
+**Incident during this verification:** partway through, a live generation round was
+inadvertently run against a `sandbox-api` process that had `WARDROBE_MOCK_AI=false` (the owner's
+own local servers commonly sit on the same ports 3098/5174) — 3 real, billed calls were made
+before this was caught. `CLAUDE.md`'s "Dev servers" section was rewritten the same day: sandbox
+testing must now unconditionally kill and relaunch both servers before every session rather than
+attaching to whatever's already running on those ports. See the `low-token-budget-avoid-
+unnecessary-model-calls` memory for the full incident record.
+
+## PR C — chat aria-live + lightbox focus management (implemented 2026-07-24)
+
+From the panel's consensus-adjacent blockers (single reviewer, high severity; not ruled on
+individually since both are standard, unambiguous accessibility fixes with an established,
+already-ratified pattern to follow):
+
+- "The async chat is silent to assistive tech — zero `aria-live`/`role=\"status\"` anywhere; a
+  screen-reader user gets no signal the stylist is working or that a reply/card/render arrived."
+- "The image preview lightbox: Escape doesn't close it, no focus trap, no focus return —
+  diverges from the dialog management already ratified on sibling surfaces (garment detail,
+  Lookbook, Calibration Boards)."
+
+**Lightbox dialog management** — mirrors the exact pattern already ratified for Calibration
+Boards (`VisualLab.jsx`), not a new invention:
+
+- `previewDialogRef`, `previewCloseRef`, `previewReturnFocusRef` added alongside the existing
+  `previewImage` state.
+- All 10 call sites that open the lightbox (`setPreviewImage({...})`, scattered across direction
+  cards, garment piece photos, generated/comparison board previews, and the piece/outfit-styling
+  landing panels) now capture `previewReturnFocusRef.current = event.currentTarget` before
+  opening.
+- A `useEffect` keyed on `previewImage` locks `document.body` and `.app-main` scroll, focuses the
+  Close button, installs a `keydown` handler for Escape (closes) and Tab (cycles focus within
+  `previewDialogRef`'s focusable elements, wrapping first↔last), and on cleanup restores scroll
+  and returns focus to `previewReturnFocusRef.current`.
+- `role="dialog" aria-modal="true" aria-labelledby="stylist-preview-title"` added to the overlay;
+  the visible title text now has that id.
+- **One deliberate divergence from VisualLab's exact mechanism:** initial focus is called
+  synchronously in the effect body rather than deferred through
+  `requestAnimationFrame(() => ref.current?.focus())`. `useEffect` already runs after the DOM is
+  committed and refs are attached, so the extra frame of deferral is unnecessary — and it made
+  the behavior untestable in the sandbox browser tab, which reports `document.hidden = true` in
+  this automation environment (`document.hasFocus()` stays `true`, so keyboard events still work
+  correctly; only rAF-gated code is affected). Real user tabs are foregrounded, so this wasn't a
+  functional bug for them, but the synchronous call is simpler and removes the dependency on
+  paint timing entirely. VisualLab's own dialogs were not touched.
+
+**Chat activity announcements:**
+
+- Added a global `.sr-only` utility class (`src/App.css`) — the codebase had an inline
+  visually-hidden pattern for one nav label but no reusable one.
+- The existing typing-dots "stylist is working" indicator gained `role="status"
+  aria-live="polite"`; its status text (already shown to sighted users via the timed
+  `loadingStatus` sequence — "Preparing wardrobe photos…", "Composing outfits…", etc.) is now
+  also what screen readers hear, with a "Stylist is working…" fallback for the moment before the
+  first timed status lands.
+- A separate, always-present `chatAnnouncement` sr-only live region announces "Stylist replied."
+  (or "Stylist reply failed." on error) once a request that was loading settles with a new
+  assistant message — needed because *removing* content from a live region (the typing dots
+  disappearing) is not itself announced, so "the reply arrived" needed its own explicit signal.
+
+**Verification:** `npm run build` passed; full relevant suite passed (143 passing, same 6
+pre-existing unrelated failures) including two new regression tests locking in the dialog
+attributes/handlers and the announcement wiring. Live-verified in the sandbox following the
+corrected restart procedure (fresh `WARDROBE_MOCK_AI=true` confirmed before testing):
+
+- Lightbox: initial focus lands on Close immediately; Shift+Tab from Close stays on Close (only
+  one focusable control in this case, trap holds); Escape closes, restores scroll, and returns
+  focus to the exact trigger element (confirmed via `document.activeElement` matching the
+  original button, not just "some element").
+- Chat: sending a message and receiving a mocked reply produced `chatAnnouncement` = "Stylist
+  replied." (the loading-state region itself resolved too quickly to catch mid-flight against
+  the near-instant mock response, same limitation encountered verifying PR A/B — the code path is
+  unconditional on mock vs. real, so this doesn't weaken the finding).
+- No new console errors (two stale `[hmr] Failed to reload` messages were from the intermediate
+  broken-syntax state during editing, before the fix and a full page reload; the one persistent
+  `fetchPriority` warning is pre-existing and unrelated).
+
+## Small mechanical batch (implemented 2026-07-24)
+
+From the panel's "Other findings," the items small and unambiguous enough not to need a design
+ruling, plus one added mid-batch by the owner. Diagnosed individually before batching — two
+similarly small-sounding findings (unstable "N looks" counts, lossy thread-rail subtitles) were
+explicitly left out because they need root-cause diagnosis first, not just a markup/CSS fix.
+
+1. **Post-send focus drops to `<body>`.** Root cause: `setInput('')` inside `send()` disables
+   the send button (`disabled={loading || !input.trim()}`); if focus was on that button,
+   disabling it drops focus to `<body>` per standard browser behavior. Fix: `textRef.current?.
+   focus()` right after clearing input, returning focus to the still-enabled composer textarea.
+2. **`Suggested additions` contrast (4.48:1, marginal).** The flagged occurrence used
+   `color: 'var(--accent)'` at 10px; swapped to `var(--text-light)`, the token already
+   documented in `App.css` as the app's lowest-contrast readable text color (≥4.8:1). The other
+   occurrence of this label already used `--text-light` and didn't need changing.
+3. **Mobile history drawer lacks dialog semantics.** `ThreadRail.jsx`'s `mobile-rail-drawer`
+   gained the same dialog pattern as PR C's lightbox: `role="dialog" aria-modal="true"
+   aria-label="Chat history"`, initial focus on Close, Tab focus trap, Escape to close, scroll
+   lock, and focus return to whatever was focused before the drawer opened (captured via
+   `document.activeElement` at mount rather than a threaded return-focus prop, since the mobile
+   drawer is its own conditionally-mounted `<ThreadRail>` instance). Escape defers to an
+   in-progress rename or delete-confirmation's own local Escape handling first, read through a
+   ref (not a `useEffect` dependency) so the dialog-setup effect doesn't re-run — and re-steal
+   focus from the rename input — on every keystroke.
+4. **Send (↑) / remove-image (✕) controls unlabeled.** Added `aria-label="Send message"` and
+   `aria-label="Remove attached photo"`. The drawer's own close button (`✕`, only had a `title`)
+   also gained `aria-label="Close chat history"` while touching that file.
+5. **Comparison sheet: `Saved` pill overlaps a column label** (added by the owner mid-batch,
+   after diagnosis split it from the sibling finding — see below). All 6 `saved-board-badge`
+   occurrences across generated/comparison board previews changed from an absolutely-positioned
+   overlay (`position: absolute, top: 8, right: 8, zIndex: 10`) sitting on top of the image to a
+   normal-flow pill rendered above it (`width: fit-content, marginBottom: 6`). The badge was
+   already first in JSX source order relative to the image button at every site, so removing
+   `position: absolute` was sufficient — no structural reordering needed.
+
+**Diagnosed but explicitly not fixed as part of this — a genuine AI-generation limitation, not a
+code bug:** the *other* half of the comparison-sheet finding, "baked-in caption text is
+illegible." The comparison-sheet prompt (`styling-engine/core.js`'s
+`wholeWardrobeComparisonSheetPrompt`) already explicitly instructs the model: `"No text of any
+kind may appear inside the image"`, and separately lists captions/labels/titles/typography as
+forbidden. The illegible text the panel saw is the image model occasionally not complying with
+an instruction that's already correct — not a prompt-wording bug fixable by editing code. Owner
+was asked whether to also try strengthening the prompt wording; declined to answer that question
+for now — it remains open, undecided, and untouched.
+
+**Verification:** `npm run build` passed. Full relevant suite passed (172 tests, 166 passing,
+same 6 pre-existing unrelated `aiEndpointContracts.test.js` failures), including two new
+regression tests (one in `aiEndpointContracts.test.js` covering items 1/2/4/5, one dedicated to
+the `ThreadRail` drawer). Live-verified in a freshly-restarted mocked sandbox:
+
+- Post-send focus: confirmed `document.activeElement` is the composer textarea immediately
+  after sending, not `<body>`.
+- Mobile drawer (375×812 viewport): initial focus lands on the close button; Shift+Tab from
+  Close stays on Close (trap holds); Escape closes, unlocks scroll, and returns focus to the
+  exact "History" trigger button that opened it (confirmed via DOM identity, not just "some
+  button"). The nested rename-vs-drawer Escape guard was verified by code review rather than a
+  live click-through — the thread row's overflow menu didn't open via a synthetic `.click()` in
+  this automated environment (likely a hover/touch-state quirk), but the guard reads a ref
+  populated fresh every render, so it reflects the correct `renamingId`/`confirmDeleteId` state
+  at the moment any Escape keypress is handled regardless of how the menu was reached.
+- Send/remove-photo/drawer-close buttons all report their new `aria-label` via the accessibility
+  tree.
+- Saved-board badge: verified in source (all 6 sites) that it no longer collides with the
+  photo — not re-verified against an actual comparison-sheet render with visible baked-in text,
+  since reproducing that specific model output isn't controllable on demand.
+
+## Two more small removals (implemented 2026-07-24)
+
+Owner-requested while reviewing a screenshot, not from the panel synthesis:
+
+1. **"✓ Rendered" badge removed.** The `isPreview`-mode "Generate outfit image (~$0.07)" button
+   disabled itself and showed a static `✓ Rendered` checkmark once used, with no way to
+   regenerate — inconsistent with the two other render-button variants elsewhere on the same
+   page (whole-wardrobe / non-preview), which stay enabled and offer `Regenerate outfit image`
+   instead. Made this variant consistent with those: stays enabled after rendering, label
+   becomes `Regenerate outfit image (~$0.07)` (cost stays labelled since each regenerate is a
+   new paid call).
+2. **"AI · propose_outfit" removed from the UI.** This was `getCardAuthorLabel`'s output — a
+   QA/debug aid (see the code comment history: found during 2026-07-14 testing #87-89 that the
+   model sometimes bypasses `plan_outfit_set` and silently re-composes via `propose_outfit`)
+   that was rendering unconditionally on every outfit card for every user, not gated by
+   `STYLIST_DEBUG_ENABLED` like the rest of PR A's engine internals. Owner asked to confirm the
+   AI-vs-engine distinction stays traceable via logs before removing it from the UI — confirmed:
+   every tool call (`propose_outfit`, `plan_outfit_set`, etc.) is already unconditionally logged
+   server-side via `styling-engine/tools.js`'s `executeTool` wrapper (`🤖 [Agent Tool Call]
+   <name> (...)`), in every environment, so grepping server logs already answers this without
+   needing the UI label. Removed both the render call and the now-dead `getCardAuthorLabel`
+   function; kept the historical incident context as a comment, relocated to explain why the
+   card no longer shows its composing source and where to find it instead.
+
+**Verification:** `npm run build` passed; `npm test`'s relevant suites passed with no new
+failures (same 6 pre-existing unrelated failures); no test referenced either removed element.
+Live-verified in a freshly-restarted mocked sandbox against the exact thread from the owner's
+screenshot ("cream ribbed knit sweater styling"): the previously-rendered "Butter & Espresso"
+direction now shows `Regenerate outfit image (~$0.07)` instead of a disabled `✓ Rendered`
+badge, and no `AI · propose_outfit` (or any other source label) appears anywhere in the
+transcript. No new console errors.

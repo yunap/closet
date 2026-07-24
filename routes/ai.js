@@ -2347,8 +2347,8 @@ router.post('/generate-saved-outfit-image', async (req, res) => {
     const boards = [{
       label: mode === 'creative' ? 'Creative outfit alternatives' : 'Similar outfit variants',
       reason: mode === 'creative'
-        ? 'One GPT-4o call generated three exploratory outfit alternatives from the saved outfit photo and linked garment references.'
-        : 'One GPT-4o call generated three adjacent outfit variants from the saved outfit photo and linked garment references.',
+        ? 'One image-generation call produced three exploratory outfit alternatives from the saved outfit photo and linked garment references.'
+        : 'One image-generation call produced three adjacent outfit variants from the saved outfit photo and linked garment references.',
       watchFor: mode === 'creative'
         ? 'The alternatives should explore different formulas without turning into random novelty.'
         : 'The variants should feel like the same person on a different day, not tiny styling tweaks.',

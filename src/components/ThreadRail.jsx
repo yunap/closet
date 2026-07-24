@@ -67,6 +67,13 @@ export default function ThreadRail({
   const [openMenuId, setOpenMenuId] = useState(null)
   const [openSubjectGroups, setOpenSubjectGroups] = useState({})
   const threadPrefetchTimer = useRef(null)
+  const drawerPanelRef = useRef(null)
+  const drawerCloseRef = useRef(null)
+  // Read via a ref (not the keydown effect's dependency array) so the effect below only sets up
+  // scroll-lock/initial-focus once on mount, instead of re-running (and re-stealing focus from
+  // the rename input) on every renamingId/confirmDeleteId change.
+  const drawerNestedStateRef = useRef({ renamingId: null, confirmDeleteId: null })
+  drawerNestedStateRef.current = { renamingId, confirmDeleteId }
 
   useEffect(() => {
     if (!isMobileDrawer) {
@@ -75,6 +82,51 @@ export default function ThreadRail({
       } catch {}
     }
   }, [collapsed, isMobileDrawer])
+
+  // Mobile history drawer dialog management — same pattern already ratified for Calibration
+  // Boards and the Stylist image-preview lightbox: initial focus, Tab focus trap, Escape to
+  // close (deferring to an in-progress rename/delete-confirm's own Escape handling first),
+  // focus return to whatever was focused before the drawer opened, and scroll lock.
+  useEffect(() => {
+    if (!isMobileDrawer) return undefined
+    const previouslyFocused = document.activeElement
+    const main = document.querySelector('.app-main')
+    const previousBodyOverflow = document.body.style.overflow
+    const previousMainOverflow = main?.style?.overflow
+    document.body.style.overflow = 'hidden'
+    if (main) main.style.overflow = 'hidden'
+    drawerCloseRef.current?.focus()
+
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') {
+        if (drawerNestedStateRef.current.renamingId || drawerNestedStateRef.current.confirmDeleteId) return
+        event.preventDefault()
+        onCloseDrawer?.()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = [...(drawerPanelRef.current?.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+      ) || [])]
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousBodyOverflow
+      if (main) main.style.overflow = previousMainOverflow || ''
+      previouslyFocused?.focus?.()
+    }
+  }, [isMobileDrawer])
 
   useEffect(() => {
     try {
@@ -433,7 +485,7 @@ export default function ThreadRail({
           </button>
         )}
         {isMobileDrawer && onCloseDrawer && (
-          <button className="rail-close-drawer-btn" onClick={onCloseDrawer} title="Close history">
+          <button ref={drawerCloseRef} className="rail-close-drawer-btn" onClick={onCloseDrawer} title="Close history" aria-label="Close chat history">
             ✕
           </button>
         )}
@@ -605,7 +657,7 @@ export default function ThreadRail({
   if (isMobileDrawer) {
     return (
       <div className="mobile-rail-drawer-overlay" onClick={onCloseDrawer}>
-        <div className="mobile-rail-drawer" onClick={e => e.stopPropagation()}>
+        <div ref={drawerPanelRef} className="mobile-rail-drawer" role="dialog" aria-modal="true" aria-label="Chat history" onClick={e => e.stopPropagation()}>
           {railContent}
         </div>
       </div>

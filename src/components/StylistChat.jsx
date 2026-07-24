@@ -243,6 +243,23 @@ const composerUsageSummary = (usage = null) => {
   return pieces.join(' · ')
 }
 
+// Owner-facing engine internals (styling engine trace, generation timing/token telemetry,
+// raw gate-rejection vocabulary) are for tuning the model/engine, not for regular users.
+// Set VITE_STYLIST_DEBUG=true (see sandbox-web in .claude/launch.json) to surface them.
+const STYLIST_DEBUG_ENABLED = import.meta.env.VITE_STYLIST_DEBUG === 'true'
+
+const ROSTER_CATEGORY_PLURAL_LABELS = {
+  top: 'tops',
+  bottom: 'bottoms',
+  dress: 'dresses',
+  outerwear: 'outerwear',
+  shoes: 'shoes',
+  accessory: 'accessories',
+}
+
+const pluralizeRosterCategory = (category) =>
+  ROSTER_CATEGORY_PLURAL_LABELS[category] || `${category}s`
+
 const calculateOpenAICost = (timings) => {
   if (!timings || !timings.usage) return null
   const input = (timings.usage.input_tokens || 0) * 0.0000025
@@ -259,6 +276,7 @@ const renderCost = (timings) => {
 }
 
 const MessageTelemetryDisclosure = ({ message }) => {
+  if (!STYLIST_DEBUG_ENABLED) return null
   const composerUsage = message?.debug?.composerUsage
   const showTiming = (message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings
   if (!composerUsage && !showTiming) return null
@@ -272,20 +290,22 @@ const MessageTelemetryDisclosure = ({ message }) => {
   }
 
   return (
-    <details className="telemetry-details message-telemetry">
-      <summary title="Click for generation telemetry">
-        <span className="message-telemetry-label">Telemetry</span>
-        <span className="message-telemetry-count">{rows.length}</span>
-      </summary>
-      <div className="message-telemetry-panel">
-        {rows.map(([label, value]) => (
-          <div className="message-telemetry-row" key={label}>
-            <span>{label}</span>
-            <span>{value}</span>
-          </div>
-        ))}
-      </div>
-    </details>
+    <div className="stylist-response-dev-telemetry">
+      <details className="telemetry-details message-telemetry">
+        <summary title="Click for generation timing and token telemetry (dev only)">
+          <span className="message-telemetry-label">Dev telemetry</span>
+          <span className="message-telemetry-count">{rows.length}</span>
+        </summary>
+        <div className="message-telemetry-panel">
+          {rows.map(([label, value]) => (
+            <div className="message-telemetry-row" key={label}>
+              <span>{label}</span>
+              <span>{value}</span>
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
   )
 }
 
@@ -490,8 +510,11 @@ export default function StylistChat({
     initialOutfit?.autoSend === true ? null : (initialOutfit || null)
   ))
   const [pendingPiece, setPendingPiece] = useState(() => initialPiece || null)
+  const [pendingOutfitAction, setPendingOutfitAction] = useState(null)
   const [loading, setLoading] = useState(false)
   const [loadingStatus, setLoadingStatus] = useState('')
+  const [chatAnnouncement, setChatAnnouncement] = useState('')
+  const wasLoadingRef = useRef(false)
   const [imageStatusByKey, setImageStatusByKey] = useState({})
   const [pieces, setPieces] = useState([])
   const [outfits, setOutfits] = useState([])
@@ -530,6 +553,9 @@ export default function StylistChat({
 
   const [boardLoadingIndex, setBoardLoadingIndex] = useState(null)
   const [previewImage, setPreviewImage] = useState(null)
+  const previewDialogRef = useRef(null)
+  const previewCloseRef = useRef(null)
+  const previewReturnFocusRef = useRef(null)
   const [editPiece, setEditPiece] = useState(null)
   const [fileInputKey, setFileInputKey] = useState(0)
   const bottomRef = useRef(null)
@@ -1386,6 +1412,67 @@ export default function StylistChat({
     return () => clearTimeout(t)
   }, [pendingPiece, pendingOutfit])
 
+  // Screen-reader announcement for "a reply/card/render arrived" — removing content from an
+  // aria-live region (the typing-dots indicator disappearing) is not itself announced, so this
+  // is a distinct signal fired once a request that was loading settles with a new assistant
+  // message. Mirrors the existing timed status text sighted users already get.
+  useEffect(() => {
+    if (wasLoadingRef.current && !loading) {
+      const last = messages[messages.length - 1]
+      if (last?.role === 'assistant') {
+        setChatAnnouncement(last.isError ? 'Stylist reply failed.' : 'Stylist replied.')
+      }
+    }
+    wasLoadingRef.current = loading
+  }, [loading, messages])
+
+  // Image-preview lightbox dialog management, mirroring the pattern already ratified for
+  // Calibration Boards (VisualLab.jsx): initial focus, Tab focus trap, Escape to close, focus
+  // return to the trigger, and scroll lock on the document + app-main scroll container.
+  useEffect(() => {
+    if (!previewImage) return undefined
+    const main = document.querySelector('.app-main')
+    const previousBodyOverflow = document.body.style.overflow
+    const previousMainOverflow = main?.style?.overflow
+    document.body.style.overflow = 'hidden'
+    if (main) main.style.overflow = 'hidden'
+    // Refs are already attached by the time an effect runs (React's commit-then-effect
+    // ordering), so focusing directly here — rather than deferring another frame — is both
+    // simpler and reliably testable (a requestAnimationFrame-wrapped focus call never fires on
+    // a backgrounded/hidden tab, which real user tabs aren't, but which made this untestable
+    // in automation).
+    previewCloseRef.current?.focus()
+
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setPreviewImage(null)
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = [...(previewDialogRef.current?.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+      ) || [])]
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousBodyOverflow
+      if (main) main.style.overflow = previousMainOverflow || ''
+      previewReturnFocusRef.current?.focus?.()
+    }
+  }, [previewImage])
+
   const addToHistory = (role, content) => setChatHistory(h => [...h, { role, content }])
 
   const handleImage = (e) => {
@@ -1428,11 +1515,13 @@ export default function StylistChat({
     setSavedIndices(prev => new Set([...prev, messageIndex]))
   }
 
-  const FEEDBACK_ACTIONS = [
+  const FEEDBACK_PRIMARY_ACTIONS = [
     { type: 'signature', label: 'Signature' },
     { type: 'works', label: 'Works' },
     { type: 'almost', label: 'Almost' },
     { type: 'not_me', label: 'Not me' },
+  ]
+  const FEEDBACK_REASON_ACTIONS = [
     { type: 'too_safe', label: 'Too safe' },
     { type: 'too_soft', label: 'Too soft' },
     { type: 'too_generic', label: 'Too generic' },
@@ -1477,21 +1566,15 @@ export default function StylistChat({
   // lines, tripPlanLines) and share one plan presentation.
   const isPlannedSetSource = (source) => source === 'trip_precompose' || source === 'plan_outfit_set'
 
-  // QA/debug aid: which code path produced this card. 'plan_outfit_set'/'trip_precompose' are the
-  // deterministic composer (gated, carries tripPlanLines); 'proposed_outfit' is the model hand-
-  // composing via propose_outfit, which can happen even after plan_outfit_set already ran (found
-  // 2026-07-14 testing #87-89: the model called plan_outfit_set then silently re-composed every
-  // card itself via propose_outfit, bypassing the engine's coverage-gap/trim disclosures).
-  const getCardAuthorLabel = (outfit = {}) => {
-    const source = outfit?.source
-    const composedBy = outfit?.composedBy
-    if (source === 'plan_outfit_set' && composedBy === 'model') return 'AI · plan_outfit_set'
-    if (source === 'plan_outfit_set') return 'engine · plan_outfit_set'
-    if (source === 'trip_precompose') return 'engine · precompose'
-    if (source === 'proposed_outfit' || source === 'proposed') return 'AI · propose_outfit'
-    if (source === 'whole_wardrobe') return 'AI · whole_wardrobe'
-    return source ? `source: ${source}` : ''
-  }
+  // Which code path produced a given card (plan_outfit_set/trip_precompose = deterministic
+  // composer; proposed_outfit = model hand-composing via propose_outfit, which can happen even
+  // after plan_outfit_set already ran — found 2026-07-14 testing #87-89: the model called
+  // plan_outfit_set then silently re-composed every card itself via propose_outfit, bypassing
+  // the engine's coverage-gap/trim disclosures) is no longer surfaced on the card — it was a
+  // QA/debug aid leaking into the regular user-facing UI. The same distinction is already
+  // traceable server-side: every tool call is unconditionally logged via
+  // `styling-engine/tools.js`'s `executeTool` wrapper (`🤖 [Agent Tool Call] <name> (...)`),
+  // so grepping server logs for `propose_outfit` vs `plan_outfit_set` still answers this.
 
   const getCompactOutfitIntro = (message, hasBoards = false) => {
     if (message?.wholeWardrobe || message?.structuredOutfits?.some(outfit => isPlannedSetSource(outfit?.source))) {
@@ -1827,7 +1910,7 @@ export default function StylistChat({
     setBoardLoadingIndex(key)
     setImageStatusByKey(prev => ({ ...prev, [key]: 'Loading garment reference photos...' }))
     statusTimers = [
-      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [key]: 'Sending direction details to GPT-4o...' })), 4000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [key]: 'Sending direction details to the image model...' })), 4000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [key]: 'Rendering outfit image. This can take a minute.' })), 14000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [key]: 'Still rendering...' })), 45000),
     ]
@@ -2317,11 +2400,11 @@ export default function StylistChat({
                       ) : (
                         <>
                           {isSaved && (
-                            <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                            <div className="saved-board-badge" style={{ width: 'fit-content', marginBottom: 6, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500 }}>
                               ✓ Saved preview board
                             </div>
                           )}
-                          <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
+                          <button type="button" className="generated-visual-preview-btn" onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' }) }} aria-label="Open comparison sheet preview">
                             <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label || 'Comparison sheet'} className="generated-visual-image" loading="lazy" decoding="async" />
                           </button>
                           <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
@@ -2422,11 +2505,11 @@ export default function StylistChat({
                         ) : (
                           <>
                             {isSaved && (
-                              <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                              <div className="saved-board-badge" style={{ width: 'fit-content', marginBottom: 6, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500 }}>
                                 ✓ Saved preview board
                               </div>
                             )}
-                            <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' })} aria-label="Open comparison sheet preview">
+                            <button type="button" className="generated-visual-preview-btn" onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Comparison sheet', meta: board.reason || '' }) }} aria-label="Open comparison sheet preview">
                               <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label || 'Comparison sheet'} className="generated-visual-image" loading="lazy" decoding="async" />
                             </button>
                             <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label || 'Comparison sheet'}</div>
@@ -2553,13 +2636,15 @@ export default function StylistChat({
           const historicalCritique = messages.find(msg => msg.role === 'assistant' && msg.wardrobeEvaluation && (msg.outfitName === outfitTitle || msg.outfitName === outfit.label || msg.outfitName === outfit.title))?.text
           const critiqueText = evaluationResultsByKey[boardKey] || historicalCritique
           const hasCritique = Boolean(critiqueText)
-          const renderOutfitFeedbackButtons = ({ fontSize = 10, padding = '2px 7px', borderRadius = 10 } = {}) => (
+          const renderOutfitFeedbackButtons = () => (
             OUTFIT_FEEDBACK_LABELS.map(([type, label]) => {
               const key = `whole-wardrobe:${messageIndex}:${idx}:${type}`
               const isSaved = feedbackSaved.has(key)
               return (
                 <button
                   key={key}
+                  type="button"
+                  aria-pressed={isSaved}
                   onClick={() => toggleStylistFeedback({
                     key,
                     feedbackType: type,
@@ -2581,15 +2666,7 @@ export default function StylistChat({
                     },
                     appendToPiece: activeContext?.type === 'piece'
                   })}
-                  style={{
-                    fontSize,
-                    color: isSaved ? 'var(--donate)' : 'var(--text-muted)',
-                    padding,
-                    borderRadius,
-                    border: '1px solid var(--border)',
-                    background: isSaved ? 'var(--surface-2)' : 'var(--surface)',
-                    cursor: 'pointer'
-                  }}
+                  className="stylist-feedback-chip"
                 >
                   {isSaved ? '✓ ' : ''}{label}
                 </button>
@@ -2607,17 +2684,19 @@ export default function StylistChat({
                   <div className="stylist-outfit-result-title">{cardDisplayTitle}</div>
                   <div className="stylist-outfit-result-strength">{isBrokenCard ? 'needs review' : (isTripCard ? getTripCardMarker(outfit) : strength)}</div>
                 </div>
-                {getCardAuthorLabel(outfit) && (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.4, letterSpacing: '0.02em', marginTop: 2 }}>{getCardAuthorLabel(outfit)}</div>
-                )}
-                {isBrokenCard && (
-                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45, fontWeight: 600 }}>
-                    Broken diagnostic card: shown to inspect a rejected model proposal.
+                {!isBrokenCard && outfit.engineNote && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4, fontStyle: 'italic' }}>
+                    {outfit.engineNote}
                   </div>
                 )}
-                {isBrokenCard && outfit.rejectionReason && (
+                {isBrokenCard && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45 }}>
+                    This direction didn't clear one of the engine's structural checks, so it's shown here for review rather than as a validated suggestion.
+                  </div>
+                )}
+                {isBrokenCard && STYLIST_DEBUG_ENABLED && outfit.rejectionReason && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4 }}>
-                    <div><strong>Rejected reason:</strong> {outfit.rejectionReason}</div>
+                    <div><strong>Dev: rejected reason:</strong> {outfit.rejectionReason}</div>
                     {outfit.resolutionNote && (
                       <div style={{ marginTop: 4, fontStyle: 'italic' }}>
                         <strong>Resolution note:</strong> {outfit.resolutionNote}
@@ -2625,9 +2704,9 @@ export default function StylistChat({
                     )}
                   </div>
                 )}
-                {isBrokenCard && brokenReasonRows.length > 0 && (
+                {isBrokenCard && STYLIST_DEBUG_ENABLED && brokenReasonRows.length > 0 && (
                   <div style={{ marginTop: 6, display: 'grid', gap: 3, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4 }}>
-                    <div style={{ fontWeight: 650 }}>Rejected pieces:</div>
+                    <div style={{ fontWeight: 650 }}>Dev: rejected pieces:</div>
                     {brokenReasonRows.map((piece, reasonIdx) => (
                       <div key={`${piece.id || piece.name}-${reasonIdx}`}>
                         <strong>{piece.name}:</strong> {piece.reason}
@@ -2635,7 +2714,7 @@ export default function StylistChat({
                     ))}
                   </div>
                 )}
-                {isBrokenCard && (() => {
+                {isBrokenCard && STYLIST_DEBUG_ENABLED && (() => {
                   const trace = outfit.debug || message?.debug?.visualCritic || message?.debug
                   if (!trace) return null
                   const resolvedAct = trace.resolvedActivity || 'none'
@@ -2644,7 +2723,7 @@ export default function StylistChat({
                   const regCeil = trace.registerCeiling || 'none'
                   const counts = trace.rosterCounts || trace.categoryCounts || {}
                   const countsStr = Object.keys(counts).length > 0
-                    ? Object.entries(counts).map(([cat, cnt]) => `${cat}s: ${cnt}`).join(' · ')
+                    ? Object.entries(counts).map(([cat, cnt]) => `${pluralizeRosterCategory(cat)}: ${cnt}`).join(' · ')
                     : 'none'
                   return (
                     <div style={{
@@ -2657,7 +2736,7 @@ export default function StylistChat({
                       color: 'var(--repair)',
                       lineHeight: 1.45
                     }}>
-                      <div style={{ fontWeight: 650, marginBottom: 4 }}>Styling Engine Debug Trace:</div>
+                      <div style={{ fontWeight: 650, marginBottom: 4 }}>Dev: styling engine debug trace</div>
                       <div><strong>Resolved Activity:</strong> {resolvedAct} ({actSrc})</div>
                       <div><strong>Walkable:</strong> {isWalk}</div>
                       <div><strong>Register Ceiling:</strong> {regCeil}</div>
@@ -2698,7 +2777,7 @@ export default function StylistChat({
                         <button
                           type="button"
                           disabled={!photo}
-                          onClick={() => photo && setPreviewImage({ src: `/uploads/${photo}`, title: piece?.name || 'Garment', meta: piece?.category || '', pieceId: piece?.id || null })}
+                          onClick={event => { if (!photo) return; previewReturnFocusRef.current = event.currentTarget; setPreviewImage({ src: `/uploads/${photo}`, title: piece?.name || 'Garment', meta: piece?.category || '', pieceId: piece?.id || null }) }}
                           className="stylist-outfit-piece-photo"
                           style={{ cursor: photo ? 'zoom-in' : 'default' }}
                           aria-label={photo ? `Open ${piece?.name || 'garment'} preview` : undefined}
@@ -2815,7 +2894,7 @@ export default function StylistChat({
                         <strong>System suggests:</strong> {outfit.systemSuggestion.message}
                       </div>
                     )}
-                    {(() => {
+                    {STYLIST_DEBUG_ENABLED && (() => {
                       const trace = outfit.debug || message?.debug?.visualCritic || message?.debug
                       if (!trace) return null
                       const resolvedAct = trace.resolvedActivity || 'none'
@@ -2824,7 +2903,7 @@ export default function StylistChat({
                       const regCeil = trace.registerCeiling || 'none'
                       const counts = trace.rosterCounts || trace.categoryCounts || {}
                       const countsStr = Object.keys(counts).length > 0
-                        ? Object.entries(counts).map(([cat, cnt]) => `${cat}s: ${cnt}`).join(', ')
+                        ? Object.entries(counts).map(([cat, cnt]) => `${pluralizeRosterCategory(cat)}: ${cnt}`).join(', ')
                         : 'none'
                       return (
                         <div style={{
@@ -2837,7 +2916,7 @@ export default function StylistChat({
                           gap: 3,
                           lineHeight: 1.45
                         }}>
-                          <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Styling Engine Trace:</div>
+                          <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Dev: styling engine trace</div>
                           <div>Activity: {resolvedAct} ({actSrc}) · Walkable: {isWalk} · Ceiling: {regCeil}</div>
                           <div>Roster: {countsStr}</div>
                         </div>
@@ -2893,17 +2972,17 @@ export default function StylistChat({
                       // Preview mode: render this single direction on demand
                       <button
                         onClick={() => renderOneEditorialDirection(outfit, messageIndex, idx)}
-                        disabled={isRendering || hasRendered}
+                        disabled={isRendering}
                         style={{
-                          fontSize: 12, color: hasRendered ? 'var(--donate)' : 'var(--accent)',
+                          fontSize: 12, color: 'var(--accent)',
                           padding: '3px 9px', borderRadius: 12,
-                          border: `1px solid ${hasRendered ? 'var(--donate)' : 'var(--accent)'}`,
+                          border: '1px solid var(--accent)',
                           background: 'var(--surface)',
-                          cursor: (isRendering || hasRendered) ? 'default' : 'pointer',
+                          cursor: isRendering ? 'default' : 'pointer',
                           opacity: isRendering ? 0.65 : 1,
                         }}
                       >
-                        {isRendering ? 'Rendering…' : hasRendered ? '✓ Rendered' : 'Generate outfit image (~$0.07)'}
+                        {isRendering ? 'Rendering…' : hasRendered ? 'Regenerate outfit image (~$0.07)' : 'Generate outfit image (~$0.07)'}
                       </button>
                     ) : (
                       // Wardrobe-board generation button (original mode)
@@ -2932,7 +3011,7 @@ export default function StylistChat({
                         </button>
                       </>
                     )}
-                    {!isPreview && renderOutfitFeedbackButtons({ fontSize: 12, padding: '3px 9px', borderRadius: 12 })}
+                    {!isPreview && renderOutfitFeedbackButtons()}
                   </div>
                 </>
               )}
@@ -2958,11 +3037,11 @@ export default function StylistChat({
                         ) : (
                           <>
                             {isBoardSaved && (
-                              <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                              <div className="saved-board-badge" style={{ width: 'fit-content', marginBottom: 6, fontSize: 12, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '3px 8px', fontWeight: 500 }}>
                                 ✓ Saved board
                               </div>
                             )}
-                            <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || outfit.label || 'Generated visual', meta: board.reason || outfit.reason || '' })} aria-label="Open generated visual preview">
+                            <button type="button" className="generated-visual-preview-btn" onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || outfit.label || 'Generated visual', meta: board.reason || outfit.reason || '' }) }} aria-label="Open generated visual preview">
                               <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label} className="generated-visual-image" loading="lazy" decoding="async" />
                             </button>
                             <div style={{ fontSize: 12, fontWeight: 650, marginTop: 7, color: 'var(--text)' }}>{board.label}</div>
@@ -3059,7 +3138,7 @@ export default function StylistChat({
 
                                   return (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
-                                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                      <div className="stylist-feedback-row">
                                         {primaryLabels.map(([type, label]) => {
                                           const verdictBaseKey = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}`
                                           const key = `${verdictBaseKey}:${type}`
@@ -3086,7 +3165,9 @@ export default function StylistChat({
                                                   return null
                                                 })()
                                               }, verdictBaseKey)}
-                                              style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
+                                              type="button"
+                                              aria-pressed={isSaved}
+                                              className="stylist-feedback-chip"
                                             >
                                               {isSaved ? '✓ ' : ''}{label}
                                             </button>
@@ -3096,17 +3177,18 @@ export default function StylistChat({
                                         <button
                                           type="button"
                                           onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)}
-                                          style={{ fontSize: 10, color: 'var(--accent)', cursor: 'pointer', padding: '2px 4px', display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 500, background: 'none', border: 'none' }}
+                                          aria-expanded={isExpanded}
+                                          className="stylist-feedback-chip is-quiet"
                                         >
                                           {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
                                         </button>
                                       </div>
 
                                       {isExpanded && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, paddingLeft: 4, borderLeft: '2px solid var(--border-light)', marginTop: 2 }}>
+                                        <div className="stylist-feedback-disclosure">
                                           {diagnosticGroups.map(([groupTitle, entries]) => <div key={groupTitle}>
-                                            <div style={{ fontSize: 9, color: 'var(--text-light)', marginBottom: 4 }}>{groupTitle}</div>
-                                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                            <div className="stylist-feedback-group-title">{groupTitle}</div>
+                                            <div className="stylist-feedback-row">
                                           {entries.map(([type, label, reason]) => {
                                             const key = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:${type}${reason ? `:${reason}` : ''}`
                                             const isSaved = feedbackSaved.has(key)
@@ -3132,7 +3214,9 @@ export default function StylistChat({
                                                     return null
                                                   })()
                                                 })}
-                                                style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: 'pointer' }}
+                                                type="button"
+                                                aria-pressed={isSaved}
+                                                className="stylist-feedback-chip"
                                               >
                                                 {isSaved ? '✓ ' : ''}{label}
                                               </button>
@@ -3354,7 +3438,7 @@ export default function StylistChat({
     setBoardLoadingIndex(resultKey)
     setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Loading garment reference photos...' }))
     statusTimers = [
-      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending the outfit pieces to GPT-4o...' })), 4000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending the outfit pieces to the image model...' })), 4000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Rendering the outfit image. This can take a minute.' })), 14000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Still rendering. Image generation is the slow step.' })), 45000),
     ]
@@ -3405,7 +3489,7 @@ export default function StylistChat({
     setBoardLoadingIndex(resultKey)
     setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Loading garment reference photos...' }))
     statusTimers = [
-      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending visible outfit cards to GPT-4o...' })), 4000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending visible outfit cards to the image model...' })), 4000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Rendering one rough comparison image. This can take a minute.' })), 14000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Still rendering the preview sheet...' })), 45000),
     ]
@@ -3456,7 +3540,7 @@ export default function StylistChat({
     setBoardLoadingIndex(resultKey)
     setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Loading garment reference photo...' }))
     statusTimers = [
-      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending directions to GPT-4o...' })), 4000),
+      setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Sending directions to the image model...' })), 4000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Rendering rough preview sheet. This can take a minute.' })), 14000),
       setTimeout(() => setImageStatusByKey(prev => ({ ...prev, [resultKey]: 'Still rendering preview sheet...' })), 45000),
     ]
@@ -3628,7 +3712,10 @@ export default function StylistChat({
     const activityLabel = activity !== 'none' ? `, ${ACTIVITY_OPTIONS.find(opt => opt[0] === activity)?.[1].toLowerCase()}` : ''
     const userText = `Use my wardrobe to create outfits for ${occasion}, ${season}${mood ? `, mood: ${mood}` : ''}${request ? `, request: ${request}` : ''}${activityLabel}${mission !== 'mix' ? `, mission: ${mission}` : ''}.`
     const resultId = createResultId('whole-wardrobe')
-    setWardrobeBuilderOpen(false)
+    // Keep the brief panel open (in its own "Generating..." state, see the primary-action
+    // button below) until the reply lands, instead of closing it immediately — closing it here
+    // exposed the generic empty-state landing hero for the whole request instead of a
+    // contextual generating state (looked like the app had reset / lost the request).
 
     // Automatically spin up a dedicated thread for this wardrobe generation
     const builderParams = { occasion, activity, season, mood, request }
@@ -3745,6 +3832,7 @@ export default function StylistChat({
       clearLoadingTimers()
       setLoadingStatus('')
       setLoading(false)
+      setWardrobeBuilderOpen(false)
     }
   }
 
@@ -3952,7 +4040,15 @@ export default function StylistChat({
     setChatHistory(nextChatHistory)
 
     setInput(''); setImageFile(null); setImagePrev(null)
-    setPendingOutfit(null); setPendingPiece(null); setCompareOutfitId('')
+    // Clearing input disables the send button (disabled={loading || !input.trim()}); if focus
+    // was on that button, disabling it drops focus to <body> with no signal to assistive tech.
+    // Move focus to the still-enabled composer textarea instead, so the user can keep typing.
+    textRef.current?.focus()
+    // pendingOutfit/pendingPiece are cleared once this request settles (see the finally block
+    // below), not here — clearing them immediately closed the piece/outfit-styling landing
+    // panel mid-request and exposed the generic empty-state hero instead of a contextual
+    // generating state.
+    setCompareOutfitId('')
     setGenerateOutfitMode(false); setEditorialVisualMode(false)
     setFileInputKey(k => k + 1)
     setLoading(true)
@@ -4526,6 +4622,9 @@ export default function StylistChat({
       }
     } finally {
       setLoading(false)
+      setPendingOutfit(null)
+      setPendingPiece(null)
+      setPendingOutfitAction(null)
     }
   }
 
@@ -4628,6 +4727,7 @@ export default function StylistChat({
         </>
       }
     >
+      <fieldset disabled={loading} style={{ border: 'none', margin: 0, padding: 0 }}>
       <div className="wardrobe-builder-fields">
         <div style={{ flex: '1 1 120px' }}>
           <div style={wardrobeBuilderFieldLabelStyle}>Occasion</div>
@@ -4675,6 +4775,12 @@ export default function StylistChat({
           style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
         />
       </div>
+      </fieldset>
+      {loading && (
+        <div className="wardrobe-builder-generating-status" role="status">
+          {loadingStatus || 'Composing outfit directions from your brief…'}
+        </div>
+      )}
     </StylistLandingPanel>
   )
 
@@ -4700,7 +4806,7 @@ export default function StylistChat({
             <div className="stylist-attached-photo">
               <div style={{ position: 'relative' }}>
                 <img src={imagePrev} alt="" style={{ height: 56, width: 56, objectFit: 'contain', borderRadius: 8, background: 'var(--surface-2)' }} />
-                <button onClick={() => { setImageFile(null); setImagePrev(null) }} style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, background: 'var(--text)', color: '#fff', borderRadius: '50%', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                <button onClick={() => { setImageFile(null); setImagePrev(null) }} aria-label="Remove attached photo" style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, background: 'var(--text)', color: '#fff', borderRadius: '50%', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
               </div>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Photo attached</span>
             </div>
@@ -4718,7 +4824,7 @@ export default function StylistChat({
                     </svg>
                   </label>
                   <textarea ref={textRef} className="ai-input" placeholder="Ask about your wardrobe..." value={input} onChange={handleInputChange} onKeyDown={handleKey} rows={1} />
-                  <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)}>↑</button>
+                  <button className="ai-send-btn" onClick={send} disabled={loading || (!input.trim() && !imageFile)} aria-label="Send message">↑</button>
                 </>
               )}
             </div>
@@ -4921,6 +5027,7 @@ export default function StylistChat({
           </StylistLandingPanel>
         )}
 
+        <div className="sr-only" role="status" aria-live="polite">{chatAnnouncement}</div>
         <div className="chat-thread">
           {messages.length > 1 && visibleMessageStart > 0 && (
             <button
@@ -4951,11 +5058,11 @@ export default function StylistChat({
                     return messageImageSrc ? (
                     <button
                       type="button"
-                      onClick={() => setPreviewImage({
+                      onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({
                         src: messageImageSrc,
                         title: m.contextName || 'Outfit photo',
                         meta: m.contextMode || ''
-                      })}
+                      }) }}
                       className="stylist-conversation-subject-photo"
                       aria-label="Open outfit photo preview"
                     >
@@ -5114,9 +5221,9 @@ export default function StylistChat({
                     return (
                       <div key={boardIdx} className="generated-visual-card" style={{ position: 'relative' }}>
                         {isRenderSaved && (
-                          <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>✓ Saved board</div>
+                          <div className="saved-board-badge" style={{ width: 'fit-content', marginBottom: 6, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500 }}>✓ Saved board</div>
                         )}
-                        <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Outfit preview', meta: board.reason || '' })} aria-label="Open outfit preview">
+                        <button type="button" className="generated-visual-preview-btn" onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Outfit preview', meta: board.reason || '' }) }} aria-label="Open outfit preview">
                           <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label || 'Outfit preview'} className="generated-visual-image" loading="lazy" decoding="async" />
                         </button>
                         <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
@@ -5146,16 +5253,51 @@ export default function StylistChat({
                         {boardLoadingIndex === i ? 'Generating boards...' : (boardResults[i]?.length ? 'Regenerate boards' : 'Generate visual boards')}
                       </button>
                     )}
-                    {!isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && !m.wardrobeEvaluation && FEEDBACK_ACTIONS.map(action => {
+                  </div>
+
+                  {!isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && !m.wardrobeEvaluation && (() => {
+                    const messageFeedbackAction = (action) => {
                       const key = `message:${i}:${action.type}`
                       const isSaved = feedbackSaved.has(key)
                       return (
-                        <button key={key} onClick={() => saveStylistFeedback({ key, feedbackType: action.type, targetType: 'message', label: action.label, note: m.text, payload: { messageIndex: i, text: m.text }, appendToPiece: activeContext.type === 'piece' && ['signature','works','not_me','too_soft','proportion_problem','wrong_item_read'].includes(action.type) })} disabled={isSaved} style={{ fontSize: 10, color: isSaved ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', background: isSaved ? 'var(--surface-2)' : 'var(--surface)', cursor: isSaved ? 'default' : 'pointer' }}>
-                          {isSaved ? 'saved ' : ''}{action.label}
+                        <button
+                          key={key}
+                          type="button"
+                          aria-pressed={isSaved}
+                          disabled={isSaved}
+                          onClick={() => saveStylistFeedback({ key, feedbackType: action.type, targetType: 'message', label: action.label, note: m.text, payload: { messageIndex: i, text: m.text }, appendToPiece: activeContext.type === 'piece' && ['signature','works','not_me','too_soft','proportion_problem','wrong_item_read'].includes(action.type) })}
+                          className="stylist-feedback-chip"
+                        >
+                          {isSaved ? '✓ ' : ''}{action.label}
                         </button>
                       )
-                    })}
-                  </div>
+                    }
+                    const cardKey = `message-feedback:${i}`
+                    const hasActiveReason = FEEDBACK_REASON_ACTIONS.some(action => feedbackSaved.has(`message:${i}:${action.type}`))
+                    const isExpanded = !collapsedFeedbackCards.has(cardKey) && (hasActiveReason || expandedFeedbackCards.has(cardKey))
+                    return (
+                      <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div className="stylist-feedback-row">
+                          {FEEDBACK_PRIMARY_ACTIONS.map(messageFeedbackAction)}
+                          <button
+                            type="button"
+                            onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)}
+                            aria-expanded={isExpanded}
+                            className="stylist-feedback-chip is-quiet"
+                          >
+                            {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
+                          </button>
+                        </div>
+                        {isExpanded && (
+                          <div className="stylist-feedback-disclosure">
+                            <div className="stylist-feedback-row">
+                              {FEEDBACK_REASON_ACTIONS.map(messageFeedbackAction)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
 
                   {editorialVisualResults[i]?.length > 0 && (
                     <div className="generated-visual-grid" style={{ marginTop: 10 }}>
@@ -5167,15 +5309,15 @@ export default function StylistChat({
                             {visual.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Visual error: {visual.error}</div> : (
                               <>
                                 {isSaved && (
-                                  <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                                  <div className="saved-board-badge" style={{ width: 'fit-content', marginBottom: 6, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500 }}>
                                     ✓ Saved board
                                   </div>
                                 )}
-                                <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(visual.imageUrl), title: visual.label || 'Generated visual', meta: visual.reason || '' })} aria-label="Open generated visual preview">
+                                <button type="button" className="generated-visual-preview-btn" onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({ src: resolveUploadImageSrc(visual.imageUrl), title: visual.label || 'Generated visual', meta: visual.reason || '' }) }} aria-label="Open generated visual preview">
                                   <img src={resolveUploadThumbnailSrc(visual.imageUrl, 'chat-display')} alt={visual.label} className="generated-visual-image" loading="lazy" decoding="async" />
                                 </button>
                                 <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{visual.label}</div>
-                                {Array.isArray(visual.missingPieces) && visual.missingPieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>Suggested additions: {visual.missingPieces.join(' + ')}</div>}
+                                {Array.isArray(visual.missingPieces) && visual.missingPieces.length > 0 && <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 2 }}>Suggested additions: {visual.missingPieces.join(' + ')}</div>}
                                 
                                 {visual.reason && (
                                   <details className="rationale-details" style={{ marginTop: 4 }}>
@@ -5215,13 +5357,13 @@ export default function StylistChat({
 
                                     return (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
-                                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        <div className="stylist-feedback-row">
                                           {primaryLabels.map(([type, label]) => {
                                             const verdictBaseKey = `visual-board:${i}:${idx}`
                                             const k = `${verdictBaseKey}:${type}`
                                             const isSavedFeedback = feedbackSaved.has(k)
                                             return (
-                                              <button key={k} onClick={() => selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: false }, verdictBaseKey)} style={{ fontSize: 10, color: isSavedFeedback ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', background: isSavedFeedback ? 'rgba(91,124,76,0.10)' : 'var(--surface)', cursor: 'pointer' }}>
+                                              <button key={k} onClick={() => selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: false }, verdictBaseKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                                 {isSavedFeedback ? '✓ ' : ''}{label}
                                               </button>
                                             )
@@ -5230,22 +5372,23 @@ export default function StylistChat({
                                           <button
                                             type="button"
                                             onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)}
-                                            style={{ fontSize: 10, color: 'var(--accent)', cursor: 'pointer', padding: '2px 4px', display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 500, background: 'none', border: 'none' }}
+                                            aria-expanded={isExpanded}
+                                            className="stylist-feedback-chip is-quiet"
                                           >
                                             {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
                                           </button>
                                         </div>
 
                                         {isExpanded && (
-                                          <div style={{ display: 'flex', flexDirection: 'column', gap: 7, paddingLeft: 4, borderLeft: '2px solid var(--border-light)', marginTop: 2 }}>
+                                          <div className="stylist-feedback-disclosure">
                                             {diagnosticGroups.map(([groupTitle, entries]) => <div key={groupTitle}>
-                                              <div style={{ fontSize: 9, color: 'var(--text-light)', marginBottom: 4 }}>{groupTitle}</div>
-                                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                              <div className="stylist-feedback-group-title">{groupTitle}</div>
+                                              <div className="stylist-feedback-row">
                                             {entries.map(([type, label, reason]) => {
                                               const k = `visual-board:${i}:${idx}:${type}${reason ? `:${reason}` : ''}`
                                               const isSavedFeedback = feedbackSaved.has(k)
                                               return (
-                                                <button key={k} onClick={() => toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} style={{ fontSize: 10, color: isSavedFeedback ? 'var(--donate)' : 'var(--text-muted)', padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', background: isSavedFeedback ? 'rgba(91,124,76,0.10)' : 'var(--surface)', cursor: 'pointer' }}>
+                                                <button key={k} onClick={() => toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                                   {isSavedFeedback ? '✓ ' : ''}{label}
                                                 </button>
                                               )
@@ -5287,11 +5430,11 @@ export default function StylistChat({
                             {board.error ? <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Board error: {board.error}</div> : (
                               <>
                                 {isBoardSaved && (
-                                  <div className="saved-board-badge" style={{ position: 'absolute', top: 8, right: 8, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500, pointerEvents: 'none', zIndex: 10 }}>
+                                  <div className="saved-board-badge" style={{ width: 'fit-content', marginBottom: 6, fontSize: 10, background: 'var(--donate-bg)', color: 'var(--donate)', border: '1px solid rgba(107, 140, 107, 0.25)', borderRadius: 12, padding: '2px 8px', fontWeight: 500 }}>
                                     ✓ Saved board
                                   </div>
                                 )}
-                                <button type="button" className="generated-visual-preview-btn" onClick={() => setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Generated board', meta: board.reason || '' })} aria-label="Open generated board preview">
+                                <button type="button" className="generated-visual-preview-btn" onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({ src: resolveUploadImageSrc(board.imageUrl), title: board.label || 'Generated board', meta: board.reason || '' }) }} aria-label="Open generated board preview">
                                   <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label} className="generated-visual-image" loading="lazy" decoding="async" />
                                 </button>
                                 <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
@@ -5334,9 +5477,11 @@ export default function StylistChat({
           )})}
 
           {loading && (
-            <div className="ai-message assistant">
-              <div className="typing-dots"><span /><span /><span /></div>
-              {loadingStatus && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>{loadingStatus}</div>}
+            <div className="ai-message assistant" role="status" aria-live="polite">
+              <div className="typing-dots" aria-hidden="true"><span /><span /><span /></div>
+              <div className={loadingStatus ? undefined : 'sr-only'} style={loadingStatus ? { marginTop: 8, fontSize: 12, color: 'var(--text-muted)' } : undefined}>
+                {loadingStatus || 'Stylist is working…'}
+              </div>
             </div>
           )}
         </div>
@@ -5368,11 +5513,11 @@ export default function StylistChat({
                     {pendingPhotoSrc && (
                       <button
                         type="button"
-                        onClick={() => setPreviewImage({
+                        onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({
                           src: pendingPhotoSrc,
                           title: pendingPiece.name || 'Piece',
                           meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
-                        })}
+                        }) }}
                         className="piece-styling-photo-button"
                         aria-label="Preview piece photo"
                       >
@@ -5410,6 +5555,7 @@ export default function StylistChat({
                   </div>
                   <button
                     type="button"
+                    disabled={loading}
                     onClick={() => {
                       if (pendingPieceMode === 'wardrobe') {
                         send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false })
@@ -5419,11 +5565,12 @@ export default function StylistChat({
                     }}
                     className="piece-styling-primary-action"
                   >
-                    {pendingPieceMode === 'wardrobe' ? 'Create my outfits' : 'Explore new pieces'} <span aria-hidden="true">→</span>
+                    {loading ? 'Generating...' : (pendingPieceMode === 'wardrobe' ? 'Create my outfits' : 'Explore new pieces')} <span aria-hidden="true">→</span>
                   </button>
                 </>
               }
             >
+              <fieldset disabled={loading} style={{ border: 'none', margin: 0, padding: 0 }}>
               <div className="stylist-option-grid">
                 <OptionCard
                   variant="radio"
@@ -5483,6 +5630,12 @@ export default function StylistChat({
                   style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
                 />
               </div>
+              </fieldset>
+              {loading && (
+                <div className="piece-styling-generating-status" role="status">
+                  {loadingStatus || `Composing ${pendingPieceMode === 'wardrobe' ? 'outfits' : 'new-piece ideas'} around ${capitalizeFirst(pendingPiece.name)}…`}
+                </div>
+              )}
             </StylistLandingPanel>
           </div>
         )
@@ -5505,7 +5658,7 @@ export default function StylistChat({
                     <button
                       type="button"
                       className="piece-styling-back"
-                      onClick={() => { setPendingOutfit(null); setInput('') }}
+                      onClick={() => { setPendingOutfit(null); setPendingOutfitAction(null); setInput('') }}
                     >
                       <span aria-hidden="true">←</span> Back to chat
                     </button>
@@ -5514,11 +5667,11 @@ export default function StylistChat({
                     {pendingPhotoSrc && (
                       <button
                         type="button"
-                        onClick={() => setPreviewImage({
+                        onClick={event => { previewReturnFocusRef.current = event.currentTarget; setPreviewImage({
                           src: pendingPhotoSrc,
                           title: pendingOutfit.name || 'Outfit',
                           meta: pendingConfidence ? `${pendingConfidence.label} · ${pendingConfidence.detail}` : ''
-                        })}
+                        }) }}
                         className="outfit-styling-photo-button"
                         aria-label="Preview outfit photo"
                       >
@@ -5558,24 +5711,34 @@ export default function StylistChat({
                 </div>
               }
             >
+              <fieldset disabled={loading} style={{ border: 'none', margin: 0, padding: 0 }}>
               <div className="stylist-option-grid outfit-styling-options">
                 <OptionCard
                   icon={<ReviewOutfitIcon />}
-                  title="Review this outfit"
+                  title={loading && pendingOutfitAction === 'review' ? 'Reviewing…' : 'Review this outfit'}
                   description="Get feedback on what works, what could be improved, and why."
-                  onClick={() => send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', responseMode: 'full' })}
+                  onClick={() => {
+                    setPendingOutfitAction('review')
+                    send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', responseMode: 'full' })
+                  }}
                 />
                 <OptionCard
                   icon={<SimilarLooksIcon />}
-                  title="Find similar looks"
+                  title={loading && pendingOutfitAction === 'similar' ? 'Finding similar looks…' : 'Find similar looks'}
                   description="See similar outfit ideas using pieces you own."
-                  onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'formula' }, input: 'Create formula-similar outfits from my wardrobe based on this saved look.' })}
+                  onClick={() => {
+                    setPendingOutfitAction('similar')
+                    send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'formula' }, input: 'Create formula-similar outfits from my wardrobe based on this saved look.' })
+                  }}
                 />
                 <OptionCard
                   icon={<RestyleOutfitIcon />}
-                  title="Restyle the main piece"
+                  title={loading && pendingOutfitAction === 'restyle' ? 'Restyling…' : 'Restyle the main piece'}
                   description="Build different outfits around the key garment."
-                  onClick={() => send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'creative' }, input: 'Generate creative alternatives from this saved outfit photo and linked garment references.' })}
+                  onClick={() => {
+                    setPendingOutfitAction('restyle')
+                    send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'creative' }, input: 'Generate creative alternatives from this saved outfit photo and linked garment references.' })
+                  }}
                 />
               </div>
               <div className="outfit-question-section">
@@ -5585,13 +5748,13 @@ export default function StylistChat({
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); send({ responseMode: 'followup' }) } }}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); setPendingOutfitAction('question'); send({ responseMode: 'followup' }) } }}
                   placeholder="Ask about shoes, proportions, occasion, or how to change the look…"
                   className="outfit-question-input"
                 />
                 <button
                   type="button"
-                  onClick={() => send({ responseMode: 'followup' })}
+                  onClick={() => { setPendingOutfitAction('question'); send({ responseMode: 'followup' }) }}
                   disabled={loading || !input.trim()}
                   className="outfit-question-send"
                   aria-label="Send outfit question"
@@ -5600,6 +5763,12 @@ export default function StylistChat({
                 </button>
                 </div>
               </div>
+              </fieldset>
+              {loading && (
+                <div className="outfit-styling-generating-status" role="status">
+                  {loadingStatus || (pendingOutfitAction === 'question' ? 'Answering your question…' : 'Composing your outfit direction…')}
+                </div>
+              )}
             </StylistLandingPanel>
           </div>
         )
@@ -5610,16 +5779,18 @@ export default function StylistChat({
         <div
           role="dialog"
           aria-modal="true"
+          aria-labelledby="stylist-preview-title"
           onClick={() => setPreviewImage(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(20,18,16,0.82)', display: 'grid', placeItems: 'center', padding: 20 }}
         >
           <div
+            ref={previewDialogRef}
             onClick={e => e.stopPropagation()}
             style={{ width: 'min(960px, 96vw)', maxHeight: '92vh', display: 'grid', gap: 10 }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', color: '#fff' }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>{previewImage.title}</div>
+                <div id="stylist-preview-title" style={{ fontSize: 14, fontWeight: 700 }}>{previewImage.title}</div>
                 {previewImage.meta && <div style={{ fontSize: 12, opacity: 0.78 }}>{previewImage.meta}</div>}
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -5634,7 +5805,7 @@ export default function StylistChat({
                     Edit item card
                   </button>
                 )}
-                <button className="chip" onClick={() => setPreviewImage(null)}>Close</button>
+                <button ref={previewCloseRef} className="chip" onClick={() => setPreviewImage(null)}>Close</button>
               </div>
             </div>
             <img

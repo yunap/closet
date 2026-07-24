@@ -2285,14 +2285,74 @@ test('StylistChat does not show duplicate image and evaluation buttons on whole-
   assert.match(src, /\(message\?\.wholeWardrobe \|\| \(activeContext\?\.type !== 'piece'/)
 })
 
-test('StylistChat visibly marks broken diagnostic local-fill cards', () => {
+test('StylistChat visibly marks broken diagnostic local-fill cards with a plain-language disclaimer', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /const isBrokenCard = Boolean\(outfit\.broken \|\| outfit\.diagnosticOnly\)/)
   assert.match(src, /const brokenReasonRows = Array\.isArray\(outfit\.brokenPieces\)/)
-  assert.match(src, /Broken diagnostic card: shown to inspect a rejected model proposal/)
-  assert.match(src, /Rejected reason:/)
-  assert.match(src, /Rejected pieces:/)
+  assert.match(src, /didn't clear one of the engine's structural checks, so it's shown here for review/)
   assert.match(src, /isBrokenCard \? 'needs review'/)
+})
+
+test('StylistChat gates raw engine internals behind the STYLIST_DEBUG_ENABLED dev flag', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /const STYLIST_DEBUG_ENABLED = import\.meta\.env\.VITE_STYLIST_DEBUG === 'true'/)
+  assert.match(src, /isBrokenCard && STYLIST_DEBUG_ENABLED && outfit\.rejectionReason/)
+  assert.match(src, /Dev: rejected reason:/)
+  assert.match(src, /isBrokenCard && STYLIST_DEBUG_ENABLED && brokenReasonRows\.length > 0/)
+  assert.match(src, /Dev: rejected pieces:/)
+  assert.match(src, /if \(!STYLIST_DEBUG_ENABLED\) return null/)
+  assert.doesNotMatch(src, /`\$\{cat\}s: \$\{cnt\}`/)
+})
+
+test('StylistChat image-preview lightbox behaves as a dialog rather than a static overlay', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /role="dialog"\s*\n\s*aria-modal="true"\s*\n\s*aria-labelledby="stylist-preview-title"/)
+  assert.match(src, /previewCloseRef\.current\?\.focus\(\)/)
+  assert.match(src, /event\.key === 'Escape'/)
+  assert.match(src, /previewReturnFocusRef\.current\?\.focus\?\.\(\)/)
+  assert.match(src, /document\.body\.style\.overflow = 'hidden'/)
+  // every setPreviewImage(...) that opens the dialog (not the 3 close calls) must capture the
+  // triggering element so focus can return to it on close
+  const openCalls = src.match(/onClick=\{[^}]*previewReturnFocusRef\.current = event\.currentTarget[\s\S]*?setPreviewImage\(\{/g) || []
+  assert.ok(openCalls.length >= 10, `expected at least 10 lightbox triggers to capture return focus, found ${openCalls.length}`)
+})
+
+test('StylistChat announces stylist activity and replies to assistive tech', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /className="ai-message assistant" role="status" aria-live="polite"/)
+  assert.match(src, /Stylist is working…/)
+  assert.match(src, /const \[chatAnnouncement, setChatAnnouncement\] = useState\(''\)/)
+  assert.match(src, /setChatAnnouncement\(last\.isError \? 'Stylist reply failed\.' : 'Stylist replied\.'\)/)
+  assert.match(src, /<div className="sr-only" role="status" aria-live="polite">\{chatAnnouncement\}<\/div>/)
+})
+
+test('StylistChat small accessibility/product batch: post-send focus, contrast, labels, badge placement', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  // Clearing input disables the send button; refocus the textarea so focus doesn't drop to <body>.
+  assert.match(src, /setInput\(''\); setImageFile\(null\); setImagePrev\(null\)\s*\n\s*\/\/ Clearing input disables the send button[\s\S]*?textRef\.current\?\.focus\(\)/)
+  // "Suggested additions" caption no longer uses --accent (4.48:1, marginal) — uses the
+  // documented lowest-contrast readable token instead.
+  assert.match(src, /Suggested additions: \{visual\.missingPieces\.join\(' \+ '\)\}<\/div>\}/)
+  assert.doesNotMatch(src, /color: 'var\(--accent\)', marginTop: 2 \}\}>Suggested additions/)
+  assert.match(src, /fontSize: 10, color: 'var\(--text-light\)', marginTop: 2 \}\}>Suggested additions/)
+  // Icon-only send / remove-photo controls are labelled.
+  assert.match(src, /className="ai-send-btn" onClick=\{send\}[\s\S]*?aria-label="Send message"/)
+  assert.match(src, /aria-label="Remove attached photo"/)
+  // The "Saved" badge on generated board previews no longer overlays the image (was
+  // position: absolute, top/right 8, zIndex 10) — it now sits above it in normal flow.
+  assert.doesNotMatch(src, /saved-board-badge[\s\S]{0,5}style=\{\{ position: 'absolute'/)
+  assert.match(src, /className="saved-board-badge" style=\{\{ width: 'fit-content', marginBottom: 6/)
+})
+
+test('ThreadRail mobile history drawer behaves as a dialog rather than a static overlay', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/ThreadRail.jsx'), 'utf8')
+  assert.match(src, /role="dialog" aria-modal="true" aria-label="Chat history"/)
+  assert.match(src, /drawerCloseRef\.current\?\.focus\(\)/)
+  assert.match(src, /event\.key === 'Escape'/)
+  assert.match(src, /if \(drawerNestedStateRef\.current\.renamingId \|\| drawerNestedStateRef\.current\.confirmDeleteId\) return/)
+  assert.match(src, /previouslyFocused\?\.focus\?\.\(\)/)
+  assert.match(src, /document\.body\.style\.overflow = 'hidden'/)
+  assert.match(src, /aria-label="Close chat history"/)
 })
 
 test('StylistChat selected-piece season menu keeps spring and summer separate', () => {
@@ -3723,6 +3783,45 @@ test('anchor pieces bypass suitability gates while supports stay gated', async (
   assert.equal(accepted.status, 'success')
   const card = ctx.generatedOutfits.at(-1)
   assert.deepEqual(card.anchorPieceIds, [experimentalId], 'card records which piece was the user-requested anchor')
+})
+
+test('a corrected retry with the same pieces supersedes its own earlier rejected attempt instead of duplicating the card', async () => {
+  const experimentalId = insertPiece({
+    name: 'experimental fringe vest',
+    category: 'top',
+    colors: ['tan'],
+    occasions: ['casual'],
+    photo: seeded.photos.top,
+    reads_as: 'statement fringe layer',
+    recommendation_status: 'experimental',
+    fabric_weight: 'light',
+  })
+  const ctx = {
+    generatedOutfits: [],
+    occasion: 'casual',
+    season: 'current season',
+    declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
+    retrievedPieceIds: new Set([experimentalId, seeded.bottom, seeded.shoe]),
+  }
+  const outfitPieces = (asAnchor) => ([
+    { id: experimentalId, role: 'primary_top', ...(asAnchor ? { anchor: true } : {}) },
+    { id: seeded.bottom, role: 'primary_bottom' },
+    { id: seeded.shoe, role: 'shoes' }
+  ])
+
+  // Same toolContext across both calls, same turn: first attempt rejected, retry corrects it.
+  const rejected = await executeTool('propose_outfit', { label: 'No anchor', pieces: outfitPieces(false) }, ctx)
+  assert.equal(rejected.status, 'validation_error')
+  assert.equal(ctx.generatedOutfits.length, 1, 'the rejected attempt is recorded for tuning visibility')
+  assert.equal(ctx.generatedOutfits[0].broken, true)
+
+  const accepted = await executeTool('propose_outfit', { label: 'Anchored', pieces: outfitPieces(true) }, ctx)
+  assert.equal(accepted.status, 'success')
+
+  assert.equal(ctx.generatedOutfits.length, 1, 'the superseded broken card must not linger alongside the corrected one')
+  const survivor = ctx.generatedOutfits[0]
+  assert.equal(survivor.broken, undefined, 'the surviving card is the corrected, non-broken proposal')
+  assert.match(survivor.engineNote, /experimental/, 'the original rejection reason carries forward as an honest note')
 })
 
 test('store_user_correction dedupes identical notes', async () => {
