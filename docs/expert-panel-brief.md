@@ -1,6 +1,8 @@
 # Expert panel brief
 
-**Status:** draft for owner review, 2026-07-24. Not yet ratified.
+**Status:** owner-ratified 2026-07-25. Mode A is proven on Wardrobe and Lookbook. Mode B is
+ratified as a protocol but has never been run — treat its first outing as a test of the
+instrument as well as of the surface, and revise this document afterward.
 
 The standing brief handed to every expert reviewer, for every surface. `AGENTS.md`'s
 **Mandatory UI expert panel** rule points here. Prior rulings and the durable visual rubric stay
@@ -29,6 +31,17 @@ repeatedly, not a showcase visited once.
 judgment persists as memory → later proposals reflect it. Every surface either feeds that loop
 or gets out of its way. A surface that collects a signal the loop never uses is decoration; a
 surface that makes judging harder is a regression regardless of how it looks.
+
+**Planning, not just single outfits.** A large part of freeform stylist chat is multi-event and
+multi-day planning: a wedding weekend, a four-day trip, a work week, a seasonal capsule. The
+output is a **plan** — sectioned by event or day, one look per section, carrying explicit
+*coverage* (which events are dressed), *conditions* (weather, indoor vs. outdoor, per event), and
+*repeats* (which pieces recur across days, or an assertion that none do). Packing economy is part
+of the job: wearing the same sunglasses on three of four days is a correct answer, not a variety
+failure. The stylist may also spend a conversational turn asking a clarifying question — where
+the event is, so it can pull a live forecast — before producing anything. None of this is a
+separate wizard or mode; it emerges from ordinary conversation in the same chat that critiques a
+single outfit.
 
 **The four product areas.**
 
@@ -103,9 +116,47 @@ The current Stylist set, as a worked example:
 2. Feedback vocabulary should scale with render stage rather than being uniform across surfaces.
 3. Showing a gate-rejected proposal as a "needs review" card serves the owner better than
    suppressing it.
-4. Proposing pieces the owner does not own is a legitimate stylist function, not a shopping
-   feature in disguise.
-5. Chip-based feedback is a workable way for an owner to teach a stylist at all.
+4. Chip-based feedback is a workable way for an owner to teach a stylist at all.
+5. The structured read is the right output form for a critique — a dozen diagnostic fields behind
+   a disclosure, rather than a shorter judgment or a different shape entirely.
+6. The owner can perceive the calibration loop paying off — that judging a proposal today visibly
+   changes what gets proposed later. If it is not perceivable, every feedback control in the app
+   is theater.
+7. A plan must **declare the constraints it imposed**, not merely present the result. A plan that
+   silently spends its budget is a report; one that names the tradeoff and offers the lever is a
+   decision aid. (Folds in the earlier framing — the plan, not the individual look, is the unit of
+   value, and repeats across days are a feature to surface and reason about, not a variety failure
+   to hide.)
+
+   Evidence, and it is sharper than it first appeared. The 14-piece capsule spends 3 of its 14
+   slots on shoes (a fixed quota: any budget from 12 to 23 buys exactly 3), so a single flat
+   carries 7 of 8 looks. Every reader read that as a styling failure — including the implementing
+   agent, for two hours, across four wrong hypotheses. It is not a failure; it is the budget
+   working.
+
+   And the model **said so**. It wrote *"the canvas slip-ons do heavy duty there; the burgundy cork
+   wedges carry the one evening look"*, plus the piece roster, the budget verdict, and the route to
+   a true 14. The Tucson plan likewise opened *"6 looks, 3 pairs of shoes, built for the heat"*.
+   **None of it reached the screen** — plan responses rendered only their structured cards and
+   discarded the prose entirely (fixed 2026-07-25; see `stylist-bugfix-spec.md` item 11). The
+   owner's reaction before that was found: *"on one hand it's the right decision, on the other — it
+   should have told the user 14 pieces is too tight, so I'm limiting the shoes."* It did. The
+   surface built to present plans threw it away.
+
+   So the question is not whether plans should explain themselves. It is: **what made a surface
+   designed to present a stylist's answer treat that answer as discardable?** Structured cards were
+   assumed to be the whole result, and the prose to be a preamble. Is a card grid the right
+   container for styling advice at all, or does it systematically privilege what is enumerable over
+   what is reasoned? The same instinct produced the roster, budget verdict, and trim notices being
+   computed and still not shown.
+8. Spending a conversational turn on a clarifying question — and a live weather lookup — before
+   producing a plan is worth the delay it costs.
+
+**Settled, with rationale — do not spend a slot on it.** *Proposing pieces the owner does not own
+is a legitimate stylist function, not a shopping feature in disguise.* Owner ruling, 2026-07-24:
+true for now, because styling an item sometimes requires seeing how it was **intended** to be
+styled, and the owner's wardrobe may hold nothing that accomplishes that. A reviewer may still
+challenge this, but only with an argument that engages that rationale.
 
 Each reviewer must, per proposition: take a position, state the strongest counter-argument to
 their own position, and name **what would have to be observably true for them to be wrong**. That

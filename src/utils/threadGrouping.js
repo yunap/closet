@@ -192,17 +192,21 @@ function joinSummaryItems(items = []) {
 }
 
 function compactOutcomePhrase(value = '') {
-  const v = compactText(value).toLowerCase()
+  // Slot ids arrive here verbatim (`outdoor_daytime_social`, `smart_casual_outing`), and neither
+  // the keyword branches below nor the fallback ever split on separators — so an unmatched id was
+  // printed raw into the rail subtitle ("3 looks · outdoor_daytime_social"). Normalising here fixes
+  // both: the keyword tests now see real words, and anything unmatched reads as prose.
+  const v = compactText(value).replace(/[-_]+/g, ' ').toLowerCase()
   if (!v) return ''
   if (/\b(client|presentation|meeting|meetings)\b/.test(v)) return 'client meetings'
-  if (/\boffice|work\b/.test(v)) return 'office'
+  if (/\b(office|work)\b/.test(v)) return 'office'
   if (/\b(winery|vineyard|tasting|tastings)\b/.test(v)) return 'winery'
   if (/\bmountain\b/.test(v) && /\b(hike|hiking)\b/.test(v)) return 'mountain hiking'
   if (/\b(hike|hiking|trail|trails)\b/.test(v)) return 'hike'
-  if (/\bdinner|evening\b/.test(v)) return 'dinner'
+  if (/\b(dinner|evening)\b/.test(v)) return 'dinner'
   if (/\bbrunch\b/.test(v)) return 'brunch'
-  if (/\bbeach|coastal|coast\b/.test(v)) return 'beach'
-  if (/\bgallery|museum|art\b/.test(v)) return 'gallery'
+  if (/\b(beach|coastal|coast)\b/.test(v)) return 'beach'
+  if (/\b(gallery|museum|art)\b/.test(v)) return 'gallery'
   if (/\berrands?\b/.test(v)) return 'errands'
   if (/\bmarket\b/.test(v)) return 'market'
   if (/\b(city|walking|walk|stroll)\b/.test(v)) return 'city walk'

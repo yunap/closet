@@ -1839,6 +1839,28 @@ fixed failures). Live-verified in a freshly-restarted mocked sandbox:
     title at 375px width after the CSS fix — title renders full-width on its own line, badge
     wraps to the line below it.
 
+## Panel-readiness cleanup (2026-07-25)
+
+Two defects fixed ahead of the first Mode B expert panel (see `docs/expert-panel-brief.md`), both
+recorded in full in `docs/stylist-bugfix-spec.md` (addendum items 8 and 9):
+
+- **Legacy stored diagnostic cards still leaked raw gate vocabulary.** PR 175 fixed this
+  source-side in `routes/ai.js`, but thread payloads are durable and there is no migration, so
+  cards stored before that fix still carried `watchFor` / `systemFlags` / a
+  `Rejected because …` suffix on `reason` and still rendered them. Now stripped and dev-gated at
+  render. **General rule worth remembering: render-side fixes apply retroactively to stored
+  threads, generation-side fixes do not.**
+- **The plan overview's `Useful repeats` label was a keyword guess** over the planner's own prose.
+  Both planner branches contain the word "repeats", so a plan with zero repeats announced "Useful
+  repeats: Every look is distinct." Now read from the structured `pieceReuse.repeated` the planner
+  already attaches.
+
+**New launch config: `sandbox-web-asuser` (port 5176)** — the sandbox web server without
+`VITE_STYLIST_DEBUG`. `sandbox-web` has the dev flag on, so anyone reviewing the Stylist there
+sees engine internals no real user ever sees. Use the `-asuser` server for panel evidence and for
+any "what does the owner actually see" question; the two share `sandbox-api` and can run
+side by side.
+
 ## Outstanding issues — before re-assembling the expert panel
 
 Consolidated list of what's still open, so the panel re-review targets real gaps rather than
@@ -1858,7 +1880,18 @@ already-fixed ground. Everything above this point in the document is owner-teste
    before re-assembling the expert panel** — descoped from the panel-readiness gate, stays open
    as a backlog item.
 
-2. **Anchor-garment position consistency across selected-piece directions is unverified.**
+2. **Plan outfit cap does two different jobs.** `planTotalOutfitCapForBudget`
+   (`styling-engine/outfitSetPlanner.js`) caps a plan at 8 outfits below an 18-piece budget. For a
+   trip that is sensible — the axis is days. For a capsule it is the wrong axis: a 14-piece capsule
+   is 5 tops × 5 bottoms, so ~25 combinations presented as 8, and both capsules examined carried
+   `plan trimmed` notices where the model asked for more and was cut. Owner decision on approach:
+   split the cap by plan shape (trips day-driven, capsules combinatorial), as the general rule
+   "a plan's cap comes from its own shape". The number is unresolved on purpose — it should come
+   from real capsule-wardrobe practice, not a guess. **Deferred to the panel:** if the capsule flow
+   doesn't survive Stage 1 in this shape, the number is moot. Full detail in
+   `docs/stylist-bugfix-spec.md`.
+
+3. **Anchor-garment position consistency across selected-piece directions is unverified.**
    From the "Recommended design direction" feedback (entry above). Appears to hold structurally
    — `renderOutfitSketch`'s layout is category-slotted, so the anchor lands in the same visual
    slot across cards as a side effect of the layout, not by deliberate design — but no explicit
@@ -1873,6 +1906,14 @@ already-fixed ground. Everything above this point in the document is owner-teste
   confirmed clean of any client-side leak.
 - E3 (editorial shop-the-gap silhouette comparison) — implemented (free `visualPrompt` text +
   compare-silhouettes strip).
+- **Garment IDs in stylist prose** ("The tan leather tote (ID 12)…") — owner ruling 2026-07-25:
+  **deliberate and requested**, not an internals leak. The IDs are there so a recommendation that
+  exposes a mistagged garment leads straight to the record that needs fixing — and because garment
+  names collide constantly, especially auto-tagger-written ones, so the ID is what makes a
+  recommendation point at one unambiguous record. Not a defect, so it belongs on every future
+  exclusion list. **But the presentation is open:** the owner invites panels to propose
+  alternatives, provided they actually solve garment disambiguation rather than just hiding the
+  number.
 - A4 (cost-bearing actions on broken/"needs review" cards) — owner ruling: leave as-is, cards
   are usually fine, the engine is what's broken. Not a bug.
 - E4b (comparison-sheet illegible baked-in captions) — owner ruling: leave alone, it's the image
