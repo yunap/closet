@@ -9556,7 +9556,6 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   border-radius: 0;
   background: transparent;
   --text-muted: color-mix(in srgb, var(--text) 74%, #fff);
-  --text-light: color-mix(in srgb, var(--text) 62%, #fff);
   font-family: var(--font-reading);
 }
 .stylist-response-header {
@@ -9622,9 +9621,15 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 
 .stylist-outfit-result-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
+  gap: 4px 16px;
+}
+
+.stylist-outfit-result-title {
+  flex: 1 1 160px;
+  min-width: 0;
 }
 
 .stylist-outfit-result-title {
@@ -9781,7 +9786,7 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   border-top: 1px solid var(--border-light);
 }
 
-.stylist-outfit-actions > button {
+.stylist-outfit-actions > button:not(.stylist-feedback-chip) {
   min-height: 30px;
   padding: 5px 10px !important;
   border-radius: 8px !important;

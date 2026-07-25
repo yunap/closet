@@ -75,18 +75,15 @@ grounding, generic safe solutions.
 ## Operational Rules
 
 - **Mandatory UI expert panel.** Before materially redesigning a user-facing page or component,
-  review it through three independent roles: (1) product design, covering hierarchy,
-  interaction clarity, consistency, and responsive composition; (2) UX/accessibility,
-  covering readability, contrast, focus behavior, stable interactions, and keyboard use; and
-  (3) fashion-product design, covering whether garment and outfit evidence supports the
-  user's real styling decision. Fashion-product review is required, not optional. Give every
-  reviewer the product context, representative populated/empty/long-content states, and
-  screenshots or browser access at the relevant viewports. Ask each reviewer to separate
-  blocking issues from refinements and to explain the user-task consequence of every
-  recommendation. The implementing agent synthesizes areas of agreement, reports genuine
-  disagreements to Yuna, and does not describe a visual decision as ratified until Yuna has
-  reviewed the result. The durable rubric and prior rulings live in
-  `docs/ui-v1-design-handoff.md`; read it before convening the panel.
+  convene a panel. The standing brief — shared app context, the two panel modes (craft review vs.
+  direction review), role definitions, evidence rules, and the output contract — lives in
+  `docs/expert-panel-brief.md`. Read it, and the prior rulings in `docs/ui-v1-design-handoff.md`,
+  before convening. Non-negotiables: fashion-product review is required, not optional; every
+  reviewer gets the shared app context, not just the screen; stored-data surfaces get freshly
+  generated data or are excluded; the prior-rulings exclusion list is copied verbatim, never
+  paraphrased; bugs and typos are not a panel's job. The implementing agent synthesizes areas of
+  agreement, reports genuine disagreements to Yuna, and does not describe a visual decision as
+  ratified until Yuna has reviewed the result.
 - **Consult before behavior fixes.** When debugging a user-reported styling or product behavior,
   diagnose first and report the suspected root cause before changing code. Do not rush into
   speculative fixes, especially changes to ratified styling/register/weather/activity behavior, without

@@ -86,6 +86,40 @@ test('thread display helpers derive concise history titles and outcome summaries
   assert.equal(getThreadDisplayTitle(meetingThread), 'Thursday client outfit')
   assert.equal(getThreadOutcomeSummary(meetingThread), '2 looks · office and client meetings')
 
+  // E10: critique/similar/creative/comparison threads all share activeContext.type 'outfit' and
+  // used to collapse to the same "<name> critique" title and "Outfit critique" subtitle
+  // regardless of which action it actually was. No threadMemory.latestOutfits on any of these —
+  // that's the common real-world shape for a critique/variant/comparison reply (prose or a
+  // rendered image, not a fresh structured-outfits array), which is exactly the case that used
+  // to fall through to the generic branch being fixed here.
+  const critiqueThread = {
+    originalFirstMessage: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.',
+    activeContext: { type: 'outfit', id: 'outfit_1', name: 'Volvo get together' },
+  }
+  assert.equal(getThreadDisplayTitle(critiqueThread), 'Volvo get together · Critique')
+  assert.equal(getThreadOutcomeSummary(critiqueThread), 'Outfit critique')
+
+  const similarThread = {
+    originalFirstMessage: 'Create formula-similar outfits from my wardrobe based on this saved look.',
+    activeContext: { type: 'outfit', id: 'outfit_1', name: 'Volvo get together' },
+  }
+  assert.equal(getThreadDisplayTitle(similarThread), 'Volvo get together · Similar')
+  assert.equal(getThreadOutcomeSummary(similarThread), 'Similar outfit variants')
+
+  const creativeThread = {
+    originalFirstMessage: 'Generate creative alternatives from this saved outfit photo and linked garment references.',
+    activeContext: { type: 'outfit', id: 'outfit_1', name: 'Volvo get together' },
+  }
+  assert.equal(getThreadDisplayTitle(creativeThread), 'Volvo get together · Creative')
+  assert.equal(getThreadOutcomeSummary(creativeThread), 'Creative alternatives')
+
+  const comparisonThread = {
+    originalFirstMessage: 'Compare this outfit against another saved look.',
+    activeContext: { type: 'outfit', id: 'outfit_1', name: 'Volvo get together' },
+  }
+  assert.equal(getThreadDisplayTitle(comparisonThread), 'Volvo get together · Comparison')
+  assert.equal(getThreadOutcomeSummary(comparisonThread), 'Outfit comparison')
+
   const edgeThread = {
     threadMemory: {
       latestOutfits: [
@@ -96,6 +130,31 @@ test('thread display helpers derive concise history titles and outcome summaries
     }
   }
   assert.equal(getThreadOutcomeSummary(edgeThread), '3 directions · polished edge')
+
+  // E9: diagnostic/"needs review" cards must not count toward this subtitle — otherwise it
+  // disagrees with the in-chat header, which already excludes them via the same filter.
+  const mixedDiagnosticThread = {
+    threadMemory: {
+      latestOutfits: [
+        { label: 'Winery Day' },
+        { label: 'Rejected Attempt', broken: true, diagnosticOnly: true },
+        { label: 'Dinner Out' }
+      ]
+    }
+  }
+  assert.equal(getThreadOutcomeSummary(mixedDiagnosticThread), '2 looks · winery and dinner')
+
+  // All-diagnostic threads fall back to counting them anyway (same empty-set fallback the
+  // in-chat header uses) rather than silently dropping to the no-outfits branch below.
+  const allDiagnosticThread = {
+    threadMemory: {
+      latestOutfits: [
+        { label: 'Rejected Attempt One', broken: true, diagnosticOnly: true },
+        { label: 'Rejected Attempt Two', broken: true, diagnosticOnly: true }
+      ]
+    }
+  }
+  assert.equal(getThreadOutcomeSummary(allDiagnosticThread), '2 looks · rejected attempt one and rejected attempt two')
 
   const subjectChildThread = {
     title: 'dark grey gathered mini dress styling',

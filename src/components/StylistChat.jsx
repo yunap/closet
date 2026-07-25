@@ -32,15 +32,35 @@ function GeneratedBoardLengthFeedback({ board, baseKey, feedbackSaved, toggleFee
   return (
     <div style={{ padding: 8, borderRadius: 8, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ fontSize: 10, fontWeight: 600 }}>Which garment is the wrong length?</div>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {boardPieces.map(piece => <button key={piece.id} type="button" onClick={() => setPieceId(Number(piece.id))} style={{ fontSize: 10, padding: '3px 7px', borderRadius: 10, border: '1px solid var(--border)', background: Number(selectedPiece.id) === Number(piece.id) ? 'var(--surface)' : 'transparent', color: Number(selectedPiece.id) === Number(piece.id) ? 'var(--accent)' : 'var(--text-muted)' }}>{piece.name || `Piece ${piece.id}`}</button>)}
+      <div className="stylist-feedback-row">
+        {boardPieces.map(piece => (
+          <button
+            key={piece.id}
+            type="button"
+            aria-pressed={Number(selectedPiece.id) === Number(piece.id)}
+            onClick={() => setPieceId(Number(piece.id))}
+            className="stylist-feedback-chip"
+          >
+            {piece.name || `Piece ${piece.id}`}
+          </button>
+        ))}
       </div>
       <div style={{ fontSize: 10, fontWeight: 600 }}>What was wrong?</div>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+      <div className="stylist-feedback-row">
         {WRONG_LENGTH_REASONS.map(([issue, text]) => {
           const key = `${baseKey}:wrong_length_detail:${selectedPiece.id}:${issue}`
           const active = feedbackSaved.has(key)
-          return <button key={issue} type="button" onClick={() => toggleFeedback({ key, feedbackType: 'wrong_length', targetType: 'generated_visual_board', label, note, payload: { ...payload, length_correction: { piece_id: Number(selectedPiece.id), piece_name: selectedPiece.name || `Piece ${selectedPiece.id}`, issue } }, appendToPiece: false, contextOverride })} style={{ fontSize: 10, padding: '3px 7px', borderRadius: 10, border: '1px solid var(--border)', background: active ? 'var(--surface)' : 'transparent', color: active ? 'var(--donate)' : 'var(--text-muted)' }}>{active ? '✓ ' : ''}{text}</button>
+          return (
+            <button
+              key={issue}
+              type="button"
+              aria-pressed={active}
+              onClick={() => toggleFeedback({ key, feedbackType: 'wrong_length', targetType: 'generated_visual_board', label, note, payload: { ...payload, length_correction: { piece_id: Number(selectedPiece.id), piece_name: selectedPiece.name || `Piece ${selectedPiece.id}`, issue } }, appendToPiece: false, contextOverride })}
+              className="stylist-feedback-chip"
+            >
+              {active ? '✓ ' : ''}{text}
+            </button>
+          )
         })}
       </div>
     </div>
@@ -260,6 +280,18 @@ const ROSTER_CATEGORY_PLURAL_LABELS = {
 const pluralizeRosterCategory = (category) =>
   ROSTER_CATEGORY_PLURAL_LABELS[category] || `${category}s`
 
+// Plain-language replacements for the internal signature/strong/usable/experimental
+// ranking vocabulary — panel feedback: those terms read as arbitrary badges rather
+// than telling the user what to do with a direction.
+const DIRECTION_RANK_LABELS = {
+  signature: 'Closest to your brief',
+  strong: 'Strong alternative',
+  usable: 'More exploratory',
+  experimental: 'Needs review',
+}
+
+const directionRankLabel = (value) => DIRECTION_RANK_LABELS[String(value || '').toLowerCase()] || ''
+
 const calculateOpenAICost = (timings) => {
   if (!timings || !timings.usage) return null
   const input = (timings.usage.input_tokens || 0) * 0.0000025
@@ -269,10 +301,32 @@ const calculateOpenAICost = (timings) => {
   return input + output + imgCost
 }
 
+// Translate known internal error strings into plain-language copy before they reach a board
+// card; the raw text stays in the server log (see safeJsonFromModel). Any error we don't
+// recognize passes through unchanged rather than risk hiding something the user needs to see.
+const friendlyBoardErrorMessage = (rawMessage) => {
+  const message = String(rawMessage || '')
+  if (/model did not return json/i.test(message)) {
+    return 'The image model returned an unexpected response. Try generating again.'
+  }
+  return message
+}
+
 const renderCost = (timings) => {
   const cost = calculateOpenAICost(timings)
   if (cost === null) return ''
   return ` · Measured cost: $${cost.toFixed(3)}`
+}
+
+// Renderer/timing telemetry stays behind STYLIST_DEBUG_ENABLED; the measured cost line is
+// deliberately always visible per the product's paid-action honesty.
+const renderTelemetryDetailBody = (timings, renderer) => {
+  const cost = calculateOpenAICost(timings)
+  return [
+    STYLIST_DEBUG_ENABLED ? `Render timing: ${timingSummary(timings)}` : '',
+    STYLIST_DEBUG_ENABLED && renderer ? `renderer: ${renderer}` : '',
+    cost !== null ? `Measured cost: $${cost.toFixed(3)}` : ''
+  ].filter(Boolean).join(' · ')
 }
 
 const MessageTelemetryDisclosure = ({ message }) => {
@@ -1750,12 +1804,9 @@ export default function StylistChat({
     }
     return visible.map((outfit, idx) => {
       const explicitRank = outfit.rankLabel || outfit.directionLabel
-      const strength = String(outfit.strength || '').toLowerCase()
-      const rankLabel = explicitRank || (['signature', 'strong', 'usable', 'experimental'].includes(strength)
-        ? sentenceCaseLabel(strength === 'strong' ? 'alternate' : strength)
-        : '')
+      const rankLabel = explicitRank || directionRankLabel(outfit.strength)
       return {
-        title: rankLabel ? `${rankLabel} direction` : `Direction ${idx + 1}`,
+        title: rankLabel || `Direction ${idx + 1}`,
         countLabel: '',
         items: [{ outfit, idx }]
       }
@@ -1911,7 +1962,7 @@ export default function StylistChat({
       if (!res.ok) throw new Error(data.error || 'Render failed')
       setBoardResults(prev => ({ ...prev, [key]: [data] }))
     } catch (err) {
-      setBoardResults(prev => ({ ...prev, [key]: [{ error: err.message }] }))
+      setBoardResults(prev => ({ ...prev, [key]: [{ error: friendlyBoardErrorMessage(err.message) }] }))
     } finally {
       clearImageTimers()
       setImageStatusByKey(prev => {
@@ -1940,10 +1991,19 @@ export default function StylistChat({
       beige: '#d8c7aa',
       oatmeal: '#e6dfd3',
       tan: '#c5a075',
+      camel: '#c19a6b',
+      sand: '#d9c7a3',
+      ecru: '#f0e6d2',
+      taupe: '#8b7d6b',
       brown: '#5a4538',
+      chocolate: '#4a3222',
+      espresso: '#3b2a20',
+      tobacco: '#6b4a2e',
       cognac: '#8e4c32',
       rust: '#b15a3a',
+      oxblood: '#4a1f1f',
       navy: '#2b3b4c',
+      ink: '#1c2331',
       blue: '#6b8ca6',
       green: '#547257',
       olive: '#5e684a',
@@ -2294,14 +2354,37 @@ export default function StylistChat({
       )
     }
 
-    const strengthLabel = (value, index) => {
-      const v = String(value || '').toLowerCase()
-      if (v === 'signature') return 'signature'
-      if (v === 'strong') return 'strong'
-      if (v === 'usable') return 'usable'
-      if (v === 'experimental') return 'experimental'
-      return 'direction'
+    // Panel feedback: give each direction one plain-language visual thesis (e.g.
+    // "Floral top leads, grounded by dark jeans, finished with cream shoes") instead of
+    // leaving people to reconstruct it from the sketch + role legend. Reuses the same
+    // role extraction as the sketch above so the thesis always describes the same
+    // composition it's shown next to. Deliberately keeps piece names as-is (unlike
+    // simplifyPieceTitle, which strips color words for compact trip-card titles) —
+    // color is exactly what makes one direction read differently from another here.
+    const buildVisualThesis = (outfit) => {
+      const rolePieces = getPreviewPieces(outfit)
+      if (!rolePieces.length) return ''
+      const anchor = rolePieces.find(p => p.isAnchor) || rolePieces[0]
+      const dress = rolePieces.find(p => p.category === 'dress')
+      const top = rolePieces.find(p => p.category === 'top')
+      const bottom = rolePieces.find(p => p.category === 'bottom')
+      const outerwear = rolePieces.find(p => p.category === 'outerwear')
+      const shoes = rolePieces.find(p => p.category === 'shoes')
+      const accessory = rolePieces.find(p => p.category === 'accessory')
+
+      const pieceName = (piece) => String(piece?.name || '').replace(/\s+/g, ' ').trim()
+      const lead = pieceName(dress || top || anchor)
+      const ground = pieceName(dress ? outerwear : (bottom || outerwear))
+      const finish = pieceName(shoes || accessory)
+
+      const clauses = []
+      if (lead) clauses.push(lead)
+      if (ground) clauses.push(`grounded by ${ground.toLowerCase()}`)
+      if (finish) clauses.push(`finished with ${finish.toLowerCase()}`)
+      return clauses.length ? `${clauses.join(', ')}.` : ''
     }
+
+    const strengthLabel = (value) => directionRankLabel(value) || 'Direction'
 
     const comparisonKey = `whole-wardrobe-comparison:${messageResultKey}`
     const comparisonBoards = boardResults[comparisonKey] || []
@@ -2371,7 +2454,7 @@ export default function StylistChat({
             {(isGeneratingComparison || comparisonBoards.length > 0) && (
               <div className="generated-visual-grid" style={{ marginTop: 8 }}>
                 {isGeneratingComparison && (
-                  <div className="generated-visual-card skeleton-pulse" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
+                  <div className="generated-visual-card skeleton-pulse" role="status" aria-live="polite" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
                     <div className="typing-dots" style={{ marginBottom: 12 }}><span /><span /><span /></div>
                     <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500, textAlign: 'center', lineHeight: 1.45 }}>
                       {imageStatusByKey[comparisonKey] || 'Generating rough preview...'}
@@ -2419,9 +2502,7 @@ export default function StylistChat({
                                     ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Details</span>
                                   </summary>
                                   <div style={{ marginTop: 4, background: 'var(--surface-2)', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border-light)' }}>
-                                    Render timing: {timingSummary(board.debug.timings)}
-                                    {board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
-                                    {renderCost(board.debug.timings)}
+                                    {renderTelemetryDetailBody(board.debug.timings, board.debug.renderer)}
                                   </div>
                                 </details>
                               </div>
@@ -2491,7 +2572,7 @@ export default function StylistChat({
               {(isGeneratingIdealComparison || idealComparisonBoards.length > 0) && (
                 <div className="generated-visual-grid" style={{ marginTop: 8 }}>
                   {isGeneratingIdealComparison && (
-                    <div className="generated-visual-card skeleton-pulse" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
+                    <div className="generated-visual-card skeleton-pulse" role="status" aria-live="polite" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
                       <div className="typing-dots" style={{ marginBottom: 12 }}><span /><span /><span /></div>
                       <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500, textAlign: 'center', lineHeight: 1.45 }}>
                         {imageStatusByKey[idealComparisonKey] || 'Generating rough preview...'}
@@ -2539,9 +2620,7 @@ export default function StylistChat({
                                       ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Details</span>
                                     </summary>
                                     <div style={{ marginTop: 4, background: 'var(--surface-2)', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border-light)' }}>
-                                      Render timing: {timingSummary(board.debug.timings)}
-                                      {board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
-                                      {renderCost(board.debug.timings)}
+                                      {renderTelemetryDetailBody(board.debug.timings, board.debug.renderer)}
                                     </div>
                                   </details>
                                 </div>
@@ -2610,7 +2689,7 @@ export default function StylistChat({
             </div>
             {section.items.map(({ outfit, idx }, sectionItemIndex) => {
           const cardDisplayTitle = getTripCardDisplayTitle(outfit, section, sectionItemIndex)
-          const strength = strengthLabel(outfit.strength, idx)
+          const strength = strengthLabel(outfit.strength)
           const pieces = Array.isArray(outfit.pieces) ? outfit.pieces.map(p => p?.name).filter(Boolean) : []
           const boardKey = `${messageResultKey}:${idx}`
           const isPreview = Boolean(outfit.previewOnly)
@@ -2630,7 +2709,7 @@ export default function StylistChat({
           const showOutfitSketch = isPreview && !isTextOnly && Boolean(outfit.pieceId)
           const isTripCard = isPlannedSetSource(outfit.source)
           const isBrokenCard = Boolean(outfit.broken || outfit.diagnosticOnly)
-          const isRankedCard = !isTripCard && strength === 'signature'
+          const isRankedCard = !isTripCard && String(outfit.strength || '').toLowerCase() === 'signature'
           const brokenReasonRows = Array.isArray(outfit.brokenPieces)
             ? outfit.brokenPieces.filter(piece => piece?.name && piece?.reason)
             : []
@@ -2750,6 +2829,11 @@ export default function StylistChat({
                   )
                 })()}
                 {showOutfitSketch && renderOutfitSketch(outfit)}
+                {showOutfitSketch && buildVisualThesis(outfit) && (
+                  <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600, marginTop: 4, marginBottom: 2, lineHeight: 1.4 }}>
+                    {buildVisualThesis(outfit)}
+                  </div>
+                )}
                 {showOutfitSketch && outfit.visualPrompt && (
                   <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2, marginBottom: 2, lineHeight: 1.5 }}>
                     <strong>Full look:</strong> {outfit.visualPrompt}
@@ -2937,7 +3021,7 @@ export default function StylistChat({
               )}
 
               {isEvaluating && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--accent)', marginTop: 8 }}>
+                <div role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--accent)', marginTop: 8 }}>
                   <span className="typing-dots"><span /><span /></span>
                   <span>Evaluating this outfit...</span>
                 </div>
@@ -3030,7 +3114,7 @@ export default function StylistChat({
               {(isRendering || hasRendered) && (
                 <div className="generated-visual-grid" style={{ marginTop: 10 }}>
                   {isRendering && (
-                    <div className="generated-visual-card skeleton-pulse" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
+                    <div className="generated-visual-card skeleton-pulse" role="status" aria-live="polite" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, padding: 20, border: '1px dashed var(--accent)', background: 'var(--surface-2)', borderRadius: 12 }}>
                       <div className="typing-dots" style={{ marginBottom: 12 }}><span /><span /><span /></div>
                       <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500, textAlign: 'center', lineHeight: 1.4 }}>
                         {imageStatusByKey[boardKey] || 'Rendering outfit image...'}
@@ -3078,9 +3162,7 @@ export default function StylistChat({
                                       ⓘ <span style={{ textDecoration: 'underline', marginLeft: 2 }}>Details</span>
                                     </summary>
                                     <div style={{ marginTop: 4, background: 'var(--surface-2)', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border-light)' }}>
-                                      Render timing: {timingSummary(board.debug.timings)}
-                                      {board.debug.renderer ? ` · renderer: ${board.debug.renderer}` : ''}
-                                      {renderCost(board.debug.timings)}
+                                      {renderTelemetryDetailBody(board.debug.timings, board.debug.renderer)}
                                     </div>
                                   </details>
                                 </div>
@@ -3431,7 +3513,7 @@ export default function StylistChat({
       if (!res.ok) throw new Error(data.error || 'Could not generate boards')
       setBoardResults(prev => ({ ...prev, [resultKey]: data.boards || [] }))
     } catch (err) {
-      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
+      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: friendlyBoardErrorMessage(err.message) }] }))
     } finally { setBoardLoadingIndex(null) }
   }
 
@@ -3475,7 +3557,7 @@ export default function StylistChat({
       if (!res.ok) throw new Error(data.error || 'Could not generate outfit image')
       setBoardResults(prev => ({ ...prev, [resultKey]: [data.board || data] }))
     } catch (err) {
-      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
+      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: friendlyBoardErrorMessage(err.message) }] }))
     } finally {
       clearImageTimers()
       setImageStatusByKey(prev => {
@@ -3524,7 +3606,7 @@ export default function StylistChat({
       if (!res.ok) throw new Error(data.error || 'Could not generate comparison sheet')
       setBoardResults(prev => ({ ...prev, [resultKey]: [data.board || data] }))
     } catch (err) {
-      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
+      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: friendlyBoardErrorMessage(err.message) }] }))
     } finally {
       clearImageTimers()
       setImageStatusByKey(prev => {
@@ -3580,7 +3662,7 @@ export default function StylistChat({
       if (!res.ok) throw new Error(data.error || 'Could not generate comparison sheet')
       setBoardResults(prev => ({ ...prev, [resultKey]: [data.board || data] }))
     } catch (err) {
-      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: err.message }] }))
+      setBoardResults(prev => ({ ...prev, [resultKey]: [{ error: friendlyBoardErrorMessage(err.message) }] }))
     } finally {
       clearImageTimers()
       setImageStatusByKey(prev => {

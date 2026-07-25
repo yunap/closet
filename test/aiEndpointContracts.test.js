@@ -878,8 +878,21 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   const broken = json.structuredOutfits.find(outfit => outfit.broken)
   assert.ok(broken, 'shortfall should show the broken diagnostic local-fill card')
   assert.equal(broken.source, 'local-fill')
-  assert.ok(broken.systemFlags.some(flag => flag.type === 'broken'))
+  assert.ok(broken.rejectionReason && broken.rejectionReason.length > 0)
   assert.ok(Array.isArray(broken.brokenPieces) && broken.brokenPieces.length >= 1)
+  assert.ok(
+    !String(broken.reason || '').includes(broken.rejectionReason),
+    `reason field leaked the raw rejectionReason: ${broken.reason}`
+  )
+  assert.ok(
+    broken.watchFor === undefined || !String(broken.watchFor).includes(broken.rejectionReason),
+    `watchFor leaked the raw rejectionReason: ${broken.watchFor}`
+  )
+  const brokenFlagMessages = Array.isArray(broken.systemFlags) ? broken.systemFlags.map(f => f.message) : []
+  assert.ok(
+    !brokenFlagMessages.some(msg => String(msg || '').includes(broken.rejectionReason)),
+    `systemFlags leaked the raw rejectionReason: ${JSON.stringify(brokenFlagMessages)}`
+  )
   assert.equal(json.debug.finalSelection.localFillAdded, 0)
   assert.equal(json.debug.finalSelection.diagnosticBrokenAdded, 1)
   assert.equal(json.debug.deliveredCount, 1)
@@ -995,6 +1008,26 @@ test('visual wardrobe composer shows rejected model cards as broken diagnostics'
   )
   assert.ok(brokenCards.some(outfit => outfit.label.includes('Model forgot shoes')))
   assert.ok(brokenCards.some(outfit => outfit.label.includes('Model mixed dress and pants')))
+
+  // Regression: rejectionReason is the single structured field on a broken card. It must not
+  // also leak, raw, through any other ungated field (reason suffix, watchFor, systemFlags) —
+  // see docs/stylist-bugfix-spec.md item 1.
+  for (const outfit of brokenCards) {
+    assert.ok(outfit.rejectionReason, 'broken card must carry a structured rejectionReason')
+    assert.ok(
+      !String(outfit.reason || '').includes(outfit.rejectionReason),
+      `reason field leaked the raw rejectionReason: ${outfit.reason}`
+    )
+    assert.ok(
+      outfit.watchFor === undefined || !String(outfit.watchFor).includes(outfit.rejectionReason),
+      `watchFor leaked the raw rejectionReason: ${outfit.watchFor}`
+    )
+    const flagMessages = Array.isArray(outfit.systemFlags) ? outfit.systemFlags.map(f => f.message) : []
+    assert.ok(
+      !flagMessages.some(msg => String(msg || '').includes(outfit.rejectionReason)),
+      `systemFlags leaked the raw rejectionReason: ${JSON.stringify(flagMessages)}`
+    )
+  }
 })
 
 test('visual wardrobe composer failure uses local fallback without retired agent call', async () => {

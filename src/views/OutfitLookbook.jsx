@@ -1652,7 +1652,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hidden_from_lookbook: true })
     })
-    setBoardDetail(null)
+    closeBoardDetail()
     fetchSavedBoards()
   }
 

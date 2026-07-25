@@ -59,7 +59,10 @@ export function safeJsonFromModel(raw) {
   const text = String(raw || '').trim().replace(/^```json\n?|\n?```$/g, '').trim()
   try { return JSON.parse(text) } catch {}
   const match = text.match(/\{[\s\S]*\}/)
-  if (!match) throw new Error('Model did not return JSON')
+  if (!match) {
+    console.error(`safeJsonFromModel: no JSON object found in model response. Response length ${text.length}, tail: …${text.slice(-220)}`)
+    throw new Error('Model did not return JSON')
+  }
   try {
     return JSON.parse(match[0])
   } catch (err) {
