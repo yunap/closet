@@ -17,3 +17,4 @@ scratch/*
 !scratch/recall_at_cap.js
 !scratch/check_style_claims.js
 !scratch/backfill_retagger.js
+!scratch/build_dedup_fix_demo_thread.js

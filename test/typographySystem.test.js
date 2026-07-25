@@ -28,7 +28,7 @@ test('long-form stylist reading uses the sans reading face at the body scale', (
 test('decision-critical outfit labels and actions are not treated as tiny metadata', () => {
   assert.match(css, /\.stylist-outfit-piece-name\s*\{[\s\S]*font-size:\s*var\(--type-meta\)/)
   assert.match(css, /\.stylist-outfit-reason > summary\s*\{[\s\S]*font-size:\s*var\(--type-meta\)/)
-  assert.match(css, /\.stylist-outfit-actions > button\s*\{[\s\S]*font-size:\s*var\(--type-caption\) !important/)
+  assert.match(css, /\.stylist-outfit-actions > button:not\(\.stylist-feedback-chip\)\s*\{[\s\S]*font-size:\s*var\(--type-caption\) !important/)
 })
 
 test('the interface does not use hard-coded sub-12px working text', () => {

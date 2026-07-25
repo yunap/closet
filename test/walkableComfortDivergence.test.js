@@ -428,7 +428,9 @@ test('11. Diagnostic card renders resolutionNote when unresolvedReferences is no
   assert.equal(diagnosticOutfit.broken, true)
   assert.ok(diagnosticOutfit.resolutionNote, 'Should have resolutionNote')
   assert.ok(diagnosticOutfit.resolutionNote.includes('model referenced "missing bottom item"'))
-  assert.ok(diagnosticOutfit.reason.includes('Resolution note:'))
+  // resolutionNote is a structured field, rendered only behind STYLIST_DEBUG_ENABLED — it must
+  // not also be duplicated into the ungated `reason` text (see docs/stylist-bugfix-spec.md item 1).
+  assert.ok(!diagnosticOutfit.reason.includes('Resolution note:'))
 })
 
 test('12. Full pipeline: mocked model response with stale ID for a real named roster piece resolves and completes outfit', async () => {

@@ -1717,12 +1717,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         broken: true,
         diagnosticOnly: true,
         strength: 'needs review',
-        systemFlags: [
-          ...(Array.isArray(outfit.systemFlags) ? outfit.systemFlags : []),
-          { type: 'broken', message: `Diagnostic local-fill card. Violations: ${reasonText}` }
-        ],
-        watchFor: reasonText,
-        reason: `${outfit.reason || 'Local fill candidate shown for debugging.'} Broken because ${reasonText}.`,
+        rejectionReason: reasonText,
+        reason: outfit.reason || 'Local fill candidate shown for debugging.',
         brokenPieces
       })
     }
@@ -1733,12 +1729,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       strength: 'needs review',
       rejectionReason,
       resolutionNote,
-      systemFlags: [
-        ...(Array.isArray(outfit.systemFlags) ? outfit.systemFlags : []),
-        { type: 'rejected-model-card', message: rejectionReason, resolutionNote }
-      ],
-      watchFor: rejectionReason,
-      reason: `${outfit.reason || 'Model proposal shown for debugging.'} Rejected because ${rejectionReason}.${resolutionNote ? ` Resolution note: ${resolutionNote}` : ''}`
+      reason: outfit.reason || 'Model proposal shown for debugging.'
     })
     const buildVisualLocalBackfill = () => {
       if (localBackfillOutfits.length) return localBackfillOutfits

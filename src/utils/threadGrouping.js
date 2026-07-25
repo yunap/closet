@@ -171,7 +171,13 @@ export function getThreadDisplayTitle(thread = {}) {
     return truncateLabel(`${thread.activeContext.name || 'Selected piece'} styling`, 42)
   }
   if (thread.activeContext?.type === 'outfit') {
-    return truncateLabel(`${thread.activeContext.name || 'Saved outfit'} critique`, 42)
+    // E10: was always "<name> critique" regardless of whether this was actually a critique,
+    // similar-variants, creative-alternatives, adjacent-variants, or comparison thread — see
+    // outfitSubjectActionTitle's comment for why. Falls back to the old generic suffix only if
+    // it can't tell.
+    const actionTitle = outfitSubjectActionTitle(thread)
+    const suffix = SHORT_OUTFIT_ACTION_LABELS[actionTitle] || actionTitle || 'Critique'
+    return truncateLabel(`${thread.activeContext.name || 'Saved outfit'} · ${suffix}`, 42)
   }
 
   return deriveTitleFromPrompt(firstAvailableText(thread), thread) || 'Styling chat'
@@ -220,7 +226,14 @@ export function getThreadOutcomeSummary(thread = {}) {
   if (explicit) return truncateLabel(explicit, 54)
 
   const memory = threadMemory(thread)
-  const outfits = Array.isArray(memory?.latestOutfits) ? memory.latestOutfits : []
+  const rawOutfits = Array.isArray(memory?.latestOutfits) ? memory.latestOutfits : []
+  // E9: exclude diagnostic/"needs review" cards from the count and theme summary, same filter
+  // StylistChat.jsx's in-chat header uses — otherwise this subtitle disagreed with the header's
+  // own count for the same thread (header excludes them, this didn't). Same empty-set fallback
+  // as the header, so a thread that's entirely diagnostic cards still shows a real count instead
+  // of silently going to the no-outfits branch below.
+  const visibleOutfits = rawOutfits.filter(outfit => !outfit?.diagnosticOnly)
+  const outfits = visibleOutfits.length ? visibleOutfits : rawOutfits
   if (outfits.length) {
     const isDirections = outfits.some(o => o?.previewOnly)
     const noun = isDirections ? (outfits.length === 1 ? 'direction' : 'directions') : (outfits.length === 1 ? 'look' : 'looks')
@@ -235,8 +248,16 @@ export function getThreadOutcomeSummary(thread = {}) {
     return truncateLabel(request || (season ? `${season} wardrobe generation` : 'Wardrobe generation'), 54)
   }
   if (thread.activeContext?.type === 'piece') return 'Selected-piece styling'
-  if (thread.activeContext?.type === 'outfit') return 'Outfit critique'
-  if (thread.kind === 'outfit_critique') return 'Outfit critique'
+  // E10: critique, similar-variants, creative-alternatives, adjacent-variants, and comparison
+  // threads all share activeContext.type 'outfit' and thread.kind 'outfit_critique', so this
+  // used to collapse every one of them to the same 'Outfit critique' subtitle regardless of
+  // which action it actually was. outfitSubjectActionTitle already does this differentiation
+  // correctly (it's what the "By outfit/piece" clustered view's child rows use) — just wasn't
+  // wired into this flat-list subtitle. Falls back to the old generic text only if it can't
+  // tell (empty prompt/title/source to pattern-match against).
+  if (thread.activeContext?.type === 'outfit' || thread.kind === 'outfit_critique') {
+    return outfitSubjectActionTitle(thread) || 'Outfit critique'
+  }
   if (thread.kind === 'piece') return 'Selected-piece styling'
   if ((thread.message_count ?? 0) <= 2) return 'New styling chat'
   return 'Wardrobe styling chat'
@@ -280,6 +301,19 @@ function outfitSubjectActionTitle(thread = {}) {
   if (/\bcompare|comparison\b/.test(haystack)) return 'Outfit comparison'
   if (/\bcritique|evaluate|evaluation|feedback\b/.test(haystack)) return 'Outfit critique'
   return ''
+}
+
+// Short forms of outfitSubjectActionTitle's labels, for contexts (the flat-list display title)
+// that already show the outfit name and just need a terse " · <action>" suffix — matches the
+// short suffixes ("Similar"/"Creative"/"Critique") StylistChat.jsx's send() already derives at
+// thread-creation time, extended to the two actions it didn't originally label (comparison,
+// adjacent variants).
+const SHORT_OUTFIT_ACTION_LABELS = {
+  'Creative alternatives': 'Creative',
+  'Adjacent outfit variants': 'Adjacent variants',
+  'Similar outfit variants': 'Similar',
+  'Outfit comparison': 'Comparison',
+  'Outfit critique': 'Critique',
 }
 
 export function getThreadSubjectChildTitle(thread = {}, subject = {}) {

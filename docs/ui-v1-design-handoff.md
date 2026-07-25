@@ -1632,6 +1632,47 @@ rejection+retry, which needs a real, billed model call (the mocked tool-loop can
 same limitation as the earlier "Rust Wrap" dedup verification). Confirmed correct via the new
 unit test's exact real-world piece/reason data instead.
 
+### Broadened dedup — live verification (2026-07-25)
+
+Owner attempted a live re-verification via real (billed) freeform-chat turns first. Two findings
+from that attempt, both informative:
+
+- Naming a flagged piece directly in the request (e.g. "propose an outfit using the trench coat
+  as the layer") makes the model set `anchor:true` on it — which mechanically **skips** the hard
+  gate entirely (`styling-engine/tools.js`: `if (piece.anchor) return []`, "the user asking to
+  wear it overrides auto-use suitability gates"). So directly asking for a flagged piece can
+  never trigger this bug/fix — there's nothing to reject. This isn't a bug, just a real
+  architectural reason the scenario can't be steered by prompt wording alone.
+- A "what can I use as a layer" style advice question gets answered in prose, without any
+  `propose_outfit` call at all — the tool-loop only fires when the model decides to compose an
+  actual card, which conversational/advice-style phrasing doesn't reliably trigger.
+
+Given the mock AI handler can't drive a real multi-step tool-calling sequence either (see above —
+`takeTestAiResponse` returns one flat value, which `askStylistWithTools` treats as a finished
+prose answer, never dispatching to `executeTool`), building a scripted AI response wasn't a
+viable shortcut. Instead: `scratch/build_dedup_fix_demo_thread.js` calls the real
+`executeTool('propose_outfit', ...)` directly, twice, against the durable sandbox DB — no AI
+call, no approximation, the actual production gate-evaluation and dedup code:
+
+1. `{ dress (anchor), tan cotton trench coat with belt (outerwear), black lace-up ankle boots (shoes) }`,
+   occasion `city`, season `hot July day` → real rejection:
+   `tan cotton trench coat with belt: hot weather: insulating piece`, broken card recorded.
+2. Same label, trench swapped for the (lightweight, linen-blend) green jacket → real `success`;
+   `toolContext.generatedOutfits.length` stayed at 1; the surviving card's `engineNote`: *"Approved
+   after a substitution: tan cotton trench coat with belt: hot weather: insulating piece. Swapped
+   in Green jacket to replace it."*
+
+The script then inserts the resulting exchange as a normal `chat_threads` row
+(`thread_dedupfix_demo_*`, titled "Dedup fix demo — Rust Dress Layered (scripted, real
+executeTool)"), so it's browsable live in the sandbox exactly like any other chat — confirmed via
+direct URL (`/stylist/thread_dedupfix_demo_1784946587334`): single "Rust Dress Layered" card,
+`DIRECTION` badge, the italic engine note visible under the title, all three real pieces resolved
+to actual sandbox photos, no duplicate broken card anywhere. **The broadened dedup fix is now
+live-verified**, closing the gap the unit test alone couldn't close. Re-runnable any time by
+setting the sandbox DB env vars (see script header) and running
+`node scratch/build_dedup_fix_demo_thread.js` — useful for the panel review and for any future
+regression check without spending on a real model call.
+
 ## E1 — critique buries the answer (implemented 2026-07-24)
 
 "Action guidance ('what to change first') renders last, after a dozen diagnostic/score rows"
@@ -1666,6 +1707,138 @@ critiques ("Mock sandbox critique: WARDROBE_MOCK_AI is on...") rather than real 
 evaluation data, so this specific ordering isn't observable there; confirmed via the unit test
 exercising the real `formatSharedOutfitEvaluation` function through the actual endpoint instead.
 
+**Live verification, real data (2026-07-25).** Owner ran a real (billed) "Evaluate outfit" call
+in the sandbox against the "Cream Ribbed Knit + Denim Jacket" critique
+(`thread_1784944553649`). The real structured response confirms the fix in production: after
+`Verdict: revise`, the "Full structured read" leads with `First visible issue:` (jacket/sweater
+hem colliding at the hip) then the three recommendation fields (`Next:`, `Avoid for now:`,
+`Try next:`) — all four appearing before `Intent:`, `Success criteria:`, `Visible facts:`,
+`Tension:`, `Scores:`, `Roles:`, and the rest of the diagnostic dump. This is now live-verified
+with real (non-mock) data, not just the unit test.
+
+## "Recommended design direction" feedback — audit and follow-up (2026-07-24)
+
+Owner surfaced a separate piece of feedback that had never been logged in this document (search
+turned up nothing for its distinctive terms — "dressing table", "body column", "visual thesis",
+"finishing area", "anchor garment", "optional confirmation", "comparison set", `artistic_minimal`
+— before this entry). Recorded verbatim here so it isn't lost again, followed by a point-by-point
+audit against the code as it stood at the start of this session:
+
+> Recommended design direction
+> For generated styling results:
+> * Build a category-aware "dressing table" composition:
+>    * top and bottom form the body column;
+>    * outer layers overlap that column;
+>    * footwear grounds it;
+>    * accessories occupy a finishing area.
+> * Keep the anchor garment in the same position across selected-piece directions.
+> * Give each direction one plain-language visual thesis, such as:
+>    * "Floral top leads; dark jeans ground it; cream shoes keep the finish light."
+> * Replace ambiguous rankings like "Signature / Strong / Usable" with:
+>    * "Closest to your brief"
+>    * "Strong alternative"
+>    * "More exploratory"
+>    * "Needs review"
+> * Move telemetry, source labels, internal vocabulary such as `artistic_minimal`, and technical
+>   diagnostics behind disclosure.
+> * Make two-to-four results function as a comparison set before the user generates a worn image.
+> * Keep generated images optional confirmation — not the first point where an outfit becomes
+>   understandable.
+
+**Audit at time of question, before any new work in this entry:**
+
+1. Dressing-table composition — **already matched**, pre-existing. `renderOutfitSketch`
+   (`StylistChat.jsx`) already draws a category-based croquis: top/dress form a vertical column,
+   outerwear overlaps as a border layer, bottom continues the column, shoes sit at the base, and
+   the accessory occupies its own corner slot. Predates this session; not built in response to
+   this feedback, but satisfies it.
+2. Anchor garment same position across directions — plausible as an emergent property of the
+   same category-slot layout (anchor's category always maps to the same visual slot), but never
+   explicitly implemented or tested against this specific requirement.
+3. One plain-language visual thesis per direction — **not present**. The existing `reason`
+   (one analytical sentence) and the `visualPrompt` field surfaced this session as "Full look:"
+   (silhouette/fabric/color/posture, `styling-engine/prompts.js:965`) are both denser and
+   differently-shaped than the terse "leads / grounds it / finish" example given here.
+4. Rename Signature/Strong/Usable/Experimental → Closest to your brief / Strong alternative /
+   More exploratory / Needs review — **not done**. `strengthLabel` (`StylistChat.jsx`) still
+   emitted the raw internal words as the visible badge text and section-heading text.
+5. Move telemetry/source labels/`artistic_minimal`-style vocabulary behind disclosure — **mostly
+   already done** by this session's own PR A (dev-flag-gated engine trace/telemetry) and the
+   later "AI · propose_outfit" label removal. `artistic_minimal` itself never reaches the client;
+   it's a style-lane key used only inside the server-side system prompt
+   (`styling-engine/prompts.js`).
+6. Two-to-four results as a comparison set before rendering — **done this session**, via the
+   "Editorial shop-the-gap directions — free silhouette comparison" entry above (same day, earlier
+   in this session, before this feedback was raised) — the free "Compare silhouettes" strip.
+7. Generated images as optional confirmation, not the first point of understanding — **done**,
+   same change as #6 (sketch + "Full look:" text now let someone evaluate a direction without
+   paying to render).
+
+Net: 3 of 7 already satisfied (by code that predates or was written earlier the same day without
+knowing this was the source feedback), 2 genuinely open (#3, #4), 1 partial (#5, with the one
+concrete named term `artistic_minimal` confirmed clean), 1 unverified rather than confirmed (#2).
+
+**Follow-up work done in this entry (points #3 and #4):**
+
+- **#4 — renamed the strength vocabulary.** Added `DIRECTION_RANK_LABELS`
+  (`StylistChat.jsx`, module scope) mapping `signature → 'Closest to your brief'`,
+  `strong → 'Strong alternative'`, `usable → 'More exploratory'`,
+  `experimental → 'Needs review'` — a direct 1:1 substitution matching the four raw values the
+  code already had to the four replacement phrases the feedback gave, in the same order. Both
+  the per-card badge (`strengthLabel`) and the section-heading builder (`buildResponseSections`'s
+  `rankLabel`, which previously produced awkward strings like "Alternate direction") now go
+  through this shared map. Card behavior that depended on the *raw* value (`isRankedCard`, which
+  drives the `is-ranked` highlight styling) was repointed to check `outfit.strength` directly
+  instead of the display string, so it can't silently break if the label wording changes again.
+  Known accepted overlap: the broken/diagnostic-card path already showed literal "needs review"
+  text for a different reason (an engine-level structural rejection, not a low-confidence
+  direction) — it now coincidentally shares wording with the renamed `experimental` tier. Left
+  as-is; the two states are still visually distinguished by the existing `is-broken` styling,
+  accompanying disclaimer text, and (for broken cards) the rejected-piece list.
+- **#3 — added a plain-language visual thesis line.** New `buildVisualThesis` helper
+  (`StylistChat.jsx`), reusing the same role-extraction data (`getPreviewPieces`) that
+  `renderOutfitSketch` already computes, so the thesis always describes the same composition
+  shown in the sketch next to it. Deliberately does not reuse `simplifyPieceTitle` (which strips
+  color words for compact trip-card titles) — color is exactly what the feedback's own example
+  relies on ("dark jeans", "cream shoes") to make one direction read differently from another.
+  Renders as `"{lead}, grounded by {ground}, finished with {finish}."` — passive-participle
+  connectors deliberately chosen over conjugated verbs ("leads"/"grounds"/"finishes") because
+  garment names are free text of unpredictable grammatical number ("Cream Loafers" vs. "Denim
+  Jacket"), and "X leads" vs. "X lead" agreement can't be determined reliably client-side.
+  Rendered above the existing "Full look:" line, gated on the same `showOutfitSketch` condition
+  (editorial ideal-additions direction cards only).
+- **CSS fix found during verification.** The longer rename phrases broke the card heading's
+  layout on narrow viewports: `.stylist-outfit-result-heading` used `justify-content:
+  space-between` with no wrap, so a badge like "CLOSEST TO YOUR BRIEF" (fixed-width, uppercase,
+  letter-spaced) squeezed the title into an unnaturally narrow column (measured: title box
+  dropped to 79px wide, wrapping to 3 lines, on a 375px mobile viewport). Fixed by adding
+  `flex-wrap: wrap` to the heading and `flex: 1 1 160px; min-width: 0` to the title, so the badge
+  now drops to its own line under the title when space is tight instead of crushing it. Verified
+  via direct `getBoundingClientRect()` measurement before/after on the actual rendered card, not
+  just visual inspection.
+- **Not done:** #2 (anchor-position consistency) was left unverified/unimplemented — it appears
+  to already hold structurally given the category-slot layout, but no explicit test or dedicated
+  code exists for it, and confirming it properly would mean auditing every direction-generation
+  path, which is out of scope for this pass.
+
+**Verification:** `npm run build` passed both before and after the CSS fix. Full `node --test`
+suite (`aiEndpointContracts.test.js` + `threadRail.test.js`) passed with the same 6 pre-existing
+unrelated failures as baseline (confirmed identical via `git stash`/re-run — no new failures, no
+fixed failures). Live-verified in a freshly-restarted mocked sandbox:
+  - The seeded "cream ribbed knit sweater styling" thread (same 3-direction thread used for the
+    E3 silhouette-comparison verification) now shows, for each direction, a bolded thesis line
+    above "Full look:" — e.g. "cream ribbed knit sweater, grounded by deep espresso straight-leg
+    trouser with clean pressed hem and slight structure." and (for the direction with a shoe
+    role) "...grounded by ink navy structured pencil skirt..., finished with dark cognac or
+    oxblood chunky ankle boot...".
+  - The seeded "Casual" whole-wardrobe thread (5 looks) now shows section headings "Closest to
+    your brief" / "Strong alternative" and matching card badges "CLOSEST TO YOUR BRIEF" /
+    "STRONG ALTERNATIVE", with the pre-existing broken-card badge still correctly reading "NEEDS
+    REVIEW".
+  - Confirmed via DOM measurement (not just screenshot) that the heading no longer squeezes the
+    title at 375px width after the CSS fix — title renders full-width on its own line, badge
+    wraps to the line below it.
+
 ## Outstanding issues — before re-assembling the expert panel
 
 Consolidated list of what's still open, so the panel re-review targets real gaps rather than
@@ -1681,13 +1854,23 @@ already-fixed ground. Everything above this point in the document is owner-teste
    the *data-shape* half of this area — Visual Lab's reason-chip sync writing a reason-less row —
    was already fixed in the taxonomy-unification pass above; that fix is real but was proven to
    have no currently-observable effect, since nothing reads it for already-saved boards. This
-   item is the actual visible mismatch, still open.)
-2. **E9 — unstable "N looks" counts.** Needs root-cause diagnosis before any fix; explicitly
-   excluded from the earlier small-mechanical-batch pass for that reason. Not started.
-3. **E10 — lossy thread-rail subtitles.** Critique/variant/evaluate all compress to similar,
-   hard-to-distinguish subtitles in the history rail. Needs diagnosis. Not started.
+   item is the actual visible mismatch, still open.) **Owner ruling 2026-07-24: not required
+   before re-assembling the expert panel** — descoped from the panel-readiness gate, stays open
+   as a backlog item.
+
+2. **Anchor-garment position consistency across selected-piece directions is unverified.**
+   From the "Recommended design direction" feedback (entry above). Appears to hold structurally
+   — `renderOutfitSketch`'s layout is category-slotted, so the anchor lands in the same visual
+   slot across cards as a side effect of the layout, not by deliberate design — but no explicit
+   test or code exists confirming this holds across every direction-generation path. Needs a
+   dedicated look before it can be called ratified rather than assumed.
 
 **Resolved, not open:**
+- "Recommended design direction" feedback, points #3 and #4 (visual-thesis line, strength-label
+  rename) — implemented, see entry above. Points #1, #6, #7 were already satisfied by
+  pre-existing code or this session's earlier E3 work. Point #5 (telemetry/vocabulary
+  disclosure) confirmed mostly already done, with the one named term (`artistic_minimal`)
+  confirmed clean of any client-side leak.
 - E3 (editorial shop-the-gap silhouette comparison) — implemented (free `visualPrompt` text +
   compare-silhouettes strip).
 - A4 (cost-bearing actions on broken/"needs review" cards) — owner ruling: leave as-is, cards
@@ -1701,3 +1884,146 @@ already-fixed ground. Everything above this point in the document is owner-teste
 - Diagnostic-card disclaimer specificity + double-card dedup broadening — implemented, ratified.
 - E1 (critique buries the answer) — implemented, ratified: the actionable answer now leads the
   collapsed "Full structured read" details instead of trailing the diagnostic dump.
+- E9 (unstable "N looks" counts) — implemented. Root cause: two independent, disagreeing
+  counting rules for the same data. The in-chat header (`StylistChat.jsx`'s
+  `lookCount = visible.length || outfits.length`) already excluded `diagnosticOnly` cards; the
+  thread-rail sidebar subtitle (`threadGrouping.js`'s `getThreadOutcomeSummary`) counted
+  `memory.latestOutfits.length` raw, diagnostic cards included — so a thread with any lingering
+  diagnostic card showed a different count in the sidebar than in the chat itself. Confirmed via
+  `git blame`/diff review that PR 174 (E1) didn't touch this — different function, different
+  file, no overlap. Fix: `getThreadOutcomeSummary` now filters `diagnosticOnly` outfits before
+  counting/deriving themes, with the same empty-set fallback (count everything if the filtered
+  set is empty) the header already uses, so an all-diagnostic thread still shows a real number
+  instead of falling through to the no-outfits branch. Verified via two new precise assertions
+  in `test/threadRail.test.js` (mixed diagnostic+real, and all-diagnostic) using the actual
+  function's real output, not hand-derived expected strings. `npm run build` passed; full
+  relevant suite passed with no new failures. Live-verified in a freshly-restarted mocked
+  sandbox that the sidebar renders normally with no regressions for ordinary threads — the
+  specific mixed-diagnostic scenario itself wasn't reproduced live, since (like the PR A-follow-
+  on dedup fix) that requires an uncontrollable real model response the mock can't produce; the
+  unit test's use of real function output is the verification for that part.
+- E10 (lossy thread-rail subtitles) — implemented. Root cause: critique, similar-variants,
+  creative-alternatives, adjacent-variants, and comparison threads all share
+  `activeContext.type === 'outfit'` and `thread.kind === 'outfit_critique'`, and
+  `getThreadDisplayTitle`/`getThreadOutcomeSummary` (the flat "Recent" list — the default rail
+  view) both collapsed every one of them to the same generic `"<name> critique"` title /
+  `"Outfit critique"` subtitle regardless of which action it actually was. The differentiation
+  logic already existed and worked correctly — `outfitSubjectActionTitle`, pattern-matching the
+  turn's prompt/title/source text for creative/adjacent/similar/comparison/critique keywords —
+  but was only wired into `getThreadSubjectChildTitle` (the "By outfit/piece" clustered view's
+  child rows), not the default flat list. Fix: both flat-list functions now call
+  `outfitSubjectActionTitle`, falling back to the old generic text only if it can't tell (empty
+  prompt/title/source). Added `SHORT_OUTFIT_ACTION_LABELS` so the title's terse
+  `"<name> · <action>"` suffix convention (already established for Similar/Creative at thread-
+  creation time in `StylistChat.jsx`'s `send()`) extends to the two actions that convention never
+  labeled (comparison, adjacent variants); the subtitle uses the full descriptive form directly
+  since it reads naturally as a standalone summary line. Verified via 8 new precise assertions in
+  `test/threadRail.test.js` (four action categories × title + subtitle) using real function
+  output. `npm run build` passed; full relevant suite passed with no new failures. Live-verified
+  in a freshly-restarted mocked sandbox against real existing threads: confirmed genuinely
+  differentiated output across both the flat list (`"Boston bench · Critique"` / `"Outfit
+  critique"`, `"Whole-wardrobe comparison sheet · Compari…"` / `"Outfit comparison"`, `"with my
+  camera · Creative"` / `"Creative alternatives"` — previously all identical) and the clustered
+  view (no regression: `getThreadSubjectChildTitle`'s internal call to `getThreadDisplayTitle`
+  still correctly separates "Outfit critique" and "Creative alternatives" as distinct child rows
+  under the same "with my camera" subject).
+
+## Stylist bugfix spec cleanup (implemented 2026-07-24, see `docs/stylist-bugfix-spec.md`)
+
+Defect cleanup pass from a fresh expert-panel review, done as its own spec so the *next* panel
+has nothing mechanical left to report. All items below are code-only fixes on the Stylist
+surface unless noted.
+
+1. **Raw gate vocabulary leaked onto diagnostic cards (highest priority).** `routes/ai.js`'s
+   `buildBrokenModelCard` and `buildBrokenDiagnosticCard` each set the same raw rejection text
+   three times: the structured `rejectionReason` field (correctly gated behind
+   `STYLIST_DEBUG_ENABLED`/rendered as the plain-language "What didn't clear" line), plus
+   `watchFor`, a `systemFlags` entry, and a "Rejected because …"/"Broken because …" suffix on
+   `reason` — all three of which render ungated inside the "Why this outfit" disclosure. Fixed
+   at the source: both builders now set only `rejectionReason` (added to
+   `buildBrokenDiagnosticCard`, which previously didn't have it at all) and leave `reason` as the
+   model's/local-fill's own text, with no raw internals duplicated into `watchFor` or
+   `systemFlags`. `resolutionNote` was already correctly gated and untouched. Updated
+   `test/aiEndpointContracts.test.js`'s existing broken-card assertions (systemFlags check →
+   rejectionReason check) and `test/walkableComfortDivergence.test.js`'s resolutionNote test, and
+   added a new regression assertion in `aiEndpointContracts.test.js` (both broken-card tests) that
+   walks every ungated field and confirms the raw `rejectionReason` string doesn't reappear in
+   `reason`, `watchFor`, or any `systemFlags` message — testing the invariant per the spec's
+   guidance, not per-string copy.
+2. **`--text-light` was shadowed inside `.stylist-response-shell`.** The shell locally redefined
+   the global `--text-light` (documented ≥4.8:1 contrast token) to a lighter
+   `color-mix(in srgb, var(--text) 62%, #fff)`, silently breaking that guarantee for every
+   `--text-light` consumer inside the shell (the panel measured `Suggested additions` at 4.48:1).
+   No design rationale for the override exists anywhere in this doc or in code comments, so
+   removed it entirely rather than promoting it to a separate semantic token — verified via
+   computed style in a live sandbox render that `.stylist-response-shell`'s `--text-light` now
+   resolves to the global `#776958`.
+3. **Four async/paid indicators were silent to assistive technology.** Added
+   `role="status" aria-live="polite"` (matching PR C's established pattern) to the `isEvaluating`
+   "Evaluating this outfit…" indicator and the three skeleton-loading cards (whole-wardrobe
+   comparison, ideal-additions comparison, per-direction board render) — three of which sit behind
+   paid actions.
+4. **Ungated renderer/timing telemetry in the "Details" disclosure.** All three "ⓘ Details"
+   sites (comparison sheet, ideal-additions sheet, per-direction render) rendered
+   `Render timing: … · renderer: …` with no debug gate, missed by PR A's separate `Dev telemetry`
+   disclosure. Split the block: added a shared `renderTelemetryDetailBody` helper so render
+   timing and `renderer` only appear under `STYLIST_DEBUG_ENABLED`, while the measured-cost line
+   stays unconditionally visible per the product's paid-action-honesty rule. Live-verified in the
+   mocked sandbox (where `VITE_STYLIST_DEBUG=true`) that the details body still renders timing +
+   renderer correctly with debug on.
+5. **`detectColor` missed colors with no base color word.** Extended `KNOWN_COLORS` in
+   `StylistChat.jsx` with the shade terms the stylist actually emits that had no entry: `camel`,
+   `sand`, `ecru`, `taupe`, `chocolate`, `espresso`, `tobacco`, `oxblood`, `ink` — kept the
+   existing word-boundary regex (no substring matching). Text inference is the only source
+   available here (these are editorial ideal-additions pieces the owner doesn't own, so there's
+   no DB `color` field), so extending the map is the correct fix, not a violation of the
+   structured-data-over-text-inference house rule. **Left open, per the spec:** whether an
+   unmatched color should still fall back to grey, or render an explicit "unknown" treatment, is
+   a design question, not a mechanical one — not decided here.
+6. **Lower-priority items, same surface:**
+   - `GeneratedBoardLengthFeedback`'s raw inline-styled chips (piece selector + wrong-length
+     reasons) ported to the shared `.stylist-feedback-chip` class with `aria-pressed`; vocabulary
+     unchanged per PR B's standardize-don't-unify ruling.
+   - Found the actual winning selector for the 30px/34px button-height inconsistency:
+     `.stylist-outfit-actions > button` (class+element, specificity 0-1-1) was overriding
+     `.stylist-feedback-chip` (0-1-0) for feedback chips rendered inside that action row. Fixed
+     by excluding chips from the compound selector
+     (`.stylist-outfit-actions > button:not(.stylist-feedback-chip)`) rather than adding
+     `!important`. Updated the matching selector-text assertion in
+     `test/typographySystem.test.js`.
+   - `Board error: Model did not return JSON` (and its "Render/Preview error:" siblings) reached
+     the UI as the raw thrown message. Added a small `friendlyBoardErrorMessage` translation at
+     the five client-side catch sites that currently only recognizes that one known technical
+     string (translated to "The image model returned an unexpected response. Try generating
+     again."); everything else passes through unchanged so a genuinely useful error (e.g. a real
+     provider/auth error) isn't hidden. Added a `console.error` at the `styling-engine/core.js`
+     `safeJsonFromModel` throw site (previously silent; only the *other* parse-failure branch
+     logged) so the raw text is still in the server log.
+   - Lookbook `BoardDetail` focus-return: the normal close/Escape/backdrop-click path already
+     correctly restores focus to the triggering card (`closeBoardDetail`, committed in #171,
+     predates this spec). The actual gap found live-reading the code: `handleBoardDelete` (the
+     dialog's delete action) called `setBoardDetail(null)` directly, bypassing
+     `closeBoardDetail`'s focus restoration entirely. Fixed by routing it through
+     `closeBoardDetail`.
+7. **Raw DB piece IDs in the stylist's own prose — not fixed, diagnosis only, per the spec's
+   "consult before behavior fixes" instruction.** Not reproduced live this session (would need an
+   uncontrolled real model response; the mocked sandbox returns canned JSON, not freeform prose,
+   so it can't surface this). Code reading of `styling-engine/prompts.js` found a plausible
+   mechanism: the whole-wardrobe visual composer roster prompt
+   (`wholeWardrobeVisualComposerTemplate`) tells the model every piece is "labeled with its ID and
+   name," and the freeform system prompt repeatedly instructs the model to reference pieces "by
+   ID" for `propose_outfit`/re-render calls — necessary since ID resolution is load-bearing
+   (`styling-engine/tools.js`) — but neither prompt explicitly tells the model to keep IDs out of
+   conversational prose shown to the user. That's a plausible root cause, not a confirmed one.
+   Do not act on this without reproducing it first.
+
+Verification: `npm run build` passed. Full `node --test` suite: 7 known pre-existing failures
+before and after (confirmed via `git stash`), no new failures — two tests needed updating to
+match the intentionally-changed behavior (see item 1 and item 6 above), not to paper over a
+regression. Live-verified items 2–4 and the render/evaluate flow in a freshly-restarted mocked
+sandbox using `scratch/build_dedup_fix_demo_thread.js` to seed a browsable thread (the freeform
+tool-loop path, not `routes/ai.js`'s builders directly — item 1's exact code path is covered by
+the updated/added unit tests instead, since reproducing it live would need an uncontrolled real
+model rejection). Items 5's map extension and 6's mechanical fixes were verified by code reading
+and the full test suite, not live-clicked individually (no user-facing flow isolates them from
+data already covered above).
