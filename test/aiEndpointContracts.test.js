@@ -2004,7 +2004,7 @@ test('StylistChat enables rough preview for rendered freeform outfit cards', () 
 
 test('StylistChat uses outfit sketch instead of color balance on ideal direction cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
-  assert.match(src, /const renderOutfitSketch = \(outfit\) =>/)
+  assert.match(src, /const renderOutfitSketch = \(outfit, \{ compact = false \} = \{\}\) =>/)
   assert.match(src, /showOutfitSketch && renderOutfitSketch\(outfit\)/)
   assert.match(src, /lower\.includes\('trouser'\)/)
   assert.match(src, /background_color: targetPiece\.background_color \|\| ''/)
@@ -2296,8 +2296,15 @@ test('StylistChat visibly marks broken diagnostic local-fill cards with a plain-
 test('StylistChat gates raw engine internals behind the STYLIST_DEBUG_ENABLED dev flag', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /const STYLIST_DEBUG_ENABLED = import\.meta\.env\.VITE_STYLIST_DEBUG === 'true'/)
-  assert.match(src, /isBrokenCard && STYLIST_DEBUG_ENABLED && outfit\.rejectionReason/)
-  assert.match(src, /Dev: rejected reason:/)
+  // The specific rejection reason (piece name + short plain-language reason, e.g. "brown ankle
+  // boots: hot weather: insulating fiber") is unconditionally visible — it's what makes the
+  // "needs review" disclaimer useful for tuning, not raw internals, so it isn't dev-gated.
+  assert.match(src, /\{isBrokenCard && \(/)
+  assert.match(src, /What didn't clear:/)
+  assert.doesNotMatch(src, /Dev: rejected reason:/)
+  // resolutionNote (a separate, less common field) stays dev-only.
+  assert.match(src, /isBrokenCard && STYLIST_DEBUG_ENABLED && outfit\.resolutionNote/)
+  assert.match(src, /Dev: resolution note:/)
   assert.match(src, /isBrokenCard && STYLIST_DEBUG_ENABLED && brokenReasonRows\.length > 0/)
   assert.match(src, /Dev: rejected pieces:/)
   assert.match(src, /if \(!STYLIST_DEBUG_ENABLED\) return null/)
@@ -3822,6 +3829,46 @@ test('a corrected retry with the same pieces supersedes its own earlier rejected
   const survivor = ctx.generatedOutfits[0]
   assert.equal(survivor.broken, undefined, 'the surviving card is the corrected, non-broken proposal')
   assert.match(survivor.engineNote, /experimental/, 'the original rejection reason carries forward as an honest note')
+})
+
+test('a corrected retry that swaps out the specific rejected piece supersedes the broken card too', async () => {
+  // Same direction (same label), same top/bottom, but the shoe that failed the gate is
+  // replaced with a different shoe rather than being re-approved via anchor:true. Exact
+  // piece-ID matching alone would miss this and render two competing "Direction" cards.
+  const ctx = {
+    generatedOutfits: [{
+      label: 'Warm Plaid Hero',
+      broken: true,
+      rejectionReason: 'brown ankle boots: hot weather: insulating fiber',
+      pieceIds: [seeded.top, seeded.bottom, seeded.boot],
+      pieces: [
+        { id: seeded.top, name: 'black button detail top' },
+        { id: seeded.bottom, name: 'light beige linen wide-leg pants' },
+        { id: seeded.boot, name: 'brown ankle boots' },
+      ],
+    }],
+    occasion: 'casual',
+    season: 'current season',
+    declaredIntent: { want: 'cards', outfitCount: null, turnMode: null },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+  }
+
+  const accepted = await executeTool('propose_outfit', {
+    label: 'Warm Plaid Hero',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+  }, ctx)
+  assert.equal(accepted.status, 'success')
+
+  assert.equal(ctx.generatedOutfits.length, 1, 'the broken "Warm Plaid Hero" must not linger alongside the corrected one')
+  const survivor = ctx.generatedOutfits[0]
+  assert.equal(survivor.broken, undefined)
+  assert.match(survivor.engineNote, /substitution/, 'a piece swap is described as a substitution, not a plain re-approval')
+  assert.match(survivor.engineNote, /brown ankle boots/, 'names the piece that was rejected')
+  assert.match(survivor.engineNote, /cream slip-on shoes/, 'names what it was swapped in for')
 })
 
 test('store_user_correction dedupes identical notes', async () => {

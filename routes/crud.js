@@ -513,9 +513,65 @@ function syncSavedBoardFromFeedback(row) {
   setSavedBoardFeedbackLabel(imageUrl, row.feedback_type, !row.archived || Boolean(otherActive))
 }
 
+// style_direction/shape_balance are group labels that can carry many distinct reasons at
+// once (e.g. both 'weak_structure' and 'too_safe' under 'style_direction'). The chat surface
+// already writes one stylist_feedback row per specific reason (payload.feedback_reason set).
+// syncFeedbackFromSavedBoard below only tracks whether the group label is present at all, so
+// it can't represent that — it would collapse to one reason-less row per group. This syncs at
+// the individual-reason level instead, so a reason picked in Visual Lab produces the same
+// specific row the chat would have produced, and the model-facing prompt text
+// (styling-engine/rules.js's FEEDBACK_REASON_LABELS lookup) gets the specific reason rather
+// than falling back to generic text.
+const STRUCTURED_FEEDBACK_CATEGORIES = ['style_direction', 'shape_balance']
+
+export function syncStructuredReasonsFromSavedBoard(row, previousDetails, nextDetails) {
+  const imageUrl = row.image_url
+  const boardPayload = safeJsonParse(row.payload, {}) || {}
+  const boardInfo = boardPayload.board || { imageUrl, label: row.title, pieces: safeJsonParse(row.pieces, []) }
+  const findRows = db.prepare(`
+    SELECT * FROM stylist_feedback
+    WHERE feedback_type = ? AND target_type = 'generated_visual_board'
+      AND json_extract(payload, '$.board.imageUrl') = ?
+      AND json_extract(payload, '$.feedback_reason') = ?
+    ORDER BY id DESC
+  `)
+  for (const category of STRUCTURED_FEEDBACK_CATEGORIES) {
+    const previous = new Set(Array.isArray(previousDetails?.[category]) ? previousDetails[category] : [])
+    const next = new Set(Array.isArray(nextDetails?.[category]) ? nextDetails[category] : [])
+    for (const reason of new Set([...previous, ...next])) {
+      const matches = findRows.all(category, imageUrl, reason)
+      if (next.has(reason)) {
+        const existing = matches[0]
+        if (existing) {
+          if (existing.archived) db.prepare('UPDATE stylist_feedback SET archived = 0 WHERE id = ?').run(existing.id)
+        } else {
+          db.prepare(`
+            INSERT INTO stylist_feedback
+            (feedback_type, target_type, context_type, context_id, context_name, label, note, payload, is_gold, archived)
+            VALUES (?, 'generated_visual_board', ?, ?, ?, ?, ?, ?, 0, 0)
+          `).run(
+            category,
+            row.context_type || 'wardrobe',
+            row.context_id || null,
+            row.context_name || 'Whole wardrobe',
+            row.title || '',
+            row.reason || '',
+            JSON.stringify({ board: boardInfo, feedback_reason: reason })
+          )
+        }
+      } else if (previous.has(reason)) {
+        matches.forEach(match => db.prepare('UPDATE stylist_feedback SET archived = 1 WHERE id = ?').run(match.id))
+      }
+    }
+  }
+}
+
 function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
-  const previous = new Set(previousLabels)
-  const next = new Set(nextLabels)
+  // style_direction/shape_balance are handled at the specific-reason level by
+  // syncStructuredReasonsFromSavedBoard above; skip them here so this generic,
+  // group-label-only sync doesn't insert a reason-less duplicate row alongside it.
+  const previous = new Set(previousLabels.filter(label => !STRUCTURED_FEEDBACK_CATEGORIES.includes(label)))
+  const next = new Set(nextLabels.filter(label => !STRUCTURED_FEEDBACK_CATEGORIES.includes(label)))
   const imageUrl = row.image_url
   const boardPayload = safeJsonParse(row.payload, {}) || {}
   const feedbackPayload = { board: boardPayload.board || { imageUrl, label: row.title, pieces: safeJsonParse(row.pieces, []) } }
@@ -1062,6 +1118,9 @@ router.patch('/saved-boards/:id', (req, res) => {
     const updated = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(req.params.id)
     if (Array.isArray(feedbackLabels) || (typeof feedbackLabel === 'string' && feedbackLabel.trim())) {
       syncFeedbackFromSavedBoard(updated, Array.isArray(payload.feedback_labels) ? payload.feedback_labels : [], nextFeedbackLabels)
+    }
+    if (feedbackDetails && typeof feedbackDetails === 'object' && !Array.isArray(feedbackDetails)) {
+      syncStructuredReasonsFromSavedBoard(updated, payload.feedback_details || {}, nextFeedbackDetails)
     }
     syncRetagSuggestionsFromSavedBoard(updated)
     res.json({

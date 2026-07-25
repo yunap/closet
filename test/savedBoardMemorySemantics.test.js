@@ -16,6 +16,7 @@ const {
   getSavedBoardRendererMemory,
   getStylistFeedbackMemory,
 } = await import('../styling-engine/rules.js')
+const { syncStructuredReasonsFromSavedBoard } = await import('../routes/crud.js')
 
 after(() => {
   db.close()
@@ -83,6 +84,76 @@ test('style direction reasons reach stylist memory in plain language', () => {
   })
   const memory = getSavedBoardMemory('piece', selected.id, 10)
   assert.match(memory, /style direction issue: too soft; too formal; too subdued/)
+})
+
+test('a reason picked in Visual Lab is stored as its own specific stylist_feedback row', () => {
+  const imageUrl = '/uploads/lab-picked-board.png'
+  const boardId = insertBoard({ imageUrl })
+  const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(boardId)
+
+  // Simulates the PATCH /api/saved-boards/:id route: Visual Lab toggles one style_direction
+  // reason on, going from no reasons to one.
+  syncStructuredReasonsFromSavedBoard(row, {}, { style_direction: ['weak_structure'] })
+
+  const rows = db.prepare(`
+    SELECT * FROM stylist_feedback
+    WHERE feedback_type = 'style_direction' AND json_extract(payload, '$.board.imageUrl') = ?
+  `).all(imageUrl)
+  assert.equal(rows.length, 1)
+  const payload = JSON.parse(rows[0].payload)
+  // Before this fix, syncFeedbackFromSavedBoard wrote one reason-less row per group label
+  // (feedback_type: 'style_direction' with no feedback_reason at all) instead of one row per
+  // specific reason — this asserts the row now carries the reason that was actually picked.
+  assert.equal(payload.feedback_reason, 'weak_structure')
+
+  // Note: getStylistFeedbackMemory's reactionLines deliberately exclude stylist_feedback rows
+  // for boards that are already in saved_boards (see its "NOT (target_type =
+  // 'generated_visual_board' AND EXISTS (saved_boards...))" clause) to avoid double-counting
+  // with getSavedBoardMemory, which reads structured reasons directly from
+  // saved_boards.payload.feedback_details and was already correct before this fix (see "style
+  // direction reasons reach stylist memory in plain language" above). So this fix corrects the
+  // stored data's shape/consistency — useful for any future consumer that reads
+  // stylist_feedback's feedback_reason directly — but does not change getStylistFeedbackMemory's
+  // output for saved boards, which was never broken.
+})
+
+test('Visual Lab picking a second reason under the same category adds a second specific row, not a duplicate', () => {
+  const imageUrl = '/uploads/lab-two-reasons-board.png'
+  const boardId = insertBoard({ imageUrl })
+  const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(boardId)
+
+  syncStructuredReasonsFromSavedBoard(row, {}, { style_direction: ['weak_structure'] })
+  syncStructuredReasonsFromSavedBoard(row, { style_direction: ['weak_structure'] }, { style_direction: ['weak_structure', 'too_safe'] })
+
+  const rows = db.prepare(`
+    SELECT * FROM stylist_feedback
+    WHERE feedback_type = 'style_direction' AND json_extract(payload, '$.board.imageUrl') = ? AND COALESCE(archived,0) = 0
+  `).all(imageUrl)
+  const reasons = rows.map(r => JSON.parse(r.payload).feedback_reason).sort()
+  assert.deepEqual(reasons, ['too_safe', 'weak_structure'])
+})
+
+test('Visual Lab deselecting a reason archives only that reason\'s row', () => {
+  const imageUrl = '/uploads/lab-deselect-board.png'
+  const boardId = insertBoard({ imageUrl })
+  const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(boardId)
+
+  syncStructuredReasonsFromSavedBoard(row, {}, { style_direction: ['weak_structure', 'too_safe'] })
+  syncStructuredReasonsFromSavedBoard(row, { style_direction: ['weak_structure', 'too_safe'] }, { style_direction: ['too_safe'] })
+
+  const activeRows = db.prepare(`
+    SELECT * FROM stylist_feedback
+    WHERE feedback_type = 'style_direction' AND json_extract(payload, '$.board.imageUrl') = ? AND COALESCE(archived,0) = 0
+  `).all(imageUrl)
+  assert.equal(activeRows.length, 1)
+  assert.equal(JSON.parse(activeRows[0].payload).feedback_reason, 'too_safe')
+
+  const archivedRows = db.prepare(`
+    SELECT * FROM stylist_feedback
+    WHERE feedback_type = 'style_direction' AND json_extract(payload, '$.board.imageUrl') = ? AND archived = 1
+  `).all(imageUrl)
+  assert.equal(archivedRows.length, 1)
+  assert.equal(JSON.parse(archivedRows[0].payload).feedback_reason, 'weak_structure')
 })
 
 test('Almost right preserves a qualified positive formula instead of becoming avoid evidence', () => {
