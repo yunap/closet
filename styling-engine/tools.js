@@ -1178,17 +1178,47 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const anchorPieceIds = resolved.filter(p => p.anchor).map(p => Number(p.id))
         const proposedPieceIds = resolved.map(p => Number(p.id))
         const proposedPieceKey = proposedPieceIds.slice().sort((a, b) => a - b).join('|')
+        const proposedPieceIdSet = new Set(proposedPieceIds)
+        const proposedLabelKey = String(label || 'Outfit').trim().toLowerCase()
         const existingOutfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
-        // A retry that corrects an earlier rejected attempt (e.g. re-proposing the exact same
-        // pieces with anchor:true after a hard-gate rejection) is a duplicate of that attempt,
-        // not a competing direction — don't render both as separate "Direction" cards. Drop the
-        // superseded broken card and carry its rejection forward as an honest note on the
-        // surviving card instead of silently discarding it.
-        const supersededBroken = existingOutfits.find(outfit =>
-          outfit?.broken &&
-          Array.isArray(outfit.pieceIds) &&
-          outfit.pieceIds.slice().sort((a, b) => a - b).join('|') === proposedPieceKey
-        )
+        // A retry that corrects an earlier rejected attempt is a duplicate of that attempt, not
+        // a competing direction — don't render both as separate "Direction" cards. Two ways a
+        // correction shows up:
+        //  1. Same label, exact same pieces (e.g. re-proposing with anchor:true).
+        //  2. Same label, all but one piece the same (the model swapped out the specific piece
+        //     that failed the gate rather than overriding it) — e.g. the same "Warm Plaid Hero"
+        //     direction retried with different shoes after the first pair was rejected. Without
+        //     this second case, a same-direction retry that fixes itself by substitution still
+        //     rendered as a second, competing "Direction" card next to the broken one.
+        // Either way, drop the superseded broken card and carry its rejection forward as an
+        // honest note on the surviving card instead of silently discarding it.
+        const supersededBroken = existingOutfits.find(outfit => {
+          if (!outfit?.broken || !Array.isArray(outfit.pieceIds)) return false
+          const brokenPieceKey = outfit.pieceIds.slice().sort((a, b) => a - b).join('|')
+          if (brokenPieceKey === proposedPieceKey) return true
+          const brokenLabelKey = String(outfit.label || 'Outfit').trim().toLowerCase()
+          if (brokenLabelKey !== proposedLabelKey) return false
+          const brokenIdSet = new Set(outfit.pieceIds.map(Number))
+          const overlap = proposedPieceIds.filter(id => brokenIdSet.has(Number(id))).length
+          const maxLen = Math.max(outfit.pieceIds.length, proposedPieceIds.length)
+          return maxLen > 0 && (maxLen - overlap) <= 1
+        })
+        const supersededEngineNote = (() => {
+          if (!supersededBroken) return null
+          const removedPieces = (Array.isArray(supersededBroken.pieces) ? supersededBroken.pieces : [])
+            .filter(p => p?.id && !proposedPieceIdSet.has(Number(p.id)))
+          const addedPieces = resolved.filter(p => p?.id && !new Set((supersededBroken.pieceIds || []).map(Number)).has(Number(p.id)))
+          if (!removedPieces.length && !addedPieces.length) {
+            // Exact same pieces — a plain re-approval (e.g. anchor:true), nothing swapped.
+            return `Approved with an exception: ${supersededBroken.rejectionReason}`
+          }
+          const swapSummary = removedPieces.length === 1 && addedPieces.length === 1
+            ? ` Swapped in ${addedPieces[0].name} to replace it.`
+            : addedPieces.length
+              ? ` Swapped in ${addedPieces.map(p => p.name).join(', ')}.`
+              : ''
+          return `Approved after a substitution: ${supersededBroken.rejectionReason}.${swapSummary}`
+        })()
         const proposedOutfit = {
           label: label || 'Outfit',
           ...(anchorPieceIds.length ? { anchorPieceIds } : {}),
@@ -1204,7 +1234,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           activity: resolvedActivity,
           debug: outfitDebug,
           previewOnly: true,
-          ...(supersededBroken ? { engineNote: `Approved with an exception: ${supersededBroken.rejectionReason}` } : {})
+          ...(supersededEngineNote ? { engineNote: supersededEngineNote } : {})
         }
         toolContext.generatedOutfits = [
           ...existingOutfits.filter(outfit => outfit !== supersededBroken),

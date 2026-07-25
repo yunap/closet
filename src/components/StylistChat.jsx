@@ -1515,24 +1515,6 @@ export default function StylistChat({
     setSavedIndices(prev => new Set([...prev, messageIndex]))
   }
 
-  const FEEDBACK_PRIMARY_ACTIONS = [
-    { type: 'signature', label: 'Signature' },
-    { type: 'works', label: 'Works' },
-    { type: 'almost', label: 'Almost' },
-    { type: 'not_me', label: 'Not me' },
-  ]
-  const FEEDBACK_REASON_ACTIONS = [
-    { type: 'too_safe', label: 'Too safe' },
-    { type: 'too_soft', label: 'Too soft' },
-    { type: 'too_generic', label: 'Too generic' },
-    { type: 'weak_structure', label: 'Weak structure' },
-    { type: 'weak_contrast', label: 'Weak contrast' },
-    { type: 'bad_grounding', label: 'Bad grounding' },
-    { type: 'proportion_problem', label: 'Proportion problem' },
-    { type: 'wrong_silhouette', label: 'Wrong silhouette' },
-    { type: 'catalog_drift', label: 'Catalog drift' },
-    { type: 'wrong_item_read', label: 'Wrong item read' },
-  ]
 
   const isMultiOutfitResponse = (message) => {
     if (!message || message.role !== 'assistant') return false
@@ -2142,7 +2124,7 @@ export default function StylistChat({
       return { background, label }
     }
 
-    const renderOutfitSketch = (outfit) => {
+    const renderOutfitSketch = (outfit, { compact = false } = {}) => {
       const sketchPieces = getPreviewPieces(outfit)
       if (!sketchPieces.length) return null
       const anchor = sketchPieces.find(p => p.isAnchor) || sketchPieces[0]
@@ -2169,18 +2151,7 @@ export default function StylistChat({
         .filter(Boolean)
         .filter((piece, index, arr) => arr.findIndex(p => p.id === piece.id && p.category === piece.category) === index)
 
-      return (
-        <div style={{
-          display: 'flex',
-          gap: 10,
-          alignItems: 'center',
-          marginTop: 8,
-          marginBottom: 8,
-          padding: '8px 9px',
-          borderRadius: 10,
-          border: '1px solid var(--border-light)',
-          background: 'rgba(255,255,255,0.42)'
-        }}>
+      const sketchGraphic = (
           <div style={{
             width: 70,
             height: 106,
@@ -2289,6 +2260,23 @@ export default function StylistChat({
               <div title={accessory.name} style={{ position: 'absolute', right: 8, top: 45, width: 12, height: 16, borderRadius: '5px 5px 7px 7px', background: swatchFor(accessory), border: '1px solid rgba(0,0,0,0.15)' }} />
             )}
           </div>
+      )
+
+      if (compact) return sketchGraphic
+
+      return (
+        <div style={{
+          display: 'flex',
+          gap: 10,
+          alignItems: 'center',
+          marginTop: 8,
+          marginBottom: 8,
+          padding: '8px 9px',
+          borderRadius: 10,
+          border: '1px solid var(--border-light)',
+          background: 'rgba(255,255,255,0.42)'
+        }}>
+          {sketchGraphic}
           <div style={{ minWidth: 0, display: 'grid', gap: 4, flex: 1 }}>
             {rolePieces.slice(0, 5).map(piece => {
               const swatch = getSwatchStyle(piece)
@@ -2463,6 +2451,21 @@ export default function StylistChat({
                 })}
               </div>
             )}
+          </div>
+        )}
+        {isIdealAdditions && (
+          <div className="stylist-directions-compare-strip">
+            <div className="stylist-directions-compare-title">Compare silhouettes</div>
+            <div className="stylist-directions-compare-row">
+              {outfits.filter(o => o.previewOnly && o.pieceId).map((compareOutfit, compareIdx) => (
+                <div key={compareIdx} className="stylist-directions-compare-item">
+                  {renderOutfitSketch(compareOutfit, { compact: true })}
+                  <div className="stylist-directions-compare-item-title">
+                    {compareOutfit.label || compareOutfit.title || `Direction ${compareIdx + 1}`}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         {isIdealAdditions && (() => {
@@ -2691,17 +2694,19 @@ export default function StylistChat({
                 )}
                 {isBrokenCard && (
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.45 }}>
-                    This direction didn't clear one of the engine's structural checks, so it's shown here for review rather than as a validated suggestion.
-                  </div>
-                )}
-                {isBrokenCard && STYLIST_DEBUG_ENABLED && outfit.rejectionReason && (
-                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4 }}>
-                    <div><strong>Dev: rejected reason:</strong> {outfit.rejectionReason}</div>
-                    {outfit.resolutionNote && (
-                      <div style={{ marginTop: 4, fontStyle: 'italic' }}>
-                        <strong>Resolution note:</strong> {outfit.resolutionNote}
+                    <div>
+                      This direction didn't clear one of the engine's structural checks, so it's shown here for review rather than as a validated suggestion.
+                    </div>
+                    {outfit.rejectionReason && (
+                      <div style={{ marginTop: 4 }}>
+                        <strong>What didn't clear:</strong> {outfit.rejectionReason}
                       </div>
                     )}
+                  </div>
+                )}
+                {isBrokenCard && STYLIST_DEBUG_ENABLED && outfit.resolutionNote && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--repair)', lineHeight: 1.4, fontStyle: 'italic' }}>
+                    <strong>Dev: resolution note:</strong> {outfit.resolutionNote}
                   </div>
                 )}
                 {isBrokenCard && STYLIST_DEBUG_ENABLED && brokenReasonRows.length > 0 && (
@@ -2745,6 +2750,11 @@ export default function StylistChat({
                   )
                 })()}
                 {showOutfitSketch && renderOutfitSketch(outfit)}
+                {showOutfitSketch && outfit.visualPrompt && (
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2, marginBottom: 2, lineHeight: 1.5 }}>
+                    <strong>Full look:</strong> {outfit.visualPrompt}
+                  </div>
+                )}
               {((!isTripCard && (outfit.missionLabel || outfit.dominantDirection || outfit.silhouette)) || outfit.bestFor) && (
                 <div className="stylist-outfit-result-meta">
                   {!isTripCard && outfit.missionLabel && <div><strong>Mission:</strong> {outfit.missionLabel}</div>}
@@ -5254,50 +5264,6 @@ export default function StylistChat({
                       </button>
                     )}
                   </div>
-
-                  {!isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && !m.wardrobeEvaluation && (() => {
-                    const messageFeedbackAction = (action) => {
-                      const key = `message:${i}:${action.type}`
-                      const isSaved = feedbackSaved.has(key)
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          aria-pressed={isSaved}
-                          disabled={isSaved}
-                          onClick={() => saveStylistFeedback({ key, feedbackType: action.type, targetType: 'message', label: action.label, note: m.text, payload: { messageIndex: i, text: m.text }, appendToPiece: activeContext.type === 'piece' && ['signature','works','not_me','too_soft','proportion_problem','wrong_item_read'].includes(action.type) })}
-                          className="stylist-feedback-chip"
-                        >
-                          {isSaved ? '✓ ' : ''}{action.label}
-                        </button>
-                      )
-                    }
-                    const cardKey = `message-feedback:${i}`
-                    const hasActiveReason = FEEDBACK_REASON_ACTIONS.some(action => feedbackSaved.has(`message:${i}:${action.type}`))
-                    const isExpanded = !collapsedFeedbackCards.has(cardKey) && (hasActiveReason || expandedFeedbackCards.has(cardKey))
-                    return (
-                      <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <div className="stylist-feedback-row">
-                          {FEEDBACK_PRIMARY_ACTIONS.map(messageFeedbackAction)}
-                          <button
-                            type="button"
-                            onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)}
-                            aria-expanded={isExpanded}
-                            className="stylist-feedback-chip is-quiet"
-                          >
-                            {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
-                          </button>
-                        </div>
-                        {isExpanded && (
-                          <div className="stylist-feedback-disclosure">
-                            <div className="stylist-feedback-row">
-                              {FEEDBACK_REASON_ACTIONS.map(messageFeedbackAction)}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })()}
 
                   {editorialVisualResults[i]?.length > 0 && (
                     <div className="generated-visual-grid" style={{ marginTop: 10 }}>
