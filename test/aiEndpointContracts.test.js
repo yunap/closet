@@ -1512,6 +1512,19 @@ test('saved outfit cards use the shared wardrobe evaluator with linked garment i
   assert.match(json.feedback, /Idea viability: keep/)
   assert.match(json.feedback, /Execution gap: minor floor-line watch only/)
   assert.equal(json.evaluation.critiqueProse, 'Mock stylist prose: the black top carries this outfit and the proportions read clearly. Keep the floor line visible.')
+  // The actionable answer leads the collapsed "Full structured read" details, ahead of the
+  // supporting diagnostic/score dump — someone expanding it is looking for the fix, not a
+  // dozen analysis rows before reaching it.
+  assert.match(json.feedback, /First visible issue: No major issue\./)
+  assert.match(json.feedback, /Next: Keep the floor line visible\./)
+  assert.match(json.feedback, /Avoid for now: Do not over-layer\./)
+  const firstIssueIdx = json.feedback.indexOf('First visible issue:')
+  const nextIdx = json.feedback.indexOf('Next:')
+  const factsIdx = json.feedback.indexOf('Visible facts:')
+  const scoresIdx = json.feedback.indexOf('Scores:')
+  assert.ok(firstIssueIdx < nextIdx, 'first visible issue leads, ahead of the recommendation')
+  assert.ok(nextIdx < factsIdx, 'the recommendation leads the diagnostic dump, not the reverse')
+  assert.ok(factsIdx < scoresIdx, 'diagnostic fields keep their existing relative order after the answer')
 
   const lastCall = aiCalls.at(-1)
   assert.match(lastCall.system, /evaluating one proposed whole-wardrobe outfit/)

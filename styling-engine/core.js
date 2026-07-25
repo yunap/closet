@@ -2548,7 +2548,15 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
   // Summary and verdict stay out of this block: when critiqueProse leads the
   // feedback they sit right above the collapsed details, and the model tends to
   // write summary as a copy of the prose anyway.
+  // The actionable answer (what to change first, and what to avoid/try next) leads this list,
+  // ahead of the supporting diagnostic/score dump — someone who expands "Full structured read"
+  // is looking for the specific fix, not a dozen analysis rows before reaching it. Matches the
+  // "answer first" ordering fallbackFollowupFeedback below already uses.
   const structuredDetailParts = [
+    nestedEvaluation.firstVisibleIssue ? `First visible issue: ${nestedEvaluation.firstVisibleIssue}` : '',
+    (recommendationBlock.smallestAdjustment || typeof parsed.recommendation === 'string') ? `Next: ${recommendationBlock.smallestAdjustment || parsed.recommendation}` : '',
+    recommendationBlock.avoidForNow ? `Avoid for now: ${recommendationBlock.avoidForNow}` : '',
+    recommendationBlock.tryNext || parsed.tryNext ? `Try next: ${recommendationBlock.tryNext || parsed.tryNext}` : '',
     intentText,
     factsText ? `Visible facts:\n${factsText}` : '',
     nestedEvaluation.tensionType || parsed.tensionType ? `Tension: ${nestedEvaluation.tensionType || parsed.tensionType}` : '',
@@ -2561,12 +2569,8 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
     nestedEvaluation.ideaViability ? `Idea viability: ${nestedEvaluation.ideaViability}` : '',
     nestedEvaluation.executionGap ? `Execution gap: ${nestedEvaluation.executionGap}` : '',
     nestedEvaluation.mainSuccess ? `Main success: ${nestedEvaluation.mainSuccess}` : '',
-    nestedEvaluation.firstVisibleIssue ? `First visible issue: ${nestedEvaluation.firstVisibleIssue}` : '',
     Array.isArray(parsed.works) && parsed.works.length ? `Works: ${parsed.works.join(' ')}` : '',
-    Array.isArray(parsed.risks) && parsed.risks.length ? `Risks: ${parsed.risks.join(' ')}` : '',
-    (recommendationBlock.smallestAdjustment || typeof parsed.recommendation === 'string') ? `Next: ${recommendationBlock.smallestAdjustment || parsed.recommendation}` : '',
-    recommendationBlock.avoidForNow ? `Avoid for now: ${recommendationBlock.avoidForNow}` : '',
-    recommendationBlock.tryNext || parsed.tryNext ? `Try next: ${recommendationBlock.tryNext || parsed.tryNext}` : ''
+    Array.isArray(parsed.risks) && parsed.risks.length ? `Risks: ${parsed.risks.join(' ')}` : ''
   ].filter(Boolean)
   const structuredDetails = structuredDetailParts.join('\n\n')
   const structuredRead = [
