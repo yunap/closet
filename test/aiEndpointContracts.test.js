@@ -2357,6 +2357,78 @@ test('StylistChat gates raw engine internals behind the STYLIST_DEBUG_ENABLED de
   assert.doesNotMatch(src, /`\$\{cat\}s: \$\{cnt\}`/)
 })
 
+test('StylistChat suppresses raw gate vocabulary on legacy stored diagnostic cards', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  // routes/ai.js no longer writes these fields, but thread payloads are durable and there is no
+  // migration — cards stored before that fix still carry the raw rejection text, so the renderer
+  // has to hold the line for old threads too.
+  assert.match(src, /const stripEngineRejectionSuffix = \(reason\) =>/)
+  assert.match(src, /\(?:Rejected\|Broken\)\\s\+because/)
+  assert.match(src, /isBrokenCard && !STYLIST_DEBUG_ENABLED \? stripEngineRejectionSuffix\(outfit\.reason\)/)
+  // watchFor and systemFlags are raw duplicates of the rejection reason on a broken card; the
+  // plain-language "What didn't clear" disclaimer is what the owner ruling asked to show instead.
+  assert.match(src, /outfit\.watchFor[\s\S]{0,120}\(!isBrokenCard \|\| STYLIST_DEBUG_ENABLED\)/)
+  assert.match(src, /outfit\.systemFlags\)[\s\S]{0,80}\(!isBrokenCard \|\| STYLIST_DEBUG_ENABLED\)/)
+  // the builder's own placeholder must not survive stripping and reach a regular user either
+  assert.match(src, /'Model proposal shown for debugging\.'/)
+})
+
+test('trip plan repeat label is derived from structured pieceReuse, not a keyword guess', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  // Both planner branches ("Repeat schedule: ..." and "no piece repeats across the N outfits")
+  // contain the word "repeats", so the old /repeat|reuse|packing/ guess labelled a plan with zero
+  // repeats "Useful repeats". outfitSetPlanner already attaches the structured answer.
+  assert.match(src, /const pieceReuse = planOutfits\.find\(outfit => outfit\?\.pieceReuse\)\?\.pieceReuse/)
+  assert.match(src, /pieceReuse\.repeated\) && pieceReuse\.repeated\.length/)
+  assert.match(src, /'All looks distinct'/)
+  assert.match(src, /addRow\(repeatLabelFor\(text\), value\)/)
+  // the label must no longer be chosen by the regex ternary it replaced
+  assert.doesNotMatch(src, /addRow\(\/packing\/i\.test\(text\) \? 'Packing' : 'Useful repeats', text\)/)
+  // and the value must not restate the label it sits under
+  assert.match(src, /\^\(\?:Repeat schedule\|Packing reuse\):/)
+})
+
+test('response look counts describe the whole response, not the collapsed slice', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  // `outfits` is truncated to INITIAL_SAVED_OUTFIT_COUNT while "Show N more outfit results" is
+  // collapsed. Counting from it made the header's "N looks" change when the user expanded the
+  // disclosure, and printed "2 LOOKS" above cards the server had badged "1 OF 3".
+  assert.match(src, /buildStylistPresentation\(message, allOutfits, messageIndex\)/)
+  assert.doesNotMatch(src, /buildStylistPresentation\(message, outfits, messageIndex\)/)
+  assert.match(src, /buildResponseSections\(outfits, presentation, allOutfits\)/)
+  // section counts come from the full set, falling back to rendered items when it isn't passed
+  assert.match(src, /const fullCounts = new Map\(\)/)
+  assert.match(src, /fullCounts\.get\(group\.title\.toLowerCase\(\)\) \|\| group\.items\.length/)
+})
+
+test('plan and whole-wardrobe responses still render the model\'s own prose answer', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  // Regression: these two response types rendered ONLY their structured cards. `isPreviewResponse`
+  // is false for them (plan cards aren't previewOnly) and getCompactOutfitIntro() returns '' for
+  // wholeWardrobe/plannedSet, so m.text reached no render branch at all — silently dropping the
+  // declared constraint ("6 looks, 3 pairs of shoes"), the piece roster, the budget verdict, the
+  // per-look rationale, and the levers for changing any of it.
+  // Widened: the canned-intro case (selected-piece / generic outfit ideas) replaced the prose with
+  // boilerplate rather than dropping it, so `!compactIntro` must NOT gate this — every structured
+  // response except previewOnly (which renders m.text in full above) gets the notes disclosure.
+  assert.match(src, /hasStructuredIdeas && !isPreviewResponse && String\(m\.text \|\| ''\)\.trim\(\)/)
+  assert.doesNotMatch(src, /hasStructuredIdeas && !isPreviewResponse && !compactIntro/)
+  assert.match(src, /<details className="stylist-plan-notes" open>/)
+  assert.match(src, /stylist-plan-notes-body/)
+  // The canned "Outfit ideas for X… image generation is optional" line is gone entirely, along
+  // with the helper that built it — the model's own answer stands in its place.
+  assert.doesNotMatch(src, /getCompactOutfitIntro/)
+  assert.doesNotMatch(src, /image generation is optional/)
+  // Engine-built field dumps are not prose and must not reach the disclosure: for selected-piece
+  // responses styling-engine/core.js's formatStructuredOutfitFeedback assembles the message body
+  // from the same Label/Strength/Silhouette/Pieces fields the cards already show.
+  assert.match(src, /const isEngineFieldDump = \(text\) =>/)
+  assert.match(src, /!isEngineFieldDump\(m\.text\)/)
+  // A plan is one artifact — it must never be split behind "Show N more outfit results".
+  assert.match(src, /const isSinglePlanArtifact = allOutfits\.some\(outfit => isPlannedSetSource\(outfit\?\.source\)\) \|\| Boolean\(message\?\.wholeWardrobe\)/)
+  assert.match(src, /const hasDeferredOutfits = !isSinglePlanArtifact/)
+})
+
 test('StylistChat image-preview lightbox behaves as a dialog rather than a static overlay', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.match(src, /role="dialog"\s*\n\s*aria-modal="true"\s*\n\s*aria-labelledby="stylist-preview-title"/)

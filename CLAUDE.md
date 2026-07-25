@@ -14,6 +14,12 @@ Two independent server/frontend pairs are defined in `.claude/launch.json`:
 - Data lives at `~/.wardrobe-sandbox/` (owner's home dir, outside the repo — deliberately immune to `git clean`/`reset` in this working directory). Contains `legacy-wardrobe.db`, `system.db`, `users/`, `legacy-uploads/`.
 - `sandbox-api` runs `server.js` in dev mode, pointed at that directory via `WARDROBE_DB_PATH` / `WARDROBE_SYSTEM_DB_PATH` / `WARDROBE_USERS_DIR` / `WARDROBE_UPLOADS_DIR` env vars.
 - `sandbox-web` runs vite with `VITE_API_PROXY_TARGET=http://localhost:3098` (the proxy target is configurable via that env var; falls back to `localhost:3001` if unset, so the real dev pair is unaffected). It also sets `VITE_STYLIST_DEBUG=true`, which surfaces the Stylist chat's dev-only engine internals (styling engine trace, generation timing/token telemetry, raw gate-rejection detail on "needs review" cards) — see `StylistChat.jsx`'s `STYLIST_DEBUG_ENABLED`. `wardrobe-web` leaves this unset, so those internals stay hidden on the real dev pair by default.
+- **`sandbox-web-asuser`** (port 5176) is the same sandbox web server with `VITE_STYLIST_DEBUG`
+  left unset, so the Stylist renders exactly as a real user sees it. Use it whenever the question
+  is "what does the owner actually see" — most importantly when preparing evidence for an expert
+  panel, since `sandbox-web` shows dev-only engine internals that no user ever sees and a reviewer
+  will otherwise critique them as product. It shares `sandbox-api`, so both can run at once and
+  the same thread can be compared side by side.
 - Login: `burned-id-1@example.com` / `tourdemo123`.
 - **Before any sandbox testing session, always restart both servers fresh — never attach to
   whatever is already bound to ports 3098/5174.** The owner's own local servers commonly point

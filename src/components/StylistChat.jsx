@@ -280,6 +280,26 @@ const ROSTER_CATEGORY_PLURAL_LABELS = {
 const pluralizeRosterCategory = (category) =>
   ROSTER_CATEGORY_PLURAL_LABELS[category] || `${category}s`
 
+// Legacy-payload shim. `routes/ai.js` used to append the raw gate-rejection text onto a broken
+// card's own `reason` prose ("... Rejected because <raw>. Resolution note: <raw>"), alongside
+// duplicating it into `watchFor`/`systemFlags`. Those fields are no longer written, but thread
+// payloads are durable and there is no migration — cards stored before that fix still carry the
+// suffix, so stripping it at render is what actually keeps the raw vocabulary off old threads.
+// Only applied to broken/diagnostic cards, and only when the dev flag is off; the plain-language
+// "What didn't clear" disclaimer above the card carries the same information in the register the
+// owner ruling asked for.
+const LEGACY_ENGINE_REJECTION_SUFFIX = /\s*(?:Rejected|Broken)\s+because\s.*$/is
+const LEGACY_DEBUG_CARD_FALLBACKS = [
+  'Model proposal shown for debugging.',
+  'Local fill candidate shown for debugging.'
+]
+const stripEngineRejectionSuffix = (reason) => {
+  const stripped = String(reason || '').replace(LEGACY_ENGINE_REJECTION_SUFFIX, '').trim()
+  // If the model never wrote its own rationale, the builder's placeholder is all that survives —
+  // showing "shown for debugging" to a regular user is the same leak in a different costume.
+  return LEGACY_DEBUG_CARD_FALLBACKS.includes(stripped) ? '' : stripped
+}
+
 // Plain-language replacements for the internal signature/strong/usable/experimental
 // ranking vocabulary — panel feedback: those terms read as arbitrary badges rather
 // than telling the user what to do with a direction.
@@ -1612,20 +1632,12 @@ export default function StylistChat({
   // `styling-engine/tools.js`'s `executeTool` wrapper (`🤖 [Agent Tool Call] <name> (...)`),
   // so grepping server logs for `propose_outfit` vs `plan_outfit_set` still answers this.
 
-  const getCompactOutfitIntro = (message, hasBoards = false) => {
-    if (message?.wholeWardrobe || message?.structuredOutfits?.some(outfit => isPlannedSetSource(outfit?.source))) {
-      return ''
-    }
-    const text = String(message?.text || '')
-    const titleMatch = text.match(/Generated outfit ideas for:\*\*\s*([^\n]+)/i)
-    const firstOutfit = message?.structuredOutfits?.[0]
-    const heroPieceName = firstOutfit?.pieces?.[0]?.name
-    const itemName = titleMatch 
-      ? titleMatch[1].replace(/\*/g, '').trim() 
-      : (activeContext?.name || heroPieceName || 'your wardrobe')
-    if (hasBoards) return `Outfit directions for ${itemName}. Visuals are shown below for selected ideas.`
-    return `Outfit ideas for ${itemName}. Saved wardrobe pieces are shown when available; image generation is optional.`
-  }
+  // `formatStructuredOutfitFeedback` (styling-engine/core.js) builds a message body server-side by
+  // dumping each outfit's structured fields — Label/Strength/Direction/Silhouette/Pieces/Watch for.
+  // That is the same data the cards already render, in the field-dump register PR #142 moved the
+  // critique surface away from. It is not the model talking, so it must not reach the notes
+  // disclosure. Matching our own deterministic header, not garment text.
+  const isEngineFieldDump = (text) => /^\s*\*\*Generated outfit ideas for:\*\*/.test(String(text || ''))
 
   const getTripPlanNotes = (outfits = []) => {
     const tripCards = Array.isArray(outfits) ? outfits.filter(outfit => isPlannedSetSource(outfit?.source)) : []
@@ -1784,7 +1796,7 @@ export default function StylistChat({
     }
   }
 
-  const buildResponseSections = (outfits = [], presentation = {}) => {
+  const buildResponseSections = (outfits = [], presentation = {}, allOutfits = null) => {
     const visible = outfits.slice(0, 8)
     if (presentation.type === 'trip_plan') {
       const groups = []
@@ -1797,9 +1809,17 @@ export default function StylistChat({
         }
         group.items.push({ outfit, idx })
       })
+      // A slot's count is how many looks the plan holds for it, not how many are currently
+      // rendered — otherwise a collapsed disclosure shows "2 LOOKS" over a card badged "1 OF 3".
+      const fullCounts = new Map()
+      for (const outfit of (Array.isArray(allOutfits) ? allOutfits : outfits)) {
+        const title = sentenceCaseLabel(outfit.label || outfit.bestFor || outfit.title || '').toLowerCase()
+        if (!title) continue
+        fullCounts.set(title, (fullCounts.get(title) || 0) + 1)
+      }
       return groups.map(group => ({
         ...group,
-        countLabel: singularLookLabel(group.items.length)
+        countLabel: singularLookLabel(fullCounts.get(group.title.toLowerCase()) || group.items.length)
       }))
     }
     return visible.map((outfit, idx) => {
@@ -1813,8 +1833,23 @@ export default function StylistChat({
     })
   }
 
-  const getTripPlanOverviewRows = (notes = []) => {
+  const getTripPlanOverviewRows = (notes = [], planOutfits = []) => {
     const rows = []
+    // The planner already knows structurally whether pieces repeat across the plan
+    // (`describeTripPieceReuse` → `pieceReuse.repeated`, attached to every plan outfit in
+    // outfitSetPlanner.js). Read that instead of keyword-matching the prose line it produced:
+    // both of its branches ("Repeat schedule: ..." and "no piece repeats across the N outfits")
+    // contain the word "repeats", so a regex labelled a plan with zero repeats "Useful repeats".
+    const pieceReuse = planOutfits.find(outfit => outfit?.pieceReuse)?.pieceReuse || null
+    const repeatLabelFor = (text) => {
+      if (/packing/i.test(text)) return 'Packing'
+      // TODO: backfill pieceReuse — plans stored before it was attached fall back to the old
+      // keyword guess, which cannot tell the two branches apart.
+      if (!pieceReuse) return 'Useful repeats'
+      return Array.isArray(pieceReuse.repeated) && pieceReuse.repeated.length
+        ? 'Useful repeats'
+        : 'All looks distinct'
+    }
     const addRow = (label, value) => {
       const clean = String(value || '').trim()
       const cleanLabel = String(label || '').trim()
@@ -1836,7 +1871,9 @@ export default function StylistChat({
           .replace(/\s*—\s*/g, ': ')
         addRow('Conditions', compact)
       } else if (/repeat|reuse|packing/i.test(text) && !/image space/i.test(text)) {
-        addRow(/packing/i.test(text) ? 'Packing' : 'Useful repeats', text)
+        // Strip the value's own restatement of the label ("Useful repeats: Repeat schedule: ...").
+        const value = text.replace(/^(?:Repeat schedule|Packing reuse):\s*/i, '')
+        addRow(repeatLabelFor(text), value)
       }
       if (rows.length >= 4) break
     }
@@ -1976,7 +2013,15 @@ export default function StylistChat({
 
   const renderStructuredAdvice = (message, messageIndex) => {
     const allOutfits = Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : []
-    const hasDeferredOutfits = collapsedStructuredResults.has(messageIndex) && allOutfits.length > INITIAL_SAVED_OUTFIT_COUNT
+    // A plan is one artifact, not a list of independent results: splitting it behind "Show N more
+    // outfit results" cuts the thing the owner asked for in half, hides whole slots until clicked,
+    // and is what made the header/section counts describe the viewport instead of the plan. The
+    // load optimisation this fold came from (#162) still applies to ordinary multi-result replies,
+    // which are genuinely a list.
+    const isSinglePlanArtifact = allOutfits.some(outfit => isPlannedSetSource(outfit?.source)) || Boolean(message?.wholeWardrobe)
+    const hasDeferredOutfits = !isSinglePlanArtifact
+      && collapsedStructuredResults.has(messageIndex)
+      && allOutfits.length > INITIAL_SAVED_OUTFIT_COUNT
     const outfits = hasDeferredOutfits ? allOutfits.slice(0, INITIAL_SAVED_OUTFIT_COUNT) : allOutfits
     if (!outfits.length) return null
     const messageResultKey = message?.resultId || messageIndex
@@ -2402,10 +2447,15 @@ export default function StylistChat({
     const isIdealAdditions = outfits.length >= 2 &&
       outfits.some(outfit => outfit.previewOnly && outfit.pieceId)
     const canExploreAdjacent = message?.savedOutfitVariantMode === 'formula' && message?.variantSourceOutfit
-    const presentation = buildStylistPresentation(message, outfits, messageIndex)
-    const responseSections = buildResponseSections(outfits, presentation)
+    // Counts describe the whole response, not the rendered slice — `outfits` is truncated to
+    // INITIAL_SAVED_OUTFIT_COUNT while the "Show N more outfit results" disclosure is collapsed,
+    // and deriving the header/section counts from it made "N looks" change when the user expanded
+    // it (and put "2 LOOKS" above cards the server had badged "1 OF 3"). Same invariant E9 fixed
+    // between the chat header and the thread rail: one count, one meaning.
+    const presentation = buildStylistPresentation(message, allOutfits, messageIndex)
+    const responseSections = buildResponseSections(outfits, presentation, allOutfits)
     const tripNotes = getTripPlanNotes(outfits)
-    const tripOverviewRows = getTripPlanOverviewRows(tripNotes)
+    const tripOverviewRows = getTripPlanOverviewRows(tripNotes, outfits)
 
     return (
       <div className="stylist-response-shell">
@@ -2967,14 +3017,14 @@ export default function StylistChat({
                   </summary>
                   <div className="stylist-outfit-reason-body">
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                      {outfit.reason}
+                      {isBrokenCard && !STYLIST_DEBUG_ENABLED ? stripEngineRejectionSuffix(outfit.reason) : outfit.reason}
                     </div>
-                    {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (
+                    {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 6 }}>
                         <strong>Watch:</strong> {outfit.watchFor}
                       </div>
                     )}
-                    {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (
+                    {Array.isArray(outfit.systemFlags) && outfit.systemFlags.length > 0 && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
                       <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
                         {outfit.systemFlags.map((flag, flagIndex) => (
                           <div key={`${flag.type || 'note'}-${flagIndex}`} style={{ fontSize: 12, color: 'var(--text-light)', lineHeight: 1.4 }}>
@@ -5224,14 +5274,9 @@ export default function StylistChat({
                 if (m.role === 'assistant' && multi) {
                   const hasStructuredIdeas = Array.isArray(m.structuredOutfits) && m.structuredOutfits.length > 0
                   const isPreviewResponse = hasStructuredIdeas && m.structuredOutfits[0]?.previewOnly
-                  const compactIntro = getCompactOutfitIntro(m, hasBoards)
                   return (
                     <div className={`ai-message ${m.role}`} style={{ padding: '12px 14px' }}>
-                      {isPreviewResponse ? (
-                        <MarkdownMessage text={m.text} />
-                      ) : compactIntro ? (
-                        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.45 }}>{compactIntro}</p>
-                      ) : null}
+                      {isPreviewResponse ? <MarkdownMessage text={m.text} /> : null}
                       {m.queryOptions && !hasStructuredIdeas && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '8px 0 12px' }}>
                           {m.queryOptions.occasion && (
@@ -5270,6 +5315,24 @@ export default function StylistChat({
                         <div style={{ marginTop: 10 }}>
                           <MarkdownMessage text={m.text} />
                         </div>
+                      )}
+                      {/* Structured responses used to render only their cards, so the model's own
+                          written answer never appeared: plan / whole-wardrobe replies fell through
+                          every branch, and the rest were covered by a canned "Outfit ideas for X…"
+                          line (since removed) that stood in for the answer. That prose is the
+                          substance — the declared constraint ("6 looks, 3 pairs of shoes"), the
+                          piece roster, the budget verdict, per-look rationale, and the levers for
+                          changing any of it. Rendered below the cards, not above, so comparison
+                          imagery still leads per the ratified image-first ruling.
+                          Two exclusions: previewOnly responses already render m.text in full above,
+                          and engine field dumps (see isEngineFieldDump) are not prose at all. */}
+                      {hasStructuredIdeas && !isPreviewResponse && String(m.text || '').trim() && !isEngineFieldDump(m.text) && (
+                        <details className="stylist-plan-notes" open>
+                          <summary>Stylist's notes</summary>
+                          <div className="stylist-plan-notes-body">
+                            <MarkdownMessage text={m.text} />
+                          </div>
+                        </details>
                       )}
                       {Boolean(m.debug && (
                         (m.debug.gateExcludedTotal || 0) > 0 ||

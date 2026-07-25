@@ -9742,6 +9742,44 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   -webkit-line-clamp: 2;
 }
 
+/* The model's own prose answer for plan / whole-wardrobe responses. Mirrors the
+   .stylist-outfit-reason disclosure so it reads as part of the same system; body text stays at
+   the V1 reading scale because this is sustained reading, not metadata. */
+.stylist-plan-notes {
+  margin-top: 16px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border-light);
+}
+
+.stylist-plan-notes > summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: var(--type-meta);
+  font-weight: 680;
+  list-style: none;
+  user-select: none;
+}
+
+.stylist-plan-notes > summary::before {
+  content: '›';
+  display: inline-block;
+  margin-right: 7px;
+  color: var(--accent);
+  transform: rotate(0deg);
+  transition: transform 140ms ease;
+}
+
+.stylist-plan-notes[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.stylist-plan-notes-body {
+  margin-top: 10px;
+  font-size: var(--type-body);
+  line-height: 1.66;
+  max-width: 68ch;
+}
+
 .stylist-outfit-reason {
   margin-top: 14px;
   padding: 10px 0 0;

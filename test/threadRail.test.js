@@ -440,3 +440,18 @@ test('Outfit card layout refinement - split chips, saved badge, details teaser, 
   // 6. Verify telemetry details collapse
   assert.match(source, /className="telemetry-details"/i)
 })
+
+test('rail summaries humanize slot ids instead of printing them raw', () => {
+  const mk = labels => ({ id: 't', kind: 'chat', threadMemory: { latestOutfits: labels.map(l => ({ label: l, bestFor: l })) } })
+  // Slot ids reached the subtitle verbatim ("3 looks · outdoor_daytime_social") because neither
+  // the keyword branches nor the fallback split on separators.
+  assert.ok(!getThreadOutcomeSummary(mk(['outdoor_daytime_social'])).includes('_'))
+  assert.match(getThreadOutcomeSummary(mk(['outdoor_daytime_social'])), /outdoor daytime social/)
+  // Normalizing separators exposed a latent alternation bug: /\bgallery|museum|art\b/ parses as
+  // (\bgallery)|(museum)|(art\b), so "sm-art casual" matched "gallery" once the underscore that
+  // had been suppressing the word boundary became a space.
+  assert.match(getThreadOutcomeSummary(mk(['smart_casual_outing'])), /smart casual outing/)
+  assert.doesNotMatch(getThreadOutcomeSummary(mk(['smart_casual_outing'])), /gallery/)
+  // real slot vocabulary still maps to its intended phrase
+  assert.match(getThreadOutcomeSummary(mk(['city_gallery'])), /gallery/)
+})

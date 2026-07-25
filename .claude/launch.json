@@ -30,6 +30,15 @@
         "VITE_PORT=5174 VITE_API_PROXY_TARGET=http://localhost:3098 VITE_STYLIST_DEBUG=true npx vite"
       ],
       "port": 5174
+    },
+    {
+      "name": "sandbox-web-asuser",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "VITE_PORT=5176 VITE_API_PROXY_TARGET=http://localhost:3098 npx vite"
+      ],
+      "port": 5176
     }
   ]
 }
