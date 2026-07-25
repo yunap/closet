@@ -1632,6 +1632,40 @@ rejection+retry, which needs a real, billed model call (the mocked tool-loop can
 same limitation as the earlier "Rust Wrap" dedup verification). Confirmed correct via the new
 unit test's exact real-world piece/reason data instead.
 
+## E1 — critique buries the answer (implemented 2026-07-24)
+
+"Action guidance ('what to change first') renders last, after a dozen diagnostic/score rows"
+(fashion review finding, panel synthesis). Traced to `formatSharedOutfitEvaluation`
+(`styling-engine/core.js`), which builds the collapsed "Full structured read" details behind
+`CritiqueBody`'s toggle. `structuredDetailParts` put diagnostic fields (visible facts, tension,
+scores, roles, style idea, viability, execution gap, main success) first and the actionable
+fields (`firstVisibleIssue`, `recommendation.smallestAdjustment` as `Next:`, `avoidForNow`,
+`tryNext`) dead last — so anyone expanding "Full structured read" for the specific fix had to
+scroll past everything else first. Confirmed this wasn't a one-off: `fallbackFollowupFeedback` a
+few lines below already puts `firstVisibleIssue`/`Next:` first — an "answer first" convention
+already established elsewhere in the same file, just not applied to the main construction.
+
+Note: `critiqueProse` (the always-visible text above the collapsed toggle) is separately
+instructed by the system prompt to already synthesize the recommendation in natural voice
+("Write critiqueProse LAST... it is the only part the user reads by default, so it must stand
+alone" — `styling-engine/prompts.js:577`). This fix is specifically about the *expanded*
+structured-detail view, for whoever opens it looking for the specific fix in field form, not a
+claim that the always-visible prose itself was broken.
+
+**Fix:** reordered `structuredDetailParts` so `First visible issue:` and the three
+recommendation fields (`Next:`, `Avoid for now:`, `Try next:`) lead the list, ahead of the
+supporting diagnostic dump. No other fields' relative order changed.
+
+**Verification:** `npm run build` passed. Full `node --test` suite passed with no new failures
+(782/789, same 7 pre-existing unrelated failures as baseline). Extended the existing "saved
+outfit cards use the shared wardrobe evaluator with linked garment images" regression test with
+explicit ordering assertions (`First visible issue:` before `Next:` before `Visible facts:`
+before `Scores:`), using the same realistic mock evaluation shape already exercised there — no
+new fixture needed. **Not live-verified in the sandbox** — mock AI mode returns canned text for
+critiques ("Mock sandbox critique: WARDROBE_MOCK_AI is on...") rather than real structured
+evaluation data, so this specific ordering isn't observable there; confirmed via the unit test
+exercising the real `formatSharedOutfitEvaluation` function through the actual endpoint instead.
+
 ## Outstanding issues — before re-assembling the expert panel
 
 Consolidated list of what's still open, so the panel re-review targets real gaps rather than
@@ -1648,11 +1682,9 @@ already-fixed ground. Everything above this point in the document is owner-teste
    was already fixed in the taxonomy-unification pass above; that fix is real but was proven to
    have no currently-observable effect, since nothing reads it for already-saved boards. This
    item is the actual visible mismatch, still open.)
-2. **E1 — critique buries the answer.** Action guidance ("what to change first") still renders
-   last in the structured critique, after a dozen diagnostic/score rows. Not started.
-3. **E9 — unstable "N looks" counts.** Needs root-cause diagnosis before any fix; explicitly
+2. **E9 — unstable "N looks" counts.** Needs root-cause diagnosis before any fix; explicitly
    excluded from the earlier small-mechanical-batch pass for that reason. Not started.
-4. **E10 — lossy thread-rail subtitles.** Critique/variant/evaluate all compress to similar,
+3. **E10 — lossy thread-rail subtitles.** Critique/variant/evaluate all compress to similar,
    hard-to-distinguish subtitles in the history rail. Needs diagnosis. Not started.
 
 **Resolved, not open:**
@@ -1667,3 +1699,5 @@ already-fixed ground. Everything above this point in the document is owner-teste
   reasons, crud.js sync correctness) is ratified.
 - Message-level feedback under plain text — removed entirely, ratified.
 - Diagnostic-card disclaimer specificity + double-card dedup broadening — implemented, ratified.
+- E1 (critique buries the answer) — implemented, ratified: the actionable answer now leads the
+  collapsed "Full structured read" details instead of trailing the diagnostic dump.
