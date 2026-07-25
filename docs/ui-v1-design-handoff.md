@@ -1969,6 +1969,34 @@ already-fixed ground. Everything above this point in the document is owner-teste
   still correctly separates "Outfit critique" and "Creative alternatives" as distinct child rows
   under the same "with my camera" subject).
 
+**Deliberately not built / by design — not defects, do not re-file:**
+
+This list exists because the *Resolved, not open* list above only covers things that were built
+and then decided; it says nothing about absences that look like bugs but are either intentional
+behaviour or simply never built. That gap let the same four non-defects get independently
+rediscovered and reported as bugs four times in one working session (2026-07-25) before anyone
+wrote them down in one place. If a panel or a future session finds an absence that isn't on this
+list, that is a real finding — but check here first.
+
+- **"City stroll" implying comfortable walking shoes.** Owner ruling 2026-07-25: by design. A slot
+  described as a city stroll should get walking-suitable footwear; the inference already fires
+  only on the `smart_casual_outing` slot whose `bestFor` names it, not on the other four slots.
+  Full trace in `docs/stylist-bugfix-spec.md`.
+- **One shoe carrying 7 of 8 looks in a 14-piece capsule.** Diagnosed, not a variety failure: the
+  budget buys exactly 3 shoe slots (`capsuleQuotas`), one of which the register-floor guarantee
+  spends on an evening-capable shoe. Correct behaviour given the current shoe-quota math. The
+  underlying "is 3 shoe slots the right number for a 14-piece capsule" question is still open —
+  see item 2 above (plan outfit cap) — but the 7-of-8 distribution itself is not a bug.
+- **Plans not absorbing their own revisions.** Never built. Ask a plan for a change and the
+  revision arrives as a separate `proposed` card beside the plan rather than folding in — a second
+  cost of the same gap is that a revised plan gets progressively harder to find in the thread rail
+  the more it's refined, since the rail summarises from only the latest turn's outfits. Judge
+  whether the merge *should* exist; its absence is not itself a defect to report. Full detail in
+  `docs/stylist-bugfix-spec.md`.
+- **Garment IDs in stylist prose** — also listed under *Resolved, not open* above; repeated here
+  because it is the paradigm case (an absence-of-obfuscation that reads as an internals leak but is
+  a deliberate, requested disambiguation mechanism).
+
 ## Stylist bugfix spec cleanup (implemented 2026-07-24, see `docs/stylist-bugfix-spec.md`)
 
 Defect cleanup pass from a fresh expert-panel review, done as its own spec so the *next* panel

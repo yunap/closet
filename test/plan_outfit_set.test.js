@@ -213,6 +213,45 @@ test('model plan slot workbench reports suppressed pieces from the generation ga
   assert.ok(suppressedCount > 0, `suppressed note should report gated pieces, got "${workbench.slots[0].suppressed_note}"`)
 })
 
+// Weather provenance was invisible and inconsistent: a live forecast got a
+// "(live forecast)" marker, but a heuristic guess — whether the coarse
+// hot/cold/mild descriptor or the model's own free-text weather guess — got no
+// marker at all, so both read with identical confidence in the plan lines the
+// owner sees. Only the live branch should ever look authoritative.
+test('plan slot weather label marks a heuristic guess as an estimate, not a live forecast', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'weather label top', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'weather label pants', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'weather label shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+
+  // No location/date resolves, so this is the generic-heuristic branch (falls
+  // back to the coarse hot/cold/mild descriptor).
+  const genericSlots = normalizePlanSlots([{ label: 'Desert Day', occasion: 'casual', activity: 'none', count: 1 }])
+  const genericWorkbench = await buildPlanSlotWorkbench(genericSlots, { allPieces, question: 'a desert day' })
+  assert.match(genericWorkbench.slots[0].weather_used, /\(estimated\)$/, `generic heuristic weather should be marked as an estimate, got "${genericWorkbench.slots[0].weather_used}"`)
+
+  // Still heuristic (no location), but the model supplied its own weather
+  // guess in prose — this is exactly the Tucson-plan case from the bugfix
+  // spec: specific-sounding numbers with nothing behind them but the model's
+  // own knowledge, previously indistinguishable from a real forecast.
+  const wordedSlots = normalizePlanSlots([{ label: 'Desert Day', occasion: 'casual', activity: 'none', count: 1 }])
+  wordedSlots[0].season = 'hot, highs 100-105F, sunny'
+  const wordedWorkbench = await buildPlanSlotWorkbench(wordedSlots, { allPieces, question: 'a desert day' })
+  assert.equal(wordedWorkbench.slots[0].weather_used, 'hot, highs 100-105F, sunny (estimated)', 'model-guessed weather text must also be marked as an estimate')
+
+  // A real live forecast still gets its own distinct marker, not "(estimated)".
+  const liveSlots = normalizePlanSlots([{ label: 'Coastal Day', occasion: 'casual', activity: 'none', count: 1, location: 'Cambria, CA' }])
+  const liveWorkbench = await buildPlanSlotWorkbench(liveSlots, {
+    allPieces,
+    question: 'a coastal day',
+    dateRange: { start: '2026-08-01', end: '2026-08-01' },
+    fetchImpl: makePlanFetch()
+  })
+  assert.match(liveWorkbench.slots[0].weather_used, /\(live forecast, Cambria, CA\)$/, `live forecast should keep its own marker, got "${liveWorkbench.slots[0].weather_used}"`)
+  assert.doesNotMatch(liveWorkbench.slots[0].weather_used, /\(estimated\)/, 'live forecast must not also carry the heuristic estimate marker')
+})
+
 test('model plan slot workbench force-includes a shared anchor that would fall past the cap', async () => {
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'bottom', name: 'anchor cap pants', occasions: ['city'], formality: 'everyday' })

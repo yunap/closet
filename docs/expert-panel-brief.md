@@ -143,14 +143,43 @@ The current Stylist set, as a worked example:
    should have told the user 14 pieces is too tight, so I'm limiting the shoes."* It did. The
    surface built to present plans threw it away.
 
-   So the question is not whether plans should explain themselves. It is: **what made a surface
-   designed to present a stylist's answer treat that answer as discardable?** Structured cards were
-   assumed to be the whole result, and the prose to be a preamble. Is a card grid the right
-   container for styling advice at all, or does it systematically privilege what is enumerable over
-   what is reasoned? The same instinct produced the roster, budget verdict, and trim notices being
-   computed and still not shown.
+   So the question is not whether plans should explain themselves. It is: **is a card grid the
+   right container for styling advice at all, or does it systematically privilege what is
+   enumerable over what is reasoned?** The same instinct left the roster, budget verdict, and trim
+   notices computed and still unshown.
+
+   **The capsule is also open for redesign — say what you would do.** Its quotas are not defended:
+   `capsuleQuotas` gives a 14-piece budget 5 tops / 5 bottoms / 1 dress / 0 outerwear / 3 shoes,
+   and `planTotalOutfitCapForBudget` caps the result at 8 outfits (any budget from 12 to 23 gets
+   the same 3 shoes; the cap only rises at 18, 24 and 30). The owner has decided the *approach* —
+   split the cap by plan shape, so a trip is bounded by days and a capsule by combinatorial reach —
+   and deliberately left the *number* open pending what real capsule practice actually promises for
+   an N-piece capsule. That question is yours: what should a 14-piece summer capsule deliver, on
+   what axis, and is a piece budget even the right thing for an owner to specify? Answer from how
+   capsule wardrobes are actually built, not from this code.
 8. Spending a conversational turn on a clarifying question — and a live weather lookup — before
    producing a plan is worth the delay it costs.
+9. **Scaffolding needs a stopping rule, and this product does not have one.**
+
+   The Stylist is meant to be a stylist who knows the owner's wardrobe — familiar with their
+   preferences without being mechanically bound by them. On top of the model sits a growing layer
+   of structure: trip and capsule planners with slot systems, piece budgets and outfit caps;
+   per-slot weather resolution; register ceilings; activity profiles; hard validity gates; and
+   structured cards as the response format. Each was added because it made one use case
+   demonstrably better. None can be removed casually. And no finite set of them can anticipate the
+   use cases nobody has thought of yet.
+
+   `AGENTS.md` already draws a line: *"Code constrains, the model judges. Deterministic code
+   enforces hard constraints from structured data. The LLM performs aesthetic judgment. A keyword
+   rule that encodes taste is in the wrong layer."* Some existing structures are verifiable physics
+   (weather, garment-ID validation); others encode judgment (register ceilings, piece budgets,
+   outfit caps). The question is whether that line sits where it should — and, harder, what test
+   tells you a **proposed** structure falls on the wrong side of it *before* it is built.
+
+   **Open question — answer with a decision rule, not an opinion.** What test should this product
+   apply to a proposed new structure to decide whether it belongs in deterministic code, in the
+   prompt, or nowhere at all? And what are the observable signs that scaffolding has begun to cost
+   more than it returns? Draw your evidence from the artifacts rather than from this framing.
 
 **Settled, with rationale — do not spend a slot on it.** *Proposing pieces the owner does not own
 is a legitimate stylist function, not a shopping feature in disguise.* Owner ruling, 2026-07-24:
@@ -215,10 +244,13 @@ rediscovering them. Check generation dates against the most recent relevant chan
 handing anything over. Building deliberate scenarios costs real model spend — that is an argument
 for doing it once, carefully, not for skipping it.
 
-**Exclusion list, verbatim.** Copy the *Resolved, not open* list from
-[`ui-v1-design-handoff.md`](ui-v1-design-handoff.md)'s **Outstanding issues** section directly
-into the packet. Do not paraphrase it. That section exists precisely so a panel targets real
-gaps, and paraphrasing it once already inverted it.
+**Exclusion list, verbatim.** Copy both the *Resolved, not open* list and the *Deliberately not
+built / by design* list from [`ui-v1-design-handoff.md`](ui-v1-design-handoff.md)'s **Outstanding
+issues** section directly into the packet. Do not paraphrase either. The first section exists
+precisely so a panel targets real gaps, and paraphrasing it once already inverted it; the second
+exists because that same list of decided things said nothing about absences that look like bugs
+but are intentional or simply unbuilt — a gap that let four such non-defects get independently
+rediscovered and reported as bugs four times in one working session before anyone wrote them down.
 
 **Rulings come with rationale, and are challengeable.** A reviewer may argue a ratified decision
 is wrong; they must say so explicitly and give the reasoning, not smuggle a reversal into a
@@ -237,6 +269,11 @@ working**, separately, each with its user-task consequence.
 
 Mode B reviewers return a **position per proposition**, each with its counter-argument and its
 falsification condition, plus any product bet they think is missing from the list.
+
+Where a proposition carries an **open redesign question** (marked as such in its text), answer it
+with a concrete recommendation and the reasoning behind it — not only a position on the existing
+behaviour. Those are the places the owner has already decided the current shape is wrong and wants
+outside judgment on what replaces it, drawn from practice rather than from this codebase.
 
 The implementing agent synthesizes agreement, reports genuine disagreement to Yuna rather than
 resolving it silently, and records the owner-reviewed outcome in
