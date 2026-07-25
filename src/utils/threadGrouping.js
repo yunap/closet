@@ -209,6 +209,7 @@ function compactOutcomePhrase(value = '') {
   if (/\b(gallery|museum|art)\b/.test(v)) return 'gallery'
   if (/\berrands?\b/.test(v)) return 'errands'
   if (/\bmarket\b/.test(v)) return 'market'
+  if (/\bnature\b/.test(v) && /\b(walk|walking|stroll)\b/.test(v)) return 'nature walk'
   if (/\b(city|walking|walk|stroll)\b/.test(v)) return 'city walk'
   if (/\b(controlled|polished|elevated)\b.*\bedge\b|\bedge\b/.test(v)) return 'polished edge'
   return v

@@ -455,3 +455,14 @@ test('rail summaries humanize slot ids instead of printing them raw', () => {
   // real slot vocabulary still maps to its intended phrase
   assert.match(getThreadOutcomeSummary(mk(['city_gallery'])), /gallery/)
 })
+
+test('nature_walk keeps its own phrase instead of collapsing into city walk', () => {
+  const mk = labels => ({ id: 't', kind: 'chat', threadMemory: { latestOutfits: labels.map(l => ({ label: l, bestFor: l })) } })
+  // Underscore-to-space normalization turned "nature_walk" into "nature walk", which then matched
+  // the generic /\b(city|walking|walk|stroll)\b/ branch and printed "city walk" — semantically
+  // wrong in the rail (a real nature hike/stroll reading as an urban outing).
+  assert.match(getThreadOutcomeSummary(mk(['nature_walk'])), /nature walk/)
+  assert.doesNotMatch(getThreadOutcomeSummary(mk(['nature_walk'])), /city walk/)
+  // plain city/walking vocabulary still collapses to city walk
+  assert.match(getThreadOutcomeSummary(mk(['city_stroll'])), /city walk/)
+})

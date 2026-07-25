@@ -420,8 +420,13 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
     return { profile, label: `${descriptor} (live forecast${where})` }
   }
   // Heuristic: prefer the user's own weather phrasing when they gave one, since
-  // it is more informative than the coarse hot/cold/mild descriptor.
-  return { profile, label: isGenericSeason(slot.season) ? descriptor : slot.season }
+  // it is more informative than the coarse hot/cold/mild descriptor. Either way
+  // mark it as an estimate — this label previously looked exactly as
+  // authoritative as the live-forecast label above even though nothing here
+  // came from a real forecast, so the owner had no way to tell a live lookup
+  // from the model's own guess.
+  const heuristicLabel = isGenericSeason(slot.season) ? descriptor : slot.season
+  return { profile, label: `${heuristicLabel} (estimated)` }
 }
 
 const REUSE_MODES = new Set(['maximize', 'diversify', 'none'])
