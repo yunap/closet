@@ -1,8 +1,8 @@
 # App surface map
 
-**Status:** first pass complete, 2026-07-26. 28 entries covering every route, tab, mode-split and
-dialog group found by `scratch/derive_surface_skeleton.js`. Thin spots are listed at the bottom
-rather than hidden. Owner review welcome — an entry that reads wrong probably *is* wrong.
+**FORMAT SAMPLE — three entries only.** Written 2026-07-26 for the owner to react to before the
+remaining ~30 are filled in. If the format works, the first full slice is Stylist + Visual Lab +
+Settings (~15 entries), then Wardrobe, Lookbook, import, auth and admin.
 
 ## What this is for
 
@@ -251,32 +251,6 @@ plan: a header, an overview block, then looks grouped by slot.
 
 ---
 
-## Stylist → response chips and the thread header
-
-**How you get there.** The chip row under each structured reply, and the subtitle beside the page
-title.
-
-**What actually happens.**
-
-- **[by design] The chips are the brief, played back.** Occasion, season, style direction, activity,
-  *New-piece ideas*, *Wardrobe only* — drawn from the reply's stored `queryOptions`, deduplicated,
-  capped at four. They are a record of what the request was interpreted as, which is the only place
-  that interpretation is visible.
-- **[by design]** Activity is shown **only when it is not `none`**, so a chip row without one means
-  no activity gate was applied. Absence is information here.
-- **[owner check wanted]** Because unset selectors still carry their defaults, a freeform ask
-  displays chips it never chose — most visibly `Casual` on a capsule request. The chips look like a
-  summary of your intent and are partly a summary of untouched form state.
-- **[by design]** The header subtitle counts **exchanges** — `ceil(chatHistory.length / 2)`, i.e.
-  user/assistant pairs — and only on wardrobe-level threads, not ones anchored to a piece or
-  outfit. The piece count beside it is the whole wardrobe, not what the stylist can currently see;
-  the recency memory can be skipping a large share of it (see the composer footer entry).
-
-> **Stores.** `message.queryOptions`; `getResponseChips` (`StylistChat.jsx:1726`); subtitle at
-> `:5078`.
-
----
-
 ## Stylist → thread rail (chat history)
 
 **How you get there.** The left column of the Stylist page. On mobile it is a drawer behind
@@ -315,86 +289,8 @@ question.
 line, rather than collapsing to the empty "Ask anything" hero. The clicked action re-labels itself
 (*Reviewing…*, *Finding similar looks…*). **Back to chat** stays enabled as an escape hatch.
 
-**[by design] The panel footer is a memory control, and it is the only one in the app that shows
-its own state and offers a reset.** It reads *"Skipping N recently used pieces · **Include them
-again**"*. Whole-wardrobe generation keeps a **session recency memory** so repeated asks do not
-return the same garments; that memory both **penalises** recently used pieces in scoring and
-**reorders** the roster (`sessionInfluence.pieceRecency`, `styling-engine/rules.js:2836`, `:2967`).
-
-This matters for two reasons:
-
-- **It silently narrows the pool.** In the screenshotted state, 10 of 23 pieces were being skipped —
-  the model was composing from 13. Nothing else in the app tells you a memory is shrinking what the
-  stylist can see, and the count is easy to read past.
-- **It is the model for what other memory surfaces lack.** Compare it with taste memory, which
-  reaches every prompt and never announces itself. This footer names the mechanism, quantifies its
-  effect, and gives a one-click undo. Any *"make the calibration loop perceivable"* work should copy
-  this pattern rather than invent one.
-
-> **Stores.** `whole_wardrobe_sessions`. `GET /api/ai/whole-wardrobe-session-memory` returns the
-> summary (`itemCount`, `formulaCount`, `recentSessionCount`); `DELETE` clears the table and is what
-> *Include them again* calls. Refreshed after each whole-wardrobe generation.
-> `StylistChat.jsx:4799`, `:1369`, `:3989`; `routes/ai.js:1291-1300`.
-
 > **Stores.** Panel state is component-level; the resulting brief becomes the first user message
 > and `queryOptions` on the reply. `StylistChat.jsx:578-597`.
-
----
-
-## Stylist → the brief controls, and what each one actually does
-
-**How you get there.** The **Shape the brief** row on any composer landing panel: *Occasion*,
-*Activity*, *Season*, *Style direction*, plus free-text *Mood* and *Styling request*.
-
-**Why this has its own entry.** They present as five equivalent dropdowns. They are not — two are
-**hard gates** that remove garments from consideration, and the rest are soft. Nothing in the UI
-distinguishes them, and a reviewer looking at the panel cannot tell which is which.
-
-| control | what it does | strength |
-|---|---|---|
-| **Occasion** | selects an occasion profile, which sets the **register ceiling** — garments above it are excluded outright | **hard gate** |
-| **Activity** | `No special activity` / `Lots of walking` / `Hiking / Outdoor active` — the walking and hiking profiles exclude heel heights and low walk-support outright, and impose their own `everyday` register ceiling | **hard gate, the strongest control here** |
-| **Season** | eight values from *Current season* to *Very hot/cold weather*; drives the weather gate (insulating fibres in heat, bare pieces in cold) | **hard gate** |
-| **Style direction** | `Mix` plus six named lanes (*Controlled Print*, *Monochrome Texture*, *Structured + Soft*, *Color Anchor*, *Unexpected Pairing*, *Soft Architecture*) | **soft** — lanes are open and never gatekept |
-| **Mood**, **Styling request** | free text, folded into the prompt; also scanned for activity and register hints | soft, but see below |
-
-**[by design]** The comment above `ACTIVITY_OPTIONS` states the rule the list follows: *"Only
-values with real enforcement appear here."* So every activity in that dropdown hard-gates
-something — the list is short because it is honest.
-
-**[by design]** Free text is not inert. Mood and request text are scanned for activity and register
-implications, which is why *"city stroll"* in a slot description can install the walking profile.
-Ruled correct: a stroll should get comfortable shoes.
-
-**[owner check wanted]** `Occasion` defaults to **Casual**, and a freeform ask that never touches
-the selector still carries it — so a request like *"build me a 14-piece summer capsule"* is labelled
-`Casual` in the response chips. On plans the per-slot occasion governs the actual gating, so the
-default is mostly cosmetic there; on single-outfit asks it is not.
-
-> **Stores.** `queryOptions` on the reply message. `OCCASION_OPTIONS` (`:88`), `ACTIVITY_OPTIONS`
-> (`:98`), season sets (`:104`, `:116`), `STYLE_DIRECTION_OPTIONS` (`:125`). Profiles resolved in
-> `styling-engine/occasions.js` and `styling-engine/footwear-comfort.js`.
-
----
-
-## Stylist → weather location
-
-**How you get there.** Top right of the Stylist header: *Weather location · `<city>`* with a
-dropdown holding a free-text field.
-
-**What actually happens.** **[by design]** This is the home city used to resolve a **live forecast**
-when a request needs weather and no destination is given. It is one input box in a header, and it
-determines whether the plan you get is built against real conditions or an estimate.
-
-**[by design]** When a request names a destination, that wins — the wedding plan resolved
-`(live forecast, South Lake Tahoe, CA)` regardless of home location. When it does not, and the home
-city is set, the forecast comes from here.
-
-**[by design]** A resolved forecast is marked `(live forecast, City)`; a heuristic guess is marked
-`(estimated)`. The distinction is visible in the plan lines.
-
-> **Stores.** Saved to the user profile via the header control (`StylistChat.jsx:5103-5130`). Used
-> by `resolveSlotWeather` (`styling-engine/outfitSetPlanner.js`).
 
 ---
 
@@ -506,62 +402,12 @@ not a gallery.
   the model as *"high-authority outfit memory"* and bias ranking.
 - **[by design] Feedback given here reaches the model in full** — verdicts and specific reasons, in
   plain language. Traced; see the board-feedback entry above.
-- **[by design] Wrong-length feedback creates work, not just memory.** Marking **A garment is the
-  wrong length** opens a two-step capture — *which garment?* then *what was wrong?* (sleeves too
-  long/short, hem too long/short, pants-skirt-dress too long/short) — and each correction writes a
-  **retag-suggestion task** into Wardrobe → Tasks, linked to the garment and naming the field to
-  review. The sheet states at the point of capture that nothing is retagged automatically. This is
-  the one place a judgement about a *rendered image* turns into a concrete, garment-linked
-  to-do — see the Tasks entry for the full lifecycle, including that completed suggestions are
-  never regenerated.
 - **[known bug → `docs/board-feedback-desync-spec.md`]** The same board's chips will not match what
   the Stylist chat shows for it.
 
 > **Stores.** `saved_boards.payload.feedback_labels` / `.feedback_details` via
 > `PATCH /api/saved-boards/:id`; `favorite` carries *Use strongly*. Read to the model by
 > `getSavedBoardMemory`. `VisualLab.jsx:662-666`, `:781-784`.
-
----
-
-## Visual Lab → Calibration board detail sheet
-
-**How you get there.** **Review board →** on any card.
-
-**What you are doing.** Judging one board in depth: verdict first, then optional diagnosis, then
-deciding what the board is *for*.
-
-**What actually happens.** **[by design]** Verdict-first with progressive disclosure. The overall
-verdict is mutually exclusive and re-selectable; specific diagnosis sits behind **Add specific
-feedback**, which auto-opens only when such feedback already exists. Three labelled groups, and the
-separation is deliberate:
-
-- **What feels wrong?** — styling direction
-- **Fit and shape** — proportion and silhouette
-- **Problems in the generated image** — prefaced *"These report rendering accuracy only. The outfit
-  direction can still be useful."* A bad render must not be recorded as a bad direction.
-
-**[by design] Three status actions, all reversible, none of them deletion:**
-
-| action | effect |
-|---|---|
-| **Use strongly** / Use normally | marks the board `favorite`; it becomes high-authority outfit memory in the prompt |
-| **Hide from Lookbook** / Show | `hidden_from_lookbook` — presentation only |
-| **Ignore board** / Restore | `archived` — **excluded from every memory query**, so the model stops seeing it entirely |
-
-**[by design]** *Ignore* is the strong one: archived boards are filtered out of the queries that
-build stylist memory, so it is the only control here that removes a board from the model's view.
-*Hide* only affects where it appears.
-
-**[by design] View generating chat** jumps back to the thread that produced the board, when one
-exists. **Delete board** is separate, styled as destructive, and confirms with *"Delete … from
-everywhere?"*.
-
-**[by design]** Saving shows `Saving…` / `Feedback saved` / error through a polite live region, and
-controls disable while a write is in flight.
-
-> **Stores.** `saved_boards` via `PATCH /api/saved-boards/:id` — `favorite`,
-> `hidden_from_lookbook`, `archived`, `feedback_labels`, `feedback_details`. Memory queries filter
-> `COALESCE(archived,0) = 0` (`styling-engine/rules.js:611`). `VisualLab.jsx:909-929`, `:967-978`.
 
 ---
 
@@ -605,38 +451,6 @@ catalogue or a gallery.
 
 ---
 
-## Wardrobe → sort, and what "styled" means
-
-**How you get there.** The **Sort:** control in the Wardrobe toolbar. Default is **Balanced mix**.
-
-**What actually happens.** **[by design] The vocabulary is deliberately precise and the precision is
-the point.** Every label says *styled*, never *worn*:
-
-| label | sorts by |
-|---|---|
-| **Balanced mix** *(default)* | `wardrobeMixSort` — a deliberate spread rather than any single axis |
-| **Recently added** | `date_added` |
-| **Recently styled** | last time the app used the piece in a look |
-| **Most styled** | how many times the app used it |
-| **Ready to rediscover** | fewest uses first, oldest last-use as tiebreak |
-| **Name A–Z** | name |
-
-**[by design]** The source comment states the reason outright: usage counts reflect *"app usage,
-not real-world wear — the app has no way to observe that."* So *Most styled* means the stylist
-reached for it often, not that you wore it often, and *Ready to rediscover* surfaces what the
-**engine** has been neglecting.
-
-That is a quiet but real product position: the app refuses to claim knowledge it does not have.
-Worth protecting — a future "Most worn" label would be a lie the codebase currently avoids telling.
-
-**[by design]** `Balanced mix` is the default and is not a sort in the ordinary sense; it is a
-spread. It was flagged for reconsideration only if usability testing showed the meaning unclear.
-
-> **Stores.** `usageStats` derived from outfit and board links, not from any wear log.
-> `PieceInventory.jsx:40-46`, `:205-228`.
-
----
-
 ## Wardrobe → garment detail, edit, add, Tasks
 
 **How you get there.** Click a card (detail) → **Edit**; **Add pieces** from the header; **Tasks**
@@ -660,69 +474,6 @@ scope:
 
 > **Stores.** `pieces` and its upload/thumbnail pipeline. Rulings in `ui-v1-design-handoff.md` →
 > *Wardrobe garment-detail ruling*, *Wardrobe Edit Piece direction*, *Wardrobe Add Piece direction*.
-
----
-
-## Wardrobe → Tasks
-
-**How you get there.** The **Tasks** chip in the Wardrobe header, carrying a count badge of
-incomplete items. A modal, deliberately **not** URL-backed — it opens fresh each visit rather than
-being linkable.
-
-**What you are doing.** Working a queue of wardrobe chores, grouped into five types:
-**repair**, **donate**, **shopping**, **metadata**, and **retag-suggestion**.
-
-**What actually happens.**
-
-- **[by design] Two of the five types are machine-generated, and this is the app's main
-  garment-data repair loop.** `repair`, `donate` and `shopping` you create. The other two arrive on
-  their own:
-
-  **`retag-suggestion` — created from Visual Lab board feedback.** When you mark a rendered board
-  as **A garment is the wrong length**, the detail sheet asks *which* garment and *what was wrong*
-  (sleeves too long/short, hem too long/short, pants-skirt-dress too long/short). Saving that
-  writes one task per correction: *"Retag suggested for `<garment>`: `<issue>`. Review the garment
-  metadata; no tags were changed automatically."* The task carries the garment link and the
-  **field** to review — `sleeve_type` for sleeve issues, `length_hits_at` for hem issues. Nothing
-  is retagged automatically, by design, and the sheet says so at the point of capture.
-
-  **`metadata` — created by the hard gates themselves, when one excludes a garment for missing
-  data.** All of these fire inside `buildVisualComposerRoster`, i.e. while assembling the roster the
-  model is allowed to compose from — so the task is written at the moment the garment is silently
-  dropped from consideration. Three gates do it:
-
-  | gate | missing field | wording |
-  |---|---|---|
-  | **register** | `formality` | *"…missing formality — retag to restore register-gated visibility"* |
-  | **activity** | `footwear-comfort` | *"…missing footwear-comfort — retag to restore activity-gated visibility"* |
-  | **weather** | whichever field the weather gate needed | *"…missing `<field>` — retag to restore weather-gated visibility"* |
-
-  This is the queue's most useful property and it is invisible from the UI: **the Tasks list is
-  partly a record of which garments the engine could not consider, and why.** A garment missing
-  `formality` is not merely under-tagged — it is being excluded from register-gated composition
-  every time, and the task is the only place that surfaces. Deduplicated against open tasks for the
-  same piece and field, so a repeatedly-excluded garment produces one task, not one per generation.
-
-- **[by design] Resolution is a plain done-toggle, and it is remembered.** `PATCH
-  /api/todos/:id/toggle` flips `completed`. For retag suggestions this matters more than it looks:
-  each time a board's feedback changes, the sync **deletes and rebuilds that board's incomplete
-  suggestions** — but first collects the `piece:issue` pairs you already completed and skips them.
-  So a suggestion you have dealt with never comes back, while ones you have not are kept current
-  with the board.
-- **[by design]** Tasks link back to a garment: clicking one closes the modal and opens that
-  garment's detail — so "review the metadata" is one click from the suggestion.
-- **[by design]** Generated `metadata` tasks are swept rather than accumulating —
-  `POST /api/todos/clear-orphaned` deletes any whose linked piece is gone or no longer active. Only
-  `metadata` is swept; user-created and retag tasks are never auto-deleted.
-- **[owner check wanted]** This surface never received the dialog audit the other modals did. It
-  uses a plain overlay with click-outside-to-close, and has not been checked for focus trapping,
-  Escape handling, or focus return. It is the one modal in the app outside the ratified dialog
-  contract.
-
-> **Stores.** `todos` (`type`, `description`, `linked_piece_id`, `field`, `source_type`,
-> `source_id`, `payload`). Endpoints `GET/POST /api/todos`, `POST /api/todos/clear-orphaned`,
-> `PATCH /api/todos/:id/toggle`, `DELETE /api/todos/:id` (`routes/crud.js:1152-1211`). Badge count
-> via `usePendingWardrobeTaskCount`, shared across mounts so it stays in sync.
 
 ---
 
@@ -752,37 +503,6 @@ would need an explicit owner action and probably a real photo; it must never be 
 
 > **Stores.** `outfits` and `saved_boards`. Rulings in `ui-v1-design-handoff.md` →
 > *Lookbook — My Outfits* and *Generated Outfits panel ruling*.
-
----
-
-## Lookbook → filters, sort and search
-
-**How you get there.** The toolbar above either collection.
-
-**What actually happens.**
-
-- **[by design] Filters are URL-backed** — occasion, season, sort and collection all live in query
-  params, so a filtered view is linkable and survives reload. The Wardrobe Tasks modal deliberately
-  is *not* (it opens fresh); these deliberately are.
-- **[by design] `Pinned first` is an ordering toggle, not a filter.** It reorders; it does not
-  restrict. The label was corrected to match the behaviour after previously reading `Pinned`, which
-  implied filtering it never did. If a true pinned-only collection is ever wanted, **change the
-  behaviour and the label together.**
-- **[by design] Sort is deliberately dull** — newest, oldest, A–Z, Z–A, most pieces, fewest pieces.
-  No wear-based or score-based ordering. Consistent with the Wardrobe ruling that the app does not
-  claim knowledge of real-world wear.
-- **[by design] Piece-count sorting exists here and is deliberately absent from Generated
-  Outfits**, because a generated board mixes owned pieces with ideal additions and the two are not
-  comparable.
-- **[by design] Search covers pieces, not just outfit names**, and the placeholder says so —
-  *"Search outfits or pieces…"*. Honest labelling of a garment-aware search rather than implying
-  a name-only match.
-- **[by design]** Empty states distinguish a genuinely empty collection from a filtered-empty
-  result, each with its own recovery action — *"Save a complete look…"* versus *"Clear the search
-  and filters…"*.
-
-> **Stores.** `outfits` / `saved_boards`, filtered client-side; state in `searchParams`
-> (`OutfitLookbook.jsx:1512-1514`). `SORT_OPTIONS` at `:32`.
 
 ---
 
@@ -816,12 +536,6 @@ is where most people look for "what does my stylist know about me" — and it is
 
 **How you get there.** First run, or `/onboarding?step=<name>` directly.
 
-**[owner note] Onboarding never went through the UI/UX modernisation phase.** Every other surface in
-this map was reviewed and in most cases ratified during the V1 visual work; this one was not. It is
-therefore expected to look and behave older than the rest. **A craft panel should either exclude it
-explicitly or be told this before reviewing it** — otherwise it will produce a long list of
-findings the owner already knows about, at the cost of attention better spent elsewhere.
-
 **What actually happens.** **[by design]** Six steps — `welcome`, `profile`, `comfort`,
 `aesthetic`, `working`, `done` — and the middle four *build the Style Constitution*. This is where
 the layers you later edit in Style profile come from.
@@ -845,106 +559,34 @@ Two rules baked into the flow and worth not breaking:
 upload (folder / ZIP / Google Takeout / video) → analyse (classify → detect → cluster → match) →
 **review** → commit. Nothing enters the wardrobe unreviewed.
 
-**[owner note, 2026-07-26] Video import is prohibitively expensive for what it returns and will
-probably be disabled** — already hidden from users and owner-flagged only. Reviewed before removal
-in case it can be optimised; see outstanding issue on the cost drivers.
-
-**[by design]** Video needs `ffmpeg`; without it videos are skipped and counted separately
-(`videos skipped (no ffmpeg)`) rather than failing silently.
-
-**Why it costs what it does — and the expensive part is not the API bill.** *(Owner, 2026-07-26:
-the real cost is false positives that then have to be looked through and possibly tagged.)*
-
-The pipeline is precision-poor by construction:
-
-- **Sampling is `fps=1`** — one frame **per second** of footage. A two-minute closet walkthrough
-  yields ~120 images before any filtering.
-- **The only automatic filter is a blur check** (`FRAME_MIN_STDDEV = 10`). Nothing deduplicates
-  near-identical consecutive frames, so a slow pan over one rail survives as dozens of near-copies.
-- **Video frames are inherently weak evidence.** A garment glimpsed at an angle, half-occluded, on
-  a rail, in motion — the classifier sees something garment-shaped and proposes it. Each proposal
-  becomes a cluster the owner must judge in the review gate.
-
-**The single most expensive step is AI tagging** — a model call per garment — so spend scales with
-*proposals carried forward*, not with frames. False positives therefore cost twice: once in review
-attention, once in tagging whatever is mistakenly accepted. Optimising tagging would pay off across
-every import path and the wardrobe generally, and may be worth doing before this decision.
-
-So the dominant costs are **owner attention in review** and **tagging**, not classification. A hundred frames producing
-sixty proposals of which a handful are real is expensive even when the model spend is trivial, and
-it gets worse: anything mistakenly accepted then needs tagging, and a badly-tagged garment is
-exactly what the gates exclude silently (see the Tasks entry).
-
-**[unverified] The number that decides this is precision, not yield.** `import_clusters` carries a
-`status` that reaches `accepted` when a cluster becomes a real piece, so **accepted-vs-proposed for
-video-origin sessions is measurable from past imports** — no new video, no model call. If precision
-is low, sampling tuning cannot save it, because the problem is the evidence quality rather than the
-frame count.
-
-> **Stores.** `import_images`, `import_sessions`. `routes/importer.js:100-130` (sampling),
-> `:180-212` (classification, `CLASSIFY_BATCH_SIZE = 10`).
+**[by design]** Video import samples frames and needs `ffmpeg`; without it videos are skipped and
+counted separately (`videos skipped (no ffmpeg)`) rather than failing silently. Video import is
+gated off for users generally — owner-flagged only — on cost/value grounds already decided.
 
 > **Stores.** `pieces` plus the upload pipeline. `WardrobeImport.jsx`, `routes/importer.js`
 > (11 endpoints).
 
 ---
 
-## Auth (`/login`, `/register`)
+## Auth (`/login`, `/register`) and Admin (`/admin`)
 
-**What actually happens.** **[by design]** Multi-user with per-user data: each account gets its own
-SQLite database and uploads directory, and optionally its own provider keys (BYOK). Registration is
-**invite-gated**, not open — you need a minted code, or you submit an invite request an admin
-approves.
+**What actually happens.** **[by design]** Multi-user with per-user data: each user gets their own
+SQLite database, uploads directory, and optionally their own provider keys (BYOK). Admin manages
+**users and invites** — registration is invite-based rather than open.
 
 **[known bug → memory: session cookie cross-tab collision]** Unconfirmed but recorded: one shared
 session cookie may let a stale tab write to the wrong user's database after a second sign-in
 elsewhere. Needs reproduction before fixing.
 
-> **Stores.** `system.db` for accounts, invites and sessions; per-user `wardrobe.db`.
-> `routes/auth.js` (7 endpoints).
-
----
-
-## Admin (`/admin`)
-
-**How you get there.** Admin-flagged accounts only. Replaced what used to be standalone scripts
-(`create-invite.js`, `reset-password.js`).
-
-**What actually happens.** **[by design]** Three sections — **Users**, **Invites**, **Invite
-requests** — with the destructive paths deliberately guarded:
-
-- **Users** — toggle active/suspended status, grant or revoke admin, **revoke all sessions**,
-  approve use of the operator's API key (so a user can run without their own BYOK key), and
-  **delete permanently**. Deletion requires typing the account's email to confirm.
-- **Password reset issues a one-time code** shown once in a dialog, rather than mailing anything or
-  setting a password directly.
-- **Invites** — mint a code, revoke an unused one. Used codes record who consumed them and cannot
-  be revoked.
-- **Invite requests** — approve or decline requests from people without a code.
-
-**[by design]** Every user-facing action here is administrative rather than stylistic — nothing on
-this page touches wardrobes, prompts or memory.
-
-> **Stores.** `system.db`. `routes/admin.js`: `GET /users`, `PATCH /users/:id/status`,
-> `/users/:id/admin`, `/users/:id/operator-key-approval`, `POST /users/:id/reset-password`,
-> `/users/:id/revoke-sessions`, `DELETE /users/:id`, `GET|POST /invites`,
-> `DELETE /invites/:code`, `GET /invite-requests`, `PATCH /invite-requests/:id`.
+> **Stores.** `system.db` for accounts and invites; per-user `wardrobe.db`. `routes/auth.js` (7
+> endpoints), `routes/admin.js` (12).
 
 ---
 
 ## Dialogs — the shared pattern
 
-**Where.** Fourteen dialogs across six components. Each pair is a sheet plus its own full-image
-preview, which is why the counts are mostly even:
-
-| component | dialogs |
-|---|---|
-| `OutfitLookbook` | `OutfitForm` (add/edit), `OutfitDetail` + its image preview, `BoardDetail` + its image preview |
-| `PieceDetail` | garment detail sheet + full-photo preview |
-| `PieceForm` | add/edit sheet + photo preview |
-| `StylistChat` | image lightbox, mobile history drawer |
-| `VisualLab` | calibration detail sheet + full-image preview |
-| `ThreadRail` | mobile drawer |
+**Where.** Fourteen dialogs across six components: `OutfitLookbook` (5), `PieceDetail` (2),
+`PieceForm` (2), `StylistChat` (2), `VisualLab` (2), `ThreadRail` (1).
 
 **What actually happens.** **[by design]** A ratified dialog contract that every one of them is
 expected to meet:
@@ -976,13 +618,13 @@ First pass complete — every route, tab, mode-split and dialog group from
 
 **Known thin spots, listed rather than hidden:**
 
+- **Tasks modal** (Wardrobe) — covered in one line inside the garment-surfaces entry. It never
+  received the dialog audit the others did, so it deserves its own entry once someone looks at it.
+- **Calibration boards detail sheet** — the review workflow is recorded; the detail sheet's own
+  progressive-disclosure structure is summarised rather than described.
+- **Admin** — described from its data (users, invites) rather than from its screens.
 - **Per-endpoint mapping** — 106 endpoints exist; entries name the ones that matter per surface,
-  not all of them. `routes/crud.js` alone has 56.
-- **Onboarding steps** — the six steps are named and the two invariants recorded, but each step's
-  own content is not described.
-- **Import** — the pipeline stages are named; the review-gate UI is not described in detail.
-- **Individual dialogs** — enumerated and their shared contract recorded, but each one's content
-  lives in its parent surface's entry rather than having its own.
+  not all of them.
 
 **To check this map is still true:** `node scratch/derive_surface_skeleton.js`. It lists every
 surface it can find and flags those with no entry. It cannot tell you an entry has gone *wrong* —

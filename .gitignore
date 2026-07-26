@@ -19,4 +19,3 @@ scratch/*
 !scratch/backfill_retagger.js
 !scratch/build_dedup_fix_demo_thread.js
 !scratch/derive_surface_skeleton.js
-!scratch/derive_engine_behaviours.js
