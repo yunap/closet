@@ -460,7 +460,130 @@ sidebar of every screenshot.
 
   **Status: on the issues list, pending the panel.** The panel may conclude the capsule flow
   shouldn't exist in this shape at all, which would make the number moot — so the research and the
-  implementation both wait for Stage 1.
+  implementation both wait for Stage 1. **The research half is now done — see below. The
+  implementation still waits for Stage 1.**
+
+### Research done 2026-07-25 — what the capsule number should be
+
+Two strands: what capsule practice actually publishes, and what this engine can actually produce.
+Measurement script: `scratch/diagnose_capsule_outfit_capacity.js` — runs the real
+`selectCapsuleRoster` plus the real per-slot gate against the 236-piece wardrobe, over the five
+slots from `thread_1784970885986`. Read-only, no model call, no network.
+
+**Method warning, learned the hard way:** the slots handed to `selectCapsuleRoster` must carry
+`targetOutfits`. It feeds `capsuleDemandReserve`, which is what reserves roster places for the
+strictest register tier. A first pass of this script omitted it and every low-register slot came
+out roughly half as capable as the live plan actually is (`casual_city_day` read 2 cores instead
+of 5; whole-plan capacity at budget 14 read 20 instead of 24). Any future capsule diagnostic must
+pass it.
+
+**Measured capacity by budget** (distinct top×bottom-or-dress "cores" across the whole plan —
+shoe swaps re-skin a core rather than making a new look, so they are not counted as capacity):
+
+| budget | roster | naive combos | gate-valid distinct cores | current cap |
+|---|---|---|---|---|
+| 10 | 3T 3B 1D 1O 2S | 10 | 10 | 8 |
+| 12 | 4T 4B 1D 3S | 17 | 17 | 8 |
+| 14 | 5T 5B 1D 3S | 26 | **24** | 8 |
+| 16 | 7T 5B 1D 3S | 36 | 30 | 8 |
+| 18 | 8T 6B 1D 3S | 49 | 41 | 12 |
+| 20 | 9T 7B 1D 3S | 64 | 41 | 12 |
+| 24 | 10T 9B 1D 4S | 91 | 62 | 16 |
+| 30 | 13T 11B 1D 5S | 144 | 105 | 20 |
+
+Results:
+
+1. **The "~25 combinations" figure in the framing above is confirmed, not overturned.** Real
+   gate-valid capacity at budget 14 is **24** against a naive 26 — the ceilings cost almost
+   nothing at the whole-plan level. (An earlier draft of this section claimed 20 and called the
+   original estimate optimistic. That was the missing-`targetOutfits` artifact described above,
+   not a real effect.) So the cap of 8 does undersell a 14-piece capsule by roughly a factor of
+   three, exactly as originally argued.
+2. **Capacity is non-uniform across slots, and the total cap is not what binds the thin ones.**
+   At budget 14 `casual_city_day` supports 5 cores against `smart_casual_outing`'s 21 — the
+   `everyday`-ceiling-versus-`elevated`-roster interaction documented in `outfitSetPlanner.js`'s
+   comment above `effectiveSlotRegisterCeilingRank`. Raising the total cap alone would deepen the
+   already-rich slots and leave the thin one repeating. A total-outfit number is a blunt
+   instrument here; per-slot capacity is the real ceiling. (One wardrobe, one slot set — re-run
+   against another thread's slots before generalising the specific figures.)
+3. **The wardrobe is not the limitation** — see the supply/selection split below.
+
+### Is the wardrobe thin, or is the roster picking badly? — measured 2026-07-25
+
+Second script, `scratch/diagnose_capsule_supply_vs_selection.js`: for each slot it prints
+**supply** (pieces in the whole 236-piece wardrobe that pass that slot's real gate — the ceiling on
+what any roster could have bought) beside **roster** (how many of those the capsule actually
+bought). Budget 14, summer, `targetOutfits` set:
+
+| slot | supply | roster |
+|---|---|---|
+| `casual_city_day` | 44T 35B 4D 15S — 1544 cores | 2T 2B 1D **1S** — 5 cores |
+| `smart_casual_outing` | 67T 45B 11D 27S — 3026 cores | 5T 4B 1D 3S — 21 cores |
+| `evening_out` | 22T 6B 8D 26S — 140 cores | 3T 2B 0D 3S — 6 cores |
+| `outdoor_daytime_social` | 78T 52B 11D 28S — 4067 cores | 5T 4B 1D 3S — 21 cores |
+| `city_gallery` | 67T 45B 11D 27S — 3026 cores | 5T 4B 1D 3S — 21 cores |
+
+**Unambiguous: this wardrobe is nowhere near thin for a summer capsule.** The weakest slot draws
+on 44 eligible tops and 35 eligible bottoms; the roster bought two of each. Nothing here is a
+supply problem, so no amount of adding garments fixes it — the whole question lives in
+`selectCapsuleRoster`/`capsuleQuotas`, which is where the recurring-failure-mode note already
+says to start. Note also `casual_city_day` gets exactly **one** eligible shoe out of 15 in supply:
+that is the 7-of-8 shoe concentration below, seen from the supply side rather than the plan side,
+and it confirms the "budget working correctly" reading — three shoe slots, one spent on evening.
+
+**Seasonal check (same script).** Winter at budget 14 gives a 5T 4B 1D 1O 3S roster — one bottom
+traded for the outerwear `capsuleQuotas` adds when `isSummer` is false — and whole-plan capacity
+holds up. **One winter result looks like a genuine defect and is not yet filed:** with
+`targetOutfits` set, `evening_out` comes out at 4T **0B** 0D, i.e. **zero possible looks**. The
+everyday-tier demand reserve appears to crowd evening-capable bottoms out of the roster entirely.
+Summer does not show this (3T 2B). Not investigated further — flagged here so it is not lost.
+
+**What capsule practice publishes.** The established conventions are unanimous, and they
+contradict the combinatorial reading the approach decision was built on:
+
+- **10×10 challenge** — 10 pieces, **10 outfits**, 10 days. One look per piece.
+- **3-3-3 / 333 method** — 9 pieces, **9 base outfits** presented; the 27+ layered variants are
+  named as an extension, not as the deliverable.
+- **Project 333** — 33 items for three months, **no outfit list at all**.
+
+**On seasonality:** every convention above is a *seasonal* capsule by construction — Project 333
+is explicitly one season (three months), 10×10 and 3-3-3 are run as seasonal mini-capsules. So the
+research is seasonal research; there is no separate "annual capsule" literature it missed. What
+the sources notably do **not** do is vary the outfit count by season: a 10×10 is 10 looks in
+January and 10 looks in July, with the *pieces* changing and layering absorbing the difference.
+That supports a **season-invariant cap**, with `capsuleQuotas`'s existing `isSummer` handling of
+outerwear carrying the seasonal difference — which is where it already lives.
+- Commercial guides do quote large numbers ("15 pieces, 50+ outfits"; a 20-item capsule ≈ 30–50
+  combinations) — but always as a **capacity claim**, never as an enumerated lookbook. Nobody
+  ships 50 cards.
+
+So real practice presents ≈ **one look per piece at the small end**, and the ratio *falls* as the
+capsule grows, because the point of a capsule is reduced decision load rather than enumeration.
+**This inverts the premise of the approach decision above:** the capsule axis is not
+"combinatorial, therefore show more". It is *rotation* — and the trip axis, days, is also
+rotation. The two plan shapes want the same kind of number from different sources, which the
+"a plan's cap comes from its own shape" rule still expresses correctly.
+
+Note also that today's curve is already ≈ 0.67 looks per piece above 18 (12/18, 16/24, 20/30). It
+falls to 0.57 at 14 and rises to 0.8 at 10 — so it is not really "day-driven" versus
+"combinatorial", it is an unlabelled looks-per-piece ratio with a discontinuity exactly where
+capsules live.
+
+**Recommended number (not implemented, not ratified):** capsule cap = `min(piece_budget, 12)`.
+A 14-piece capsule shows 12 looks — one per piece per the 10×10 convention, saturating where a
+viewer stops distinguishing cards — against a measured capacity of 24, so the cap sits below the
+ceiling instead of above it. Trips keep the day-driven curve. Season-invariant, per the
+seasonality note above.
+
+**The number is not the whole item.** Raising the cap to 12 at budget 14 is well within capacity
+(24) and clearly right, but it will land unevenly: `smart_casual_outing` can absorb 21 while
+`casual_city_day` tops out at 5, so a bigger total needs the per-slot ceiling respected or the
+thin slot just repeats more visibly. And the felt problem stays unaddressed either way — the
+engine knows all of this exactly and never states it as a decision the owner can contest, the same
+gap as the shoe-concentration finding below. The output that would actually fix it is *"your 14
+pieces combine about 24 ways across these five use cases; the casual-day slot only supports 5, so
+I'm showing 12 and doubling up there — say the word and I'll take it to 16."* Same declaration
+fix, same two layers (stylist prompt, `getTripPlanOverviewRows`).
 - **"Why do we fold chat messages?"** A genuine load optimisation, not a UX opinion —
   `701690b`, *"Speed up garment and chat loading (#162)"*, 2026-07-22, alongside
   `chatThreadCache.js` and relationship prefetching. It is a *render* optimisation; all the data

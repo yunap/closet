@@ -36,6 +36,16 @@
   with no marker) now describes stale pre-fix behavior; regenerate or annotate that quote before
   using the packet, per the evidence-rules data pre-flight in `expert-panel-brief.md`.
 
+- **Researched the open capsule-cap number** (no code change). Measured real capsule capacity per
+  budget, and supply-versus-selection per slot, with two new read-only diagnostics
+  (`scratch/diagnose_capsule_outfit_capacity.js`, `scratch/diagnose_capsule_supply_vs_selection.js`),
+  plus a survey of what capsule practice actually publishes. Written into
+  `docs/stylist-bugfix-spec.md` under the "Who told it there should be 8 looks?" answer, and
+  summarised in **Open** below. Findings: the original "~25 combinations" framing is confirmed,
+  the wardrobe is not the constraint, per-slot capacity is very uneven, and a season-invariant cap
+  is what practice supports. One new unfiled defect signal (winter `evening_out` → zero possible
+  looks). Implementation still deferred behind Stage 1.
+
 Paste-able starting context for a new session picking this up.
 
 ## Read first, in order
@@ -108,8 +118,32 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
 
 ## Open
 
-- **Plan outfit cap does two jobs.** Approach decided — split by plan shape — number deliberately
-  unresolved pending research into real capsule practice. Deferred behind Stage 1.
+- **Plan outfit cap does two jobs.** Approach decided — split by plan shape. **The research the
+  number was waiting on is done (2026-07-25); the implementation still waits for Stage 1.** Full
+  writeup in `docs/stylist-bugfix-spec.md` ("Research done 2026-07-25 — what the capsule number
+  should be"); measurement scripts `scratch/diagnose_capsule_outfit_capacity.js` and
+  `scratch/diagnose_capsule_supply_vs_selection.js` (real `selectCapsuleRoster` + real per-slot
+  gate, read-only, no model call). Headlines:
+  - **Pass `targetOutfits` on the slots** in any capsule diagnostic — it drives
+    `capsuleDemandReserve`, and omitting it makes every low-register slot read about half as
+    capable as the live plan is. This already produced one wrong set of numbers.
+  - Real gate-valid capacity at budget 14 is **24** distinct cores against a naive 26, so the
+    original "~25 combinations presented as 8" framing is **confirmed** — the cap undersells a
+    14-piece capsule by roughly 3×.
+  - **The wardrobe is not thin.** At the weakest slot (`casual_city_day`) supply is 44 eligible
+    tops and 35 eligible bottoms; the roster bought 2 and 2. This is entirely a
+    `selectCapsuleRoster`/`capsuleQuotas` question, not a "buy more clothes" one.
+  - Capacity is **non-uniform per slot** (5 cores at `casual_city_day` vs 21 at
+    `smart_casual_outing`), so a bigger total alone deepens the rich slots and makes the thin one
+    repeat.
+  - Capsule practice presents a **rotation, not an enumeration** — 10×10 is 10 pieces/10 outfits,
+    3-3-3 is 9 pieces/9 base outfits, Project 333 lists no outfits at all; the big numbers
+    ("15 pieces, 50+ outfits") are capacity claims, never lookbooks. All of these are *seasonal*
+    capsules, and none varies its outfit count by season — supports a season-invariant cap.
+  - Recommended, unratified: capsule cap = `min(piece_budget, 12)`; trips keep the day curve.
+  - **New, unfiled defect signal:** winter at budget 14 with `targetOutfits` set leaves
+    `evening_out` with 4T **0B** — zero possible looks. The everyday-tier demand reserve appears
+    to crowd evening-capable bottoms out of the roster. Summer does not show it. Not investigated.
 - **Lossy plan overview:** `getTripPlanOverviewRows` recognises only four line patterns, so the
   piece roster, budget verdict, and `plan trimmed` notices never reach the structured summary.
 - **Revised plans unfindable in the rail — investigated, not fixed.** `threadMemory` is a single

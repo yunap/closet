@@ -1880,7 +1880,56 @@ already-fixed ground. Everything above this point in the document is owner-teste
    before re-assembling the expert panel** — descoped from the panel-readiness gate, stays open
    as a backlog item.
 
-2. **Plan outfit cap does two different jobs.** `planTotalOutfitCapForBudget`
+2. **The chat and Visual Lab write board feedback to two different stores** — expanded from
+   issue 1 on 2026-07-26, after a false alarm worth recording so it is not repeated.
+
+   **False alarm, corrected:** counting `saved_boards.payload` showed no writes after 2026-07-23
+   and zero `style_direction` values ever, which looked like the taxonomy unification (#173,
+   2026-07-24) having broken the write path. It had not. Feedback writing is healthy — the most
+   recent `stylist_feedback` row is `2026-07-26 08:30:10`. **`saved_boards.payload` is only the
+   Visual Lab path; the chat writes to `stylist_feedback` instead**, which is the desync already
+   diagnosed and deferred earlier in this document. Counting one store and concluding the feature
+   was broken is the error; do not repeat it.
+
+   **What the corrected counts do show, and it is still worth a look:** of 367 `stylist_feedback`
+   rows, **none carries `payload.feedback_reason`** — the specific-reason key the grouped
+   `style_direction` / `shape_balance` scheme is supposed to write. `style_direction` rows exist
+   (e.g. 2026-07-23) but are reason-less, which is precisely the shape the deferred
+   `syncStructuredReasonsFromSavedBoard` work was meant to correct and was then found to be inert
+   for already-saved boards. So the open question is not "is feedback captured" — it is **whether
+   the specific reason inside a grouped chip ever reaches the model**, on either path.
+
+   Unblocked, free, no model call: trace one `style_direction` row from write to prompt text and
+   confirm whether its reason survives. Until that is answered, any judgement about whether the
+   grouped reason vocabulary earns its place is judging a channel whose delivery is unverified.
+
+3. **The chat message fold is annoying to read against, and folding may be the wrong mechanism
+   entirely.** Owner-reported 2026-07-25. `INITIAL_SAVED_MESSAGE_COUNT = 8`
+   (`src/components/StylistChat.jsx`) renders only the last 8 messages when a thread opens, so a
+   long thread opens mid-conversation and earlier turns are hidden behind a control. It came from
+   `701690b` *"Speed up garment and chat loading (#162)"* (2026-07-22) and is a genuine **render**
+   optimisation — all the data arrives regardless; the fold cuts DOM and image work on photo-heavy
+   threads. So the goal is real; the mechanism hides content to achieve it.
+
+   The sibling `INITIAL_SAVED_OUTFIT_COUNT = 4` fold was already narrowed in PR #176 — plans and
+   whole-wardrobe responses are exempt, because a plan is one artifact and splitting it cut the
+   thing the owner asked for in half. Ordinary multi-result replies still fold. **The message fold
+   is untouched and is the one the owner finds annoying.**
+
+   Options, in rough order of preference:
+   - **`content-visibility: auto`** on message containers — the browser skips layout and paint for
+     offscreen content with essentially no JS, nothing hidden, no "show more" control. Would let
+     both folds be deleted rather than tuned. Needs `contain-intrinsic-size` to avoid scrollbar
+     jump, and measurement against a long photo-heavy thread.
+   - **Windowing/virtualisation** — strictly better scroll performance, materially more complexity,
+     and it interacts badly with in-thread anchors and find-in-page.
+   - **Keep folding, raise the number** — cheapest, addresses the annoyance without addressing the
+     mechanism.
+
+   Not started. Measure first: the fold was added for a real load problem, so any replacement has
+   to be checked against the thread it was added for, not against a short one.
+
+4. **Plan outfit cap does two different jobs.** `planTotalOutfitCapForBudget`
    (`styling-engine/outfitSetPlanner.js`) caps a plan at 8 outfits below an 18-piece budget. For a
    trip that is sensible — the axis is days. For a capsule it is the wrong axis: a 14-piece capsule
    is 5 tops × 5 bottoms, so ~25 combinations presented as 8, and both capsules examined carried
@@ -1891,7 +1940,7 @@ already-fixed ground. Everything above this point in the document is owner-teste
    doesn't survive Stage 1 in this shape, the number is moot. Full detail in
    `docs/stylist-bugfix-spec.md`.
 
-3. **Anchor-garment position consistency across selected-piece directions is unverified.**
+5. **Anchor-garment position consistency across selected-piece directions is unverified.**
    From the "Recommended design direction" feedback (entry above). Appears to hold structurally
    — `renderOutfitSketch`'s layout is category-slotted, so the anchor lands in the same visual
    slot across cards as a side effect of the layout, not by deliberate design — but no explicit
