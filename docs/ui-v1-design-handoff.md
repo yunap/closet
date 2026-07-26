@@ -1903,7 +1903,96 @@ already-fixed ground. Everything above this point in the document is owner-teste
    confirm whether its reason survives. Until that is answered, any judgement about whether the
    grouped reason vocabulary earns its place is judging a channel whose delivery is unverified.
 
-3. **The chat message fold is annoying to read against, and folding may be the wrong mechanism
+3. **Gate-generated metadata tasks have stopped appearing, and the plan path never generated them
+   at all.** Owner-reported 2026-07-26 ("I have not seen any tasks from the gates lately"),
+   confirmed against `wardrobe.db` the same day. **Not diagnosed.**
+
+   Measured: **zero `metadata` todos exist**, while **7 active pieces are missing `formality`** —
+   exactly the field the register gate excludes on and writes a task for. Other todo types are
+   present and current (3 retag-suggestions, plus user-created repair/donate/shopping), so the
+   table and the UI are fine.
+
+   Two candidates, and they are not exclusive:
+
+   - **The plan path cannot create them by construction.** `ensureMetadataTodo` is called only from
+     `buildVisualComposerRoster` (`styling-engine/rules.js`). Capsule and trip planning gates
+     through `filterWholeWardrobePiecesForGeneration` instead, which never calls it — so a garment
+     dropped from a plan for missing metadata is dropped **silently**, with no task and no other
+     surfacing. Given how much recent use has been plans, this alone may explain the absence.
+   - **Something else prevents it on the composer path too.** `recordMetadataTodos` defaults to
+     `true` and no caller overrides it, so the flag is not the cause. With 7 pieces missing
+     `formality`, at least one composer run over a pool containing them should have written a task.
+     Worth confirming whether those 7 are reaching the pool at all — they may be filtered earlier,
+     e.g. by status or occasion, before the register gate sees them.
+
+   **Why it matters beyond the queue:** these tasks are the only surface that tells the owner *which
+   garments the engine could not consider, and why*. Without them a mistagged piece is invisible to
+   recommendations indefinitely, and the only way to discover it is a manual diagnostic — which is
+   how the 2026-07-25 shoe investigation went, at a cost of two hours.
+
+   Free to investigate: replay `buildVisualComposerRoster` against the real wardrobe with the 7
+   untagged pieces in the pool and see whether a task is written. No model call.
+
+4. **Build the engine-behaviour map — the companion to `docs/app-surface-map.md`.** Raised
+   2026-07-26. The surface map is derived UI-first (`scratch/derive_surface_skeleton.js` walks
+   routes, tabs, mode gates and dialogs), so it is structurally blind to anything that never
+   renders. Every non-UI behaviour that reached it got there by accident — the retag-suggestion
+   loop from a screenshot, the gate-task mechanism from an unrelated grep, the whole-wardrobe
+   recency memory only because the owner pointed at a panel footer.
+
+   What a second map should cover, derived on a different axis (writes, prompt splices, retry
+   loops — all greppable):
+
+   - **Write-triggered side effects.** One `PATCH /api/saved-boards/:id` also writes retag tasks,
+     mirrors feedback into `stylist_feedback`, and syncs structured reasons. One user action, four
+     writes, one landing in a different feature.
+   - **Output guards and retries.** `applyFreeformOutputChecks` re-prompts the model up to six
+     times on a guard violation — invisible, and it costs money.
+   - **Memory builders.** `getSavedBoardMemory`, `getStylistFeedbackMemory`, session recency,
+     owner rules: what reaches the prompt, from where, in what words.
+   - **Scoring.** `planWorkbenchPieceScore`, `capsuleVersatilityScore`,
+     `compatibilityScoreForSelectedItem` — including weightings like the 30-point `fit_confidence`
+     bonus, found only by reading.
+   - **Caches and invalidation**, **sweeps** (`clear-orphaned`), and **CI ratchets** (text-matching
+     ratchet, style-claims guard) that constrain what future code may do.
+
+   This is where the expensive surprises live, because none of it is visible to the owner or to a
+   panel. Not started.
+
+5. **Decide video import: optimise or disable.** Owner position 2026-07-26 — *"prohibitively
+   expensive and not very productive, so most likely will disable it. But maybe we should review it
+   and see if it can somehow be optimised first."* Already hidden from users, owner-flagged only.
+
+   **The expensive part is not the API bill — it is false positives.** Owner's correction, and it
+   changes what optimisation would even mean: video produces many garment-shaped proposals that are
+   not garments, and each one costs owner attention in the review gate. Anything mistakenly accepted
+   then needs tagging, and a badly-tagged garment is precisely what the hard gates exclude silently
+   (see issue 3).
+
+   **Why precision is poor by construction:** sampling is `fps=1` — one frame per *second*, so a
+   two-minute walkthrough is ~120 images. The only automatic filter is a blur check
+   (`FRAME_MIN_STDDEV = 10`); nothing deduplicates near-identical consecutive frames, so a slow pan
+   over one rail survives as dozens of near-copies. And a garment seen at an angle, half-occluded,
+   in motion is weak evidence — the classifier proposes it anyway.
+
+   **The single most expensive step is AI tagging** (owner, 2026-07-26) — a model call per garment,
+   so spend scales with *proposals carried forward*, not with frames. That is why false positives
+   cost twice: once in review attention, once in tagging anything mistakenly accepted.
+   **Optimising the tagging step may be the better first move**, and it pays off across every
+   import path and the wardrobe generally — not just video. Treat that as a possible precursor to
+   this decision rather than part of it.
+
+   **The number that decides this is precision, and it is measurable for free.** `import_clusters`
+   carries a `status` reaching `accepted` when a cluster becomes a real piece, so
+   accepted-vs-proposed for video-origin sessions can be computed from past imports — no new video,
+   no model call. **If precision is low, sampling tuning cannot rescue it**, because the problem is
+   evidence quality rather than frame count, and the honest answer is to disable.
+
+   **Levers only worth trying if precision turns out to be decent:** drop to `fps=1/3` or lower;
+   perceptual-hash dedup between consecutive frames before classification; classify a cheap
+   subsample first and expand only where garments are found.
+
+6. **The chat message fold is annoying to read against, and folding may be the wrong mechanism
    entirely.** Owner-reported 2026-07-25. `INITIAL_SAVED_MESSAGE_COUNT = 8`
    (`src/components/StylistChat.jsx`) renders only the last 8 messages when a thread opens, so a
    long thread opens mid-conversation and earlier turns are hidden behind a control. It came from
@@ -1929,7 +2018,7 @@ already-fixed ground. Everything above this point in the document is owner-teste
    Not started. Measure first: the fold was added for a real load problem, so any replacement has
    to be checked against the thread it was added for, not against a short one.
 
-4. **Plan outfit cap does two different jobs.** `planTotalOutfitCapForBudget`
+7. **Plan outfit cap does two different jobs.** `planTotalOutfitCapForBudget`
    (`styling-engine/outfitSetPlanner.js`) caps a plan at 8 outfits below an 18-piece budget. For a
    trip that is sensible — the axis is days. For a capsule it is the wrong axis: a 14-piece capsule
    is 5 tops × 5 bottoms, so ~25 combinations presented as 8, and both capsules examined carried
@@ -1940,7 +2029,7 @@ already-fixed ground. Everything above this point in the document is owner-teste
    doesn't survive Stage 1 in this shape, the number is moot. Full detail in
    `docs/stylist-bugfix-spec.md`.
 
-5. **Anchor-garment position consistency across selected-piece directions is unverified.**
+8. **Anchor-garment position consistency across selected-piece directions is unverified.**
    From the "Recommended design direction" feedback (entry above). Appears to hold structurally
    — `renderOutfitSketch`'s layout is category-slotted, so the anchor lands in the same visual
    slot across cards as a side effect of the layout, not by deliberate design — but no explicit
