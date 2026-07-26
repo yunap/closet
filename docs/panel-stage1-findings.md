@@ -277,6 +277,31 @@ Interaction argues this fixes P6, P4 and the deferred chip bug simultaneously: w
 dropped, the expected `Noted:` line does not appear and the failure becomes visible in the same
 second it happens.
 
+### Evidence the panel did not have — the loop already pays off visibly, in Tasks
+
+Found 2026-07-26 while mapping surfaces, after the run. **Proposition 6 was answered against a
+packet missing the surface that answers it.**
+
+Mark a rendered board **A garment is the wrong length** in Visual Lab, name the garment and the
+issue, and the app writes a **retag-suggestion task** into Wardrobe → Tasks: garment-linked,
+naming the field to review, worded *"Retag suggested for `<garment>`: `<issue>`. Review the garment
+metadata; no tags were changed automatically."* Completion is remembered — each time that board's
+feedback changes the sync rebuilds its incomplete suggestions but skips `piece:issue` pairs already
+completed, so a suggestion you have dealt with never returns.
+
+Separately, the styling engine writes `metadata` tasks naming garments a gate has excluded for
+missing data, and why they are invisible to recommendations.
+
+So a judgement about a rendered image becomes concrete, actionable, garment-linked work with
+remembered state. That is the calibration loop closing where the owner can see it. Three reviewers
+concluded it never visibly closes; none of them could see Tasks, the wrong-length capture flow, or
+Style Profile, because the packet contained none of them.
+
+**What survives of the reviewers' argument:** the loop does not close *in the chat*, which is where
+they were looking and where the owner spends most time. `Noted:` / `Applied:` lines would still add
+something. But the proposition as stated — *"every feedback control in the app is theater"* — is
+false, and was falsifiable from surfaces that existed at the time.
+
 **Ruling:**
 
 ### C5 — "This is a confirmed formula" (Artifact B, look 5)

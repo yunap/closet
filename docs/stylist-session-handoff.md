@@ -1,52 +1,45 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-25. Branch `stylist-looks-count-diagnosis`, committed through `cbebe3c`
-(PR #176), plus uncommitted work from this session (see below). Working tree also has an untracked
-`closet.db` (0 bytes, should be gitignored or deleted) predating this session.
+**Last updated:** 2026-07-26. Branch `stylist-weather-provenance-and-labels`, committed through
+`0c934ed` plus the mapping work committed after it.
 
-**This session (uncommitted):**
-- Fixed the `nature_walk` → "city walk" mislabel: `compactOutcomePhrase`
-  (`src/utils/threadGrouping.js`) now special-cases `nature` + `walk`/`walking`/`stroll` to
-  `"nature walk"`, ahead of the generic city-walk branch, mirroring the existing `mountain` +
-  `hike` special case. Regression test added in `test/threadRail.test.js`
-  (`nature_walk keeps its own phrase instead of collapsing into city walk`). Full suite run:
-  795 tests, 7 pre-existing failures (unchanged from a `git stash` baseline check — none are new,
-  none touch `threadGrouping.js`; the "6 known failures" figure in PR #176 and below is stale by
-  one). No UI verification needed — pure string-mapping change, covered by the unit test, no
-  billed call warranted per the hard rule below.
-- Added a **"Deliberately not built / by design"** section to `docs/ui-v1-design-handoff.md`'s
-  **Outstanding issues** (right after *Resolved, not open*), covering "city stroll" → walking
-  shoes, one shoe carrying 7 of 8 capsule looks, and plans not absorbing revisions — the three
-  remaining items from the recurring-failure-mode list below that hadn't been written into the
-  canonical doc yet (garment IDs was already there). Updated `docs/expert-panel-brief.md`'s Part 4
-  to require copying this new list verbatim into future packets, same as the existing one. This
-  closes the "Open" item below about the panel packet lacking an unbuilt-things section.
-- **Fixed weather-provenance invisibility, owner-directed.** `resolveSlotWeather`
-  (`styling-engine/outfitSetPlanner.js`) now appends `" (estimated)"` to both heuristic branches
-  (the coarse hot/cold/mild descriptor and the model's own free-text weather guess), so a heuristic
-  guess no longer reads with the same confidence as the existing `"(live forecast, City)"` marker
-  on the live branch. The `stated` branch (explicit per-slot weather, e.g. `indoor`) is untouched —
-  that's known information, not a guess. Regression test in `test/plan_outfit_set.test.js`
-  (`plan slot weather label marks a heuristic guess as an estimate, not a live forecast`), covering
-  generic-heuristic, worded-heuristic, and live-forecast cases via `buildPlanSlotWorkbench` directly
-  — no model/network call. **Note:** `docs/stylist-bugfix-spec.md` had framed this as a
-  panel-judgment question ("the packet should say so") rather than a plain defect — the owner
-  chose to fix it directly this session rather than defer it. One consequence: the Tucson artifact
-  quote in `docs/panel-packet-stage1.md` (`Weather used: Casual Days — hot, highs 100-105F, sunny…`
-  with no marker) now describes stale pre-fix behavior; regenerate or annotate that quote before
-  using the packet, per the evidence-rules data pre-flight in `expert-panel-brief.md`.
+## State
 
-- **Researched the open capsule-cap number** (no code change). Measured real capsule capacity per
-  budget, and supply-versus-selection per slot, with two new read-only diagnostics
-  (`scratch/diagnose_capsule_outfit_capacity.js`, `scratch/diagnose_capsule_supply_vs_selection.js`),
-  plus a survey of what capsule practice actually publishes. Written into
-  `docs/stylist-bugfix-spec.md` under the "Who told it there should be 8 looks?" answer, and
-  summarised in **Open** below. Findings: the original "~25 combinations" framing is confirmed,
-  the wardrobe is not the constraint, per-slot capacity is very uneven, and a season-invariant cap
-  is what practice supports. One new unfiled defect signal (winter `evening_out` → zero possible
-  looks). Implementation still deferred behind Stage 1.
+Two full days of work, and **the durable output is documentation, not code**. Stage 1 of the expert
+panel ran; the more productive activity turned out to be mapping the app, which found four surfaces
+the panel packet had missed and several behaviours nobody had written down.
 
-Paste-able starting context for a new session picking this up.
+**Docs that now exist, in the order a new session should read them:**
+
+1. `docs/app-surface-map.md` — 33 entries. Every route, tab, mode-split and dialog. Plain English
+   first, stores as a footnote, every observation tagged `[by design]` / `[known bug → ref]` /
+   `[unverified]` / `[owner check wanted]`. **Read this before assuming anything about the app.**
+2. `docs/engine-behaviour-map.md` — the non-UI companion: side-effect writes, server-side thread
+   state, retry loops, prompt splices, sweeps. First pass; "still to map" section is honest.
+3. `docs/panel-stage1-findings.md` — the panel synthesis organised for triage by ID. Section A is
+   ruled; B, C, D, E are not.
+4. `docs/expert-panel-brief.md` — ratified protocol. **Part 4b lists six ways the implementing
+   agent got this wrong**; read it before assembling a packet.
+5. `docs/board-feedback-desync-spec.md` — self-contained, ready for a separate session.
+6. `docs/ui-v1-design-handoff.md` — rulings, plus **Outstanding issues 1–8**.
+
+**Two derivation scripts**, both read-only and free:
+`node scratch/derive_surface_skeleton.js` (surfaces, diffed against the map) and
+`node scratch/derive_engine_behaviours.js` (writes, retries, splices). Run them to check the maps
+have not rotted.
+
+## What is decided vs open
+
+**Ruled (panel findings section A):** A1 prints on shoes/accessories, A2 confident rationale under
+scarcity, A4 shoe register span, A5 reasoning-then-interaction — all **accepted, not yet
+implemented**. A3 rejected (asking what you own is deliberate). A6 reframed — the `~$0.07` labels
+are owner-facing instrumentation, not user pricing, so the question is tiers, not honesty.
+
+**Not ruled:** B1 chips, B2 structured read, B3 diagnostic cards, C1–C5, D1, and which of E1–E6
+become propositions. Recommended order is in the findings doc: **C3 (the decision rule) before the
+B items**, because it is upstream of them.
+
+**Stage 2** (Mode A craft review, per flow) not started. It should use the surface map's inventory.
 
 ## Read first, in order
 
@@ -77,6 +70,14 @@ Paste-able starting context for a new session picking this up.
 - **`wardrobe-web` (5173) proxies to the live un-mocked API.** Browsing stored threads is free;
   clicking `Generate outfit image`, `Evaluate outfit`, or `Preview all directions` spends real
   money. Keep review agents off it entirely.
+
+## Before generating panel evidence
+
+**Clear the whole-wardrobe session recency memory**, unless the artifact is meant to show the
+rotation mechanism — in which case declare it, with the skip count. The memory silently narrows the
+pool (observed: 10 of 23 pieces skipped), and the only sign is one line in the composer footer.
+**Include them again**, or `DELETE /api/ai/whole-wardrobe-session-memory`. Full rule in
+`docs/expert-panel-brief.md` → Part 4.
 
 ## The recurring failure mode — read before reporting anything as a bug
 

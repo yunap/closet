@@ -280,6 +280,21 @@ because circumstances changed is a legitimate finding.
 **States.** Populated, empty, long-content, error, and the narrow viewport — for every surface,
 in both modes.
 
+**Clear the session recency memory before generating evidence.** Whole-wardrobe generation keeps a
+recency memory that skips recently used pieces — it both penalises them in scoring and reorders the
+roster. It is easy to miss: the only sign is one line in the composer footer, *"Skipping N recently
+used pieces"*. In one observed state that was **10 of 23 pieces**, so the stylist was composing
+from 13 and every artifact generated in that state understates the wardrobe's range.
+
+Reviewers judging variety, repetition or "why does the same garment keep appearing" against a warm
+memory are judging an artificially narrow pool, and nothing in the artifact tells them so. Clear it
+first — **Include them again** in the composer footer, or
+`DELETE /api/ai/whole-wardrobe-session-memory`.
+
+**The exception:** if the artifact exists to demonstrate the rotation mechanism itself, leave the
+memory warm — and say so in the packet, with the skip count at the time of generation. An
+unexplained warm memory is a confound; a declared one is evidence.
+
 **Surface inventory, mandatory.** Before assembling a packet, list every surface the feature spans
 — not just the one the question is about. For the Stylist that is: the chat thread, the per-piece
 `…` menu, Settings → *Learned rules & preferences*, Visual Lab → *Calibration boards* and *Style
