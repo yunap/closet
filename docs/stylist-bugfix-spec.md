@@ -157,10 +157,15 @@ that turns into a design question, stop and report it.
 
 ---
 
-## 6. Lower priority, same surface
+## 6. Lower priority, same surface — **entire section stale, all four items already resolved**
+
+Corrected 2026-07-28: every item below was listed as open and none was. All four shipped in
+earlier PRs (the "PR C" / "Small mechanical batch" passes in `docs/ui-v1-design-handoff.md`) and
+this spec was never updated after. Left in place, struck through, rather than deleted — per this
+project's own convention of recording what was wrong and why, not just quietly fixing the text.
 
 - ~~`GeneratedBoardLengthFeedback` still uses the old raw inline-styled chips, missed by PR B's
-  `.stylist-feedback-*` standardization.~~ **Stale even before today** — it already used the
+  `.stylist-feedback-*` standardization.~~ **Stale even before 2026-07-27** — it already used the
   shared `.stylist-feedback-chip` class (see `docs/ui-v1-design-handoff.md`'s item 6.1, which
   recorded that porting as done). What it actually had, found and fixed 2026-07-27: the "which
   garment" picker was a single shared pointer that reset to the first piece on every open/close
@@ -168,15 +173,19 @@ that turns into a design question, stop and report it.
   reason group per piece, in both this component and Visual Lab's matching widget. Same fix used
   the occasion to also unify board feedback onto two other chat surfaces that had no feedback UI
   at all — see `docs/board-feedback-desync-spec.md` and `docs/app-surface-map.md`.
-- **Button height inconsistency**, 30px vs the 34px `.stylist-feedback-chip` floor, caused by CSS
-  specificity. Still above the 24px WCAG floor, so cosmetic. Find the winning selector rather than
-  adding `!important`.
-- **`Board error: Model did not return JSON`** reaches the UI as raw text. Thrown at
-  `styling-engine/core.js:62`. Give the user-facing path a plain-language message; keep the raw
-  text in the server log.
-- **Lookbook `BoardDetail` dialog is missing focus-return**, inconsistent with the pattern
-  ratified on Stylist's lightbox, Calibration Boards, and garment detail. Outside the Stylist
-  surface but the same defect class — include it if cheap, split it out if not.
+- ~~Button height inconsistency, 30px vs the 34px `.stylist-feedback-chip` floor, caused by CSS
+  specificity.~~ **Already fixed** — `.stylist-outfit-actions > button:not(.stylist-feedback-chip)`
+  exists in `App.css:9827`, exactly the selector-specificity fix already recorded as implemented
+  in `docs/ui-v1-design-handoff.md`'s PR C section. Confirmed 2026-07-28 by reading the CSS
+  directly rather than trusting this list.
+- ~~`Board error: Model did not return JSON` reaches the UI as raw text.~~ **Already fixed** —
+  `friendlyBoardErrorMessage` (`StylistChat.jsx:326`) translates exactly this string at all five
+  client-side catch sites, and has since PR #175 — before this spec's note was even written.
+  Confirmed 2026-07-28 by reading the function and its call sites directly.
+- ~~Lookbook `BoardDetail` dialog is missing focus-return.~~ **Already fixed** — `openBoardDetail`
+  captures the trigger element, `closeBoardDetail` returns focus to it (`OutfitLookbook.jsx:1666-
+  1676`), alongside a full focus-trap/Escape/scroll-lock implementation matching the ratified
+  pattern. Confirmed 2026-07-28 by reading the component directly.
 
 ---
 

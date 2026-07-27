@@ -854,6 +854,7 @@ imported and in scope there. Deleting the `rules.js` duplicate would remove the 
 | `createWholeWardrobeComparisonSheetImage` | up to 5 outfits on one sheet | unique pieces across the 5 |
 | `createIdealAdditionsComparisonSheetImage` | directions sheet | **one** garment ref |
 | `createEditorialConceptImage` | ideal-addition concept | refs + anchor garment |
+| `createOutfitBoardImage` | 2-3 candidate boards from the ad hoc "Generate visual boards" button (`POST /generate-outfit-boards`) | selected piece + owned/missing board pieces | **found 2026-07-27 — missing from this table since it was first written**; see `scratch/derive_board_producer_fanout.js`. |
 
 All five call `client.responses.create` with **`model: 'gpt-4o'`** and
 `tools: [{ type: 'image_generation', size, quality: 'medium' }]`. Quality is hard-coded. Size

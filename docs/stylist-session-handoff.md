@@ -77,12 +77,13 @@ the panel packet had missed and several behaviours nobody had written down.
    the mechanism if touching board feedback again; not an open item anymore.
 7. `docs/ui-v1-design-handoff.md` — rulings, plus **Outstanding issues 1–8**.
 
-**Ten derivation/measurement scripts**, all read-only and free — none constructs an AI client:
+**Eleven derivation/measurement scripts**, all read-only and free — none constructs an AI client:
 
 | script | answers |
 |---|---|
 | `derive_surface_skeleton.js` | every surface, diffed against the surface map |
 | `derive_engine_behaviours.js` | writes, retry loops, prompt splices |
+| **`derive_board_producer_fanout.js`** | **for each image-producer function: its server call sites, and which frontend render block consumes the result — flags any board-rendering block with no feedback-chip UI.** Neither the surface map (UI-structure-first) nor the engine map (producer-function-first) tracks this fan-out axis; this is what caught the two no-chip surfaces fixed 2026-07-27. |
 | `measure_scoring_terms.js` | how often each scoring term fires on the real 236-piece wardrobe |
 | `measure_gate_impact.js` | what the hard gate excludes per context, by reason |
 | `measure_diversity_classifiers.js` | the repeat-detection buckets diversity penalises on |
@@ -95,7 +96,9 @@ the panel packet had missed and several behaviours nobody had written down.
 Run them to check the maps have not rotted. **The last two are the ones that stop wrong fixes** —
 provenance caught three bad recommendations, and the plural sweep showed that several measured
 distributions in the map are understated. Run both before acting on anything keyword- or
-column-derived.
+column-derived. **Run `derive_board_producer_fanout.js` too** before touching any board-rendering
+surface — it's the one that catches a shared function with inconsistent frontend consumers (see
+the recurring-failure-mode entry below); nothing else here checks that axis.
 
 ## What is decided vs open
 
@@ -166,6 +169,25 @@ For any capsule- or plan-shaped question, start at `capsuleQuotas` / `selectCaps
 at the per-slot gate. The gate, `PLAN_WORKBENCH_PIECE_LIMIT`, `planWorkbenchPieceScore`,
 `fit_confidence`, and feedback influence all operate *after* the roster is chosen — an entire
 investigation was spent in the wrong layer.
+
+### A second failure mode, distinct from the one above — doc status claims go stale too
+
+The four cases above are about *product behaviour* looking like a bug when it wasn't. This one is
+about *a doc's own claim that something is still a bug* being wrong. Found 2026-07-28: an entire
+section of `docs/stylist-bugfix-spec.md` ("§6, lower priority, same surface") listed four items as
+open — a raw error string reaching the UI, a button-height CSS inconsistency, a missing
+focus-return, and a styling gap in a chat component — and **all four had already shipped in
+earlier PRs**. Nobody had gone back to update that spec once the fixes landed elsewhere. Worse:
+the session immediately before this one **repeated one of those stale claims into new doc text**
+(a "deliberately left unfixed" note in `docs/app-surface-map.md`) without checking the code first
+— the exact same failure this project's docs keep warning about (measure one source, don't verify
+against the current state), just applied to a doc's bug-status tag instead of a product behaviour.
+
+**Before trusting any `[known bug]`, "still open", "not yet implemented", or similar status claim
+in these docs — especially one you're about to cite, repeat, or build on — grep the code it names
+and confirm the claim is still true.** A status tag is a claim about the state of the code *at the
+time it was written*, not a live query. The docs get long-lived precisely because they're mostly
+right; the failure mode is trusting the 5% that quietly went stale.
 
 ## What shipped in PR #176
 
