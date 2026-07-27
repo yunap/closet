@@ -355,9 +355,10 @@ test('StylistChat queries saved-boards on mount and uses savedBoardUrls to check
   // Verify state declaration
   assert.match(source, /const\s*\[savedBoardUrls,\s*setSavedBoardUrls\]\s*=\s*useState\(new Set\(\)\)/)
   
-  // Verify fetch call on mount
+  // Verify fetch call on mount (extracted into refreshSavedBoards, called from the mount effect)
   assert.match(source, /fetch\('\/api\/saved-boards\?limit=1000'\)/)
-  assert.match(source, /setSavedBoardUrls\(new Set\(urls\)\)/)
+  assert.match(source, /refreshSavedBoards\(\)/)
+  assert.match(source, /setSavedBoardUrls\(urls\)/)
   
   // Verify imageURL checks for board/visual card rendering
   assert.match(source, /isSaved\s*=\s*savedBoardKeys\.has\(saveKey\)\s*\|\|\s*\(board\.imageUrl\s*&&\s*savedBoardUrls\.has\(board\.imageUrl\)\)/)

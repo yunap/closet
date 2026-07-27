@@ -20,7 +20,7 @@ test('generated chat boards save structured reasons and mutually exclusive verdi
   assert.match(chatSource, /payload: \{ board: visual/)
   assert.match(chatSource, /GeneratedBoardLengthFeedback/)
   assert.match(chatSource, /length_correction: \{ piece_id:/)
-  assert.match(chatSource, /WRONG_LENGTH_REASONS/)
+  assert.match(chatSource, /wrongLengthReasonsForCategory/)
   assert.match(chatSource, /collapsedFeedbackCards\.has\(cardKey\)/)
   assert.match(chatSource, /toggleFeedbackCardExpansion\(cardKey, isExpanded\)/)
 })

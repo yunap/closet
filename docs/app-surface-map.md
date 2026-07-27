@@ -41,22 +41,58 @@ shape. This is *what exists, how you reach it, and where its data lives*.
 
 ## Stylist → board feedback chips
 
-**How you get there.** Inside a Stylist chat thread, under any generated visual board: a verdict
-row (*Signature / Works / Almost / Not me*) and, behind **More feedback**, grouped reason chips
-(*What feels wrong?*, *Fit and shape*, *Problems in the generated image*).
+**How you get there.** Inside a Stylist chat thread, under any generated visual board, **on all
+four surfaces that can render one** (as of 2026-07-27 — two of the four had no feedback UI at all
+until that date; see the surface table below): a verdict row (*Signature / Works / Almost / Not
+me*) and, behind **More feedback**, grouped reason chips (*What feels wrong?*, *Fit and shape*,
+*Problems in the generated image*).
 
 **What you are doing.** Telling the stylist whether a rendered look worked, and why not.
 
-**What actually happens — three things worth knowing:**
+**Four rendering surfaces, previously two of them silent — now consistent:**
 
-- **[known bug → `docs/board-feedback-desync-spec.md`, outstanding issue 1]** **This does not
-  update Visual Lab.** The same board opened in Visual Lab → Calibration boards shows *different*
-  selected chips. The chat writes its chip state into the thread it happened in; Visual Lab reads
-  the canonical saved-board record. Neither reads the other. Diagnosed, fix deferred.
-- **[known bug → same root]** **The chat's chip state is frozen at the moment you clicked.**
-  Restored from the thread's own stored snapshot on load and never re-checked. Change the same
-  board's feedback elsewhere and this thread will not notice. This is the same defect as above
-  seen from the read side, not a separate design decision.
+| surface | how you get one | chips? |
+|---|---|---|
+| Structured outfit card's rendered image (`boardResults[boardKey]`) | "Generate outfit image" on a direction/plan card | yes — full taxonomy |
+| `editorialVisualResults` | "ideal pieces" suggestions | yes — full taxonomy |
+| `m.renderedBoards` | the model's own `render_preview` tool call mid-answer | **[fixed 2026-07-27]** — was Save-button-only |
+| `boardResults[i]` ("wardrobe-board") | the ad hoc **Generate visual boards** button under plain prose | **[fixed 2026-07-27]** — was Save-button-only; still shows a raw `Board error: Model did not return JSON` string on failure (`styling-engine/core.js:62`), that part deliberately left unfixed |
+
+There was never a `[by design]` ruling for the old split — the existing "no chips on plain-text
+replies" ruling (see the message-level-actions entry below) is about judging *prose*, not about
+the rendered *image* that appears after you act on it. The two silent surfaces now use the exact
+same `GENERATED_BOARD_FEEDBACK_LABELS` taxonomy and the same canonical-board read/write path
+(below) as the two that already had it — same keying pattern, one feedback card per rendered
+board, keyed off that surface's own save key (`render-preview:${i}:${boardIdx}` /
+`wardrobe-board:${i}:${idx}`).
+
+**What actually happens:**
+
+- **[fixed 2026-07-27, was: known bug]** Chat and Visual Lab used to show different selected
+  chips for the same board — Visual Lab always read the canonical `saved_boards` record live;
+  chat read a snapshot frozen into the thread at the moment feedback was given, restored on load
+  and never re-checked, so editing a board's feedback in Visual Lab was invisible to any chat
+  thread showing that board. Full writeup and fix in `docs/board-feedback-desync-spec.md`. Chat
+  now indexes saved boards by `imageUrl` on mount and on every thread load/save
+  (`refreshSavedBoards`, `StylistChat.jsx:1389`), and once a board is saved, both reads and writes
+  for its chips branch through the canonical `saved_boards` record via `PATCH /api/saved-boards/:id`
+  — the same mechanism Visual Lab itself uses — instead of the old `stylist_feedback`/thread-
+  snapshot path. Unsaved boards keep using that old path, since there's no canonical record yet.
+  Verified live both directions: a verdict set in Visual Lab appears in chat on next thread load
+  with no chat-side click, and un-toggling it in chat deletes it from `saved_boards.payload` too,
+  not just the local snapshot.
+- **[fixed 2026-07-27]** The wrong-length correction widget (`GeneratedBoardLengthFeedback`,
+  `StylistChat.jsx:27`) used to make you pick a garment first, then pick what was wrong with it —
+  a single shared pointer that silently reset to the first piece every time and never indicated
+  which piece actually had a saved correction, so a correctly-stored correction on a second or
+  third garment looked missing unless you happened to click through to it. Now every piece on the
+  board gets its own always-visible reason group, each showing a `(n)` count when it already
+  carries corrections, driven directly by `feedback_details.wrong_length` — no picker, nothing to
+  reset. Same fix applied to the matching widget in Visual Lab (see that entry below). Reason
+  options are also filtered by `piece.category` now (`lib/feedbackTaxonomy.js`'s
+  `wrongLengthReasonsForCategory`) — shoes and accessories get no length options at all, tops/
+  outerwear get sleeves + their own hem, bottoms get only the skirt/pants hem, dresses get sleeves
+  + the skirt/dress hem (not "jacket hem").
 - **[by design] Feedback given in Visual Lab reaches the model in full — verdicts *and* specific
   reasons.** Traced end to end 2026-07-26 by running the real builder against the real wardrobe.
   A board carrying `feedback_details.shape_balance` renders into the prompt as:
@@ -72,10 +108,13 @@ row (*Signature / Works / Almost / Not me*) and, behind **More feedback**, group
 
 **[by design] Costs nothing.** Feedback actions never call a model.
 
-> **Stores.** Writes `stylist_feedback` (via `POST /api/stylist-feedback`) and
-> `thread.payload.feedbackSaved`, a `Set` of composite keys inside the thread row. Reads only the
-> latter. Does **not** touch `saved_boards.payload`.
-> `StylistChat.jsx:3460`, `:621`, `:698`, `:873`.
+> **Stores.** For an unsaved board: writes `stylist_feedback` (via `POST /api/stylist-feedback`)
+> and `thread.payload.feedbackSaved`, a `Set` of composite keys inside the thread row; reads only
+> the latter. For a board already in `saved_boards` (post 2026-07-27 fix): reads/writes
+> `saved_boards.payload.feedback_labels` / `.feedback_details` directly via
+> `PATCH /api/saved-boards/:id`, mirroring Visual Lab's own write path.
+> `StylistChat.jsx:3460` (unsaved-board path), `refreshSavedBoards`/`canonicalBoardFor`/
+> `toggleCanonicalBoard*` helpers around `:3467-3546` (canonical path).
 >
 > **Delivery to the model.** `getSavedBoardMemory` (`styling-engine/rules.js:660`) reads
 > `saved_boards.payload` and renders verdicts plus specific reasons into plain language. Spliced at
@@ -295,6 +334,14 @@ separate mode.
   **latest turn**, not the thread. Revise a plan and a six-look trip is summarised as *"1 direction
   · travel"*, because the revision arrived as one card outside the plan. Plan threads get harder to
   find in history the more you refine them.
+- **[fixed 2026-07-27, was: known bug]** Opening a thread directly by URL (`/stylist/:threadId`,
+  e.g. from a rail row, a deep link, or a page reload) could silently render a **different**
+  thread's messages under the correct thread's URL and title — the URL-driven load rendered first,
+  then got overwritten moments later by whatever thread `localStorage`'s `stylist_current_thread_id`
+  pointed to, from a completely independent mount-time effect (`initAndMigrate`) that never checked
+  whether a specific thread had already been requested. Survived a hard reload, since both effects
+  re-ran fresh in the same order every time. Fixed by making that effect's guard also skip when a
+  thread was requested via the URL (`StylistChat.jsx:1259`, `isLaunchingAction`).
 
 > **Stores.** Reads `chat_threads` rows and `payload.threadMemory.latestOutfits`. Titles/subtitles
 > computed at render — nothing is persisted. `ThreadRail.jsx:502/511/645`.
@@ -494,9 +541,15 @@ not a gallery.
 **What actually happens.**
 
 - **[by design] Two independent filter rows, deliberately separate.** **Review** (`Not reviewed` /
-  `Positive` / `Needs review` / `Image issues`) asks *have I judged this*; **Status** (`Use
+  `Positive` / `Flagged` / `Image issues`) asks *have I judged this*; **Status** (`Use
   strongly` / `Hidden` / `Ignored`) asks *how should it be used*. They are different questions and
   were split on purpose — do not merge them back into one chip row.
+- **[fixed 2026-07-27, was mislabeled]** The Review filter was named `Needs review` and grouped
+  `almost` ("Almost right") in with true negatives (`not_me` and every structural critique reason).
+  `almost` is a positive-leaning verdict — close, not rejected (see `getSavedBoardMemory`'s
+  close-bucket handling, which preserves the outfit formula rather than avoiding it) — so it now
+  counts as `Positive`, alongside `signature`/`works`. The filter is renamed `Flagged` and scoped
+  to genuine negative/critique labels only.
 - **[by design] A bad render does not reject the outfit.** Image-fidelity problems surface as a
   separate `Image issue` signal beside the verdict, so a good direction rendered badly is not
   recorded as a bad direction.
@@ -506,16 +559,22 @@ not a gallery.
   the model as *"high-authority outfit memory"* and bias ranking.
 - **[by design] Feedback given here reaches the model in full** — verdicts and specific reasons, in
   plain language. Traced; see the board-feedback entry above.
-- **[by design] Wrong-length feedback creates work, not just memory.** Marking **A garment is the
-  wrong length** opens a two-step capture — *which garment?* then *what was wrong?* (sleeves too
-  long/short, hem too long/short, pants-skirt-dress too long/short) — and each correction writes a
-  **retag-suggestion task** into Wardrobe → Tasks, linked to the garment and naming the field to
-  review. The sheet states at the point of capture that nothing is retagged automatically. This is
-  the one place a judgement about a *rendered image* turns into a concrete, garment-linked
-  to-do — see the Tasks entry for the full lifecycle, including that completed suggestions are
-  never regenerated.
-- **[known bug → `docs/board-feedback-desync-spec.md`]** The same board's chips will not match what
-  the Stylist chat shows for it.
+- **[fixed 2026-07-27, was: two-step capture]** Marking **A garment is the wrong length** used to
+  open a picker — *which garment?* then *what was wrong?* — driven by a single shared pointer that
+  reset to the first piece on every open/close of the board and never indicated which piece
+  actually had a saved correction, so a correction on a second or third garment looked missing
+  unless you happened to click through to it. Now every piece on the board gets its own always-
+  visible reason group (sleeves too long/short, hem too long/short, pants-skirt-dress too
+  long/short — filtered by the piece's own category: shoes/accessories get none, tops/outerwear
+  get sleeves + their own hem, bottoms get only the skirt/pants hem, dresses get sleeves + the
+  skirt/dress hem), each correction still writing a **retag-suggestion task** into Wardrobe →
+  Tasks, linked to the garment and naming the field to review. The sheet states at the point of
+  capture that nothing is retagged automatically. This is the one place a judgement about a
+  *rendered image* turns into a concrete, garment-linked to-do — see the Tasks entry for the full
+  lifecycle, including that completed suggestions are never regenerated.
+- **[fixed 2026-07-27, was: known bug]** The same board's chips used to not match what the Stylist
+  chat showed for it. Full writeup in `docs/board-feedback-desync-spec.md`; see the board-feedback
+  entry above for what changed.
 
 > **Stores.** `saved_boards.payload.feedback_labels` / `.feedback_details` via
 > `PATCH /api/saved-boards/:id`; `favorite` carries *Use strongly*. Read to the model by

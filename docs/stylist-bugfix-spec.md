@@ -159,10 +159,15 @@ that turns into a design question, stop and report it.
 
 ## 6. Lower priority, same surface
 
-- **`GeneratedBoardLengthFeedback`** (`StylistChat.jsx:27`, used at ~3275 and ~5402) still uses
-  the old raw inline-styled chips, missed by PR B's `.stylist-feedback-*` standardization. Port it
-  to the shared classes with `aria-pressed`. Vocabulary unchanged — PR B's ruling was
-  standardize-don't-unify.
+- ~~`GeneratedBoardLengthFeedback` still uses the old raw inline-styled chips, missed by PR B's
+  `.stylist-feedback-*` standardization.~~ **Stale even before today** — it already used the
+  shared `.stylist-feedback-chip` class (see `docs/ui-v1-design-handoff.md`'s item 6.1, which
+  recorded that porting as done). What it actually had, found and fixed 2026-07-27: the "which
+  garment" picker was a single shared pointer that reset to the first piece on every open/close
+  and never indicated which piece already had a saved correction. Replaced with one always-visible
+  reason group per piece, in both this component and Visual Lab's matching widget. Same fix used
+  the occasion to also unify board feedback onto two other chat surfaces that had no feedback UI
+  at all — see `docs/board-feedback-desync-spec.md` and `docs/app-surface-map.md`.
 - **Button height inconsistency**, 30px vs the 34px `.stylist-feedback-chip` floor, caused by CSS
   specificity. Still above the 24px WCAG floor, so cosmetic. Find the winning selector rather than
   adding `!important`.

@@ -54,7 +54,7 @@ test('Calibration boards provide client-side search and meaningful feedback filt
   assert.match(source, /const filteredSavedBoards = useMemo/)
   assert.match(source, /Search boards, pieces, or feedback/)
   assert.match(source, /\['unreviewed', 'Not reviewed'\]/)
-  assert.match(source, /\['review', 'Needs review'\]/)
+  assert.match(source, /\['flagged', 'Flagged'\]/)
   assert.match(source, /\['image', 'Image issues'\]/)
   assert.match(source, /aria-label="Review status"/)
   assert.match(source, /aria-label="Board status"/)
@@ -93,14 +93,13 @@ test('Calibration board detail behaves as a review dialog rather than a gallery 
   assert.match(source, /aria-labelledby="calibration-image-label"/)
 })
 
-test('wrong-length garment selector is local navigation and not gated by a pending save', () => {
-  // The garment picker only calls setRetagPieceId (local UI state); disabling it while a
-  // feedback write is in flight swallows a quick garment switch so it appears not to persist.
-  const selectorButton = source.match(/<button key=\{piece\.id\}[\s\S]*?setRetagPieceId\(Number\(piece\.id\)\)\}>/)?.[0] || ''
-  assert.ok(selectorButton, 'garment selector button should exist')
-  assert.doesNotMatch(selectorButton, /disabled=\{savedBoardPending\}/)
-  // The reason buttons, which do write, remain gated during a save.
-  const reasonButton = source.match(/<button key=\{issue\}[\s\S]*?toggleWrongLengthReason\(selectedBoard, issue\)\}>/)?.[0] || ''
+test('wrong-length correction renders one reason group per piece, with no shared garment picker to lose', () => {
+  // A single shared "which garment" pointer (retagPieceId) used to reset to the first piece
+  // on every open/close of the board detail card, hiding correctly-saved corrections on any
+  // piece past the first. Fixed by dropping the picker entirely: every piece gets its own
+  // always-visible reason group, driven directly by feedback_details.wrong_length.
+  assert.doesNotMatch(source, /retagPieceId/)
+  const reasonButton = source.match(/<button key=\{issue\}[\s\S]*?toggleWrongLengthReason\(selectedBoard, pieceId, issue\)\}>/)?.[0] || ''
   assert.ok(reasonButton, 'wrong-length reason button should exist')
   assert.match(reasonButton, /disabled=\{savedBoardPending\}/)
 })
