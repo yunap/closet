@@ -56,7 +56,7 @@ me*) and, behind **More feedback**, grouped reason chips (*What feels wrong?*, *
 | Structured outfit card's rendered image (`boardResults[boardKey]`) | "Generate outfit image" on a direction/plan card | yes — full taxonomy |
 | `editorialVisualResults` | "ideal pieces" suggestions | yes — full taxonomy |
 | `m.renderedBoards` | the model's own `render_preview` tool call mid-answer | **[fixed 2026-07-27]** — was Save-button-only |
-| `boardResults[i]` ("wardrobe-board") | the ad hoc **Generate visual boards** button under plain prose | **[fixed 2026-07-27]** — was Save-button-only; still shows a raw `Board error: Model did not return JSON` string on failure (`styling-engine/core.js:62`), that part deliberately left unfixed |
+| `boardResults[i]` ("wardrobe-board") | the ad hoc **Generate visual boards** button under plain prose | **[fixed 2026-07-27]** — was Save-button-only. Failure text on this surface is already translated to plain language by `friendlyBoardErrorMessage` (shipped in #175, before this fix) — corrected here 2026-07-28 after wrongly re-flagging it as raw/open, see `docs/stylist-bugfix-spec.md` §6 |
 
 There was never a `[by design]` ruling for the old split — the existing "no chips on plain-text
 replies" ruling (see the message-level-actions entry below) is about judging *prose*, not about
@@ -458,6 +458,20 @@ city is set, the forecast comes from here.
 - **[by design, not fixable in code]** Baked-in captions in that sheet are often illegible. The
   prompt already forbids text in the image; the image model does not always comply. Ruled: not a
   prompt bug.
+- **[by design, ruled 2026-07-27]** These sheets carry **no feedback chips at all** — Save only.
+  Found by `scratch/derive_board_producer_fanout.js` while checking whether the two no-chip bugs
+  fixed the same day (`m.renderedBoards`, `boardResults[i]`) recurred elsewhere; this pair looked
+  identical at first (same "silent" symptom) but isn't the same defect. A sheet composites
+  **multiple outfits into one image**, so a single verdict/reason chip set would be attached to no
+  specific outfit — the same reasoning the owner gave in conversation 2026-07-26 for why
+  "Creative outfit alternatives" (a different multi-outfit collage board, `boardResults[i]`) can't
+  take per-outfit feedback either. That reasoning was never written down anywhere until now; this
+  is its first appearance in the docs. Owner-ruled: silence here is correct, not a bug.
+
+  **Open, unscoped:** *how* a multi-outfit sheet could take feedback at all — per-panel chips
+  keyed by position, a coarser "which one, if any, looked right" prompt, or something else — is an
+  unanswered product question, not a code question. No proposal exists yet; flagging so it isn't
+  rediscovered as "missing chips" again before anyone has thought about what the right shape is.
 
 > **Stores.** Sheets land in `saved_boards` like any other render. `StylistChat.jsx:2492/2501/2589`.
 

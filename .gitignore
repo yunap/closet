@@ -20,3 +20,4 @@ scratch/*
 !scratch/build_dedup_fix_demo_thread.js
 !scratch/derive_surface_skeleton.js
 !scratch/derive_engine_behaviours.js
+!scratch/derive_board_producer_fanout.js

@@ -1909,6 +1909,15 @@ already-fixed ground. Everything above this point in the document is owner-teste
    confirm whether its reason survives. Until that is answered, any judgement about whether the
    grouped reason vocabulary earns its place is judging a channel whose delivery is unverified.
 
+   **Answered, 2026-07-27:** yes, the specific reason survives — `getSavedBoardMemory` reads
+   `saved_boards.payload.feedback_details` directly and renders it into plain language for the
+   model, for any board that's been saved. The channel was never broken; only the *display* (issue
+   1, now fixed) and the `stylist_feedback` mirror (deliberately still inert, not a bug — see
+   `docs/board-feedback-desync-spec.md`) were in question. "Two different stores" is also no
+   longer quite the right frame post-fix: once a board is saved, chat reads and writes the same
+   canonical `saved_boards` record Visual Lab does; `stylist_feedback` remains the store only for
+   boards that were never saved.
+
 3. **Gate-generated metadata tasks have stopped appearing, and the plan path never generated them
    at all.** Owner-reported 2026-07-26 ("I have not seen any tasks from the gates lately"),
    confirmed against `wardrobe.db` the same day. **Not diagnosed.**
