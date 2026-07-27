@@ -1416,6 +1416,65 @@ it is the reason the merge protection mapped under *The tagger prompt* matters.
 
 **This is an owner decision, not something to run.** It is recorded here as a costed option.
 
+### Re-tagging is not the first move — owner ruling, 2026-07-26
+
+An earlier draft of this section said "re-tag first, then fix the prompt." **That is wrong and is
+withdrawn.** The owner's position, which the data supports:
+
+> This wardrobe has already been re-tagged **multiple times**. Each pass is only as good as the
+> tagger was on the day it ran. The 167 unversioned pieces are not evidence that a re-tag is
+> overdue — they are the *residue of previous re-tags* that predate the current prompt. Doing it
+> again against a tagger with known gaps just buys another generation of data to redo.
+
+So the ordering is: **raise the tagger's ceiling first, re-tag once afterwards.** The $11 is not
+the constraint; spending it on a tagger that is not yet at its best is. Treat every item below as
+blocking the next re-tag, not as optional polish.
+
+### What would raise the tagger's ceiling — findings from this map
+
+**1. Calibration anchors cover two fields out of the several that gate.**
+`tagPieceWithProvider` calls `buildAnchorBlock` with `fields: ['formality', 'fabric_weight']`
+(`routes/ai.js:370`). Measured, on the corrections that already exist:
+
+| anchor fields | anchors produced |
+|---|---|
+| `formality` + `fabric_weight` (today) | **18** — 11 + 7 |
+| add `occasions` | **49** — +31 |
+| add `fit_on_body` + `length_hits_at` too | **67** |
+
+`occasions` is the second-largest gate input (the occasion gate, the +35 workbench term, capsule
+versatility) and **38 owner corrections for it already exist and are unused for calibration.**
+Adding it to that array is a one-line change.
+
+**Two honest caveats before doing it.** `occasions` is an *array*, and `buildAnchorBlock` buckets by
+the joined string — so each distinct combination becomes its own bucket, which is why 38
+corrections yield 31 anchors. Anchoring on a set is weaker calibration than anchoring on a scalar
+like `formality`, and 31 near-unique anchors may read as noise rather than as a range. And more
+anchors means more tokens per tag, on a call whose cost is already under-quoted by 1.6×. Worth
+measuring the anchor block's token cost against its benefit before shipping — not an obvious win.
+
+**2. Two gate columns cannot be anchored at all.** `heel_height` has **0** owner corrections and
+`walk_support` has **4**, so no anchor bucket can form for either. Both feed the activity
+footwear-comfort gate, and `heel_height` is 100% tagger-set (see the provenance table). If that
+gate matters, the missing input is owner corrections, not prompt text.
+
+**3. Only 8 of 18 anchors get a thumbnail.** `anchorThumbsForTagger` caps at `limit = 8`
+(`routes/ai.js:335`) while the text block lists all 18. Which 8 depends on bucket iteration order,
+not on importance — so the illustrated anchors are effectively arbitrary. Worth making
+deliberate before a run that re-tags the whole wardrobe against them.
+
+**4. The singular/plural gap is upstream of tagging too.** The tagger writes `name` and `reads_as`;
+every downstream keyword rule then reads those. Re-tagging into an engine where `jean`, `loafer`,
+`sneaker` and `clog` never match is spending money to feed classifiers that cannot see the result.
+
+**5. `extract-pieces` emits no `_confidence` map**, so anything added through it is treated as
+`medium` trust. If a re-tag is meant to establish a confidence baseline, that endpoint currently
+undermines it.
+
+**Not blocking:** the editorial image prompt's missing length clause and the `pattern_type` blind
+spot in the classifiers are *consumer-side* — they misread good data rather than producing bad
+data, so they can be fixed on either side of a re-tag.
+
 ---
 
 ## Findings this map produced
