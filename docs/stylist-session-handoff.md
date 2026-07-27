@@ -34,8 +34,12 @@ the panel packet had missed and several behaviours nobody had written down.
    ruled; B, C, D, E are not.
 4. `docs/expert-panel-brief.md` — ratified protocol. **Part 4b lists six ways the implementing
    agent got this wrong**; read it before assembling a packet.
-5. `docs/board-feedback-desync-spec.md` — self-contained, ready for a separate session.
-6. `docs/ui-v1-design-handoff.md` — rulings, plus **Outstanding issues 1–8**.
+5. **`docs/tagger-cost-spec.md`** — **draft, awaiting ratification.** Cost-first tagger spec:
+   cold-start onboarding is the primary case ($12.18 for 200 garments today, target <=$3.50).
+   Four phases, one billed step (~$2.70), decision rule written down. Read §2 first — it lists the
+   prior rulings that constrain it.
+6. `docs/board-feedback-desync-spec.md` — self-contained, ready for a separate session.
+7. `docs/ui-v1-design-handoff.md` — rulings, plus **Outstanding issues 1–8**.
 
 **Ten derivation/measurement scripts**, all read-only and free — none constructs an AI client:
 
@@ -203,8 +207,13 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   **5 have owner-corrected `occasions`** — so for 47 of them the conflicting `casual` tag is
   auto-tagger output, and the override would let the tagger overrule you. `formality` is the most
   curated field in the wardrobe (**202 of 236** pieces hand-corrected); `elevated` has not drifted.
-  What's actually left is the **5 pieces you tagged both ways** — a five-row list. Raising
-  `casual`'s ceiling to `elevated` remains a separate taste call.
+  What's actually left is the **5 pieces you tagged both ways** — a five-row list.
+  ~~Raising `casual`'s ceiling to `elevated` remains a separate taste call.~~ **Also withdrawn** —
+  `docs/occasion_profiles_ratification.md` shows you **ratified `casual → everyday` on 2026-07-05**,
+  with the consequence written down at the time: *"the largest behavior change… would make
+  park-friend, coffee, errands, and low-key social rosters reject `elevated` and `dressy` pieces."*
+  The 108-piece exclusion is the intended, documented result of a decision you already made. The
+  only live question is whether a given piece's `formality` is right — a tagging question.
 - **`extract-pieces` output is trusted more than the tagger's, on less evidence.** The
   "identify every garment in this outfit photo" endpoint shares the tagger's schema but sends **no
   calibration anchors, no photo-authority rules, no `style_profile_json`, and no `_confidence`
@@ -254,6 +263,16 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
      match spends money feeding classifiers that can't see the result.
   5. **`extract-pieces` emits no `_confidence` map**, so pieces added that way default to `medium`
      trust and undermine any confidence baseline a re-tag establishes.
+
+  **Prior rulings checked across `docs/` before finalising any of this** (map → *Provenance →
+  prior rulings a tagger spec must respect*). The load-bearing ones: optimising the tagger is
+  **already owner-sanctioned as possibly the better first move**, framed as paying off across
+  *every import path*, with the video-import decision downstream of it; *"AI retagging reports what
+  changed, leaves results reviewable, and cannot race Save"* is **ratified**, so capture-then-apply
+  is that principle at batch scale rather than a new idea; **nothing is retagged automatically, by
+  design**; **worn-photo scope is an OPEN product decision** a spec must not quietly settle; and
+  **any field change costs 9 wiring points with "tagger prompts x2" first** — which settles the
+  scope question, `extract-pieces` travels with `tag-piece`.
 
   Evidence that the current prompt *does* work when it runs: where the photo-authority section ran,
   low-confidence `length_hits_at` falls from **81% (191/236) to 42% (24/57)**. And this is not
