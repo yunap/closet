@@ -21,24 +21,15 @@ pass, and an expert panel that returns a defect list has been briefed wrong.
 - You do not need the database. Every artifact you need is transcribed into this packet.
 - Read the *whole* packet before writing anything.
 
-## The recurring failure mode — read this before calling anything a defect
+## The recurring failure mode — read before calling anything a defect
 
 Four separate times in one working session, an absence was reported as a defect and turned out to
-be deliberate or simply never built. The reviewer, and the implementing agent, and in one case two
-hours of investigation, were all wrong. Assume this trap is set for you too.
+be deliberate or simply never built. A reviewer, the implementing agent, and in one case two hours
+of investigation were all wrong. Assume the trap is set for you too.
 
-- **Garment IDs in the stylist's prose** ("the tan leather tote (ID 12)") — deliberately requested.
-  Garment names collide constantly, especially auto-tagger-written ones, and the ID is what makes a
-  recommendation point at one unambiguous record. The *presentation* is open to redesign; the
-  disambiguation problem is not negotiable. Propose an alternative only if it actually solves
-  disambiguation.
-- **"city stroll" implying comfortable walking shoes** — by design.
-- **One shoe carrying 7 of 8 looks in the capsule** — a 14-piece budget buys exactly 3 shoe slots,
-  one of which is spent on an evening-capable shoe. Correct behaviour, not a variety failure. See
-  proposition 7, where the underlying question *is* open.
-- **Plans not absorbing their own revisions** — never built. Ask a plan for a change and the
-  revision arrives as a separate card beside the plan. Judge whether it *should* exist; do not
-  report its absence as a bug.
+The canonical list is reproduced under **Settled ground** below, in the owner's own words. Read it
+before writing any finding. If you want to argue one of those decisions is wrong, do — but engage
+its stated reasoning; a restatement that it looks wrong is not an argument.
 ## Part 1 — The app (shared context, given to every reviewer)
 
 **What it is.** A wardrobe and personal-styling workspace. A person catalogs the clothes they
@@ -156,15 +147,35 @@ The current Stylist set, as a worked example:
    enumerable over what is reasoned?** The same instinct left the roster, budget verdict, and trim
    notices computed and still unshown.
 
-   **The capsule is also open for redesign — say what you would do.** Its quotas are not defended:
-   `capsuleQuotas` gives a 14-piece budget 5 tops / 5 bottoms / 1 dress / 0 outerwear / 3 shoes,
-   and `planTotalOutfitCapForBudget` caps the result at 8 outfits (any budget from 12 to 23 gets
-   the same 3 shoes; the cap only rises at 18, 24 and 30). The owner has decided the *approach* —
-   split the cap by plan shape, so a trip is bounded by days and a capsule by combinatorial reach —
-   and deliberately left the *number* open pending what real capsule practice actually promises for
-   an N-piece capsule. That question is yours: what should a 14-piece summer capsule deliver, on
-   what axis, and is a piece budget even the right thing for an owner to specify? Answer from how
-   capsule wardrobes are actually built, not from this code.
+   **The capsule is open for redesign, and the research is already done — your job is to break it
+   or confirm it.** `capsuleQuotas` gives a 14-piece budget 5 tops / 5 bottoms / 1 dress / 3 shoes,
+   and `planTotalOutfitCapForBudget` caps the result at 8 outfits. Measurement against the real
+   wardrobe (read-only, no model calls) established three things:
+
+   - **Capacity is real and the cap wastes it.** Gate-valid distinct outfit cores at budget 14 is
+     **24**, against a naive 26 — the validity ceilings cost almost nothing. A cap of 8 undersells
+     a 14-piece capsule by roughly threefold.
+   - **The wardrobe is not the constraint.** The weakest slot draws on 44 eligible tops and 35
+     eligible bottoms in supply; the roster bought two of each. This lives entirely in
+     `selectCapsuleRoster`/`capsuleQuotas`, not in what the owner owns.
+   - **Established practice contradicts the combinatorial reading.** 10×10 is 10 pieces → 10
+     outfits; 3-3-3 is 9 pieces → 9 base outfits with layered variants named as an extension;
+     Project 333 publishes no outfit list at all. Commercial "15 pieces, 50+ outfits" numbers are
+     always *capacity claims*, never enumerated lookbooks — nobody ships 50 cards. So practice
+     presents roughly **one look per piece at the small end, with the ratio falling as the capsule
+     grows**, because a capsule exists to reduce decision load rather than to enumerate. Practice
+     also does not vary the count by season, which argues for a season-invariant cap.
+
+   That last finding inverts the premise this decision started from: the capsule axis is **rotation,
+   not combinatorial reach**. A fourth finding complicates it — per-slot capacity is wildly uneven
+   (5 cores for `casual_city_day` against 21 for `smart_casual_outing` at the same budget), so a
+   single total-outfit number is a blunt instrument regardless of where it is set.
+
+   **Open questions, wanted as concrete recommendations:** Is rotation the right frame, or does the
+   one-look-per-piece convention reflect the limits of publishing a lookbook rather than what an
+   owner actually wants from a tool that can generate on demand? Given uneven per-slot capacity,
+   should the bound be a total at all, or per-slot? And is a piece budget even the right thing to
+   ask an owner to specify? Argue from practice and from the artifacts, not from this summary.
 8. Spending a conversational turn on a clarifying question — and a live weather lookup — before
    producing a plan is worth the delay it costs.
 9. **Scaffolding needs a stopping rule, and this product does not have one.**
@@ -207,7 +218,9 @@ settle.
 ## Settled ground — owner rulings you may not re-litigate
 
 Decided by the owner after earlier review. Each may be challenged, but only with a NEW
-argument engaging its stated reasoning — not a restatement that it looks wrong.
+argument engaging its stated reasoning — not a restatement that it looks wrong. The first
+list covers things that were built and then decided; the second covers absences that look
+like bugs but are intentional or simply never built.
 
 **Resolved, not open:**
 - "Recommended design direction" feedback, points #3 and #4 (visual-thesis line, strength-label
@@ -280,14 +293,52 @@ argument engaging its stated reasoning — not a restatement that it looks wrong
   still correctly separates "Outfit critique" and "Creative alternatives" as distinct child rows
   under the same "with my camera" subject).
 
+**Deliberately not built / by design — not defects, do not re-file:**
+
+This list exists because the *Resolved, not open* list above only covers things that were built
+and then decided; it says nothing about absences that look like bugs but are either intentional
+behaviour or simply never built. That gap let the same four non-defects get independently
+rediscovered and reported as bugs four times in one working session (2026-07-25) before anyone
+wrote them down in one place. If a panel or a future session finds an absence that isn't on this
+list, that is a real finding — but check here first.
+
+- **"City stroll" implying comfortable walking shoes.** Owner ruling 2026-07-25: by design. A slot
+  described as a city stroll should get walking-suitable footwear; the inference already fires
+  only on the `smart_casual_outing` slot whose `bestFor` names it, not on the other four slots.
+  Full trace in `docs/stylist-bugfix-spec.md`.
+- **One shoe carrying 7 of 8 looks in a 14-piece capsule.** Diagnosed, not a variety failure: the
+  budget buys exactly 3 shoe slots (`capsuleQuotas`), one of which the register-floor guarantee
+  spends on an evening-capable shoe. Correct behaviour given the current shoe-quota math. The
+  underlying "is 3 shoe slots the right number for a 14-piece capsule" question is still open —
+  see item 2 above (plan outfit cap) — but the 7-of-8 distribution itself is not a bug.
+- **Plans not absorbing their own revisions.** Never built. Ask a plan for a change and the
+  revision arrives as a separate `proposed` card beside the plan rather than folding in — a second
+  cost of the same gap is that a revised plan gets progressively harder to find in the thread rail
+  the more it's refined, since the rail summarises from only the latest turn's outfits. Judge
+  whether the merge *should* exist; its absence is not itself a defect to report. Full detail in
+  `docs/stylist-bugfix-spec.md`.
+- **Garment IDs in stylist prose** — also listed under *Resolved, not open* above; repeated here
+  because it is the paradigm case (an absence-of-obfuscation that reads as an internals leak but is
+  a deliberate, requested disambiguation mechanism).
+
+
 ---
 
 ## The artifacts
 
 Real stylist output, transcribed verbatim. Indented text is what the model wrote; the
-card list beneath is what the UI actually displayed. Until 2026-07-25 the prose was
-discarded entirely for plan responses — the owner saw only the cards. That is now fixed,
-but every artifact here predates the fix, and it bears on propositions 7 and 9.
+notes beneath describe what the UI actually displayed. A–E are plans and conversation;
+F–H cover the un-rendered direction surface, the critique form, and a gate-rejected card.
+
+**Two things every artifact predates, both since fixed — do not report either:**
+
+1. **The prose was discarded entirely for plan responses.** The owner saw only the cards.
+   The gap between what the model wrote and what was shown is visible below, and bears
+   directly on propositions 7 and 9.
+2. **Heuristic weather carried no marker.** Lines like `Weather used: Casual Days — hot,
+   highs 100-105F` were estimates shown with the same confidence as a resolved forecast.
+   They now read `(estimated)`; the `(live forecast, City)` marker in Artifact C was and
+   remains genuine. Judge proposition 8 on the mechanism, not these stale labels.
 
 ### Artifact A — 14-piece summer capsule (236-piece wardrobe)
 
@@ -596,6 +647,70 @@ but every artifact here predates the fix, and it bears on propositions 7 and 9.
 
 **Engine piece-reuse record:** 7 distinct pieces; repeats: rust floral wrap short-sleeve dress -> Casual Daytime, City Outing, Smart Casual / Dinner; cream chunky lace-up sneakers -> Casual Daytime; rust corduroy button-up shirt -> Casual Daytime, City Outing; black A-line midi skirt -> City Outing, Outdoor Daytime Social
 
+### Artifact F — ideal-additions directions, un-rendered (236-piece wardrobe)
+
+*Thread `thread_1783803763847` — the free-before-paid surface. Central to proposition 1.*
+
+**OWNER ASKED:** Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.
+
+**STYLIST WROTE:**
+
+> Here are three styling directions for bold purple floral sleeveless top. Review them and click "Generate image (~$0.07)" on any you want to render.
+
+**UI DISPLAYED 3 un-rendered direction card(s).** Each carries a free CSS
+croquis sketch (garment-shaped colour blocks), a plain-language thesis line, a
+'Full look:' description, and a `Generate outfit image (~$0.07)` button. A free
+'Compare silhouettes' strip shows all of them side by side, above a paid
+`Preview all directions (~$0.07)` action.
+
+- **Tailored Elegance**
+  - Full look: Fitted dark top, deep charcoal structured wide-leg trousers, sleek black leather loafers. Matte textures, dark neutral palette with a bold top as the focal point. Relaxed confident stance.
+  - Ideal additions the owner does not own: deep charcoal structured wide-leg trousers, sleek black leather loafers
+- **Artisan Flair**
+  - Full look: Fitted top with bold pattern, camel-toned flowing midi skirt, and brown strappy sandals. Textural contrast with earthy tones grounding the vibrant top. Relaxed, effortless posture.
+  - Ideal additions the owner does not own: camel-toned flowing midi skirt, brown strappy sandals
+- **Urban Explorer**
+  - Full look: Bold printed top, black high-waisted cargo pants, lightweight canvas sneakers. Matte, practical textures with a mix of utility and bold accents. Confident, dynamic posture.
+  - Ideal additions the owner does not own: black high-waisted cargo pants, lightweight canvas sneakers
+
+
+### Artifact G — outfit critique (236-piece wardrobe)
+
+*Thread `thread_1784620777062` — the structured-read output form. Central to proposition 5.*
+
+**STYLIST WROTE** (visible prose first, then a collapsed 'Full structured read'):
+
+> This outfit is working on its own terms — the folk-geometric jacket is the clear hero, and everything around it plays a supporting role correctly: the taupe knit base stays quiet, the beige wide-leg pants give it a neutral ground, and the woven straw bag and jute-platform espadrilles form a natural-material echo that reads like an intentional artisan detail rather than an accident. The bold floral shoe is actually the bravest move here, and it lands because the jute sole connects directly to the bag's woven texture.
+>
+> The one thing to test is the waist transition — with the top untucked at hip level over a relaxed wide-leg pant, both volumes are similar width, so the silhouette flattens into one continuous soft column rather than the compact-top-wide-bottom read the pants are designed for. To answer your question directly: no, the pants are not the problem. Try buttoning the jacket at the lowest button on your next wear — it narrows the center column visually and gives the proportion a cleaner break without changing anything else.
+>
+> Verdict: keep
+>
+> --- Full structured read ---
+>
+> Intent: folk-artisan casual with earthy texture layering
+> Success criteria: The jacket pattern reads as the textural hero, not as casual noise The wide-leg pant grounds the look without competing with the jacket The espadrilles connect to the folk/artisan register without introducing a third competing pattern register The overall palette stays in an earthy warm lane: taupe, beige, cream, dark floral The bag's woven texture closes the artisan loop at the accessory level
+>
+> Visible facts:
+> Floor line: The wide-leg beige pants fall to full length, grazing the floor or just above. The platform espadrille sole is visible beneath the hem — the chunky jute platform peeks out but the pant leg is wide enough tha
+>
+> [truncated]
+
+
+### Artifact H — a gate-rejected proposal shown as 'needs review' (23-piece sandbox)
+
+*Thread `thread_1784876334282` — central to proposition 3. Note: no diagnostic card appears*
+*in the last 150 real-wardrobe threads, so this surface is rare in live use.*
+
+**UI DISPLAYED 5 cards, 2 of them 'needs review':**
+
+- **Rust Shirt Day: standard wear** — engine verdict `structural: missing bottom`
+  - shown to the owner as: "What didn't clear: structural: missing bottom"
+  - the card still offers `Generate outfit image (~$0.07)` and `Evaluate outfit`
+- **White Shirt, Where Are You: standard wear** — engine verdict `structural: missing bottom`
+  - shown to the owner as: "What didn't clear: structural: missing bottom"
+  - the card still offers `Generate outfit image (~$0.07)` and `Evaluate outfit`
+
 
 ---
 
@@ -622,8 +737,9 @@ For this Stage 1 run specifically, return:
 1. **A position on each of the 9 propositions** — defend or attack, the strongest
    counter-argument to your own position, and what would have to be observably true for
    you to be wrong. Cite specific garments, looks or lines from the artifacts.
-2. **A concrete recommendation** on the open redesign question in proposition 7, and a
-   **decision rule** for the open question in proposition 9.
+2. **Concrete recommendations** on the open questions in proposition 7 (the capsule
+   redesign — research exists and wants breaking or confirming) and proposition 9 (a
+   decision rule for when to add structure).
 3. **Any product bet missing** from the list of 9.
 4. **One change you would make and one thing you would protect**, in your own lens.
 

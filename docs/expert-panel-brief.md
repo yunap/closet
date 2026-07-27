@@ -148,15 +148,35 @@ The current Stylist set, as a worked example:
    enumerable over what is reasoned?** The same instinct left the roster, budget verdict, and trim
    notices computed and still unshown.
 
-   **The capsule is also open for redesign — say what you would do.** Its quotas are not defended:
-   `capsuleQuotas` gives a 14-piece budget 5 tops / 5 bottoms / 1 dress / 0 outerwear / 3 shoes,
-   and `planTotalOutfitCapForBudget` caps the result at 8 outfits (any budget from 12 to 23 gets
-   the same 3 shoes; the cap only rises at 18, 24 and 30). The owner has decided the *approach* —
-   split the cap by plan shape, so a trip is bounded by days and a capsule by combinatorial reach —
-   and deliberately left the *number* open pending what real capsule practice actually promises for
-   an N-piece capsule. That question is yours: what should a 14-piece summer capsule deliver, on
-   what axis, and is a piece budget even the right thing for an owner to specify? Answer from how
-   capsule wardrobes are actually built, not from this code.
+   **The capsule is open for redesign, and the research is already done — your job is to break it
+   or confirm it.** `capsuleQuotas` gives a 14-piece budget 5 tops / 5 bottoms / 1 dress / 3 shoes,
+   and `planTotalOutfitCapForBudget` caps the result at 8 outfits. Measurement against the real
+   wardrobe (read-only, no model calls) established three things:
+
+   - **Capacity is real and the cap wastes it.** Gate-valid distinct outfit cores at budget 14 is
+     **24**, against a naive 26 — the validity ceilings cost almost nothing. A cap of 8 undersells
+     a 14-piece capsule by roughly threefold.
+   - **The wardrobe is not the constraint.** The weakest slot draws on 44 eligible tops and 35
+     eligible bottoms in supply; the roster bought two of each. This lives entirely in
+     `selectCapsuleRoster`/`capsuleQuotas`, not in what the owner owns.
+   - **Established practice contradicts the combinatorial reading.** 10×10 is 10 pieces → 10
+     outfits; 3-3-3 is 9 pieces → 9 base outfits with layered variants named as an extension;
+     Project 333 publishes no outfit list at all. Commercial "15 pieces, 50+ outfits" numbers are
+     always *capacity claims*, never enumerated lookbooks — nobody ships 50 cards. So practice
+     presents roughly **one look per piece at the small end, with the ratio falling as the capsule
+     grows**, because a capsule exists to reduce decision load rather than to enumerate. Practice
+     also does not vary the count by season, which argues for a season-invariant cap.
+
+   That last finding inverts the premise this decision started from: the capsule axis is **rotation,
+   not combinatorial reach**. A fourth finding complicates it — per-slot capacity is wildly uneven
+   (5 cores for `casual_city_day` against 21 for `smart_casual_outing` at the same budget), so a
+   single total-outfit number is a blunt instrument regardless of where it is set.
+
+   **Open questions, wanted as concrete recommendations:** Is rotation the right frame, or does the
+   one-look-per-piece convention reflect the limits of publishing a lookbook rather than what an
+   owner actually wants from a tool that can generate on demand? Given uneven per-slot capacity,
+   should the bound be a total at all, or per-slot? And is a piece budget even the right thing to
+   ask an owner to specify? Argue from practice and from the artifacts, not from this summary.
 8. Spending a conversational turn on a clarifying question — and a live weather lookup — before
    producing a plan is worth the delay it costs.
 9. **Scaffolding needs a stopping rule, and this product does not have one.**
@@ -260,7 +280,76 @@ because circumstances changed is a legitimate finding.
 **States.** Populated, empty, long-content, error, and the narrow viewport — for every surface,
 in both modes.
 
+**Clear the session recency memory before generating evidence.** Whole-wardrobe generation keeps a
+recency memory that skips recently used pieces — it both penalises them in scoring and reorders the
+roster. It is easy to miss: the only sign is one line in the composer footer, *"Skipping N recently
+used pieces"*. In one observed state that was **10 of 23 pieces**, so the stylist was composing
+from 13 and every artifact generated in that state understates the wardrobe's range.
+
+Reviewers judging variety, repetition or "why does the same garment keep appearing" against a warm
+memory are judging an artificially narrow pool, and nothing in the artifact tells them so. Clear it
+first — **Include them again** in the composer footer, or
+`DELETE /api/ai/whole-wardrobe-session-memory`.
+
+**The exception:** if the artifact exists to demonstrate the rotation mechanism itself, leave the
+memory warm — and say so in the packet, with the skip count at the time of generation. An
+unexplained warm memory is a confound; a declared one is evidence.
+
+**Surface inventory, mandatory.** Before assembling a packet, list every surface the feature spans
+— not just the one the question is about. For the Stylist that is: the chat thread, the per-piece
+`…` menu, Settings → *Learned rules & preferences*, Visual Lab → *Calibration boards* and *Style
+profile*, and the Lookbook entry points. Include each, or state in the packet that it was excluded
+and why. Stage 1 shipped without four of those and a reviewer concluded a capability did not exist
+when it did. A reviewer can only reason about what is in front of them, and a gap in the packet
+reads to them as a gap in the product.
+
 ---
+
+## Part 4b — How the implementing agent gets this wrong
+
+Recorded from the Stage 1 run (2026-07-25/26). Every item below actually happened, most of them
+more than once, and each produced either a false finding in a packet or a false correction to a
+real one. Read this before assembling a packet and before synthesising results.
+
+**1. Measuring one store and concluding a feature is broken.** The single most repeated error.
+Board feedback lives in *two* stores — `stylist_feedback` (chat) and `saved_boards.payload`
+(Visual Lab). Counting the second alone showed no writes for three days and produced a filed
+regression against a feature that was being written to that same morning. Earlier in the same
+session the same mistake produced "4 of 243 boards carry reason chips", which became the evidence
+base for a whole proposition. **Before counting anything, read how the surface that displays it
+persists it, and state which store you measured.** An empty table is not evidence of absence.
+
+**2. Treating absence as defect.** Four separate times an absence was reported as a bug and turned
+out to be deliberate or simply never built (garment IDs in prose; "city stroll" implying walking
+shoes; one shoe carrying most of a capsule; plans not absorbing revisions). A fifth came from a
+reviewer: *"nowhere can the owner see, edit or delete what the stylist has learned"* — there is a
+Settings surface with Edit and Retire that the packet did not include. **Check the by-design list,
+then check whether the thing has a different home, before writing the word "missing".**
+
+**3. Shipping a packet that omits surfaces the feature spans.** Stage 1's packet transcribed chat
+threads and nothing else — no Settings, no per-piece `…` menu, no owner-rule mechanism. Three
+reviewers then reasoned about a teaching loop with its main capture channel and its entire
+management UI invisible, and produced one dead finding and one inverted one. **Enumerate every
+surface the feature touches and either include it or say explicitly that it was excluded.**
+
+**4. Inferring causation from timestamp proximity.** An owner rule dated the same day as a
+conversation was asserted to have come from that conversation. `context_id` was empty; the link did
+not exist and could not be checked. The owner then supplied the actual sequence, which was
+different in a way that mattered — the rule was captured on a second, differently-phrased attempt,
+not the first. **If the link is not in the data, say so instead of inferring it.**
+
+**5. Over-correcting when a premise is challenged.** Told that the `~$0.07` labels are owner-facing
+instrumentation rather than user-facing pricing, the whole cost finding was discarded — when only
+the honesty-to-users half died and the instrumentation half was, if anything, more useful. **When
+a premise is corrected, isolate which half of the conclusion it kills.**
+
+**6. Building an argument on an unvalidated metric.** Related to 1, but distinct and worth its own
+line: a number was produced, not checked against the UI that renders the same data, and then used
+to carry a proposition. **Validate any metric against the surface that displays it before reasoning
+from it.**
+
+The common root: reaching for a query before understanding the model. The corrective is cheap —
+read the write path and the read path of the surface in question first, every time.
 
 ## Part 5 — Output contract
 
