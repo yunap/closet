@@ -1079,7 +1079,7 @@ correctly, the disclosure toggle expands/collapses the reason-chip group, and re
 navigation produces the global focus ring (2px solid accent) on the new chips. No new console
 errors (the one observed `fetchPriority` warning is pre-existing and unrelated).
 
-### PR B follow-on, deferred: two post-render board surfaces use different taxonomies
+### PR B follow-on, two post-render board surfaces use different taxonomies — resolved 2026-07-27
 
 Discovered 2026-07-24 while explaining the staged-vocabulary ruling to the owner using two
 screenshots from the same thread (`stylist/thread_1784839837475`). Traced live in the DOM
@@ -1100,9 +1100,18 @@ Both boards are already fully rendered photos by the time feedback is being give
 "some judgments need the image" reasoning behind keeping vocabulary staged (see the theme-B
 ruling above) does not actually explain why *these two* differ. The real split is which flow
 produced the image (structured multi-direction proposal vs. ad hoc conversational board), not
-render stage. This is a real inconsistency, distinct from PR A/B's scope. **Deferred — not
-scheduled, needs an owner decision on whether/how to unify these two post-render surfaces onto
-one taxonomy before any implementation.**
+render stage. This is a real inconsistency, distinct from PR A/B's scope.
+
+**Update 2026-07-27:** by the time this was picked back up, the ad hoc surface's own flat
+vocabulary (`FEEDBACK_PRIMARY_ACTIONS`/`FEEDBACK_REASON_ACTIONS`) no longer existed — deleted
+along with the rest of message-level feedback (see below) — leaving that surface with **no
+feedback UI whatsoever**, not just a different one. A second, previously-undocumented surface
+(`m.renderedBoards`, the model's own `render_preview` tool call mid-answer) turned out to be in
+the same state. Both were unified onto the shared taxonomy in the same pass that fixed the
+chat/Visual Lab desync (`docs/board-feedback-desync-spec.md`) — same components, same canonical
+read/write helpers, so the marginal cost of extending them was small. All four board-rendering
+surfaces in the Stylist now show the same verdict/reason/wrong-length UI. See
+`docs/app-surface-map.md`'s board-feedback-chips entry for the current, accurate surface table.
 
 ## Generating-state fix — "Create outfits" showed the empty/start-over state (implemented 2026-07-24)
 
@@ -1867,18 +1876,15 @@ Consolidated list of what's still open, so the panel re-review targets real gaps
 already-fixed ground. Everything above this point in the document is owner-tested and ratified.
 
 1. **Chat vs. Visual Lab board feedback show different selected states for the same board.**
-   Diagnosed, not implemented. Root cause: two disconnected reads — Visual Lab always reads live
-   from `saved_boards.payload`; the chat reads a snapshot frozen into that specific thread's own
-   storage (`thread.payload.feedbackSaved`) the moment feedback was given, never refreshed
-   against what's since changed elsewhere. A real fix means indexing full saved-board records by
-   `imageUrl` on load and branching the chat's board-feedback reads/writes through the canonical
-   `saved_boards` record once a board is saved, instead of trusting the local snapshot. (Note:
-   the *data-shape* half of this area — Visual Lab's reason-chip sync writing a reason-less row —
-   was already fixed in the taxonomy-unification pass above; that fix is real but was proven to
-   have no currently-observable effect, since nothing reads it for already-saved boards. This
-   item is the actual visible mismatch, still open.) **Owner ruling 2026-07-24: not required
-   before re-assembling the expert panel** — descoped from the panel-readiness gate, stays open
-   as a backlog item.
+   **Fixed 2026-07-27** — see `docs/board-feedback-desync-spec.md`'s "The display fix" section
+   for what shipped. Chat now indexes full saved-board records by `imageUrl` on load and branches
+   board-feedback reads/writes through the canonical `saved_boards` record once a board is saved,
+   exactly as scoped below; the per-thread snapshot remains the fallback for never-saved boards.
+   Live-verified both directions in the sandbox. (Note: the *data-shape* half of this area —
+   Visual Lab's reason-chip sync writing a reason-less row — was already fixed in the taxonomy-
+   unification pass above; that fix is real but has no observable effect, since nothing reads it
+   for already-saved boards, and remains that way on purpose — see the desync spec's "Deliberately
+   not touched" note.)
 
 2. **The chat and Visual Lab write board feedback to two different stores** — expanded from
    issue 1 on 2026-07-26, after a false alarm worth recording so it is not repeated.

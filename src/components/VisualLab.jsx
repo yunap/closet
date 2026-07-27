@@ -7,7 +7,7 @@ import {
   STYLE_DIRECTION_REASONS,
   SHAPE_BALANCE_REASONS,
   IMAGE_FIDELITY_FEEDBACK_LABELS,
-  WRONG_LENGTH_REASONS,
+  wrongLengthReasonsForCategory,
   SAVED_BOARD_FEEDBACK_DISPLAY_LABELS,
 } from '../../lib/feedbackTaxonomy.js'
 
@@ -104,7 +104,6 @@ export default function VisualLab({ onGoToThread } = {}) {
   const [calibrationEditNotes, setCalibrationEditNotes]     = useState('')
   const [savedBoards, setSavedBoards]                       = useState([])
   const [savedBoardsLoading, setSavedBoardsLoading]         = useState(false)
-  const [retagPieceId, setRetagPieceId]                     = useState(null)
   const [previewImage, setPreviewImage]                     = useState(null)
   const [selectedBoard, setSelectedBoard]                   = useState(null)
   const [savedBoardFilter, setSavedBoardFilter]             = useState('all')
@@ -122,10 +121,6 @@ export default function VisualLab({ onGoToThread } = {}) {
   const previewReturnFocusRef = useRef(null)
   const [searchParams, setSearchParams] = useSearchParams()
   previewImageRef.current = previewImage
-  useEffect(() => {
-    const firstPieceId = (selectedBoard?.pieces || []).find(piece => Number(piece?.id))?.id
-    setRetagPieceId(firstPieceId ? Number(firstPieceId) : null)
-  }, [selectedBoard?.id])
   // activeSection is URL-backed (survives tab switches); sub-filters stay local.
   const VALID_SECTIONS = ['references', 'saved', 'profile', 'upload']
   const rawSection  = searchParams.get('section')
@@ -272,9 +267,12 @@ export default function VisualLab({ onGoToThread } = {}) {
 
   const filteredSavedBoards = useMemo(() => {
     const imageIssueValues = new Set(IMAGE_FIDELITY_FEEDBACK_LABELS.map(([value]) => value))
-    const positiveValues = new Set(['signature', 'works'])
-    const reviewValues = new Set([
-      'almost', 'not_me', 'style_direction', 'shape_balance',
+    // "Almost right" is a positive-leaning verdict (close, not rejected — see
+    // getSavedBoardMemory's close-bucket handling), so it belongs with the other positive
+    // verdicts, not lumped in with actual negative/critique feedback.
+    const positiveValues = new Set(['signature', 'works', 'almost'])
+    const flaggedValues = new Set([
+      'not_me', 'style_direction', 'shape_balance',
       ...STYLE_DIRECTION_REASONS.map(([value]) => value),
       ...SHAPE_BALANCE_REASONS.map(([value]) => value),
       'wrong_energy', 'wrong_silhouette', 'wrong_proportions', 'catalog_drift',
@@ -287,7 +285,7 @@ export default function VisualLab({ onGoToThread } = {}) {
         const state = savedBoardReviewState(board)
         if (savedBoardFilter === 'unreviewed') return state.value === 'unreviewed'
         if (savedBoardFilter === 'positive') return labels.some(label => positiveValues.has(label))
-        if (savedBoardFilter === 'review') return labels.some(label => reviewValues.has(label))
+        if (savedBoardFilter === 'flagged') return labels.some(label => flaggedValues.has(label))
         if (savedBoardFilter === 'image') return labels.some(label => imageIssueValues.has(label))
         return true
       })()
@@ -506,12 +504,12 @@ export default function VisualLab({ onGoToThread } = {}) {
     })
   }
 
-  const toggleWrongLengthReason = async (row, issue) => {
+  const toggleWrongLengthReason = async (row, rawPieceId, issue) => {
     const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {}
     const details = payload.feedback_details && typeof payload.feedback_details === 'object' ? payload.feedback_details : {}
     const current = Array.isArray(details.wrong_length) ? details.wrong_length : []
     const pieces = Array.isArray(row?.pieces) ? row.pieces.filter(piece => Number(piece?.id)) : []
-    const pieceId = Number(retagPieceId || pieces[0]?.id)
+    const pieceId = Number(rawPieceId)
     const piece = pieces.find(candidate => Number(candidate.id) === pieceId)
     if (!pieceId || !piece) return
     const exists = current.some(correction => Number(correction?.piece_id) === pieceId && correction?.issue === issue)
@@ -780,7 +778,7 @@ export default function VisualLab({ onGoToThread } = {}) {
               ['all', 'All'],
               ['unreviewed', 'Not reviewed'],
               ['positive', 'Positive'],
-              ['review', 'Needs review'],
+              ['flagged', 'Flagged'],
               ['image', 'Image issues'],
             ].map(([value, label]) => (
               <button key={value} type="button" className={`chip ${savedBoardFilter === value ? 'active' : ''}`} aria-pressed={savedBoardFilter === value} onClick={() => setSavedBoardFilter(value)}>{label}</button>
@@ -939,24 +937,25 @@ export default function VisualLab({ onGoToThread } = {}) {
                   <div className="calibration-board-feedback-detail">
                     <h4>Which garment was rendered at the wrong length?</h4>
                     <p>This creates a review suggestion; it does not change the garment automatically.</p>
-                    <div className="calibration-board-feedback-options">
-                      {(selectedBoard.pieces || []).filter(piece => Number(piece?.id)).map((piece, index) => {
-                        const chosenId = Number(retagPieceId || (selectedBoard.pieces || []).find(candidate => Number(candidate?.id))?.id)
-                        // Choosing which garment to annotate is local UI navigation, not a save.
-                        // It must stay tappable while a feedback write is in flight, or a quick
-                        // switch after selecting a reason gets swallowed and appears not to persist.
-                        return <button key={piece.id} type="button" className={chosenId === Number(piece.id) ? 'active' : ''} aria-pressed={chosenId === Number(piece.id)} onClick={() => setRetagPieceId(Number(piece.id))}>{piece.name || `Piece ${index + 1}`}</button>
-                      })}
-                    </div>
-                    <h4 className="calibration-board-feedback-detail-question">What was wrong?</h4>
-                    <div className="calibration-board-feedback-options">
-                      {WRONG_LENGTH_REASONS.map(([issue, text]) => {
-                        const pieceId = Number(retagPieceId || (selectedBoard.pieces || []).find(piece => Number(piece?.id))?.id)
-                        const corrections = selectedBoard?.payload?.feedback_details?.wrong_length
-                        const active = Array.isArray(corrections) && corrections.some(correction => Number(correction?.piece_id) === pieceId && correction?.issue === issue)
-                        return <button key={issue} type="button" className={active ? 'active' : ''} aria-pressed={active} disabled={savedBoardPending} onClick={() => toggleWrongLengthReason(selectedBoard, issue)}>{text}</button>
-                      })}
-                    </div>
+                    {(selectedBoard.pieces || []).filter(piece => Number(piece?.id) && wrongLengthReasonsForCategory(piece.category).length).map(piece => {
+                      const pieceId = Number(piece.id)
+                      const pieceReasons = wrongLengthReasonsForCategory(piece.category)
+                      const corrections = selectedBoard?.payload?.feedback_details?.wrong_length
+                      const pieceCorrections = Array.isArray(corrections) ? corrections.filter(correction => Number(correction?.piece_id) === pieceId) : []
+                      return (
+                        <div key={piece.id} className="calibration-board-feedback-piece-detail">
+                          <h5 className="calibration-board-feedback-group-title">
+                            {piece.name || `Piece ${pieceId}`}{pieceCorrections.length ? ` (${pieceCorrections.length})` : ''}
+                          </h5>
+                          <div className="calibration-board-feedback-options">
+                            {pieceReasons.map(([issue, text]) => {
+                              const active = pieceCorrections.some(correction => correction?.issue === issue)
+                              return <button key={issue} type="button" className={active ? 'active' : ''} aria-pressed={active} disabled={savedBoardPending} onClick={() => toggleWrongLengthReason(selectedBoard, pieceId, issue)}>{text}</button>
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
                 </details>

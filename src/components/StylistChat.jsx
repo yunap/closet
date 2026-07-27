@@ -14,7 +14,7 @@ import {
   STYLE_DIRECTION_REASONS,
   SHAPE_BALANCE_REASONS,
   IMAGE_FIDELITY_FEEDBACK_LABELS,
-  WRONG_LENGTH_REASONS,
+  wrongLengthReasonsForCategory,
 } from '../../lib/feedbackTaxonomy.js'
 
 const GENERATED_BOARD_FEEDBACK_LABELS = [
@@ -24,45 +24,44 @@ const GENERATED_BOARD_FEEDBACK_LABELS = [
   ...IMAGE_FIDELITY_FEEDBACK_LABELS.map(([type, label]) => [type, label, null]),
 ]
 
-function GeneratedBoardLengthFeedback({ board, baseKey, feedbackSaved, toggleFeedback, payload, label, note, contextOverride = null }) {
-  const boardPieces = Array.isArray(board?.pieces) ? board.pieces.filter(piece => Number(piece?.id)) : []
-  const [pieceId, setPieceId] = useState(() => Number(boardPieces[0]?.id) || 0)
-  const selectedPiece = boardPieces.find(piece => Number(piece.id) === Number(pieceId)) || boardPieces[0]
-  if (!selectedPiece) return <div style={{ fontSize: 10, color: 'var(--text-light)' }}>The source garment could not be identified for this older image.</div>
+function GeneratedBoardLengthFeedback({ board, baseKey, feedbackSaved, toggleFeedback, payload, label, note, contextOverride = null, canonicalCorrections = null, onToggleCanonical = null }) {
+  const boardPieces = Array.isArray(board?.pieces) ? board.pieces.filter(piece => Number(piece?.id) && wrongLengthReasonsForCategory(piece.category).length) : []
+  if (!boardPieces.length) return <div style={{ fontSize: 10, color: 'var(--text-light)' }}>The source garment could not be identified for this older image.</div>
   return (
-    <div style={{ padding: 8, borderRadius: 8, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style={{ padding: 8, borderRadius: 8, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ fontSize: 10, fontWeight: 600 }}>Which garment is the wrong length?</div>
-      <div className="stylist-feedback-row">
-        {boardPieces.map(piece => (
-          <button
-            key={piece.id}
-            type="button"
-            aria-pressed={Number(selectedPiece.id) === Number(piece.id)}
-            onClick={() => setPieceId(Number(piece.id))}
-            className="stylist-feedback-chip"
-          >
-            {piece.name || `Piece ${piece.id}`}
-          </button>
-        ))}
-      </div>
-      <div style={{ fontSize: 10, fontWeight: 600 }}>What was wrong?</div>
-      <div className="stylist-feedback-row">
-        {WRONG_LENGTH_REASONS.map(([issue, text]) => {
-          const key = `${baseKey}:wrong_length_detail:${selectedPiece.id}:${issue}`
-          const active = feedbackSaved.has(key)
-          return (
-            <button
-              key={issue}
-              type="button"
-              aria-pressed={active}
-              onClick={() => toggleFeedback({ key, feedbackType: 'wrong_length', targetType: 'generated_visual_board', label, note, payload: { ...payload, length_correction: { piece_id: Number(selectedPiece.id), piece_name: selectedPiece.name || `Piece ${selectedPiece.id}`, issue } }, appendToPiece: false, contextOverride })}
-              className="stylist-feedback-chip"
-            >
-              {active ? '✓ ' : ''}{text}
-            </button>
-          )
-        })}
-      </div>
+      {boardPieces.map(piece => {
+        const pieceId = Number(piece.id)
+        const pieceReasons = wrongLengthReasonsForCategory(piece.category)
+        const pieceCorrections = canonicalCorrections ? canonicalCorrections.filter(c => Number(c?.piece_id) === pieceId) : null
+        const activeCount = pieceCorrections
+          ? pieceCorrections.length
+          : pieceReasons.filter(([issue]) => feedbackSaved.has(`${baseKey}:wrong_length_detail:${piece.id}:${issue}`)).length
+        return (
+          <div key={piece.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 10, fontWeight: 600 }}>{piece.name || `Piece ${piece.id}`}{activeCount ? ` (${activeCount})` : ''}</div>
+            <div className="stylist-feedback-row">
+              {pieceReasons.map(([issue, text]) => {
+                const key = `${baseKey}:wrong_length_detail:${piece.id}:${issue}`
+                const active = pieceCorrections ? pieceCorrections.some(c => c?.issue === issue) : feedbackSaved.has(key)
+                return (
+                  <button
+                    key={issue}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => onToggleCanonical
+                      ? onToggleCanonical(pieceId, piece.name || `Piece ${pieceId}`, issue)
+                      : toggleFeedback({ key, feedbackType: 'wrong_length', targetType: 'generated_visual_board', label, note, payload: { ...payload, length_correction: { piece_id: pieceId, piece_name: piece.name || `Piece ${pieceId}`, issue } }, appendToPiece: false, contextOverride })}
+                    className="stylist-feedback-chip"
+                  >
+                    {active ? '✓ ' : ''}{text}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -624,6 +623,7 @@ export default function StylistChat({
   const [boardLearningStatus, setBoardLearningStatus] = useState({})
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
   const [savedBoardUrls, setSavedBoardUrls] = useState(new Set())
+  const [savedBoardsByUrl, setSavedBoardsByUrl] = useState({})
 
   const [boardLoadingIndex, setBoardLoadingIndex] = useState(null)
   const [previewImage, setPreviewImage] = useState(null)
@@ -852,6 +852,7 @@ export default function StylistChat({
     }
 
     const applyLoadedThread = (thread) => {
+      refreshSavedBoards()
       const loadedMessages = thread.payload.messages || []
       suppressThreadLoadAutosaveRef.current = true
       suppressNextMessageScrollRef.current = true
@@ -1255,7 +1256,12 @@ export default function StylistChat({
 
         setThreads(serverThreads)
 
-        const isLaunchingAction = initialOutfit || initialPiece || initialOpenVisualComposer
+        // A specific thread requested via the URL (initialThreadId) is handled by its own
+        // effect below. If this init effect also picks a thread from localStorage, the two
+        // race — this one runs several awaited fetches first, so it reliably finishes last and
+        // silently overwrites the correct thread's content with whatever was last active in a
+        // different tab/session, without ever updating the URL.
+        const isLaunchingAction = initialOutfit || initialPiece || initialOpenVisualComposer || initialThreadId
         if (!isLaunchingAction) {
           let activeId = 'new_chat'
           const savedActiveId = localStorage.getItem('stylist_current_thread_id')
@@ -1386,18 +1392,30 @@ export default function StylistChat({
     setLoadingStatus('')
   }, [currentThreadId])
 
+  const refreshSavedBoards = useCallback(async () => {
+    try {
+      const res = await fetch('/api/saved-boards?limit=1000')
+      const data = await res.json()
+      if (!Array.isArray(data)) return
+      const urls = new Set()
+      const byUrl = {}
+      for (const board of data) {
+        const imageUrl = board.imageUrl || board.image_url
+        if (!imageUrl) continue
+        urls.add(imageUrl)
+        byUrl[imageUrl] = board
+      }
+      setSavedBoardUrls(urls)
+      setSavedBoardsByUrl(byUrl)
+    } catch (err) {
+      console.error('Failed to fetch saved boards:', err)
+    }
+  }, [])
+
   useEffect(() => {
     fetch('/api/pieces').then(r => r.json()).then(setPieces)
     fetch('/api/outfits').then(r => r.json()).then(setOutfits).catch(() => setOutfits([]))
-    fetch('/api/saved-boards?limit=1000')
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          const urls = data.map(b => b.imageUrl || b.image_url).filter(Boolean)
-          setSavedBoardUrls(new Set(urls))
-        }
-      })
-      .catch(err => console.error('Failed to fetch saved boards:', err))
+    refreshSavedBoards()
     fetch('/api/settings/home-location')
       .then(r => r.json())
       .then(data => {
@@ -3270,9 +3288,11 @@ export default function StylistChat({
                                     ['Problems in the generated image', diagnosticLabels.filter(([type]) => IMAGE_FIDELITY_FEEDBACK_LABELS.some(([value]) => value === type))],
                                   ]
 
+                                  const isBoardSavedToCanon = Boolean(canonicalBoardFor(board))
+
                                   const hasActiveDiagnostic = diagnosticLabels.some(([type, , reason]) => {
                                     const key = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:${type}${reason ? `:${reason}` : ''}`
-                                    return feedbackSaved.has(key)
+                                    return (boardFeedbackActive(board, type, reason) ?? feedbackSaved.has(key))
                                   })
 
                                   const cardKey = `board-card:${messageIndex}:${idx}:${boardIdx}`
@@ -3284,10 +3304,10 @@ export default function StylistChat({
                                         {primaryLabels.map(([type, label]) => {
                                           const verdictBaseKey = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}`
                                           const key = `${verdictBaseKey}:${type}`
-                                          const isSaved = feedbackSaved.has(key)
+                                          const isSaved = boardFeedbackActive(board, type) ?? feedbackSaved.has(key)
                                           return (
                                             <button key={key}
-                                              onClick={() => selectGeneratedBoardVerdict({
+                                              onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(board, type) : selectGeneratedBoardVerdict({
                                                 key,
                                                 feedbackType: type,
                                                 targetType: 'generated_visual_board',
@@ -3333,10 +3353,12 @@ export default function StylistChat({
                                             <div className="stylist-feedback-row">
                                           {entries.map(([type, label, reason]) => {
                                             const key = `editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:${type}${reason ? `:${reason}` : ''}`
-                                            const isSaved = feedbackSaved.has(key)
+                                            const isSaved = boardFeedbackActive(board, type, reason) ?? feedbackSaved.has(key)
                                             return (
                                               <button key={key}
-                                                onClick={() => toggleStylistFeedback({
+                                                onClick={() => isBoardSavedToCanon
+                                                  ? (reason ? toggleCanonicalBoardReason(board, type, reason) : toggleCanonicalBoardLabel(board, type))
+                                                  : toggleStylistFeedback({
                                                   key,
                                                   feedbackType: type,
                                                   targetType: 'generated_visual_board',
@@ -3366,7 +3388,7 @@ export default function StylistChat({
                                           })}
                                             </div>
                                           </div>)}
-                                          {feedbackSaved.has(`editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:wrong_length`) && (
+                                          {(boardFeedbackActive(board, 'wrong_length') ?? feedbackSaved.has(`editorial-idea-board:${messageIndex}:${idx}:${boardIdx}:wrong_length`)) && (
                                             <GeneratedBoardLengthFeedback
                                               board={board}
                                               baseKey={`editorial-idea-board:${messageIndex}:${idx}:${boardIdx}`}
@@ -3378,6 +3400,8 @@ export default function StylistChat({
                                               contextOverride={message?.wholeWardrobe || board?.wholeWardrobe || outfit?.wholeWardrobe
                                                 ? { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
                                                 : (activeContext || null)}
+                                              canonicalCorrections={boardWrongLengthCorrections(board)}
+                                              onToggleCanonical={isBoardSavedToCanon ? (pieceId, pieceName, issue) => toggleCanonicalWrongLength(board, pieceId, pieceName, issue) : null}
                                             />
                                           )}
                                         </div>
@@ -3452,6 +3476,86 @@ export default function StylistChat({
       wrong_length: 'Rendering correction saved: preserve garment length.',
     }
     return copy[feedbackType] || 'Learning saved.'
+  }
+
+  // Once a board is saved to Visual Lab, saved_boards.payload is the canonical feedback
+  // record — Visual Lab writes there directly and reads it live. Chat used to read only its
+  // own frozen per-thread snapshot (feedbackSaved), which never noticed edits made in Visual
+  // Lab. These helpers branch reads/writes through the canonical record for any board present
+  // in savedBoardsByUrl, falling back to the local snapshot for boards never saved.
+  const canonicalBoardFor = (board) => (board?.imageUrl ? savedBoardsByUrl[board.imageUrl] : null)
+
+  const boardFeedbackActive = (board, feedbackType, reason = null) => {
+    const canonical = canonicalBoardFor(board)
+    if (!canonical) return null
+    const labels = Array.isArray(canonical.payload?.feedback_labels) ? canonical.payload.feedback_labels : []
+    if (!reason) return labels.includes(feedbackType)
+    const details = canonical.payload?.feedback_details || {}
+    const list = Array.isArray(details[feedbackType]) ? details[feedbackType] : []
+    return list.includes(reason)
+  }
+
+  const boardWrongLengthCorrections = (board) => {
+    const canonical = canonicalBoardFor(board)
+    const corrections = canonical?.payload?.feedback_details?.wrong_length
+    return Array.isArray(corrections) ? corrections : null
+  }
+
+  const patchCanonicalBoard = async (board, patch) => {
+    const canonical = canonicalBoardFor(board)
+    if (!canonical) return false
+    try {
+      const res = await fetch(`/api/saved-boards/${canonical.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!res.ok) return false
+      await refreshSavedBoards()
+      return true
+    } catch (err) {
+      console.error('Failed to update saved board feedback:', err)
+      return false
+    }
+  }
+
+  const toggleCanonicalBoardVerdict = async (board, type) => {
+    const canonical = canonicalBoardFor(board)
+    const current = Array.isArray(canonical.payload?.feedback_labels) ? canonical.payload.feedback_labels : []
+    const verdictValues = new Set(OVERALL_VERDICT_LABELS.map(([value]) => value))
+    const isActive = current.includes(type)
+    const next = current.filter(value => !verdictValues.has(value))
+    if (!isActive) next.push(type)
+    await patchCanonicalBoard(board, { feedbackLabels: next })
+  }
+
+  const toggleCanonicalBoardLabel = async (board, label) => {
+    const canonical = canonicalBoardFor(board)
+    const current = Array.isArray(canonical.payload?.feedback_labels) ? canonical.payload.feedback_labels : []
+    const next = current.includes(label) ? current.filter(value => value !== label) : [...current, label]
+    await patchCanonicalBoard(board, { feedbackLabels: next })
+  }
+
+  const toggleCanonicalBoardReason = async (board, category, reason) => {
+    const canonical = canonicalBoardFor(board)
+    const details = canonical.payload?.feedback_details || {}
+    const current = Array.isArray(details[category]) ? details[category] : []
+    const next = current.includes(reason) ? current.filter(value => value !== reason) : [...current, reason]
+    const labels = Array.isArray(canonical.payload?.feedback_labels) ? canonical.payload.feedback_labels : []
+    const nextLabels = next.length ? (labels.includes(category) ? labels : [...labels, category]) : labels.filter(value => value !== category)
+    await patchCanonicalBoard(board, { feedbackLabels: nextLabels, feedbackDetails: { ...details, [category]: next } })
+  }
+
+  const toggleCanonicalWrongLength = async (board, pieceId, pieceName, issue) => {
+    const canonical = canonicalBoardFor(board)
+    const details = canonical.payload?.feedback_details || {}
+    const current = Array.isArray(details.wrong_length) ? details.wrong_length : []
+    const exists = current.some(correction => Number(correction?.piece_id) === Number(pieceId) && correction?.issue === issue)
+    const next = exists
+      ? current.filter(correction => !(Number(correction?.piece_id) === Number(pieceId) && correction?.issue === issue))
+      : [...current, { piece_id: Number(pieceId), piece_name: pieceName, issue }]
+    const labels = Array.isArray(canonical.payload?.feedback_labels) ? canonical.payload.feedback_labels : []
+    await patchCanonicalBoard(board, { feedbackLabels: labels.includes('wrong_length') ? labels : [...labels, 'wrong_length'], feedbackDetails: { ...details, wrong_length: next } })
   }
 
   const saveStylistFeedback = async ({ key, feedbackType, targetType = 'message', label = '', note = '', payload = {}, appendToPiece = false, contextOverride = null }) => {
@@ -3547,6 +3651,7 @@ export default function StylistChat({
     if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Could not save board') }
     setSavedBoardKeys(prev => new Set([...prev, key]))
     setSavedBoardUrls(prev => new Set([...prev, board.imageUrl]))
+    await refreshSavedBoards()
   }
 
   const generateVisualBoards = async (resultKey, conceptText, structuredOverride = null, pieceIdOverride = null, sourceMessageIndex = null) => {
@@ -5382,11 +5487,79 @@ export default function StylistChat({
                           <img src={resolveUploadThumbnailSrc(board.imageUrl, 'chat-display')} alt={board.label || 'Outfit preview'} className="generated-visual-image" loading="lazy" decoding="async" />
                         </button>
                         <div style={{ fontSize: 13, fontWeight: 650, marginTop: 8, color: 'var(--text)' }}>{board.label}</div>
-                        {!isRenderSaved && (
-                          <div style={{ marginTop: 6 }}>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8, width: '100%', alignItems: 'center' }}>
+                          {!isRenderSaved && (
                             <button onClick={() => saveGeneratedBoard({ key: renderSaveKey, board, boardType: 'render_preview', messageIndex: i, boardIndex: boardIdx })} style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}>Save board</button>
-                          </div>
-                        )}
+                          )}
+                          {(() => {
+                            const primaryTypes = ['signature', 'works', 'almost', 'not_me']
+                            const primaryLabels = GENERATED_BOARD_FEEDBACK_LABELS.filter(([type, , reason]) => primaryTypes.includes(type) && !reason)
+                            const diagnosticLabels = GENERATED_BOARD_FEEDBACK_LABELS.filter(([type, , reason]) => !primaryTypes.includes(type) || reason)
+                            const diagnosticGroups = [
+                              ['What feels wrong?', diagnosticLabels.filter(([type]) => type === 'style_direction')],
+                              ['Fit and shape', diagnosticLabels.filter(([type]) => type === 'shape_balance')],
+                              ['Problems in the generated image', diagnosticLabels.filter(([type]) => IMAGE_FIDELITY_FEEDBACK_LABELS.some(([value]) => value === type))],
+                            ]
+                            const isBoardSavedToCanon = Boolean(canonicalBoardFor(board))
+                            const hasActiveDiagnostic = diagnosticLabels.some(([type, , reason]) => {
+                              const k = `${renderSaveKey}:${type}${reason ? `:${reason}` : ''}`
+                              return (boardFeedbackActive(board, type, reason) ?? feedbackSaved.has(k))
+                            })
+                            const cardKey = `render-card:${i}:${boardIdx}`
+                            const isExpanded = !collapsedFeedbackCards.has(cardKey) && (hasActiveDiagnostic || expandedFeedbackCards.has(cardKey))
+                            return (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                                <div className="stylist-feedback-row">
+                                  {primaryLabels.map(([type, label]) => {
+                                    const k = `${renderSaveKey}:${type}`
+                                    const isSavedFeedback = boardFeedbackActive(board, type) ?? feedbackSaved.has(k)
+                                    return (
+                                      <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(board, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'rendered board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: boardIdx, feedbackLabel: type }, appendToPiece: false }, renderSaveKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                        {isSavedFeedback ? '✓ ' : ''}{label}
+                                      </button>
+                                    )
+                                  })}
+                                  <button type="button" onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)} aria-expanded={isExpanded} className="stylist-feedback-chip is-quiet">
+                                    {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
+                                  </button>
+                                </div>
+                                {isExpanded && (
+                                  <div className="stylist-feedback-disclosure">
+                                    {diagnosticGroups.map(([groupTitle, entries]) => <div key={groupTitle}>
+                                      <div className="stylist-feedback-group-title">{groupTitle}</div>
+                                      <div className="stylist-feedback-row">
+                                    {entries.map(([type, label, reason]) => {
+                                      const k = `${renderSaveKey}:${type}${reason ? `:${reason}` : ''}`
+                                      const isSavedFeedback = boardFeedbackActive(board, type, reason) ?? feedbackSaved.has(k)
+                                      return (
+                                        <button key={k} onClick={() => isBoardSavedToCanon
+                                          ? (reason ? toggleCanonicalBoardReason(board, type, reason) : toggleCanonicalBoardLabel(board, type))
+                                          : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'rendered board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: boardIdx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                          {isSavedFeedback ? '✓ ' : ''}{label}
+                                        </button>
+                                      )
+                                    })}
+                                      </div>
+                                    </div>)}
+                                    {(boardFeedbackActive(board, 'wrong_length') ?? feedbackSaved.has(`${renderSaveKey}:wrong_length`)) && (
+                                      <GeneratedBoardLengthFeedback
+                                        board={board}
+                                        baseKey={renderSaveKey}
+                                        feedbackSaved={feedbackSaved}
+                                        toggleFeedback={toggleStylistFeedback}
+                                        label={board.label || 'Rendered board'}
+                                        note={board.reason || ''}
+                                        payload={{ board, messageIndex: i, boardIndex: boardIdx }}
+                                        canonicalCorrections={boardWrongLengthCorrections(board)}
+                                        onToggleCanonical={isBoardSavedToCanon ? (pieceId, pieceName, issue) => toggleCanonicalWrongLength(board, pieceId, pieceName, issue) : null}
+                                      />
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
+                        </div>
                       </div>
                     )
                   })}
@@ -5458,9 +5631,11 @@ export default function StylistChat({
                                       ['Problems in the generated image', diagnosticLabels.filter(([type]) => IMAGE_FIDELITY_FEEDBACK_LABELS.some(([value]) => value === type))],
                                     ]
 
+                                    const isBoardSavedToCanon = Boolean(canonicalBoardFor(visual))
+
                                     const hasActiveDiagnostic = diagnosticLabels.some(([type, , reason]) => {
                                       const k = `visual-board:${i}:${idx}:${type}${reason ? `:${reason}` : ''}`
-                                      return feedbackSaved.has(k)
+                                      return (boardFeedbackActive(visual, type, reason) ?? feedbackSaved.has(k))
                                     })
 
                                     const cardKey = `visual-card:${i}:${idx}`
@@ -5472,9 +5647,9 @@ export default function StylistChat({
                                           {primaryLabels.map(([type, label]) => {
                                             const verdictBaseKey = `visual-board:${i}:${idx}`
                                             const k = `${verdictBaseKey}:${type}`
-                                            const isSavedFeedback = feedbackSaved.has(k)
+                                            const isSavedFeedback = boardFeedbackActive(visual, type) ?? feedbackSaved.has(k)
                                             return (
-                                              <button key={k} onClick={() => selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: false }, verdictBaseKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                              <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(visual, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: false }, verdictBaseKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                                 {isSavedFeedback ? '✓ ' : ''}{label}
                                               </button>
                                             )
@@ -5497,16 +5672,18 @@ export default function StylistChat({
                                               <div className="stylist-feedback-row">
                                             {entries.map(([type, label, reason]) => {
                                               const k = `visual-board:${i}:${idx}:${type}${reason ? `:${reason}` : ''}`
-                                              const isSavedFeedback = feedbackSaved.has(k)
+                                              const isSavedFeedback = boardFeedbackActive(visual, type, reason) ?? feedbackSaved.has(k)
                                               return (
-                                                <button key={k} onClick={() => toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                                <button key={k} onClick={() => isBoardSavedToCanon
+                                                  ? (reason ? toggleCanonicalBoardReason(visual, type, reason) : toggleCanonicalBoardLabel(visual, type))
+                                                  : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                                   {isSavedFeedback ? '✓ ' : ''}{label}
                                                 </button>
                                               )
                                             })}
                                               </div>
                                             </div>)}
-                                            {feedbackSaved.has(`visual-board:${i}:${idx}:wrong_length`) && (
+                                            {(boardFeedbackActive(visual, 'wrong_length') ?? feedbackSaved.has(`visual-board:${i}:${idx}:wrong_length`)) && (
                                               <GeneratedBoardLengthFeedback
                                                 board={visual}
                                                 baseKey={`visual-board:${i}:${idx}`}
@@ -5515,6 +5692,8 @@ export default function StylistChat({
                                                 label={visual.label || 'Visual board'}
                                                 note={visual.reason || ''}
                                                 payload={{ board: visual, messageIndex: i, boardIndex: idx }}
+                                                canonicalCorrections={boardWrongLengthCorrections(visual)}
+                                                onToggleCanonical={isBoardSavedToCanon ? (pieceId, pieceName, issue) => toggleCanonicalWrongLength(visual, pieceId, pieceName, issue) : null}
                                               />
                                             )}
                                           </div>
@@ -5561,10 +5740,78 @@ export default function StylistChat({
                                   </details>
                                 )}
 
-                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8 }}>
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8, width: '100%', alignItems: 'center' }}>
                                   {!isBoardSaved && (
                                     <button onClick={() => saveGeneratedBoard({ key: saveKey, board, boardType: 'wardrobe_board', messageIndex: i, boardIndex: idx })} style={{ fontSize: 10, color: 'var(--accent)', padding: '2px 7px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer' }}>Save board</button>
                                   )}
+                                  {(() => {
+                                    const primaryTypes = ['signature', 'works', 'almost', 'not_me']
+                                    const primaryLabels = GENERATED_BOARD_FEEDBACK_LABELS.filter(([type, , reason]) => primaryTypes.includes(type) && !reason)
+                                    const diagnosticLabels = GENERATED_BOARD_FEEDBACK_LABELS.filter(([type, , reason]) => !primaryTypes.includes(type) || reason)
+                                    const diagnosticGroups = [
+                                      ['What feels wrong?', diagnosticLabels.filter(([type]) => type === 'style_direction')],
+                                      ['Fit and shape', diagnosticLabels.filter(([type]) => type === 'shape_balance')],
+                                      ['Problems in the generated image', diagnosticLabels.filter(([type]) => IMAGE_FIDELITY_FEEDBACK_LABELS.some(([value]) => value === type))],
+                                    ]
+                                    const isBoardSavedToCanon = Boolean(canonicalBoardFor(board))
+                                    const hasActiveDiagnostic = diagnosticLabels.some(([type, , reason]) => {
+                                      const k = `${saveKey}:${type}${reason ? `:${reason}` : ''}`
+                                      return (boardFeedbackActive(board, type, reason) ?? feedbackSaved.has(k))
+                                    })
+                                    const cardKey = `wardrobe-board-card:${i}:${idx}`
+                                    const isExpanded = !collapsedFeedbackCards.has(cardKey) && (hasActiveDiagnostic || expandedFeedbackCards.has(cardKey))
+                                    return (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                                        <div className="stylist-feedback-row">
+                                          {primaryLabels.map(([type, label]) => {
+                                            const k = `${saveKey}:${type}`
+                                            const isSavedFeedback = boardFeedbackActive(board, type) ?? feedbackSaved.has(k)
+                                            return (
+                                              <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(board, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'wardrobe board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: false }, saveKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                                {isSavedFeedback ? '✓ ' : ''}{label}
+                                              </button>
+                                            )
+                                          })}
+                                          <button type="button" onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)} aria-expanded={isExpanded} className="stylist-feedback-chip is-quiet">
+                                            {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
+                                          </button>
+                                        </div>
+                                        {isExpanded && (
+                                          <div className="stylist-feedback-disclosure">
+                                            {diagnosticGroups.map(([groupTitle, entries]) => <div key={groupTitle}>
+                                              <div className="stylist-feedback-group-title">{groupTitle}</div>
+                                              <div className="stylist-feedback-row">
+                                            {entries.map(([type, label, reason]) => {
+                                              const k = `${saveKey}:${type}${reason ? `:${reason}` : ''}`
+                                              const isSavedFeedback = boardFeedbackActive(board, type, reason) ?? feedbackSaved.has(k)
+                                              return (
+                                                <button key={k} onClick={() => isBoardSavedToCanon
+                                                  ? (reason ? toggleCanonicalBoardReason(board, type, reason) : toggleCanonicalBoardLabel(board, type))
+                                                  : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'wardrobe board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                                  {isSavedFeedback ? '✓ ' : ''}{label}
+                                                </button>
+                                              )
+                                            })}
+                                              </div>
+                                            </div>)}
+                                            {(boardFeedbackActive(board, 'wrong_length') ?? feedbackSaved.has(`${saveKey}:wrong_length`)) && (
+                                              <GeneratedBoardLengthFeedback
+                                                board={board}
+                                                baseKey={saveKey}
+                                                feedbackSaved={feedbackSaved}
+                                                toggleFeedback={toggleStylistFeedback}
+                                                label={board.label || 'Wardrobe board'}
+                                                note={board.reason || ''}
+                                                payload={{ board, messageIndex: i, boardIndex: idx }}
+                                                canonicalCorrections={boardWrongLengthCorrections(board)}
+                                                onToggleCanonical={isBoardSavedToCanon ? (pieceId, pieceName, issue) => toggleCanonicalWrongLength(board, pieceId, pieceName, issue) : null}
+                                              />
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
                                 </div>
                               </>
                             )}

@@ -1,7 +1,42 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-26. Branch `stylist-weather-provenance-and-labels`, committed through
-`0c934ed` plus the mapping work committed after it.
+**Last updated:** 2026-07-27. Branch `stylist-weather-provenance-and-labels`.
+
+## 2026-07-27 session — board feedback desync fixed, plus three bugs found along the way
+
+Picked up `docs/board-feedback-desync-spec.md` (previously "diagnosed, not implemented"). Now
+**implemented and live-verified** — see that spec's "The display fix" section for the mechanism
+(chat now indexes saved boards by `imageUrl` and branches reads/writes through the canonical
+`saved_boards` record, same as Visual Lab). Full details, including what was deliberately left
+alone, are in that spec; don't duplicate them here.
+
+Three more bugs surfaced and were fixed in the same session, none of them things this session set
+out to find:
+
+1. **Wrong-length garment picker** (`GeneratedBoardLengthFeedback` in chat, its twin in Visual
+   Lab) reset to the first piece on every open/close and never indicated which piece already had
+   a saved correction — a correction on a second or third garment looked missing. Fixed by
+   replacing the picker with one always-visible reason group per piece; also filtered which
+   reasons apply by garment category (shoes/accessories get none). See
+   `docs/app-surface-map.md`'s board-feedback-chips entry.
+2. **Two chat board-rendering surfaces had no feedback UI at all** (`m.renderedBoards`/
+   `render_preview`, and `boardResults[i]`/"wardrobe-board") — separate from the desync, since
+   there was nothing to desync when one side had no chips to begin with. Given the desync fix's
+   canonical helpers already existed, extended the same taxonomy to both. All four board surfaces
+   in the Stylist now behave consistently.
+3. **Thread-loading race**: opening a thread by direct URL could silently render a *different*
+   thread's messages under the correct URL/title, survivably across a hard reload — a competing
+   mount-time effect (`initAndMigrate`) picked its own thread from `localStorage`, independent of
+   the URL, and reliably finished last. Fixed by making that effect's guard also skip when a
+   thread was requested via the URL. See `docs/app-surface-map.md`'s thread-rail entry.
+
+Also: Visual Lab's Calibration Boards "Needs review" filter was renamed to **"Flagged"** and no
+longer includes `almost` ("Almost right"), which is a positive-leaning verdict and now counts as
+Positive instead.
+
+All fixes live-verified in the sandbox (feedback clicks are free, no billed calls). Build passes
+throughout; suite held at the 7 pre-existing baseline failures the whole session (two test files
+needed updates for refactors, not new failures).
 
 ## State
 
@@ -38,7 +73,8 @@ the panel packet had missed and several behaviours nobody had written down.
    cold-start onboarding is the primary case ($12.18 for 200 garments today, target <=$3.50).
    Four phases, one billed step (~$2.70), decision rule written down. Read §2 first — it lists the
    prior rulings that constrain it.
-6. `docs/board-feedback-desync-spec.md` — self-contained, ready for a separate session.
+6. `docs/board-feedback-desync-spec.md` — **implemented and live-verified 2026-07-27.** Read for
+   the mechanism if touching board feedback again; not an open item anymore.
 7. `docs/ui-v1-design-handoff.md` — rulings, plus **Outstanding issues 1–8**.
 
 **Ten derivation/measurement scripts**, all read-only and free — none constructs an AI client:

@@ -148,9 +148,13 @@ builder against the real wardrobe rather than read from source alone.
   `OUTFIT_COMPOSER_SYSTEM`, `OUTFIT_BOARD_PLANNER_SYSTEM`, `EDITORIAL_NEW_PIECES_SYSTEM`,
   `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` (twice), plus `editorialImagePrompt`. Cached per user and
   invalidated on any write (`promptRuntime.js`), so an edit takes effect next request.
-- **[known bug → `docs/board-feedback-desync-spec.md`]** The `stylist_feedback` mirror of grouped
-  reasons reaches nothing: `getStylistFeedbackMemory` excludes rows whose board already exists in
-  `saved_boards`, which is every row that mirror produces.
+- **[by design, confirmed still true 2026-07-27 → `docs/board-feedback-desync-spec.md`]** The
+  `stylist_feedback` mirror of grouped reasons reaches nothing: `getStylistFeedbackMemory` excludes
+  rows whose board already exists in `saved_boards`, which is every row that mirror produces. Not
+  a bug — `getSavedBoardMemory` already reads `saved_boards.payload` directly for saved boards, so
+  the mirror was never load-bearing. The *display* desync this was originally filed under (chat
+  showing stale chip state) is fixed as of that date; this specific sub-finding about the mirror
+  itself was deliberately left as-is, not part of that fix.
 
 ---
 

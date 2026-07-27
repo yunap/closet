@@ -1,6 +1,8 @@
 # Spec — board feedback desync between chat and Visual Lab
 
-**Status:** diagnosed, not implemented. Ready to hand to a separate session.
+**Status: implemented and live-verified, 2026-07-27.** See "What shipped" at the bottom for what
+was built, what was verified, and the one thing (`syncStructuredReasonsFromSavedBoard`'s inert
+mirror) that was deliberately left as-is.
 **Owner-reported** during taxonomy-unification testing (2026-07-24), re-raised 2026-07-26.
 **Prior context:** `docs/ui-v1-design-handoff.md` — the original diagnosis under *"Data-hygiene fix
 found and fixed while testing this: Visual Lab's structured-reason sync"*, plus Outstanding issues
@@ -71,14 +73,48 @@ specific reasons already reach the model via `getSavedBoardMemory`, the desync i
 they reach nothing, the richest part of the feedback vocabulary has never influenced anything, and
 that is a far larger finding.
 
-## The display fix, when it is wanted
+## The display fix — implemented 2026-07-27
 
-Already diagnosed, not implemented: index full saved-board records by `imageUrl` on load, and
-branch the chat's board-feedback reads and writes through the canonical `saved_boards` record once
-a board is saved, instead of trusting the local snapshot. The per-thread snapshot can stay as an
-offline fallback for boards that were never saved.
+Built as diagnosed: chat now indexes full saved-board records by `imageUrl` on load
+(`refreshSavedBoards`, `StylistChat.jsx:1389` — called on mount, on every thread load, and after
+saving a board), and branches board-feedback reads and writes through the canonical `saved_boards`
+record once a board is saved. The per-thread snapshot (`feedbackSaved`) remains the fallback for
+boards that were never saved — exactly as scoped.
 
-**Do not start with this.** Run the trace first — it may reclassify the whole item.
+**New helpers, all in `StylistChat.jsx` just above `saveStylistFeedback`:** `canonicalBoardFor`,
+`boardFeedbackActive`, `boardWrongLengthCorrections` (reads); `patchCanonicalBoard`,
+`toggleCanonicalBoardVerdict`, `toggleCanonicalBoardLabel`, `toggleCanonicalBoardReason`,
+`toggleCanonicalWrongLength` (writes — all via `PATCH /api/saved-boards/:id`, the same route
+Visual Lab's own toggle functions use). Every board-feedback chip site (verdict row, reason
+groups, the wrong-length card) now computes its active state as
+`boardFeedbackActive(board, type, reason) ?? feedbackSaved.has(key)` — canonical first, snapshot
+as fallback — and its `onClick` branches the same way.
+
+**Live-verified both directions**, sandbox, no billed calls: a verdict set in Visual Lab appeared
+in chat on the next thread load with zero chat-side interaction; toggling it back off *in chat*
+correctly deleted it from `saved_boards.payload.feedback_labels`, not just the local snapshot
+(confirmed via direct `saved_boards` reads before/after each click, not just the UI). Build passes;
+full suite holds at the 7 pre-existing baseline failures throughout (two test files needed updates
+for the refactor — `test/threadRail.test.js` and `test/chatFeedbackTaxonomy.test.js` — both
+asserting the literal old code shape rather than behavior).
+
+**Deliberately not touched:** `syncStructuredReasonsFromSavedBoard`'s mirror into `stylist_feedback`
+stays inert, per the "Start here" trace above — `getSavedBoardMemory` already reads
+`saved_boards.payload` directly for saved boards, so the mirror was never load-bearing and this fix
+doesn't change that.
+
+**Two previously undiscovered bugs surfaced and were fixed in the same pass**, both upstream of
+this spec's original scope but found while implementing it:
+- The wrong-length correction widget (both in this chat surface and in Visual Lab) used a single
+  shared "which garment" pointer that reset to the first piece on every open/close and never
+  indicated which piece already had a correction — a correctly-saved correction on a second or
+  third garment looked missing. Fixed by replacing the picker with one always-visible reason group
+  per piece. See `docs/app-surface-map.md`'s board-feedback-chips entry for the full writeup.
+- Two other board-rendering surfaces in chat (`m.renderedBoards` / `render_preview`, and
+  `boardResults[i]` / "wardrobe-board") had **no feedback UI at all**, independent of this desync —
+  a board on either surface couldn't be judged from chat regardless of the read/write path. Given
+  the canonical helpers built for this fix, extending the same taxonomy to both was a small
+  addition and was done the same session. See `docs/app-surface-map.md`.
 
 ## Constraints for whoever picks this up
 
