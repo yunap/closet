@@ -569,9 +569,17 @@ So the open item is not "is the ceiling right" — it is a **column conflict aff
 > field (202 of 236 pieces corrected by hand). An earlier draft of this document suggested letting
 > an explicit `casual` occasion tag override the ceiling; that would let tagger output override the
 > owner on 47 garments, and is withdrawn. The remaining question is the **5 pieces the owner tagged
-> both ways** — a five-row list, not a policy decision. Raising `casual`'s ceiling to `elevated`
-> (making it behave like `city_smart_casual`, which blocks 21%) stays on the table as a separate
-> taste call.
+> both ways** — a five-row list, not a policy decision.
+>
+> **And the ceiling itself is ratified — do not reopen it.**
+> `docs/occasion_profiles_ratification.md` → *Ratified Amendment: Register Ceilings For Roster
+> Gating*, **ratified by Yuna 2026-07-05**, sets `casual → everyday` explicitly, with this note
+> recorded at the time: *"`casual -> everyday` is the largest behavior change. It would make
+> park-friend, coffee, errands, and low-key social rosters reject `elevated` and `dressy`
+> pieces."* The 108-piece exclusion measured above is the **documented, intended consequence of a
+> ratified decision**, not a discovery. An earlier draft of this section offered "raise `casual`'s
+> ceiling to `elevated`" as an open taste call; **that is withdrawn.** The only live question is
+> whether a given piece's `formality` value is right — a tagging question, not a ceiling question.
 
 This is upstream of the capsule-cap work, and is the mechanism behind the live-tested 2026-07-14
 failure recorded at
@@ -1474,6 +1482,96 @@ undermines it.
 **Not blocking:** the editorial image prompt's missing length clause and the `pattern_type` blind
 spot in the classifiers are *consumer-side* — they misread good data rather than producing bad
 data, so they can be fixed on either side of a re-tag.
+
+### Tagging cost — the adoption barrier, not a personal budget line
+
+**Owner reframing, 2026-07-26:** *"it's not just my tagging — the largest barrier for my users to
+start using the app is bringing in/tagging their wardrobes."* So tagger spend is a **per-signup
+onboarding cost**, paid on the user's own key (BYOK shipped in spec 33). Optimising it is an
+adoption problem, and everything below is scoped that way.
+
+**[known bug — unfiled] A new user gets zero calibration anchors.** `buildAnchorBlock` only buckets
+pieces whose field is in `manual_overrides`, so a wardrobe with no corrections yields an **empty
+anchor block** — verified. The wardrobe-calibration mechanism, the thing that makes the tagger
+good, is **unavailable to precisely the population whose first impression decides adoption**. It is
+rich-get-richer by construction: the tagger is at its worst on day one and improves only as the
+user corrects it. Any cold-start quality work has to come from the static prompt, because the
+dynamic half does not exist yet.
+
+**Cost of onboarding, measured** (cold start: no anchors, no anchor thumbnails, so ~5,582 prompt
+tokens + one ~2,226-token photo + up to 2,500 output):
+
+| | 50 garments | 200 garments |
+|---|---|---|
+| today — sonnet-4-6, no caching | $3.05 | **$12.18** |
+| + prompt caching | $2.29 | $9.17 |
+| + haiku-4-5 | **$0.76** | **$3.06** |
+
+**Output is 56% of the bill** ($0.0375 of $0.0671 per garment at sonnet), so prompt trimming
+attacks the smaller half. The levers in order of measured value:
+
+1. **Model tier — 67%.** The importer already runs haiku for classification, detection, crop
+   verification, clustering and merge matching; only tagging uses the full stylist model. This is
+   the one lever with real quality risk, and it is exactly what an evaluation harness should
+   decide.
+2. **Prompt caching — 31%, quality-neutral, currently impossible.** `tagPieceWithProvider` sets no
+   `cache_control` at all, and cannot benefit until the content array is reordered: the per-piece
+   photo is pushed **first** (`routes/ai.js:364`), before the anchors and the prompt, and a cache
+   prefix must be contiguous from the start. Reorder to *[prompt + anchors] → [photo]*, then mark
+   the prefix. The machinery already exists (`provider.js` → `PROMPT_CACHE_BREAKPOINT`,
+   `systemToAnthropicBlocks`) and is used by the stylist conversation path.
+3. **Output schema — attacks the expensive half.** `cross_photo_agreement_note` is explicitly
+   demanded by the prompt (*"Always emit a brief cross-photo agreement note"*) and then **deleted**
+   in `applyTaggerResult` (`taggerMerge.js:243`) — paid tokens discarded on arrival. The rest of
+   the schema needs the same field-by-field trace; several sub-fields *are* consumed, so this is an
+   audit, not a guess.
+4. **Latency is a second adoption barrier.** Tagging is one call per garment, sequential, while the
+   importer batches every other stage (10 images per classify call, 12 per cluster sheet). A
+   200-garment onboarding is 200 serial calls. Batching amortises the prompt, but caching already
+   does most of that — the real prize here is wall-clock, not dollars.
+
+**Consequence for the evaluation harness:** the question it must answer is no longer "did my prompt
+edit help" but **"does haiku tag well enough for a cold-start user"** — and it must be tested in the
+*cold-start configuration*, with the anchor block stripped, not against this wardrobe's 18 anchors.
+Testing warm would measure a configuration no new user ever sees.
+
+### Prior rulings a tagger spec must respect
+
+Checked across `docs/` 2026-07-26, because several of these would have made the suggestions above
+wrong or redundant.
+
+- **Optimising the tagger is already owner-sanctioned as a priority.**
+  `ui-v1-design-handoff.md` (issue 5, owner 2026-07-26): *"The single most expensive step is AI
+  tagging… **Optimising the tagging step may be the better first move**, and it pays off across
+  every import path and the wardrobe generally — not just video."* So the spec's frame is **not**
+  "make re-tagging cheaper" — it is "make tagging better everywhere", with the video-import
+  decision explicitly downstream of it.
+- **[ratified] "AI retagging reports what changed, leaves results reviewable, and cannot race
+  Save."** `ui-v1-design-handoff.md`, PieceDetail acceptance criteria. Capture-then-apply is this
+  principle at batch scale — cite it rather than proposing it as new.
+- **[by design] Nothing is retagged automatically.** Surface map → Tasks: retag-suggestion todos
+  name the field to review, and *"the sheet states at the point of capture that nothing is
+  retagged automatically."* Any apply step stays a deliberate owner action.
+- **[OPEN — needs owner agreement, do not assume] Worn-photo scope.**
+  `ui-v1-design-handoff.md`: *"the UI promises a fit note, while the current AI tagging path can
+  revise broader identity and style fields. Prefer scoping worn-photo analysis to fit, drape, and
+  wear behavior unless the broader draft is made explicit and separately reviewable."* The engine's
+  photo-authority map already approximates this — worn photos are authoritative only for
+  `fit_on_body`, drape, `length_hits_at`, `tuck_behavior`, `waistband_type`, on-body silhouette —
+  but the product decision is unresolved, so a spec must not quietly settle it.
+- **Any field change costs 9 wiring points**, and *"tagger prompts ×2"* is the first of them
+  (`freeform-rearchitecture-handoff.md` → new tag field checklist). That settles the scope
+  question: **`extract-pieces` travels with `tag-piece`**; they are already treated as a pair.
+- **`occasions.js` is frozen and its standing rules bind.**
+  `occasion_profiles_ratification.md`: profile prohibitions may encode **validity only**,
+  taste-adjacent entries are always SOFT; mood text may trigger a profile only via strong activity
+  words, never generic ones; model-added entries are `[proposed]` and inert until ratified. A
+  tagger spec may change what the tagger *emits*, not what the profiles *mean*.
+- **Adjacent dead code:** `setPath` (`taggerMerge.js:168`) is marked **DEAD — delete in next spec**
+  by `cleanup-inventory.md`. Cheap to fold in.
+- **Known mis-tag for a test case:** piece **353** (cargo pants) has `length_hits_at` mis-tagged as
+  `mid-thigh` (`freeform-rearchitecture-handoff.md`). Useful as a fixed regression case in any
+  evaluation sample.
 
 ---
 
