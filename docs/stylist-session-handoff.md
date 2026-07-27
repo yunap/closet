@@ -230,16 +230,35 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   judged per classifier, and `heel_height`/`walk_support` already exist as enums for the footwear
   question. **Re-measure any keyword-derived number with `node scratch/measure_plural_gap.js`
   before acting on it.**
-- **The length problem is stale tag data first, prompt construction second — and a fix costs ~$11.**
-  **167 of 236 pieces are `tagger_version`-less**, i.e. tagged before the photo-property-authority
-  prompt existed. Only 64 carry any photo-property judgment. Where that prompt *did* run,
-  low-confidence `length_hits_at` falls from **81% (191/236) to 42% (24/57)** — it works. And this
-  is not "no worn photos": **176 of 236 pieces have one**, including 144 of the 191 low-confidence
-  ones. The photos exist; the old tagger never classified them. Re-tagging the 167 is **~$11.21**
-  (upper bound, output priced at the cap) on `claude-sonnet-4-6`, and `applyTaggerResult` **cannot
-  overwrite your 202 formality corrections** — the merge protects every manually-overridden field.
-  **Your call; I have not run it.** This reorders the image-prompt fix below: re-tag first, then
-  fix the prompt.
+- **Do NOT re-tag yet — owner ruling 2026-07-26, and I had this backwards.** I originally wrote
+  "re-tag first, then fix the prompt." **Withdrawn.** This wardrobe has been re-tagged multiple
+  times already; each pass is only as good as the tagger on that day, and the **167 unversioned
+  pieces are the residue of previous re-tags**, not evidence one is overdue. Order is: **raise the
+  tagger's ceiling first, re-tag once after.** The ~$11 cost is not the constraint — spending it on
+  a tagger with known gaps is.
+- **What would raise the tagger's ceiling** (full detail in the map → *Provenance → what would
+  raise the tagger's ceiling*), all found by this mapping:
+  1. **Anchors cover 2 of the gating fields.** `tagPieceWithProvider` anchors only `formality` +
+     `fabric_weight` → 18 anchors. Adding **`occasions`** would give **49**, using **38 owner
+     corrections that already exist and are currently unused**. One-line change — but two caveats:
+     `occasions` is an array so each combination becomes its own bucket (38 corrections → 31
+     near-unique anchors, which may read as noise not range), and more anchors means more tokens on
+     a call already under-quoted 1.6×. Measure before shipping.
+  2. **`heel_height` (0 corrections) and `walk_support` (4) can't be anchored at all** — both feed
+     the activity footwear gate, and `heel_height` is 100% tagger-set. The missing input there is
+     your corrections, not prompt text.
+  3. **Only 8 of 18 anchors get a thumbnail**, and which 8 is bucket-iteration order, not
+     importance. Worth making deliberate before a whole-wardrobe run calibrates against them.
+  4. **The singular/plural gap is upstream of tagging** — the tagger writes `name`/`reads_as` and
+     every keyword rule reads them; re-tagging into an engine where `jean`/`loafer`/`sneaker` never
+     match spends money feeding classifiers that can't see the result.
+  5. **`extract-pieces` emits no `_confidence` map**, so pieces added that way default to `medium`
+     trust and undermine any confidence baseline a re-tag establishes.
+
+  Evidence that the current prompt *does* work when it runs: where the photo-authority section ran,
+  low-confidence `length_hits_at` falls from **81% (191/236) to 42% (24/57)**. And this is not
+  "missing worn photos" — **176 of 236 pieces have one**, including 144 of the 191 low-confidence
+  ones. The photos exist; the older tagger never classified them.
 - **A provenance section and script now exist** (`node scratch/measure_provenance.js`, plus
   `measure_provenance.js <colA> <colB>` to cross-tab two columns). `formality` is 86% hand-corrected;
   `heel_height`, `recommendation_status` and `role_permission` are **100% tagger-set**. The tagger
