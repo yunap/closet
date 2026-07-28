@@ -1,6 +1,60 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-27. Branch `stylist-weather-provenance-and-labels`.
+**Last updated:** 2026-07-28. Branch `stylist-docs-staleness-fixes`.
+
+## 2026-07-28 session — A1/A2/A5 shipped, C3 ratified, piece-action-menu rebuilt end to end
+
+Re-verified panel-stage1-findings.md's Section A against the code (per its own "recurring failure
+mode" warning) before trusting the "accepted, not yet implemented" status line — confirmed it was
+still accurate, then implemented and shipped:
+
+- **A1, A2, A5** — all three as `styling-engine/prompts.js` instruction fixes (this is
+  chat-composed styling, not a deterministic gate): pattern discipline now explicitly covers
+  shoes/accessories (A1); a new "Scarcity Honesty" rule degrades look count instead of writing
+  confident rationale for a violated brief (A2); a new "Pushback on a Specific Garment" rule
+  requires re-reading the garment record and forbids a byte-identical card in response to a
+  correction (A5). A4 deferred at the owner's request — belongs with the capsule redesign.
+  Safety-rail snapshot `test/fixtures/prompts_yuna_snapshot.json` updated to match (deliberate
+  content change, confirmed via diff that only the touched keys moved).
+- **C3 ratified** as `AGENTS.md` Engineering Principle #7 (the five-question decision rule for new
+  structure), amended twice from running it for real: added a build/fix/kill trichotomy (a failing
+  test names what's missing, doesn't always mean delete) and a "deliberately soft" carve-out for
+  test 3 (the `owner_rule` case, soft by design after the #44 memory-pollution incident). Full
+  derivation stays in `docs/panel-stage1-findings.md` → C3.
+- **B1 corrected** — the panel's two "chip → structure" proposals both already existed
+  (`Wrong for <occasion>` hard edit; `store_user_correction` → editable Style Profile rule), same
+  shape as the earlier C4 correction: argued from a packet without code access. Running C3 against
+  the *existing* mechanism (not just proposals) is what surfaced the real, previously-unknown gap:
+  `occasion_exclusions` had no view or undo path anywhere outside the chip itself.
+- **The piece action menu (`···` on any outfit-card garment) rebuilt across several owner-caught
+  rounds** — full derivation and every live-verification step in `docs/app-surface-map.md`'s
+  occasion-exclusion entry, this is the summary:
+  - Added the missing **Occasion exclusions** view (Style Profile) so the hard exclusion from
+    above is checkable and reversible.
+  - Trigger changed from literal `...` (reads as truncation, not a button — probably why two
+    review passes missed this menu entirely) to the standard `⋮` kebab, better contrast.
+  - Panel rewritten as a `document.body` portal (`PieceActionMenu` in `StylistChat.jsx`) — the
+    old absolutely-positioned version was silently clipped on every edge (left/right/bottom) by
+    the outfit card's own `overflow: hidden`.
+  - Categorized into Piece information / Outfit pairing / Occasion rule (owner mockup), each with
+    an icon and a plain-language consequence line; copy corrected against the actual scoring code
+    before shipping (traced `getWholeWardrobeFeedbackMemory` — the "Replace" action penalizes the
+    piece itself, not "this pairing," which is what the mockup's text claimed).
+  - Two real regressions caught and fixed **in the same review, both by the owner, neither by
+    me first**: a capture-phase auto-close raced the button's own click under genuine pointer
+    input (synthetic `dispatchEvent` testing didn't reproduce it — real clicks did), breaking
+    "Edit piece details"; and a button-label fix that didn't touch the actual click handler,
+    so "Open source chat" kept opening the garment editor regardless of what it said.
+  - Style Profile's "Outfit & styling feedback" list: raw `wrong item read` label → "Replaced in
+    this outfit" (matches the chat's own words); its "Open garment"/"Open thread" choice reordered
+    to prefer the thread (garment shows the piece in isolation, no outfit, no "why"); added a
+    piece-set board-match fallback (`matchedBoardByPieceSet`) for threadless rows, generalized
+    beyond just this one feedback type; added a **Remove** button (existing delete endpoint,
+    previously unexposed here) for the rows that have no board, no thread, and never did.
+  - **New, unfiled defect found while answering "what is this other entry":** legacy
+    `message`-type feedback embeds its board image as markdown text instead of a structured field,
+    so it can't be linked even when a matching board and thread both still exist — see `## Open`
+    below.
 
 ## 2026-07-27 session — board feedback desync fixed, plus three bugs found along the way
 
@@ -103,13 +157,23 @@ the recurring-failure-mode entry below); nothing else here checks that axis.
 ## What is decided vs open
 
 **Ruled (panel findings section A):** A1 prints on shoes/accessories, A2 confident rationale under
-scarcity, A4 shoe register span, A5 reasoning-then-interaction — all **accepted, not yet
-implemented**. A3 rejected (asking what you own is deliberate). A6 reframed — the `~$0.07` labels
-are owner-facing instrumentation, not user pricing, so the question is tiers, not honesty.
+scarcity, A4 shoe register span, A5 reasoning-then-interaction — all **accepted**. **A1, A2, A5
+implemented and shipped 2026-07-28** (see this date's session entry above). **A4 deferred** —
+owner is planning a capsule-logic redesign; register-span allocation belongs with that, not patched
+separately first. A3 rejected (asking what you own is deliberate). A6 reframed — the `~$0.07`
+labels are owner-facing instrumentation, not user pricing, so the question is tiers, not honesty.
 
-**Not ruled:** B1 chips, B2 structured read, B3 diagnostic cards, C1–C5, D1, and which of E1–E6
-become propositions. Recommended order is in the findings doc: **C3 (the decision rule) before the
-B items**, because it is upstream of them.
+**C3 ratified 2026-07-28** — now `AGENTS.md` Engineering Principle #7, not an open item.
+
+**B1 partially ruled 2026-07-28** — the per-piece menu consistency question and the
+occasion-exclusion visibility gap are closed (see session entry above); the remaining half
+(narrating a chip's effect at the moment it fires) was tried, found to have real problems for the
+structured-feedback-chip case, and the owner ruled the chip's own active-state color is sufficient
+— not pursued further for that case.
+
+**Not ruled:** B2 structured read, B3 diagnostic cards, C1, C2, C4, C5, D1, and which of E1–E6
+become propositions. Recommended order is in the findings doc: **C3 was upstream of the B items,
+now ratified — B2/B3 are next in that original order.**
 
 **Stage 2** (Mode A craft review, per flow) not started. It should use the surface map's inventory.
 
@@ -188,6 +252,33 @@ in these docs — especially one you're about to cite, repeat, or build on — g
 and confirm the claim is still true.** A status tag is a claim about the state of the code *at the
 time it was written*, not a live query. The docs get long-lived precisely because they're mostly
 right; the failure mode is trusting the 5% that quietly went stale.
+
+### A third failure mode — proposing structure that already exists, because the maps went unread
+
+Found 2026-07-27, working panel finding B1 ("are chips a teaching mechanism"). The panel's packet
+had no code access, so it argued from absence: chips "carry verdicts, not teaching," and offered
+two synthesis proposals — a chip that opens a freeform note, and a chip that proposes a garment tag
+edit. **Both already existed**, in a stronger combined form: the per-piece `Wrong for <occasion>`
+chip is a one-click hard edit to `pieces.occasion_exclusions` (`docs/app-surface-map.md` lines
+133-153), and `store_user_correction` from chat prose already surfaces as an editable, retirable
+`owner_rule` in `StylistSettings.jsx`'s "Learned rules & preferences" (same doc, lines 860-882).
+Neither is a secret — both are documented, with exact code locations, in the surface/engine maps.
+An entire round of B1 analysis was written and delivered to the owner before either was checked.
+
+That is a different mistake from the two above: not trusting a stale claim, but **skipping the
+maps entirely when reasoning about what the product does or doesn't do.** The read-first list at
+the top of this doc already says to read `app-surface-map.md` and `engine-behaviour-map.md` "before
+assuming anything about the app" — this incident is what skipping that instruction looks like in
+practice, mid-session, on a task that felt like open design discussion rather than "assuming."
+
+**Before ruling on, redesigning, or filing as "missing" any B/C/D/E item in
+`docs/panel-stage1-findings.md` (or any other proposition that claims the product lacks a
+mechanism) — grep both maps for the item's key nouns first**: the feedback-taxonomy label, the
+chip text, the tool name, the endpoint. If a mechanism doing roughly the job already exists, the
+real question shrinks to whether it's complete/consistent/visible enough, not whether to build it.
+This applies even mid-conversation, not just at session start — the maps don't go stale between
+your first Read and your fifth tool call in the same session, so re-check them, don't rely on
+memory of having glanced at the table of contents once.
 
 ## What shipped in PR #176
 
@@ -394,3 +485,19 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   of 40. Tested, not inferred (`scratch/measure_open_questions.js` Q3). No action needed unless the
   weights are being tuned; then start with the four that actually order it.
 - Smaller: the `All looks distinct` label branch unverified (not worth a billed call).
+- **Legacy `message`-type feedback can't find its own thread or board, even when both still
+  exist.** Found 2026-07-28 tracing a real Style Profile row (`wardrobe.db` id 340, a `works` /
+  `Gold` entry on "dark grey gathered mini dress"). Its `target_type` is `message` (a thumbs-up on
+  a chat reply, not a whole-wardrobe-outfit correction), and the rendered image is embedded as
+  **inline markdown in `payload.text`**
+  (`![Belted Definition](sandbox:/uploads/generated-boards/whole-wardrobe-...png)`) rather than in
+  a structured `payload.board.imageUrl` field. Both `matchedFeedbackBoard` and
+  `referencedThreadForFeedback` (`routes/crud.js`) only ever look at the structured fields, so they
+  come up empty — even though grepping the embedded filename against `saved_boards.image_url` and
+  `chat_threads.payload` found an exact match on both (board id 224 "Belted Definition", thread
+  `thread_1784016944304`). The links exist; nothing extracts them. Likely affects a whole class of
+  older `message`-type feedback rows saved before the app started writing structured board/thread
+  references. Fix shape: extract the image filename from `payload.text` via regex (same style as
+  `readableFeedbackNote`'s own markdown-stripping regex, which already parses this exact pattern
+  for *display*, just discards the match instead of using it to look anything up) and match it the
+  same way `matchedBoardByPieceSet` matches on piece sets. Not started.

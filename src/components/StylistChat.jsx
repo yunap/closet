@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, useLocation } from 'react-router-dom'
 import ThreadRail, { humanizeLabel, deriveBuilderTitle } from './ThreadRail'
 import MarkdownMessage from './MarkdownMessage.js'
@@ -23,6 +24,98 @@ const GENERATED_BOARD_FEEDBACK_LABELS = [
   ...SHAPE_BALANCE_REASONS.map(([reason, label]) => ['shape_balance', label, reason]),
   ...IMAGE_FIDELITY_FEEDBACK_LABELS.map(([type, label]) => [type, label, null]),
 ]
+
+const PIECE_ACTION_MENU_MARGIN = 8
+
+const PieceActionEditIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="15" height="15"><path d="M15.6 5.4 18.6 8.4 8.4 18.6 4.8 19.2 5.4 15.6 15.6 5.4Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+)
+const PieceActionSwapIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="15" height="15"><path d="M5 8.5h13M18 8.5 14.5 5M18 8.5 14.5 12M19 15.5H6M6 15.5 9.5 12M6 15.5 9.5 19" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+)
+const PieceActionRuleIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="15" height="15"><circle cx="12" cy="12" r="7.25" stroke="currentColor" strokeWidth="1.5"/><path d="M7.2 16.8 16.8 7.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+)
+
+// Portals the dropdown into document.body and positions it from the trigger's
+// real bounding rect, clamped to the viewport on every edge — outfit cards use
+// `overflow: hidden` for their rounded corners, which silently clips any
+// absolutely-positioned popover that opens near an edge (left, right, or
+// bottom of a card). A portal is the only fix that works regardless of where
+// the trigger sits.
+function PieceActionMenu({ label, children }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [coords, setCoords] = useState(null)
+  const [measured, setMeasured] = useState(false)
+  const triggerRef = useRef(null)
+  const panelRef = useRef(null)
+
+  const open = () => {
+    const rect = triggerRef.current.getBoundingClientRect()
+    setMeasured(false)
+    setCoords({ top: rect.bottom + 4, left: rect.left })
+    setIsOpen(true)
+  }
+  const close = () => setIsOpen(false)
+
+  useLayoutEffect(() => {
+    if (!isOpen || measured || !panelRef.current || !triggerRef.current) return
+    const triggerRect = triggerRef.current.getBoundingClientRect()
+    const panelRect = panelRef.current.getBoundingClientRect()
+    let left = triggerRect.left + triggerRect.width / 2 - panelRect.width / 2
+    left = Math.max(PIECE_ACTION_MENU_MARGIN, Math.min(left, window.innerWidth - panelRect.width - PIECE_ACTION_MENU_MARGIN))
+    const fitsBelow = triggerRect.bottom + 4 + panelRect.height <= window.innerHeight - PIECE_ACTION_MENU_MARGIN
+    const top = fitsBelow ? triggerRect.bottom + 4 : Math.max(PIECE_ACTION_MENU_MARGIN, triggerRect.top - 4 - panelRect.height)
+    setCoords({ top, left })
+    setMeasured(true)
+  }, [isOpen, measured])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const onMouseDown = (e) => {
+      if (triggerRef.current?.contains(e.target)) return
+      if (panelRef.current?.contains(e.target)) return
+      close()
+    }
+    const onKey = (e) => { if (e.key === 'Escape') close() }
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [isOpen])
+
+  return (
+    <div className="piece-action-menu">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="piece-action-menu-trigger"
+        onClick={() => (isOpen ? close() : open())}
+        title={label}
+        aria-label={label}
+        aria-expanded={isOpen}
+      >
+        ⋮
+      </button>
+      {isOpen && coords && createPortal(
+        <div
+          ref={panelRef}
+          className="piece-action-menu-panel"
+          style={{ top: coords.top, left: coords.left, visibility: measured ? 'visible' : 'hidden' }}
+        >
+          {typeof children === 'function' ? children({ close }) : children}
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
 
 function GeneratedBoardLengthFeedback({ board, baseKey, feedbackSaved, toggleFeedback, payload, label, note, contextOverride = null, canonicalCorrections = null, onToggleCanonical = null }) {
   const boardPieces = Array.isArray(board?.pieces) ? board.pieces.filter(piece => Number(piece?.id) && wrongLengthReasonsForCategory(piece.category).length) : []
@@ -2966,22 +3059,26 @@ export default function StylistChat({
                               : msgOccasion
                             const displayOccasionName = String(exclusionDisplaySource || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
                             return (
-                              <details className="piece-action-menu">
-                                <summary title={`Actions for ${piece?.name || 'this piece'}`} aria-label={`Actions for ${piece?.name || 'this piece'}`}>
-                                  ...
-                                </summary>
-                                <div className="piece-action-menu-panel">
+                              <PieceActionMenu label={`Actions for ${piece?.name || 'this piece'}`}>
+                                {({ close }) => (<>
+                                  <div className="piece-action-menu-group-label">Piece information</div>
                                   <button
                                     type="button"
-                                    onClick={() => openPieceEditor(piece)}
+                                    onClick={() => { close(); openPieceEditor(piece) }}
                                     className="piece-action-menu-item"
-                                    title="Open the edit card for this garment"
                                   >
-                                    Edit item card
+                                    <PieceActionEditIcon />
+                                    <span className="piece-action-menu-item-body">
+                                      <span className="piece-action-menu-item-label">Edit piece details</span>
+                                      <span className="piece-action-menu-item-hint">Update fabric, color, fit, or other details — future recommendations use the corrected information.</span>
+                                    </span>
                                   </button>
+                                  <div className="piece-action-menu-divider" />
+                                  <div className="piece-action-menu-group-label">Outfit pairing</div>
                                   <button
                                     type="button"
                                     onClick={() => {
+                                      close()
                                       toggleStylistFeedback({
                                         key: swapKey,
                                         feedbackType: 'wrong_item_read',
@@ -3006,21 +3103,29 @@ export default function StylistChat({
                                         contextOverride: activeContext?.type === 'piece' ? activeContext : { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
                                       })
                                     }}
-                                    className={isSwapped ? 'piece-action-menu-item active' : 'piece-action-menu-item'}
-                                    title="Replace just this piece next time - the rest of the outfit stays, and the piece stays in your wardrobe."
+                                    className={isSwapped ? 'piece-action-menu-item piece-action-menu-item-quiet-active' : 'piece-action-menu-item'}
                                   >
-                                    {isSwapped ? '✓ Swapped out' : 'Swap this out'}
+                                    <PieceActionSwapIcon />
+                                    <span className="piece-action-menu-item-body">
+                                      <span className="piece-action-menu-item-label">{isSwapped ? '✓ Replaced in this outfit' : 'Replace in this outfit'}</span>
+                                      <span className="piece-action-menu-item-hint">Flags this piece as wrong for this look and steers your stylist away from choosing it as often. Everything else here stays the same.</span>
+                                    </span>
                                   </button>
+                                  <div className="piece-action-menu-divider" />
+                                  <div className="piece-action-menu-group-label">Occasion rule</div>
                                   <button
                                     type="button"
-                                    onClick={() => toggleOccasionExclusion(piece.id, msgOccasion, isExcluded)}
-                                    className={isExcluded ? 'piece-action-menu-item active' : 'piece-action-menu-item'}
-                                    title={`Exclude from ${displayOccasionName}`}
+                                    onClick={() => { close(); toggleOccasionExclusion(piece.id, msgOccasion, isExcluded) }}
+                                    className={isExcluded ? 'piece-action-menu-item piece-action-menu-item-hard piece-action-menu-item-quiet-active' : 'piece-action-menu-item piece-action-menu-item-hard'}
                                   >
-                                    {isExcluded ? `✓ Wrong for ${displayOccasionName}` : `Wrong for ${displayOccasionName}`}
+                                    <PieceActionRuleIcon />
+                                    <span className="piece-action-menu-item-body">
+                                      <span className="piece-action-menu-item-label">{isExcluded ? `✓ Wrong for ${displayOccasionName}` : `Wrong for ${displayOccasionName}`}</span>
+                                      <span className="piece-action-menu-item-hint">Never suggest this piece for {displayOccasionName} again — applies everywhere, not just this card. Undo anytime in Style profile.</span>
+                                    </span>
                                   </button>
-                                </div>
-                              </details>
+                                </>)}
+                              </PieceActionMenu>
                             )
                         })()}
                       </div>

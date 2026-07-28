@@ -50,10 +50,10 @@ test('StylistChat.jsx does not use disabled={isSaved} on outfit-level feedback b
   assert.ok(!buttonContent.includes('disabled={isSaved}'), 'Outfit-level buttons must not be disabled when saved')
 })
 
-test('StylistChat.jsx renames piece issue to Swap this out', () => {
+test('StylistChat.jsx renames piece issue to Replace in this outfit', () => {
   const content = fs.readFileSync(stylistChatPath, 'utf8')
 
-  assert.ok(content.includes('Swap this out'), 'Should include Swap this out')
-  assert.ok(content.includes('✓ Swapped out'), 'Should include ✓ Swapped out')
+  assert.ok(content.includes('Replace in this outfit'), 'Should include Replace in this outfit')
+  assert.ok(content.includes('✓ Replaced in this outfit'), 'Should include ✓ Replaced in this outfit')
   assert.ok(!content.includes("'piece issue'") && !content.includes('"piece issue"'), 'Should not contain old name')
 })

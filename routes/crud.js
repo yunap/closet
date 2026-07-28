@@ -164,6 +164,28 @@ router.get('/pieces/usage-stats', (req, res) => {
   res.json(getPieceUsageStats())
 })
 
+// C3 fix (panel-stage1-findings.md → B1): occasion_exclusions is a hard, durable, one-click
+// edit written from the Stylist chat, but had no view anywhere in the wardrobe UI — a false
+// positive was effectively unreachable to undo, since the only control lived on the exact
+// outfit card that would no longer be offered once excluded. This lists every current exclusion
+// so it can be reviewed and restored from Style Profile instead. Must be registered before
+// GET /pieces/:id, or that route's :id param would swallow this path.
+router.get('/pieces/occasion-exclusions', (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, name, category, photo, occasion_exclusions FROM pieces
+    WHERE occasion_exclusions IS NOT NULL AND occasion_exclusions != '[]' AND occasion_exclusions != ''
+    ORDER BY name COLLATE NOCASE
+  `).all()
+  const entries = []
+  for (const row of rows) {
+    const occasions = safeJsonParse(row.occasion_exclusions, [])
+    for (const occasion of occasions) {
+      entries.push({ pieceId: row.id, name: row.name, category: row.category, photo: row.photo, occasion })
+    }
+  }
+  res.json(entries)
+})
+
 router.get('/pieces/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
   if (!p) return res.status(404).json({ error: 'Not found' })
@@ -329,7 +351,6 @@ router.post('/pieces/:id/occasion-exclusion', (req, res) => {
   const updated = db.prepare('SELECT * FROM pieces WHERE id = ?').get(id)
   res.json(parsePiece(updated))
 })
-
 
 // ── Outfits API ────────────────────────────────────────────────────────────────
 router.get('/outfits', (req, res) => {

@@ -4,14 +4,43 @@
 human↔model interaction design; cost and economics honesty). Packet:
 `docs/panel-packet-stage1.md`. Each read only the packet — no database, no browser, no model calls.
 
-**Status: nothing here is ruled yet.** This is the raw synthesis, organised for triage. Work
-through it by ID. Each item carries a **Ruling:** line to fill in; once ruled, the outcome moves to
-`docs/ui-v1-design-handoff.md` (rulings) or `docs/stylist-bugfix-spec.md` (implementation), and the
-entry here is marked with where it went.
+**Status, corrected 2026-07-28 — the line below was stale, another instance of the doc-status-
+claim failure mode `docs/stylist-session-handoff.md` now warns about.** Section A **is** ruled
+(A1/A2/A4/A5 accepted-fix, A3 rejected, A6 reframed as a product question — all 2026-07-25). B, C,
+D are not — every `**Ruling:**` line in those sections is still blank. E is proposed additions,
+not itself individually ruled. **Whether A1/A2/A4/A5 were actually *implemented* since being
+accepted needs re-checking against `docs/stylist-bugfix-spec.md` and recent PRs before assuming
+either way** — "accepted, not yet implemented" was last confirmed some days before this
+correction, and multiple PRs have landed since. Do not trust that status without re-verifying it
+against the code, same as any other status claim in these docs.
+
+**Re-checked 2026-07-27: A1, A2, A5 were still unimplemented as of that check** — `git log`
+between the panel commit and HEAD touched no file under `styling-engine/` or `routes/`, only docs
+and one unrelated board-feedback UI session. **All three implemented same day**, as prompt-text
+fixes in `styling-engine/prompts.js` (pattern discipline extended to shoes/accessories for A1; a
+Scarcity Honesty rule for A2; a Pushback-on-a-Specific-Garment rule — re-read the garment record,
+never return a byte-identical card — for A5). Safety-rail snapshot
+`test/fixtures/prompts_yuna_snapshot.json` updated to match (deliberate content change, not
+drift). **A4 deferred** — the owner is planning a capsule-logic redesign (see C1/C2/D1) and shoe
+register-span allocation should be designed as part of that, not patched separately first.
+
+Work through remaining items by ID. Each item carries a **Ruling:** line to fill in; once ruled,
+the outcome moves to `docs/ui-v1-design-handoff.md` (rulings) or `docs/stylist-bugfix-spec.md`
+(implementation), and the entry here should be marked with where it went — that housekeeping step
+was the one skipped for Section A, which is how the top-of-file status line went stale in the
+first place.
 
 **Confidence caveat, stated once:** all three read the same packet, so convergence is partly shared
 evidence rather than three independent observations. Treat 3/3 agreement as strong but not as
 replication.
+
+**Before ruling on any B/C/D/E item below: grep `docs/app-surface-map.md` and
+`docs/engine-behaviour-map.md` for its key nouns first.** The panel argued from the packet alone —
+no code, no database — so an item filed here as a gap or a fresh proposal may already have a
+shipped mechanism the reviewers couldn't see. B1 is the example: two "synthesis positions" were
+written up as open design questions when both already existed, documented with exact code
+locations in the maps. See `docs/stylist-session-handoff.md`'s recurring-failure-mode section
+(third entry) for the full incident.
 
 ---
 
@@ -33,7 +62,7 @@ three times when the second print is on a shoe or accessory:
 So the model knows the rule; the rule is not reaching footwear and accessories. This is a ratified
 `AGENTS.md` styling principle failing in production.
 
-**Ruling (owner, 2026-07-25): ACCEPTED — fix.**
+**Ruling (owner, 2026-07-25): ACCEPTED — fix.** **Implemented 2026-07-27** — `styling-engine/prompts.js`'s pattern-discipline and PATTERN MIXING instructions now explicitly state the one-loud-print budget covers shoes and accessories, not just top/bottom.
 
 ### A2 — Under scarcity the model writes confident rationale for a violated brief
 **Source:** styling.
@@ -44,7 +73,7 @@ rationale advocates rather than discloses: *"the two rusts are close enough to r
 not accidental."* In a 23-piece wardrobe that overshirt is the only layer she owns, and the honest
 sentence names that. Scarcity should degrade to **fewer looks**, never to confident wrong advice.
 
-**Ruling (owner, 2026-07-25): ACCEPTED — fix.**
+**Ruling (owner, 2026-07-25): ACCEPTED — fix.** **Implemented 2026-07-27** — new "Scarcity Honesty" instruction in `styling-engine/prompts.js`: on a wardrobe too thin to fill a slot/look-count without repeating a piece that violates the stated brief, drop the look and disclose the scarcity instead of writing rationale defending the violation.
 
 ### A3 — The stylist asked the owner to inventory her own wardrobe
 **Source:** styling. Called "the one question this product must never ask."
@@ -76,7 +105,10 @@ look 3: lace-trim wide-leg trousers on a smart-casual outing, grounded by canvas
 Proposed rule: before buying a second shoe at any register, buy one at each end of the register
 span the slot list demands. Derived from formality tags, so `AGENTS.md` #3 puts it in code.
 
-**Ruling (owner, 2026-07-25): ACCEPTED — fix.**
+**Ruling (owner, 2026-07-25): ACCEPTED — fix.** **Deferred 2026-07-27** — owner is planning a
+capsule-logic redesign (see C1/C2/D1, which show the shoe concentration is partly a trim-objective
+question, not only a quota one); register-span allocation should be designed as part of that
+redesign rather than patched in isolation first.
 
 ### A5 — A correction returned a byte-identical card
 **Source:** all three, independently.
@@ -102,6 +134,20 @@ So A5 has two halves, and the reasoning half is the one to fix first:
    defending the choice. Absent fabric data is not absent data.
 2. **Interaction:** a correction must produce either a changed card or an explicit "no change, and
    here is why" — never a byte-identical card presented as a response.
+
+**Implemented 2026-07-27** — a "Pushback on a Specific Garment" instruction in
+`styling-engine/prompts.js` covers both halves: re-read the garment's truth text (formality,
+fabric, AI styled read, feedback) before defending a choice, say plainly when the record is silent
+on the point raised, and either change the card or hold the line with a stated reason — never
+re-render the identical card as if it were a response.
+
+**Also worth knowing (2026-07-27):** the interaction half was never as broken as the packet made
+it look. This exact incident's card already has a working, model-independent escape hatch — the
+per-piece `Wrong for Travel` chip (`docs/app-surface-map.md` lines 133-153) immediately excludes
+the dress from Travel Day regardless of what the model says next turn, and the owner's actual
+chat correction on this thread landed as a durable, visible "Owner Rule" in Style Profile (see
+B1's correction, above). The prose fix above still matters — a repeated byte-identical card is a
+bad response on its own terms — but the user was never actually stuck the way the packet implied.
 
 See also E1 (holding ground under pushback), which is the same incident viewed as a product bet.
 
@@ -171,6 +217,63 @@ continuously.
 changes when a chip is dropped — the channel is undebuggable by use. That reframes the deferred bug
 from an accident into a design property.
 
+**Correction, 2026-07-27 — both synthesis positions already exist; the panel argued from a packet
+that didn't show them (same shape as the C4 correction below).**
+
+- **"Chip → tag edit" is already shipped**, and goes further than the packet's proposal: the
+  per-piece **`Wrong for <occasion>`** action is a one-click, immediate, garment-level hard edit —
+  `toggleOccasionExclusion` → `POST /api/pieces/:id/occasion-exclusion` → `pieces.occasion_exclusions`.
+  Documented at `docs/app-surface-map.md` lines 133-153 (**"one of the few places a chat interaction
+  writes a hard constraint to a garment record rather than a soft memory the model may or may not
+  weigh"**) and `docs/engine-behaviour-map.md` line 498.
+- **"Chip as index, opens a freeform field" is also already shipped**, as the general (not
+  per-garment) half: `store_user_correction` from chat prose lands as an `owner_rule` /
+  `preference_reaction` row, surfaced with **Edit / Retire** in `StylistSettings.jsx`'s "Learned
+  rules & preferences." Documented at `docs/app-surface-map.md` lines 860-882 and
+  `docs/engine-behaviour-map.md` line 63. This also substantially closes **E4** ("memory should be
+  a visible, editable object") — it already is, for chat-stated corrections.
+- **A third, narrower mechanism** exists too: the `wrong_length` board-feedback chip writes a
+  garment-linked **retag-suggestion Task** (reviewable, not auto-applied — "no tags were changed
+  automatically") into Wardrobe → Tasks. Documented at `docs/app-surface-map.md` lines 577-590 and
+  754, `docs/engine-behaviour-map.md` lines 68/166/1557.
+
+So the actual open question for B1 is not "should we build a chip → structure mechanism" — narrower:
+is this pattern consistent across every card surface, and does the owner ever get told **in the
+moment** that a chip fired a hard edit or fed the negative-label scoring path (ties to C4's
+`Noted:`/`Applied:` proposal)? That's a much smaller ruling than the packet implied.
+
+**Checked 2026-07-27: the per-piece menu (`Edit item card` / `Swap this out` / `Wrong for
+<occasion>`) is already consistent** — it lives in exactly one shared render block
+(`StylistChat.jsx`, gated on `Array.isArray(outfit.pieces)`), so every outfit *card* (freeform,
+whole-wardrobe, plan/trip) already gets it. It does not extend to the four rendered *visual board*
+surfaces (Composer/editorial/whole-wardrobe renders), which only ever carry board-level chips — but
+per the owner, rendered boards never appear without an accompanying outfit card in practice, so
+this is not a live gap.
+
+**Tried and reverted, 2026-07-27 — moment-of-firing disclosure for the structured feedback chips
+(style_direction/shape_balance).** `toggleOccasionExclusion` already toasts on click; the "What
+feels wrong?" / "Fit and shape" reason chips don't, even though they feed real negative-label
+scoring in `rules.js`. Found that the infrastructure already existed and was simply never
+rendered: `saveStylistFeedback` computes a per-board `learningMessage` into `boardLearningStatus`,
+but no JSX read it. Wired it up as an inline line under the chip row at all four board-render
+sites — but it surfaced two real problems, and the owner ruled the fix out rather than iterate on
+it further:
+1. **Not reason-specific.** Every "What feels wrong?" chip sends the same generic
+   `feedbackType: 'style_direction'` (the specific reason travels separately as `feedback_reason`,
+   never read by the copy lookup), so the line was identical regardless of which chip — or how
+   many — were clicked.
+2. **Wrong data model for multi-select.** These reason chips are independent toggles, not a single
+   choice, but `boardLearningStatus` stores one last-written string per board — structurally
+   incapable of representing "several things are currently noted," and going stale the moment one
+   is toggled without the others.
+A live-computed summary (derived from currently-checked reasons, not a stored last event) would
+fix both, but the owner's ruling made that moot: **the chip's own active-state color change
+(gray → lavender) is already sufficient confirmation** — no additional line needed for this
+feedback type. Fully reverted (`git diff` on `StylistChat.jsx` confirmed clean); `node --test`
+held at the 7 pre-existing baseline failures throughout. Occasion-exclusion's toast stands, since
+that mechanism had no confirmation signal at all before the toast — the two cases aren't the same
+shape and shouldn't be forced into the same fix.
+
 **Ruling:**
 
 ### B2 — What to do with the structured read (proposition 5) — three different answers
@@ -198,6 +301,17 @@ critiques as a one-time billed experiment — the one place any reviewer recomme
   the fact that changes the calculus: this surface fires almost exclusively for **small wardrobes**,
   i.e. new users, who are least able to read `structural: missing bottom` and most in need of the
   insight.
+
+**Partially checked against the maps, 2026-07-27:** `docs/app-surface-map.md` lines 480-500
+confirms cost's near-null number exactly (0 in the last 150 real threads) and confirms raw gate
+vocabulary/rejected-piece lists are already dev-only, behind `VITE_STYLIST_DEBUG` — real users
+never see the literal engine trace. **Not fully checked:** whether the always-visible `What
+didn't clear:` line (`outfit.rejectionReason`, built from `styling-engine/rules.js`'s
+`exclude(piece, reason)` calls around line 2391) is itself already plain language or still carries
+an internal reason string — didn't trace every `reason` argument passed to `exclude()`. So the
+"raw jargon reaches real users" premise may be weaker than the packet assumed, but this one isn't
+resolved the way B1 was — still worth a ruling on the copy, just a narrower one than "rewrite raw
+gate vocabulary."
 
 **Ruling:**
 
@@ -260,7 +374,87 @@ look counts); a declared constraint no output honours (`warm` + corduroy); debug
 complaint requires reading code; the engine trims what it just bought; model prose contradicts the
 structured result and the surface discards the prose.
 
-**Ruling:**
+**Amendments from running C3 against two already-shipped mechanisms, 2026-07-27** (the
+`Wrong for <occasion>` chip → `pieces.occasion_exclusions`, and `store_user_correction` →
+`owner_rule`, both found while checking B1 — see that section):
+
+- **A failing test doesn't always mean "kill it" — the test result is a diagnosis, not a
+  sentence.** The occasion-exclusion mechanism failed tests 1, 4, and 5 (no owner-facing view of
+  what's excluded; the only undo path is a chip that, once excluded, never appears again for that
+  piece/occasion; nothing narrates the exclusion later) — but it passed 2 and 3 cleanly, and the
+  underlying idea (a garment can be permanently wrong for an occasion, and one click should record
+  that) is sound. The fix is a missing surface (a view/undo list, a later "excluded" note), not a
+  reason to remove the mechanism. **Read C3 as build / fix / kill, not build-or-kill**: test 3
+  failing outright (nothing is bound, it's pure narration) points at kill; tests 1, 4, or 5 failing
+  while 2 and 3 pass points at a completeness gap worth naming and fixing, not deleting.
+  **Implemented 2026-07-27** — fixed tests 1 and 4 (test 5, the later narration, is still open,
+  folds into C4): `GET /api/pieces/occasion-exclusions` (`routes/crud.js`, registered ahead of
+  `GET /pieces/:id` so its own path isn't swallowed) lists every current exclusion, and a new
+  "Occasion exclusions" section in Style Profile (`StylistSettings.jsx`, mode `style`) renders
+  them with a **Restore** button that calls the existing `occasion-exclusion` endpoint with
+  `excluded: false` — the same restore path the chip already supported, just newly reachable.
+  Live-verified in the sandbox: excluding a piece from an occasion populates the list; Restore
+  clears it and the piece becomes eligible again; the empty state renders correctly with nothing
+  excluded. `node --test` held at the 7 pre-existing baseline failures throughout. **Also confirmed
+  against the real `wardrobe.db`** (6 real exclusions existed already, including the black abstract
+  midi dress from the A5 incident, `travel`) — the section first appeared empty on `wardrobe-web`
+  because the already-running API process predated this change (plain `node server.js`, no
+  watcher, so new routes don't load without a restart); after the owner restarted it, the section
+  correctly listed all 6.
+  **Test 5 (silence) is only partially closed.** The chip's own creation-time toast already
+  disclosed the exclusion when it fires (*"won't appear for `<occasion>` again"*); the list above
+  fixes discoverability after the fact (tests 1/4). What's still silent is the moment an existing
+  exclusion actually **removes a candidate during composition** — the owner asks for travel
+  outfits weeks later and the piece just isn't offered, with nothing said. That's C4's job, not a
+  separate mechanism — but it must not be implemented as a copy of C4's own `owner_rule` example
+  (*"Applied: no rayon — you said so Jul 25"*). That example is a **soft, weather-conditioned**
+  signal the model applies by judgment — the `Applied:` line's job there is to confirm the model
+  actually consulted and obeyed it, since compliance is never guaranteed. `occasion_exclusions` is
+  the opposite shape: a **hard, code-level filter keyed to one exact occasion string**, applied
+  every time with certainty — there is no "did it apply" question, only "does the owner know a
+  candidate silently dropped out." So the trigger condition is different and must be exact: narrate
+  only when (a) the current turn's occasion matches an exclusion on a piece, AND (b) that piece
+  would otherwise have been a plausible candidate for this composition — never on a turn for a
+  different occasion/activity than the one it was excluded from, and never as a blanket "you have
+  N exclusions" notice unrelated to what's being composed right now. Getting this wrong either
+  under-informs (silence persists) or over-attributes (claims a rule fired on a dimension —
+  weather, activity — it was never scoped to).
+- **Test 3 needs a third bucket: deliberately soft.** The `owner_rule` mechanism is written by its
+  own code comment to be "prompt guidance, never a mechanical gate — the #44 memory-pollution
+  lesson: stored text must never get absolute mechanical authority" (`styling-engine/rules.js`
+  lines 1332-1338). That's a structure that mostly *describes* rather than mechanically *decides* —
+  by design, after an earlier attempt at hardening it went wrong. C3's original phrasing ("bind it
+  or kill it") has no room for "bind it softly, on purpose, having tried harder once and been
+  burned." Add that case explicitly so it isn't mistaken for a test-3 failure.
+- **C3 applies retroactively, not only to new proposals.** It was written for *proposed* structure
+  ("name the artifact... if you cannot name it, do not build it"), but running it against something
+  already shipped is exactly what surfaced the occasion-exclusion gap — a real defect the surface
+  map's own "[owner check wanted]" note (menu styling) didn't catch, because that note was asking a
+  different question. Treat the five tests as a standing audit tool for the existing inventory in
+  `docs/engine-behaviour-map.md` (scoring weights, gates, caches, narrated lines), not just a gate
+  on new work.
+
+**What "having C3" would actually mean for this app:** there is no way to make these five questions
+a runtime check — "is this speakable in one sentence" and "would the owner accept it as a reason"
+are judgment calls, not predicates a linter can evaluate. So "implementing" C3 means two concrete,
+human-run things, not new code:
+1. **A required step before adding new scaffolding** — a score, gate, cap, or narrated line doesn't
+   ship without its author (person or session) writing one line per test, in the spec doc that
+   introduces it. This is process, not enforcement; the value is making the self-assessment
+   mandatory and visible in the spec, not automatic.
+2. **A periodic retroactive audit** of what already exists, prioritized by
+   `docs/engine-behaviour-map.md`'s inventory (it already lists every scoring weight, gate, and
+   cache with a measured firing rate) — pick the ones with the highest cost-to-understand-per-value
+   (like the two Two `planWorkbenchPieceScore` weights already found to be decoration, or now this
+   occasion-exclusion gap) and run the five tests, expecting a build/fix/kill verdict each time, not
+   assuming clean passes because something already shipped.
+
+**Ruling (owner, 2026-07-27): ACCEPTED.** Moved to `AGENTS.md` → Engineering Principles #7, as a
+standing house rule (this is a process discipline, not a UI ruling or a one-off implementation
+item, so it doesn't belong in `docs/ui-v1-design-handoff.md` or `docs/stylist-bugfix-spec.md`).
+The five tests, the build/fix/kill trichotomy, and the soft-by-design carve-out all carried over;
+this doc keeps the full derivation and the two case studies (occasion-exclusion, `owner_rule`) the
+rule was tested against.
 
 ### C4 — Make the loop perceivable (proposition 6)
 All three attack the proposition; all three note the engine narrates weather source, roster,
