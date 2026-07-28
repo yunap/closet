@@ -144,9 +144,170 @@ mechanisms with three different blast radii:
 **[by design]** The occasion exclusion is one of the few places a chat interaction writes a **hard
 constraint** to a garment record rather than a soft memory the model may or may not weigh.
 
-**Owner check wanted.** Three actions with radically different permanence sit in one menu, styled
-identically. Whether that is a problem is a design judgement, not a defect — flagged here for the
-owner rather than assumed either way.
+**[fixed 2026-07-27, was: three actions with radically different permanence, styled identically]**
+Menu items are now two-line (bold label + a plain-language consequence sentence), and a divider
+separates the two per-outfit-scoped actions (*Edit item card*, *Swap this out*) from the one
+cross-context hard edit (*Wrong for `<occasion>`*), which also gets a slightly bolder label. No
+change to the card itself — the explanation only exists inside the already-hidden `···` menu, so
+resting-state density is unaffected. Owner ruling: keep all three together (they're all genuinely
+piece-level actions; splitting into separate menus would add clicks for no reason) but make the
+consequence legible at the point of choice rather than only via native `title` hover-tooltips,
+which the menu relied on before and which don't work on touch and are easy to miss.
+
+**[fixed 2026-07-27, was: trigger easy to miss, and both the trigger and the panel could be
+clipped]** Two more owner-caught defects on this same control:
+1. **The trigger read as an ellipsis, not a button.** Three literal periods (`...`) look like a
+   truncation mark, not a "more actions" affordance — both the expert panel and the earlier
+   mapping session missed that this menu existed at all, which is a stronger discoverability
+   signal than any usability heuristic. Swapped for the vertical-dots kebab (`⋮`), the standard
+   overflow-menu glyph, with slightly stronger border/color contrast at rest (previously
+   `--text-light`, the palest token in the app, doing double duty as "quiet" and "invisible").
+2. **The panel could be clipped on every edge.** It rendered as an absolutely-positioned child of
+   the outfit card, which uses `overflow: hidden` for its rounded corners — so a piece near the
+   left, right, *or bottom* edge of a card had its menu cut off, regardless of any centering math.
+   Rewritten as `PieceActionMenu` (`StylistChat.jsx`), a small controlled component that portals
+   the panel into `document.body` and positions it from the trigger's real `getBoundingClientRect()`,
+   clamped to the viewport on every side and flipped above the trigger when it doesn't fit below.
+   Also closes on outside click, Escape, and scroll/resize, and (since each instance owns its own
+   outside-click listener) opening a second menu closes any other one already open — no explicit
+   shared state needed. Verified live in the sandbox: leftmost/rightmost pieces no longer clip
+   horizontally, a trigger placed within a few px of the viewport bottom now opens upward and
+   stays fully on-screen (confirmed by measuring the rendered panel's rect), and outside-click/
+   Escape/second-trigger-closes-first all behave correctly. `node --test` held at the 7
+   pre-existing baseline failures throughout.
+
+**[fixed 2026-07-27, was: three flat, unlabeled actions]** Owner mocked up a categorized version
+and it shipped, with two adjustments made before building it:
+- **Grouped under three quiet section headers** — Piece information / Outfit pairing / Occasion
+  rule — each item now has a small line icon (pencil / swap-arrows / circle-slash) plus its label
+  and explanation. *Edit item card* → **Edit piece details**; *Swap this out* → **Replace in this
+  outfit**.
+- **The occasion-rule item is not styled as an alert.** The mockup used a solid red/pink alarm box
+  with a prohibit icon; that reads as an error state (something went wrong) rather than a
+  deliberate, intentional action, and would be the only red anywhere in an otherwise uniformly
+  quiet UI. Kept as a labeled section with a bolder label instead — same distinction, no alarm
+  tone.
+- **The "Replace in this outfit" copy was corrected against the actual mechanism before shipping.**
+  The mockup read *"avoid suggesting this same pairing again"* — traced the code
+  (`getWholeWardrobeFeedbackMemory` in `rules.js`, `wrong_item_read` branch) and confirmed
+  `focusedPieceId` is set on this payload, so the penalty lands on **the piece itself** (with an
+  extra 1.35× weight, stronger than ordinary feedback) and its formula-family combination — not
+  specifically "this pairing." Corrected to *"steers your stylist away from choosing it as often"*,
+  which is what the scoring code actually does. Shipping the mockup's literal wording would have
+  been a real, if small, overclaim — the same class of honesty problem as under-narrating a hard
+  edit, just in the other direction.
+- The **onboarding coach-mark tip** and the **hover/keyboard-focus tooltip states** from the same
+  mockup are not built — they need real state (has this user seen it, which piece/card triggers
+  it, dismissal persistence) and are tracked as a separate follow-up, not bundled into this pass.
+- Verified live in the sandbox by reading the rendered panel's `innerText` directly (screenshot
+  timing in the test harness was unreliable mid-session, so this was the load-bearing check): all
+  three section headers, icons, and the corrected copy render exactly as authored. `node --test`
+  held at the 7 pre-existing baseline failures — two transient overshoots during this pass (a
+  reverted rename check, a hard-coded sub-12px group-label font-size) were both caught and fixed
+  before landing.
+
+**[fixed 2026-07-27, owner-caught, two rounds]**
+1. **The occasion-rule active state was still red.** The categorized menu used the same shared
+   `.active` class (danger red/pink) as *Replace in this outfit* for its toggled-on state — same
+   alarm-reads-as-error problem as the mockup's box, just carried over from pre-existing styling
+   instead of introduced by the redesign. Gave it its own accent-toned active class instead.
+   **Owner asked for `Replace in this outfit`'s active state to match** — both now share
+   `piece-action-menu-item-quiet-active` (renamed from the occasion-rule-specific name once it
+   applied to both). Live-verified: both read `rgb(104, 77, 98)` (the app's accent color) when
+   toggled on, no red left on either.
+   - **While checking where a "Replaced in this outfit" flag shows up afterward** (asked directly):
+     Visual Lab → Style profile → **Outfit & styling feedback**, filterable by type. Found the
+     entry existed but under the raw engine label `wrong item read` — a second small instance of
+     the jargon-leak this whole session has been chasing. Added `FEEDBACK_TYPE_DISPLAY_LABELS` in
+     `StylistSettings.jsx` so it reads **"Replaced in this outfit"**, matching the chat menu's own
+     words, in both the card label and the type filter dropdown.
+   - **Owner follow-up: the row's "Open garment" link isn't useful for this correction type** —
+     it lands on the piece in isolation, no outfit, no "why." Every `wrong_item_read` row already
+     carries a `threadId` in its payload (`saveStylistFeedback` auto-attaches
+     `currentThreadId`) and the backend already derives `referenced_thread_id` from it generically
+     (`referencedThreadForFeedback` in `routes/crud.js`) — the data existed, `canOpenGarment` was
+     just unconditionally winning over `canOpenThread` in the button-choice logic. Reordered so
+     the thread link (labeled "Open source chat") wins whenever one survives; garment is now only
+     the fallback for rows with no reachable thread (e.g. an archived/deleted one). Live-verified:
+     triggered a real "Replace in this outfit" from the chat, confirmed the resulting row's
+     `referenced_thread_id` populated correctly and the Style Profile card showed "Open source
+     chat" with no "Open garment" button.
+   - **Owner caught a second bug in the same flow, immediately after**: the label was fixed but
+     the *click* still opened the garment editor. Root cause: `canOpenThread`/`canOpenGarment`
+     only controlled which **button text** rendered — the actual handler,
+     `openFeedbackContext`, had its own independent priority order that still checked
+     `wrong_item_read` → garment **before** checking `referenced_thread_id`, so clicking
+     "Open source chat" ran the garment branch anyway. Classic label-fixed-but-action-didn't
+     bug — the two lived in different functions and only one got reordered. Reordered
+     `openFeedbackContext` to match: thread first, garment fallback second. Confirmed the
+     inconsistent buttons visible on real rows (`wardrobe.db`, read-only check: rows from
+     2026-07-18 and earlier have no `threadId` in payload at all, predating when
+     `saveStylistFeedback` started attaching it; rows from 2026-07-26 on do) are not a bug —
+     that's the correct, honest fallback for corrections made before thread-linking existed.
+     Live-verified the actual navigation this time, not just the label: clicking "Open source
+     chat" now lands on `/stylist/thread_...`, no garment modal.
+   - **Owner follow-up: for the threadless rows, prefer the saved Visual Lab board over the bare
+     garment page too.** `wrong_item_read` payloads carry no board image (they're feedback on the
+     outfit card, not a rendered board), so the existing imageUrl-based board match
+     (`matchedFeedbackBoard`) never applies to them — but `GET /saved-boards` already returns
+     `linked_piece_ids` per board (via `collectPieceIdsFromSavedBoardRow`, used elsewhere for the
+     piece-scoped board query), so a saved board's piece set is a free, already-computed
+     fingerprint for "this exact look." Added `matchedBoardByPieceSet` in `StylistSettings.jsx`:
+     compares the row's `payload.pieceIds` (sorted) against each saved board's `linked_piece_ids`
+     (sorted), client-side, no backend change. **Only trusted on an exact, unambiguous match** — if
+     more than one saved board has the identical piece set (the same look saved twice), it falls
+     through to garment rather than guessing, the same caution `referencedThreadForFeedback`
+     already applies server-side for its own fallback case. New priority: thread → piece-matched
+     board → bare garment. Live-verified both branches: a threadless row whose piece set matched
+     a real saved board ("Friends Hangout", id 14) showed "Open board" and navigated to
+     `boardId=14`; a threadless row with a piece set matching nothing correctly still fell back to
+     "Open garment."
+   - **Owner found two more gaps, on the real `wardrobe.db`, immediately after.** First: many
+     contextual-feedback rows have **no button at all** — `bad_occasion` and similar
+     `whole_wardrobe_outfit`-scoped types, `context_type: 'wardrobe'` (no single piece/outfit to
+     jump to), old enough to predate thread-linking, and with a `textOnly: true` payload meaning
+     no board was ever rendered for them either — genuinely nothing left to link to. Broadened
+     `matchedBoardByPieceSet` from `wrong_item_read`-only to any `target_type:
+     'whole_wardrobe_outfit'` row (helps some, not all — the specific row checked, id 232, has no
+     matching board because none was ever saved for it). For the remainder, added a **Remove**
+     button (reuses the existing `DELETE /api/stylist-feedback/:id`, same endpoint already used
+     elsewhere) always present alongside whatever Open-X button does or doesn't apply — matches
+     the "Retire" affordance already standard on Learned rules. Live-verified: created a row with
+     an unmatchable piece set, confirmed only "Remove" rendered (no Open-anything), clicked it,
+     confirmed the row vanished from the list **and** from a fresh `GET /api/stylist-feedback`
+     (hard-deleted, not just hidden).
+   - **Second: what is the "dark grey gathered mini dress" / `Works · Gold` entry?** Traced on
+     `wardrobe.db` (id 340): `feedback_type: 'works'`, `target_type: 'message'`, `context_type:
+     'piece'` (257) — a different shape entirely from the whole-wardrobe-outfit rows above. Its
+     "Open garment" comes from the generic `canOpenContext` path (context is a piece), not from
+     any wrong-item/board logic. Genuinely interesting finding while tracing it: the row's raw
+     note has the rendered image embedded as inline markdown
+     (`![Belted Definition](sandbox:/uploads/generated-boards/whole-wardrobe-1784018070308-...)`)
+     rather than a structured `payload.board.imageUrl` — and **both a matching saved board (id
+     224, "Belted Definition") and a matching thread (`thread_1784016944304`) actually exist**,
+     found by grepping the embedded filename against `saved_boards.image_url` and
+     `chat_threads.payload`. Neither is linked today because `matchedFeedbackBoard` and
+     `referencedThreadForFeedback` only look at structured fields
+     (`payload.board.imageUrl`, `payload.threadId`), not text embedded in `payload.text`. Real,
+     larger gap — extracting the embedded image path from legacy `message`-type feedback and
+     matching it the same way would recover thread/board links for a whole class of old rows —
+     but scoped as a follow-up, not bundled into this pass.
+2. **"Edit piece details" stopped opening the editor** — a real regression, and a genuinely
+   interesting one: it only reproduced under a **real, physically-dispatched click**, not a
+   synthetic `dispatchEvent`, which is why the first verification pass missed it. Root cause: the
+   portal panel closed itself via an `onClickCapture` on its wrapper — a capture-phase side effect
+   racing the target button's own bubble-phase `onClick` under genuine pointer input. Fixed by
+   removing the capture-phase auto-close entirely; `PieceActionMenu`'s children are now a render
+   prop (`{ close }`) and each action calls `close()` itself, in its own handler, before doing its
+   real work — no race, no ambiguity about ordering. Re-verified with an actual dispatched click
+   (not scripted) this time. `node --test` held at 7 throughout both rounds.
+
+**[fixed 2026-07-27, was: no visibility anywhere]** Until this date, `occasion_exclusions` had no
+view or undo path outside the chip itself — and the chip stops appearing for that exact
+piece/occasion once excluded, so a false positive was effectively unreachable through normal use.
+Visual Lab → Style profile → **Occasion exclusions** now lists every current exclusion with a
+**Restore** button. See `docs/panel-stage1-findings.md` → C3 for how running the decision rule
+against this already-shipped mechanism (rather than a new proposal) is what surfaced the gap.
 
 > **Stores.** *Edit item card* → `pieces` via the editor. *Swap this out* → `stylist_feedback`
 > (`feedback_type: 'wrong_item_read'`, scoped to the piece and outfit). *Wrong for X* →

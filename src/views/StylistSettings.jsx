@@ -30,6 +30,13 @@ const INTERVIEW_STEPS = { body_contract: 'comfort', aesthetic_gravity: 'aestheti
 // (store_user_correction → owner_rule; persisted preference reactions). Card-level
 // taste feedback stays in the chat's context-scoped Learning panel.
 const LEARNING_TYPES = new Set(['owner_rule', 'preference_reaction', 'correction'])
+// Raw feedback_type values read fine as filter option text but not as the label on a card the
+// owner is scanning — 'wrong_item_read' in particular is engine vocabulary for what the chat
+// menu calls "Replace in this outfit". Keep both readable, in the chat's own words.
+const FEEDBACK_TYPE_DISPLAY_LABELS = {
+  wrong_item_read: 'Replaced in this outfit',
+}
+const feedbackTypeDisplayLabel = (type) => FEEDBACK_TYPE_DISPLAY_LABELS[type] || String(type || '').replaceAll('_', ' ')
 const CONTEXT_FILTERS = [
   ['all', 'All'],
   ['outfit', 'Outfits'],
@@ -102,6 +109,8 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const [historyFor, setHistoryFor] = useState(null)
   const [historyRows, setHistoryRows] = useState([])
   const [learnings, setLearnings] = useState([])
+  const [occasionExclusions, setOccasionExclusions] = useState([])
+  const [occasionExclusionsLoading, setOccasionExclusionsLoading] = useState(true)
   const [contextualFeedback, setContextualFeedback] = useState([])
   const [feedbackBoards, setFeedbackBoards] = useState([])
   const [feedbackLoading, setFeedbackLoading] = useState(true)
@@ -121,6 +130,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
 
   const load = async () => {
     setFeedbackLoading(true)
+    setOccasionExclusionsLoading(true)
     try {
       const [p, h, c] = await Promise.all([
         fetch('/api/settings/profile').then(r => r.json()),
@@ -130,6 +140,9 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       setProfile(p)
       setHomeLocation(h.homeLocation || '')
       setLayers(c.layers || [])
+      fetch('/api/pieces/occasion-exclusions').then(r => r.json()).then(rows => {
+        setOccasionExclusions(Array.isArray(rows) ? rows : [])
+      }).catch(() => setOccasionExclusions([])).finally(() => setOccasionExclusionsLoading(false))
       const [feedback, savedBoards] = await Promise.all([
         fetch('/api/stylist-feedback?limit=1000').then(r => r.json()).catch(() => []),
         fetch('/api/saved-boards?limit=500').then(r => r.json()).catch(() => []),
@@ -216,6 +229,20 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     if (res.ok) { flash('Learning retired — it will no longer influence styling.'); load() }
   }
 
+  const restoreOccasionExclusion = async (entry) => {
+    const res = await fetch(`/api/pieces/${entry.pieceId}/occasion-exclusion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ occasion: entry.occasion, excluded: false })
+    })
+    if (res.ok) {
+      flash(`${entry.name} will be offered for ${entry.occasion} again.`)
+      setOccasionExclusions(prev => prev.filter(e => !(e.pieceId === entry.pieceId && e.occasion === entry.occasion)))
+    } else {
+      flash('Failed to restore this piece')
+    }
+  }
+
   const showHistory = async (layer) => {
     if (historyFor === layer) { setHistoryFor(null); return }
     const res = await fetch(`/api/settings/constitution/${layer}/history`)
@@ -241,6 +268,37 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const matchedFeedbackBoard = row => {
     const imageUrl = feedbackBoardImage(row)
     return imageUrl ? feedbackBoards.find(board => board.image_url === imageUrl) : null
+  }
+  // Whole-wardrobe-outfit feedback (wrong_item_read, bad_occasion, too_safe, ...) carries no
+  // board image — it's feedback on the outfit card, not a rendered board — and older rows
+  // predate thread-linking entirely, so neither of the above lookups can find anything for them.
+  // A saved board's piece set is still a reliable fingerprint of "this exact look" — reuse it as
+  // a fallback before landing on the bare garment page (or, for text-only outfit replies that
+  // were never rendered as a board at all, before landing on nothing). Only trusted when exactly
+  // one board matches; an ambiguous match (the outfit saved more than once) is left alone rather
+  // than guessing, same caution `referencedThreadForFeedback` already applies server-side for its
+  // own fallback case.
+  const matchedBoardByPieceSet = row => {
+    if (row.target_type !== 'whole_wardrobe_outfit') return null
+    const rowPieceIds = (row?.payload?.pieceIds || row?.payload?.outfit?.pieceIds || [])
+      .map(Number).filter(Boolean).sort((a, b) => a - b)
+    if (!rowPieceIds.length) return null
+    const key = rowPieceIds.join(',')
+    const candidates = feedbackBoards.filter(board => {
+      const boardIds = (board.linked_piece_ids || []).map(Number).filter(Boolean).sort((a, b) => a - b)
+      return boardIds.length > 0 && boardIds.join(',') === key
+    })
+    return candidates.length === 1 ? candidates[0] : null
+  }
+
+  const removeContextualFeedback = async (row) => {
+    const res = await fetch(`/api/stylist-feedback/${row.id}`, { method: 'DELETE' })
+    if (res.ok) {
+      setContextualFeedback(prev => prev.filter(r => r.id !== row.id))
+      flash('Removed.')
+    } else {
+      flash('Failed to remove this entry')
+    }
   }
 
   const openFeedbackContext = async (row) => {
@@ -278,13 +336,22 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       }
       return
     }
+    // Thread wins over the garment page when both are reachable — matches the button label
+    // logic below (canOpenThread / canOpenGarment): a "Replaced in this outfit" row's garment
+    // page shows the piece in isolation, no outfit, no "why", so the thread that produced the
+    // correction is the more useful jump whenever it still exists.
+    if (row.referenced_thread_id && onGoToThread) {
+      onGoToThread(row.referenced_thread_id)
+      return
+    }
+    const pieceMatchedBoard = matchedBoardByPieceSet(row)
+    if (pieceMatchedBoard) {
+      navigate(`/visual-lab?section=profile&boardId=${pieceMatchedBoard.id}`)
+      return
+    }
     const referencedPieceId = row?.payload?.pieceId || row?.payload?.piece?.id
     if (row.feedback_type === 'wrong_item_read' && referencedPieceId) {
       navigate(`/wardrobe?pieceId=${referencedPieceId}`)
-      return
-    }
-    if (row.referenced_thread_id && onGoToThread) {
-      onGoToThread(row.referenced_thread_id)
       return
     }
     if (row.context_type === 'outfit' && row.context_id) navigate(`/outfits?outfitId=${row.context_id}`)
@@ -530,6 +597,39 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       <section className="style-profile-section style-profile-learnings">
         <div className="style-profile-section-heading">
           <div>
+            <span>Garment memory</span>
+            <h2>Occasion exclusions</h2>
+          </div>
+          <p>Garments marked "Wrong for" an occasion from the Stylist chat. This is a hard rule —
+          the piece will never be offered for that occasion again until you restore it here.</p>
+        </div>
+        {occasionExclusionsLoading && <div className="style-profile-empty">Loading occasion exclusions…</div>}
+        {!occasionExclusionsLoading && occasionExclusions.length === 0 && (
+          <div className="style-profile-empty">No garments are currently excluded from any occasion.</div>
+        )}
+        <div className="style-memory-list">
+        {occasionExclusions.map(entry => (
+          <div key={`${entry.pieceId}:${entry.occasion}`} className="style-memory-row style-memory-row--context">
+            <div className="style-memory-context-layout">
+              <div className="style-memory-copy">
+                <div className="style-memory-kind">occasion exclusion</div>
+                <div className="style-memory-context-title">{entry.name}</div>
+                <div className="style-memory-note">Won't be offered for {entry.occasion}.</div>
+              </div>
+              <div className="style-memory-context-actions">
+                <button className="btn-secondary" onClick={() => restoreOccasionExclusion(entry)}>
+                  Restore for {entry.occasion}
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+        </div>
+      </section>
+
+      <section className="style-profile-section style-profile-learnings">
+        <div className="style-profile-section-heading">
+          <div>
             <span>Contextual memory</span>
             <h2>Outfit &amp; styling feedback</h2>
           </div>
@@ -572,7 +672,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
             >
               <option value="all">All feedback types</option>
               {contextualFeedbackTypes.map(type => (
-                <option key={type} value={type}>{type.replaceAll('_', ' ')}</option>
+                <option key={type} value={type}>{feedbackTypeDisplayLabel(type)}</option>
               ))}
             </select>
           </div>
@@ -597,15 +697,21 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           const hasTechnicalDetails = readableNote !== String(row.note || '').trim()
             || Boolean(row.target_type || row.context_id || row.referenced_board_id || row.referenced_thread_id)
           const canOpenContext = ['outfit', 'piece'].includes(row.context_type) && row.context_id
-          const canOpenBoard = Boolean(row.referenced_board_id || matchedFeedbackBoard(row) || (row.target_type === 'generated_visual_board' && feedbackBoardImage(row)))
-          const canOpenGarment = row.feedback_type === 'wrong_item_read' && Boolean(row?.payload?.pieceId || row?.payload?.piece?.id)
-          const canOpenThread = !canOpenBoard && !canOpenGarment && Boolean(row.referenced_thread_id && onGoToThread)
+          const hasImageBoardMatch = Boolean(row.referenced_board_id || matchedFeedbackBoard(row) || (row.target_type === 'generated_visual_board' && feedbackBoardImage(row)))
+          // A "Replaced in this outfit" row's garment page shows the piece in isolation — no
+          // outfit, no "why" — so once the thread that produced the correction is reachable,
+          // that's the more useful jump. If no thread survives either, try the saved board with
+          // the same piece set (see matchedBoardByPieceSet) before landing on bare garment.
+          const canOpenThread = !hasImageBoardMatch && Boolean(row.referenced_thread_id && onGoToThread)
+          const pieceMatchedBoard = (!hasImageBoardMatch && !canOpenThread) ? matchedBoardByPieceSet(row) : null
+          const canOpenBoard = hasImageBoardMatch || Boolean(pieceMatchedBoard)
+          const canOpenGarment = row.feedback_type === 'wrong_item_read' && !canOpenThread && !pieceMatchedBoard && Boolean(row?.payload?.pieceId || row?.payload?.piece?.id)
           return (
             <div key={row.id} className="style-memory-row style-memory-row--context">
               <div className="style-memory-context-layout">
                 <div className="style-memory-copy">
                   <div className="style-memory-kind">
-                    {row.feedback_type.replaceAll('_', ' ')}{row.is_gold ? ' · Gold' : ''}
+                    {feedbackTypeDisplayLabel(row.feedback_type)}{row.is_gold ? ' · Gold' : ''}
                   </div>
                   <div className="style-memory-context-title">{contextLabel}</div>
                   {row.label && row.label !== contextLabel && <div className="style-memory-label">{row.label}</div>}
@@ -641,6 +747,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
                   {canOpenThread && (
                     <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>Open source chat</button>
                   )}
+                  <button className="style-memory-retire" onClick={() => removeContextualFeedback(row)}>Remove</button>
                 </div>
               </div>
             </div>

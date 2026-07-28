@@ -71,6 +71,19 @@ grounding, generic safe solutions.
 6. **Additive, provable no-ops.** New context dimensions (weather, formality, ...) must be
    no-ops when their context is absent — provable by diffing rankings with the context empty.
    Prefer additive changes; do not refactor unrelated rules in the same change.
+7. **New structure must earn its keep.** Before adding a new score, gate, cap, or narrated line,
+   check: (1) free falsifiability — can it be checked wrong from a photo, a forecast, or the DB,
+   without a paid model call? (2) speakable — can it be stated in one sentence the owner would
+   accept as a reason? (3) decides, or only describes — a line nothing downstream reads is prompt
+   text at best. (4) cheap false positives — reversible, low-cost when it fires wrongly? (5) the
+   silence test — if it fires, is the owner ever told? A failure on (1), (4), or (5) is usually a
+   missing surface (a view, an undo path, a narrated line) — fix it, don't delete the structure.
+   A failure on (3) alone, with no deliberate soft-by-design reason behind it, means kill it. A
+   structure that decides only softly *on purpose* (e.g. `owner_rule`, kept as prompt guidance
+   after the #44 memory-pollution incident) is not a (3) failure — name that choice, don't conflate
+   it with dead scaffolding. Applies to existing structure, not only new proposals — periodically
+   run it against `docs/engine-behaviour-map.md`'s inventory of weights, gates, and caches. Full
+   derivation and case studies: `docs/panel-stage1-findings.md` → C3.
 
 ## Operational Rules
 
