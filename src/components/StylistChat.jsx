@@ -3696,6 +3696,19 @@ export default function StylistChat({
         delete next[args.key]
         return next
       })
+      // Mirrors saveStylistFeedback's own add-side write below — until this fix, nothing ever
+      // removed a type from here, so an unsaved board's chip (no `saved_boards` row to read
+      // live from, so `canonicalBoardFor` is null and `boardFeedbackActive` falls back to this
+      // per-thread snapshot) would show active again on the thread's next load even after the
+      // underlying stylist_feedback row was deleted — from here, or from Style Profile's Remove.
+      const bucket = feedbackBucketKey(args.targetType, args.payload)
+      if (bucket) {
+        setBoardFeedbackLabels(prev => {
+          const existing = Array.isArray(prev[bucket]) ? prev[bucket] : []
+          if (!existing.includes(args.feedbackType)) return prev
+          return { ...prev, [bucket]: existing.filter(type => type !== args.feedbackType) }
+        })
+      }
       return
     }
     await saveStylistFeedback(args)

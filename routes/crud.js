@@ -534,6 +534,35 @@ function syncSavedBoardFromFeedback(row) {
   setSavedBoardFeedbackLabel(imageUrl, row.feedback_type, !row.archived || Boolean(otherActive))
 }
 
+// A board with no `saved_boards` row (never explicitly "Saved") has no canonical record for
+// StylistChat.jsx's boardFeedbackActive to read live — it falls back to a per-thread snapshot
+// (chat_threads.payload.boardFeedbackLabels) written once, on save, and never otherwise touched.
+// Un-toggling a chip inside the same open chat session now clears its own client copy
+// (StylistChat.jsx's toggleStylistFeedback), but that fix can't reach a removal that happens
+// elsewhere — Style Profile's Remove button, in particular, is a different component with no
+// access to that thread's live state. This is the one place both paths converge, so it clears
+// the persisted snapshot directly. The bucket key is reconstructed the same way
+// StylistChat.jsx's feedbackBucketKey does — both sides must be kept in sync if that changes.
+function clearThreadBoardFeedbackSnapshot(row) {
+  try {
+    const payload = safeJsonParse(row.payload, {}) || {}
+    const threadId = payload.threadId
+    if (!threadId) return
+    if (!Number.isInteger(payload.messageIndex) || !Number.isInteger(payload.boardIndex)) return
+    if (!['generated_visual_board', 'board', 'renderer_calibration'].includes(row.target_type)) return
+    const bucket = `${row.target_type}:${payload.messageIndex}:${payload.boardIndex}`
+    const thread = db.prepare('SELECT * FROM chat_threads WHERE id = ?').get(threadId)
+    if (!thread) return
+    const threadPayload = safeJsonParse(thread.payload, {}) || {}
+    const labels = threadPayload.boardFeedbackLabels || {}
+    if (!Array.isArray(labels[bucket]) || !labels[bucket].includes(row.feedback_type)) return
+    threadPayload.boardFeedbackLabels = { ...labels, [bucket]: labels[bucket].filter(t => t !== row.feedback_type) }
+    db.prepare('UPDATE chat_threads SET payload = ? WHERE id = ?').run(JSON.stringify(threadPayload), threadId)
+  } catch (err) {
+    console.error('Failed to clear thread board-feedback snapshot:', err)
+  }
+}
+
 // style_direction/shape_balance are group labels that can carry many distinct reasons at
 // once (e.g. both 'weak_structure' and 'too_safe' under 'style_direction'). The chat surface
 // already writes one stylist_feedback row per specific reason (payload.feedback_reason set).
@@ -834,7 +863,10 @@ router.delete('/stylist-feedback/:id', (req, res) => {
   try {
     db.prepare('UPDATE stylist_feedback SET archived = 1 WHERE id = ?').run(req.params.id)
     const updated = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
-    if (updated) syncSavedBoardFromFeedback(updated)
+    if (updated) {
+      syncSavedBoardFromFeedback(updated)
+      clearThreadBoardFeedbackSnapshot(updated)
+    }
     res.json({ success: true })
   } catch (err) {
     console.error('Archive stylist feedback error:', err)

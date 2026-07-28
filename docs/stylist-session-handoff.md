@@ -2,6 +2,38 @@
 
 **Last updated:** 2026-07-28. Branch `stylist-docs-staleness-fixes`.
 
+## 2026-07-28 session, part 2 — Remove button didn't clear the board-feedback chip
+
+The new Style Profile **Remove** button (added earlier the same session, see below) called the
+existing `DELETE /api/stylist-feedback/:id` endpoint, which archives the row and correctly
+re-syncs `saved_boards.payload.feedback_labels` for canonical (saved-to-Visual-Lab) boards. But an
+unsaved board has no `saved_boards` row — `StylistChat.jsx`'s `boardFeedbackActive` falls back to
+a per-thread snapshot (`chat_threads.payload.boardFeedbackLabels`), and **nothing had ever cleared
+that snapshot**, not even the chat's own pre-existing "un-toggle a chip" flow. So deleting the
+feedback row (via Remove, or by un-toggling the chip in chat) left the chip showing active again
+next time the thread loaded, from either surface.
+
+Fixed both sides that write into this snapshot:
+- `routes/crud.js`: new `clearThreadBoardFeedbackSnapshot(row)`, called from the DELETE route —
+  this is the one place both surfaces converge, since Style Profile has no access to the chat's
+  live React state.
+- `StylistChat.jsx`'s `toggleStylistFeedback`: the removal branch now also strips the type from
+  local `boardFeedbackLabels` state, mirroring what the add branch (`saveStylistFeedback`) already
+  did.
+
+Live-verified in the sandbox (`thread_1784969252663`, "Friends Hangout" board, `generated_visual_board:4:0`
+bucket): clicked "Looks good" for real, confirmed the bucket held `["works"]`; clicked it again to
+un-toggle, confirmed the DELETE fired against the correct feedback row, the chip un-highlighted,
+and the bucket came back `[]`. `npm test` still at the established 7-failure baseline.
+
+**Caught a testing-process mistake worth flagging for next time:** an early verification pass used
+`computer` click coordinates read off an 800×450 screenshot while `read_page`'s returned
+coordinates were relative to the actual 1280×720 viewport — clicks landed on nothing, no network
+request fired, and a stale leftover DB value made the follow-up check look like a pass. Caught by
+cross-checking `read_network_requests` for the expected DELETE call before trusting a "looks
+fixed" API read. Always click via `ref`, not raw screenshot-derived coordinates, when the two
+differ.
+
 ## 2026-07-28 session — A1/A2/A5 shipped, C3 ratified, piece-action-menu rebuilt end to end
 
 Re-verified panel-stage1-findings.md's Section A against the code (per its own "recurring failure
