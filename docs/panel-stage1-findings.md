@@ -6,10 +6,12 @@ human↔model interaction design; cost and economics honesty). Packet:
 
 **Status, reconciled 2026-07-29 against the code and later capsule rulings.** Section A is ruled:
 A1/A2/A5 are implemented; A3 was rejected; A4 was implemented as part of the later capsule
-redesign; A6 remains a cost-instrumentation and monetization question. C3 is ratified. B1 is
-substantially closed and B2 is partially ruled. Later owner rulings also answer or supersede the
+redesign; A6 remains a cost-instrumentation and monetization question. C3 and B2 are ratified. B1 is
+substantially closed. Later owner rulings also answer or supersede the
 original C1/C2/D1 capsule recommendations; their entries below state exactly which parts survived.
-B2 presentation, B3, C4, C5's wording, and the unresolved E propositions remain open.
+B3, C4, C5's wording, and the unresolved E propositions remain open. B2's presentation and
+interaction model were ratified on 2026-07-29; provider-cost optimizations are tracked separately
+and do not reopen that product ruling.
 
 **Re-checked 2026-07-27: A1, A2, A5 were still unimplemented as of that check** — `git log`
 between the panel commit and HEAD touched no file under `styling-engine/` or `routes/`, only docs
@@ -302,15 +304,15 @@ photograph back to the person who supplied it, it is useful diagnostic evidence:
 is wrong, this field shows what the model believed it saw while producing that critique. That
 falsifiability is worth preserving.
 
-This does **not** ratify the current structured read unchanged. It is too long for an ordinary user
-to read, even behind the existing disclosure. B2 therefore remains open on presentation: shorten
+This did **not** ratify the current structured read unchanged. It was too long for an ordinary user
+to read, even behind the existing disclosure. B2 therefore remained open on presentation: shorten
 and layer the user-facing read while keeping the model-premise evidence available through a
 secondary diagnostic expansion or debug surface. The ruled-out solution is deleting
 `Visible facts`; the remaining question is how to separate the concise critique from its deeper
 diagnostic record.
 
-**Experiment in progress, 2026-07-29 — not yet a final presentation ruling.** Branch
-`experiment/b2-readable-critique-clean`, rebased onto `origin/main` at `160d992`, now tests a
+**Ratified 2026-07-29 after live testing.** Branch
+`experiment/b2-readable-critique-clean`, rebased onto `origin/main` at `160d992`, implements a
 three-layer answer without adding a second model call:
 
 1. `userCritique` is the default read: answer, short reason, one action, and an observable check.
@@ -336,10 +338,24 @@ The live sequence established why each iteration changed:
 - `thread_1785358062445`: a dedicated four-paragraph field reached the intended depth and flow
   without a parse failure or another provider call.
 
-What remains open is narrower: the dedicated explanation still sometimes uses stylist shorthand
-(`hero`, `register`, `visual weight`, `floor line`) and exposes internal provenance such as saved
-wardrobe history. The architecture is promising and is being tested before ratification; final
-voice constraints, provenance language, and whether `Intent` should become editable remain open.
+The owner accepted the current language level and provenance behavior for now; neither is a B2
+ship blocker. `Visible facts` stays stored for debugging and is not exposed in the normal client
+UI. `Intent` does not become a separate editable control: the user corrects or refines the read
+through an ordinary follow-up, which preserves the conversational interaction rather than adding
+a second correction surface. Older saved evaluations keep the structured-field fallback.
+
+The cost acceptance criterion is architectural rather than a prerequisite telemetry study:
+one provider call, a bounded response, and redundant generated prose removed. Formal before/after
+token proof is not required to ratify B2. Usage and JSON-parse failures should still be monitored;
+an observed regression is a tuning issue, not a reason to reopen the presentation decision.
+
+**Cost follow-up, separate from B2:** the critique path should add provider prompt caching and
+usage telemetry, then give follow-ups a lean answer-only response contract. Today the UI displays
+only a short follow-up, but the backend still sends the full evaluator instructions and permits a
+3,000-token response, so it may regenerate diagnostic fields and detailed prose that are discarded.
+After measuring those changes, add a short-lived exact-request cache for retries/double submissions.
+Cache stable image/evidence blocks only if telemetry shows that additional complexity is warranted.
+None of this should shorten the ratified four-paragraph explanation or add a second model call.
 
 ### B3 — What the "needs review" card should be (proposition 3)
 - **Cost:** near-null surface (zero in the last 150 real threads); don't spend engineering here.
