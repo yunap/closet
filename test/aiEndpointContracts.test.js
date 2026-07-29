@@ -2326,9 +2326,10 @@ test('Opened garment modal uses grouped metadata and updated detail hierarchy', 
 test('StylistChat renders wardrobe evaluation replies in the chat thread', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   assert.doesNotMatch(src, /if \(m\.wardrobeEvaluation \|\| m\.contextName === 'Whole wardrobe evaluation'\) \{\s*return null\s*\}/)
-  assert.match(src, /if \(m\.role === 'assistant' && m\.wardrobeEvaluation\)/)
-  assert.match(src, /<details open=\{true\} style=\{\{ width: '100%' \}\}>/)
-  assert.match(src, /View Outfit Critique: \{m\.outfitName \|\| 'Generated Outfit'\}/)
+  assert.match(src, /if \(m\.role === 'assistant' && m\.wardrobeEvaluation && m\.evaluationResponseMode !== 'followup'\)/)
+  assert.match(src, /<details open=\{true\}>/)
+  assert.match(src, /<span>Outfit critique<\/span>/)
+  assert.match(src, /<strong>\{m\.outfitName \|\| 'Generated outfit'\}<\/strong>/)
 })
 
 test('StylistChat scopes rendered wardrobe boards to each generation result', () => {
