@@ -4842,16 +4842,33 @@ export default function StylistChat({
         replyOutfitName = outfitToSend.name
         replyDebug = data.debug || null
         const isEvaluationFollowup = (overrides.responseMode || 'full') === 'followup'
+        const rememberedOutfit = {
+          id: outfitToSend.id ?? null,
+          label: outfitToSend.name || outfitToSend.title,
+          title: outfitToSend.name || outfitToSend.title,
+          name: outfitToSend.name || outfitToSend.title,
+          photo: shouldAttachOutfitPhoto ? (outfitToSend.photo || '') : '',
+          bestFor: outfitToSend.occasion || '',
+          occasion: outfitToSend.occasion || '',
+          season: outfitToSend.season || '',
+          pieces: outfitToSend.pieces || [],
+          pieceIds: outfitPieceIds,
+          reason: outfitToSend.notes || '',
+        }
         nextThreadMemory = {
-          type: 'outfit',
+          type: outfitToSend.id == null ? 'generated_outfit' : 'outfit',
           id: outfitToSend.id,
           name: outfitToSend.name,
+          latestOutfit: rememberedOutfit,
           latestEvaluation: isEvaluationFollowup
             ? (threadMemory?.latestEvaluation || null)
             : (data.evaluation || null),
           latestEvaluationText: isEvaluationFollowup
             ? priorEvaluationText
             : compactEvaluationMemory(data.evaluation),
+          latestContextText: outfitToSend.id == null
+            ? compactGeneratedOutfitContext([rememberedOutfit], { source: 'lookbook_generated_outfit' })
+            : undefined,
         }
         setThreadMemory(nextThreadMemory)
 

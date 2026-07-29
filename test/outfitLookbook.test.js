@@ -113,6 +113,13 @@ test('Saved and generated outfits enter the same Stylist action chooser', () => 
   assert.doesNotMatch(source, /stylistPrompt: 'Evaluate this styling direction/)
 })
 
+test('Generated outfit critiques retain their linked outfit context for follow-up questions', () => {
+  assert.match(stylistSource, /type: outfitToSend\.id == null \? 'generated_outfit' : 'outfit'/)
+  assert.match(stylistSource, /latestOutfit: rememberedOutfit/)
+  assert.match(stylistSource, /pieceIds: outfitPieceIds/)
+  assert.match(stylistSource, /threadMemory\?\.type === 'generated_outfit' && OUTFIT_FOLLOWUP_PATTERN\.test\(q\)/)
+})
+
 test('My Outfit detail owns scrolling and keeps its management actions visible', () => {
   assert.match(source, /className="modal-overlay outfit-detail-overlay"/)
   assert.match(source, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-labelledby="outfit-detail-title"/)
