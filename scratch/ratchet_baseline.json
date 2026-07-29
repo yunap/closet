@@ -1,7 +1,7 @@
 {
   "fileCounts": {
     "styling-engine/attributes.js": 58,
-    "styling-engine/core.js": 61,
+    "styling-engine/core.js": 54,
     "styling-engine/footwear-comfort.js": 0,
     "styling-engine/occasions.js": 0,
     "styling-engine/outfitSetPlanner.js": 0,
@@ -16,5 +16,5 @@
     "routes/ai.js": 0,
     "routes/crud.js": 0
   },
-  "total": 238
+  "total": 231
 }

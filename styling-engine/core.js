@@ -3,7 +3,7 @@ import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
-import { buildWardrobeManifest } from '../src/utils/wardrobeAiContext.js'
+import { buildWardrobeManifest, STRUCTURAL_FIELD_UNSET } from '../src/utils/wardrobeAiContext.js'
 import { resolveOpenAiKey, hasOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 
 import {
@@ -2996,10 +2996,29 @@ export function dedupeAndDifferentiateEditorialDirections(directions = [], selec
   return cleaned.slice(0, 3)
 }
 
+// A structural column the tagger populated, or '' when it is absent or set to
+// the not-applicable sentinel. `readable` turns `hangs_straight` into
+// `hangs straight` so a clause reads as English rather than as a column dump.
+function anchorColumn(piece, field) {
+  const value = String(piece?.[field] ?? '').trim().toLowerCase()
+  return STRUCTURAL_FIELD_UNSET.has(value) ? '' : value
+}
+const readable = value => value.replace(/[-_]+/g, ' ')
+
+// Every clause here used to be derived from `name + notes` regexes. That meant
+// `length_hits_at` — populated on 207 of 236 pieces — produced no length
+// instruction at all, because the builder had no length clause and the column
+// was never read. Meanwhile the renderer memory appended to this same prompt is
+// full of "prior render had this rendered too long" corrections: the wardrobe
+// knew the length, the prompt never stated it, and the correction arrived
+// afterwards as feedback. Columns are now the primary source; the old regexes
+// survive only as the fallback for pieces that carry no structured value, so
+// nothing that produced a clause before stops producing one.
 export function anchorFidelityInstructions(selectedPiece = {}) {
   const name = String(selectedPiece.name || '').toLowerCase()
   const category = String(selectedPiece.category || '').toLowerCase()
   const notes = String(selectedPiece.notes || '').toLowerCase()
+  const described = `${name} ${notes}`
   const parts = []
 
   if (category.includes('top') || /top|shell|tank|tee|shirt|blouse|sweater|cardigan|tunic/.test(name)) {
@@ -3008,13 +3027,52 @@ export function anchorFidelityInstructions(selectedPiece = {}) {
   if (category.includes('bottom') || /pant|jean|trouser|skirt|short/.test(name)) {
     parts.push('Anchor is a lower-body garment: preserve the rise, leg/hem width, length, drape, and visible volume. Do not turn wide pants into slim pants or cropped pants into long pants.')
   }
-  if (/sleeveless|tank|shell/.test(name + ' ' + notes)) parts.push('Keep the anchor sleeveless; do not add sleeves.')
-  if (/short sleeve|short-sleeve/.test(name + ' ' + notes)) parts.push('Keep the anchor short-sleeved; do not make it long-sleeved.')
-  if (/long sleeve|long-sleeve/.test(name + ' ' + notes)) parts.push('Keep the anchor long-sleeved; do not shorten the sleeves.')
-  if (/stripe|striped/.test(name + ' ' + notes)) parts.push('Preserve stripe direction, stripe spacing, and color relationship; do not invent a different stripe scale.')
-  if (/lace|crochet|gauze|linen|corduroy|cashmere|wool|silk|satin|denim/.test(name + ' ' + notes)) parts.push('Preserve the apparent fabric character and texture weight of the anchor garment.')
-  if (/boxy|relaxed|loose|oversized/.test(name + ' ' + notes)) parts.push('Keep the anchor relaxed/boxy if described that way; do not make it clingy or tucked tight.')
-  if (/fitted|slim|compact/.test(name + ' ' + notes)) parts.push('Keep the anchor fitted/compact if described that way; do not make it oversized.')
+
+  const length = anchorColumn(selectedPiece, 'length_hits_at')
+  if (length) {
+    parts.push(`Anchor length: this garment hits at ${readable(length)} — render it at exactly that length. Wrong length is the most common failure on this path; do not lengthen or shorten the anchor to suit the composition.`)
+  }
+
+  const sleeve = anchorColumn(selectedPiece, 'sleeve_type')
+  if (sleeve === 'sleeveless') {
+    parts.push('Keep the anchor sleeveless; do not add sleeves.')
+  } else if (sleeve) {
+    parts.push(`Anchor sleeve: ${readable(sleeve)} — preserve that exact sleeve length and volume; do not lengthen, shorten, or slim it, and do not cover it with a layer that would crush it.`)
+  } else {
+    if (/sleeveless|tank|shell/.test(described)) parts.push('Keep the anchor sleeveless; do not add sleeves.')
+    if (/short sleeve|short-sleeve/.test(described)) parts.push('Keep the anchor short-sleeved; do not make it long-sleeved.')
+    if (/long sleeve|long-sleeve/.test(described)) parts.push('Keep the anchor long-sleeved; do not shorten the sleeves.')
+  }
+
+  const patternType = anchorColumn(selectedPiece, 'pattern_type')
+  const patternScale = anchorColumn(selectedPiece, 'pattern_scale')
+  if (patternType && patternType !== 'solid') {
+    const scale = patternScale ? ` at ${readable(patternScale)} scale` : ''
+    parts.push(`Anchor pattern: ${readable(patternType)}${scale} — reproduce that motif, its scale, and its color relationship; do not substitute a different print or invent a different scale.`)
+    if (patternType === 'stripe') parts.push('Preserve stripe direction and stripe spacing.')
+  } else if (!patternType && /stripe|striped/.test(described)) {
+    parts.push('Preserve stripe direction, stripe spacing, and color relationship; do not invent a different stripe scale.')
+  }
+
+  const fabric = anchorColumn(selectedPiece, 'fabric_category')
+  const fabricWeight = anchorColumn(selectedPiece, 'fabric_weight')
+  if (fabric) {
+    parts.push(`Anchor fabric: ${readable(fabric)}${fabricWeight ? `, ${readable(fabricWeight)} weight` : ''} — preserve that texture and how it hangs.`)
+  } else if (/lace|crochet|gauze|linen|corduroy|cashmere|wool|silk|satin|denim/.test(described)) {
+    parts.push('Preserve the apparent fabric character and texture weight of the anchor garment.')
+  }
+
+  const silhouette = anchorColumn(selectedPiece, 'silhouette')
+  const fitOnBody = anchorColumn(selectedPiece, 'fit_on_body')
+  if (silhouette) parts.push(`Anchor silhouette: ${readable(silhouette)} — keep that volume; do not tighten or loosen it.`)
+  if (fitOnBody) parts.push(`Anchor fit: it ${readable(fitOnBody)} on the body — keep that relationship to the body.`)
+  if (!silhouette && !fitOnBody) {
+    if (/boxy|relaxed|loose|oversized/.test(described)) parts.push('Keep the anchor relaxed/boxy if described that way; do not make it clingy or tucked tight.')
+    if (/fitted|slim|compact/.test(described)) parts.push('Keep the anchor fitted/compact if described that way; do not make it oversized.')
+  }
+
+  const hem = anchorColumn(selectedPiece, 'hem_finish')
+  if (hem && hem !== 'straight_loose') parts.push(`Anchor hem finish: ${readable(hem)} — keep it.`)
 
   return parts.join(' ')
 }
@@ -3023,13 +3081,16 @@ export function editorialImagePrompt({ selectedPiece, direction, occasion, seaso
   const missing = Array.isArray(direction.missingPieces)
     ? direction.missingPieces.join(', ')
     : ''
-  const pieceDesc = [
-    selectedPiece.name,
-    selectedPiece.category,
-    selectedPiece.colors  ? `colors: ${selectedPiece.colors}`  : '',
-    selectedPiece.fabric  ? `fabric: ${selectedPiece.fabric}`  : '',
-    selectedPiece.notes   ? `notes: ${String(selectedPiece.notes).slice(0, 700)}` : ''
-  ].filter(Boolean).join('; ')
+  // Built from the same truth text the whole-wardrobe image path uses. The old
+  // hand-picked list carried name/category/colors/notes only — no length,
+  // sleeve, silhouette, hem or fabric — and its `fabric` line read
+  // `selectedPiece.fabric`, a column that does not exist (the real ones are
+  // fabric_category / fabric_weight / fiber_content), so it never rendered at
+  // all. Two prompts describing the same wardrobe should describe it the same way.
+  // buildPieceText already leads with `• name (category | …)`, so it carries the
+  // name and category the old list stated by hand.
+  const pieceDesc = buildPieceText(selectedPiece) ||
+    [selectedPiece.name, selectedPiece.category].filter(Boolean).join('; ')
   const anchorRules = anchorFidelityInstructions(selectedPiece)
   const selectedGroup = wardrobeCategoryGroup(selectedPiece)
   const silhouetteRule = selectedGroup === 'bottom' || selectedGroup === 'dress'

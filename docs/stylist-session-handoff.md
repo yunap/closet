@@ -1052,7 +1052,7 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   suppress the value — it ships to the image prompt tagged `[low confidence - add worn photo]`.
   **Run this before resolving any conflict between two columns**; it is what caught all three of
   the recommendations I had to withdraw.
-- **The editorial image prompt has no length clause — and "wrong length" is the top render
+- **[FIXED 2026-07-29] The editorial image prompt has no length clause — and "wrong length" is the top render
   complaint.** `anchorFidelityInstructions` derives every fidelity rule from `name + notes`, so:
   `length_hits_at` is populated on **207 of 236** pieces and produces **no length instruction at
   all** (the builder has no such clause); `sleeve_type` is populated on 207 and reaches 48;
@@ -1065,6 +1065,14 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   asymmetry between the two prompts, and the fix is to build the editorial description from the
   same truth text. Also in that builder: it reads `selectedPiece.fabric`, **a column that does not
   exist**, so that line never renders.
+  **Fixed exactly as prescribed:** columns are now the primary source in `anchorFidelityInstructions`
+  (regexes kept as the fallback so no piece lost a clause), the anchor description is now
+  `buildPieceText`, and the dead `selectedPiece.fabric` line is gone. Over the live wardrobe:
+  **206 of 243 pieces now carry a length clause** (was 0); pieces with **no** fidelity instruction
+  fell **49 → 1**. A tagged sleeve also now carries *do not cover it with a layer that would crush
+  it* (bishop-sleeve incident). Separately, `trustedFieldText` now drops the tagger's
+  not-applicable `none` sentinel, so the shared truth text stopped emitting `sleeve: none` on 59
+  bottoms, 13 accessories and 6 shoes. The 900-char truncation below is **still open**.
 - **The whole-wardrobe image prompt truncates piece truth text at 900 chars; the real median is
   1,130** — 169 of 236 pieces lose their tail, and the fields at the end of the string are
   `fit_on_body`, tuck behavior, occasions and trust status.

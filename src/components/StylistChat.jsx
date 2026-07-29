@@ -2083,7 +2083,13 @@ export default function StylistChat({
   }
 
   const buildResponseSections = (outfits = [], presentation = {}, allOutfits = null) => {
-    const visible = outfits.slice(0, 8)
+    // A plan is one artifact, not a list of independent results — the same rule
+    // that already disables the "show N more" fold for plans. This 8-cap never
+    // got the same treatment, so a 10-card capsule silently lost its last two:
+    // live, that hid a Nature Walks look AND the needs-review card the person
+    // was supposed to repair. Ordinary multi-result replies are genuinely a
+    // list and keep the cap.
+    const visible = presentation.type === 'trip_plan' ? outfits : outfits.slice(0, 8)
     if (presentation.type === 'trip_plan') {
       const groups = []
       visible.forEach((outfit, idx) => {

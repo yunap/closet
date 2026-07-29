@@ -38,7 +38,7 @@ import {
   TAG_PIECE_SYSTEM,
   EXTRACT_PIECES_SYSTEM
 } from '../styling-engine/promptRuntime.js'
-import { validateSubmittedPlanOutfits } from '../styling-engine/outfitSetPlanner.js'
+import { validateSubmittedPlanOutfits, describeOutfitStructureGap } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
 import {
@@ -528,8 +528,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -548,6 +548,9 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.submitPlanPartialAccepts) || 0,
       Number(diagnostics.capsuleFinalFallbacks) || 0,
       Number(diagnostics.capsuleSupplyGaps) || 0,
+      Number(diagnostics.capsuleRosterModelCalls) || 0,
+      Number(diagnostics.capsuleRosterModelRepairs) || 0,
+      Number(diagnostics.capsuleRosterModelFallbacks) || 0,
       Number(diagnostics.providerIterations) || 0,
       Number(diagnostics.providerInputTokens) || 0,
       Number(diagnostics.providerOutputTokens) || 0,
@@ -2765,6 +2768,98 @@ export function capsulePlanCompositionSchema(targetOutfits = 1) {
   }
 }
 
+// Spec §3 stage 2 — the model picks the roster from a bench the engine gated.
+// Behind WARDROBE_MODEL_CAPSULE_ROSTER (default off): until it is switched on
+// deliberately, capsule behaviour is exactly what shipped.
+export function modelCapsuleRosterEnabled() {
+  return String(process.env.WARDROBE_MODEL_CAPSULE_ROSTER || '').toLowerCase() === 'true'
+}
+
+export function capsuleRosterSelectionSchema(budget = 24) {
+  const exact = Math.max(1, Number(budget) || 1)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      roster_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: exact, maxItems: exact },
+      palette: { type: 'string' },
+      piece_jobs: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { piece_id: { type: 'integer' }, job: { type: 'string' } },
+          required: ['piece_id', 'job']
+        }
+      }
+    },
+    required: ['roster_piece_ids', 'palette', 'piece_jobs']
+  }
+}
+
+function capsuleRosterSelectionSystemPrompt() {
+  return `You are choosing the garments for a seasonal capsule wardrobe. The conversational stylist has already interpreted the request and fixed the use-case slots; a deterministic engine has already gated the candidates you are given.
+
+Pick exactly the requested number of pieces from the supplied candidates, using their IDs. Choose ONLY from the candidate list — nothing else exists for this task.
+
+A capsule is a set, not a ranked list of good garments. Judge the pieces against each other: what recombines, what earns its place, what is redundant beside something already chosen. A garment that is excellent alone and duplicates another choice is a worse pick than a plainer one that unlocks new outfits.
+
+Cover every requested use case. A roster with a beautiful palette that leaves one use case unwearable is a failed roster — the engine will reject it and you will get one chance to repair it. Make sure each use case can form complete outfits (a top and a bottom, or a dress, plus shoes that suit it).
+
+State the palette you built around in your own words. If the request named colours, respect them as a strong preference, but never at the cost of leaving a use case uncovered — say so in the palette line when you had to reach outside them.
+
+For each piece, give one short line naming the job it does in this capsule. Write it for the wearer, not as engine vocabulary: what it is for and what it goes with. Do not restate the garment's own description.
+
+Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether two pieces belong in one wardrobe.`
+}
+
+async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds }, toolContext) {
+  const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
+  const slotLines = slots.map(slot => `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}): ${slot.bestFor || slot.label}`)
+  const repairBlock = attempt > 1
+    ? `\n\nYOUR PREVIOUS SELECTION WAS REJECTED. Previous IDs: [${(previousRosterIds || []).join(', ')}]\nFix exactly these problems, keeping the rest of your selection:\n${failures.map(entry => `- ${entry.message}`).join('\n')}`
+    : ''
+  const content = [{
+    type: 'text',
+    text: `SEASON: ${isWinter ? 'winter' : isSummer ? 'summer' : 'unspecified'}
+CAPSULE SIZE: exactly ${budget} pieces
+${palette.length ? `COLOURS THE PERSON ASKED FOR: ${palette.join(', ')}` : 'The person did not state a palette; choose one that suits these garments.'}
+
+USE CASES THIS CAPSULE MUST COVER:
+${slotLines.join('\n')}
+
+CANDIDATES:
+${truthCatalog.join('\n')}${repairBlock}`
+  }]
+
+  // Photographs for the candidates, same reasoning as the composer: this stage
+  // is more aesthetic than composition, and until now it was the blind one.
+  for (const piece of bench) {
+    const photoFile = piece.worn_photo || piece.photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(userUploadsDir(), photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const thumb = await prepareWardrobeThumb(filePath, `capsule-roster:${piece.id}:${photoFile}`, { maxPx: 448 })
+      content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      content.push({ type: 'image', detail: 'low', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+    } catch (err) {
+      console.error(`Error loading capsule roster thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: capsuleRosterSelectionSystemPrompt(),
+    messages: [{ role: 'user', content }],
+    schema: capsuleRosterSelectionSchema(budget),
+    name: 'capsule_roster_selection',
+    description: 'Choose the garments for this capsule from the supplied candidates.',
+    maxTokens: Math.max(700, 300 + budget * 40)
+  })
+  if (toolContext) recordToolLoopUsage(toolContext, usage)
+  return value || {}
+}
+
 function capsulePlanCompositionSystemPrompt() {
   return `You are the composition stage of a capsule-planning tool. The conversational stylist has already interpreted the request, chosen the use-case slots, and fixed the capsule roster.
 
@@ -3066,7 +3161,42 @@ router.post('/repair-capsule-look', async (req, res) => {
     // so a swap can never smuggle in a piece the slot already excludes.
     const swapTargets = blockedIds.length ? blockedIds : originalIds
     const attempts = []
-    for (const targetId of swapTargets) {
+
+    // A look can fail for a piece that is WRONG or for a piece that is ABSENT,
+    // and swapping only fixes the first. The live case: a dinner look submitted
+    // with no shoes at all — every substitution failed, and the endpoint then
+    // told the person "the pieces it would need are not in this capsule" while
+    // the slot had five eligible shoes sitting in the roster. Complete the look
+    // first; only then try substitutions.
+    const structureGap = describeOutfitStructureGap(
+      originalIds.map(id => piecesById.get(id)).filter(Boolean),
+      { requireShoes: true }
+    )
+    const MISSING_GROUP_BY_GAP = [
+      [/missing shoes/i, 'shoes'],
+      [/missing bottom/i, 'bottom'],
+      [/missing top or dress/i, 'top'],
+    ]
+    const missingGroup = (MISSING_GROUP_BY_GAP.find(([pattern]) => pattern.test(structureGap)) || [])[1]
+    if (missingGroup) {
+      const additions = allowedPieces
+        .filter(piece => wardrobeCategoryGroup(piece) === missingGroup && !originalIds.includes(Number(piece.id)))
+        .sort((a, b) => Number(a.id) - Number(b.id))
+      for (const candidate of additions) {
+        const pieceIds = [...originalIds, Number(candidate.id)]
+        const { accepted } = validateSubmittedPlanOutfits(pendingPlan, [{
+          slot_id: contextSlot.id,
+          title: String(req.body?.title || contextSlot.label || '').trim(),
+          piece_ids: pieceIds,
+          reason: ''
+        }])
+        if (accepted.length) {
+          attempts.push({ accepted: accepted[0], replaced: null, replacement: candidate, added: true })
+          break
+        }
+      }
+    }
+    for (const targetId of attempts.length ? [] : swapTargets) {
       const targetPiece = piecesById.get(targetId)
       const targetGroup = wardrobeCategoryGroup(targetPiece || {})
       const candidates = allowedPieces
@@ -3090,12 +3220,14 @@ router.post('/repair-capsule-look', async (req, res) => {
 
     if (!attempts.length) {
       return res.status(409).json({
-        error: 'No single swap from this capsule roster fixes that look — the pieces it would need are not in this capsule.',
-        debug: { providerCalls: 0, swapsTried: swapTargets.length }
+        error: missingGroup
+          ? `That look is missing ${missingGroup === 'shoes' ? 'shoes' : `a ${missingGroup}`}, and nothing in this capsule's roster for ${contextSlot.label} completes it.`
+          : 'No single swap from this capsule roster fixes that look — the pieces it would need are not in this capsule.',
+        debug: { providerCalls: 0, swapsTried: swapTargets.length, missingGroup: missingGroup || null }
       })
     }
 
-    const { accepted: acceptedOutfit, replaced, replacement } = attempts[0]
+    const { accepted: acceptedOutfit, replaced, replacement, added } = attempts[0]
     const structuredOutfit = {
       ...acceptedOutfit,
       label: contextSlot.label,
@@ -3109,11 +3241,15 @@ router.post('/repair-capsule-look', async (req, res) => {
       slotWeather: contextSlot.weatherLabel,
       source: 'plan_outfit_set',
       composedBy: 'engine',
-      engineNote: `Swapped ${replaced?.name || 'the blocked piece'} for ${replacement.name}.`,
+      engineNote: added
+        ? `Added ${replacement.name} — the look was missing ${missingGroup === 'shoes' ? 'shoes' : `a ${missingGroup}`}.`
+        : `Swapped ${replaced?.name || 'the blocked piece'} for ${replacement.name}.`,
       capsulePlanContext: req.body.planContext
     }
     return res.json({
-      answer: `Fixed that ${contextSlot.label} look — swapped ${replaced?.name || 'the blocked piece'} for ${replacement.name}.`,
+      answer: added
+        ? `Fixed that ${contextSlot.label} look — added ${replacement.name}.`
+        : `Fixed that ${contextSlot.label} look — swapped ${replaced?.name || 'the blocked piece'} for ${replacement.name}.`,
       structuredOutfits: [structuredOutfit],
       structuredOutfitsSource: 'plan_outfit_set',
       repairedPieceId: Number(replaced?.id) || null,
@@ -3162,6 +3298,11 @@ router.post('/ask', async (req, res) => {
     // use this one-shot structured composer instead of returning a workbench
     // that starts an open-ended submit/replan loop.
     toolContext.composeCapsulePlanOnce = workbench => composeCapsulePlanOnce(workbench, toolContext)
+    // Stage 2 roster selection is opt-in. With the flag off, toolContext never
+    // gets a chooser and the capsule path is byte-identical to what shipped.
+    if (modelCapsuleRosterEnabled()) {
+      toolContext.chooseCapsuleRoster = request => chooseCapsuleRosterWithProvider(request, toolContext)
+    }
     const payload = await buildStylistConversationPayload({
       ...req.body,
       occasion: req.body.occasion,

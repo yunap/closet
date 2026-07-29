@@ -173,6 +173,9 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       submitPlanPartialAccepts: 0,
       capsuleFinalFallbacks: 0,
       capsuleSupplyGaps: 0,
+      capsuleRosterModelCalls: 0,
+      capsuleRosterModelRepairs: 0,
+      capsuleRosterModelFallbacks: 0,
       providerIterations: 0,
       providerInputTokens: 0,
       providerOutputTokens: 0,
@@ -1597,7 +1600,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
           mood: toolContext.mood || '',
           question: toolContext.question || '',
           ownerRules,
-          planKind
+          planKind,
+          // Injected only when the route wired one (flag on). Absent, the
+          // roster is chosen deterministically exactly as before.
+          chooseCapsuleRoster: typeof toolContext.chooseCapsuleRoster === 'function'
+            ? toolContext.chooseCapsuleRoster
+            : null,
+          onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
         const useAtomicCapsuleComposition =
           planKind === 'seasonal_capsule' &&
@@ -1694,6 +1703,16 @@ async function executeToolInternal(name, args, toolContext = {}) {
             plannedTotal,
             acceptedTotal: accepted.length
           })
+          // Live: the closing model said a card was flagged because the formula
+          // "runs warm for summer evenings" and offered a lighter swap. It was
+          // actually flagged for having no shoes. It had the COUNT but never the
+          // REASON, so it invented a plausible one — the same confabulation the
+          // final-answer guard exists to catch, arriving through a gap the guard
+          // cannot see. Hand it the real reasons.
+          const rejectionSummary = failures
+            .filter(failure => Array.isArray(failure.reasons) && failure.reasons.length && failure.outfit)
+            .map(failure => `"${failure.label}" — ${failure.reasons[0]}`)
+            .join('; ')
           if (shortfallLine) {
             pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), shortfallLine]
             toolContext.capsuleShortfall = {
@@ -1713,7 +1732,20 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const planContext = acceptedCards.find(outfit => outfit?.capsulePlanContext)?.capsulePlanContext || null
           const rejectedCards = buildRejectedCapsuleCards(failures, pendingPlan)
             .map(card => (planContext ? { ...card, capsulePlanContext: planContext } : card))
+          // Place each rejected card with its own slot rather than appending
+          // them all at the end. Grouping is by slot label, so a needs-review
+          // card that lands after every other slot reads as unrelated to the
+          // use case it belongs to — and it is the card the person is meant to
+          // act on.
+          const slotOrder = new Map((pendingPlan.slots || []).map((slot, index) => [slot.label, index]))
+          const orderOf = card => {
+            const position = slotOrder.get(card?.label)
+            return Number.isInteger(position) ? position : slotOrder.size
+          }
           const planOutfits = [...acceptedCards, ...rejectedCards]
+            .map((card, index) => ({ card, index }))
+            .sort((a, b) => orderOf(a.card) - orderOf(b.card) || a.index - b.index)
+            .map(entry => entry.card)
           toolContext.generatedOutfits = planOutfits
           toolContext.source = 'plan_outfit_set'
           toolContext.sourceLocked = true
@@ -1723,7 +1755,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "success",
             bounded_composition: true,
-            message: `${accepted.length} representative capsule outfit${accepted.length === 1 ? '' : 's'} accepted. These cards are already displayed. Present only the accepted rotation naturally and finish; no additional actions are available for this turn.${shortfallLine ? ` ${accepted.length} of ${plannedTotal} planned looks passed validation — say so plainly in one sentence if you mention the count at all. Do not describe the shortfall as an engine or card ceiling, and do not supply the missing looks yourself in prose.` : ''}`,
+            message: `${accepted.length} representative capsule outfit${accepted.length === 1 ? '' : 's'} accepted. These cards are already displayed. Present only the accepted rotation naturally and finish; no additional actions are available for this turn.${shortfallLine ? ` ${accepted.length} of ${plannedTotal} planned looks passed validation.${rejectionSummary ? ` The reason each one was held back, which you may state plainly and must NOT guess at or replace with your own theory: ${rejectionSummary}. Those looks are already shown as needs-review cards the user can repair, so do not offer to re-style them yourself.` : ''} Do not describe the shortfall as an engine or card ceiling, and do not supply the missing looks yourself in prose.` : ''}`,
             plan_lines: planLinesForResponse,
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,

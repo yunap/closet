@@ -11,6 +11,7 @@
     "test:capsule:lifestyle-audit": "node scratch/audit_summer_capsule_lifestyle.js",
     "test:capsule:roster-utility": "node scratch/audit_summer_capsule_roster_utility.js",
     "test:capsule:bench": "node scratch/diagnose_capsule_bench.js",
+    "test:capsule:compare": "node scratch/compare_capsule_rosters.js",
     "inspect:piece": "node scratch/inspect_piece.js",
     "apply:soft-score-floors": "node scratch/apply_soft_score_floors.js",
     "start": "node server.js"

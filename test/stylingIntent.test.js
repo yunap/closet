@@ -304,6 +304,22 @@ test('StylistChat carries generated styling context into ask requests', () => {
 // card replaced by "Swapped cream cotton button-up shirt for rust corduroy
 // button-up shirt"); this pins the wiring so the button can't drift off the
 // deterministic endpoint or start appending instead of replacing.
+// Live loss (thread_1785348988259): a 10-card capsule rendered 8. The tail held
+// a Nature Walks look and the needs-review card the person was supposed to
+// repair — both silently absent, with nothing on screen suggesting anything was
+// missing. A plan is one artifact; the "show N more" fold already knows that,
+// but the section builder's 8-cap did not.
+test('a plan renders every card it produced, not the first eight', () => {
+  const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
+  const content = fs.readFileSync(chatPath, 'utf8')
+
+  assert.match(
+    content,
+    /const visible = presentation\.type === 'trip_plan' \? outfits : outfits\.slice\(0, 8\)/,
+    'plans must not be truncated to 8 cards; ordinary multi-result replies still are'
+  )
+})
+
 test('a needs-review capsule card offers an in-place repair that costs nothing', () => {
   const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
   const content = fs.readFileSync(chatPath, 'utf8')
