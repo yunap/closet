@@ -10,7 +10,7 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
-const { formatSharedOutfitEvaluation, CRITIQUE_DETAILS_DELIMITER } = await import('../styling-engine/core.js')
+const { formatSharedOutfitEvaluation, CRITIQUE_DETAILS_DELIMITER, wholeWardrobeImagePrompt } = await import('../styling-engine/core.js')
 const { buildPrompts } = await import('../styling-engine/prompts.js')
 const { db } = await import('../db.js')
 const WHOLE_WARDROBE_EVALUATOR_SYSTEM = buildPrompts().WHOLE_WARDROBE_EVALUATOR_SYSTEM
@@ -142,4 +142,33 @@ test('evaluator prompt requires the readable contract while retaining visible-fa
   assert.match(WHOLE_WARDROBE_EVALUATOR_SYSTEM, /"detailedCritique": \[/)
   const schema = WHOLE_WARDROBE_EVALUATOR_SYSTEM.slice(WHOLE_WARDROBE_EVALUATOR_SYSTEM.lastIndexOf('JSON shape:'))
   assert.doesNotMatch(schema, /"summary"|"roles"|"scores"|"works"|"risks"|"critiqueProse"|"styleIdea"|"mainSuccess"|"executionGap"/)
+})
+
+test('generated outfit image prompt treats garment truth as authoritative over card prose', () => {
+  const prompt = wholeWardrobeImagePrompt({
+    outfit: {
+      label: 'Gallery',
+      reason: 'Tuck the shirt into the trousers for a crisp waist.',
+    },
+    pieces: [{
+      name: 'white tailed shirt',
+      category: 'top',
+      silhouette: 'oversized',
+      length_hits_at: 'hip',
+      hem_finish: 'design_hem',
+      fit_on_body: 'hangs_straight',
+      tuck_behavior: 'wear_over_only',
+    }],
+  })
+
+  assert.match(prompt, /Structured garment fields and reference images are authoritative/)
+  assert.match(prompt, /silhouette=oversized; length=hip; hem=design_hem; fit=hangs_straight; tuck=wear_over_only/)
+  assert.match(prompt, /Non-authoritative styling intent: Tuck the shirt/)
+  assert.doesNotMatch(prompt, /Stylist mechanics:/)
+})
+
+test('critique request ranks linked garment truth above generated card rationale', () => {
+  const coreSource = fs.readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
+  assert.match(coreSource, /Card rationale \(non-authoritative styling intent only/)
+  assert.match(coreSource, /structured owned-garment truth and the current attached images outrank card titles, reasons/)
 })

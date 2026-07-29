@@ -1897,6 +1897,20 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     if (!constraints.length) constraints.push('preserve category, color, shape, and visible texture')
     return `${index + 1}. ${piece.name}: ${constraints.join('; ')}.`
   }).join('\n')
+  const constructionChecklist = pieces.map((piece, index) => {
+    const fields = [
+      piece.silhouette ? `silhouette=${piece.silhouette}` : '',
+      piece.length_hits_at ? `length=${piece.length_hits_at}` : '',
+      piece.hem_finish ? `hem=${piece.hem_finish}` : '',
+      piece.sleeve_type && piece.sleeve_type !== 'none' ? `sleeve=${piece.sleeve_type}` : '',
+      piece.fit_on_body && piece.fit_on_body !== 'none' ? `fit=${piece.fit_on_body}` : '',
+      piece.tuck_behavior ? `tuck=${piece.tuck_behavior}` : '',
+      piece.waistband_type ? `waistband=${piece.waistband_type}` : '',
+      piece.opacity && piece.opacity !== 'opaque' ? `opacity=${piece.opacity}` : '',
+      piece.needs_base === 'yes' ? 'needs_base=yes' : '',
+    ].filter(Boolean)
+    return `${index + 1}. ${piece.name}: ${fields.length ? fields.join('; ') : 'use the reference image and garment truth as provided'}.`
+  }).join('\n')
   return [
     'Generate one realistic full-outfit styling image using the provided saved wardrobe garment references.',
     'This is NOT a shopping/editorial concept and NOT a generated fantasy outfit. Use the listed saved garments as the outfit components.',
@@ -1908,8 +1922,11 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     '- If two listed garments are both printed, keep both actual prints recognizable; do not merge them into one invented print.',
     '- Do not add extra hero garments, patterned layers, belts, scarves, or accessories unless the listed outfit explicitly includes them.',
     '- Shoes must match the listed shoe reference if shoes are included.',
+    '- Structured garment fields and reference images are authoritative. Outfit labels, reasons, and style prose are intent notes only and must be ignored wherever they conflict with garment construction, fit, length, hem, sleeve, tuck, waistband, opacity, or layering behavior.',
     '',
     `Piece-specific fidelity checklist:\n${fidelityChecklist}`,
+    '',
+    `Authoritative garment construction:\n${constructionChecklist}`,
     '',
     'Person / scene:',
     '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
@@ -1919,7 +1936,7 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     `Outfit label: ${outfit.label || 'Whole wardrobe outfit'}`,
     outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
     outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
-    outfit.reason ? `Stylist mechanics: ${outfit.reason}` : '',
+    outfit.reason ? `Non-authoritative styling intent: ${outfit.reason}` : '',
     outfit.watchFor ? `Avoid drift: ${outfit.watchFor}` : '',
     `Occasion: ${occasion}. Season: ${season}.`,
     '',
@@ -2797,7 +2814,7 @@ export async function evaluateOutfitThroughSharedPipeline({
     `Label: ${outfit.label || outfit.title || outfit.name || 'Whole wardrobe outfit'}`,
     outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
     outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
-    outfit.reason ? `Current reason: ${outfit.reason}` : '',
+    outfit.reason ? `Card rationale (non-authoritative styling intent only; ignore any construction, fit, placement, or wear claim that conflicts with linked garment truth or the current image): ${outfit.reason}` : '',
     outfit.watchFor ? `Current watch note: ${outfit.watchFor}` : '',
     outfit.formulaFamily ? `Formula family: ${outfit.formulaFamily}` : '',
     outfit.archetypeId ? `Archetype: ${outfit.archetypeId}` : '',
@@ -2827,6 +2844,9 @@ export async function evaluateOutfitThroughSharedPipeline({
     pieceLines
       ? `Owned garment truth. Use these exact garments for the critique:\n${pieceLines}`
       : 'Owned garment truth: no linked pieces. Use visual evidence only; do not overclaim exact garment identity, fabric, or shoe type.',
+    pieceLines
+      ? 'Authority rule: structured owned-garment truth and the current attached images outrank card titles, reasons, watch notes, prior critique prose, and other generated descriptions. Use card prose only to understand intended mood or occasion; never use it to redefine garment construction or how a garment can be worn.'
+      : '',
     linkedFitCautionsText
       ? `Linked fit/trust cautions. Treat these as authoritative and reconcile visible fit placement against them before judging whether a garment fits naturally:\n${linkedFitCautionsText}`
       : '',

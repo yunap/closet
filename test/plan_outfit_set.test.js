@@ -2388,6 +2388,41 @@ test('workbench instructions carry the professional-slot styling line unconditio
   assert.match(workbench.instructions, /no statement wraps at work/)
 })
 
+test('model plan workbench exposes authoritative garment construction without special-case rules', async () => {
+  const allPieces = [
+    {
+      id: 9101,
+      name: 'white tailed shirt',
+      category: 'top',
+      colors: ['white'],
+      occasions: ['city'],
+      formality: 'everyday',
+      silhouette: 'oversized',
+      length_hits_at: 'hip',
+      hem_finish: 'design_hem',
+      sleeve_type: 'long',
+      fit_on_body: 'hangs_straight',
+      tuck_behavior: 'wear_over_only',
+      opacity: 'opaque',
+      fabric_category: 'cotton',
+      status: 'active',
+    },
+    { id: 9102, name: 'navy trousers', category: 'bottom', colors: ['navy'], occasions: ['city'], formality: 'everyday', status: 'active' },
+    { id: 9103, name: 'black loafers', category: 'shoes', colors: ['black'], occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high', status: 'active' },
+  ]
+  const slots = normalizePlanSlots([{ label: 'Gallery', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'gallery outfit' })
+  const shirtLine = workbench.piece_catalog.find(line => line.includes('white tailed shirt'))
+
+  assert.match(shirtLine, /silhouette:oversized/)
+  assert.match(shirtLine, /length:hip/)
+  assert.match(shirtLine, /hem:design_hem/)
+  assert.match(shirtLine, /fit:hangs_straight/)
+  assert.match(shirtLine, /tuck:wear_over_only/)
+  assert.match(workbench.instructions, /authoritative garment construction/)
+  assert.doesNotMatch(workbench.instructions, /NO_TUCK|wear_over_only/)
+})
+
 test('workbench instructions omit the OWNER RULES block when no owner rules exist', async () => {
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }])
