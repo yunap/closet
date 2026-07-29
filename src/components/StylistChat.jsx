@@ -565,24 +565,19 @@ const splitCritiqueText = (text = '') => {
   }
 }
 
-// Renders critique feedback: stylist-voice prose as the message, with the
-// structured field dump (when present) collapsed behind a details toggle.
+// Renders critique feedback with its short supporting explanation collapsed.
 const CritiqueBody = ({ text }) => {
   const { prose, details } = splitCritiqueText(text)
   return (
     <div className="stylist-critique-body">
-      {prose.split('\n').filter(Boolean).map((line, j) => (
-        <p key={j}>{line}</p>
-      ))}
+      <MarkdownMessage text={prose} />
       {details && (
         <details className="stylist-critique-details">
           <summary>
-            Full structured read
+            More detail
           </summary>
           <div className="stylist-critique-details-body">
-            {details.split('\n').filter(Boolean).map((line, j) => (
-              <p key={j}>{line}</p>
-            ))}
+            <MarkdownMessage text={details} />
           </div>
         </details>
       )}

@@ -2550,12 +2550,21 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
   const userCritique = parsed?.userCritique && typeof parsed.userCritique === 'object'
     ? parsed.userCritique
     : {}
+  const detailedCritique = Array.isArray(parsed?.detailedCritique)
+    ? parsed.detailedCritique.map(paragraph => String(paragraph || '').trim()).filter(Boolean)
+    : typeof parsed?.detailedCritique === 'string' && parsed.detailedCritique.trim()
+      ? parsed.detailedCritique.split(/\n\s*\n/).map(paragraph => paragraph.trim()).filter(Boolean)
+      : []
   const critiqueProse = typeof parsed?.critiqueProse === 'string' ? parsed.critiqueProse.trim() : ''
+  const noChangeNeeded = /^no change needed\.?$/i.test(String(userCritique.action || recommendationBlock.smallestAdjustment || '').trim())
+  const displayAnswer = noChangeNeeded && userCritique.answer ? 'Works' : userCritique.answer
   const userCritiqueText = [
-    userCritique.answer ? `**${String(userCritique.answer).trim()}.**` : '',
+    displayAnswer ? `**${String(displayAnswer).trim()}.**` : '',
     userCritique.reason ? String(userCritique.reason).trim() : '',
-    userCritique.action ? `**Try this:** ${String(userCritique.action).trim()}` : '',
-    userCritique.check ? `**Check:** ${String(userCritique.check).trim()}` : '',
+    userCritique.action
+      ? (noChangeNeeded ? '**No change needed.**' : `**Try this:** ${String(userCritique.action).trim()}`)
+      : '',
+    userCritique.check && !noChangeNeeded ? `**Check:** ${String(userCritique.check).trim()}` : '',
     userCritique.occasionNote ? `**For this occasion:** ${String(userCritique.occasionNote).trim()}` : ''
   ].filter(Boolean).join('\n\n')
   const userFacingCritique = userCritiqueText || critiqueProse
@@ -2586,7 +2595,9 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
     Array.isArray(parsed.works) && parsed.works.length ? `Works: ${parsed.works.join(' ')}` : '',
     Array.isArray(parsed.risks) && parsed.risks.length ? `Risks: ${parsed.risks.join(' ')}` : ''
   ].filter(Boolean)
-  const structuredDetails = structuredDetailParts.join('\n\n')
+  const structuredDetails = detailedCritique.length
+    ? detailedCritique.join('\n\n')
+    : structuredDetailParts.join('\n\n')
   const structuredRead = [
     nestedEvaluation.summary || parsed.summary || 'Evaluation complete.',
     verdict ? `Verdict: ${verdict}` : '',
@@ -2636,6 +2647,7 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
       avoidForNow: recommendationBlock.avoidForNow || '',
       tryNext: recommendationBlock.tryNext || parsed.tryNext || '',
       userCritique,
+      detailedCritique,
       critiqueProse,
       saveableLearning: parsed.saveableLearning || ''
     }

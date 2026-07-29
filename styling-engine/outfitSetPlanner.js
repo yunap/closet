@@ -904,15 +904,6 @@ function pieceNeedsBase(piece = {}) {
   return String(piece?.needs_base || '').toLowerCase() === 'yes'
 }
 
-// Owner-set (and, for pieces the tagger touches, tagger-set) construction fact:
-// this garment cannot be worn against skin on its own. In a finite capsule it
-// therefore costs two roster slots to produce one look — fine when a base is
-// there, dead weight when it isn't. Only 'yes' counts: unset means nobody has
-// looked, and must behave exactly as it did before the field existed.
-function pieceNeedsBase(piece = {}) {
-  return String(piece?.needs_base || '').toLowerCase() === 'yes'
-}
-
 function isCapsuleStatementPiece(piece = {}) {
   const group = wardrobeCategoryGroup(piece)
   if (!['top', 'bottom', 'dress'].includes(group)) return false

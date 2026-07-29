@@ -1,6 +1,44 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-29. Branch `stylist-docs-staleness-fixes`.
+**Last updated:** 2026-07-29. Branch `experiment/b2-readable-critique-clean`, rebased onto
+`origin/main` at `160d992`.
+
+## 2026-07-29 — B2 readable critique ratified
+
+The owner retained the B2 ruling that `Visible facts` must not be deleted: it is the falsifiable
+record of what the model believed it saw. The current experiment separates that evidence from what
+the client reads without adding a second provider call.
+
+The default `userCritique` answers first with a short reason, one action, and one check. The
+collapsed surface is now **More detail**, backed by a dedicated four-paragraph
+`detailedCritique` written last in the same evaluator response. Full `visibleFacts` remain stored
+for diagnosis and follow-up context. The requested schema removes redundant prose fields so this
+does not simply append another essay to the old response. Older saved evaluations retain the
+structured-field fallback.
+
+Several live iterations were deliberately rejected before reaching this shape. Deterministic
+headings were too short and too structured; unlabeled selected fields were only a longer summary;
+and joining every field restored depth but repeated itself because each field was independently
+authored. The dedicated field produced the first explanation with the intended depth and
+continuity (`thread_1785358062445`). It still sometimes uses internal stylist vocabulary and names
+internal evidence sources; the owner accepted that current behavior for now. `Visible facts`
+remains stored/debug-only in the normal client experience. Corrections and refinements happen
+through follow-up conversation, replacing the proposed editable `Intent` control.
+
+No extra model call was added. This one-call, bounded-output architecture is sufficient for the
+B2 cost ruling; before/after token telemetry is not a ratification prerequisite. Focused
+prompt-equivalence tests pass. The full pre-rebase suite
+reported the documented seven UI/contract baseline failures plus four stale assertions tied to the
+old structured-read labels; fresh main contains their migrated versions. After rebasing, current
+`origin/main` declared `pieceNeedsBase` twice; the branch removes the second identical declaration
+as a separate merge-repair commit.
+
+**Separate cost follow-up:** add prompt-cache marking and critique usage telemetry first; replace
+the current full evaluator contract on follow-up turns with a lean answer-only contract; then add
+a short-lived exact-request cache. Although the UI currently displays only a short follow-up, the
+backend still runs that turn through the full 3,000-token evaluator path. Stable image/evidence
+caching should wait for measurements. These optimizations must not shorten the ratified detailed
+critique or introduce a second provider call.
 
 ## 2026-07-29 — rejected looks are shown and repaired, not discarded
 
@@ -723,9 +761,9 @@ the panel packet had missed and several behaviours nobody had written down.
    marked in place. All four were caught by the same two checks, which is the durable lesson:
    **check provenance** (owner-set or tagger-set? which prompt version?) and **check the keyword**
    (does the regex actually match real garment names?). Two scripts now do exactly that.
-3. `docs/panel-stage1-findings.md` — the panel synthesis organised for triage by ID. Section A and
-   C3 are ruled; B1/B2 are partially ruled; later capsule decisions reconcile C1/C2/D1. B2's
-   presentation, B3, C4, C5's wording, and the unresolved E propositions remain open.
+3. `docs/panel-stage1-findings.md` — the panel synthesis organised for triage by ID. Section A,
+   C3, and B2 are ruled; B1 is substantially closed; later capsule decisions reconcile C1/C2/D1.
+   B3, C4, C5's wording, and the unresolved E propositions remain open.
 4. `docs/expert-panel-brief.md` — ratified protocol. **Part 4b lists six ways the implementing
    agent got this wrong**; read it before assembling a packet.
 5. **`docs/tagger-cost-spec.md`** — **draft, awaiting ratification.** Cost-first tagger spec:
@@ -777,11 +815,13 @@ occasion-exclusion visibility gap are closed (see session entry above); the rema
 structured-feedback-chip case, and the owner ruled the chip's own active-state color is sufficient
 — not pursued further for that case.
 
-**B2 partially ruled 2026-07-29** — retain `Visible facts` as diagnostic evidence of what the
-model believed it saw; do not delete it merely because it describes the supplied photograph.
-This is not approval of the current structured read unchanged. It remains too long for ordinary
-use and still needs a shorter, layered presentation that keeps deeper model-premise evidence
-available for debugging.
+**B2 ratified 2026-07-29** — retain `Visible facts` as stored diagnostic evidence, while the normal
+client surface separates a concise `userCritique` from a same-call four-paragraph
+`detailedCritique` behind **More detail**. Current voice/provenance behavior is accepted for now.
+Corrections happen through follow-up conversation rather than an editable `Intent` control. Older
+saved evaluations keep their structured fallback. One provider call plus bounded output and
+removed redundant prose is sufficient for the cost ruling; caching, telemetry, and a lean
+follow-up contract are separate optimizations.
 
 **Later capsule rulings reconcile C1/C2/D1.** Capacity is reported separately from a curated
 `min(piece_budget, 12)` representative rotation; allocation is coverage-first and bounded by
@@ -789,9 +829,8 @@ per-slot capacity plus whole-plan distinct-core feasibility; the piece budget re
 finite-roster bound; and the roster is no longer trimmed to only pieces appearing in the shown
 cards. The findings doc records which parts of the panel proposals survived.
 
-**Not ruled:** B2's presentation, B3 diagnostic cards, C4, C5's wording, and which unresolved
-E propositions become product commitments. Recommended order: finish B2's presentation decision,
-then B3.
+**Not ruled:** B3 diagnostic cards, C4, C5's wording, and which unresolved E propositions become
+product commitments.
 
 **Stage 2** (Mode A craft review, per flow) not started. It should use the surface map's inventory.
 

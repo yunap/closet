@@ -407,27 +407,39 @@ behind **Why this outfit**, and an action row.
 
 ---
 
-## Stylist → critique and the "Full structured read"
+## Stylist → critique and "More detail"
 
 **How you get there.** `Evaluate outfit` on any card, or *Ask stylist about this outfit* → review.
 
-**What actually happens.** **[by design]** The reply is prose first — a direct answer, a named
-first issue, one concrete adjustment, then a verdict. Everything after the marker
-`--- Full structured read ---` is collapsed behind a disclosure: intent, success criteria, visible
-facts, tension, scores, roles.
+**What actually happens (B2 ratified 2026-07-29).** The default reply is `userCritique`: a
+plain answer, short reason, one action, and an observable check. The internal marker remains
+`--- Full structured read ---` for saved-text compatibility, but the UI labels the disclosure
+**More detail** and renders it as Markdown.
 
-**[by design]** Inside that disclosure the actionable fields lead — `First visible issue:` then
-`Next:` / `Avoid for now:` / `Try next:` — ahead of the diagnostic dump. That ordering was a
-deliberate fix; do not "tidy" it back into field order.
+For new evaluations, that disclosure is a purpose-written `detailedCritique`: four connected
+paragraphs produced in the same evaluator call. It explains intent and occasion, fit and
+proportion, relevant visual relationships, then the diagnosis and recommendation. It is not a
+formatter concatenation of the diagnostic fields. Older saved evaluations without
+`detailedCritique` still fall back to the prior structured-field read.
 
-**[owner ruling 2026-07-29; presentation still open]** Keep `Visible facts`: it records what the
-model believed it saw and makes a wrong critique diagnosable. This does not ratify the current
-disclosure unchanged. The full structured read remains too long for ordinary use and needs a
-shorter, layered presentation, with the deeper premise evidence available through a secondary
-diagnostic expansion or debug surface.
+**[owner ruling 2026-07-29]** Keep `Visible facts`: it records what the model believed it saw and
+makes a wrong critique diagnosable. It remains in the stored `evaluation` object rather than being
+repeated wholesale in **More detail**. The owner accepts the current occasional stylist shorthand
+and internal-provenance language for now. Corrections happen through follow-up conversation;
+`Intent` is not a separate editable control.
 
-> **Stores.** Delimiter shared between `StylistChat.jsx:464` and `styling-engine/core.js`. Built by
-> `formatSharedOutfitEvaluation`.
+> **Stores and follow-ups.** The evaluation object stores `visibleFacts`, `userCritique`, and
+> `detailedCritique`. Immediate follow-ups receive the recent critique through chat history plus a
+> compact evaluation memory (intent, verdict, floor line, fit placement, shoe read, first issue,
+> recommendation) and display an ordinary short chat answer. The current backend nevertheless
+> runs those turns through the full evaluator contract; an answer-only follow-up contract is a
+> pending cost optimization. Built by `formatSharedOutfitEvaluation`.
+
+> **Cost boundary.** B2 is one provider call. It removes redundant generated prose rather than
+> adding a rewrite call, and formal before/after token proof is not a ratification gate. Pending
+> optimization work: cache the stable evaluator prompt, expose input/output/cache usage, use the
+> lean follow-up contract above, and protect exact retries with a short-lived result cache. Cache
+> stable image/evidence blocks only if measurements justify it.
 
 ---
 
