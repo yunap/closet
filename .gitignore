@@ -21,3 +21,9 @@ scratch/*
 !scratch/derive_surface_skeleton.js
 !scratch/derive_engine_behaviours.js
 !scratch/derive_board_producer_fanout.js
+!scratch/diagnose_capsule_scenario_matrix.js
+!scratch/replay_summer_capsule_live_2026_07_28.js
+!scratch/audit_summer_capsule_lifestyle.js
+!scratch/audit_summer_capsule_roster_utility.js
+!scratch/diagnose_capsule_bench.js
+!scratch/build_capsule_disclosure_demo_thread.js

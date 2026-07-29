@@ -17,7 +17,7 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 const { db } = await import('../db.js')
 const { executeTool, bumpFreeformDiagnostic, looksLikeTimezoneIdentifier, resolveStatedOrLiveWeather } = await import('../styling-engine/tools.js')
 const { persistFreeformGenerationRun } = await import('../routes/ai.js')
-const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, freeformToolLoopFallbackAnswer } = await import('../styling-engine/provider.js')
+const { findZeroResultContradiction, looksLikeUnproposedOutfitProse, looksLikeDestinationOrWeatherQuestion, extractPieceIdsFromProse, looksLikeOutfitRequest, extractRequestedOutfitCount, applyFreeformOutputChecks, boundedCapsuleFinalAnswer, freeformToolLoopFallbackAnswer, recordToolLoopUsage } = await import('../styling-engine/provider.js')
 
 // Spec 3 (freeform observability): gate exclusions and propose_outfit validation outcomes must be
 // inspectable, not anecdotal — the freeform-chat equivalent of the composer's excludedCounts debug.
@@ -42,7 +42,84 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     submitPlanValidationFails: 0,
     submitPlanResubmits: 0,
     submitPlanPartialAccepts: 0,
+    capsuleFinalFallbacks: 0,
+    providerIterations: 0,
+    providerInputTokens: 0,
+    providerOutputTokens: 0,
+    providerCacheReadInputTokens: 0,
+    providerCacheCreationInputTokens: 0,
     weatherSource: ''
+  })
+})
+
+test('recordToolLoopUsage aggregates every paid provider iteration into turn diagnostics', () => {
+  const toolContext = {}
+  recordToolLoopUsage(toolContext, {
+    inputTokens: 1200,
+    outputTokens: 180,
+    cacheReadInputTokens: 900,
+    cacheCreationInputTokens: 40
+  })
+  recordToolLoopUsage(toolContext, {
+    inputTokens: 1500,
+    outputTokens: 260,
+    cacheReadInputTokens: 1200,
+    cacheCreationInputTokens: 0
+  })
+  assert.equal(toolContext.freeformDiagnostics.providerIterations, 2)
+  assert.equal(toolContext.freeformDiagnostics.providerInputTokens, 2700)
+  assert.equal(toolContext.freeformDiagnostics.providerOutputTokens, 440)
+  assert.equal(toolContext.freeformDiagnostics.providerCacheReadInputTokens, 2100)
+  assert.equal(toolContext.freeformDiagnostics.providerCacheCreationInputTokens, 40)
+})
+
+test('a completed bounded capsule does not re-enter generic card delivery retries', () => {
+  const toolContext = {
+    question: 'Build a 14-piece capsule with 8 looks',
+    declaredIntent: { want: 'cards', outfitCount: 5 },
+    generatedOutfits: [],
+    capsuleAtomicAttempted: true,
+    freeformDiagnostics: {}
+  }
+  const result = applyFreeformOutputChecks('I could not validate a credible look for one use case, so I am disclosing the gap.', toolContext, new Set())
+  assert.equal(result.block, false)
+})
+
+test('bounded capsule final prose is replaced locally when it invents unvalidated outfits', () => {
+  const toolContext = {
+    capsuleAtomicAttempted: true,
+    capsuleAtomicCompleted: true,
+    generatedOutfits: [{
+      title: 'Validated look',
+      pieces: [{ id: 10 }, { id: 20 }, { id: 30 }]
+    }],
+    freeformDiagnostics: {}
+  }
+  const result = boundedCapsuleFinalAnswer(
+    'Here is the validated look. Second option: pair your top (ID #99) with another bottom.',
+    toolContext
+  )
+  assert.equal(result.replaced, true)
+  assert.match(result.answer, /1 validated look/)
+  assert.doesNotMatch(result.answer, /99|Second option/)
+  assert.equal(toolContext.freeformDiagnostics.capsuleFinalFallbacks, 1)
+})
+
+test('bounded capsule final prose passes when it only introduces accepted cards', () => {
+  const toolContext = {
+    capsuleAtomicAttempted: true,
+    capsuleAtomicCompleted: true,
+    generatedOutfits: [{
+      title: 'Validated look',
+      pieces: [{ id: 10 }, { id: 20 }, { id: 30 }]
+    }],
+    freeformDiagnostics: {}
+  }
+  const text = 'Here is your validated capsule rotation. The cards below cover the five parts of your summer.'
+  assert.deepEqual(boundedCapsuleFinalAnswer(text, toolContext), {
+    answer: text,
+    replaced: false,
+    reasons: []
   })
 })
 
@@ -381,6 +458,33 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
   assert.equal(row.submit_plan_validation_fails, 2)
   assert.equal(row.submit_plan_resubmits, 2)
   assert.equal(row.submit_plan_partial_accepts, 1)
+  assert.equal(row.capsule_final_fallbacks, 0)
+})
+
+test('persistFreeformGenerationRun stores aggregate provider usage for cost audits', () => {
+  persistFreeformGenerationRun({
+    sessionId: 'usage-audit',
+    occasion: 'capsule',
+    diagnostics: {
+      providerIterations: 5,
+      providerInputTokens: 12500,
+      providerOutputTokens: 1800,
+      providerCacheReadInputTokens: 9000,
+      providerCacheCreationInputTokens: 700
+    }
+  })
+  const row = db.prepare(`
+    SELECT provider_iterations, provider_input_tokens, provider_output_tokens,
+           provider_cache_read_input_tokens, provider_cache_creation_input_tokens
+    FROM freeform_generation_runs WHERE session_id = ?
+  `).get('usage-audit')
+  assert.deepEqual(row, {
+    provider_iterations: 5,
+    provider_input_tokens: 12500,
+    provider_output_tokens: 1800,
+    provider_cache_read_input_tokens: 9000,
+    provider_cache_creation_input_tokens: 700
+  })
 })
 
 // Spec 3 Part 0 (live-testing findings, 2026-07-09):

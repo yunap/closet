@@ -205,6 +205,12 @@ function initDb(dbPath) {
       submit_plan_validation_fails INTEGER DEFAULT 0,
       submit_plan_resubmits  INTEGER DEFAULT 0,
       submit_plan_partial_accepts INTEGER DEFAULT 0,
+      capsule_final_fallbacks INTEGER DEFAULT 0,
+      provider_iterations    INTEGER DEFAULT 0,
+      provider_input_tokens  INTEGER DEFAULT 0,
+      provider_output_tokens INTEGER DEFAULT 0,
+      provider_cache_read_input_tokens INTEGER DEFAULT 0,
+      provider_cache_creation_input_tokens INTEGER DEFAULT 0,
       weather_source          TEXT DEFAULT '',
       created_at              TEXT DEFAULT (datetime('now'))
     );
@@ -320,7 +326,13 @@ function initDb(dbPath) {
     'submit_plan_calls INTEGER DEFAULT 0',
     'submit_plan_validation_fails INTEGER DEFAULT 0',
     'submit_plan_resubmits INTEGER DEFAULT 0',
-    'submit_plan_partial_accepts INTEGER DEFAULT 0'
+    'submit_plan_partial_accepts INTEGER DEFAULT 0',
+    'capsule_final_fallbacks INTEGER DEFAULT 0',
+    'provider_iterations INTEGER DEFAULT 0',
+    'provider_input_tokens INTEGER DEFAULT 0',
+    'provider_output_tokens INTEGER DEFAULT 0',
+    'provider_cache_read_input_tokens INTEGER DEFAULT 0',
+    'provider_cache_creation_input_tokens INTEGER DEFAULT 0'
   ].forEach(col => {
     try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
   })

@@ -6,6 +6,11 @@
     "dev": "concurrently \"node server.js\" \"vite\"",
     "build": "vite build",
     "test": "node scratch/check_style_claims.js && node scratch/check_text_matching_ratchet.js && node --test --test-concurrency=1",
+    "test:capsule:offline": "node scratch/diagnose_capsule_scenario_matrix.js",
+    "test:capsule:summer-replay": "node scratch/replay_summer_capsule_live_2026_07_28.js",
+    "test:capsule:lifestyle-audit": "node scratch/audit_summer_capsule_lifestyle.js",
+    "test:capsule:roster-utility": "node scratch/audit_summer_capsule_roster_utility.js",
+    "test:capsule:bench": "node scratch/diagnose_capsule_bench.js",
     "inspect:piece": "node scratch/inspect_piece.js",
     "apply:soft-score-floors": "node scratch/apply_soft_score_floors.js",
     "start": "node server.js"

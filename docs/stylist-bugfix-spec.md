@@ -550,7 +550,139 @@ traded for the outerwear `capsuleQuotas` adds when `isSummer` is false — and w
 holds up. **One winter result looks like a genuine defect and is not yet filed:** with
 `targetOutfits` set, `evening_out` comes out at 4T **0B** 0D, i.e. **zero possible looks**. The
 everyday-tier demand reserve appears to crowd evening-capable bottoms out of the roster entirely.
-Summer does not show this (3T 2B). Not investigated further — flagged here so it is not lost.
+Summer does not show this (3T 2B).
+
+**Diagnosed and fixed 2026-07-28:** that hypothesis was confirmed, down to the exact swap.
+Before `capsuleDemandReserve`, the winter roster contains four bottoms: elevated light-cream linen
+pants (125), the **dressy oatmeal crochet midi skirt (93)**, elevated wide-leg trousers (101), and
+everyday bootcut jeans (105). The evening gate has six eligible bottoms in the whole wardrobe, but
+93 is the only one the initial quota bought, so it supplies all four evening cores.
+
+The plan asks for two casual looks. `capsuleDemandReserve` takes the strictest/lowest ceiling
+(`everyday`) and requires two everyday bottoms. The roster has one, so
+`ensureCapsuleGroupReserve` swaps its lowest-scoring non-everyday bottom — piece 93 — for everyday
+dark-navy straight jeans (109). Casual capacity rises from 2 to 5 cores; evening capacity falls
+from 4 to **zero**. The one selected dress is everyday and is not evening-eligible, so no second
+structural path survives. This is not a thin-wardrobe problem: evening supply is 22 tops, 6
+bottoms, 8 dresses, and 26 shoes.
+
+**Owner wardrobe check, 2026-07-28:** the Wardrobe correctly shows 31 Cool/Winter bottoms with no
+occasion filter — that is the broad inventory count, not the engine's evening-gated pool. The
+owner then added/tagged two more evening-capable year-round pants (charcoal tailored trousers and
+black wide-leg pants). Re-running the real gate raised evening-bottom supply from 6 to **8**, but
+the 14-piece winter roster still selected **0** of them after the demand-reserve swap. The added
+supply does not change the diagnosis; it makes the selection failure more conclusive.
+
+**Policy implication for the capsule redesign:** demand reservation cannot optimize one edge of
+the register range independently. Before adding multiplicity at any register, the roster must
+preserve at least one complete structural path (top+bottom or dress, plus shoes) for every requested
+slot/register. A minimal coverage-preserving choice here is better than the current local optimum:
+keep one everyday bottom plus the everyday dress for casual coverage and retain one
+evening-capable bottom or dress. Exact allocation remains part of the open A4/C1/C2/D1 capsule
+policy; do not patch piece 93 or add a winter exception.
+
+**Indoor-weather caveat, checked after owner challenge 2026-07-28:** the original diagnostic
+applied the cold winter profile to every slot. The prompt tells the model to pass
+`weather:'indoor'` for restaurants, and `isIndoorPlanSlot` mechanically recognizes literal
+`restaurant` prose, but it does **not** infer indoor from the generic live wording
+`Evening Out / dinner, drinks`; that wording inherits cold outdoor weather. Replaying the same
+workbench three ways:
+
+- omitted environment → cold estimated weather, roster allows 1 top + 1 outerwear + 3 shoes;
+- explicit `weather:'indoor'` → indoor, roster allows 4 tops + 1 outerwear + 3 shoes;
+- `Restaurant Dinner` prose → inferred indoor, same 4 tops + 1 outerwear + 3 shoes.
+
+All three still allow **0 bottoms and 0 dresses**, because the roster reserve removed every
+evening-compatible main path before per-slot weather is applied. So the weather assumption
+overstated the top/layer restriction but did not cause the zero-look result. Two separate policy
+questions remain: capsule coverage preservation, and whether generic winter-evening slots should
+default indoors or require the use case to say restaurant/indoor.
+
+**Owner ruling and implementation, 2026-07-28:** coverage precedes multiplicity. A mixed capsule
+must preserve a complete casual, elevated, and evening path before buying additional rotation.
+Winter tops are indoor bases; reusable outerwear supplies warmth, so tops do not need to be
+independently winter-weight. `selectCapsuleRoster` now evaluates each requested elevated use case
+against the real deterministic occasion/weather/activity gate. It keeps an eligible elevated dress
+path when one exists; otherwise it reserves an eligible top+bottom path without evicting the
+already-reserved casual minimum. This is register/use-case coverage, not a winter or garment-ID
+exception.
+
+The provider-free wardrobe matrix now gives the 14-piece winter mixed-register capsule complete
+coverage for all 3/3 slots, with four valid cores in its weakest slot (previously 2/3 and zero
+evening cores). The 10-piece mixed scenarios still expose genuine compression conflicts and remain
+honest gaps. Restaurant dinner scenarios are explicitly tested as indoor; generic unspecified
+evening wording is not silently reclassified.
+
+**Representative-rotation allocation implemented 2026-07-28:** after the curated roster passes
+the real per-slot gates, the allocator reserves one card for every use case with at least one
+complete core. It then assigns remaining cards to the largest unmet recurring demand, preserving
+stable slot order for ties, and never exceeds either the global `min(piece_budget, 12)` cap or the
+slot's unique core capacity. A use case with zero cores receives zero requested cards plus an
+explicit `[missing wardrobe gap: ...]` line, so the model is not asked to submit an impossible
+outfit.
+
+**Representative-rotation quality implemented 2026-07-28:** an enforced capsule now rejects a
+second card with the same main core (the same top+bottom pair, or the same dress) even when shoes,
+outerwear, or accessories change. This makes the displayed cards genuinely representative rather
+than cosmetic variants. The rule is capsule-only; ordinary multi-outfit plans may still show a
+fixed core with different shoes. Footwear range remains a composition judgment rather than an
+arbitrary numeric gate: the workbench explicitly tells the model to use the casual/elevated shoes
+the roster reserved where their slots call for them and not let one pair dominate when another
+eligible pair better expresses the register or activity.
+
+**Live-result quality follow-up implemented 2026-07-28:** the first successful eight-card winter
+capsule was mechanically complete but visually exposed three contract losses. Model-authored titles
+were overwritten twice (assembly set every title to the slot label, then the UI synthesized a
+generic garment title); both layers now preserve a model-composed title. An explicit user request
+for reusable outerwear "for transitions" now becomes set-level coverage: when a slot has eligible
+capsule outerwear, at least one representative card for that use case must show it. Finally, a
+recurring capsule slot with two or more gate-eligible shoes must demonstrate at least two of them;
+this is local representation of already-curated options, not a global shoe-count or style gate.
+All three checks are no-ops when their prerequisite context or supply is absent.
+
+The captured IDs are replayable without a provider via
+`node scratch/replay_capsule_live_2026_07_28.js`. Against current wardrobe truth, the replay also
+shows which original cards no longer clear today’s structured gates, independently of the
+presentation findings.
+
+**First live winter-capsule run, 2026-07-28:** the retained request log is
+`scratch/run-logs/capsule-live-2026-07-28.log` (ignored local evidence; no credentials). The run
+cost an estimated **$0.5515** across ten Sonnet iterations: 5,224 output tokens, 525,003 cache-read
+tokens, and 84,161 cache-creation tokens. It exposed three deterministic retry multipliers now
+fixed provider-free:
+
+1. `plan_note:"Comfort-first..."` was parsed as a lounge register target and overrode the
+   structured `occasion:"casual"` ceiling, rejecting ordinary indoor tops, bottoms, and shoes.
+   Slot workbenches now pass the structured occasion/register ceiling explicitly; prose can inform
+   composition but cannot silently lower the gate.
+2. Anthropic sent the otherwise valid `submit_plan_outfits.outfits` array as JSON-encoded text.
+   The executor now recovers this narrow malformed shape before validation.
+3. After the resubmit cap, two accepted cards were rendered, but the advertised gap-fill
+   `plan_outfit_set` call replaced same-slot accepted cards and reported zero carried forward.
+   Partial-success plans now retain their accepted ledger; gap-fill counts add to the already
+   accepted cards. A genuine pre-success slot re-plan still replaces that slot as before.
+
+The run also showed that console usage aggregation was live while its SQLite row stored zeros
+because the running route process predated the persistence-column change. The backend has since
+restarted; the permanent persistence contract remains covered by
+`test/freeform_observability.test.js`.
+
+**Retry-cost follow-up, 2026-07-28:** disclosing the validator requirements in the workbench was
+truthful but did not reduce the loop. The measured follow-up reached 10 provider iterations, 4
+submit failures, and only 5 accepted looks. Enforced capsules now keep the model-owned conversation
+boundary but make composition atomic inside the model-invoked `plan_outfit_set`: one forced
+structured composition from the fixed roster, one deterministic validation pass, then accepted
+cards plus disclosed gaps. The turn cannot re-enter submit/replan or generic card-count retries.
+This is deliberately not a capsule keyword pre-route; the conversational model still decides when
+and how to call the planner and supplies the use-case decomposition.
+
+**Visual evidence correction before live testing:** the bounded composer initially inherited the
+ordinary plan workbench's compact catalog and no images. That catalog does not carry
+`pairing_requirements` or `do_not_pair_rules`; the preceding live run's hoodie-under-cardigan look
+therefore missed two already-stored rules against pairing either relaxed garment with another loose
+top. The one atomic call now receives full `buildPieceText` truth and 448px thumbnails for every
+fixed-roster piece with a photo. This raises the one call's image-input cost, intentionally, while
+preserving the no-retry boundary and restoring the model's visual-judgment role.
 
 **What capsule practice publishes.** The established conventions are unanimous, and they
 contradict the combinatorial reading the approach decision was built on:
@@ -583,11 +715,22 @@ falls to 0.57 at 14 and rises to 0.8 at 10 — so it is not really "day-driven" 
 "combinatorial", it is an unlabelled looks-per-piece ratio with a discontinuity exactly where
 capsules live.
 
-**Recommended number (not implemented, not ratified):** capsule cap = `min(piece_budget, 12)`.
+**Owner-ratified and implemented 2026-07-28:** capsule cap = `min(piece_budget, 12)`.
 A 14-piece capsule shows 12 looks — one per piece per the 10×10 convention, saturating where a
 viewer stops distinguishing cards — against a measured capacity of 24, so the cap sits below the
 ceiling instead of above it. Trips keep the day-driven curve. Season-invariant, per the
-seasonality note above.
+<!-- The sentence above was true as a ruling and false as a description of the code for a
+     while: the implementation collapsed `planTotalOutfitCapForBudget` into `min(budget, 12)`
+     and made every non-capsule caller pass 0, so a 30-piece trip was pinned at 8 looks.
+     Corrected 2026-07-28 — the curve now lives in `planTotalOutfitCapForBudget` and the
+     capsule cap in `capsuleTotalOutfitCap`, with a regression test asserting the two
+     disagree at budget 24. -->
+
+seasonality note above. The plan report now names the full curated roster and separately reports
+the number of unique gate-valid outfit cores it supports across the requested use cases. Capacity
+deduplicates the same top+bottom or dress core when it works for multiple slots and requires at
+least one eligible shoe in a slot; it is deliberately structural capacity, not a claim that every
+combination is aesthetically equal. The cards remain a representative rotation.
 
 **The number is not the whole item.** Raising the cap to 12 at budget 14 is well within capacity
 (24) and clearly right, but it will land unevenly: `smart_casual_outing` can absorb 21 while

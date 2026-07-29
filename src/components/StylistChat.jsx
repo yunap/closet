@@ -665,6 +665,7 @@ export default function StylistChat({
   }, [onContextChange])
 
   const [input, setInput] = useState('')
+  const [pendingCapsuleExpansion, setPendingCapsuleExpansion] = useState(null)
   const [renamingThreadId, setRenamingThreadId] = useState(null)
   const [renamingTitle, setRenamingTitle] = useState('')
   const [pendingPieceMode, setPendingPieceMode] = useState('wardrobe')
@@ -1750,6 +1751,106 @@ export default function StylistChat({
   // disclosure. Matching our own deterministic header, not garment text.
   const isEngineFieldDump = (text) => /^\s*\*\*Generated outfit ideas for:\*\*/.test(String(text || ''))
 
+  const parsePlanTrimNote = (note = '') => {
+    const match = String(note || '').match(
+      /^\[plan trimmed: "([^"]+)" reduced from (\d+) to (\d+) looks? — the plan asked for more outfits than the (\d+)-outfit total across the set allows\]$/
+    )
+    if (!match) return null
+    const requested = Number(match[2])
+    const shown = Number(match[3])
+    return {
+      label: match[1],
+      requested,
+      shown,
+      remaining: Math.max(0, requested - shown),
+      cap: Number(match[4]),
+    }
+  }
+
+  // The engine's own rotation-limit line: this use case was trimmed because the
+  // roster has no further distinct outfit core for it, not because of the card
+  // cap. Kept separate from parsePlanTrimNote so the two causes can never print
+  // the same sentence — offering "ask for the remaining looks" against an
+  // exhausted rotation is what put two contradicting sentences in one box.
+  const parseRotationLimitNote = (note = '') => {
+    const match = String(note || '').match(
+      /^\[rotation limit: "([^"]+)" reduced from (\d+) to (\d+) looks? — this capsule roster has no further distinct outfit core for that use case\]$/
+    )
+    if (!match) return null
+    return { label: match[1], requested: Number(match[2]), shown: Number(match[3]) }
+  }
+
+  // The capsule roster's own zero-capacity line reached the user verbatim,
+  // brackets and all ("no complete gate-valid outfit core"). Ratified rule:
+  // capsule-gap internals are developer evidence, not stylist copy. The fact is
+  // the user's; the vocabulary is not.
+  const parseCapsuleWardrobeGapNote = (note = '') => {
+    const match = String(note || '').match(
+      /^\[missing wardrobe gap: "([^"]+)" has no complete gate-valid outfit core in this (\d+)-piece capsule roster\]$/
+    )
+    if (!match) return null
+    return { label: match[1], budget: Number(match[2]) }
+  }
+
+  const parseCapsuleShortfallNote = (note = '') => {
+    const match = String(note || '').match(
+      /^\[capsule shortfall: showing (\d+) of (\d+) planned looks — (.+) could not be completed from this capsule's roster\]$/
+    )
+    if (!match) return null
+    // The engine writes slot labels in ASCII quotes; the surrounding prose is
+    // typeset. Normalise so one sentence doesn't mix both.
+    const detail = match[3].replace(/"([^"]+)"/g, '“$1”')
+    return { shown: Number(match[1]), planned: Number(match[2]), detail }
+  }
+
+  const formatPlanNote = (note = '') => {
+    const trim = parsePlanTrimNote(note)
+    if (trim) {
+      // No "you can ask for the remaining looks" here: whether that is even
+      // possible depends on the slot's unused core capacity, which the action
+      // row below already decides. Stating it in both places is how the notes
+      // ended up offering more looks directly above "Full available rotation
+      // shown". The note states the fact; the action row states availability.
+      return `Showing ${trim.shown} of ${trim.requested} requested “${trim.label}” looks in this ${trim.cap}-look representative rotation.`
+    }
+    const limit = parseRotationLimitNote(note)
+    if (limit) {
+      return `Showing ${limit.shown} of ${limit.requested} requested “${limit.label}” looks — this capsule’s pieces don’t make another distinct outfit for that use case.`
+    }
+    const wardrobeGap = parseCapsuleWardrobeGapNote(note)
+    if (wardrobeGap) {
+      return `“${wardrobeGap.label}” has no complete outfit in this ${wardrobeGap.budget}-piece capsule — nothing in the roster covers it with a top, bottom or dress and shoes that suit it.`
+    }
+    const shortfall = parseCapsuleShortfallNote(note)
+    if (shortfall) {
+      const missing = Math.max(0, shortfall.planned - shortfall.shown)
+      return `Showing ${shortfall.shown} of the ${shortfall.planned} looks planned for this capsule. ${missing === 1 ? 'One look' : `${missing} looks`} couldn’t be completed from this capsule’s pieces — ${shortfall.detail} — so ${missing === 1 ? 'it was' : 'they were'} left out rather than shown as a weaker option.`
+    }
+    return note
+  }
+
+  const getPlanExpansionSuggestions = (outfits = []) => {
+    const firstPlannedCard = (Array.isArray(outfits) ? outfits : []).find(outfit => isPlannedSetSource(outfit?.source))
+    const lines = Array.isArray(firstPlannedCard?.tripPlanLines) ? firstPlannedCard.tripPlanLines : []
+    const planContext = firstPlannedCard?.capsulePlanContext || null
+    return lines.map(parsePlanTrimNote).filter(trim => trim?.remaining > 0).map(trim => {
+      const slot = (Array.isArray(planContext?.slots) ? planContext.slots : []).find(item => item?.label === trim.label)
+      const shownForSlot = (Array.isArray(outfits) ? outfits : []).filter(outfit =>
+        outfit?.tripSlot === slot?.id || outfit?.label === trim.label
+      ).length
+      const coreCapacity = Math.max(0, Number(slot?.core_capacity) || 0)
+      const capacityExhausted = coreCapacity > 0 && shownForSlot >= coreCapacity
+      return {
+        ...trim,
+        slotId: slot?.id || '',
+        planContext,
+        existingOutfits: Array.isArray(outfits) ? outfits : [],
+        capacityExhausted,
+        canExpandDirectly: Boolean(planContext && slot?.id && !capacityExhausted)
+      }
+    })
+  }
+
   const getTripPlanNotes = (outfits = []) => {
     const tripCards = Array.isArray(outfits) ? outfits.filter(outfit => isPlannedSetSource(outfit?.source)) : []
     if (!tripCards.length) return []
@@ -1777,12 +1878,14 @@ export default function StylistChat({
     // test: 11 total lines, the 4 gap/trim lines past index 7 vanished with no signal to the user).
     // Cap the cosmetic lines instead so disclosure lines always survive.
     const CAP = 7
-    if (deduped.length <= CAP) return deduped
+    if (deduped.length <= CAP) return deduped.map(formatPlanNote)
     const isCritical = (note) => /^\[/.test(note)
     const critical = deduped.filter(isCritical)
     const nonCritical = deduped.filter(note => !isCritical(note))
     const keptNonCritical = new Set(nonCritical.slice(0, Math.max(0, CAP - critical.length)))
-    return deduped.filter(note => isCritical(note) || keptNonCritical.has(note))
+    return deduped
+      .filter(note => isCritical(note) || keptNonCritical.has(note))
+      .map(formatPlanNote)
   }
 
   const getPlanNotesTitle = (outfits = []) => {
@@ -1873,6 +1976,28 @@ export default function StylistChat({
       const prompt = getPreviousUserText(messageIndex)
       const destination = derivePlanDestination(prompt)
       const planLength = derivePlanLength(plannedCards)
+      const planOccasions = [...new Set(plannedCards
+        .map(outfit => sentenceCaseLabel(outfit?.occasion || ''))
+        .filter(Boolean))]
+      const planChips = [
+        planOccasions.length > 1
+          ? { id: 'occasion', label: 'Mixed occasions' }
+          : (planOccasions[0] ? { id: 'occasion', label: planOccasions[0] } : null),
+        // Read the plan's own state, not the user's wording. A regex on the
+        // prompt labelled a winter *trip* "Winter capsule", and never produced
+        // a chip for a summer capsule at all. capsulePlanContext is present
+        // only on a real enforced capsule, and carries its own winter flag.
+        (() => {
+          const capsuleContext = plannedCards.find(outfit => outfit?.capsulePlanContext)?.capsulePlanContext
+          if (capsuleContext) {
+            return { id: 'season', label: capsuleContext.is_winter_capsule ? 'Winter capsule' : 'Capsule' }
+          }
+          return query.season && String(query.season).toLowerCase() !== 'current season'
+            ? { id: 'season', label: sentenceCaseLabel(query.season) }
+            : null
+        })(),
+        message.wholeWardrobe && { id: 'wardrobe', label: 'Wardrobe only' },
+      ].filter(Boolean)
       const title = destination
         ? [planLength, destination, 'outfit plan'].filter(Boolean).join(' ')
         : (plannedCards.some(outfit => outfit?.source === 'trip_precompose') ? 'Trip wardrobe plan' : 'Wardrobe outfit plan')
@@ -1880,7 +2005,7 @@ export default function StylistChat({
         type: 'trip_plan',
         title,
         summary: [singularLookLabel(plannedCards.length), coverage].filter(Boolean).join(' · '),
-        chips: getResponseChips(message)
+        chips: planChips
       }
     }
     if (isIdealDirections || activeContext?.type === 'piece') {
@@ -2025,6 +2150,10 @@ export default function StylistChat({
 
   const getTripCardDisplayTitle = (outfit = {}, section = {}, sectionItemIndex = 0) => {
     if (!isPlannedSetSource(outfit.source)) return outfit.label || outfit.title || `Direction ${sectionItemIndex + 1}`
+    const authoredTitle = String(outfit.title || '').trim()
+    if (outfit.composedBy === 'model' && authoredTitle && authoredTitle !== String(outfit.label || '').trim()) {
+      return authoredTitle
+    }
     const hydrated = Array.isArray(outfit.pieces) ? outfit.pieces.map(piece => hydrateDisplayPiece(piece)) : []
     const dress = hydrated.find(piece => String(piece?.category || '').toLowerCase() === 'dress')
     if (dress) return simplifyPieceTitle(dress)
@@ -4273,6 +4402,14 @@ export default function StylistChat({
     const outfitToSend = overrides.outfit ?? pendingOutfit
     const pieceToSend = overrides.piece ?? pendingPiece
     const fileToSend = overrides.imageFile ?? imageFile
+    const capsuleExpansionToSend = overrides.capsuleExpansion ?? pendingCapsuleExpansion
+    const useCapsuleExpansion = Boolean(
+      capsuleExpansionToSend?.canExpandDirectly &&
+      q === capsuleExpansionToSend?.prompt &&
+      !outfitToSend &&
+      !pieceToSend &&
+      !fileToSend
+    )
     if (!q && !fileToSend) return
     if ((overrides.piece || overrides.outfit) && (pendingPiece || pendingOutfit)) {
       holdActionScrollRef.current = true
@@ -4404,7 +4541,7 @@ export default function StylistChat({
     setMessages(nextMessages)
     setChatHistory(nextChatHistory)
 
-    setInput(''); setImageFile(null); setImagePrev(null)
+    setInput(''); setPendingCapsuleExpansion(null); setImageFile(null); setImagePrev(null)
     // Clearing input disables the send button (disabled={loading || !input.trim()}); if focus
     // was on that button, disabling it drops focus to <body> with no signal to assistive tech.
     // Move focus to the still-enabled composer textarea instead, so the user can keep typing.
@@ -4458,7 +4595,45 @@ export default function StylistChat({
       let generatedBoards = null
       let replyRenderedBoards = null
 
-      if (outfitToSend && compareId) {
+      if (useCapsuleExpansion) {
+        const existingCapsuleOutfits = messages.flatMap(message =>
+          (Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : [])
+            .filter(outfit => isPlannedSetSource(outfit?.source))
+        )
+        const res = await fetch('/api/ai/expand-capsule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            planContext: capsuleExpansionToSend.planContext,
+            slotId: capsuleExpansionToSend.slotId,
+            slotLabel: capsuleExpansionToSend.label,
+            existingOutfits: existingCapsuleOutfits,
+          })
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Could not add another capsule look')
+        replyText = data.answer || `Added another ${capsuleExpansionToSend.label} look.`
+        replyStructuredOutfits = data.structuredOutfits || []
+        replyDebug = data.debug || null
+        replyMode = 'capsule_expansion'
+        replyQueryOptions = {
+          occasion: replyStructuredOutfits[0]?.occasion || 'casual',
+          season: capsuleExpansionToSend.planContext?.is_winter_capsule ? 'winter' : 'current season',
+          activity: replyStructuredOutfits[0]?.activity || 'none',
+        }
+        nextThreadMemory = {
+          type: 'generated_outfits',
+          source: 'plan_outfit_set',
+          latestContextText: compactGeneratedOutfitContext(
+            [...existingCapsuleOutfits, ...replyStructuredOutfits],
+            { source: 'plan_outfit_set' }
+          ),
+          latestOutfits: [...existingCapsuleOutfits, ...replyStructuredOutfits],
+          stylingContext: replyQueryOptions,
+        }
+        setThreadMemory(nextThreadMemory)
+
+      } else if (outfitToSend && compareId) {
         const res = await fetch('/api/ai/compare-outfits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outfitAId: outfitToSend.id, outfitBId: compareId, question: q || 'Which outfit works better for me?', history: historySnapshot }) })
         const data = await res.json()
         replyText = data.feedback || data.error || 'Something went wrong.'
@@ -5497,6 +5672,12 @@ export default function StylistChat({
                 if (m.role === 'assistant' && multi) {
                   const hasStructuredIdeas = Array.isArray(m.structuredOutfits) && m.structuredOutfits.length > 0
                   const isPreviewResponse = hasStructuredIdeas && m.structuredOutfits[0]?.previewOnly
+                  const structuredPlanNotes = hasStructuredIdeas ? getTripPlanNotes(m.structuredOutfits) : []
+                  const planExpansionSuggestions = hasStructuredIdeas ? getPlanExpansionSuggestions(m.structuredOutfits) : []
+                  const modelNoteText = String(m.text || '').trim()
+                  const planNotesMissingFromProse = structuredPlanNotes.filter(note =>
+                    !modelNoteText.toLowerCase().includes(String(note || '').toLowerCase())
+                  )
                   return (
                     <div className={`ai-message ${m.role}`} style={{ padding: '12px 14px' }}>
                       {isPreviewResponse ? <MarkdownMessage text={m.text} /> : null}
@@ -5549,11 +5730,42 @@ export default function StylistChat({
                           imagery still leads per the ratified image-first ruling.
                           Two exclusions: previewOnly responses already render m.text in full above,
                           and engine field dumps (see isEngineFieldDump) are not prose at all. */}
-                      {hasStructuredIdeas && !isPreviewResponse && String(m.text || '').trim() && !isEngineFieldDump(m.text) && (
+                      {hasStructuredIdeas && !isPreviewResponse &&
+                        ((modelNoteText && !isEngineFieldDump(modelNoteText)) || structuredPlanNotes.length > 0) && (
                         <details className="stylist-plan-notes" open>
                           <summary>Stylist's notes</summary>
                           <div className="stylist-plan-notes-body">
-                            <MarkdownMessage text={m.text} />
+                            {planNotesMissingFromProse.length > 0 && (
+                              <ul className="stylist-plan-notes-list">
+                                {planNotesMissingFromProse.map(note => <li key={note}>{note}</li>)}
+                              </ul>
+                            )}
+                            {planExpansionSuggestions.some(trim => trim.canExpandDirectly) && (
+                              <div className="stylist-plan-expansion-actions">
+                                {planExpansionSuggestions.filter(trim => trim.canExpandDirectly).map(trim => (
+                                  <button
+                                    key={`${trim.label}-${trim.remaining}`}
+                                    type="button"
+                                    onClick={() => {
+                                      const prompt = `Try 1 additional “${trim.label}” look for this capsule. Keep the same capsule roster and all existing looks.`
+                                      setPendingCapsuleExpansion({ ...trim, prompt })
+                                      setInput(prompt)
+                                      requestAnimationFrame(() => textRef.current?.focus())
+                                    }}
+                                  >
+                                    Show another for {trim.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {planExpansionSuggestions.some(trim => trim.capacityExhausted) && (
+                              <div className="stylist-plan-expansion-actions">
+                                {planExpansionSuggestions.filter(trim => trim.capacityExhausted).map(trim => (
+                                  <span key={`${trim.label}-full`}>Full available rotation shown for {trim.label}.</span>
+                                ))}
+                              </div>
+                            )}
+                            {modelNoteText && !isEngineFieldDump(modelNoteText) && <MarkdownMessage text={modelNoteText} />}
                           </div>
                         </details>
                       )}

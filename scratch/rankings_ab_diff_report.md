@@ -1,6 +1,6 @@
 # A/B Rankings Comparison Report (Pre-remediation vs. Post-remediation)
 
-Generated on: 2026-07-23T00:22:34.877Z
+Generated on: 2026-07-28T07:27:13.395Z
 
 This report compares top-12 garment recommendations side-by-side to identify semantic changes.
 
@@ -66,7 +66,7 @@ EXPLAINED BY: [repaired bottomKind mini-skirt substring match on "minimal" in no
 - **olive ruffle hem midi skirt** (ID: 97) (Rank #2) [score: 38 → 35]
   - *Baseline reasons*: Yuna palette; grounded skirt anchor; hot weather: lightweight fabric; needed bottom for selected top; soft + soft risk; stable vertical bottom
   - *Current reasons*: hot weather: lightweight fabric; needed bottom for selected top; signature palette; stable vertical bottom
-- **beige twill cargo capri pants** (ID: 261) (Rank #8 → #4) [score: 28]
+- **beige twill cargo capri pants** (ID: 261) (Rank #8 → #3) [score: 28]
   - *Baseline reasons*: Yuna palette; hot weather: lightweight fabric; needed bottom for selected top; soft + soft risk; stable vertical bottom
   - *Current reasons*: hot weather: lightweight fabric; needed bottom for selected top; signature palette; soft + soft risk; stable vertical bottom
 - **wide leg trousers** (ID: 101) (Rank #3 → #8) [score: 32 → 24]
@@ -80,12 +80,12 @@ EXPLAINED BY: [repaired bottomKind mini-skirt substring match on "minimal" in no
   - *Current reasons*: expressive competition risk; hot weather: lightweight fabric; needed bottom for selected top; register spread needs intentional styling; stable vertical bottom
 
 ### Entered the Top-12
-- **denim mid-thigh shorts** (ID: 239) [Current Rank #3, score 33 (was #32)]
-  - *Reasons*: hot weather: skin-friendly cut; needed bottom for selected top; stable vertical bottom; signature palette
-- **beige cotton relaxed capris** (ID: 127) [Current Rank #5, score 26 (was #30)]
+- **beige cotton relaxed capris** (ID: 127) [Current Rank #4, score 26 (was #30)]
   - *Reasons*: hot weather: skin-friendly cut; needed bottom for selected top; stable vertical bottom; signature palette; soft + soft risk
-- **beige solid cotton shorts** (ID: 241) [Current Rank #6, score 26 (was #34)]
+- **beige solid cotton shorts** (ID: 241) [Current Rank #5, score 26 (was #34)]
   - *Reasons*: hot weather: skin-friendly cut; needed bottom for selected top; stable vertical bottom; signature palette; soft + soft risk
+- **denim mid-thigh shorts** (ID: 239) [Current Rank #6, score 25 (was #32)]
+  - *Reasons*: needed bottom for selected top; stable vertical bottom; signature palette
 - **brown twill knee shorts** (ID: 990352) [Current Rank #7, score 25 (was #36)]
   - *Reasons*: needed bottom for selected top; stable vertical bottom; signature palette
 - **taupe knit lace-up sneakers** (ID: 198) [Current Rank #10, score 24 (was #15)]
@@ -224,7 +224,7 @@ EXPLAINED BY: [trustedField filtering on selected top (Whale stripe tee) removes
 - **olive ruffle hem midi skirt** (ID: 97) (Rank #2) [score: 24 → 21]
   - *Baseline reasons*: Yuna palette; grounded skirt anchor; hot weather: lightweight fabric; needed bottom for selected top; soft + soft risk; stable vertical bottom; weak going-out occasion fit
   - *Current reasons*: hot weather: lightweight fabric; needed bottom for selected top; signature palette; stable vertical bottom; weak going-out occasion fit
-- **beige twill cargo capri pants** (ID: 261) (Rank #8 → #4) [score: 14]
+- **beige twill cargo capri pants** (ID: 261) (Rank #8 → #3) [score: 14]
   - *Baseline reasons*: Yuna palette; hot weather: lightweight fabric; needed bottom for selected top; soft + soft risk; stable vertical bottom; weak going-out occasion fit
   - *Current reasons*: hot weather: lightweight fabric; needed bottom for selected top; signature palette; soft + soft risk; stable vertical bottom; weak going-out occasion fit
 - **wide leg trousers** (ID: 101) (Rank #3 → #8) [score: 18 → 10]
@@ -238,12 +238,12 @@ EXPLAINED BY: [trustedField filtering on selected top (Whale stripe tee) removes
   - *Current reasons*: expressive competition risk; hot weather: lightweight fabric; needed bottom for selected top; register spread needs intentional styling; stable vertical bottom; weak going-out occasion fit
 
 ### Entered the Top-12
-- **denim mid-thigh shorts** (ID: 239) [Current Rank #3, score 19 (was #33)]
-  - *Reasons*: hot weather: skin-friendly cut; weak going-out occasion fit; needed bottom for selected top; stable vertical bottom; signature palette
-- **beige cotton relaxed capris** (ID: 127) [Current Rank #5, score 12 (was #31)]
+- **beige cotton relaxed capris** (ID: 127) [Current Rank #4, score 12 (was #31)]
   - *Reasons*: hot weather: skin-friendly cut; weak going-out occasion fit; needed bottom for selected top; stable vertical bottom; signature palette; soft + soft risk
-- **beige solid cotton shorts** (ID: 241) [Current Rank #6, score 12 (was #35)]
+- **beige solid cotton shorts** (ID: 241) [Current Rank #5, score 12 (was #35)]
   - *Reasons*: hot weather: skin-friendly cut; weak going-out occasion fit; needed bottom for selected top; stable vertical bottom; signature palette; soft + soft risk
+- **denim mid-thigh shorts** (ID: 239) [Current Rank #6, score 11 (was #33)]
+  - *Reasons*: weak going-out occasion fit; needed bottom for selected top; stable vertical bottom; signature palette
 - **brown twill knee shorts** (ID: 990352) [Current Rank #7, score 11 (was #37)]
   - *Reasons*: weak going-out occasion fit; needed bottom for selected top; stable vertical bottom; signature palette
 - **taupe knit lace-up sneakers** (ID: 198) [Current Rank #10, score 10 (was #16)]
@@ -382,7 +382,7 @@ EXPLAINED BY: [trustedField filtering on selected top (Whale stripe tee) removes
 - **olive ruffle hem midi skirt** (ID: 97) (Rank #2) [score: 24 → 21]
   - *Baseline reasons*: Yuna palette; grounded skirt anchor; hot weather: lightweight fabric; needed bottom for selected top; soft + soft risk; stable vertical bottom; weak hiking occasion fit
   - *Current reasons*: hot weather: lightweight fabric; needed bottom for selected top; signature palette; stable vertical bottom; weak hiking occasion fit
-- **beige twill cargo capri pants** (ID: 261) (Rank #8 → #5) [score: 14]
+- **beige twill cargo capri pants** (ID: 261) (Rank #8 → #4) [score: 14]
   - *Baseline reasons*: Yuna palette; hot weather: lightweight fabric; needed bottom for selected top; soft + soft risk; stable vertical bottom; weak hiking occasion fit
   - *Current reasons*: hot weather: lightweight fabric; needed bottom for selected top; signature palette; soft + soft risk; stable vertical bottom; weak hiking occasion fit
 - **wide leg trousers** (ID: 101) (Rank #3 → #9) [score: 18 → 10]
@@ -393,14 +393,14 @@ EXPLAINED BY: [trustedField filtering on selected top (Whale stripe tee) removes
   - *Current reasons*: artistic/texture vocabulary; hot weather: insulating coverage; hot weather: lightweight fabric; needed bottom for selected top; signature palette; soft + soft risk; stable vertical bottom; weak hiking occasion fit
 
 ### Entered the Top-12
-- **denim mid-thigh shorts** (ID: 239) [Current Rank #3, score 19 (was #33)]
-  - *Reasons*: hot weather: skin-friendly cut; weak hiking occasion fit; needed bottom for selected top; stable vertical bottom; signature palette
-- **cream textured slip-on shoes** (ID: 215) [Current Rank #4, score 19 (was #23)]
+- **cream textured slip-on shoes** (ID: 215) [Current Rank #3, score 19 (was #23)]
   - *Reasons*: hot weather: lightweight fabric; register: walkable shoe; cream textured slip-on shoes: register: walkable shoe; weak hiking occasion fit; shoe support; signature palette; artistic/texture vocabulary
-- **beige cotton relaxed capris** (ID: 127) [Current Rank #6, score 12 (was #31)]
+- **beige cotton relaxed capris** (ID: 127) [Current Rank #5, score 12 (was #31)]
   - *Reasons*: hot weather: skin-friendly cut; weak hiking occasion fit; needed bottom for selected top; stable vertical bottom; signature palette; soft + soft risk
-- **beige solid cotton shorts** (ID: 241) [Current Rank #7, score 12 (was #35)]
+- **beige solid cotton shorts** (ID: 241) [Current Rank #6, score 12 (was #35)]
   - *Reasons*: hot weather: skin-friendly cut; weak hiking occasion fit; needed bottom for selected top; stable vertical bottom; signature palette; soft + soft risk
+- **denim mid-thigh shorts** (ID: 239) [Current Rank #7, score 11 (was #33)]
+  - *Reasons*: weak hiking occasion fit; needed bottom for selected top; stable vertical bottom; signature palette
 - **brown twill knee shorts** (ID: 990352) [Current Rank #8, score 11 (was #37)]
   - *Reasons*: weak hiking occasion fit; needed bottom for selected top; stable vertical bottom; signature palette
 - **taupe knit lace-up sneakers** (ID: 198) [Current Rank #11, score 10 (was #16)]
@@ -523,7 +523,7 @@ EXPLAINED BY: [trustedField filtering on selected top (Whale stripe tee) removes
   - *Reasons*: needed top for selected bottom; compact/structured top; shared color: black; Yuna palette; artistic/texture vocabulary
 - **textured cream knit top** (ID: 363) [Baseline Rank #7, score 32 (now #18)]
   - *Reasons*: needed top for selected bottom; compact/structured top; shared color: cream; Yuna palette; artistic/texture vocabulary
-- **mustard knit sweater** (ID: 84) [Baseline Rank #9, score 29 (now #61)]
+- **mustard knit sweater** (ID: 84) [Baseline Rank #9, score 29 (now #62)]
   - *Reasons*: needed top for selected bottom; compact/structured top; Yuna palette; artistic/texture vocabulary
 
 EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops (like IDs 137, 264, 363) from being automatically recommended, which allows fully trusted and high-confidence tops (like ID 140) to enter the top-12.]
@@ -547,7 +547,7 @@ EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops
 - **black geometric tassel hem crop top** (ID: 258) (Rank #1 → #7) [score: 50 → 46]
   - *Baseline reasons*: Yuna palette; artistic/texture vocabulary; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; shared color: black/cream
   - *Current reasons*: artistic/texture vocabulary; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; register spread needs intentional styling; shared color: black/cream; signature palette
-- **paisley sleeveless blouse** (ID: 83) (Rank #8) [score: 43]
+- **paisley sleeveless blouse** (ID: 83) (Rank #9 → #8) [score: 43]
   - *Baseline reasons*: Yuna palette; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom
   - *Current reasons*: compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; signature palette
 - **turquoise ribbed sleeveless cropped top** (ID: 225) (Rank #6 → #10) [score: 44 → 40]
@@ -568,13 +568,13 @@ EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; register spread needs intentional styling; needed top for selected bottom; compact/structured top; artistic/texture vocabulary
 
 ### Left the Top-12
-- **gold abstract print blouse** (ID: 68) [Baseline Rank #9, score 42 (now #21)]
+- **metallic stripe scoop tank** (ID: 990582) [Baseline Rank #8, score 44 (now #14)]
+  - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; compact/structured top; artistic/texture vocabulary
+- **gold abstract print blouse** (ID: 68) [Baseline Rank #10, score 42 (now #21)]
   - *Reasons*: hot weather: lightweight fabric; needed top for selected bottom; compact/structured top; shared color: cream/black; Yuna palette; artistic/texture vocabulary
-- **white scoop neck sleeveless top** (ID: 364) [Baseline Rank #10, score 40 (now #18)]
+- **white scoop neck sleeveless top** (ID: 364) [Baseline Rank #11, score 40 (now #19)]
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; compact/structured top
-- **abstract print sleeveless top** (ID: 365) [Baseline Rank #11, score 40 (now #19)]
-  - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; compact/structured top
-- **metallic stripe scoop tank** (ID: 990582) [Baseline Rank #12, score 40 (now #20)]
+- **abstract print sleeveless top** (ID: 365) [Baseline Rank #12, score 40 (now #20)]
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; compact/structured top
 
 EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops (like IDs 137, 264, 363) from being automatically recommended, which allows fully trusted and high-confidence tops (like ID 140) to enter the top-12.]
@@ -679,7 +679,7 @@ EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops
   - *Reasons*: weak going-out occasion fit; needed top for selected bottom; compact/structured top; shared color: black; Yuna palette; artistic/texture vocabulary
 - **textured cream knit top** (ID: 363) [Baseline Rank #7, score 18 (now #20)]
   - *Reasons*: weak going-out occasion fit; needed top for selected bottom; compact/structured top; shared color: cream; Yuna palette; artistic/texture vocabulary
-- **mustard knit sweater** (ID: 84) [Baseline Rank #9, score 15 (now #61)]
+- **mustard knit sweater** (ID: 84) [Baseline Rank #9, score 15 (now #62)]
   - *Reasons*: weak going-out occasion fit; needed top for selected bottom; compact/structured top; Yuna palette; artistic/texture vocabulary
 
 EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops (like IDs 137, 264, 363) from being automatically recommended, which allows fully trusted and high-confidence tops (like ID 140) to enter the top-12.]
@@ -703,7 +703,7 @@ EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops
 - **black geometric tassel hem crop top** (ID: 258) (Rank #1 → #7) [score: 36 → 32]
   - *Baseline reasons*: Yuna palette; artistic/texture vocabulary; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; shared color: black/cream; weak going-out occasion fit
   - *Current reasons*: artistic/texture vocabulary; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; register spread needs intentional styling; shared color: black/cream; signature palette; weak going-out occasion fit
-- **paisley sleeveless blouse** (ID: 83) (Rank #8) [score: 29]
+- **paisley sleeveless blouse** (ID: 83) (Rank #9 → #8) [score: 29]
   - *Baseline reasons*: Yuna palette; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; weak going-out occasion fit
   - *Current reasons*: compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; signature palette; weak going-out occasion fit
 - **turquoise ribbed sleeveless cropped top** (ID: 225) (Rank #6 → #10) [score: 30 → 26]
@@ -724,13 +724,13 @@ EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; register spread needs intentional styling; weak going-out occasion fit; needed top for selected bottom; compact/structured top; artistic/texture vocabulary
 
 ### Left the Top-12
-- **gold abstract print blouse** (ID: 68) [Baseline Rank #9, score 28 (now #21)]
+- **metallic stripe scoop tank** (ID: 990582) [Baseline Rank #8, score 30 (now #14)]
+  - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; weak going-out occasion fit; needed top for selected bottom; compact/structured top; artistic/texture vocabulary
+- **gold abstract print blouse** (ID: 68) [Baseline Rank #10, score 28 (now #21)]
   - *Reasons*: hot weather: lightweight fabric; weak going-out occasion fit; needed top for selected bottom; compact/structured top; shared color: cream/black; Yuna palette; artistic/texture vocabulary
-- **white scoop neck sleeveless top** (ID: 364) [Baseline Rank #10, score 26 (now #18)]
+- **white scoop neck sleeveless top** (ID: 364) [Baseline Rank #11, score 26 (now #19)]
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; weak going-out occasion fit; needed top for selected bottom; compact/structured top
-- **abstract print sleeveless top** (ID: 365) [Baseline Rank #11, score 26 (now #19)]
-  - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; weak going-out occasion fit; needed top for selected bottom; compact/structured top
-- **metallic stripe scoop tank** (ID: 990582) [Baseline Rank #12, score 26 (now #20)]
+- **abstract print sleeveless top** (ID: 365) [Baseline Rank #12, score 26 (now #20)]
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; weak going-out occasion fit; needed top for selected bottom; compact/structured top
 
 EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops (like IDs 137, 264, 363) from being automatically recommended, which allows fully trusted and high-confidence tops (like ID 140) to enter the top-12.]
@@ -836,7 +836,7 @@ EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops
   - *Reasons*: weak hiking occasion fit; needed top for selected bottom; compact/structured top; shared color: black; Yuna palette; artistic/texture vocabulary
 - **textured cream knit top** (ID: 363) [Baseline Rank #7, score 18 (now #20)]
   - *Reasons*: weak hiking occasion fit; needed top for selected bottom; compact/structured top; shared color: cream; Yuna palette; artistic/texture vocabulary
-- **mustard knit sweater** (ID: 84) [Baseline Rank #9, score 15 (now #65)]
+- **mustard knit sweater** (ID: 84) [Baseline Rank #9, score 15 (now #66)]
   - *Reasons*: weak hiking occasion fit; needed top for selected bottom; compact/structured top; Yuna palette; artistic/texture vocabulary
 
 EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops (like IDs 137, 264, 363) from being automatically recommended, which allows fully trusted and high-confidence tops (like ID 140) to enter the top-12.]
@@ -860,7 +860,7 @@ EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops
 - **black geometric tassel hem crop top** (ID: 258) (Rank #1 → #7) [score: 36 → 32]
   - *Baseline reasons*: Yuna palette; artistic/texture vocabulary; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; shared color: black/cream; weak hiking occasion fit
   - *Current reasons*: artistic/texture vocabulary; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; register spread needs intentional styling; shared color: black/cream; signature palette; weak hiking occasion fit
-- **paisley sleeveless blouse** (ID: 83) (Rank #8) [score: 29]
+- **paisley sleeveless blouse** (ID: 83) (Rank #9 → #8) [score: 29]
   - *Baseline reasons*: Yuna palette; compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; weak hiking occasion fit
   - *Current reasons*: compact/structured top; hot weather: lightweight fabric; hot weather: skin-friendly cut; needed top for selected bottom; signature palette; weak hiking occasion fit
 - **turquoise ribbed sleeveless cropped top** (ID: 225) (Rank #6 → #10) [score: 30 → 26]
@@ -881,13 +881,13 @@ EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; register spread needs intentional styling; weak hiking occasion fit; needed top for selected bottom; compact/structured top; artistic/texture vocabulary
 
 ### Left the Top-12
-- **gold abstract print blouse** (ID: 68) [Baseline Rank #9, score 28 (now #21)]
+- **metallic stripe scoop tank** (ID: 990582) [Baseline Rank #8, score 30 (now #14)]
+  - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; weak hiking occasion fit; needed top for selected bottom; compact/structured top; artistic/texture vocabulary
+- **gold abstract print blouse** (ID: 68) [Baseline Rank #10, score 28 (now #21)]
   - *Reasons*: hot weather: lightweight fabric; weak hiking occasion fit; needed top for selected bottom; compact/structured top; shared color: cream/black; Yuna palette; artistic/texture vocabulary
-- **white scoop neck sleeveless top** (ID: 364) [Baseline Rank #10, score 26 (now #18)]
+- **white scoop neck sleeveless top** (ID: 364) [Baseline Rank #11, score 26 (now #19)]
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; weak hiking occasion fit; needed top for selected bottom; compact/structured top
-- **abstract print sleeveless top** (ID: 365) [Baseline Rank #11, score 26 (now #19)]
-  - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; weak hiking occasion fit; needed top for selected bottom; compact/structured top
-- **metallic stripe scoop tank** (ID: 990582) [Baseline Rank #12, score 26 (now #20)]
+- **abstract print sleeveless top** (ID: 365) [Baseline Rank #12, score 26 (now #20)]
   - *Reasons*: hot weather: lightweight fabric; hot weather: skin-friendly cut; weak hiking occasion fit; needed top for selected bottom; compact/structured top
 
 EXPLAINED BY: [auto-styling trust rules block low-confidence or provisional tops (like IDs 137, 264, 363) from being automatically recommended, which allows fully trusted and high-confidence tops (like ID 140) to enter the top-12.]
@@ -1416,7 +1416,7 @@ EXPLAINED BY: [formality register spread penalty (-8 points for spread = 2) appl
   - *Reasons*: register: walkable shoe; brown suede platform sandals: register: walkable shoe; register spread needs intentional styling; weak hiking occasion fit; supports selected dress; signature palette; soft + soft risk
 
 ### Left the Top-12
-- **tan leather cross-strap toe loop sandals** (ID: 192) [Baseline Rank #2, score 7 (now #65)]
+- **tan leather cross-strap toe loop sandals** (ID: 192) [Baseline Rank #2, score 7 (now #66)]
   - *Reasons*: cold weather: heavy fabric; weak hiking occasion fit; supports selected dress; Yuna palette
 - **taupe suede ankle boots** (ID: 200) [Baseline Rank #6, score 5 (now #20)]
   - *Reasons*: cold weather: insulating coverage; weak hiking occasion fit; supports selected dress; Yuna palette

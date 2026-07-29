@@ -13,7 +13,9 @@ import {
   contentToOpenAI,
   askStylist,
   askStylistWithUsage,
+  askStylistStructuredWithUsage,
   askStylistWithTools,
+  recordToolLoopUsage,
   estimateAiUsageCost,
   parseModelJson,
   salvageFirstJson,
@@ -36,6 +38,7 @@ import {
   TAG_PIECE_SYSTEM,
   EXTRACT_PIECES_SYSTEM
 } from '../styling-engine/promptRuntime.js'
+import { validateSubmittedPlanOutfits } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
 import {
@@ -525,8 +528,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -543,6 +546,12 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.submitPlanValidationFails) || 0,
       Number(diagnostics.submitPlanResubmits) || 0,
       Number(diagnostics.submitPlanPartialAccepts) || 0,
+      Number(diagnostics.capsuleFinalFallbacks) || 0,
+      Number(diagnostics.providerIterations) || 0,
+      Number(diagnostics.providerInputTokens) || 0,
+      Number(diagnostics.providerOutputTokens) || 0,
+      Number(diagnostics.providerCacheReadInputTokens) || 0,
+      Number(diagnostics.providerCacheCreationInputTokens) || 0,
       diagnostics.weatherSource || ''
     )
   } catch (err) {
@@ -2651,6 +2660,344 @@ function getHomeLocation() {
   }
 }
 
+function normalizedCapsuleExpansionContext(raw = {}) {
+  const rosterIds = [...new Set((Array.isArray(raw?.roster_ids) ? raw.roster_ids : [])
+    .map(Number).filter(id => Number.isInteger(id) && id > 0))].slice(0, 40)
+  const slots = (Array.isArray(raw?.slots) ? raw.slots : []).slice(0, 12).map(slot => ({
+    id: String(slot?.id || '').trim(),
+    label: String(slot?.label || '').trim(),
+    occasion: normalizeOccasion(slot?.occasion || 'casual'),
+    activity: normalizeActivity(slot?.activity || 'none'),
+    environment: String(slot?.environment || '').trim(),
+    register: String(slot?.register || '').trim(),
+    weatherLabel: String(slot?.weather_label || '').trim(),
+    weatherProfile: slot?.weather_profile && typeof slot.weather_profile === 'object' ? slot.weather_profile : {},
+    coreCapacity: Math.max(0, Number(slot?.core_capacity) || 0),
+    allowedIds: [...new Set((Array.isArray(slot?.allowed_piece_ids) ? slot.allowed_piece_ids : [])
+      .map(Number).filter(id => rosterIds.includes(id)))]
+  })).filter(slot => slot.id && slot.label)
+  return {
+    version: Number(raw?.version) || 0,
+    pieceBudget: Math.max(0, Number(raw?.piece_budget) || 0),
+    capacity: Math.max(0, Number(raw?.capacity) || 0),
+    isWinterCapsule: Boolean(raw?.is_winter_capsule),
+    rosterIds,
+    slots
+  }
+}
+
+function capsuleExpansionSystemPrompt() {
+  return `You are selecting ONE additional outfit for an existing capsule wardrobe.
+Return ONLY valid JSON in this exact shape:
+{"title":"short evocative title","piece_ids":[1,2,3],"reason":"one specific visual reason"}
+
+Use only IDs in the supplied allowed roster. The outfit must contain exactly one top plus one bottom, or one dress; exactly one pair of shoes; and at most one optional layer. Choose a new main core not already represented. Do not add accessories. Do not reinterpret the weather, occasion, roster, or capsule brief. If the catalog cannot support another credible outfit, return {"title":"","piece_ids":[],"reason":"no credible unused combination"}.
+
+STYLE CONSTITUTION — BODY CONTRACT:
+${prompts.BODY_CONTRACT}
+
+PROVEN FORMULAS:
+${prompts.PROVEN_FORMULAS}
+
+AESTHETIC GRAVITY:
+${prompts.AESTHETIC_GRAVITY}
+
+LANE NEUTRALITY:
+${prompts.LANE_NEUTRALITY}
+
+WORKING STYLE:
+${prompts.WORKING_STYLE}`
+}
+
+function capsuleExpansionCoreKey(pieces = []) {
+  const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  if (dress) return `dress:${Number(dress.id)}`
+  const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
+  const bottom = pieces.find(piece => wardrobeCategoryGroup(piece) === 'bottom')
+  return top && bottom ? `separates:${Number(top.id)}:${Number(bottom.id)}` : ''
+}
+
+function capsuleExpansionCoreCapacity(pieces = []) {
+  if (!pieces.some(piece => wardrobeCategoryGroup(piece) === 'shoes')) return 0
+  const tops = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top')
+  const bottoms = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'bottom')
+  const dresses = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'dress')
+  return (tops.length * bottoms.length) + dresses.length
+}
+
+const CAPSULE_EXPANSION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    title: { type: 'string' },
+    piece_ids: { type: 'array', items: { type: 'integer' } },
+    reason: { type: 'string' }
+  },
+  required: ['title', 'piece_ids', 'reason']
+}
+
+export function capsulePlanCompositionSchema(targetOutfits = 1) {
+  const exactCount = Math.max(1, Number(targetOutfits) || 1)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      outfits: {
+        type: 'array',
+        minItems: exactCount,
+        maxItems: exactCount,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            slot_id: { type: 'string' },
+            piece_ids: { type: 'array', items: { type: 'integer' } },
+            title: { type: 'string' },
+            reason: { type: 'string' }
+          },
+          required: ['slot_id', 'piece_ids', 'title', 'reason']
+        }
+      }
+    },
+    required: ['outfits']
+  }
+}
+
+function capsulePlanCompositionSystemPrompt() {
+  return `You are the composition stage of a capsule-planning tool. The conversational stylist has already interpreted the request, chosen the use-case slots, and fixed the capsule roster.
+
+Return the complete representative rotation in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Every look needs a distinct main core: a different top+bottom pair, or a different dress. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context (for example, home versus errands). When a slot combines adjacent contexts, state the narrower context the look genuinely serves instead of claiming it works for all of them. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+
+STYLE CONSTITUTION — BODY CONTRACT:
+${prompts.BODY_CONTRACT}
+
+PROVEN FORMULAS:
+${prompts.PROVEN_FORMULAS}
+
+AESTHETIC GRAVITY:
+${prompts.AESTHETIC_GRAVITY}
+
+LANE NEUTRALITY:
+${prompts.LANE_NEUTRALITY}
+
+WORKING STYLE:
+${prompts.WORKING_STYLE}`
+}
+
+async function composeCapsulePlanOnce(workbench, toolContext) {
+  const targetOutfitCount = (workbench.slots || [])
+    .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
+  const rosterIds = [...new Set((workbench.slots || [])
+    .flatMap(slot => Array.isArray(slot?.allowed_piece_ids) ? slot.allowed_piece_ids : [])
+    .map(Number)
+    .filter(id => Number.isInteger(id) && id > 0))]
+  const rosterPieces = rosterIds.length
+    ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${rosterIds.map(() => '?').join(',')})`)
+      .all(...rosterIds)
+      .map(parsePiece)
+    : []
+  const truthCatalog = rosterPieces.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
+  const promptPayload = {
+    instructions: workbench.instructions,
+    constraints: workbench.constraints,
+    slots: workbench.slots,
+    // Full garment truth is intentional here. The ordinary workbench's compact
+    // line omits garment-intelligence pairing requirements and do-not-pair
+    // rules; that omission allowed a relaxed hoodie under a relaxed cardigan
+    // even though both records explicitly prohibit another loose top.
+    piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog
+  }
+  const content = [{
+    type: 'text',
+    text: `Compose this fixed capsule workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`
+  }]
+  const visuallySeenIds = []
+  for (const piece of rosterPieces) {
+    const photoFile = piece.worn_photo || piece.photo || ''
+    if (!photoFile) continue
+    const filePath = path.join(userUploadsDir(), photoFile)
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const thumb = await prepareWardrobeThumb(filePath, `capsule-plan:${piece.id}:${photoFile}`, { maxPx: 448 })
+      content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      content.push({
+        type: 'image',
+        detail: 'low',
+        source: { type: 'base64', media_type: thumb.media_type, data: thumb.data }
+      })
+      visuallySeenIds.push(Number(piece.id))
+    } catch (err) {
+      console.error(`Error loading atomic capsule thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+  if (!(toolContext.retrievedPieceIds instanceof Set)) toolContext.retrievedPieceIds = new Set()
+  if (!(toolContext.visuallySeenPieceIds instanceof Set)) toolContext.visuallySeenPieceIds = new Set()
+  for (const piece of rosterPieces) toolContext.retrievedPieceIds.add(Number(piece.id))
+  for (const id of visuallySeenIds) toolContext.visuallySeenPieceIds.add(id)
+  const { value, usage } = await askStylistStructuredWithUsage({
+    system: capsulePlanCompositionSystemPrompt(),
+    messages: [{ role: 'user', content }],
+    schema: capsulePlanCompositionSchema(targetOutfitCount),
+    name: 'capsule_plan_composition',
+    description: 'Compose the complete representative capsule rotation from the fixed roster and slots.',
+    // A 12-look rotation with IDs, titles, and reasons can legitimately exceed
+    // the old 1,600-token ceiling. This is a ceiling, not prepaid usage: concise
+    // responses cost only what they emit, while truncation no longer pressures
+    // the model toward an empty array.
+    maxTokens: Math.max(1600, Math.min(3200, 600 + (targetOutfitCount * 180)))
+  })
+  // This nested composition call is part of the same paid user turn and must
+  // appear in the existing usage/cost diagnostics alongside outer tool-loop
+  // iterations.
+  recordToolLoopUsage(toolContext, usage)
+  toolContext.freeformDiagnostics.atomicCapsuleVisualPieces = visuallySeenIds.length
+  return Array.isArray(value?.outfits) ? value.outfits : []
+}
+
+// A capsule expansion is deliberately not a freeform tool loop. The original plan already paid
+// to choose the roster and resolve the slot's weather/register context. Reusing that structured
+// state turns "show one more" into one bounded composition call: no declare/search/view/propose
+// chain, no broad wardrobe retrieval, and no silent corrective retry. The result still passes the
+// same deterministic submit_plan_outfits validator before it can become a card.
+router.post('/expand-capsule', async (req, res) => {
+  try {
+    const context = normalizedCapsuleExpansionContext(req.body?.planContext || {})
+    if (context.version !== 1 || !context.rosterIds.length || !context.slots.length) {
+      return res.status(400).json({ error: 'This capsule predates reusable expansion state. Regenerate the capsule before requesting additional looks.' })
+    }
+    const requestedSlotId = String(req.body?.slotId || '').trim()
+    const requestedSlotLabel = String(req.body?.slotLabel || '').trim()
+    const contextSlot = context.slots.find(slot =>
+      (requestedSlotId && slot.id === requestedSlotId) ||
+      (requestedSlotLabel && slot.label === requestedSlotLabel)
+    )
+    if (!contextSlot) return res.status(400).json({ error: 'The requested capsule use case was not found in the saved plan state.' })
+
+    const placeholders = context.rosterIds.map(() => '?').join(',')
+    const roster = db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${placeholders})`)
+      .all(...context.rosterIds)
+      .map(parsePiece)
+    const piecesById = new Map(roster.map(piece => [Number(piece.id), piece]))
+    const allowedIds = new Set(contextSlot.allowedIds.filter(id => piecesById.has(id)))
+    const allowedPieces = [...allowedIds].map(id => piecesById.get(id)).filter(Boolean)
+    if (!allowedPieces.length) return res.status(409).json({ error: 'No active pieces remain in this capsule slot roster.' })
+
+    const existingOutfits = (Array.isArray(req.body?.existingOutfits) ? req.body.existingOutfits : [])
+      .slice(0, 20)
+      .map(outfit => {
+        const pieceIds = (Array.isArray(outfit?.pieceIds) ? outfit.pieceIds : [])
+          .map(Number).filter(id => piecesById.has(id))
+        return {
+          ...outfit,
+          pieceIds,
+          pieces: pieceIds.map(id => piecesById.get(id)),
+          _slotId: outfit?.tripSlot || outfit?._slotId || ''
+        }
+      })
+      .filter(outfit => outfit.pieceIds.length)
+    const existingCoreLines = existingOutfits.map(outfit =>
+      `${outfit.title || outfit.label || 'Existing look'}: [${outfit.pieceIds.join(', ')}]`
+    ).join('\n')
+    const usedSlotCores = new Set(existingOutfits
+      .filter(outfit => !outfit._slotId || outfit._slotId === contextSlot.id)
+      .map(outfit => capsuleExpansionCoreKey(outfit.pieces))
+      .filter(Boolean))
+    const slotCoreCapacity = contextSlot.coreCapacity || capsuleExpansionCoreCapacity(allowedPieces)
+    if (usedSlotCores.size >= slotCoreCapacity) {
+      return res.status(409).json({
+        error: `Full available rotation shown for ${contextSlot.label}; this capsule roster has no unused outfit core for that use case.`,
+        debug: { providerCalls: 0, usedCores: usedSlotCores.size, coreCapacity: slotCoreCapacity }
+      })
+    }
+    const catalog = allowedPieces
+      .map(piece => `ID ${Number(piece.id)}: ${buildPieceText(piece)}`)
+      .join('\n')
+    const userPrompt = `CAPSULE SLOT
+id: ${contextSlot.id}
+label: ${contextSlot.label}
+occasion: ${contextSlot.occasion}
+activity: ${contextSlot.activity}
+environment: ${contextSlot.environment || 'unspecified'}
+register: ${contextSlot.register || 'unspecified'}
+weather already resolved: ${contextSlot.weatherLabel || 'unspecified'}
+
+EXISTING CAPSULE LOOKS — do not repeat their main top+bottom pair or dress:
+${existingCoreLines || '(none)'}
+
+ALLOWED CAPSULE PIECES:
+${catalog}`
+    const { value: parsed, usage } = await askStylistStructuredWithUsage({
+      system: capsuleExpansionSystemPrompt(),
+      messages: [{ role: 'user', content: userPrompt }],
+      schema: CAPSULE_EXPANSION_SCHEMA,
+      name: 'capsule_expansion',
+      description: 'Select exactly one additional outfit from the supplied capsule roster.',
+      maxTokens: 400
+    })
+    const submission = {
+      slot_id: contextSlot.id,
+      title: String(parsed?.title || '').trim(),
+      piece_ids: Array.isArray(parsed?.piece_ids) ? parsed.piece_ids : [],
+      reason: String(parsed?.reason || '').trim()
+    }
+    const slot = {
+      ...contextSlot,
+      targetOutfits: 1,
+      allowedPieces,
+      rosterIds: allowedIds,
+      gateAllowedIds: allowedIds,
+      suppressedReasonsById: new Map()
+    }
+    const pendingPlan = {
+      slots: [slot],
+      piecesById,
+      heldOutfits: existingOutfits,
+      constraints: {
+        reuse: 'maximize',
+        noRepeat: new Set(),
+        allowRepeat: new Set(['shoes']),
+        anchorIds: new Set(),
+        pieceBudget: context.pieceBudget
+      },
+      isWinterCapsule: context.isWinterCapsule
+    }
+    const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, [submission])
+    if (!accepted.length) {
+      return res.status(422).json({
+        error: 'The single capsule-expansion attempt did not produce another valid look. No automatic retry was made.',
+        validationFailures: failures,
+        debug: { providerCalls: 1, usage, estimatedCost: estimateAiUsageCost(usage) }
+      })
+    }
+    const acceptedOutfit = accepted[0]
+    const structuredOutfit = {
+      ...acceptedOutfit,
+      label: contextSlot.label,
+      title: acceptedOutfit.title || contextSlot.label,
+      bestFor: contextSlot.label,
+      occasion: contextSlot.occasion,
+      activity: contextSlot.activity,
+      tripSlot: contextSlot.id,
+      coverage: contextSlot.label,
+      coveragePosition: `${contextSlot.label} · additional look`,
+      slotWeather: contextSlot.weatherLabel,
+      source: 'plan_outfit_set',
+      composedBy: 'model',
+      capsulePlanContext: req.body.planContext
+    }
+    return res.json({
+      answer: `Added one more ${contextSlot.label} look from the existing capsule roster.`,
+      structuredOutfits: [structuredOutfit],
+      structuredOutfitsSource: 'plan_outfit_set',
+      debug: { providerCalls: 1, usage, estimatedCost: estimateAiUsageCost(usage) }
+    })
+  } catch (err) {
+    console.error('Capsule expansion error:', err)
+    const { status, message } = describeAiError(err)
+    return res.status(status).json({ error: message })
+  }
+})
+
 router.post('/ask', async (req, res) => {
   try {
     const extractedWeather = req.body.weather || extractWeatherContext([
@@ -2682,6 +3029,11 @@ router.post('/ask', async (req, res) => {
       // and composing tools consume it instead of keyword-guessing.
       declaredIntent: null
     }
+    // The freeform model still owns intent and slot decomposition. Once it
+    // invokes plan_outfit_set with an enforced capsule budget, the tool may
+    // use this one-shot structured composer instead of returning a workbench
+    // that starts an open-ended submit/replan loop.
+    toolContext.composeCapsulePlanOnce = workbench => composeCapsulePlanOnce(workbench, toolContext)
     const payload = await buildStylistConversationPayload({
       ...req.body,
       occasion: req.body.occasion,

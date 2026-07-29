@@ -123,10 +123,110 @@ message. `retriedChecks` ensures each distinct guard only triggers one retry, so
 ping-pong on the same violation.
 
 **Consequence:** a single user turn can be several model calls — tool iterations plus guard
-retries — and nothing surfaces that. When a turn feels slow or a bill looks high, this is the first
-place to look. Relevant to any cost-instrumentation work, which currently measures none of it.
+retries. **Instrumented 2026-07-28:** every tool-loop iteration now accumulates input, output,
+cache-read, and cache-creation tokens in the turn's `freeformDiagnostics`; `/ask` returns them in
+its existing debug payload and `freeform_generation_runs` persists them. This makes a four-call
+capsule turn distinguishable from a nine-call retry spiral without another live reproduction.
+
+**[by design] Capsule “Show another” does not enter either retry loop.** New capsule cards persist
+their bounded roster and normalized use-case slot. The explicit expansion action sends that state
+to `/api/ai/expand-capsule`, which reloads only those active garments, makes one JSON composition
+call, and runs the normal deterministic plan validator. A failed composition returns visibly
+after that one call; it is not corrected by another billed call. Legacy capsule threads without
+the saved state do not offer this action and must be regenerated once. The response shape is
+provider-enforced (forced Anthropic tool / strict OpenAI JSON Schema), not merely requested in
+prompt prose; this was hardened after the first live one-call attempt narrated until its token cap.
+Each saved slot also carries its distinct core capacity. Exhausted slots suppress the expansion
+action, and the endpoint repeats that capacity check before the provider boundary (`providerCalls:
+0`), so stale clients cannot purchase a composition the roster cannot possibly supply.
+
+**[by design] Plan validation requirements are disclosed before composition.** Each model workbench
+slot carries `submission_requirements` generated from the same structured context the validator
+uses: exact count, complete outfit roles, and—only when applicable—winter indoor cardigan,
+transition-layer coverage, and recurring shoe range. This does not relax validation; it prevents
+paid discovery of deterministic rules through rejection. **Live measurement did not support this
+as a sufficient cost control:** the next winter-capsule run grew from 8 to 10 provider iterations,
+from 2 to 4 validation failures, and delivered only 5 looks. The requirements prevented some earlier
+structural mistakes, so they remain truthful guidance, but the model instead split overlapping slots,
+searched outside the curated roster, re-planned after partial success, and invented new slot IDs.
+
+**[by design] Seasonal capsules are explicit and compose atomically after the model calls
+`plan_outfit_set`.** The conversational model still owns the turn and decomposes the request into
+use-case slots; there is no client or server capsule keyword pre-route. The tool schema requires
+`plan_kind` (`trip`, `seasonal_capsule`, or `coordinated_plan`). An unnumbered seasonal capsule gets
+the owner-ruled 24-piece working ceiling; an explicit number wins. Capsule-only roster selection,
+validation, display capacity, and atomic composition are gated by `plan_kind`, never merely by a
+piece budget, so a budgeted trip remains on the ordinary trip workbench.
+
+Once a seasonal capsule has produced its fixed roster and slot workbench, `plan_outfit_set` makes
+one provider-enforced structured composition call, validates the whole response once, and returns
+accepted cards. Validation failures remain in server logs and numeric diagnostics rather than
+being promoted into production `tripPlanLines`; the model's internally chosen target counts are
+not user promises, and raw validator coaching is not stylist copy. After success, the outer
+conversational model gets one final
+prose turn with no tools exposed; it cannot call `submit_plan_outfits`, search broadly, re-plan, or
+start generic card-delivery retries. The nested call's usage is added to the existing turn
+diagnostics. Trips, work weeks, event sets, and other non-capsule plans retain the ordinary model
+workbench path. **Visual/truth correction before the first live test:** the atomic call now
+attaches a 448px thumbnail for every fixed-roster piece with a photo and replaces the ordinary
+compact workbench line with `buildPieceText`'s full truth, including pairing requirements,
+do-not-pair rules, real-wear notes, and learned authoritative rules. Only successfully attached
+photos are marked visually seen. This adds image input to the one bounded call, but prevents the
+cheaper path from becoming a blind composer; `atomicCapsuleVisualPieces` reports the image count in
+the turn debug payload.
+
+There is no remaining numeric-budget fallback in the planner: direct callers, like production,
+must pass `planKind:"seasonal_capsule"` to activate capsule roster selection. A `trip` or
+`coordinated_plan` may still carry `piece_budget`; that constraint is reported and enforced without
+changing the plan's identity.
+
+**[by design] Atomic-capsule final prose never opens a retry loop.** The outer model may naturally
+introduce the accepted rotation, but it may not add an unvalidated outfit in prose, cite a garment
+ID absent from the accepted cards, or invent an engine/card ceiling. `boundedCapsuleFinalAnswer`
+checks those mechanically. On a violation it returns a deterministic accepted-card summary
+locally, without another provider call; compliant prose is unchanged. Replacements increment
+`capsule_final_fallbacks` in `freeform_generation_runs`.
+
+Seasonal-capsule `reuse:maximize` does not apply the packing-light three-shoe ceiling: every shoe
+already selected into the finite capsule roster may appear in its representative rotation. Trips
+and other packing-light plans retain the ceiling. The atomic composer also treats each slot's
+`best_for` as lived context, not decorative narration; broad occasion eligibility cannot erase a
+piece's more specific context truth.
+
+Before capsule quotas rank and select garments, the selector takes the union of pieces admitted by
+the existing deterministic gates for at least one requested use-case slot. Failing one slot is
+normal; failing every slot means the piece has no capsule job and cannot consume the finite
+budget. This is preselection, not a new taste score, and it is a provable no-op when no slots are
+provided. “Eligible but not shown in the representative rotation” remains distinct from
+“ineligible”: the rotation demonstrates the capsule rather than enumerating every roster piece.
 
 > `styling-engine/provider.js:734` (guard retries), `:758` (tool loop).
+> `routes/ai.js` (`composeCapsulePlanOnce`, `POST /expand-capsule`).
+
+**[by design] Repeated ordinal names do not create artificial capsule coverage slots.**
+At the `normalizePlanSlots` boundary, structurally identical slots whose labels are clearly
+numbered variants of the same use case (for example, `Casual Indoor Day 1` and `Casual Indoor
+Day 2`) merge into one slot and their requested counts are added. The merge is deliberately
+conservative: occasion, activity, environment, register, season/weather, location, date,
+best-for text, coverage text, and plan note must agree after ordinal normalization. A numbered
+pair also remains separate when each entry requests exactly one look, since those may be real
+calendar days; the captured artificial split is identifiable because one numbered “day” itself
+requests multiple looks. Different dates or conditions likewise remain separate. This prevents displayed looks from
+being credited to one bookkeeping variant while another variant falsely reports zero submitted.
+
+> `styling-engine/outfitSetPlanner.js` (`normalizePlanSlots`,
+> `mergeEquivalentOrdinalPlanSlots`).
+
+**[by design] Multi-use-case trip requests may still need one material clarification.**
+Listing several activities is not proof that the styling brief is complete. Before declaring
+cards intent, the conversational model may ask one concise question when the answer changes
+occasion coverage, activity safety, formality/register, footwear, or another required garment
+role. It should otherwise proceed directly, must not ask users to repeat supplied facts, and
+must not ask for weather when a named location can resolve it. This restores the useful Tucson
+pattern: nice lunch versus backyard time and trail hike versus nature walk are styling decisions,
+not conversational overhead.
+
+> `styling-engine/prompts.js` (`STYLIST_SYSTEM`, coordinated multi-outfit planning).
 
 ---
 
@@ -181,7 +281,10 @@ it only *discriminates* if its condition is sometimes false.
 | scorer | decides | scale |
 |---|---|---|
 | `planWorkbenchPieceScore` | which ≤40 pieces the model may compose a plan slot from | ~0–265, +100000 for anchors |
-| `capsuleVersatilityScore` | which pieces the capsule roster buys inside the piece budget | ~-24 to +50 |
+| all-slot capsule eligibility union | which pieces may compete for finite capsule roster slots; existing trust/register/weather/activity gates, no score |
+| `capsuleVersatilityScore` | which eligible pieces the capsule roster buys inside the piece budget | ~-24 to +50 |
+| `capsuleOutfitCoreCapacity` | reports unique gate-valid top+bottom or dress cores across requested capsule use cases; requires eligible shoes and deduplicates cross-slot overlap | count, report-only |
+| `allocateCapsuleRepresentativeRotation` | reserves one displayed card per coverable capsule use case, then spends remaining cards on recurring demand without exceeding slot capacity | 0…`min(piece_budget, 12)` cards |
 | `compatibilityScoreForSelectedItem` | ranking of partners for one selected garment | unbounded sum of clamped terms |
 | `getRelevanceScore` (visual composer roster) | which pieces get an image slot | unbounded sum |
 | `scoreWholeWardrobeCandidate` | ranking of whole-wardrobe outfit candidates | unbounded sum |
@@ -1715,3 +1818,15 @@ provenance: `node scratch/measure_provenance.js <colA> <colB>`.
 `measure_diversity_classifiers.js`, `measure_image_path.js`, `measure_roles.js`,
 `measure_plural_gap.js`, `measure_provenance.js`, and `measure_open_questions.js`. They report mechanisms and numbers; they cannot tell you an entry has
 gone *wrong*, only that the shape underneath it moved.
+### Seasonal capsule bounded composition
+
+For a seasonal capsule, deterministic roster selection and slot-capacity checks happen before the
+single bounded model composition call. The composition response schema requires exactly the sum of
+the requested slot counts; an empty or partial array is not a valid successful response. The
+output-token ceiling scales with the requested representative-look count (within a fixed cap), but
+billing remains based on actual generated tokens rather than that ceiling.
+
+If the bounded composer nevertheless returns no outfits, `plan_outfit_set` returns an engine error,
+locks the atomic attempt, and exposes no alternate outfit-building tools for that turn. It must not
+report zero accepted cards as success or invite the conversational model to reconstruct the capsule
+slot by slot.
