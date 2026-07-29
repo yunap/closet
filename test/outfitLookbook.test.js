@@ -94,9 +94,9 @@ test('Outfit detail modal separates identity, composition, and styling actions',
   assert.match(source, />\s*◇ Work with stylist\s*<\/button>/)
   assert.match(source, /'Edit linked pieces'/)
   assert.match(source, /className="outfit-management-actions"/)
-  assert.match(stylistSource, /title="Review this outfit"/)
-  assert.match(stylistSource, /title="Find similar looks"/)
-  assert.match(stylistSource, /title="Restyle the main piece"/)
+  assert.match(stylistSource, /'Reviewing…' : 'Review this outfit'/)
+  assert.match(stylistSource, /'Finding similar looks…' : 'Find similar looks'/)
+  assert.match(stylistSource, /'Restyling…' : 'Restyle the main piece'/)
   assert.match(stylistSource, /className="outfit-question-input"/)
   assert.match(source, />\s*Delete outfit\s*<\/button>/)
   assert.doesNotMatch(source, />\s*Find similar\s*<\/button>/)
@@ -111,12 +111,6 @@ test('Saved and generated outfits enter the same Stylist action chooser', () => 
   assert.equal((source.match(/>\s*◇ Work with stylist\s*<\/button>/g) || []).length, 2)
   assert.match(source, /onSendToStylist\(\{\s*id: null,[\s\S]*autoSend: false/)
   assert.doesNotMatch(source, /stylistPrompt: 'Evaluate this styling direction/)
-})
-
-test('Outfit action chooser dismisses as soon as the selected request starts', () => {
-  assert.doesNotMatch(stylistSource, /pendingOutfitAction/)
-  assert.match(stylistSource, /send\(\{ outfit: pendingOutfit, input: 'Evaluate this outfit\.[\s\S]*responseMode: 'full' \}\)\s*setPendingOutfit\(null\)/)
-  assert.match(stylistSource, /send\(\{ outfit: pendingOutfit, responseMode: 'followup' \}\)\s*setPendingOutfit\(null\)/)
 })
 
 test('My Outfit detail owns scrolling and keeps its management actions visible', () => {
