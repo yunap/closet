@@ -117,7 +117,16 @@ test('Generated outfit critiques retain their linked outfit context for follow-u
   assert.match(stylistSource, /type: outfitToSend\.id == null \? 'generated_outfit' : 'outfit'/)
   assert.match(stylistSource, /latestOutfit: rememberedOutfit/)
   assert.match(stylistSource, /pieceIds: outfitPieceIds/)
-  assert.match(stylistSource, /threadMemory\?\.type === 'generated_outfit' && OUTFIT_FOLLOWUP_PATTERN\.test\(q\)/)
+  assert.match(stylistSource, /shouldUseOutfitCritiqueFollowup\(q, threadMemory\)/)
+})
+
+test('Critique follow-ups use one dedicated evaluator request while explicit new topics escape', () => {
+  assert.match(stylistSource, /const shouldUseOutfitCritiqueFollowup = \(text = '', memory = null\) => \(\s*hasOutfitCritiqueMemory\(memory\) && !isExplicitCritiqueTopicChange\(text\)/)
+  assert.match(stylistSource, /what should i wear/)
+  assert.match(stylistSource, /shouldUseOutfitCritiqueFollowup\(q, threadMemory\)[\s\S]*?fetch\('\/api\/ai\/evaluate-wardrobe-outfit'/)
+  assert.match(stylistSource, /previousEvaluation: threadMemory\.latestEvaluationText \|\| ''/)
+  assert.match(stylistSource, /responseMode: 'followup'/)
+  assert.match(stylistSource, /replyEvaluationResponseMode = 'followup'/)
 })
 
 test('Review dismisses the outfit chooser while the other outfit actions keep it visible', () => {

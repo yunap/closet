@@ -506,6 +506,28 @@ const resolveUploadThumbnailSrc = (photo, variant) => uploadThumbnailSrc(resolve
 
 const VISUAL_FOLLOWUP_PATTERN = /\b(look|again|photo|image|visible|read|missed|shoe|shoes|hem|cuff|floor|fit|waist|rise|pull|bunch|color|colour|sleeve|neckline|length|drape|fabric|texture|pattern|lighting|crop|cropped)\b/i
 const OUTFIT_FOLLOWUP_PATTERN = /\b(this|it|outfit|idea|look|piece|pieces|make|change|swap|instead|sharper|stronger|softer|better|work|works|risk|risky|why|how|what)\b/i
+const CRITIQUE_NEW_TOPIC_PATTERNS = [
+  /\b(?:build|create|generate|plan)\b[\s\S]{0,40}\b(?:capsule|packing list|outfit|outfits|look|looks|cards?)\b/i,
+  /\b(?:show|give|find|suggest)\s+me\b[\s\S]{0,40}\b(?:outfit|outfits|look|looks|options?|ideas?)\b/i,
+  /\bwhat should i wear\b/i,
+  /\b(?:capsule|packing list|wardrobe audit|trip wardrobe|travel wardrobe)\b/i,
+  /\b(?:style|outfit ideas? for)\s+(?:my|the)\s+(?!current\b|same\b|outfit\b|look\b|this\b|it\b)/i,
+  /\b(?:another|different|new)\s+(?:outfit|look|photo|image)\b/i,
+]
+
+const hasOutfitCritiqueMemory = (memory = null) => Boolean(
+  (memory?.type === 'outfit' || memory?.type === 'generated_outfit') &&
+  memory?.latestEvaluationText
+)
+
+const isExplicitCritiqueTopicChange = (text = '') => {
+  const q = String(text || '').trim()
+  return CRITIQUE_NEW_TOPIC_PATTERNS.some(pattern => pattern.test(q))
+}
+
+const shouldUseOutfitCritiqueFollowup = (text = '', memory = null) => (
+  hasOutfitCritiqueMemory(memory) && !isExplicitCritiqueTopicChange(text)
+)
 
 const createResultId = (prefix = 'result') => `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e6)}`
 
@@ -4950,7 +4972,48 @@ export default function StylistChat({
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Something went wrong — try again')
         replyText = data.feedback || 'Something went wrong.'
-      } else if (threadMemory?.type === 'generated_outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q)) {
+      } else if (shouldUseOutfitCritiqueFollowup(q, threadMemory)) {
+        const rememberedOutfit = threadMemory.latestOutfit ||
+          outfits.find(outfit => String(outfit.id) === String(threadMemory.id))
+        if (!rememberedOutfit) {
+          throw new Error('Outfit critique context was not found. Reopen the outfit and try again.')
+        }
+        const outfitPieceIds = Array.isArray(rememberedOutfit.pieceIds) && rememberedOutfit.pieceIds.length
+          ? rememberedOutfit.pieceIds
+          : (Array.isArray(rememberedOutfit.pieces) ? rememberedOutfit.pieces.map(piece => piece?.id).filter(Boolean) : [])
+        if (!outfitPieceIds.length) {
+          throw new Error('Outfit critique context is missing linked pieces. Reopen the outfit and try again.')
+        }
+        const res = await fetch('/api/ai/evaluate-wardrobe-outfit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outfit: rememberedOutfit,
+            pieceIds: outfitPieceIds,
+            occasion: rememberedOutfit.occasion || threadMemory?.stylingContext?.occasion || effectiveGenerateOccasion,
+            season: rememberedOutfit.season || threadMemory?.stylingContext?.season || effectiveGenerateSeason,
+            mood: threadMemory?.stylingContext?.mood || '',
+            previousEvaluation: threadMemory.latestEvaluationText || '',
+            responseMode: 'followup',
+            question: q,
+            history: historySnapshot,
+          })
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Could not continue outfit evaluation')
+        replyText = data.feedback || 'Outfit follow-up complete.'
+        replyWardrobeEvaluation = true
+        replyEvaluationResponseMode = 'followup'
+        replyOutfitName = rememberedOutfit.name || rememberedOutfit.title || threadMemory.name
+        replyDebug = data.debug || null
+        nextThreadMemory = {
+          ...threadMemory,
+          latestOutfit: rememberedOutfit,
+          latestEvaluation: threadMemory.latestEvaluation || data.evaluation || null,
+          latestEvaluationText: threadMemory.latestEvaluationText || compactEvaluationMemory(data.evaluation),
+        }
+        setThreadMemory(nextThreadMemory)
+      } else if (threadMemory?.type === 'generated_outfit' && !hasOutfitCritiqueMemory(threadMemory) && OUTFIT_FOLLOWUP_PATTERN.test(q)) {
         const rememberedOutfit = threadMemory.latestOutfit || {}
         const outfitPieceIds = Array.isArray(rememberedOutfit.pieceIds) && rememberedOutfit.pieceIds.length
           ? rememberedOutfit.pieceIds
@@ -5015,7 +5078,7 @@ export default function StylistChat({
           setThreadMemory(nextThreadMemory)
         }
 
-      } else if (activeContext?.type === 'outfit' || (threadMemory?.type === 'outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q))) {
+      } else if (!hasOutfitCritiqueMemory(threadMemory) && (activeContext?.type === 'outfit' || (threadMemory?.type === 'outfit' && OUTFIT_FOLLOWUP_PATTERN.test(q)))) {
         const activeOutfitId = activeContext?.type === 'outfit' ? activeContext.id : threadMemory.id
         const activeOutfit = outfits.find(o => String(o.id) === String(activeOutfitId))
         if (!activeOutfit) throw new Error('Active outfit context was not found. Reopen the outfit and try again.')
