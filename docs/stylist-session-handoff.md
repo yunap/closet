@@ -2,7 +2,9 @@
 
 **Last updated:** 2026-07-28. Branch `stylist-docs-staleness-fixes`.
 
-## 2026-07-28 — capsule design evaluation, six correctness fixes, and a selection rethink
+## 2026-07-28 — comprehensive capsule work and related fixes
+
+### Capsule design evaluation, six correctness fixes, and a selection rethink
 
 An evaluation pass over the capsule design and implementation. The architecture held up — explicit
 `plan_kind` routing, atomic one-call composition, and full garment truth plus thumbnails into that
@@ -113,7 +115,7 @@ hand-corrected), and **66% of all color mentions match `CAPSULE_NEUTRAL_COLORS`*
 `capsuleVersatilityScore`'s +12 neutral bonus fires on two-thirds of the wardrobe and is closer to
 a baseline offset than a selector.
 
-## 2026-07-28 — capsule-design session completion record
+### Capsule-design session completion record
 
 This is the consolidated handoff for the capsule work completed in this session. The detailed
 chronology and evidence remain below; this section is the authoritative short reading path.
@@ -290,7 +292,7 @@ captured summer replay 11/11 accepted; summer/winter 10/14/18/24 matrix has no s
 current roster-utility audit has zero all-slot-blocked selected pieces; style-claims,
 text-matching ratchet, and `git diff --check` pass. No billed call was made.
 
-## 2026-07-28 — seasonal capsule is now a first-class plan kind
+### Seasonal capsule is now a first-class plan kind
 
 Owner ruling: a person may simply ask for “a summer capsule.” The product—not the person—must know
 what a useful seasonal capsule entails. Do not require the user to prescribe internal occasions,
@@ -418,7 +420,7 @@ cannot consume the finite roster. With no slots, the generic selector is unchang
 zero all-slot-blocked pieces. Permanent planner coverage pins the rule. No gate was weakened and
 no billed call was made.
 
-## 2026-07-28 — capsule testing cost controls, before capsule behavior work
+### Capsule testing cost controls, before capsule behavior work
 
 Added a provider-free testing layer before changing capsule behavior:
 
@@ -446,7 +448,7 @@ roster's only evening-capable bottom is the dressy oatmeal crochet midi skirt (9
 bottom, raising casual capacity 2→5 while collapsing evening 4→0. Full piece-level trace and the
 general coverage-first policy implication are in `docs/stylist-bugfix-spec.md` → “Seasonal check.”
 
-## 2026-07-28 session, part 2 — Remove button didn't clear the board-feedback chip
+### Remove button didn't clear the board-feedback chip
 
 The new Style Profile **Remove** button (added earlier the same session, see below) called the
 existing `DELETE /api/stylist-feedback/:id` endpoint, which archives the row and correctly
@@ -478,7 +480,7 @@ cross-checking `read_network_requests` for the expected DELETE call before trust
 fixed" API read. Always click via `ref`, not raw screenshot-derived coordinates, when the two
 differ.
 
-## 2026-07-28 session — A1/A2/A5 shipped, C3 ratified, piece-action-menu rebuilt end to end
+### A1/A2/A5 shipped, C3 ratified, piece-action-menu rebuilt end to end
 
 Re-verified panel-stage1-findings.md's Section A against the code (per its own "recurring failure
 mode" warning) before trusting the "accepted, not yet implemented" status line — confirmed it was
@@ -532,7 +534,7 @@ still accurate, then implemented and shipped:
     so it can't be linked even when a matching board and thread both still exist — see `## Open`
     below.
 
-## 2026-07-27 session — board feedback desync fixed, plus three bugs found along the way
+### Board feedback desync fixed, plus three bugs found along the way
 
 Picked up `docs/board-feedback-desync-spec.md` (previously "diagnosed, not implemented"). Now
 **implemented and live-verified** — see that spec's "The display fix" section for the mechanism
@@ -961,6 +963,7 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   of 40. Tested, not inferred (`scratch/measure_open_questions.js` Q3). No action needed unless the
   weights are being tuned; then start with the four that actually order it.
 - Smaller: the `All looks distinct` label branch unverified (not worth a billed call).
+<<<<<<< HEAD
 - **Capsule coverage-first ruling implemented 2026-07-28.** The roster selector now preserves an
   actually gate-eligible elevated dress path, or an elevated top+bottom path, for every requested
   dinner/gallery/smart-casual use case after reserving casual rotation. It protects the casual
@@ -1116,6 +1119,8 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   pieces remain tag-only. `atomicCapsuleVisualPieces` is surfaced in the existing turn diagnostics.
   This deliberately spends image tokens inside the one bounded call rather than testing a cheaper
   but partially blind composer. Still no billed call made.
+=======
+>>>>>>> origin/main
 - **Legacy `message`-type feedback can't find its own thread or board, even when both still
   exist.** Found 2026-07-28 tracing a real Style Profile row (`wardrobe.db` id 340, a `works` /
   `Gold` entry on "dark grey gathered mini dress"). Its `target_type` is `message` (a thumbs-up on
