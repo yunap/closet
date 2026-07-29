@@ -684,7 +684,6 @@ export default function StylistChat({
     initialOutfit?.autoSend === true ? null : (initialOutfit || null)
   ))
   const [pendingPiece, setPendingPiece] = useState(() => initialPiece || null)
-  const [pendingOutfitAction, setPendingOutfitAction] = useState(null)
   const [loading, setLoading] = useState(false)
   const [loadingStatus, setLoadingStatus] = useState('')
   const [chatAnnouncement, setChatAnnouncement] = useState('')
@@ -5250,7 +5249,6 @@ export default function StylistChat({
       setLoading(false)
       setPendingOutfit(null)
       setPendingPiece(null)
-      setPendingOutfitAction(null)
     }
   }
 
@@ -6432,7 +6430,7 @@ export default function StylistChat({
                     <button
                       type="button"
                       className="piece-styling-back"
-                      onClick={() => { setPendingOutfit(null); setPendingOutfitAction(null); setInput('') }}
+                      onClick={() => { setPendingOutfit(null); setInput('') }}
                     >
                       <span aria-hidden="true">←</span> Back to chat
                     </button>
@@ -6489,29 +6487,29 @@ export default function StylistChat({
               <div className="stylist-option-grid outfit-styling-options">
                 <OptionCard
                   icon={<ReviewOutfitIcon />}
-                  title={loading && pendingOutfitAction === 'review' ? 'Reviewing…' : 'Review this outfit'}
+                  title="Review this outfit"
                   description="Get feedback on what works, what could be improved, and why."
                   onClick={() => {
-                    setPendingOutfitAction('review')
                     send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', responseMode: 'full' })
+                    setPendingOutfit(null)
                   }}
                 />
                 <OptionCard
                   icon={<SimilarLooksIcon />}
-                  title={loading && pendingOutfitAction === 'similar' ? 'Finding similar looks…' : 'Find similar looks'}
+                  title="Find similar looks"
                   description="See similar outfit ideas using pieces you own."
                   onClick={() => {
-                    setPendingOutfitAction('similar')
                     send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'formula' }, input: 'Create formula-similar outfits from my wardrobe based on this saved look.' })
+                    setPendingOutfit(null)
                   }}
                 />
                 <OptionCard
                   icon={<RestyleOutfitIcon />}
-                  title={loading && pendingOutfitAction === 'restyle' ? 'Restyling…' : 'Restyle the main piece'}
+                  title="Restyle the main piece"
                   description="Build different outfits around the key garment."
                   onClick={() => {
-                    setPendingOutfitAction('restyle')
                     send({ outfit: { ...pendingOutfit, imageGenerationMode: true, variantMode: 'creative' }, input: 'Generate creative alternatives from this saved outfit photo and linked garment references.' })
+                    setPendingOutfit(null)
                   }}
                 />
               </div>
@@ -6522,13 +6520,22 @@ export default function StylistChat({
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); setPendingOutfitAction('question'); send({ responseMode: 'followup' }) } }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && input.trim()) {
+                      e.preventDefault()
+                      send({ outfit: pendingOutfit, responseMode: 'followup' })
+                      setPendingOutfit(null)
+                    }
+                  }}
                   placeholder="Ask about shoes, proportions, occasion, or how to change the look…"
                   className="outfit-question-input"
                 />
                 <button
                   type="button"
-                  onClick={() => { setPendingOutfitAction('question'); send({ responseMode: 'followup' }) }}
+                  onClick={() => {
+                    send({ outfit: pendingOutfit, responseMode: 'followup' })
+                    setPendingOutfit(null)
+                  }}
                   disabled={loading || !input.trim()}
                   className="outfit-question-send"
                   aria-label="Send outfit question"
@@ -6538,11 +6545,6 @@ export default function StylistChat({
                 </div>
               </div>
               </fieldset>
-              {loading && (
-                <div className="outfit-styling-generating-status" role="status">
-                  {loadingStatus || (pendingOutfitAction === 'question' ? 'Answering your question…' : 'Composing your outfit direction…')}
-                </div>
-              )}
             </StylistLandingPanel>
           </div>
         )
