@@ -1,6 +1,35 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-29. Branch `stylist-docs-staleness-fixes`.
+**Last updated:** 2026-07-29. Branch `experiment/b2-readable-critique-clean`, rebased onto
+`origin/main` at `160d992`.
+
+## 2026-07-29 — B2 readable critique experiment
+
+The owner retained the B2 ruling that `Visible facts` must not be deleted: it is the falsifiable
+record of what the model believed it saw. The current experiment separates that evidence from what
+the client reads without adding a second provider call.
+
+The default `userCritique` answers first with a short reason, one action, and one check. The
+collapsed surface is now **More detail**, backed by a dedicated four-paragraph
+`detailedCritique` written last in the same evaluator response. Full `visibleFacts` remain stored
+for diagnosis and follow-up context. The requested schema removes redundant prose fields so this
+does not simply append another essay to the old response. Older saved evaluations retain the
+structured-field fallback.
+
+Several live iterations were deliberately rejected before reaching this shape. Deterministic
+headings were too short and too structured; unlabeled selected fields were only a longer summary;
+and joining every field restored depth but repeated itself because each field was independently
+authored. The dedicated field produced the first explanation with the intended depth and
+continuity (`thread_1785358062445`). It still sometimes uses internal stylist vocabulary and names
+internal evidence sources; those voice/provenance constraints remain open while the owner tests.
+Do not describe B2 presentation as ratified yet.
+
+No extra model call was added. Focused prompt-equivalence tests pass. The full pre-rebase suite
+reported the documented seven UI/contract baseline failures plus four stale assertions tied to the
+old structured-read labels; fresh main contains their migrated versions. After rebasing, current
+`origin/main` itself blocks the imported critique suite because
+`styling-engine/outfitSetPlanner.js` declares `pieceNeedsBase` twice; that upstream defect is not
+part of B2 and was not silently repaired here.
 
 ## 2026-07-29 — rejected looks are shown and repaired, not discarded
 
@@ -779,9 +808,10 @@ structured-feedback-chip case, and the owner ruled the chip's own active-state c
 
 **B2 partially ruled 2026-07-29** — retain `Visible facts` as diagnostic evidence of what the
 model believed it saw; do not delete it merely because it describes the supplied photograph.
-This is not approval of the current structured read unchanged. It remains too long for ordinary
-use and still needs a shorter, layered presentation that keeps deeper model-premise evidence
-available for debugging.
+This is not approval of the old structured read unchanged. The active experiment now separates a
+concise `userCritique`, a same-call four-paragraph `detailedCritique` behind **More detail**, and
+the stored `visibleFacts` diagnostic record. Depth and structure are now close to the intended
+shape; final voice/provenance constraints and editable intent remain under test.
 
 **Later capsule rulings reconcile C1/C2/D1.** Capacity is reported separately from a curated
 `min(piece_budget, 12)` representative rotation; allocation is coverage-first and bounded by
@@ -789,9 +819,9 @@ per-slot capacity plus whole-plan distinct-core feasibility; the piece budget re
 finite-roster bound; and the roster is no longer trimmed to only pieces appearing in the shown
 cards. The findings doc records which parts of the panel proposals survived.
 
-**Not ruled:** B2's presentation, B3 diagnostic cards, C4, C5's wording, and which unresolved
-E propositions become product commitments. Recommended order: finish B2's presentation decision,
-then B3.
+**Not ruled:** B2's final presentation/voice, B3 diagnostic cards, C4, C5's wording, and which
+unresolved E propositions become product commitments. Recommended order: let the B2 experiment
+run, then finish its presentation decision before B3.
 
 **Stage 2** (Mode A craft review, per flow) not started. It should use the surface map's inventory.
 

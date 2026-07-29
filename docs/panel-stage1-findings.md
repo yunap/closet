@@ -309,6 +309,38 @@ secondary diagnostic expansion or debug surface. The ruled-out solution is delet
 `Visible facts`; the remaining question is how to separate the concise critique from its deeper
 diagnostic record.
 
+**Experiment in progress, 2026-07-29 — not yet a final presentation ruling.** Branch
+`experiment/b2-readable-critique-clean`, rebased onto `origin/main` at `160d992`, now tests a
+three-layer answer without adding a second model call:
+
+1. `userCritique` is the default read: answer, short reason, one action, and an observable check.
+2. **More detail** is a purpose-written `detailedCritique` returned by the same evaluator as four
+   connected client-facing paragraphs. It replaces the attempted formatter-only solutions, which
+   either became too short or exposed the seams and repetition between independently written
+   diagnostic fields.
+3. The complete `visibleFacts` object remains in the stored evaluation for falsifiability and
+   follow-up context; it is no longer copied wholesale into the ordinary disclosure.
+
+The requested schema drops redundant prose fields (`summary`, roles, scores, `works`/`risks`,
+`styleIdea`, `mainSuccess`, and `executionGap`) so the detailed explanation replaces output rather
+than merely adding tokens. The UI renders the critique as Markdown, uses **More detail** rather
+than **Full structured read**, and retains the old structured-field formatter only as a
+backward-compatible fallback for saved evaluations without `detailedCritique`.
+
+The live sequence established why each iteration changed:
+
+- `thread_1785356337371`: deterministic headings were too short and too visibly structured.
+- `thread_1785356838715`: unlabeled stitched fields still read as a slightly longer summary.
+- `thread_1785357460237`: restoring all fields produced the right depth but repeated the same
+  diagnosis because each field was written to stand alone.
+- `thread_1785358062445`: a dedicated four-paragraph field reached the intended depth and flow
+  without a parse failure or another provider call.
+
+What remains open is narrower: the dedicated explanation still sometimes uses stylist shorthand
+(`hero`, `register`, `visual weight`, `floor line`) and exposes internal provenance such as saved
+wardrobe history. The architecture is promising and is being tested before ratification; final
+voice constraints, provenance language, and whether `Intent` should become editable remain open.
+
 ### B3 — What the "needs review" card should be (proposition 3)
 - **Cost:** near-null surface (zero in the last 150 real threads); don't spend engineering here.
   One string warning that a `missing bottom` render will invent a garment.
