@@ -78,7 +78,9 @@ test('generate_outfits schema exposes styling intent enums', () => {
   assert.ok(proposeTool.input_schema.properties.pieces.items.properties.role.enum.includes('primary_top'), 'propose_outfit pieces carry a role enum')
   assert.match(proposeTool.description, /ONE (complete, )?coherent outfit/, 'propose_outfit is one outfit, not a roster group')
   assert.match(proposeTool.description, /NEVER pass multiple pieces of the same role/, 'propose_outfit forbids same-role groups')
-  assert.match(planTool.input_schema.properties.slots.description, /10-14 cards for a 24-piece capsule/, '24-piece seasonal capsules should request a representative outfit rotation')
+  assert.match(planTool.input_schema.properties.slots.description, /total card cap is min\(piece_budget, 12\)/, 'capsules should request a bounded representative outfit rotation')
+  assert.deepEqual(planTool.input_schema.properties.plan_kind.enum, ['trip', 'seasonal_capsule', 'coordinated_plan'])
+  assert.ok(planTool.input_schema.required.includes('plan_kind'), 'the model must declare the planning objective')
 })
 
 test('normalize styling intent defaults and preserves valid values', () => {
@@ -155,7 +157,16 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   // asked for weather instead of composing).
   assert.ok(STYLIST_SYSTEM.includes('Do NOT stall a multi-day plan with a weather question when no place is named'))
   assert.ok(STYLIST_SYSTEM.includes("call 'plan_outfit_set' NOW, proceeding on the calendar season inferred from today's date"))
-  assert.ok(STYLIST_SYSTEM.includes('you have everything you need — decompose and call \'plan_outfit_set\' rather than asking a clarifying question first'))
+  assert.ok(STYLIST_SYSTEM.includes('Named use cases do not automatically make a styling brief complete'))
+  assert.ok(STYLIST_SYSTEM.includes('Ask one concise clarification BEFORE declaring cards intent when the answer would materially change occasion coverage, activity safety, formality/register, footwear, or another required garment role'))
+  assert.ok(STYLIST_SYSTEM.includes('nice lunches versus backyard time or a real trail versus a nature walk'))
+  assert.ok(!STYLIST_SYSTEM.includes('you have everything you need — decompose and call \'plan_outfit_set\' rather than asking a clarifying question first'))
+  assert.ok(STYLIST_SYSTEM.includes('"I want a summer capsule" is a complete product request'))
+  assert.ok(STYLIST_SYSTEM.includes('Do not ask how many pieces'))
+  assert.ok(STYLIST_SYSTEM.includes('destination packing is `trip` even when it has a piece limit'))
+  assert.ok(STYLIST_SYSTEM.includes('make an At Home slot and an Errands / Weekends slot'))
+  assert.ok(STYLIST_SYSTEM.includes('both with `occasion:\'casual\'`'))
+  assert.ok(STYLIST_SYSTEM.includes('Do not invent a home hard filter'))
   assert.ok(!STYLIST_SYSTEM.includes('únicamente'))
   // Indoor slots are climate-controlled — the outdoor forecast must not drive an
   // office day toward sleeveless/beachy pieces (live finding: office week
@@ -172,7 +183,7 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   // category — Tops / Bottoms / Shoes — instead of use-case).
   assert.ok(STYLIST_SYSTEM.includes('For a CAPSULE, slot by USE-CASE, NEVER by garment category'))
   assert.ok(STYLIST_SYSTEM.includes('"N-piece capsule" means ~N distinct PIECES, not N outfits'))
-  assert.ok(STYLIST_SYSTEM.includes('larger seasonal capsules (18-24 pieces) should show a real rotation, usually 8-14 outfit cards'))
+  assert.ok(STYLIST_SYSTEM.includes('never exceed the engine cap of min(piece_budget, 12) cards'))
   assert.ok(STYLIST_SYSTEM.includes('do NOT default every slot to count 1'))
   assert.ok(STYLIST_SYSTEM.includes('ALWAYS set `piece_budget` to the number in "N-piece capsule"'))
   assert.ok(STYLIST_SYSTEM.includes('weighted toward SEPARATES that recombine'))
@@ -271,6 +282,13 @@ test('stylist prompt has professional-context competence as a system-side defaul
   }
 })
 
+test('stylist prompt treats capsule intent separately from its optional piece budget', () => {
+  assert.doesNotMatch(STYLIST_SYSTEM, /the budget is what makes it a capsule/i)
+  assert.doesNotMatch(STYLIST_SYSTEM, /16-20 cards|8-14 outfit cards/i)
+  assert.match(STYLIST_SYSTEM, /explicit seasonal-capsule plan kind makes it a capsule/i)
+  assert.match(STYLIST_SYSTEM, /never exceed the engine cap of min\(piece_budget, 12\)/i)
+})
+
 test('StylistChat carries generated styling context into ask requests', () => {
   const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
   const content = fs.readFileSync(chatPath, 'utf8')
@@ -279,6 +297,24 @@ test('StylistChat carries generated styling context into ask requests', () => {
   assert.ok((content.match(/stylingContext:\s*\{/g) || []).length >= 3, 'generated outfit thread memory should store stylingContext')
   assert.ok((content.match(/\.\.\.stylingContextFromMemory\(threadMemory/g) || []).length >= 3, 'ask requests should include carried styling context')
   assert.ok(!content.includes('activity: activeContext?.type === \'piece\' ? generateActivity : wardrobeOutfitActivity'), 'general ask body should reconcile activity through stylingContext')
+})
+
+test('planned-set presentation derives occasion and winter chips from the plan instead of generic request defaults', () => {
+  const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
+  const content = fs.readFileSync(chatPath, 'utf8')
+
+  assert.ok(content.includes("label: 'Mixed occasions'"), 'multi-occasion plan should not be labeled Casual')
+  assert.ok(content.includes("'Winter capsule' : 'Capsule'"), 'a capsule identifies itself, winter or otherwise')
+  // The first version tested /\bwinter\b/ against the user's prompt, so a
+  // winter *trip* was labelled "Winter capsule" and a summer capsule got no
+  // chip at all. The chip must come from the plan's own state.
+  assert.ok(
+    content.includes('plannedCards.find(outfit => outfit?.capsulePlanContext)?.capsulePlanContext'),
+    'the capsule chip should read the plan context, not the request wording'
+  )
+  assert.doesNotMatch(content, /\/\\bwinter\\b\/i\.test\(prompt\)/, 'no prompt-regex season labelling')
+  assert.ok(content.includes("String(query.season).toLowerCase() !== 'current season'"), 'generic Current season fallback must be hidden on planned sets')
+  assert.match(content, /type:\s*'trip_plan'[\s\S]*?chips:\s*planChips/, 'planned-set presentation should use its derived chips')
 })
 
 test('travelRequestCanResolveWeatherLive allows named-place single-occasion trips to use live weather', () => {

@@ -9780,6 +9780,40 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   max-width: 68ch;
 }
 
+.stylist-plan-notes-list {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.stylist-plan-expansion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.stylist-plan-expansion-actions button {
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent);
+  font: 600 var(--type-meta)/1.2 var(--font-sans);
+  cursor: pointer;
+}
+
+.stylist-plan-expansion-actions button:hover {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.stylist-plan-expansion-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .stylist-outfit-reason {
   margin-top: 14px;
   padding: 10px 0 0;
@@ -10292,7 +10326,7 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 
 .stylist-chat-scroll.is-existing-chat .chat-thread {
   /* Keep the last decision/result clear of the dock while it is pinned. */
-  padding-bottom: 28px;
+  padding-bottom: 112px;
   margin-bottom: 0;
 }
 

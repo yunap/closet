@@ -2357,6 +2357,192 @@ test('StylistChat gates raw engine internals behind the STYLIST_DEBUG_ENABLED de
   assert.doesNotMatch(src, /`\$\{cat\}s: \$\{cnt\}`/)
 })
 
+test('capsule expansion uses one bounded model call, the saved roster, and the saved indoor slot context', async () => {
+  const alternateTop = insertPiece({
+    name: 'navy stripe mock neck top',
+    category: 'top',
+    colors: ['navy', 'cream'],
+    occasions: ['casual'],
+    photo: seeded.photos.top,
+    reads_as: 'quiet striped mock neck top',
+    silhouette: 'fitted',
+    fabric_weight: 'medium',
+    formality: 'casual',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  let expansionCalls = 0
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    expansionCalls += 1
+    assert.match(system, /selecting ONE additional outfit for an existing capsule wardrobe/)
+    const promptText = String(messages?.[0]?.content || '')
+    assert.match(promptText, /environment: indoor/)
+    assert.match(promptText, /weather already resolved: indoor/)
+    assert.match(promptText, new RegExp(`\\b${alternateTop}\\b`))
+    return {
+      title: 'Stripe & Charcoal',
+      piece_ids: [alternateTop, seeded.bottom, seeded.shoe],
+      reason: 'The compact stripe gives the quiet wide-leg trousers a clear focal line.',
+    }
+  }
+
+  const planContext = {
+    version: 1,
+    piece_budget: 10,
+    capacity: 4,
+    roster_ids: [seeded.top, alternateTop, seeded.bottom, seeded.shoe],
+    is_winter_capsule: false,
+    slots: [{
+      id: 'casual_indoors',
+      label: 'Casual Indoors',
+      occasion: 'casual',
+      activity: 'none',
+      environment: 'indoor',
+      register: '',
+      weather_label: 'indoor',
+      weather_profile: {},
+      allowed_piece_ids: [seeded.top, alternateTop, seeded.bottom, seeded.shoe],
+    }],
+  }
+  const data = await postJson('/api/ai/expand-capsule', {
+    planContext,
+    slotId: 'casual_indoors',
+    slotLabel: 'Casual Indoors',
+    existingOutfits: [{
+      title: 'Existing casual look',
+      tripSlot: 'casual_indoors',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+    }],
+  })
+
+  assert.equal(expansionCalls, 1, 'capsule expansion must not enter a multi-iteration tool loop')
+  assert.equal(data.debug.providerCalls, 1)
+  assert.equal(data.structuredOutfits.length, 1)
+  assert.deepEqual(data.structuredOutfits[0].pieceIds, [alternateTop, seeded.bottom, seeded.shoe])
+  assert.equal(data.structuredOutfits[0].tripSlot, 'casual_indoors')
+  assert.deepEqual(data.structuredOutfits[0].capsulePlanContext, planContext)
+})
+
+test('capsule expansion stops after one invalid composition instead of silently retrying', async () => {
+  const alternateTop = insertPiece({
+    name: 'alternate casual knit',
+    category: 'top',
+    occasions: ['casual'],
+    photo: seeded.photos.top,
+    formality: 'casual',
+  })
+  let expansionCalls = 0
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    expansionCalls += 1
+    return {
+      title: 'Repeated core',
+      piece_ids: [seeded.top, seeded.bottom, seeded.shoe],
+      reason: 'This deliberately repeats the existing core.',
+    }
+  }
+  const planContext = {
+    version: 1,
+    piece_budget: 10,
+    capacity: 4,
+    roster_ids: [seeded.top, alternateTop, seeded.bottom, seeded.shoe],
+    is_winter_capsule: false,
+    slots: [{
+      id: 'casual_indoors',
+      label: 'Casual Indoors',
+      occasion: 'casual',
+      activity: 'none',
+      environment: 'indoor',
+      register: '',
+      weather_label: 'indoor',
+      weather_profile: {},
+      allowed_piece_ids: [seeded.top, alternateTop, seeded.bottom, seeded.shoe],
+    }],
+  }
+  const response = await fetch(`${baseUrl}/api/ai/expand-capsule`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planContext,
+      slotId: 'casual_indoors',
+      existingOutfits: [{
+        title: 'Existing casual look',
+        tripSlot: 'casual_indoors',
+        pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      }],
+    }),
+  })
+  const data = await response.json()
+
+  assert.equal(response.status, 422)
+  assert.equal(expansionCalls, 1)
+  assert.equal(data.debug.providerCalls, 1)
+  assert.match(data.error, /No automatic retry was made/)
+  assert.ok(data.validationFailures.length > 0)
+})
+
+test('capsule expansion stops for free when the saved slot has no unused core', async () => {
+  let expansionCalls = 0
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    expansionCalls += 1
+    return { title: 'Should never run', piece_ids: [], reason: '' }
+  }
+  const response = await fetch(`${baseUrl}/api/ai/expand-capsule`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      planContext: {
+        version: 1,
+        piece_budget: 10,
+        roster_ids: [seeded.top, seeded.bottom, seeded.shoe],
+        slots: [{
+          id: 'casual_indoors',
+          label: 'Casual Indoors',
+          occasion: 'casual',
+          activity: 'none',
+          environment: 'indoor',
+          core_capacity: 1,
+          allowed_piece_ids: [seeded.top, seeded.bottom, seeded.shoe],
+        }],
+      },
+      slotId: 'casual_indoors',
+      existingOutfits: [{
+        title: 'Only available core',
+        tripSlot: 'casual_indoors',
+        pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      }],
+    }),
+  })
+  const data = await response.json()
+
+  assert.equal(response.status, 409)
+  assert.equal(expansionCalls, 0)
+  assert.equal(data.debug.providerCalls, 0)
+  assert.match(data.error, /Full available rotation shown/)
+})
+
+test('capsule expansion uses provider-enforced structured output rather than prose JSON prompting', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const providerSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/provider.js'), 'utf8')
+
+  assert.match(routeSrc, /askStylistStructuredWithUsage\(\{/)
+  assert.match(routeSrc, /schema: CAPSULE_EXPANSION_SCHEMA/)
+  assert.doesNotMatch(routeSrc, /parseModelJson\(text, \{ context: 'capsule expansion'/)
+  assert.match(providerSrc, /response_format:\s*\{\s*type: 'json_schema'/)
+  assert.match(providerSrc, /tool_choice: \{ type: 'tool', name \}/)
+  assert.match(providerSrc, /block\?\.type === 'tool_use' && block\?\.name === name/)
+})
+
+test('atomic capsule composition receives roster thumbnails and full authoritative garment truth', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+
+  assert.match(routeSrc, /function capsulePlanCompositionSystemPrompt\(\)/)
+  assert.match(routeSrc, /piece_catalog: truthCatalog\.length \? truthCatalog : workbench\.piece_catalog/)
+  assert.match(routeSrc, /truthCatalog = rosterPieces\.map\(piece => `ID \$\{piece\.id\}: \$\{buildPieceText\(piece\)\}`\)/)
+  assert.match(routeSrc, /prepareWardrobeThumb\(filePath, `capsule-plan:/)
+  assert.match(routeSrc, /content\.push\(\{\s*type: 'image'/)
+  assert.match(routeSrc, /toolContext\.visuallySeenPieceIds\.add\(id\)/)
+  assert.match(routeSrc, /atomicCapsuleVisualPieces = visuallySeenIds\.length/)
+})
+
 test('StylistChat suppresses raw gate vocabulary on legacy stored diagnostic cards', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   // routes/ai.js no longer writes these fields, but thread payloads are durable and there is no
@@ -2411,7 +2597,18 @@ test('plan and whole-wardrobe responses still render the model\'s own prose answ
   // Widened: the canned-intro case (selected-piece / generic outfit ideas) replaced the prose with
   // boilerplate rather than dropping it, so `!compactIntro` must NOT gate this — every structured
   // response except previewOnly (which renders m.text in full above) gets the notes disclosure.
-  assert.match(src, /hasStructuredIdeas && !isPreviewResponse && String\(m\.text \|\| ''\)\.trim\(\)/)
+  assert.match(src, /const structuredPlanNotes = hasStructuredIdeas \? getTripPlanNotes\(m\.structuredOutfits\) : \[\]/)
+  assert.match(src, /structuredPlanNotes\.length > 0/)
+  assert.match(src, /className="stylist-plan-notes-list"/)
+  assert.match(src, /const planExpansionSuggestions = hasStructuredIdeas \? getPlanExpansionSuggestions\(m\.structuredOutfits\) : \[\]/)
+  assert.match(src, /Showing \$\{trim\.shown\} of \$\{trim\.requested\} requested/)
+  assert.match(src, /className="stylist-plan-expansion-actions"/)
+  assert.match(src, /Show another for \{trim\.label\}/)
+  assert.match(src, /setPendingCapsuleExpansion\(\{ \.\.\.trim, prompt \}\)/)
+  assert.match(src, /fetch\('\/api\/ai\/expand-capsule'/)
+  assert.match(src, /q === capsuleExpansionToSend\?\.prompt/)
+  assert.match(src, /const capacityExhausted = coreCapacity > 0 && shownForSlot >= coreCapacity/)
+  assert.match(src, /Full available rotation shown for \{trim\.label\}/)
   assert.doesNotMatch(src, /hasStructuredIdeas && !isPreviewResponse && !compactIntro/)
   assert.match(src, /<details className="stylist-plan-notes" open>/)
   assert.match(src, /stylist-plan-notes-body/)
@@ -2423,7 +2620,7 @@ test('plan and whole-wardrobe responses still render the model\'s own prose answ
   // responses styling-engine/core.js's formatStructuredOutfitFeedback assembles the message body
   // from the same Label/Strength/Silhouette/Pieces fields the cards already show.
   assert.match(src, /const isEngineFieldDump = \(text\) =>/)
-  assert.match(src, /!isEngineFieldDump\(m\.text\)/)
+  assert.match(src, /!isEngineFieldDump\(modelNoteText\)/)
   // A plan is one artifact — it must never be split behind "Show N more outfit results".
   assert.match(src, /const isSinglePlanArtifact = allOutfits\.some\(outfit => isPlannedSetSource\(outfit\?\.source\)\) \|\| Boolean\(message\?\.wholeWardrobe\)/)
   assert.match(src, /const hasDeferredOutfits = !isSinglePlanArtifact/)
@@ -3947,6 +4144,55 @@ test('a corrected retry with the same pieces supersedes its own earlier rejected
   const survivor = ctx.generatedOutfits[0]
   assert.equal(survivor.broken, undefined, 'the surviving card is the corrected, non-broken proposal')
   assert.match(survivor.engineNote, /experimental/, 'the original rejection reason carries forward as an honest note')
+})
+
+test('a one-piece correction supersedes this turn’s rejected attempt even when the model renames the direction', async () => {
+  const experimentalId = insertPiece({
+    name: 'experimental renamed retry top',
+    category: 'top',
+    colors: ['black'],
+    occasions: ['casual'],
+    photo: seeded.photos.top,
+    reads_as: 'experimental statement top',
+    recommendation_status: 'experimental',
+    fabric_weight: 'medium',
+  })
+  const ctx = {
+    generatedOutfits: [],
+    occasion: 'casual',
+    season: 'indoor',
+    declaredIntent: { want: 'cards', outfitCount: 1, turnMode: 'followup' },
+    retrievedPieceIds: new Set([experimentalId, seeded.top, seeded.bottom, seeded.shoe]),
+  }
+
+  const rejected = await executeTool('propose_outfit', {
+    label: 'Casual Indoors — Dark Tonal',
+    occasion: 'casual',
+    season: 'indoor',
+    pieces: [
+      { id: experimentalId, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+  }, ctx)
+  assert.equal(rejected.status, 'validation_error')
+  assert.equal(ctx.generatedOutfits[0].retryPending, true)
+
+  const accepted = await executeTool('propose_outfit', {
+    label: 'Casual Indoors — Stripe & Charcoal',
+    occasion: 'casual',
+    season: 'indoor',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ],
+  }, ctx)
+  assert.equal(accepted.status, 'success')
+  assert.equal(ctx.generatedOutfits.length, 1, 'renaming the corrected direction must not preserve the failed attempt as a second look')
+  assert.equal(ctx.generatedOutfits[0].label, 'Casual Indoors — Stripe & Charcoal')
+  assert.equal(ctx.generatedOutfits[0].broken, undefined)
+  assert.match(ctx.generatedOutfits[0].engineNote, /substitution/)
 })
 
 test('a corrected retry that swaps out the specific rejected piece supersedes the broken card too', async () => {

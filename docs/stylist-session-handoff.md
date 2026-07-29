@@ -2,7 +2,453 @@
 
 **Last updated:** 2026-07-28. Branch `stylist-docs-staleness-fixes`.
 
-## 2026-07-28 session, part 2 — Remove button didn't clear the board-feedback chip
+## 2026-07-28 — comprehensive capsule work and related fixes
+
+### Capsule design evaluation, six correctness fixes, and a selection rethink
+
+An evaluation pass over the capsule design and implementation. The architecture held up — explicit
+`plan_kind` routing, atomic one-call composition, and full garment truth plus thumbnails into that
+call are all the right calls and are not revisited. The defects were at the seams, and four of them
+compounded into the exact failure the last live run showed (13 looks planned, 10 shown, the closing
+model inventing prose outfits to cover the difference).
+
+**Shipped, all provider-free-verified, no billed call:**
+
+1. **Capsule allocation is now bounded by the plan's real distinct-core capacity.**
+   `allocateCapsuleRepresentativeRotation` sized each slot by its own
+   `capsuleOutfitCoreCapacity` while `validateSubmittedPlanOutfits` enforces distinct cores
+   *globally*. Overlapping slots — At Home and Errands routinely resolve to the identical gate
+   result — therefore double-counted shared cores. Measured on the live wardrobe: **sum of per-slot
+   capacities 253 against 91 actually distinct.** Allocation now tests each increment against the
+   whole plan (`capsuleRotationFeasible`, augmenting-path matching over the demand units), and a
+   slot retired for global infeasibility reports no unused core, so no billed "Show another" is
+   offered against an already-complete rotation.
+2. **The atomic capsule shortfall is disclosed.** `suppressModelCoverageGaps` kept raw per-slot
+   internals out of production notes — correct — but it also removed the only signal that looks
+   were missing, on the one path that cannot retry. New `describeCapsuleCompositionShortfall`
+   emits an honest total ("showing 10 of 12 planned looks — …") while the raw validator reasons
+   stay in the log. `boundedCapsuleFinalAnswer` no longer asserts completeness when the turn knows
+   it fell short.
+3. **Set-level rules no longer delete a valid card when no repair round exists.** The shoe-range
+   and transition-layer checks splice an accepted outfit out "so the normal resubmit path can
+   repair it" — but the atomic path forbids resubmission, so the splice simply deleted a wearable
+   look. Gated on a new `pendingPlan.boundedComposition`; the finding is still recorded.
+4. **Non-capsule plans got their budget curve back.** `planTotalOutfitCapForBudget` had been
+   collapsed to `min(budget, 12)` and every non-capsule caller passed 0 — pinning a 30-piece trip
+   at 8 looks. The curve (12/16/20 at 18/24/30) is restored under that name; the capsule cap now
+   lives in `capsuleTotalOutfitCap`. A regression asserts the two disagree at budget 24.
+   The ruling was always "trips keep the day curve"; only the code had drifted.
+5. **A capacity-trimmed slot names the real cause.** `describePlanCapTrim` blamed the card cap even
+   when allocation trimmed for core capacity; new `[rotation limit: …]` line for that case. The
+   chat's notes no longer offer "ask for the remaining looks" directly above "Full available
+   rotation shown" — the note states the fact, the action row states availability.
+6. **The plan's season chip reads plan state, not the prompt.** A `/\bwinter\b/` test against the
+   user's wording labelled a winter *trip* "Winter capsule" and gave a summer capsule no chip at
+   all. Now derived from `capsulePlanContext.is_winter_capsule`.
+
+**Live-reviewed in the sandbox, and it found a seventh thing.** New fixture
+`scratch/build_capsule_disclosure_demo_thread.js` drives the real planner against the sandbox
+wardrobe (no AI client, no network) and inserts a reviewable thread, so the new disclosure copy can
+be read as a user sees it. Doing that showed the capsule's own zero-capacity line reaching the user
+verbatim — `[missing wardrobe gap: "Errands / Weekends" has no complete gate-valid outfit core in
+this 10-piece capsule roster]`, brackets and engine vocabulary intact — which is the ratified
+"capsule-gap internals are developer evidence, not stylist copy" rule being broken in production.
+Now formatted like the others. Every bracketed line is gone from the rendered notes.
+
+Verification: focused planner/intent/observability/layout suites **196/196**; capsule offline
+matrix no structural gaps; summer replay 11/11 accepted with zero raw validator lines;
+roster-utility and lifestyle audits unchanged; style-claims, text ratchet, `git diff --check`, and
+`npm run build` all pass. `test/aiEndpointContracts.test.js` remains at the known **136 pass /
+7 pre-existing fail** baseline.
+
+**The larger finding is not a bug, and is written up separately:**
+**`docs/capsule-roster-selection-spec.md`** (draft, awaiting ratification). Owner's framing: a
+summer capsule should be "the ideal combination the stylist looking at my closet would pick", not
+24 defensible pieces. `capsuleVersatilityScore` scores every piece **in isolation** — nothing in
+the selector ever scores a pair or the set — and roster selection loads **no images at all**, while
+composition now gets thumbnails. So the stage that is more aesthetic is the blind one. Proposal:
+engine benches (gate-eligible, ranked, per-category and per-slot minimums) → model selects the
+roster as a set with a stated palette and per-piece job → engine validates deterministically with
+one bounded repair → existing atomic composition on the ratified roster. The six fixes above stand
+regardless of who ends up picking the roster.
+
+### Reserve guarantees are now checked once, at the end (2026-07-28)
+
+The bench work turned up independent evidence for the "seven sequential mutating passes with ad-hoc
+protected sets" problem, so it is fixed. Each reserve pass in `selectCapsuleRoster` states a
+guarantee, mutates the roster, and hands it to the next pass — which is free to undo it. Measured:
+a winter/casual capsule at budget 10 reached **2** register-compliant tops after
+`ensureCapsuleGroupReserve` and ended with **1**, because `ensureWinterIndoorTopBalance` swaps on
+sleeve coverage alone and knows nothing about register. Two of the final three tops were unwearable
+in the very slots that requested them.
+
+Fixed with a post-condition check rather than a fourth protected set: `capsuleRosterPostConditions`
+collects what each pass promised (register reserve per group, winter covered bases, both winter
+layer roles, every shoe demand) as data, and `enforceCapsulePostConditions` repairs violations after
+all passes have run. Two properties make it safe: a swap target must leave every *already satisfied*
+condition satisfied **after the swap** (judging removal alone rejects exactly the repairs worth
+making — that was a real bug caught by its own test), and a roster with nothing violated is returned
+untouched, which is what keeps ratified selections byte-identical. A guarantee the wardrobe cannot
+meet is reported on `roster.postConditionGaps` instead of being silently abandoned. Declaring the
+guarantees as data also means a future reserve pass is checked automatically rather than relying on
+whoever adds it to thread a protected set correctly.
+
+Effect on the provider-free matrix: no scenario regressed, three improved — winter/casual 10
+weakest-slot cores 2→4, winter/mixed 14 2→3, summer/casual 18 13→16. Summer replay still 11/11,
+structural gaps still none, focused suites 209/209, `aiEndpointContracts` still 136/7.
+
+**`docs/capsule-bench-implementation-brief.md`** is the delegable slice of that spec — migration
+steps 1–2 (bench builder, roster validator, bench width check), all deterministic with free offline
+acceptance criteria, written for an agent starting cold. Step 3 (the roster-selection model call) is
+deliberately excluded: its constraints are easy to satisfy in letter and miss in spirit, and its
+failure mode is discovered by a billed call.
+
+Owner rulings recorded in that spec: bench size **40** (with a free offline width check first),
+**palette becomes an input**, and the roster rationale ships **user-visible and is judged on the
+evidence** rather than hidden on a guess. The palette section was corrected mid-draft by the owner
+— it had claimed the person can't know their wardrobe's colors before seeing a capsule, when the
+Wardrobe page already ships a data-derived color filter. Measured while fixing it: **38 distinct
+stored color values, 37 inside the picker vocabulary, exactly 1 off-vocabulary mention in 466** —
+so the vocabulary is clean and usable as a real input. Two caveats went in with it: `colors` is
+owner-corrected on only **13 of 241** pieces (~95% tagger-set, unlike `formality`'s 86%
+hand-corrected), and **66% of all color mentions match `CAPSULE_NEUTRAL_COLORS`**, meaning
+`capsuleVersatilityScore`'s +12 neutral bonus fires on two-thirds of the wardrobe and is closer to
+a baseline offset than a selector.
+
+### Capsule-design session completion record
+
+This is the consolidated handoff for the capsule work completed in this session. The detailed
+chronology and evidence remain below; this section is the authoritative short reading path.
+
+### Owner rulings and product boundary
+
+- A person can ask simply for “a summer capsule” or “a winter capsule.” The stylist owns the
+  capsule expertise: it may ask one natural lifestyle question when the answer materially changes
+  the plan, but must not require the person to supply stylist language, internal occasion slots,
+  layering instructions, a representative-rotation rule, or a piece count.
+- Seasonal capsules and trips share the conversation-led planning architecture, but they are
+  different plan kinds. A budgeted trip remains a trip. Capsule-only roster selection, rotation
+  capacity, validation, and bounded composition must never activate merely because a request has
+  a piece budget.
+- An unnumbered seasonal capsule uses a 24-piece working ceiling; an explicit user number wins.
+  The initial display is a curated representative rotation capped at
+  `min(piece_budget, 12)`, not a claim that the capsule contains only the displayed garments.
+- Winter indoor clothing is not evaluated as though the wearer remains outdoors. Tops are indoor
+  bases; the roster must still represent winter realistically with sleeve-covered options, a
+  reusable indoor cardigan, and a separate transition coat/jacket when the budget supports those
+  jobs. A winter sleeveless base is valid only when its displayed indoor outfit includes the
+  appropriate cardigan layer.
+- A capsule roster piece must have at least one legitimate requested-context job. Eligibility is
+  the union of the real slot gates, not their intersection. “Eligible but not displayed” is not
+  the same as “blocked.”
+- The Visual Composer's recently-styled-piece memory does not currently influence capsule
+  selection. That separation was accepted for now; no new memory coupling was added.
+- Raw validator coaching, coverage-gap internals, capsule-gap internals, and retry diagnostics are
+  developer evidence, not production stylist copy.
+
+### Implemented capsule behavior
+
+- Introduced explicit `plan_kind` routing (`trip`, `seasonal_capsule`, `coordinated_plan`) while
+  preserving the conversational model's control over whether and how to plan.
+- Added the 24-piece default, category quotas, coverage-first roster correction, per-slot capacity,
+  representative-rotation allocation, distinct-core enforcement, truthful plan chips and notes,
+  and a finite-roster expansion path.
+- Split explicitly named home time from errands/weekends during capsule decomposition without
+  inventing a new `home` hard gate. Current wardrobe metadata is too sparse to support that gate
+  honestly.
+- Added slot-aware preselection so pieces blocked by every requested slot cannot consume a finite
+  capsule quota. The selector remains unchanged when no slots are supplied.
+- Corrected seasonal-capsule shoe reuse: all shoes deliberately selected into the finite capsule
+  may be demonstrated; the packing-light three-shoe ceiling remains for trips and other ordinary
+  `reuse:maximize` plans.
+- Preserved model-authored card titles, surfaced deterministic plan notes without clipping them,
+  changed the 12-card cap disclosure from failure language to curation language, and made
+  “Show another” unavailable when the saved slot's distinct-core capacity is exhausted.
+- Replaced the generic multi-turn capsule expansion loop with one bounded structured-output call
+  over the saved roster and slot. It performs no automatic corrective call after rejection.
+- Replaced the main capsule search/propose/retry loop with one atomic, provider-enforced structured
+  composition call after `plan_outfit_set` fixes the roster and slots. The outer model receives a
+  final prose turn with tools disabled; it cannot search, re-plan, submit more cards, or promise to
+  bypass the atomic result manually.
+- The atomic composer now receives full structured garment truth plus a 448px thumbnail for every
+  roster piece with an available image. This fixed the earlier partially blind composition
+  contract that omitted pairing and real-wear rules.
+- The composition schema now requires exactly the requested representative-look count. Its output
+  ceiling scales with that count (actual generated tokens determine billed output cost). Empty or
+  partial arrays cannot be reported as success; an empty atomic result becomes an engine error and
+  cannot lead to “I’ll build it myself slot by slot” continuation prose.
+
+### Live evidence and corrections
+
+- The original winter capsule exposed excessive retrying, partial-result loss, generic titles,
+  missing cardigan/transition-layer roles, warm-season tops dominating an indoor winter rotation,
+  incorrect plan chips, repeated shoes, clipped notes, and internal validation text leaking into
+  the UI. Each finding was converted into provider-free regression coverage before the next live
+  check.
+- The first one-call “Show another” attempt proved the no-retry architecture but failed because
+  free prose consumed the JSON allowance. Expansion now uses provider-enforced structured output.
+  A later attempt correctly stopped after one invalid result; saved capacity now prevents offering
+  a billed action where no unused core exists.
+- The first simple summer request (`thread_1785272841293`) verified natural one-question intake,
+  the 24-piece default, roster images, atomic composition, and immediate tool shutdown. It exposed
+  the seasonal shoe-cap leak, production debug-note leakage, and a combined home/errands context;
+  all three were corrected offline.
+- The first trip comparison (`thread_1785271684246`) ran against a stale process and is not valid
+  isolation evidence. After restart, `thread_1785272563870` stayed on the ordinary trip path and
+  produced all four requested looks without capsule context. Weather follow-through after a
+  destination clarification and the dress-plus-patterned-shawl result remain separate open trip
+  findings.
+- A subsequent summer capsule returned zero cards and said the engine needed more guidance before
+  promising manual slot-by-slot construction. Offline reconstruction proved that every requested
+  slot had ample valid supply (allowed-piece counts 13/13/13/22/24; distinct valid core capacities
+  25/25/25/81/91). The cause was the atomic response contract, not the wardrobe: an empty array was
+  schema-valid, the 12-look output allowance was tight, and omission language contradicted the
+  already-proved capacity. Exact-count schema enforcement, scaled output allowance, and the
+  explicit zero-result error path are now implemented.
+
+### Garment-data findings kept as data
+
+- Garments 93 and 172 were corrected by the owner from dressy to elevated; their earlier audit was
+  stale. They are eligible even when absent from a representative rotation.
+- Garment 97's top-level experimental status—not its nested AI profile—was the blocking source; the
+  owner changed it to trusted.
+- Garment 996775 is a puffer coat and was corrected by the owner to elevated with evening use; it
+  can serve elevated outdoor transitions. Garment 996762 remains appropriately blocked from
+  dinner use.
+- Many cardigans are top-level outerwear. Capsule logic now recognizes the indoor-cardigan job
+  through structured layer properties rather than assuming every outerwear record is an outdoor
+  coat.
+- No garment IDs or names were embedded in engine rules.
+
+### Cost controls and verification state
+
+- Added provider-free scenario matrices, captured-roster replays, lifecycle audits, roster-utility
+  audits, tool-script replay, per-call usage aggregation, and permanent contract tests. These are
+  the default workflow; live calls are reserved for final integration checks.
+- Current offline evidence after the exact-count/zero-result fix:
+  `test/plan_outfit_set.test.js` plus `test/stylingIntent.test.js` 130/130;
+  summer replay 11/11 accepted with no raw production validator lines; summer/winter
+  10/14/18/24 scenario matrix has no unexpected structural gaps; roster-utility, style-claims,
+  text-matching ratchet, and `git diff --check` pass.
+- The last complete dirty-worktree suite observed nine failures: the seven established AI-contract
+  baseline failures plus two unrelated current prompt/UI assertions. A later complete-suite retry
+  was blocked by sandbox `listen EPERM`, so do not claim a new full-suite baseline from the focused
+  runs. The stash list was inspected but not mutated; no trustworthy clean-stash comparison was
+  available.
+- No billed call was made by the agent for offline diagnosis or verification. Live tests were
+  initiated explicitly by the owner.
+
+### Current handoff point
+
+The owner restarted the backend and completed a fresh “I want a summer capsule” live test after
+the exact-count schema and zero-result handling changes (`thread_1785278212091`). Per the owner's
+instruction, the consolidated record above was completed **before** inspecting
+`/tmp/wardrobe-dev.log`.
+
+The log then confirmed that the exact-count correction worked: the atomic composer submitted the
+full bounded rotation in one call rather than returning an empty array. Ten cards were accepted.
+Two of the three submitted `City Outings & Museums` looks used high-heeled piece 199 and correctly
+failed the existing walking/activity gate. There was one validation pass, one partial acceptance,
+and no automatic retry. Persisted turn usage was four provider iterations total (intake intent,
+lifestyle/planning turn, nested atomic composition, and final prose), 14,603 input tokens, 2,987
+output tokens, 71,443 cache-read tokens, and 47,351 cache-creation tokens. All 24 roster images
+were attached to the atomic call.
+
+The run exposed a separate final-prose contract defect. Although `plan_outfit_set` said “10
+representative capsule outfits accepted” and explicitly prohibited additional actions, the outer
+model:
+
+- falsely called ten an “engine ceiling” (the requested 13 looks were curated to the 12-card
+  initial cap, then two city cards failed validation);
+- blamed the one-look nature-walk allocation instead of accurately disclosing the two rejected
+  city cards; and
+- manually supplied one extra city outfit and one extra nature-walk outfit in prose, with garment
+  IDs, even though neither suggestion was represented by a validated card.
+
+The internal high-heel failure reasons stayed out of the displayed structured cards, which is
+correct, but the final model filled the missing coverage with invented explanatory copy. Diagnose
+the final-response guard/contract before changing behavior; do not weaken the walking footwear
+gate and do not make another billed request until the prose-addition path has provider-free
+coverage.
+
+**Resolved offline after owner approval:** completed atomic capsules now pass through a
+capsule-specific final-answer check before the ordinary retrying output guards. A natural closing
+that only introduces the accepted cards passes unchanged. A closing that cites garment IDs absent
+from the accepted cards, invents an engine/card ceiling, or offers an additional/alternate outfit
+in prose is replaced locally with a concise deterministic statement that the displayed cards and
+Stylist's notes are the complete result. The replacement never asks the provider to retry and
+increments the persisted `capsule_final_fallbacks` counter.
+
+The same change removed the two remaining “budget implies capsule” planner fallbacks. Capsule
+selection now requires `planKind === "seasonal_capsule"` even for direct engine callers; focused
+tests were migrated to pass their intent explicitly. A permanent regression proves a budgeted
+`trip` keeps an empty capsule roster. The runtime stylist prompt also no longer says a budget is
+what makes a capsule, no longer advertises 14–20 displayed cards, and states the single
+`min(piece_budget, 12)` initial-rotation cap. The budget still controls a genuine capsule's roster
+size; it no longer determines plan identity.
+
+Offline verification after these changes: focused planner/observability/intent contracts 183/183;
+captured summer replay 11/11 accepted; summer/winter 10/14/18/24 matrix has no structural gaps;
+current roster-utility audit has zero all-slot-blocked selected pieces; style-claims,
+text-matching ratchet, and `git diff --check` pass. No billed call was made.
+
+### Seasonal capsule is now a first-class plan kind
+
+Owner ruling: a person may simply ask for “a summer capsule.” The product—not the person—must know
+what a useful seasonal capsule entails. Do not require the user to prescribe internal occasions,
+layering rules, a representative rotation, or a piece count. If lifestyle coverage is genuinely
+unknown, the stylist may ask one natural question that would materially change the result; it must
+not turn the intake into a stylist's questionnaire.
+
+Implementation:
+
+- `plan_outfit_set` now requires an explicit `plan_kind`: `trip`, `seasonal_capsule`, or
+  `coordinated_plan`. The question-text fallback exists only for old direct callers.
+- An unnumbered seasonal capsule receives the owner-ruled 24-piece working ceiling. An explicit
+  user number still wins. The selected coherent roster may be smaller and must report its truth.
+- Capsule roster selection, capsule validation, the larger representative-rotation cap, and the
+  atomic one-call composer are gated by `plan_kind === "seasonal_capsule"`, not by the presence of
+  a piece budget. A trip with a packing limit remains a trip and keeps the established trip
+  workbench.
+- After a successful atomic capsule composition, the outer conversational model receives one
+  final prose turn with no tools exposed. It cannot spend more iterations searching, re-planning,
+  or proposing cards after the bounded result already exists.
+
+Offline coverage includes the simple unnumbered request, the 24-piece default, explicit
+trip/capsule isolation, and post-composition tool shutdown. No billed model call was made.
+
+### Live trip-isolation verification and follow-ups
+
+The first attempted comparison (`thread_1785271684246`) began seconds before the separating code
+landed and therefore exercised the stale process: a 12-piece Tahoe packing list entered atomic
+capsule composition, returned only two of four requested looks, persisted `capsulePlanContext`,
+then continued through searches and a blocked proposal for nine provider iterations. Do not use
+that thread as evidence about the new routing.
+
+After restart, `thread_1785272563870` verified the intended boundary. The model explicitly sent
+`plan_kind:"trip"` with the same 12-piece budget; the ordinary slot workbench produced all four
+requested looks on its first submission; no capsule context or capsule-gap wording was persisted.
+The clarification also opened naturally instead of leaking the prior correction-shaped “You're
+right” phrasing. The completed plan turn used six provider iterations rather than nine.
+
+Two trip-flow findings remain open and are deliberately not capsule changes:
+
+- The stylist asked for a named destination because weather mattered, but after “It’s Tahoe” the
+  plan omitted dates and used `hot (estimated)` rather than resolving live weather. A destination
+  clarification must lead to the promised weather resolution when the forecast window can be
+  inferred or must ask for the missing dates plainly.
+- The dinner card paired a black abstract-print dress with a red paisley shawl and justified the
+  second pattern because it draped. This should be reviewed against the ratified stricter pattern
+  discipline; drape alone is not an exemption from the one-loud-print rule.
+
+### First simple summer-capsule live test and corrections
+
+`thread_1785272841293` verified the new intake and bounded architecture end to end. “I want a
+summer capsule” produced one natural lifestyle question; the answer became four lived use-case
+slots; `plan_kind:"seasonal_capsule"` received the 24-piece default; the atomic composer saw 20
+available roster photos; and the outer turn stopped immediately after the bounded result. The
+completed generation recorded four provider calls including the nested composition call, with no
+search/replan loop.
+
+The run also exposed three production defects, corrected offline:
+
+- A three-pair shoe cap attached to `reuse:maximize` rejected two restaurant looks even though the
+  24-piece seasonal roster intentionally contained four shoes. Seasonal-capsule reuse now means
+  mix-and-match value across the bounded roster; trip and other packing-light plans retain the
+  three-pair cap.
+- Atomic validation traces (`[capsule gap: ...]`, `[coverage gap: ...]`, validator coaching, and
+  bounded-composition internals) were copied into persisted stylist notes and then paraphrased by
+  the conversational model. Atomic failures now remain in server logs and numeric diagnostics;
+  production plan lines contain only the accepted representative rotation.
+- The bold botanical tiered midi skirt (92) was not a blind-image failure: its photo was available
+  and its structured truth says bold/loud hero, casual/city high, but home low. The composer blurred
+  “home” with “errands” inside one combined slot. The atomic composition contract now states that
+  `best_for` is the lived scenario, not decorative text, and that a broad occasion gate does not
+  override a garment's more specific context truth. A combined slot's rationale must name the
+  narrower context the look genuinely serves.
+
+Regression coverage proves seasonal capsules can use every shoe selected into their roster while
+ordinary `reuse:maximize` plans still block a fourth pair; atomic failure details remain observable
+but absent from production plan notes. Planner suite 118/118, provider-free capsule matrix has no
+structural gaps, style-claims and text ratchets pass, and the AI contract suite remains at the known
+136 pass / 7 pre-existing fail baseline. No billed call was made for these corrections.
+
+The live summer case is now a permanent provider-free fixture:
+`npm run test:capsule:summer-replay` reconstructs `thread_1785272841293`'s exact 24-piece roster
+and saved per-slot gates, then submits an 11-look structural reference rotation through the real
+validator and production metadata assembler. It proves 11/11 can clear from that roster, with zero
+validator failures and zero raw validator lines in production notes. The reference combinations
+are deliberately structural evidence, not saved aesthetic recommendations. This restores the
+preferred working rhythm: recorded live evidence becomes a free regression fixture; further
+capsule changes are batched offline before any final live acceptance run.
+
+`npm run test:capsule:lifestyle-audit` adds the structured lifestyle audit for the same roster.
+It found a real representation boundary: the frozen engine already has a `home_loungewear`
+profile and garment records carry `occasion_confidence.home`, but `home` is absent from the
+planner's controlled occasion vocabulary. The live planner therefore merged home with generic
+casual/errands. On the captured roster, 16 pieces are explicitly home-low, 8 are unknown, and zero
+are home-high/medium; across the entire active wardrobe only one top and one outerwear piece are
+home-high, two shoes are medium, and no bottoms are home-positive. Therefore adding a deterministic
+home gate now would falsely starve the capsule rather than solve the styling problem. Recommended
+next ruling: when the owner explicitly names both home and errands/weekends, keep them as separate
+lived-context slots while retaining the existing `casual` hard gate; let the model use `best_for`,
+full garment truth, and images to judge low-key home suitability. Do not add a new home hard filter
+until the metadata has enough coverage to support it.
+
+Owner agreed. Implemented as a capsule-decomposition rule in `STYLIST_SYSTEM`: explicitly named
+home time and errands/weekends become separate `At Home` and `Errands / Weekends` slots, both using
+the existing `casual` hard gate. No occasion vocabulary, profile, score, or garment gate changed.
+The saved summer replay now exercises the five-context split and still accepts 11/11 structural
+reference looks with zero raw production diagnostics. Prompt contract, planner suite 118/118,
+style-claims check, and text ratchet pass; no billed call was made.
+
+### Capsule roster slots must have a real job
+
+The captured summer roster exposed an audit-category error and one real selector defect. Garments
+93 and 172 were first audited from stale pre-edit formality values; after the owner's edits both
+are `elevated`, pass at least one requested slot, and were merely absent from the recorded
+representative rotation. That is legal: a representative rotation need not display all 24 roster
+pieces. Garment 132, by contrast, remained top-level `recommendation_status:"experimental"` and
+was blocked by every normal-composition slot even though its nested AI profile said trusted.
+
+`selectCapsuleRoster` now applies the existing trust/register/weather/activity gates to every
+requested slot before spending category quotas. Eligibility is a union: a piece may fail four
+contexts and still enter if it has one legitimate capsule job; a piece blocked from every context
+cannot consume the finite roster. With no slots, the generic selector is unchanged. The audit
+`npm run test:capsule:roster-utility` now reports historical “used,” “eligible but unused,” and
+“blocked everywhere” as separate states, and separately verifies that today's selector contains
+zero all-slot-blocked pieces. Permanent planner coverage pins the rule. No gate was weakened and
+no billed call was made.
+
+### Capsule testing cost controls, before capsule behavior work
+
+Added a provider-free testing layer before changing capsule behavior:
+
+- `scratch/diagnose_capsule_scenario_matrix.js` / `npm run test:capsule:offline` runs the real
+  roster selector and hard gates across summer/winter, budgets 10/14/18/24, and casual,
+  mixed-register, and social slot sets. No AI client, network request, or write. Its first run
+  reproduced the recorded winter defect for free: the 14-piece winter mixed-register roster has
+  zero evening cores, while summer at the same budget covers all slots.
+- `replayStylistToolScript` in `styling-engine/provider.js` replays
+  `declare_intent → plan_outfit_set → submit_plan_outfits → final` through the real tools and a
+  shared context without constructing a provider client. Acceptance coverage lives in
+  `test/plan_outfit_set.test.js`.
+- Every real tool-loop provider iteration now aggregates input/output/cache tokens into the turn's
+  `freeformDiagnostics`; the totals are returned in `/ask`'s existing `debug` payload and persisted
+  in `freeform_generation_runs` for later cost audits.
+
+No capsule selection, cap, trim, or composition behavior changed. Focused affected suite: 140/140
+passing. Full `npm test`: established 7-failure baseline. The required `git stash push -u` baseline
+check was attempted, but returned success while creating no stash and leaving the worktree
+unchanged; the existing top stash is older and unrelated, so it was deliberately not touched.
+
+**Winter gap diagnosed immediately afterward, still not fixed:** at budget 14 the initial winter
+roster's only evening-capable bottom is the dressy oatmeal crochet midi skirt (93).
+`capsuleDemandReserve` sees two requested casual looks and swaps that skirt for a second everyday
+bottom, raising casual capacity 2→5 while collapsing evening 4→0. Full piece-level trace and the
+general coverage-first policy implication are in `docs/stylist-bugfix-spec.md` → “Seasonal check.”
+
+### Remove button didn't clear the board-feedback chip
 
 The new Style Profile **Remove** button (added earlier the same session, see below) called the
 existing `DELETE /api/stylist-feedback/:id` endpoint, which archives the row and correctly
@@ -34,7 +480,7 @@ cross-checking `read_network_requests` for the expected DELETE call before trust
 fixed" API read. Always click via `ref`, not raw screenshot-derived coordinates, when the two
 differ.
 
-## 2026-07-28 session — A1/A2/A5 shipped, C3 ratified, piece-action-menu rebuilt end to end
+### A1/A2/A5 shipped, C3 ratified, piece-action-menu rebuilt end to end
 
 Re-verified panel-stage1-findings.md's Section A against the code (per its own "recurring failure
 mode" warning) before trusting the "accepted, not yet implemented" status line — confirmed it was
@@ -88,7 +534,7 @@ still accurate, then implemented and shipped:
     so it can't be linked even when a matching board and thread both still exist — see `## Open`
     below.
 
-## 2026-07-27 session — board feedback desync fixed, plus three bugs found along the way
+### Board feedback desync fixed, plus three bugs found along the way
 
 Picked up `docs/board-feedback-desync-spec.md` (previously "diagnosed, not implemented"). Now
 **implemented and live-verified** — see that spec's "The display fix" section for the mechanism
@@ -517,6 +963,164 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   of 40. Tested, not inferred (`scratch/measure_open_questions.js` Q3). No action needed unless the
   weights are being tuned; then start with the four that actually order it.
 - Smaller: the `All looks distinct` label branch unverified (not worth a billed call).
+<<<<<<< HEAD
+- **Capsule coverage-first ruling implemented 2026-07-28.** The roster selector now preserves an
+  actually gate-eligible elevated dress path, or an elevated top+bottom path, for every requested
+  dinner/gallery/smart-casual use case after reserving casual rotation. It protects the casual
+  minimum while making those swaps, stays inside the piece budget, and uses no garment IDs or
+  winter exception. Winter tops remain indoor bases; reusable outerwear supplies warmth.
+  `npm run test:capsule:offline` now reports 3/3 covered slots and four weakest-slot cores for the
+  real 14-piece winter mixed-register case (formerly 2/3 and zero evening cores). Explicit
+  restaurant dinners are tested as indoor; generic evening wording remains unchanged. Budget-10
+  mixed capsules still disclose real compression gaps.
+- **Capsule output contract implemented 2026-07-28.** Capsule cards are a representative rotation
+  capped at `min(piece_budget, 12)`; non-capsule plans keep the existing eight-card default. The
+  plan report now uses the full curated roster rather than only pieces appearing in submitted
+  cards, and separately states unique gate-valid outfit-core capacity across the requested use
+  cases. Capacity requires an eligible shoe, counts top+bottom and dress cores, deduplicates a core
+  that serves multiple slots, and does not claim every structurally valid core is aesthetically
+  equal.
+- **Capsule rotation allocation implemented 2026-07-28.** After real per-slot gates run, every
+  coverable use case gets one card before any use case gets multiplicity. Remaining cards go to
+  the largest unmet recurring demand, with stable slot order as the tie-break, bounded by both the
+  global capsule card cap and each slot's unique core capacity. Zero-capacity slots request no
+  impossible submission and produce an explicit wardrobe-gap plan line.
+- **Capsule representative quality implemented 2026-07-28.** Capsule submissions cannot repeat the
+  same top+bottom core or dress and call it a new representative merely by changing shoes, a layer,
+  or accessories. Non-capsule plans retain that flexibility. Shoe/register span stays model
+  judgment, delivered in the composition workbench: use the casual/elevated shoes already reserved
+  for their relevant slots and avoid unnecessary single-shoe dominance. No arbitrary shoe-count
+  taste gate was added.
+- **First live winter-capsule test diagnosed and fixed offline, 2026-07-28.** Preserved request log:
+  `scratch/run-logs/capsule-live-2026-07-28.log` (ignored local evidence, no credentials). The run
+  spent an estimated $0.5515 over ten Sonnet iterations and returned no visible capsule even though
+  two cards had briefly passed. Root causes fixed with regression tests: descriptive
+  `comfort-first` prose can no longer lower a structured casual slot to a lounge ceiling;
+  `submit_plan_outfits` recovers a JSON-encoded outfits array; and the partial-success gap-fill path
+  retains already accepted same-slot cards instead of replacing them. Console usage was present,
+  while that run's DB row stored zeros because the route process predated the persistence change;
+  the backend was subsequently restarted. Do not spend another live call until the provider-free
+  replay remains green and Yuna explicitly approves it.
+- **Successful live capsule quality follow-up implemented offline, 2026-07-28.** The screenshots
+  showed generic generated titles, no transition layer in any casual card, and one shoe dominating
+  a recurring use case despite another eligible capsule shoe. Model-authored titles now survive
+  assembly and UI rendering. Explicit "outerwear for transitions" language requires one
+  outerwear-bearing representative per coverable use case. A recurring capsule slot with at least
+  two gate-eligible shoes must demonstrate two; no-op for one-look slots or one-shoe supply. This is
+  representation of curated options, not a global shoe quota. Provider-free captured-ID replay:
+  `scratch/replay_capsule_live_2026_07_28.js`.
+- **Winter indoor capsule balance and truthful plan chips implemented 2026-07-28.** `indoor`
+  remains weather-neutral: it does not pretend a heated room has outdoor-winter physics, and
+  year-round sleeveless layering bases remain eligible. When the owner explicitly requests a
+  winter capsule, however, the finite roster no longer spends slots on `season = warm` pieces and
+  reserves a majority of sleeve-covered tops using structured `season` and `sleeve_type`. On the
+  real 14-piece captured replay this changed the top roster from four sleeveless tops out of five
+  to four sleeve-covered tops plus one sleeveless option, while retaining the reusable transition
+  jacket. This is a capsule-roster rule only and is provably absent when winter is not requested.
+  The plan header also derives its chips from the cards and request: this mixed plan now says
+  `Mixed occasions` / `Winter capsule` rather than leaking the generic freeform defaults
+  `Casual` / `Current season`.
+- **Winter capsule layer roles implemented 2026-07-28.** At budgets of 12 or more, an explicitly
+  winter capsule now shifts one top slot into outerwear and carries two structured layer jobs:
+  one medium/heavy everyday cardigan for indoor wear and one everyday coat/jacket that is heavy
+  or has an insulating fiber for outdoor transitions. The 14-piece allocation is therefore
+  4 tops / 4 bottoms / 1 dress / 2 layers / 3 shoes. On the real wardrobe the offline replay
+  selects `grey textured cardigan or fleece` plus `Black puffer coat`, instead of asking the
+  spring-weight olive utility jacket to do both jobs. No-op for non-winter requests and winter
+  budgets below 12. The owner corrected garment `996775` (Black puffer coat) to
+  `formality: elevated` with an explicit `evening` occasion. Explicit owner occasion tags take
+  precedence over stale low AI confidence, so the puffer is valid for brunch and
+  restaurant-dinner transition use; it remains intentionally excluded from casual indoor cores
+  by the everyday formality ceiling. Garment `996762` (grey textured cardigan or fleece) remains
+  dinner-blocked because its low evening confidence is consistent with the owner's judgment.
+  an outdoor transition layer should be judged by destination-occasion confidence.
+- **Winter capsule outfit-level layering and deterministic notes implemented 2026-07-28.**
+  A winter capsule's indoor roster may still contain a sleeveless base, but a submitted indoor
+  outfit using it must now include a structured medium/heavy cardigan; a coat or puffer alone is
+  not an indoor layer. This is an explicit-winter-capsule validation rule, not a general ban on
+  sleeveless tops or a change to indoor weather physics. Partial recovery also maps an
+  unambiguously compatible model-created `Supplement` slot back onto the original missing slot,
+  so a valid cardigan correction fills the gap instead of becoming an orphaned use case. Finally,
+  the UI renders `tripPlanLines` from the structured response under **Stylist's notes** even when
+  the model's closing prose is terse, while deduplicating lines the prose already repeats. The
+  thread receives extra bottom clearance so those notes are not hidden behind the sticky composer.
+- **Capsule card cap is now presented as curation, not failure, 2026-07-28.** The ratified
+  `min(piece_budget, 12)` initial rotation remains in force and no hidden billed looks are generated.
+  In the UI, the internal `[plan trimmed: …]` line is rewritten as “Showing M of N requested looks
+  in this 12-look representative rotation.” Each affected use case gets a **Show N more** action
+  that only pre-fills a same-roster, keep-existing-looks follow-up; it does not call the model until
+  the owner deliberately sends it. If future composition ever returns valid over-cap cards, retain
+  them rather than silently discarding them.
+- **Renamed single-outfit retries no longer render as extra recommendations, 2026-07-28.** The
+  first **Show 1 more** live follow-up rejected `black knit top` for exceeding the casual register
+  ceiling, then accepted a one-top substitution under a new title. Retry cleanup previously
+  required title equality, so the rejected attempt remained as a second `NEEDS REVIEW` Direction
+  and the UI claimed two looks. Rejections now carry same-turn retry provenance; an accepted
+  proposal sharing all but one piece supersedes that attempt even if the model renames it, while
+  preserving the rejection as an engine substitution note. The same log exposed a separate cost
+  problem still open: one ordinary extra look took six model iterations
+  (`declare → view → reject → search → view → accept → prose`), and the recovery search incorrectly
+  requested `weather:"hot"` for an indoor winter-capsule follow-up. That generic composition/cost
+  architecture is now bypassed for new capsule expansion actions as described below.
+- **Capsule expansion is now a one-call bounded operation, implemented offline 2026-07-28.**
+  Newly generated capsule cards persist the curated roster and normalized slot context that the
+  initial plan already resolved. **Show another for [use case]** reuses that state through
+  `/api/ai/expand-capsule`: only saved, still-active roster pieces are presented; one JSON
+  composition call is made; and the ordinary deterministic plan validator accepts or visibly
+  rejects it. There is no declare/search/view/propose/prose tool chain, no broad wardrobe search,
+  no weather reinterpretation, and no automatic corrective call after a rejection. Contract tests
+  assert both the successful one-call path and the invalid-result one-call stop. Legacy capsule
+  threads lack this saved state and intentionally do not show the action; generate a fresh capsule
+  after restarting the backend to test it. No live/billed call has been made for this change.
+  **First live expansion exposed and fixed one response-shape flaw:** the single call correctly
+  avoided all retries, but ordinary prose generation began with “Looking at…”, exhausted its
+  700-token output cap, and never completed JSON. Expansion now uses provider-enforced structured
+  output instead: a forced named tool on Anthropic and strict JSON Schema on OpenAI. This preserves
+  the one-call/no-retry contract while making narration structurally impossible. The failed live
+  attempt remains visible in the thread rather than being silently retried. The next live attempt
+  returned valid structure in one call but correctly failed validation: the saved casual slot had
+  one top and two bottoms, and both possible cores were already shown. Per-slot core capacity is now
+  persisted; exhausted slots say **Full available rotation shown** instead of offering a billed
+  action. The endpoint independently recomputes/checks capacity and returns with `providerCalls: 0`
+  before contacting a model, which also protects older threads whose UI lacks the new capacity field.
+- **Main capsule retry-loop reduction, step 1 was useful but falsified as a cost optimization,
+  2026-07-28.** The eight-call live
+  trace showed that deterministic validator rules were hidden until rejection. Every workbench slot
+  now states its exact required count and complete-outfit structure before composition: top+bottom
+  or dress, exactly one shoe pair, and outerwear never substituting for the top. Applicable slots
+  also receive the same winter sleeveless/cardigan, transition-layer coverage, and recurring
+  shoe-range requirements that validation already enforces. No gate or aesthetic rule changed; this
+  is earlier disclosure of the existing contract. Planner suite and the provider-free capsule matrix
+  remained green. The fresh live test made the larger problem measurable rather than solving it:
+  10 provider iterations, 4 submit calls, 4 validation failures, 4,782 output tokens, 460,487
+  cache-read tokens, 65,014 cache-creation tokens, and only 5 valid looks. The model avoided some
+  earlier structure mistakes but split overlapping use cases, searched outside the curated roster,
+  re-planned after partial success, and invented slot IDs. Keep the truthful requirements; do not
+  describe them as retry-loop control.
+- **Main enforced-capsule composition is now atomic behind the model-called planner, implemented
+  offline 2026-07-28.** This preserves the freeform architecture ruling: the conversational model
+  still decides that planning is needed and decomposes the request into slots. There is no client or
+  server capsule pre-route. Once `plan_outfit_set` resolves an enforced piece budget into a fixed
+  roster/workbench, the tool performs one provider-enforced structured composition call, validates
+  once, and returns accepted cards plus honest gaps. It cannot re-enter `submit_plan_outfits`,
+  re-call `plan_outfit_set`, or trigger generic card-delivery retries in the same turn. The nested
+  call's usage is included in the existing cost diagnostics. Non-capsule plans keep the existing
+  open model-workbench flow. Provider-free regression coverage proves one composition callback,
+  one validation pass, and blocked submit/replan attempts; planner suite 111/111, build green, and
+  the full AI contract suite remains at the known 135 pass / 7 pre-existing fail baseline. No billed
+  call was made for this implementation.
+- **Atomic capsule composition now sees the roster and its full garment rules, 2026-07-28.**
+  Before the first live test, a screenshot from the preceding open-loop run exposed a relaxed olive
+  fleece hoodie under a relaxed cashmere cardigan. Both database records already said to avoid
+  another loose top, but the plan workbench's compact catalog omitted those `do_not_pair_rules`, and
+  photos were available only when the open-loop model happened to call `view_pieces`. The atomic
+  call now sends `buildPieceText` truth for every fixed-roster garment and attaches its 448px
+  thumbnail when available. Successfully attached IDs are recorded as visually seen; no-photo
+  pieces remain tag-only. `atomicCapsuleVisualPieces` is surfaced in the existing turn diagnostics.
+  This deliberately spends image tokens inside the one bounded call rather than testing a cheaper
+  but partially blind composer. Still no billed call made.
+=======
+>>>>>>> origin/main
 - **Legacy `message`-type feedback can't find its own thread or board, even when both still
   exist.** Found 2026-07-28 tracing a real Style Profile row (`wardrobe.db` id 340, a `works` /
   `Gold` entry on "dark grey gathered mini dress"). Its `target_type` is `message` (a thumbs-up on

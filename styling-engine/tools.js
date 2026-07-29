@@ -9,13 +9,16 @@ import { getCurrentWeatherProfile } from './weather.js'
 import {
   normalizePlanSlots,
   planTotalOutfitCapForBudget,
+  capsuleTotalOutfitCap,
   buildPlanSlotWorkbench,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
   mergePendingPlanForReplan,
   reasonRevisesMidSentence,
+  describeCapsuleCompositionShortfall,
   REASON_REVISION_MESSAGE,
-  printPairingSightIssue
+  printPairingSightIssue,
+  MIN_ENFORCED_CAPSULE_BUDGET
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind } from './attributes.js'
@@ -49,6 +52,19 @@ export function sanitizePlanConstraintsForQuestion(rawConstraints = {}, question
     delete constraints.no_repeat
   }
   return constraints
+}
+
+export const DEFAULT_SEASONAL_CAPSULE_BUDGET = 24
+export const PLAN_KINDS = new Set(['trip', 'seasonal_capsule', 'coordinated_plan'])
+
+export function resolvePlanKind(rawKind = '', question = '') {
+  const explicit = String(rawKind || '').trim().toLowerCase()
+  if (PLAN_KINDS.has(explicit)) return explicit
+  // Intent fallback only. The model-facing schema owns the normal path, but
+  // this keeps older clients and malformed tool calls from turning a plainly
+  // named capsule into a trip merely because plan_kind was omitted.
+  if (/\bcapsule\b/i.test(String(question || ''))) return 'seasonal_capsule' // ratchet-allow: user plan intent, not garment matching
+  return 'coordinated_plan'
 }
 
 const SEARCH_WARDROBE_VISUAL_CAP = 16
@@ -153,6 +169,12 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       submitPlanValidationFails: 0,
       submitPlanResubmits: 0,
       submitPlanPartialAccepts: 0,
+      capsuleFinalFallbacks: 0,
+      providerIterations: 0,
+      providerInputTokens: 0,
+      providerOutputTokens: 0,
+      providerCacheReadInputTokens: 0,
+      providerCacheCreationInputTokens: 0,
       weatherSource: ''
     }
   }
@@ -457,13 +479,18 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "plan_outfit_set",
-    description: "Compose a coordinated SET of outfits across multiple use-case slots under shared constraints — trip packing, multi-day plans, event weekends. YOU decompose the request into slots (that's judgment: 'mainly wineries, hiking, maybe the coast' → winery days + dinner + hike + optional coast day). In engine mode, the deterministic engine composes gated outfits per slot and returns cards plus a plan summary. In model-composition mode, this returns slot rosters; YOU then compose the outfits and call submit_plan_outfits once with every slot. Requires declare_intent want:'cards' first. Use this for multi-slot planning turns; use propose_outfit for one specific outfit and generate_outfits for a single-context batch.",
+    description: "Compose a coordinated SET of outfits across multiple use-case slots under shared constraints — capsules, trip packing, multi-day plans, event weekends. YOU decompose the request into slots (that's judgment: 'mainly wineries, hiking, maybe the coast' → winery days + dinner + hike + optional coast day). Enforced capsules are composed atomically inside this tool from their fixed roster and return finished cards plus any honest gaps; do not call submit_plan_outfits afterward. Other plans return slot rosters for YOU to compose and submit once with submit_plan_outfits. Requires declare_intent want:'cards' first. Use this for multi-slot planning turns; use propose_outfit for one specific outfit and generate_outfits for a single-context batch.",
     input_schema: {
       type: "object",
       properties: {
+        plan_kind: {
+          type: "string",
+          enum: ["trip", "seasonal_capsule", "coordinated_plan"],
+          description: "The objective, inferred from ordinary user language. Use 'seasonal_capsule' for a season-long wardrobe core, including a simple request such as 'I want a summer capsule'; use 'trip' for destination packing even when the trip has a piece limit; use 'coordinated_plan' for work weeks, event weekends, and other multi-outfit sets."
+        },
         slots: {
           type: "array",
-          description: "The plan's use-case slots, in wearing order. Estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination; one-off use cases usually get count 1. For compact/travel capsules, keep the set tight (about 6-8 outfit cards). For larger seasonal capsules with piece_budget >= 18, request a representative rotation instead of one card per category: about 8-12 cards for an 18-piece capsule, 10-14 cards for a 24-piece capsule, and up to 16-20 cards for a 30-piece capsule.",
+          description: "The plan's use-case slots, in wearing order. Estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination; one-off use cases usually get count 1. A capsule shows a representative rotation, never every possible combination: the total card cap is min(piece_budget, 12). Keep compact/travel capsules around 6-8 cards and larger seasonal capsules around 8-12 cards.",
           items: {
             type: "object",
             properties: {
@@ -506,7 +533,7 @@ export const STYLIST_TOOLS = [
         duration_text: { type: "string", description: "Stated or inferred plan duration (e.g. '5 days'), when known — shown as the plan's duration line." },
         day_breakdown: { type: "string", description: "Short natural breakdown of recurring day/evening needs — shown as the plan's 'Coverage' line." }
       },
-      required: ["slots"]
+      required: ["plan_kind", "slots"]
     }
   },
   {
@@ -634,6 +661,17 @@ export function coercePlanOutfitSetSlotsArg(rawSlots) {
     }
   } catch { /* unrecoverable — caller keeps the existing validation error */ }
   return null
+}
+
+export function coerceSubmitPlanOutfitsArg(rawOutfits) {
+  if (Array.isArray(rawOutfits)) return rawOutfits
+  if (typeof rawOutfits !== 'string') return null
+  try {
+    const parsed = JSON.parse(rawOutfits)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 function logAgentToolResult(name, result) {
@@ -1086,6 +1124,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const brokenOutfit = {
             label: label || 'Outfit',
             broken: true,
+            retryPending: true,
             rejectionReason: issues.join('; '),
             pieceIds: resolved.map(p => Number(p.id)),
             pieces: resolved,
@@ -1149,6 +1188,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const brokenOutfit = {
             label: label || 'Outfit',
             broken: true,
+            retryPending: true,
             rejectionReason: hardGateIssues.join('; '),
             pieceIds: resolved.map(p => Number(p.id)),
             pieces: resolved,
@@ -1185,11 +1225,10 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // a competing direction — don't render both as separate "Direction" cards. Two ways a
         // correction shows up:
         //  1. Same label, exact same pieces (e.g. re-proposing with anchor:true).
-        //  2. Same label, all but one piece the same (the model swapped out the specific piece
-        //     that failed the gate rather than overriding it) — e.g. the same "Warm Plaid Hero"
-        //     direction retried with different shoes after the first pair was rejected. Without
-        //     this second case, a same-direction retry that fixes itself by substitution still
-        //     rendered as a second, competing "Direction" card next to the broken one.
+        //  2. All but one piece is the same and this turn's immediately retryable rejection is
+        //     being corrected (or the label stayed the same for a legacy diagnostic). Models
+        //     routinely rename a direction after swapping the rejected piece; title equality is
+        //     presentation, not retry identity.
         // Either way, drop the superseded broken card and carry its rejection forward as an
         // honest note on the surviving card instead of silently discarding it.
         const supersededBroken = existingOutfits.find(outfit => {
@@ -1197,7 +1236,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const brokenPieceKey = outfit.pieceIds.slice().sort((a, b) => a - b).join('|')
           if (brokenPieceKey === proposedPieceKey) return true
           const brokenLabelKey = String(outfit.label || 'Outfit').trim().toLowerCase()
-          if (brokenLabelKey !== proposedLabelKey) return false
+          if (!outfit.retryPending && brokenLabelKey !== proposedLabelKey) return false
           const brokenIdSet = new Set(outfit.pieceIds.map(Number))
           const overlap = proposedPieceIds.filter(id => brokenIdSet.has(Number(id))).length
           const maxLen = Math.max(outfit.pieceIds.length, proposedPieceIds.length)
@@ -1458,6 +1497,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls')
+        if (toolContext.capsuleAtomicAttempted) {
+          return {
+            status: "validation_error",
+            message: "This turn already used its one bounded capsule-composition attempt. Present the accepted cards and disclosed gaps; do not re-plan or retry the capsule in this turn."
+          }
+        }
         // Spec 23 Part 1: detect a partial re-plan BEFORE anything below
         // mutates toolContext.pendingPlan — a plan already in progress this
         // turn (held outfits still pending submit, and/or cards from an
@@ -1495,6 +1540,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
         )
         const planWeather = String(args?.weather || '').trim()
+        const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '')
         // Capsule safety net: "N-piece capsule" states an explicit budget. The
         // model routinely forgets to set piece_budget (live: a "14-piece capsule"
         // came through with none, so the roster never enforced and 5 of 14 were
@@ -1502,14 +1548,21 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // fires; the model's own value always wins when present.
         const explicitConstraintsProvided = Boolean(args?.constraints && typeof args.constraints === 'object' && Object.keys(args.constraints).length > 0)
         let planConstraints = { ...(args?.constraints || {}) }
-        if (!(Number(planConstraints.piece_budget) > 0)) {
+        if (planKind === 'seasonal_capsule' && !(Number(planConstraints.piece_budget) > 0)) {
           const capsuleBudget = String(toolContext.question || '').match(/\b(\d{1,2})[-\s]?piece\b/i) // ratchet-allow: capsule budget extraction, not garment matching
-          if (capsuleBudget && /\bcapsule\b/i.test(String(toolContext.question || ''))) {
-            planConstraints.piece_budget = Number(capsuleBudget[1])
-          }
+          planConstraints.piece_budget = capsuleBudget
+            ? Number(capsuleBudget[1])
+            : DEFAULT_SEASONAL_CAPSULE_BUDGET
         }
+        if (planKind === 'seasonal_capsule' && !String(planConstraints.reuse || '').trim()) planConstraints.reuse = 'maximize'
         planConstraints = sanitizePlanConstraintsForQuestion(planConstraints, toolContext.question || '')
-        const planTotalOutfitCap = planTotalOutfitCapForBudget(planConstraints.piece_budget)
+        // A capsule's cap is combinatorial (min(budget, 12)); every other plan
+        // keeps the day-shaped curve, where a larger packing budget genuinely
+        // means more distinct days to dress. Passing 0 here would have pinned
+        // every trip at 8 regardless of its budget.
+        const planTotalOutfitCap = planKind === 'seasonal_capsule'
+          ? capsuleTotalOutfitCap(planConstraints.piece_budget)
+          : planTotalOutfitCapForBudget(planConstraints.piece_budget)
         const planSlots = normalizePlanSlots(sanitizedSlots, {
           fallbackWeather: planWeather || toolContext.weather || '',
           fallbackOccasion: toolContext.occasion || 'city',
@@ -1539,8 +1592,112 @@ async function executeToolInternal(name, args, toolContext = {}) {
           dateRange: planDateRange,
           mood: toolContext.mood || '',
           question: toolContext.question || '',
-          ownerRules
+          ownerRules,
+          planKind
         })
+        const useAtomicCapsuleComposition =
+          planKind === 'seasonal_capsule' &&
+          Number(planConstraints.piece_budget) >= MIN_ENFORCED_CAPSULE_BUDGET &&
+          typeof toolContext.composeCapsulePlanOnce === 'function' &&
+          !isPartialReplan
+        if (useAtomicCapsuleComposition) {
+          toolContext.capsuleAtomicAttempted = true
+          const pendingPlan = {
+            ...workbench.pendingPlan,
+            mode: 'model',
+            // The user did not request the model's internal per-slot target
+            // counts, so the raw per-slot coverage-gap internals stay out of
+            // production notes; the honest total shortfall is disclosed below
+            // in its own line instead.
+            suppressModelCoverageGaps: true,
+            // One composition call, one validation pass, no repair round —
+            // set-level rules must not drop an otherwise valid card here.
+            boundedComposition: true
+          }
+          const submittedOutfits = await toolContext.composeCapsulePlanOnce({
+            status: workbench.status,
+            instructions: workbench.instructions,
+            piece_catalog: workbench.piece_catalog,
+            slots: workbench.slots,
+            constraints: workbench.constraints
+          })
+          bumpFreeformDiagnostic(toolContext, 'submitPlanCalls')
+          if (!Array.isArray(submittedOutfits) || submittedOutfits.length === 0) {
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            toolContext.generatedOutfits = []
+            toolContext.source = 'plan_outfit_set'
+            toolContext.sourceLocked = true
+            toolContext.pendingPlan = null
+            toolContext.capsuleAtomicCompleted = true
+            return {
+              status: 'error',
+              bounded_composition: true,
+              message: 'The bounded capsule composer returned no outfits even though the deterministic roster has valid capacity. Do not build the capsule manually or call other styling tools in this turn; explain that composition failed and ask the user to retry after the engine issue is corrected.'
+            }
+          }
+          const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
+            visuallySeenPieceIds: toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+          })
+          const acceptedCounts = new Map()
+          for (const outfit of accepted) {
+            const slotId = outfit?._slotId || outfit?.slot_id
+            if (slotId) acceptedCounts.set(slotId, (acceptedCounts.get(slotId) || 0) + 1)
+          }
+          const shortfalls = []
+          let plannedTotal = 0
+          for (const slot of pendingPlan.slots || []) {
+            const target = Math.max(0, Number(slot.targetOutfits) || 0)
+            plannedTotal += target
+            const missing = target - (acceptedCounts.get(slot.id) || 0)
+            if (missing > 0) {
+              shortfalls.push({ label: slot.label, missing })
+              failures.push({
+                slot_id: slot.id,
+                label: slot.label,
+                reasons: [`bounded composition left ${missing} of ${target} requested look${missing === 1 ? '' : 's'} unfilled; no automatic retry was made`]
+              })
+            }
+          }
+          if (failures.length) {
+            bumpFreeformDiagnostic(toolContext, 'submitPlanValidationFails')
+            bumpFreeformDiagnostic(toolContext, 'submitPlanPartialAccepts')
+            console.log('[Atomic Capsule Validation]', failures)
+          }
+          // Raw validator reasons stay in the log; the shortfall itself is the
+          // user's to know. Without this, the turn renders fewer cards than it
+          // planned while every other surface asserts completeness.
+          const shortfallLine = describeCapsuleCompositionShortfall(shortfalls, {
+            plannedTotal,
+            acceptedTotal: accepted.length
+          })
+          if (shortfallLine) {
+            pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), shortfallLine]
+            toolContext.capsuleShortfall = {
+              missing: shortfalls.reduce((sum, entry) => sum + entry.missing, 0),
+              planned: plannedTotal,
+              accepted: accepted.length
+            }
+          }
+          const planOutfits = assembleSubmittedPlanOutfits(pendingPlan, accepted)
+          toolContext.generatedOutfits = planOutfits
+          toolContext.source = 'plan_outfit_set'
+          toolContext.sourceLocked = true
+          toolContext.pendingPlan = null
+          toolContext.capsuleAtomicCompleted = true
+          const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
+          return {
+            status: "success",
+            bounded_composition: true,
+            message: `${accepted.length} representative capsule outfit${accepted.length === 1 ? '' : 's'} accepted. These cards are already displayed. Present only the accepted rotation naturally and finish; no additional actions are available for this turn.${shortfallLine ? ` ${accepted.length} of ${plannedTotal} planned looks passed validation — say so plainly in one sentence if you mention the count at all. Do not describe the shortfall as an engine or card ceiling, and do not supply the missing looks yourself in prose.` : ''}`,
+            plan_lines: planLinesForResponse,
+            outfit_summaries: planOutfits.map(outfit => ({
+              slot: outfit.label,
+              coverage: outfit.coveragePosition,
+              weather: outfit.slotWeather || '',
+              pieceNames: (outfit.pieces || []).map(piece => piece.name)
+            }))
+          }
+        }
         if (isPartialReplan) {
           const merged = mergePendingPlanForReplan(priorPendingPlan, workbench.pendingPlan, {
             explicitConstraintsProvided,
@@ -1579,7 +1736,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         const pendingPlan = toolContext.pendingPlan
-        const submittedOutfits = Array.isArray(args?.outfits) ? args.outfits : []
+        const submittedOutfits = coerceSubmitPlanOutfitsArg(args?.outfits) || []
         const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
           visuallySeenPieceIds: toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
         })
@@ -1592,13 +1749,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
           countsBySlot.set(slotId, (countsBySlot.get(slotId) || 0) + 1)
         }
         const missingSlots = (pendingPlan.slots || []).filter(slot =>
-          (countsBySlot.get(slot.id) || 0) < Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1))
+          (countsBySlot.get(slot.id) || 0) < Math.min(3, Math.max(0, Number(slot.targetOutfits) || 0))
         )
         if (missingSlots.length) {
           failures.push({
             slot_id: '',
             label: 'Missing slots',
-            reasons: missingSlots.map(slot => `${slot.label} still needs ${Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1)) - (countsBySlot.get(slot.id) || 0)} outfit${Math.min(3, Math.max(1, Number(slot.targetOutfits) || 1)) - (countsBySlot.get(slot.id) || 0) === 1 ? '' : 's'}`)
+            reasons: missingSlots.map(slot => `${slot.label} still needs ${Math.min(3, Math.max(0, Number(slot.targetOutfits) || 0)) - (countsBySlot.get(slot.id) || 0)} outfit${Math.min(3, Math.max(0, Number(slot.targetOutfits) || 0)) - (countsBySlot.get(slot.id) || 0) === 1 ? '' : 's'}`)
           })
         }
         pendingPlan.heldOutfits = heldPlusAccepted
@@ -1623,7 +1780,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
           toolContext.generatedOutfits = planOutfits
           toolContext.source = 'plan_outfit_set'
           toolContext.sourceLocked = true
-          toolContext.pendingPlan = null
+          // Keep the accepted ledger available for the gap-fill path named in
+          // the response below. A subsequent plan_outfit_set call for the
+          // missing count must add to these cards, not replace them.
+          pendingPlan.partialDelivered = true
+          toolContext.pendingPlan = pendingPlan
           const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
           return {
             status: "success",

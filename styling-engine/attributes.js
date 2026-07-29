@@ -475,3 +475,13 @@ export function sleeveCoverage(p) {
   if (/\b(none|sleeveless|strap|tank|cami|camisole|halter)\b/i.test(s)) return 'none'
   return null
 }
+
+// Construction fact for hard pairing constraints. Unlike sleeveCoverage,
+// this intentionally does not discard a populated structured sleeve_type
+// merely because its tagger confidence is low: "sleeveless" is cheap to
+// verify from the garment photo, and treating it as covered creates the
+// higher-cost failure (an unwearable cold-weather outfit).
+export function hasSleevelessConstruction(p) {
+  const sleeve = String(p?.sleeve_type || '').toLowerCase().trim()
+  return ['none', 'sleeveless', 'strap', 'tank', 'cami', 'camisole', 'halter'].includes(sleeve)
+}

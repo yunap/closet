@@ -61,7 +61,7 @@ test('critique prose uses the shared readable body scale and a controlled line l
 })
 
 test('established chat composer stays pinned without covering the final result', () => {
-  assert.match(cssSource, /\.stylist-chat-scroll\.is-existing-chat \.chat-thread\s*\{[\s\S]*padding-bottom:\s*28px/)
+  assert.match(cssSource, /\.stylist-chat-scroll\.is-existing-chat \.chat-thread\s*\{[\s\S]*padding-bottom:\s*112px/)
   assert.match(cssSource, /\.stylist-composer-dock\.is-sticky\s*\{[\s\S]*position:\s*sticky;[\s\S]*bottom:\s*0;/)
   assert.match(cssSource, /\.stylist-composer-dock\.is-sticky \.stylist-input-shell,[\s\S]*width:\s*min\(100%, 880px\);[\s\S]*margin-inline:\s*auto/)
 })

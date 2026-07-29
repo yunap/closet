@@ -176,11 +176,15 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   const readyCards = Array.isArray(toolContext?.generatedOutfits)
     ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
     : 0
+  // An atomic capsule attempt deliberately degrades to accepted cards + honest
+  // gaps after one composition call. Re-entering the generic delivery retries
+  // here would undo that cost boundary and restart search/propose/replan.
+  const boundedCapsuleCompleted = Boolean(toolContext?.capsuleAtomicAttempted)
   // Declared cards, delivered none, and didn't ask the user anything: the
   // turn's contract is unmet. An answer containing a question is treated as the
   // model's own clarification judgment and passes.
   const askedAQuestion = String(answerText || '').includes('?')
-  if (!retried.has('cardsNotDelivered') && declaredIntent?.want === 'cards' && readyCards === 0 && !askedAQuestion) {
+  if (!boundedCapsuleCompleted && !retried.has('cardsNotDelivered') && declaredIntent?.want === 'cards' && readyCards === 0 && !askedAQuestion) {
     return fail('cardsNotDelivered', 'cardsNotDeliveredBlocks',
       "You declared want:'cards' but finished the turn with zero verified outfit cards and no clarifying question. Either compose now — search_wardrobe, then propose_outfit — or, if the wardrobe genuinely cannot satisfy the request, call declare_intent({ want: 'text' }) and explain the gap plainly.")
   }
@@ -192,7 +196,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
     return fail('imageNotDelivered', 'imageNotDeliveredBlocks',
       "You declared want:'image' but never called render_preview. Call render_preview({ outfit_index }) for a card produced this turn, or render_preview({ piece_ids }) with IDs from a verified card — or ask the user which look to render.")
   }
-  if (!retried.has('outfitCount') && requestedOutfitCount && turnWantsCards && readyCards > 0 && readyCards < requestedOutfitCount) {
+  if (!boundedCapsuleCompleted && !retried.has('outfitCount') && requestedOutfitCount && turnWantsCards && readyCards > 0 && readyCards < requestedOutfitCount) {
     const alreadySearched = (toolContext?.freeformDiagnostics?.searchCalls || 0) > 0
     const missingCount = requestedOutfitCount - readyCards
     return fail('outfitCount', 'outfitCountBlocks', alreadySearched
@@ -206,7 +210,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // cards before the loop starts — narrating those back is fine, hence the
   // preseeded exemption.)
   const hasPreseededOutfitCard = Array.isArray(toolContext?.generatedOutfits) && toolContext.generatedOutfits.length > 0
-  if (!retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
+  if (!boundedCapsuleCompleted && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
       (looksLikeUnproposedOutfitProse(answerText) || (!declaredIntent && looksLikeOutfitRequest(toolContext?.question)))) {
     const priorIds = extractPieceIdsFromProse(answerText)
     const idHint = priorIds.length
@@ -216,6 +220,47 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
       `This looked like a request for an outfit, but propose_outfit was never called this turn — the pieces must go through the tool call to render as a verified card, not a hand-written list. Call propose_outfit now with the outfit you'd suggest.${idHint}`)
   }
   return { block: false }
+}
+
+export function boundedCapsuleFinalAnswer(answerText = '', toolContext = {}) {
+  const outfits = Array.isArray(toolContext?.generatedOutfits)
+    ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken)
+    : []
+  if (!toolContext?.capsuleAtomicAttempted || !toolContext?.capsuleAtomicCompleted || !outfits.length) {
+    return { answer: String(answerText || ''), replaced: false, reasons: [] }
+  }
+
+  const acceptedPieceIds = new Set(outfits.flatMap(outfit =>
+    (outfit?.pieces || []).map(piece => Number(piece?.id)).filter(Number.isFinite)
+  ))
+  const outsideCardIds = extractPieceIdsFromProse(answerText)
+    .filter(id => !acceptedPieceIds.has(Number(id)))
+  const text = String(answerText || '')
+  const reasons = []
+  if (outsideCardIds.length) reasons.push(`piece IDs outside accepted cards: ${outsideCardIds.join(', ')}`)
+  if (/\b(?:engine|outfit|look|card|rotation)\b.{0,24}\b(?:ceiling|cap|limit)\b/i.test(text)) { // ratchet-allow: final-response contract language, not garment matching
+    reasons.push('unsupported engine-cap claim')
+  }
+  if (/\b(?:second|another|additional|extra|alternate|alternative)\b.{0,48}\b(?:option|look|outfit|combination)\b/i.test(text) || // ratchet-allow: final-response contract language, not garment matching
+      /\b(?:option|alternative)\s*:\s*(?:your|the|pair|wear|combine)\b/i.test(text)) { // ratchet-allow: final-response contract language, not garment matching
+    reasons.push('unvalidated prose outfit addition')
+  }
+  if (!reasons.length) return { answer: text, replaced: false, reasons: [] }
+
+  bumpFreeformDiagnostic(toolContext, 'capsuleFinalFallbacks')
+  // Don't assert completeness when the turn knows it fell short — that pairing
+  // (suppressed shortfall + "this is the complete result") is what made the
+  // hole invisible in the first place. Name the shortfall and point at the
+  // notes, which now carry the same number.
+  const shortfall = toolContext?.capsuleShortfall
+  const shortfallSentence = Number(shortfall?.missing) > 0
+    ? ` ${shortfall.missing} of the ${shortfall.planned} looks I planned did not pass this capsule's own rules and are not shown — see Stylist's notes.`
+    : " The cards and Stylist's notes are the complete result."
+  return {
+    answer: `Here ${outfits.length === 1 ? 'is' : 'are'} ${outfits.length} validated look${outfits.length === 1 ? '' : 's'} from your capsule rotation. I kept this turn to the combinations represented by the outfit cards below.${shortfallSentence}`,
+    replaced: true,
+    reasons
+  }
 }
 
 export function freeformToolLoopFallbackAnswer(toolContext = {}) {
@@ -517,6 +562,10 @@ export function extractToolResultImages(result) {
   return { textResult: JSON.stringify(stripped), images }
 }
 
+export function stylistToolsForTurn(toolContext = {}) {
+  return toolContext?.capsuleAtomicCompleted ? [] : STYLIST_TOOLS
+}
+
 // Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"
 // used to read identically whether the model wrote malformed JSON or the
 // response simply hit maxTokens mid-string — the tagger's actual cause
@@ -720,6 +769,73 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
   return askClaudeWithUsage({ system, messages, maxTokens, model })
 }
 
+// One provider call with a provider-enforced object schema. Use this for small deterministic
+// composition payloads where free-text narration is not a valid response and a corrective retry
+// would be wasteful. Anthropic is forced through one named tool; OpenAI uses strict json_schema.
+export async function askStylistStructuredWithUsage({
+  system = prompts.STYLIST_SYSTEM,
+  messages,
+  schema,
+  name = 'structured_response',
+  description = 'Return the requested structured response.',
+  maxTokens = 1200,
+  model = null
+}) {
+  const plainSystem = systemToPlainText(system)
+  const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
+  if (testResponse != null) {
+    const value = typeof testResponse === 'string'
+      ? parseModelJson(testResponse, { context: name, maxTokens })
+      : testResponse
+    return { value, usage: normalizeAiUsage(testResponse?.usage || null) }
+  }
+
+  assertProviderKey()
+
+  if (AI_PROVIDER === 'openai') {
+    const client = new OpenAI({ apiKey: resolveOpenAiKey() })
+    const response = await client.chat.completions.create({
+      model: OPENAI_MODEL,
+      max_tokens: maxTokens,
+      messages: [
+        { role: 'system', content: plainSystem },
+        ...messages.map(message => ({ role: message.role, content: contentToOpenAI(message.content) }))
+      ],
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name, strict: true, schema }
+      }
+    })
+    const text = response.choices?.[0]?.message?.content || ''
+    return {
+      value: parseModelJson(text, { context: name, maxTokens }),
+      usage: normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+    }
+  }
+
+  const resolvedModel = model || ANTHROPIC_MODEL
+  const client = new Anthropic({ apiKey: resolveAnthropicKey() })
+  const response = await client.messages.create({
+    model: resolvedModel,
+    max_tokens: maxTokens,
+    system: systemToAnthropicBlocks(system),
+    messages: (Array.isArray(messages) ? messages : []).map(message => ({
+      ...message,
+      content: toAnthropicContentBlocks(message.content)
+    })),
+    tools: [{ name, description, input_schema: schema }],
+    tool_choice: { type: 'tool', name }
+  })
+  const toolUse = response.content?.find(block => block?.type === 'tool_use' && block?.name === name)
+  if (!toolUse?.input || typeof toolUse.input !== 'object') {
+    throw new Error(`Model did not return the required ${name} structured response.`)
+  }
+  return {
+    value: toolUse.input,
+    usage: normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel })
+  }
+}
+
 
 export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
   const plainSystem = systemToPlainText(system)
@@ -732,6 +848,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     let answerStr = typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
     const retriedChecks = new Set()
     for (let i = 0; i < 6; i++) {
+      const capsuleFinal = boundedCapsuleFinalAnswer(answerStr, toolContext)
+      if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections: [] }
       const check = applyFreeformOutputChecks(answerStr, toolContext, retriedChecks)
       if (!check.block) break
       retriedChecks.add(check.blockType)
@@ -758,6 +876,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   for (let iter = 0; iter < 10; iter++) {
     if (AI_PROVIDER === 'openai') {
       const client = new OpenAI({ apiKey: resolveOpenAiKey() })
+      const availableTools = stylistToolsForTurn(toolContext)
       const response = await client.chat.completions.create({
         model: OPENAI_MODEL,
         max_tokens: maxTokens,
@@ -780,17 +899,20 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
             return mapped
           })
         ],
-        tools: STYLIST_TOOLS.map(t => ({
-          type: "function",
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: t.input_schema
-          }
-        }))
+        ...(availableTools.length ? {
+          tools: availableTools.map(t => ({
+            type: "function",
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: t.input_schema
+            }
+          }))
+        } : {})
       })
+      const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+      recordToolLoopUsage(toolContext, usage)
       if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
-        const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
         console.log('[OpenAI Tool Loop Usage]', {
           iter,
           inputTokens: usage.inputTokens,
@@ -845,6 +967,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = message.content || ''
+        const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
+        if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
         const check = applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
@@ -861,15 +985,19 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         return { role: m.role, content: toAnthropicContentBlocks(m.content) }
       }))
 
+      const availableTools = stylistToolsForTurn(toolContext)
       const response = await client.messages.create({
         model: ANTHROPIC_MODEL,
         max_tokens: maxTokens,
         system: systemToAnthropicBlocks(system),
         messages: formattedMessages,
-        tools: STYLIST_TOOLS
+        ...(availableTools.length
+          ? { tools: availableTools }
+          : {})
       })
+      const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
+      recordToolLoopUsage(toolContext, usage)
       if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {
-        const usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: ANTHROPIC_MODEL })
         console.log('[Anthropic Tool Loop Usage]', {
           iter,
           inputTokens: usage.inputTokens,
@@ -930,6 +1058,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         continue
       } else {
         const finalText = response.content?.[0]?.text || ''
+        const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
+        if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
         const check = applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
@@ -950,4 +1080,35 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
   }
   return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
+}
+
+export function recordToolLoopUsage(toolContext = {}, usage = {}) {
+  bumpFreeformDiagnostic(toolContext, 'providerIterations')
+  bumpFreeformDiagnostic(toolContext, 'providerInputTokens', Number(usage.inputTokens) || 0)
+  bumpFreeformDiagnostic(toolContext, 'providerOutputTokens', Number(usage.outputTokens) || 0)
+  bumpFreeformDiagnostic(toolContext, 'providerCacheReadInputTokens', Number(usage.cacheReadInputTokens) || 0)
+  bumpFreeformDiagnostic(toolContext, 'providerCacheCreationInputTokens', Number(usage.cacheCreationInputTokens) || 0)
+  return toolContext.freeformDiagnostics
+}
+
+// Provider-free orchestration replay for plan/tool-contract tests. Scripted
+// steps use the real tool executor and one shared context, but never construct
+// an AI client. Functional args let a submit step consume an earlier workbench.
+export async function replayStylistToolScript({ steps = [], toolContext = {} } = {}) {
+  const results = []
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue
+    if (step.final != null) {
+      results.push({ type: 'final', text: String(step.final) })
+      continue
+    }
+    const name = String(step.tool || '').trim()
+    if (!name) throw new Error('Replay step needs tool or final')
+    const args = typeof step.args === 'function'
+      ? await step.args({ results, toolContext })
+      : (step.args || {})
+    const result = await executeTool(name, args, toolContext)
+    results.push({ type: 'tool', name, args, result })
+  }
+  return { results, toolContext }
 }
