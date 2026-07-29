@@ -23,6 +23,7 @@ import {
   buildPlanSlotWorkbench,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
+  buildRejectedCapsuleCards,
   describeCapsuleCompositionShortfall,
   capsuleTotalOutfitCap
 } from '../styling-engine/outfitSetPlanner.js'
@@ -94,7 +95,27 @@ async function main() {
       }
     }
   }
-  submissions.pop() // one planned look deliberately not delivered
+  // Keep one deliberate rejection: resubmit an already-used core so the look is
+  // rejected as a duplicate, which is the repairable case the Fix action exists
+  // for (all pieces valid, no single garment named as the culprit).
+  // Same top+bottom core, DIFFERENT shoe: rejected because changing only the
+  // shoes is not a distinct representative look — and unlike a byte-identical
+  // resubmission it survives the UI's piece-set dedup, which is what a real
+  // model-produced duplicate looks like.
+  const firstSlot = pendingPlan.slots.find(slot => (slot.gateAllowedIds || new Set()).size)
+  const altShoe = [...(firstSlot?.gateAllowedIds || [])]
+    .map(id => pendingPlan.piecesById.get(Number(id)))
+    .filter(piece => piece && wardrobeCategoryGroup(piece) === 'shoes')
+    .find(piece => !submissions[0]?.piece_ids?.includes(Number(piece.id)))
+  const duplicate = submissions.length && altShoe
+    ? {
+        ...submissions[0],
+        title: `${submissions[0].title} (same core, new shoes)`,
+        piece_ids: submissions[0].piece_ids.map((id, index) => (index === submissions[0].piece_ids.length - 1 ? Number(altShoe.id) : id))
+      }
+    : null
+  submissions.pop()
+  if (duplicate) submissions.push(duplicate)
 
   const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submissions, {
     visuallySeenPieceIds: new Set(pendingPlan.capsuleRoster.map(piece => Number(piece.id)))
@@ -118,7 +139,12 @@ async function main() {
   })
   if (shortfallLine) pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), shortfallLine]
 
-  const planOutfits = assembleSubmittedPlanOutfits(pendingPlan, accepted)
+  const acceptedCards = assembleSubmittedPlanOutfits(pendingPlan, accepted)
+  const planContext = acceptedCards.find(o => o?.capsulePlanContext)?.capsulePlanContext || null
+  const rejectedCards = buildRejectedCapsuleCards(failures, pendingPlan)
+    .map(card => (planContext ? { ...card, capsulePlanContext: planContext } : card))
+  const planOutfits = [...acceptedCards, ...rejectedCards]
+  console.log(`rejected cards retained: ${rejectedCards.length}`, rejectedCards.map(c => `${c.label}: ${c.rejectionReason}`))
   if (!planOutfits.length) throw new Error('no cards assembled — fixture cannot be reviewed')
 
   console.log('\nplan lines rendered under Stylist’s notes:')

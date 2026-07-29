@@ -578,8 +578,10 @@ the register range independently. Before adding multiplicity at any register, th
 preserve at least one complete structural path (top+bottom or dress, plus shoes) for every requested
 slot/register. A minimal coverage-preserving choice here is better than the current local optimum:
 keep one everyday bottom plus the everyday dress for casual coverage and retain one
-evening-capable bottom or dress. Exact allocation remains part of the open A4/C1/C2/D1 capsule
-policy; do not patch piece 93 or add a winter exception.
+evening-capable bottom or dress. **This policy was subsequently ruled and implemented
+2026-07-28:** coverage precedes multiplicity, with complete register/use-case paths and shoe
+demands protected before additional rotation. The historical diagnosis still explains the fix;
+A4/C1/C2/D1 are no longer open allocation policy.
 
 **Indoor-weather caveat, checked after owner challenge 2026-07-28:** the original diagnostic
 applied the cold winter profile to every slot. The prompt tells the model to pass

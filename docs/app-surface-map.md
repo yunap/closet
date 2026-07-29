@@ -420,6 +420,12 @@ facts, tension, scores, roles.
 `Next:` / `Avoid for now:` / `Try next:` — ahead of the diagnostic dump. That ordering was a
 deliberate fix; do not "tidy" it back into field order.
 
+**[owner ruling 2026-07-29; presentation still open]** Keep `Visible facts`: it records what the
+model believed it saw and makes a wrong critique diagnosable. This does not ratify the current
+disclosure unchanged. The full structured read remains too long for ordinary use and needs a
+shorter, layered presentation, with the deeper premise evidence available through a secondary
+diagnostic expansion or debug surface.
+
 > **Stores.** Delimiter shared between `StylistChat.jsx:464` and `styling-engine/core.js`. Built by
 > `formatSharedOutfitEvaluation`.
 

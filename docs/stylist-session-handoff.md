@@ -1,6 +1,103 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-28. Branch `stylist-docs-staleness-fixes`.
+**Last updated:** 2026-07-29. Branch `stylist-docs-staleness-fixes`.
+
+## 2026-07-29 — rejected looks are shown and repaired, not discarded
+
+Follow-on to the capsule work in PR #184. Four changes, all offline-verified, no billed call made.
+
+### 1. A rejected capsule look is a card, not an absence
+
+**Owner ruling:** *"what we do in other flows is show the card with a disclaimer, do not throw it
+away, and fix locally on that card."* The atomic capsule path was the only composing surface that
+deleted a rejected attempt — `propose_outfit` has recorded `broken` / `brokenPieces` /
+`rejectionReason` cards for ages, and `StylistChat` already renders them as **needs review** with
+plain-language reasons. The capsule path assembled only `accepted` and announced the gap in prose.
+
+`validateSubmittedPlanOutfits` now carries the rejected attempt itself and **which piece was
+blocked**; `buildRejectedCapsuleCards` turns those into the existing broken-card shape, so the
+established rendering and its reason shim apply unchanged. Three follow-on corrections stop the old
+problem reappearing in a new place: the plan header counts only non-broken cards, the expansion
+offer ignores broken cards when counting a slot's shown looks, and the shortfall line points at what
+is on screen instead of announcing what is missing.
+
+**This supersedes the disclosure wording shipped in #184** — see the amendment in that entry below.
+
+### 2. `POST /api/ai/repair-capsule-look` — a deterministic in-place fix
+
+`providerCalls: 0`, always. The rejection names the blocked garment, `capsulePlanContext` holds the
+slot's gate-passing roster, and the real validator confirms the substitution — so the repair swaps
+one piece and re-validates with the existing looks as held outfits (a repair cannot duplicate
+another card's core). When the rejection names no single piece — a repeated core, say — it tries
+each piece in turn. Candidates come only from the slot's own allowed roster, so a repair can never
+smuggle in a garment that slot excludes.
+
+**It deliberately has no billed fallback.** An unfixable look returns 409 with *"No single swap from
+this capsule roster fixes that look — the pieces it would need are not in this capsule"*, which is a
+true statement about the capsule. A test pins `providerCalls: 0` on the failure path too.
+
+Live-verified in the sandbox: `POST → 200`, the broken card replaced in place, engine note
+*"Swapped cream cotton button-up shirt for rust corduroy button-up shirt."*
+
+**Verification trap worth knowing:** `?thread=<id>` is **not** the Stylist's URL parameter — it
+silently loads whatever thread was last active, and the rail labels threads by their first message
+rather than the `title` column. Both together produced two confident, wrong conclusions that broken
+cards were being dropped by the renderer. Nothing was wrong with the code. Same class as the
+screenshot-coordinate incident: a verification method that fails quietly.
+
+### 3. The final-answer guard logs what it replaces, and over-matched
+
+Its first live firing was undiagnosable — it incremented a counter, discarded the model's prose, and
+recorded neither the reasons nor the original, so a correct catch and a false positive looked
+identical afterwards. It now logs both.
+
+It was also probably wrong that time. Measured offline: the bare words *"another/second … look/
+option"* are ordinary English for explaining a rejection, and the tool message explicitly asks the
+model to explain one — the guard replaced *"I couldn't land a second option that worked with walking
+shoes."* An unvalidated **addition** now requires an actual garment: a piece ID, or a "wear/pair X
+with Y". Verified both directions — all five honest closings pass, all four real violations
+(engine-ceiling claim, prose outfits with IDs) still caught.
+
+### 4. Supply precondition, and the `needs_base` selector rule
+
+**Too little supply → ask for more of the closet, before composing.** `describeCapsuleSupplyGap`
+runs ahead of the composition call, so an unsustainable request also costs nothing. The framing is
+the ruling: the constraint is **what has been digitized, not what the person owns**, and the message
+must never read as a shopping recommendation. It names which contexts are uncovered and which
+category is short — that is what to photograph next — and offers what is possible now.
+
+A first threshold of "at least 3 cores" let the 23-piece sandbox case straight through (5 contexts,
+3 cores, one card — the exact failure this exists to catch). Replaced with a test that scales to the
+request: a capsule that cannot give every requested context even one distinct look is not a
+rotation. Measured: 243 pieces at budgets 24 and 10 proceed; 23 pieces at budget 10 declines,
+naming `Errands / Weekends` and `Restaurant Dinner (needs a top)`.
+
+**`needs_base`** (the field wired in #184, defaulting to unset) now does something: a garment that
+cannot be worn alone may only hold a place in a finite roster when something it can go over is also
+there. Expressed as a post-condition so a later pass cannot undo it, and **conditional** — the
+requirement is only added when a dependent piece is actually present, so an unpopulated field
+remains a strict no-op. The owner has hand-set two pieces (132, 258); on the real wardrobe 132 is
+selected at budgets 14 and 24 with 4 and 9 wearable-alone tops beside it.
+
+### Verification
+
+Focused suites **222/222**; `aiEndpointContracts` back to the documented **138 pass / 7 fail**
+baseline; capsule matrix reports no structural gaps; summer replay 11/11 accepted with zero raw
+validator lines; bench invariant holds; style-claims, text ratchet (`outfitSetPlanner.js` still at
+0 regexes), `git diff --check` and `npm run build` all pass.
+
+Two failures that appeared mid-session were **not** capsule-related: an in-flight
+`critiqueProse` → `userCritique` migration had updated one of three dependent assertions. The other
+two were finished (lines 1455 and 1600) rather than worked around.
+
+### One nuance the panel docs slightly overstate
+
+`docs/panel-stage1-findings.md` now says composition "requires recurring use cases to demonstrate a
+second gate-eligible shoe when one exists." That is stated to the model in `submission_requirements`
+and enforced in the open workbench path — but in the **atomic** capsule path it is advisory: since
+2026-07-28 that set-level check records the finding without dropping a card, because dropping one
+with no repair round available just deletes a wearable look. Accurate as a composition instruction;
+not a hard guarantee there.
 
 ## 2026-07-28 — comprehensive capsule work and related fixes
 
@@ -26,9 +123,14 @@ model inventing prose outfits to cover the difference).
 2. **The atomic capsule shortfall is disclosed.** `suppressModelCoverageGaps` kept raw per-slot
    internals out of production notes — correct — but it also removed the only signal that looks
    were missing, on the one path that cannot retry. New `describeCapsuleCompositionShortfall`
-   emits an honest total ("showing 10 of 12 planned looks — …") while the raw validator reasons
-   stay in the log. `boundedCapsuleFinalAnswer` no longer asserts completeness when the turn knows
-   it fell short.
+   emits an honest total while the raw validator reasons stay in the log.
+   `boundedCapsuleFinalAnswer` no longer asserts completeness when the turn knows it fell short.
+   **Superseded 2026-07-29 — read this before quoting the wording above.** The owner then ruled
+   that a rejected look is not announced as an absence at all: it is shown as a "needs review"
+   card and repaired in place, the way every other composing surface already does it. The line
+   now reads "N of M planned looks are ready — … need a fix and are shown below marked for
+   review". Disclosing the gap was the right fix for *silence*; showing the card is strictly
+   better and is what ships.
 3. **Set-level rules no longer delete a valid card when no repair round exists.** The shoe-range
    and transition-layer checks splice an accepted outfit out "so the normal resubmit path can
    repair it" — but the atomic path forbids resubmission, so the splice simply deleted a wearable
@@ -514,7 +616,8 @@ still accurate, then implemented and shipped:
   shoes/accessories (A1); a new "Scarcity Honesty" rule degrades look count instead of writing
   confident rationale for a violated brief (A2); a new "Pushback on a Specific Garment" rule
   requires re-reading the garment record and forbids a byte-identical card in response to a
-  correction (A5). A4 deferred at the owner's request — belongs with the capsule redesign.
+  correction (A5). A4 was deferred at that point because it belonged with the capsule redesign;
+  the later 2026-07-28 capsule work implemented it there.
   Safety-rail snapshot `test/fixtures/prompts_yuna_snapshot.json` updated to match (deliberate
   content change, confirmed via diff that only the touched keys moved).
 - **C3 ratified** as `AGENTS.md` Engineering Principle #7 (the five-question decision rule for new
@@ -620,8 +723,9 @@ the panel packet had missed and several behaviours nobody had written down.
    marked in place. All four were caught by the same two checks, which is the durable lesson:
    **check provenance** (owner-set or tagger-set? which prompt version?) and **check the keyword**
    (does the regex actually match real garment names?). Two scripts now do exactly that.
-3. `docs/panel-stage1-findings.md` — the panel synthesis organised for triage by ID. Section A is
-   ruled; B, C, D, E are not.
+3. `docs/panel-stage1-findings.md` — the panel synthesis organised for triage by ID. Section A and
+   C3 are ruled; B1/B2 are partially ruled; later capsule decisions reconcile C1/C2/D1. B2's
+   presentation, B3, C4, C5's wording, and the unresolved E propositions remain open.
 4. `docs/expert-panel-brief.md` — ratified protocol. **Part 4b lists six ways the implementing
    agent got this wrong**; read it before assembling a packet.
 5. **`docs/tagger-cost-spec.md`** — **draft, awaiting ratification.** Cost-first tagger spec:
@@ -659,9 +763,10 @@ the recurring-failure-mode entry below); nothing else here checks that axis.
 
 **Ruled (panel findings section A):** A1 prints on shoes/accessories, A2 confident rationale under
 scarcity, A4 shoe register span, A5 reasoning-then-interaction — all **accepted**. **A1, A2, A5
-implemented and shipped 2026-07-28** (see this date's session entry above). **A4 deferred** —
-owner is planning a capsule-logic redesign; register-span allocation belongs with that, not patched
-separately first. A3 rejected (asking what you own is deliberate). A6 reframed — the `~$0.07`
+implemented and shipped 2026-07-28** (see this date's session entry above). **A4 was initially
+deferred and then implemented inside the capsule redesign**: mixed-register and demanding-activity
+shoe paths are protected in the roster and checked by the validator. A3 rejected (asking what you
+own is deliberate). A6 reframed — the `~$0.07`
 labels are owner-facing instrumentation, not user pricing, so the question is tiers, not honesty.
 
 **C3 ratified 2026-07-28** — now `AGENTS.md` Engineering Principle #7, not an open item.
@@ -672,9 +777,21 @@ occasion-exclusion visibility gap are closed (see session entry above); the rema
 structured-feedback-chip case, and the owner ruled the chip's own active-state color is sufficient
 — not pursued further for that case.
 
-**Not ruled:** B2 structured read, B3 diagnostic cards, C1, C2, C4, C5, D1, and which of E1–E6
-become propositions. Recommended order is in the findings doc: **C3 was upstream of the B items,
-now ratified — B2/B3 are next in that original order.**
+**B2 partially ruled 2026-07-29** — retain `Visible facts` as diagnostic evidence of what the
+model believed it saw; do not delete it merely because it describes the supplied photograph.
+This is not approval of the current structured read unchanged. It remains too long for ordinary
+use and still needs a shorter, layered presentation that keeps deeper model-premise evidence
+available for debugging.
+
+**Later capsule rulings reconcile C1/C2/D1.** Capacity is reported separately from a curated
+`min(piece_budget, 12)` representative rotation; allocation is coverage-first and bounded by
+per-slot capacity plus whole-plan distinct-core feasibility; the piece budget remains a real
+finite-roster bound; and the roster is no longer trimmed to only pieces appearing in the shown
+cards. The findings doc records which parts of the panel proposals survived.
+
+**Not ruled:** B2's presentation, B3 diagnostic cards, C4, C5's wording, and which unresolved
+E propositions become product commitments. Recommended order: finish B2's presentation decision,
+then B3.
 
 **Stage 2** (Mode A craft review, per flow) not started. It should use the surface map's inventory.
 
@@ -986,7 +1103,6 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   of 40. Tested, not inferred (`scratch/measure_open_questions.js` Q3). No action needed unless the
   weights are being tuned; then start with the four that actually order it.
 - Smaller: the `All looks distinct` label branch unverified (not worth a billed call).
-<<<<<<< HEAD
 - **Capsule coverage-first ruling implemented 2026-07-28.** The roster selector now preserves an
   actually gate-eligible elevated dress path, or an elevated top+bottom path, for every requested
   dinner/gallery/smart-casual use case after reserving casual rotation. It protects the casual
@@ -1142,8 +1258,6 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   pieces remain tag-only. `atomicCapsuleVisualPieces` is surfaced in the existing turn diagnostics.
   This deliberately spends image tokens inside the one bounded call rather than testing a cheaper
   but partially blind composer. Still no billed call made.
-=======
->>>>>>> origin/main
 - **Legacy `message`-type feedback can't find its own thread or board, even when both still
   exist.** Found 2026-07-28 tracing a real Style Profile row (`wardrobe.db` id 340, a `works` /
   `Gold` entry on "dark grey gathered mini dress"). Its `target_type` is `message` (a thumbs-up on

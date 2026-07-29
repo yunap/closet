@@ -241,13 +241,29 @@ export function boundedCapsuleFinalAnswer(answerText = '', toolContext = {}) {
   if (/\b(?:engine|outfit|look|card|rotation)\b.{0,24}\b(?:ceiling|cap|limit)\b/i.test(text)) { // ratchet-allow: final-response contract language, not garment matching
     reasons.push('unsupported engine-cap claim')
   }
-  if (/\b(?:second|another|additional|extra|alternate|alternative)\b.{0,48}\b(?:option|look|outfit|combination)\b/i.test(text) || // ratchet-allow: final-response contract language, not garment matching
-      /\b(?:option|alternative)\s*:\s*(?:your|the|pair|wear|combine)\b/i.test(text)) { // ratchet-allow: final-response contract language, not garment matching
+  // Narrowed 2026-07-28. The original pattern fired on the bare words
+  // "another/second … look/option", which is ordinary English for explaining a
+  // rejection — offline it replaced "I couldn't land a second option that
+  // worked with walking shoes", i.e. exactly the honest disclosure the tool
+  // message asks for. What actually makes prose an unvalidated ADDITION is a
+  // garment: a piece ID, or a "wear X with Y" instruction. Require one.
+  const proposesAGarment = outsideCardIds.length > 0 ||
+    /\b(?:pair|wear|swap|style|combine)\b.{0,40}\bwith\b/i.test(text) // ratchet-allow: final-response contract language, not garment matching
+  if (proposesAGarment &&
+      (/\b(?:second|another|additional|extra|alternate|alternative)\b.{0,48}\b(?:option|look|outfit|combination)\b/i.test(text) || // ratchet-allow: final-response contract language, not garment matching
+       /\b(?:option|alternative)\s*:\s*(?:your|the|pair|wear|combine)\b/i.test(text))) { // ratchet-allow: final-response contract language, not garment matching
     reasons.push('unvalidated prose outfit addition')
   }
   if (!reasons.length) return { answer: text, replaced: false, reasons: [] }
 
   bumpFreeformDiagnostic(toolContext, 'capsuleFinalFallbacks')
+  // Log what was replaced and why. The first live firing of this guard could
+  // not be diagnosed at all: it incremented a counter, discarded the model's
+  // prose, and recorded neither the reasons nor the original — so there was no
+  // way to tell a correct catch from a false positive. Replacing text without
+  // keeping it is not a decision anyone can review later.
+  console.log('[Capsule Final Answer Replaced]', { reasons, original: text })
+  toolContext.capsuleFinalFallbackDetail = { reasons, original: text }
   // Don't assert completeness when the turn knows it fell short — that pairing
   // (suppressed shortfall + "this is the complete result") is what made the
   // hole invisible in the first place. Name the shortfall and point at the

@@ -13,6 +13,8 @@ import {
   buildPlanSlotWorkbench,
   validateSubmittedPlanOutfits,
   assembleSubmittedPlanOutfits,
+  buildRejectedCapsuleCards,
+  describeCapsuleSupplyGap,
   mergePendingPlanForReplan,
   reasonRevisesMidSentence,
   describeCapsuleCompositionShortfall,
@@ -170,6 +172,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       submitPlanResubmits: 0,
       submitPlanPartialAccepts: 0,
       capsuleFinalFallbacks: 0,
+      capsuleSupplyGaps: 0,
       providerIterations: 0,
       providerInputTokens: 0,
       providerOutputTokens: 0,
@@ -1602,6 +1605,26 @@ async function executeToolInternal(name, args, toolContext = {}) {
           typeof toolContext.composeCapsulePlanOnce === 'function' &&
           !isPartialReplan
         if (useAtomicCapsuleComposition) {
+          // Check supply BEFORE spending the composition call. A wardrobe that
+          // cannot sustain the requested capsule produces a one-card "capsule"
+          // that reads as broken; the honest answer is to say what is missing
+          // and ask for more of the closet to be added. Doing it here also
+          // means the unusable request costs nothing.
+          const supplyGap = describeCapsuleSupplyGap(workbench.pendingPlan)
+          if (supplyGap) {
+            toolContext.generatedOutfits = []
+            toolContext.pendingPlan = null
+            bumpFreeformDiagnostic(toolContext, 'capsuleSupplyGaps')
+            const uncoveredText = supplyGap.uncovered
+              .map(entry => `${entry.label}${entry.missing.length ? ` (no ${entry.missing.join(' or ')} that suits it)` : ''}`)
+              .join('; ')
+            return {
+              status: 'insufficient_wardrobe',
+              message: `This wardrobe has ${supplyGap.rosterSize} usable piece${supplyGap.rosterSize === 1 ? '' : 's'} for the requested capsule and supports ${supplyGap.totalCapacity} distinct outfit${supplyGap.totalCapacity === 1 ? '' : 's'} across ${supplyGap.covered.length} of ${supplyGap.covered.length + supplyGap.uncovered.length} use cases — not enough for a rotation worth calling a capsule. Do not compose one, and do not call other styling tools this turn. Tell the user plainly: the app can only see the pieces they have added so far, so the limit is what has been photographed, not what they own. Ask them to add more of their existing wardrobe — NEVER suggest buying anything. Name what would unlock the most: ${uncoveredText || 'the uncovered use cases'}. Offer what IS possible now: ${supplyGap.covered.join(', ') || 'no complete use case yet'}.`,
+              covered_use_cases: supplyGap.covered,
+              uncovered_use_cases: supplyGap.uncovered
+            }
+          }
           toolContext.capsuleAtomicAttempted = true
           const pendingPlan = {
             ...workbench.pendingPlan,
@@ -1679,7 +1702,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
               accepted: accepted.length
             }
           }
-          const planOutfits = assembleSubmittedPlanOutfits(pendingPlan, accepted)
+          // Rejected looks are shown, not deleted (owner ruling 2026-07-28).
+          // They ride alongside the accepted cards as "needs review" so the
+          // person can see what was attempted and repair it in place.
+          const acceptedCards = assembleSubmittedPlanOutfits(pendingPlan, accepted)
+          // capsulePlanContext is attached during assembly, which only accepted
+          // cards go through — but the repair action reads it off the card it
+          // is repairing, so a rejected card without it renders no Fix action
+          // at all. Carry it across.
+          const planContext = acceptedCards.find(outfit => outfit?.capsulePlanContext)?.capsulePlanContext || null
+          const rejectedCards = buildRejectedCapsuleCards(failures, pendingPlan)
+            .map(card => (planContext ? { ...card, capsulePlanContext: planContext } : card))
+          const planOutfits = [...acceptedCards, ...rejectedCards]
           toolContext.generatedOutfits = planOutfits
           toolContext.source = 'plan_outfit_set'
           toolContext.sourceLocked = true

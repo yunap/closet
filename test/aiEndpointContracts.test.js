@@ -477,7 +477,13 @@ function mockAiHandler({ system, messages }) {
       works: ['garment placement is readable'],
       risks: [],
       recommendation: { smallestAdjustment: 'Keep the floor line visible.', avoidForNow: 'Do not over-layer.' },
-      critiqueProse: 'Mock stylist prose: the black top carries this outfit and the proportions read clearly. Keep the floor line visible.',
+      userCritique: {
+        answer: 'Works with one adjustment',
+        reason: 'The black top gives the wide-leg pants a clear upper edge, but the long hem is beginning to hide the shoes.',
+        action: 'Adjust the pant hem enough to keep the cream shoes readable.',
+        check: 'Look for the leg line to stay long without fabric pooling over the shoes.',
+        occasionNote: '',
+      },
     }
   }
 
@@ -1446,7 +1452,9 @@ test('wardrobe outfit evaluator sends outfit and linked garment images', async (
   assert.equal(json.debug.outfitImageIncluded, true)
   assert.equal(json.debug.linkedPieceCount, 3)
   assert.ok(json.debug.imageCount >= 4)
-  assert.match(json.feedback, /^Mock stylist prose:/)
+  assert.match(json.feedback, /^\*\*Works with one adjustment\.\*\*/)
+  assert.match(json.feedback, /\*\*Try this:\*\* Adjust the pant hem/)
+  assert.match(json.feedback, /\*\*Check:\*\* Look for the leg line/)
   assert.doesNotMatch(json.feedback, /Mock evaluation/)
   assert.match(json.feedback, /Fit placement: garments sit naturally/)
   assert.match(json.feedback, /Proportion read: top length and pant rise create a readable proportion/)
@@ -1534,17 +1542,25 @@ test('saved outfit cards use the shared wardrobe evaluator with linked garment i
   assert.equal(json.debug.outfitImageIncluded, true)
   assert.equal(json.debug.linkedPieceCount, 3)
   assert.ok(json.debug.imageCount >= 4)
-  assert.match(json.feedback, /^Mock stylist prose:/)
+  assert.match(json.feedback, /^\*\*Works with one adjustment\.\*\*/)
+  assert.match(json.feedback, /\*\*Try this:\*\* Adjust the pant hem/)
+  assert.match(json.feedback, /\*\*Check:\*\* Look for the leg line/)
   assert.match(json.feedback, /--- Full structured read ---/)
-  assert.ok(json.feedback.indexOf('Mock stylist prose:') < json.feedback.indexOf('--- Full structured read ---'))
-  // The summary is deduped out of the details block when critiqueProse leads.
+  assert.ok(json.feedback.indexOf('**Works with one adjustment.**') < json.feedback.indexOf('--- Full structured read ---'))
+  // The summary is deduped out of the details block when userCritique leads.
   assert.doesNotMatch(json.feedback, /Mock evaluation/)
   assert.equal(json.evaluation.summary, 'Mock evaluation')
   assert.match(json.feedback, /Fit placement: garments sit naturally/)
   assert.match(json.feedback, /Proportion read: top length and pant rise create a readable proportion/)
   assert.match(json.feedback, /Idea viability: keep/)
   assert.match(json.feedback, /Execution gap: minor floor-line watch only/)
-  assert.equal(json.evaluation.critiqueProse, 'Mock stylist prose: the black top carries this outfit and the proportions read clearly. Keep the floor line visible.')
+  assert.deepEqual(json.evaluation.userCritique, {
+    answer: 'Works with one adjustment',
+    reason: 'The black top gives the wide-leg pants a clear upper edge, but the long hem is beginning to hide the shoes.',
+    action: 'Adjust the pant hem enough to keep the cream shoes readable.',
+    check: 'Look for the leg line to stay long without fabric pooling over the shoes.',
+    occasionNote: '',
+  })
   // The actionable answer leads the collapsed "Full structured read" details, ahead of the
   // supporting diagnostic/score dump — someone expanding it is looking for the fix, not a
   // dozen analysis rows before reaching it.
@@ -1583,7 +1599,9 @@ test('uploaded outfit feedback uses the shared wardrobe evaluator with uploaded 
   assert.equal(json.debug.outfitImageIncluded, true)
   assert.equal(json.debug.linkedPieceCount, 0)
   assert.equal(json.debug.imageCount, 1)
-  assert.match(json.feedback, /^Mock stylist prose:/)
+  assert.match(json.feedback, /^\*\*Works with one adjustment\.\*\*/)
+  assert.match(json.feedback, /\*\*Try this:\*\* Adjust the pant hem/)
+  assert.match(json.feedback, /\*\*Check:\*\* Look for the leg line/)
   assert.match(json.feedback, /--- Full structured read ---/)
   assert.doesNotMatch(json.feedback, /Mock evaluation/)
   assert.match(json.feedback, /Fit placement: garments sit naturally/)
@@ -2355,6 +2373,94 @@ test('StylistChat gates raw engine internals behind the STYLIST_DEBUG_ENABLED de
   assert.match(src, /Dev: rejected pieces:/)
   assert.match(src, /if \(!STYLIST_DEBUG_ENABLED\) return null/)
   assert.doesNotMatch(src, /`\$\{cat\}s: \$\{cnt\}`/)
+})
+
+// Owner ruling 2026-07-28: a rejected capsule look is shown as a "needs review"
+// card and fixed in place. The rejection already names the blocked garment and
+// the saved plan context already holds the slot's gate-passing roster, so the
+// repair is a deterministic substitution — it must cost nothing, and it must
+// never quietly fall back to a billed guess.
+test('capsule look repair swaps the blocked piece from the saved roster with no model call', async () => {
+  // Uses only seeded pieces: inserting one mid-run mutates the shared wardrobe
+  // while other async subtests in this file are mid-flight, which is how this
+  // test first broke two unrelated evaluator tests. And it deliberately does
+  // NOT touch globalThis.__WARDROBE_AI_TEST_HANDLER__: the
+  // repair route makes no model call, and async subtests in this file interleave,
+  // so reassigning the shared handler clobbers whichever test is mid-flight.
+  // debug.providerCalls is the assertion that matters anyway.
+  const planContext = {
+    version: 1,
+    piece_budget: 10,
+    capacity: 4,
+    roster_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.boot],
+    is_winter_capsule: false,
+    slots: [{
+      id: 'casual_indoors',
+      label: 'Casual Indoors',
+      occasion: 'casual',
+      activity: 'none',
+      environment: 'indoor',
+      register: '',
+      weather_label: 'indoor',
+      weather_profile: {},
+      allowed_piece_ids: [seeded.top, seeded.bottom, seeded.shoe, seeded.boot],
+    }],
+  }
+  const data = await postJson('/api/ai/repair-capsule-look', {
+    planContext,
+    slotId: 'casual_indoors',
+    title: 'Museum Day',
+    pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+    blockedPieceIds: [seeded.shoe],
+    existingOutfits: [],
+  })
+
+  assert.equal(data.debug.providerCalls, 0, 'repairing a look must not call a model')
+  assert.equal(data.structuredOutfits.length, 1)
+  assert.deepEqual(
+    data.structuredOutfits[0].pieceIds,
+    [seeded.top, seeded.bottom, seeded.boot],
+    'only the blocked garment is replaced; the rest of the look is preserved'
+  )
+  assert.equal(data.repairedPieceId, seeded.shoe)
+  assert.match(data.answer, /swapped/i)
+})
+
+test('capsule look repair reports honestly when the roster cannot fix the look', async () => {
+  const planContext = {
+    version: 1,
+    piece_budget: 10,
+    capacity: 1,
+    roster_ids: [seeded.top, seeded.bottom, seeded.shoe],
+    is_winter_capsule: false,
+    slots: [{
+      id: 'casual_indoors',
+      label: 'Casual Indoors',
+      occasion: 'casual',
+      activity: 'none',
+      environment: 'indoor',
+      register: '',
+      weather_label: 'indoor',
+      weather_profile: {},
+      allowed_piece_ids: [seeded.top, seeded.bottom, seeded.shoe],
+    }],
+  }
+  const response = await fetch(`${baseUrl}/api/ai/repair-capsule-look`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      planContext,
+      slotId: 'casual_indoors',
+      pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+      blockedPieceIds: [seeded.shoe],
+      existingOutfits: [],
+    }),
+  })
+  const body = await response.json()
+
+  assert.equal(response.status, 409)
+  assert.match(body.error, /not in this capsule/i)
+  assert.equal(body.debug.providerCalls, 0, 'an unfixable look must not escalate to a billed guess')
 })
 
 test('capsule expansion uses one bounded model call, the saved roster, and the saved indoor slot context', async () => {

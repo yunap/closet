@@ -299,6 +299,31 @@ test('StylistChat carries generated styling context into ask requests', () => {
   assert.ok(!content.includes('activity: activeContext?.type === \'piece\' ? generateActivity : wardrobeOutfitActivity'), 'general ask body should reconcile activity through stylingContext')
 })
 
+// Owner ruling 2026-07-28: a rejected capsule look is shown and repaired in
+// place, not thrown away. Live-verified in the sandbox (POST → 200, the broken
+// card replaced by "Swapped cream cotton button-up shirt for rust corduroy
+// button-up shirt"); this pins the wiring so the button can't drift off the
+// deterministic endpoint or start appending instead of replacing.
+test('a needs-review capsule card offers an in-place repair that costs nothing', () => {
+  const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
+  const content = fs.readFileSync(chatPath, 'utf8')
+
+  assert.ok(content.includes("fetch('/api/ai/repair-capsule-look'"), 'the repair must go through the deterministic endpoint')
+  assert.ok(content.includes('Fix this look'), 'a rejected look needs an action, not just a diagnosis')
+  assert.match(
+    content,
+    /outfit\.capsuleRepair\?\.slotId && outfit\.capsulePlanContext/,
+    'the action only appears when the card carries the state the repair needs'
+  )
+  assert.match(
+    content,
+    /structuredOutfits: \(message\.structuredOutfits \|\| \[\]\)\.map\(other => other === outfit \? repaired : other\)/,
+    'the repaired look replaces the rejected one in place rather than being appended'
+  )
+  // The endpoint is deterministic; if this claim ever stops being true the copy is a lie.
+  assert.ok(content.includes('free, no AI call'), 'the button states its cost')
+})
+
 test('planned-set presentation derives occasion and winter chips from the plan instead of generic request defaults', () => {
   const chatPath = path.join(import.meta.dirname, '../src/components/StylistChat.jsx')
   const content = fs.readFileSync(chatPath, 'utf8')
