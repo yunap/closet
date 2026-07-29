@@ -4,15 +4,12 @@
 human↔model interaction design; cost and economics honesty). Packet:
 `docs/panel-packet-stage1.md`. Each read only the packet — no database, no browser, no model calls.
 
-**Status, corrected 2026-07-28 — the line below was stale, another instance of the doc-status-
-claim failure mode `docs/stylist-session-handoff.md` now warns about.** Section A **is** ruled
-(A1/A2/A4/A5 accepted-fix, A3 rejected, A6 reframed as a product question — all 2026-07-25). B, C,
-D are not — every `**Ruling:**` line in those sections is still blank. E is proposed additions,
-not itself individually ruled. **Whether A1/A2/A4/A5 were actually *implemented* since being
-accepted needs re-checking against `docs/stylist-bugfix-spec.md` and recent PRs before assuming
-either way** — "accepted, not yet implemented" was last confirmed some days before this
-correction, and multiple PRs have landed since. Do not trust that status without re-verifying it
-against the code, same as any other status claim in these docs.
+**Status, reconciled 2026-07-29 against the code and later capsule rulings.** Section A is ruled:
+A1/A2/A5 are implemented; A3 was rejected; A4 was implemented as part of the later capsule
+redesign; A6 remains a cost-instrumentation and monetization question. C3 is ratified. B1 is
+substantially closed and B2 is partially ruled. Later owner rulings also answer or supersede the
+original C1/C2/D1 capsule recommendations; their entries below state exactly which parts survived.
+B2 presentation, B3, C4, C5's wording, and the unresolved E propositions remain open.
 
 **Re-checked 2026-07-27: A1, A2, A5 were still unimplemented as of that check** — `git log`
 between the panel commit and HEAD touched no file under `styling-engine/` or `routes/`, only docs
@@ -21,8 +18,10 @@ fixes in `styling-engine/prompts.js` (pattern discipline extended to shoes/acces
 Scarcity Honesty rule for A2; a Pushback-on-a-Specific-Garment rule — re-read the garment record,
 never return a byte-identical card — for A5). Safety-rail snapshot
 `test/fixtures/prompts_yuna_snapshot.json` updated to match (deliberate content change, not
-drift). **A4 deferred** — the owner is planning a capsule-logic redesign (see C1/C2/D1) and shoe
-register-span allocation should be designed as part of that, not patched separately first.
+drift). **A4 was initially deferred, then implemented inside the 2026-07-28 capsule redesign** —
+mixed-register rosters preserve both casual and elevated shoe paths; demanding-activity footwear
+is protected alongside them; and recurring slots demonstrate a second eligible shoe when supply
+supports it.
 
 Work through remaining items by ID. Each item carries a **Ruling:** line to fill in; once ruled,
 the outcome moves to `docs/ui-v1-design-handoff.md` (rulings) or `docs/stylist-bugfix-spec.md`
@@ -109,6 +108,12 @@ span the slot list demands. Derived from formality tags, so `AGENTS.md` #3 puts 
 capsule-logic redesign (see C1/C2/D1, which show the shoe concentration is partly a trim-objective
 question, not only a quota one); register-span allocation should be designed as part of that
 redesign rather than patched in isolation first.
+
+**Implemented as part of that redesign, 2026-07-28.** `selectCapsuleRoster` now protects the
+requested shoe-demand paths rather than allocating by quota alone, and the capsule validator
+reports a specific `register_shoe_path_missing` failure. Composition also requires recurring use
+cases to demonstrate a second gate-eligible shoe when one exists. This is supply-conditional and
+does not impose a global shoe-count taste rule.
 
 ### A5 — A correction returned a byte-identical card
 **Source:** all three, independently.
@@ -274,7 +279,11 @@ held at the 7 pre-existing baseline failures throughout. Occasion-exclusion's to
 that mechanism had no confirmation signal at all before the toast — the two cases aren't the same
 shape and shouldn't be forced into the same fix.
 
-**Ruling:**
+**Partial ruling (owner, 2026-07-28): closed for immediate chip confirmation.** The shared
+outfit-card action menu is consistent; occasion exclusions toast when written and are visible and
+reversible in Style Profile; multi-select feedback chips confirm their state through their active
+color. Do not add a second generic confirmation line for those chips. The separate C4 question —
+whether a stored signal should be narrated when it changes a later result — remains open.
 
 ### B2 — What to do with the structured read (proposition 5) — three different answers
 - **Cost:** stop generating it; make it opt-in *generation*, not opt-in disclosure. Highest-frequency
@@ -288,7 +297,17 @@ shape and shouldn't be forced into the same fix.
 in which case removing them buys worse advice cheaply. Cost proposes settling it with ~10 paired
 critiques as a one-time billed experiment — the one place any reviewer recommends spending money.
 
-**Ruling:**
+**Partial ruling (owner, 2026-07-29): do not delete `Visible facts`.** Although it repeats the
+photograph back to the person who supplied it, it is useful diagnostic evidence: when a critique
+is wrong, this field shows what the model believed it saw while producing that critique. That
+falsifiability is worth preserving.
+
+This does **not** ratify the current structured read unchanged. It is too long for an ordinary user
+to read, even behind the existing disclosure. B2 therefore remains open on presentation: shorten
+and layer the user-facing read while keeping the model-premise evidence available through a
+secondary diagnostic expansion or debug surface. The ruled-out solution is deleting
+`Visible facts`; the remaining question is how to separate the concise critique from its deeper
+diagnostic record.
 
 ### B3 — What the "needs review" card should be (proposition 3)
 - **Cost:** near-null surface (zero in the last 150 real threads); don't spend engineering here.
@@ -335,7 +354,15 @@ is the culture's language) but treat it as a **target to report against, not a b
 Styling adds: the coupling from piece budget → outfit count via `planTotalOutfitCapForBudget` is
 what produced two hours of wrong hypotheses. Break the coupling.
 
-**Ruling:**
+**Superseded by later owner rulings and implemented 2026-07-28.** The surviving proposition was
+“state capacity, curate the shown set”: the plan reports distinct gate-valid core capacity and
+shows a representative rotation capped at `min(piece_budget, 12)`. Allocation is coverage-first:
+each structurally coverable use case gets one card before recurring demand gets multiplicity, and
+each slot is bounded by its own core capacity plus whole-plan distinct-core feasibility.
+
+Two panel recommendations did not survive. The piece budget remains a real finite-roster bound,
+not merely a reporting target. A global presentation cap also remains, but it no longer allocates
+blindly: per-slot capacity and global matching decide which cards can be requested beneath it.
 
 ### C2 — Invert the capsule trim objective
 **Source:** styling. **This partially overturns a by-design item — see D1.**
@@ -345,7 +372,13 @@ capsule's objective is *maximum rotation from a fixed budget*. If 12 covers the 
 budget is 14, **generate more looks; do not shrink the roster.** Never buy a piece and then trim
 it.
 
-**Ruling:**
+**Superseded by the same 2026-07-28 capsule rulings.** The engine now curates the finite roster
+first and reports its full distinct-core capacity separately from the cards shown; it does not
+trim the roster down to the minimum garments appearing in the representative rotation. It also
+does not generate every additional valid combination merely to justify every roster piece:
+`min(piece_budget, 12)` is the ratified initial lookbook cap, with same-roster expansion available
+on demand. Thus “never buy a piece and then trim it” survived, while “generate more looks until
+the budget is exhausted” did not.
 
 ### C3 — A decision rule for new structure (proposition 9)
 All three produced rules; the cores agree. Merged, in the order they would be applied:
@@ -496,7 +529,12 @@ they were looking and where the owner spends most time. `Noted:` / `Applied:` li
 something. But the proposition as stated — *"every feedback control in the app is theater"* — is
 false, and was falsifiable from surfaces that existed at the time.
 
-**Ruling:**
+**Partial factual correction; product ruling still open.** Tasks, editable learned rules,
+occasion-exclusion toasts, exclusion restore, and chip active states already make several feedback
+effects visible. Do not add a redundant generic confirmation line to multi-select feedback chips;
+the owner ruled their active state sufficient. What remains open is later application: whether and
+how to narrate when a stored soft rule changes a future result, or when a matching hard occasion
+exclusion removes an otherwise plausible candidate.
 
 ### C5 — "This is a confirmed formula" (Artifact B, look 5)
 Flagged independently by interaction and styling. Confirmed by whom, and when? Either it came from
@@ -505,7 +543,11 @@ typographically indistinguishable from the model being emphatic — or it did no
 app's only apparent memory receipt is **hallucinated**, which trains the owner to discount real
 ones. Needs checking against the memory store before it can be ruled.
 
-**Ruling:**
+**Checked against the actual source, 2026-07-27; wording still open.** This was not a hallucinated
+memory receipt. The phrase is the model's paraphrase of the `PROVEN_FORMULAS` constitution layer,
+whose framing says formulas are earned from confirmed outfits. It is not a citation either: it
+does not name the formula or the confirmed outfit that supports it. The remaining owner decision
+is whether that vague paraphrase is acceptable or should name its source more precisely.
 
 ---
 
@@ -519,7 +561,11 @@ took it to 2. So the by-design entry — *"the 14-piece budget buys exactly 3 sh
 behaviour"* — is not wrong but is incomplete: the 7-of-8 concentration owes as much to the trim as
 to the quota. See C2, which is the proposed consequence.
 
-**Ruling:**
+**Resolved by the later capsule redesign, 2026-07-28.** The diagnosis was correct: quota alone did
+not explain the observed shoe concentration. The replacement architecture protects register and
+activity shoe paths in the roster and validates them explicitly, while the representative
+rotation demonstrates available shoe range. The old post-selection trim explanation no longer
+describes the current capsule path.
 
 ---
 

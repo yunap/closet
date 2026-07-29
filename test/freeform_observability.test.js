@@ -43,6 +43,7 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     submitPlanResubmits: 0,
     submitPlanPartialAccepts: 0,
     capsuleFinalFallbacks: 0,
+    capsuleSupplyGaps: 0,
     providerIterations: 0,
     providerInputTokens: 0,
     providerOutputTokens: 0,
@@ -121,6 +122,45 @@ test('bounded capsule final prose passes when it only introduces accepted cards'
     replaced: false,
     reasons: []
   })
+})
+
+// First live firing of this guard (2026-07-28, thread_1785288370357) replaced the
+// model's closing and recorded NOTHING — counter incremented, prose discarded, no
+// reasons, no original. A correct catch and a false positive looked identical
+// afterwards, which is what made the run undiagnosable.
+test('a replaced capsule closing keeps the reasons and the original prose for review', () => {
+  const toolContext = {
+    capsuleAtomicAttempted: true,
+    capsuleAtomicCompleted: true,
+    generatedOutfits: [{ pieces: [{ id: 10 }, { id: 20 }, { id: 30 }] }],
+    freeformDiagnostics: {}
+  }
+  const original = 'That is the engine ceiling for this capsule.'
+  const result = boundedCapsuleFinalAnswer(original, toolContext)
+
+  assert.equal(result.replaced, true)
+  assert.deepEqual(toolContext.capsuleFinalFallbackDetail.reasons, result.reasons)
+  assert.equal(toolContext.capsuleFinalFallbackDetail.original, original)
+})
+
+// The same run's guard fired on prose that was probably honest. Measured offline:
+// the bare words "another/second … look/option" are ordinary English for explaining
+// a rejection, and the tool message explicitly asks the model to explain one. What
+// makes prose an unvalidated ADDITION is a garment — an ID, or a "wear X with Y".
+test('an honest explanation of a rejected look is not treated as proposing one', () => {
+  const toolContext = {
+    capsuleAtomicAttempted: true,
+    capsuleAtomicCompleted: true,
+    generatedOutfits: [{ pieces: [{ id: 10 }, { id: 20 }, { id: 30 }] }],
+    capsuleShortfall: { missing: 1, planned: 9, accepted: 8 },
+    freeformDiagnostics: {}
+  }
+  const honest = "For the museum day I couldn't land a second option that worked with walking shoes."
+  assert.equal(boundedCapsuleFinalAnswer(honest, toolContext).replaced, false, 'explaining a rejection is the disclosure we asked for')
+
+  // ...but naming garments to wear still gets replaced, which is the whole point.
+  const proposes = 'Option: pair the white blouse with the beige trousers for a second museum look.'
+  assert.equal(boundedCapsuleFinalAnswer(proposes, { ...toolContext, freeformDiagnostics: {} }).replaced, true)
 })
 
 // 2026-07-10: even after the prompt fix, live testing found the model still passed

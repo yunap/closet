@@ -2547,10 +2547,21 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
     roles.groundingPiece ? `Grounding: ${roles.groundingPiece}` : '',
     roles.possibleCompetingPiece ? `Tension point: ${roles.possibleCompetingPiece}` : '',
   ].filter(Boolean).join('\n')
+  const userCritique = parsed?.userCritique && typeof parsed.userCritique === 'object'
+    ? parsed.userCritique
+    : {}
   const critiqueProse = typeof parsed?.critiqueProse === 'string' ? parsed.critiqueProse.trim() : ''
-  // Summary and verdict stay out of this block: when critiqueProse leads the
-  // feedback they sit right above the collapsed details, and the model tends to
-  // write summary as a copy of the prose anyway.
+  const userCritiqueText = [
+    userCritique.answer ? `**${String(userCritique.answer).trim()}.**` : '',
+    userCritique.reason ? String(userCritique.reason).trim() : '',
+    userCritique.action ? `**Try this:** ${String(userCritique.action).trim()}` : '',
+    userCritique.check ? `**Check:** ${String(userCritique.check).trim()}` : '',
+    userCritique.occasionNote ? `**For this occasion:** ${String(userCritique.occasionNote).trim()}` : ''
+  ].filter(Boolean).join('\n\n')
+  const userFacingCritique = userCritiqueText || critiqueProse
+  // Summary and verdict stay out of this block: when the user-facing critique
+  // leads the feedback they sit right above the collapsed details, and the
+  // model tends to write summary as a copy of that answer anyway.
   // The actionable answer (what to change first, and what to avoid/try next) leads this list,
   // ahead of the supporting diagnostic/score dump — someone who expands "Full structured read"
   // is looking for the specific fix, not a dozen analysis rows before reaching it. Matches the
@@ -2581,10 +2592,9 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
     verdict ? `Verdict: ${verdict}` : '',
     structuredDetails
   ].filter(Boolean).join('\n\n')
-  const feedback = critiqueProse
+  const feedback = userFacingCritique
     ? [
-        critiqueProse,
-        verdict ? `Verdict: ${verdict}` : '',
+        userFacingCritique,
         structuredDetails ? `${CRITIQUE_DETAILS_DELIMITER}\n\n${structuredDetails}` : ''
       ].filter(Boolean).join('\n\n')
     : structuredRead
@@ -2625,6 +2635,7 @@ export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', qu
       recommendation: recommendationBlock.smallestAdjustment || (typeof parsed.recommendation === 'string' ? parsed.recommendation : ''),
       avoidForNow: recommendationBlock.avoidForNow || '',
       tryNext: recommendationBlock.tryNext || parsed.tryNext || '',
+      userCritique,
       critiqueProse,
       saveableLearning: parsed.saveableLearning || ''
     }

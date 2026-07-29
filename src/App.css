@@ -9814,6 +9814,34 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   outline-offset: 2px;
 }
 
+/* In-card repair action on a "needs review" capsule look. Deliberately quieter
+   than the expansion buttons: this is a correction offered inside a card that
+   is already flagged, not a new thing to go generate. */
+.stylist-inline-action {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--repair) 42%, var(--border));
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--repair);
+  font: 600 var(--type-meta)/1.2 var(--font-sans);
+  cursor: pointer;
+}
+
+.stylist-inline-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--repair) 8%, var(--surface));
+}
+
+.stylist-inline-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.stylist-inline-action:focus-visible {
+  outline: 2px solid var(--repair);
+  outline-offset: 2px;
+}
+
 .stylist-outfit-reason {
   margin-top: 14px;
   padding: 10px 0 0;

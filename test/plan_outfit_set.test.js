@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, buildRejectedCapsuleCards, describeCapsuleSupplyGap, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
@@ -1202,7 +1202,7 @@ test('capsule shortfall is described for the user, without the raw validator rea
     { plannedTotal: 12, acceptedTotal: 10 }
   )
 
-  assert.match(line, /showing 10 of 12 planned looks/)
+  assert.match(line, /10 of 12 planned looks are ready/)
   assert.match(line, /"City Outings & Museums" \(2\)/)
   assert.doesNotMatch(line, /Brunch/, 'a slot that lost nothing is not listed')
   assert.doesNotMatch(line, /heel|gate|register|validator/i, 'internal rejection reasons stay in the log')
@@ -3702,6 +3702,103 @@ test('a small capsule is not forced to spend a slot on a statement piece', () =>
   // at all rather than being added and then reported as an unmeetable gap.
   const conditions = capsuleRosterPostConditions({ quotas: { top: 3, bottom: 3, dress: 1 } })
   assert.ok(!conditions.some(condition => condition.code === 'statement_presence'))
+})
+
+// Owner ruling 2026-07-28: "what we do in other flows is show the card with a
+// disclaimer, do not throw it away, and fix locally on that card." The atomic
+// capsule path was the only composing surface that deleted a rejected attempt
+// and announced an absence instead — the live run lost two looks that way and
+// the person never saw what had been tried.
+test('a rejected capsule look survives as a needs-review card carrying its blocked piece', () => {
+  const heels = { id: 199, name: 'burgundy cork wedges', category: 'shoes', formality: 'elevated' }
+  const top = { id: 10, name: 'white tank', category: 'top', formality: 'everyday' }
+  const bottom = { id: 20, name: 'linen shorts', category: 'bottom', formality: 'everyday' }
+  const failures = [{
+    slot_id: 'city_museum',
+    label: 'City / Museum',
+    reasons: ["piece 199 failed this slot's gates: activity profile: high heel unsuitable"],
+    blockedPieceIds: [199],
+    outfit: { title: 'Museum Day', pieces: [top, bottom, heels], pieceIds: [10, 20, 199] }
+  }]
+  const pendingPlan = { slots: [{ id: 'city_museum', label: 'City / Museum', bestFor: 'museums', occasion: 'city' }] }
+
+  const [card] = buildRejectedCapsuleCards(failures, pendingPlan)
+
+  assert.equal(card.broken, true, 'the attempt is shown, not deleted')
+  assert.equal(card.tripSlot, 'city_museum', 'it renders in the slot it was meant for')
+  assert.deepEqual(card.pieces.map(p => p.id), [10, 20, 199], 'the whole attempt is preserved')
+  assert.deepEqual(card.brokenPieces.map(p => p.name), ['burgundy cork wedges'], 'only the blocked garment is flagged, not the whole outfit')
+  assert.deepEqual(card.capsuleRepair, { slotId: 'city_museum', blockedPieceIds: [199] }, 'enough state to swap one garment without re-planning')
+  assert.equal(card.title, 'Museum Day', "the model's own title survives")
+})
+
+test('a failure with no recoverable outfit produces no card rather than an empty one', () => {
+  const cards = buildRejectedCapsuleCards(
+    [{ slot_id: 'x', label: 'X', reasons: ['unknown slot_id'] }],
+    { slots: [] }
+  )
+  assert.deepEqual(cards, [])
+})
+
+// Owner ruling 2026-07-28: a garment that cannot be worn alone costs two roster
+// slots to make one look, so it may only take a place in a finite capsule when
+// something it can go over is also there. Conditional by nature — the guarantee
+// is added only when a dependent piece is actually present, so an unpopulated
+// needs_base field changes nothing for any existing wardrobe.
+test('a capsule carrying a layer-only top must also carry something to wear under it', () => {
+  const dependent = { id: 1, name: 'crochet overlay top', category: 'top', formality: 'everyday', needs_base: 'yes' }
+  const plainTop = { id: 2, name: 'cotton tee', category: 'top', formality: 'everyday' }
+  const roster = [dependent]
+  const conditions = capsuleRosterPostConditions({ quotas: { top: 2 }, roster })
+
+  assert.ok(conditions.some(condition => condition.code === 'base_for_dependent_top'), 'a dependent piece adds the requirement')
+
+  const { roster: settled, unsatisfied } = enforceCapsulePostConditions(
+    roster, { top: [dependent, plainTop] }, conditions, new Map([[plainTop, 5]]), new Set()
+  )
+  assert.equal(unsatisfied.length, 0)
+  assert.ok(settled.includes(plainTop), 'the base is brought into the roster')
+
+  // Unset needs_base must be a strict no-op, or shipping the column would have
+  // silently changed every existing wardrobe on the day it landed.
+  const noneDependent = capsuleRosterPostConditions({ quotas: { top: 2 }, roster: [plainTop] })
+  assert.ok(!noneDependent.some(condition => condition.code === 'base_for_dependent_top'))
+})
+
+// Owner ruling 2026-07-28: when the digitized wardrobe cannot sustain the capsule
+// asked for, say so BEFORE composing. The live sandbox case — 23 pieces, five
+// requested contexts, three distinct cores — produced a single card and read as
+// broken. The constraint is what has been photographed, not what is owned.
+test('a wardrobe too thin for the requested capsule is declined before composition', () => {
+  const top = { id: 1, name: 'tee', category: 'top' }
+  const bottom = { id: 2, name: 'jeans', category: 'bottom' }
+  const shoe = { id: 3, name: 'sneakers', category: 'shoes' }
+  const roster = [top, bottom, shoe]
+  const thin = {
+    capsuleRoster: roster,
+    capsuleCapacity: 1,
+    slots: [
+      { label: 'At Home', capsuleSlotCapacity: 1, gateAllowedIds: new Set([1, 2, 3]) },
+      { label: 'Errands', capsuleSlotCapacity: 0, gateAllowedIds: new Set([1, 2]) },
+      { label: 'Dinner', capsuleSlotCapacity: 0, gateAllowedIds: new Set([3]) },
+    ]
+  }
+  const gap = describeCapsuleSupplyGap(thin)
+
+  assert.ok(gap, 'three contexts against one distinct core is not a capsule')
+  assert.deepEqual(gap.covered, ['At Home'])
+  assert.deepEqual(gap.uncovered.map(entry => entry.label), ['Errands', 'Dinner'])
+  assert.ok(gap.uncovered[0].missing.includes('shoes'), 'name what to photograph next, in plain words')
+  assert.ok(gap.uncovered[1].missing.includes('a top'))
+  // A healthy plan must not trip this — it is a no-op for any real capsule.
+  assert.equal(
+    describeCapsuleSupplyGap({
+      capsuleRoster: roster,
+      capsuleCapacity: 40,
+      slots: [{ label: 'At Home', capsuleSlotCapacity: 6, gateAllowedIds: new Set([1, 2, 3]) }]
+    }),
+    null
+  )
 })
 
 test('the post-condition check leaves a satisfied roster untouched', () => {

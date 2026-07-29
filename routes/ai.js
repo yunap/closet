@@ -528,8 +528,8 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -547,6 +547,7 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       Number(diagnostics.submitPlanResubmits) || 0,
       Number(diagnostics.submitPlanPartialAccepts) || 0,
       Number(diagnostics.capsuleFinalFallbacks) || 0,
+      Number(diagnostics.capsuleSupplyGaps) || 0,
       Number(diagnostics.providerIterations) || 0,
       Number(diagnostics.providerInputTokens) || 0,
       Number(diagnostics.providerOutputTokens) || 0,
@@ -2994,6 +2995,132 @@ ${catalog}`
     })
   } catch (err) {
     console.error('Capsule expansion error:', err)
+    const { status, message } = describeAiError(err)
+    return res.status(status).json({ error: message })
+  }
+})
+
+// Repairing a rejected capsule look needs no model at all. The rejection already
+// names the blocked garment, the saved plan context already holds the slot's
+// gate-passing roster, and the real validator can confirm a substitution — so
+// this route swaps one piece and re-validates, with providerCalls: 0. It never
+// falls back to a billed call: if no substitution from the saved roster passes,
+// that is a fact about the capsule worth telling the person, not a prompt to
+// spend money guessing.
+router.post('/repair-capsule-look', async (req, res) => {
+  try {
+    const context = normalizedCapsuleExpansionContext(req.body?.planContext || {})
+    if (context.version !== 1 || !context.rosterIds.length || !context.slots.length) {
+      return res.status(400).json({ error: 'This capsule predates in-place repair. Regenerate the capsule to fix looks from the card.' })
+    }
+    const requestedSlotId = String(req.body?.slotId || '').trim()
+    const contextSlot = context.slots.find(slot => slot.id === requestedSlotId)
+    if (!contextSlot) return res.status(400).json({ error: 'The requested capsule use case was not found in the saved plan state.' })
+
+    const placeholders = context.rosterIds.map(() => '?').join(',')
+    const roster = db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${placeholders})`)
+      .all(...context.rosterIds)
+      .map(parsePiece)
+    const piecesById = new Map(roster.map(piece => [Number(piece.id), piece]))
+    const allowedIds = new Set(contextSlot.allowedIds.filter(id => piecesById.has(id)))
+    const allowedPieces = [...allowedIds].map(id => piecesById.get(id)).filter(Boolean)
+    if (!allowedPieces.length) return res.status(409).json({ error: 'No active pieces remain in this capsule slot roster.' })
+
+    const originalIds = (Array.isArray(req.body?.pieceIds) ? req.body.pieceIds : []).map(Number).filter(Boolean)
+    if (!originalIds.length) return res.status(400).json({ error: 'The look being repaired has no pieces to work from.' })
+    const blockedIds = (Array.isArray(req.body?.blockedPieceIds) ? req.body.blockedPieceIds : []).map(Number).filter(Boolean)
+
+    const existingOutfits = (Array.isArray(req.body?.existingOutfits) ? req.body.existingOutfits : [])
+      .slice(0, 20)
+      .map(outfit => {
+        const pieceIds = (Array.isArray(outfit?.pieceIds) ? outfit.pieceIds : []).map(Number).filter(id => piecesById.has(id))
+        return { ...outfit, pieceIds, pieces: pieceIds.map(id => piecesById.get(id)), _slotId: outfit?.tripSlot || outfit?._slotId || '' }
+      })
+      .filter(outfit => outfit.pieceIds.length)
+
+    const slot = {
+      ...contextSlot,
+      targetOutfits: 1,
+      allowedPieces,
+      rosterIds: allowedIds,
+      gateAllowedIds: allowedIds,
+      suppressedReasonsById: new Map()
+    }
+    const pendingPlan = {
+      slots: [slot],
+      piecesById,
+      heldOutfits: existingOutfits,
+      constraints: {
+        reuse: 'maximize',
+        noRepeat: new Set(),
+        allowRepeat: new Set(['shoes']),
+        anchorIds: new Set(),
+        pieceBudget: context.pieceBudget
+      },
+      isWinterCapsule: context.isWinterCapsule
+    }
+
+    // Replace the blocked garment when the rejection named one; otherwise the
+    // rejection was about the look as a whole (a repeated core, say), so try
+    // each piece in turn. Candidates are the slot's own gate-passing roster,
+    // so a swap can never smuggle in a piece the slot already excludes.
+    const swapTargets = blockedIds.length ? blockedIds : originalIds
+    const attempts = []
+    for (const targetId of swapTargets) {
+      const targetPiece = piecesById.get(targetId)
+      const targetGroup = wardrobeCategoryGroup(targetPiece || {})
+      const candidates = allowedPieces
+        .filter(piece => wardrobeCategoryGroup(piece) === targetGroup && !originalIds.includes(Number(piece.id)))
+        .sort((a, b) => Number(a.id) - Number(b.id))
+      for (const candidate of candidates) {
+        const pieceIds = originalIds.map(id => (id === targetId ? Number(candidate.id) : id))
+        const { accepted } = validateSubmittedPlanOutfits(pendingPlan, [{
+          slot_id: contextSlot.id,
+          title: String(req.body?.title || contextSlot.label || '').trim(),
+          piece_ids: pieceIds,
+          reason: ''
+        }])
+        if (accepted.length) {
+          attempts.push({ accepted: accepted[0], replaced: targetPiece, replacement: candidate })
+          break
+        }
+      }
+      if (attempts.length) break
+    }
+
+    if (!attempts.length) {
+      return res.status(409).json({
+        error: 'No single swap from this capsule roster fixes that look — the pieces it would need are not in this capsule.',
+        debug: { providerCalls: 0, swapsTried: swapTargets.length }
+      })
+    }
+
+    const { accepted: acceptedOutfit, replaced, replacement } = attempts[0]
+    const structuredOutfit = {
+      ...acceptedOutfit,
+      label: contextSlot.label,
+      title: acceptedOutfit.title || contextSlot.label,
+      bestFor: contextSlot.label,
+      occasion: contextSlot.occasion,
+      activity: contextSlot.activity,
+      tripSlot: contextSlot.id,
+      coverage: contextSlot.label,
+      coveragePosition: `${contextSlot.label} · repaired`,
+      slotWeather: contextSlot.weatherLabel,
+      source: 'plan_outfit_set',
+      composedBy: 'engine',
+      engineNote: `Swapped ${replaced?.name || 'the blocked piece'} for ${replacement.name}.`,
+      capsulePlanContext: req.body.planContext
+    }
+    return res.json({
+      answer: `Fixed that ${contextSlot.label} look — swapped ${replaced?.name || 'the blocked piece'} for ${replacement.name}.`,
+      structuredOutfits: [structuredOutfit],
+      structuredOutfitsSource: 'plan_outfit_set',
+      repairedPieceId: Number(replaced?.id) || null,
+      debug: { providerCalls: 0 }
+    })
+  } catch (err) {
+    console.error('Capsule repair error:', err)
     const { status, message } = describeAiError(err)
     return res.status(status).json({ error: message })
   }

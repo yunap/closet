@@ -258,7 +258,10 @@ export function describeCapsuleCompositionShortfall(shortfalls = [], { plannedTo
   // Deliberately not "failed validation": the same shortfall can come from a
   // rejected look or from a composition that under-delivered, and the user's
   // question is the same either way — what happened to the looks you planned?
-  return `[capsule shortfall: showing ${acceptedTotal} of ${plannedTotal} planned looks — ${detail} could not be completed from this capsule's roster]`
+  // The rejected attempts are now shown as "needs review" cards, so this line
+  // stopped being an announcement of absence and became a pointer at something
+  // visible. Say what is on screen and why, not what is missing.
+  return `[capsule shortfall: ${acceptedTotal} of ${plannedTotal} planned looks are ready — ${detail} need a fix and are shown below marked for review]`
 }
 
 function buildCoverageGapLines(coverageGaps = []) {
@@ -815,6 +818,15 @@ function ensureCapsuleGroupReserve(roster = [], groups = {}, group = '', require
 // guarantee cannot disagree about which pieces they are talking about.
 const CAPSULE_STATEMENT_MIN_MAIN_PIECES = 8
 
+// Owner-set (and, for pieces the tagger touches, tagger-set) construction fact:
+// this garment cannot be worn against skin on its own. In a finite capsule it
+// therefore costs two roster slots to produce one look — fine when a base is
+// there, dead weight when it isn't. Only 'yes' counts: unset means nobody has
+// looked, and must behave exactly as it did before the field existed.
+function pieceNeedsBase(piece = {}) {
+  return String(piece?.needs_base || '').toLowerCase() === 'yes'
+}
+
 function isCapsuleStatementPiece(piece = {}) {
   const group = wardrobeCategoryGroup(piece)
   if (!['top', 'bottom', 'dress'].includes(group)) return false
@@ -995,7 +1007,7 @@ function demandingActivityProfilesForSlots(slots = []) {
 // passes were each promising and check it ONCE at the end. Declaring the
 // guarantees as data also means a new reserve pass gets checked automatically
 // instead of relying on whoever adds it to thread a protected set correctly.
-export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWinter = false, shoeDemands = [] } = {}) {
+export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWinter = false, shoeDemands = [], roster = [] } = {}) {
   const conditions = []
   if (reserve) {
     for (const [group, required] of Object.entries(reserve.byGroup || {})) {
@@ -1046,6 +1058,21 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       required: 1,
       predicate: isCapsuleColdTransitionLayer,
       describe: () => 'a cold-transition coat/jacket layer'
+    })
+  }
+  // Conditional by nature, which is why it reads the roster rather than the
+  // quotas: a dependent garment is only a problem when nothing in the capsule
+  // can go under it. Absent any `needs_base` piece the condition is not added
+  // at all, so an unpopulated field changes nothing anywhere.
+  const dependentTops = (Array.isArray(roster) ? roster : [])
+    .filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
+  if (dependentTops.length) {
+    conditions.push({
+      code: 'base_for_dependent_top',
+      group: 'top',
+      required: 1,
+      predicate: piece => !pieceNeedsBase(piece),
+      describe: () => `a top that can be worn alone, to go under ${dependentTops[0]?.name || 'the layering piece'}`
     })
   }
   for (const [index, demand] of (Array.isArray(shoeDemands) ? shoeDemands : []).entries()) {
@@ -1279,7 +1306,7 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
   const { roster: settledRoster, unsatisfied } = enforceCapsulePostConditions(
     roster,
     groups,
-    capsuleRosterPostConditions({ quotas, reserve, isWinter, shoeDemands }),
+    capsuleRosterPostConditions({ quotas, reserve, isWinter, shoeDemands, roster }),
     scoreOf,
     protectedCoveragePieces
   )
@@ -2618,7 +2645,19 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       if (printIssue) reasons.push(printIssue)
     }
     if (reasons.length) {
-      failures.push({ slot_id: slot.id, label, reasons })
+      // Carry the rejected attempt itself, not just its reasons. Owner ruling
+      // 2026-07-28: a rejected look is shown as a "needs review" card and
+      // repaired in place, the way every other composing surface already does
+      // it — so the caller needs the pieces, and needs to know WHICH piece was
+      // blocked in order to offer a one-garment swap. Additive: existing
+      // callers that only read `reasons` are unaffected.
+      failures.push({
+        slot_id: slot.id,
+        label,
+        reasons,
+        outfit,
+        blockedPieceIds: [...new Set(unresolvedPieceIds)]
+      })
       continue
     }
     const key = tripOutfitKey(outfit)
@@ -2675,6 +2714,102 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     })
   }
   return { accepted, failures }
+}
+
+// Owner ruling 2026-07-28: a capsule look that fails validation is not thrown
+// away. Every other composing surface already shows the attempt as a "needs
+// review" card and lets it be repaired; the atomic capsule path was the only
+// one that deleted the evidence and announced an absence instead. Same card
+// shape propose_outfit produces, so the existing broken-card rendering and its
+// plain-language reason shim apply unchanged.
+// Below these, a capsule is not a capsule. First-pass values, measured against
+// one wardrobe — see docs/capsule-roster-selection-spec.md §7c on not tuning
+// constants until a number exists for more than one closet.
+const CAPSULE_MIN_COVERED_SLOT_RATIO = 0.5
+const CAPSULE_MIN_MEANINGFUL_CORES = 3
+
+// Owner ruling 2026-07-28: when the digitized wardrobe cannot sustain the
+// capsule that was asked for, say so BEFORE composing rather than delivering a
+// one-card "capsule" that looks broken. The live sandbox case: 23 pieces, five
+// requested contexts, two uncoverable, one card. Returns null when the wardrobe
+// can support the request, so this is a no-op for any healthy capsule.
+export function describeCapsuleSupplyGap(pendingPlan = {}) {
+  const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
+  if (!slots.length) return null
+  const roster = Array.isArray(pendingPlan?.capsuleRoster) ? pendingPlan.capsuleRoster : []
+  if (!roster.length) return null
+  const piecesById = pieceMapForPieces(roster)
+
+  const covered = []
+  const uncovered = []
+  for (const slot of slots) {
+    const capacity = Math.max(0, Number(slot?.capsuleSlotCapacity) || 0)
+    if (capacity > 0) { covered.push(slot.label); continue }
+    const allowed = [...(slot.gateAllowedIds instanceof Set ? slot.gateAllowedIds : [])]
+      .map(id => piecesById.get(Number(id)))
+      .filter(Boolean)
+    const present = new Set(allowed.map(piece => wardrobeCategoryGroup(piece)))
+    // What to photograph next, in the person's words — not "no gate-valid core".
+    const missing = []
+    if (!present.has('shoes')) missing.push('shoes')
+    if (!present.has('dress') && !present.has('top')) missing.push('a top')
+    if (!present.has('dress') && !present.has('bottom')) missing.push('a bottom')
+    uncovered.push({ label: slot.label, missing })
+  }
+
+  const totalCapacity = Math.max(0, Number(pendingPlan?.capsuleCapacity) || 0)
+  const tooFewContexts = covered.length < Math.ceil(slots.length * CAPSULE_MIN_COVERED_SLOT_RATIO)
+  // Scale the rotation test to what was actually asked for rather than a flat
+  // number: a capsule that cannot give every requested context even one
+  // distinct look is not a rotation, however that count lands. (A flat 3 let
+  // the 23-piece sandbox case through — 5 contexts, 3 cores, one card — which
+  // is the exact failure this check exists to catch.)
+  const requiredCores = Math.max(CAPSULE_MIN_MEANINGFUL_CORES, slots.length)
+  const tooFewCores = totalCapacity < requiredCores
+  if (!tooFewContexts && !tooFewCores) return null
+
+  return {
+    covered,
+    uncovered,
+    totalCapacity,
+    rosterSize: roster.length,
+    reason: tooFewContexts ? 'contexts' : 'rotation'
+  }
+}
+
+export function buildRejectedCapsuleCards(failures = [], pendingPlan = {}, { source = 'plan_outfit_set' } = {}) {
+  const slots = Array.isArray(pendingPlan?.slots) ? pendingPlan.slots : []
+  const slotById = new Map(slots.map(slot => [slot.id, slot]))
+  const cards = []
+  for (const failure of Array.isArray(failures) ? failures : []) {
+    const pieces = failure?.outfit?.pieces || []
+    if (!pieces.length) continue
+    const slot = slotById.get(failure.slot_id)
+    const blockedIds = new Set((failure.blockedPieceIds || []).map(Number))
+    cards.push({
+      ...failure.outfit,
+      label: slot?.label || failure.label || 'Needs review',
+      title: String(failure.outfit?.title || '').trim() || slot?.label || failure.label || 'Needs review',
+      broken: true,
+      rejectionReason: (failure.reasons || []).join('; '),
+      brokenPieces: pieces
+        .filter(piece => blockedIds.has(Number(piece?.id)))
+        .map(piece => ({ name: piece?.name || `Piece ${piece?.id}`, reason: (failure.reasons || []).join('; ') })),
+      source,
+      tripSlot: slot?.id || failure.slot_id || '',
+      bestFor: slot?.bestFor || '',
+      occasion: slot?.occasion || '',
+      activity: slot?.activity || '',
+      composedBy: 'model',
+      // Enough state for a local one-garment repair without re-planning: which
+      // slot to re-check against, and which piece actually blocked the look.
+      capsuleRepair: {
+        slotId: slot?.id || failure.slot_id || '',
+        blockedPieceIds: [...blockedIds]
+      }
+    })
+  }
+  return cards
 }
 
 export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits = [], { source = 'plan_outfit_set' } = {}) {

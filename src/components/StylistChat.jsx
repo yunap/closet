@@ -1772,6 +1772,53 @@ export default function StylistChat({
   // cap. Kept separate from parsePlanTrimNote so the two causes can never print
   // the same sentence — offering "ask for the remaining looks" against an
   // exhausted rotation is what put two contradicting sentences in one box.
+  // Owner ruling 2026-07-28: a rejected look is shown and repaired in place
+  // rather than thrown away. The card already carries everything the repair
+  // needs (the slot, and which garment was blocked), and the endpoint is
+  // deterministic — providerCalls: 0 — so this button never spends money.
+  const [repairingCardKey, setRepairingCardKey] = useState(null)
+  const [repairErrorByCard, setRepairErrorByCard] = useState({})
+
+  const repairCapsuleLook = async (outfit, messageIndex, cardKey) => {
+    if (!outfit?.capsuleRepair?.slotId || !outfit?.capsulePlanContext) return
+    setRepairingCardKey(cardKey)
+    setRepairErrorByCard(prev => ({ ...prev, [cardKey]: null }))
+    try {
+      const siblingOutfits = (messages[messageIndex]?.structuredOutfits || [])
+        .filter(other => !other?.broken && isPlannedSetSource(other?.source))
+        .map(other => ({ title: other.title, tripSlot: other.tripSlot, pieceIds: other.pieceIds }))
+      const res = await fetch('/api/ai/repair-capsule-look', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planContext: outfit.capsulePlanContext,
+          slotId: outfit.capsuleRepair.slotId,
+          title: outfit.title || '',
+          pieceIds: outfit.pieceIds || (outfit.pieces || []).map(piece => Number(piece?.id)).filter(Boolean),
+          blockedPieceIds: outfit.capsuleRepair.blockedPieceIds || [],
+          existingOutfits: siblingOutfits,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not fix that look')
+      const repaired = (data.structuredOutfits || [])[0]
+      if (!repaired) throw new Error('Could not fix that look')
+      // Replace the broken card in place: the repaired look belongs where the
+      // rejected attempt was, not appended at the end of the plan.
+      setMessages(prev => prev.map((message, index) => {
+        if (index !== messageIndex) return message
+        return {
+          ...message,
+          structuredOutfits: (message.structuredOutfits || []).map(other => other === outfit ? repaired : other),
+        }
+      }))
+    } catch (err) {
+      setRepairErrorByCard(prev => ({ ...prev, [cardKey]: err.message || 'Could not fix that look' }))
+    } finally {
+      setRepairingCardKey(null)
+    }
+  }
+
   const parseRotationLimitNote = (note = '') => {
     const match = String(note || '').match(
       /^\[rotation limit: "([^"]+)" reduced from (\d+) to (\d+) looks? — this capsule roster has no further distinct outfit core for that use case\]$/
@@ -1794,7 +1841,7 @@ export default function StylistChat({
 
   const parseCapsuleShortfallNote = (note = '') => {
     const match = String(note || '').match(
-      /^\[capsule shortfall: showing (\d+) of (\d+) planned looks — (.+) could not be completed from this capsule's roster\]$/
+      /^\[capsule shortfall: (\d+) of (\d+) planned looks are ready — (.+) need a fix and are shown below marked for review\]$/
     )
     if (!match) return null
     // The engine writes slot labels in ASCII quotes; the surrounding prose is
@@ -1824,7 +1871,7 @@ export default function StylistChat({
     const shortfall = parseCapsuleShortfallNote(note)
     if (shortfall) {
       const missing = Math.max(0, shortfall.planned - shortfall.shown)
-      return `Showing ${shortfall.shown} of the ${shortfall.planned} looks planned for this capsule. ${missing === 1 ? 'One look' : `${missing} looks`} couldn’t be completed from this capsule’s pieces — ${shortfall.detail} — so ${missing === 1 ? 'it was' : 'they were'} left out rather than shown as a weaker option.`
+      return `${shortfall.shown} of the ${shortfall.planned} looks planned for this capsule are ready. ${missing === 1 ? 'One look' : `${missing} looks`} still ${missing === 1 ? 'needs' : 'need'} a fix — ${shortfall.detail} — and ${missing === 1 ? 'is' : 'are'} shown below marked for review rather than dropped.`
     }
     return note
   }
@@ -1836,7 +1883,7 @@ export default function StylistChat({
     return lines.map(parsePlanTrimNote).filter(trim => trim?.remaining > 0).map(trim => {
       const slot = (Array.isArray(planContext?.slots) ? planContext.slots : []).find(item => item?.label === trim.label)
       const shownForSlot = (Array.isArray(outfits) ? outfits : []).filter(outfit =>
-        outfit?.tripSlot === slot?.id || outfit?.label === trim.label
+        !outfit?.broken && (outfit?.tripSlot === slot?.id || outfit?.label === trim.label)
       ).length
       const coreCapacity = Math.max(0, Number(slot?.core_capacity) || 0)
       const capacityExhausted = coreCapacity > 0 && shownForSlot >= coreCapacity
@@ -2004,7 +2051,10 @@ export default function StylistChat({
       return {
         type: 'trip_plan',
         title,
-        summary: [singularLookLabel(plannedCards.length), coverage].filter(Boolean).join(' · '),
+        // A "needs review" card is an attempt, not a look the plan delivers.
+        // Counting it would restate the old lie in a new place: the header
+        // would claim 10 looks while two of them are marked broken.
+        summary: [singularLookLabel(plannedCards.filter(outfit => !outfit?.broken).length), coverage].filter(Boolean).join(' · '),
         chips: planChips
       }
     }
@@ -3069,6 +3119,24 @@ export default function StylistChat({
                     {outfit.rejectionReason && (
                       <div style={{ marginTop: 4 }}>
                         <strong>What didn't clear:</strong> {outfit.rejectionReason}
+                      </div>
+                    )}
+                    {outfit.capsuleRepair?.slotId && outfit.capsulePlanContext && (
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="stylist-inline-action"
+                          disabled={repairingCardKey === `repair:${boardKey}`}
+                          onClick={() => repairCapsuleLook(outfit, messageIndex, `repair:${boardKey}`)}
+                        >
+                          {repairingCardKey === `repair:${boardKey}` ? 'Fixing…' : 'Fix this look'}
+                        </button>
+                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-light)' }}>
+                          Swaps the blocked piece for another from this capsule — free, no AI call.
+                        </span>
+                        {repairErrorByCard[`repair:${boardKey}`] && (
+                          <div style={{ marginTop: 6 }}>{repairErrorByCard[`repair:${boardKey}`]}</div>
+                        )}
                       </div>
                     )}
                   </div>
