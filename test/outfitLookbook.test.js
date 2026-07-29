@@ -120,6 +120,12 @@ test('Generated outfit critiques retain their linked outfit context for follow-u
   assert.match(stylistSource, /threadMemory\?\.type === 'generated_outfit' && OUTFIT_FOLLOWUP_PATTERN\.test\(q\)/)
 })
 
+test('Review dismisses the outfit chooser while the other outfit actions keep it visible', () => {
+  assert.match(stylistSource, /setPendingOutfitAction\('review'\)[\s\S]*?responseMode: 'full' \}\)\s*setPendingOutfit\(null\)/)
+  assert.doesNotMatch(stylistSource, /setPendingOutfitAction\('similar'\)[\s\S]*?variantMode: 'formula'[\s\S]*?setPendingOutfit\(null\)/)
+  assert.doesNotMatch(stylistSource, /setPendingOutfitAction\('restyle'\)[\s\S]*?variantMode: 'creative'[\s\S]*?setPendingOutfit\(null\)/)
+})
+
 test('My Outfit detail owns scrolling and keeps its management actions visible', () => {
   assert.match(source, /className="modal-overlay outfit-detail-overlay"/)
   assert.match(source, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-labelledby="outfit-detail-title"/)

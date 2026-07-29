@@ -6511,6 +6511,7 @@ export default function StylistChat({
                   onClick={() => {
                     setPendingOutfitAction('review')
                     send({ outfit: pendingOutfit, input: 'Evaluate this outfit. Tell me whether the pieces work together, what feels risky, and what I should change first.', responseMode: 'full' })
+                    setPendingOutfit(null)
                   }}
                 />
                 <OptionCard
