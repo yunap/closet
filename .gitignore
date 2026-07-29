@@ -26,4 +26,5 @@ scratch/*
 !scratch/audit_summer_capsule_lifestyle.js
 !scratch/audit_summer_capsule_roster_utility.js
 !scratch/diagnose_capsule_bench.js
+!scratch/compare_capsule_rosters.js
 !scratch/build_capsule_disclosure_demo_thread.js

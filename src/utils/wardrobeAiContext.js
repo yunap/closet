@@ -33,8 +33,15 @@ export function getFieldConfidence(piece = {}, field) {
   return piece.tag_state === 'provisional' ? 'low' : 'medium'
 }
 
+// The tagger writes the literal string `none` for a structural field that does
+// not apply to the category — sleeve_type on 59 bottoms, length_hits_at on
+// shoes and accessories. Emitting `sleeve: none` is worse than silence: it
+// reads as a claim about the garment rather than an absence of one.
+export const STRUCTURAL_FIELD_UNSET = new Set(['none', 'unknown', 'n/a'])
+
 function trustedFieldText(piece, field, label, value) {
   if (!value) return null
+  if (STRUCTURAL_FIELD_UNSET.has(String(value).trim().toLowerCase())) return null
   return getFieldConfidence(piece, field) === 'low'
     ? `${label}: [low confidence - add worn photo] ${value}`
     : `${label}: ${value}`
@@ -210,6 +217,13 @@ export function buildWardrobePieceTruthText(piece = {}) {
   if (lengthText) parts.push(lengthText)
   const silhouetteText = trustedFieldText(piece, 'silhouette', 'silhouette', piece.silhouette)
   if (silhouetteText) parts.push(silhouetteText)
+  // sleeve_type was populated on 207 of 236 pieces and reached NO composing
+  // prompt — so a capsule look put a short-sleeved cardigan over a bishop
+  // sleeve, because as far as the model could see the top had no sleeve at all.
+  // Same shape as the missing length clause: the wardrobe knows, the prompt
+  // never says, the correction arrives afterwards as feedback.
+  const sleeveText = trustedFieldText(piece, 'sleeve_type', 'sleeve', piece.sleeve_type)
+  if (sleeveText) parts.push(sleeveText)
   if (piece.fabric_category) parts.push(`fabric: ${piece.fabric_category}${piece.fabric_weight ? `/${piece.fabric_weight}` : ''}`)
   if (piece.opacity && piece.opacity !== 'opaque') {
     const opacityText = trustedFieldText(piece, 'opacity', 'opacity', piece.opacity)

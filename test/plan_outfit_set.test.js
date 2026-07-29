@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, buildRejectedCapsuleCards, describeCapsuleSupplyGap, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
@@ -3609,6 +3609,218 @@ test('validateCapsuleRoster produces a specific, repairable failure for each doc
   }
 })
 
+// Stage 3 hands roster choice to a model and validateCapsuleRoster becomes the
+// ONLY guard, so any guarantee selectCapsuleRoster enforces that the validator
+// does not know about is a guarantee that silently stops existing. Three were
+// missing when this was written: statement_presence, base_for_dependent_top and
+// winter_covered_bases. Both now read the same declarations, so they cannot drift.
+// Spec §7 path 1: a palette stated in the request was being dropped entirely,
+// because roster selection reads structured columns and never the request text.
+// The vocabulary comes from the wardrobe's own stored colours, so it is
+// per-user rather than a hard-coded list.
+test('a palette stated in the request is read from the wardrobe\'s own colour vocabulary', () => {
+  const pool = [
+    { id: 1, category: 'top', colors: ['black'] },
+    { id: 2, category: 'bottom', colors: ['cream'] },
+    { id: 3, category: 'shoes', colors: ['olive'] },
+    { id: 4, category: 'top', colors: ['fuchsia'] },
+  ]
+  assert.deepEqual(extractStatedPalette('summer capsule, keep it to black cream and olive', pool).colors, ['black', 'cream', 'olive'])
+  assert.deepEqual(extractStatedPalette('I want a summer capsule', pool).colors, [], 'saying nothing is not a palette')
+  // "neutrals" names a set; expand it against what this person actually owns.
+  const neutrals = extractStatedPalette('a summer capsule in neutrals', pool).colors
+  assert.ok(neutrals.includes('black') && neutrals.includes('cream'))
+  assert.ok(!neutrals.includes('fuchsia'))
+  // A colour the wardrobe does not have is not invented.
+  assert.deepEqual(extractStatedPalette('a capsule in turquoise', pool).colors, [])
+})
+
+// Owner request 2026-07-29: there must be a way to skip palette choosing.
+// "said nothing" and "explicitly wants no constraint" have to stay
+// distinguishable — otherwise a stored palette preference would apply to every
+// future capsule with no way to turn it off for one request.
+test('a person can explicitly opt out of palette choosing', () => {
+  const pool = [{ id: 1, category: 'top', colors: ['black'] }]
+  for (const phrase of [
+    'a summer capsule, any colour is fine',
+    'summer capsule with no palette',
+    'build a capsule and ignore my palette',
+    'a capsule in any color please',
+  ]) {
+    const result = extractStatedPalette(phrase, pool)
+    assert.equal(result.optOut, true, `expected opt-out for: ${phrase}`)
+    assert.deepEqual(result.colors, [])
+  }
+  // Unstated is NOT an opt-out — the two states must not collapse.
+  assert.equal(extractStatedPalette('I want a summer capsule', pool).optOut, false)
+  // A colour word is not an opt-out just because "any" appears near it.
+  assert.equal(extractStatedPalette('any black top works', pool).optOut, false)
+})
+
+// The §7 constraint, and this project's own gate history: a hard filter on a
+// taste dimension starves capacity (the `home` gate ruling). A palette biases
+// the ranking; it never excludes, and structural coverage still wins.
+test('a stated palette is a preference, not a filter', () => {
+  const palettePieces = []
+  for (let i = 0; i < 4; i += 1) {
+    palettePieces.push({ id: 10 + i, name: `black top ${i}`, category: 'top', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
+    palettePieces.push({ id: 20 + i, name: `black bottom ${i}`, category: 'bottom', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
+  }
+  // The only shoes in the wardrobe are outside the requested palette.
+  const offPalette = [
+    { id: 90, name: 'rust sneakers', category: 'shoes', colors: ['rust'], formality: 'everyday', occasions: ['casual', 'city'] },
+    { id: 91, name: 'rust boots', category: 'shoes', colors: ['rust'], formality: 'everyday', occasions: ['casual', 'city'] },
+  ]
+  const pool = [...palettePieces, ...offPalette]
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const roster = selectCapsuleRoster(pool, { budget: 10, isSummer: true, occasions: ['casual'], slots, palette: ['black'] })
+
+  assert.ok(
+    roster.some(piece => wardrobeCategoryGroup(piece) === 'shoes'),
+    'a palette must not starve a category the capsule structurally needs'
+  )
+  assert.ok(roster.filter(piece => (piece.colors || []).includes('black')).length >= 4, 'the palette still shapes the roster')
+})
+
+// Spec §3 stage 2. The whole point of injecting `chooseRoster` is that the
+// contract is provable with no provider: one bounded call, ONE repair given the
+// specific failures, then the deterministic roster. Never a third attempt.
+function paletteTestWardrobe() {
+  const pool = []
+  for (let i = 0; i < 6; i += 1) {
+    pool.push({ id: 100 + i, name: `top ${i}`, category: 'top', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'], pattern_complexity: i === 0 ? 'loud' : 'quiet' })
+    pool.push({ id: 200 + i, name: `bottom ${i}`, category: 'bottom', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
+  }
+  for (let i = 0; i < 3; i += 1) {
+    pool.push({ id: 300 + i, name: `shoe ${i}`, category: 'shoes', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
+  }
+  return pool
+}
+
+test('a model-chosen capsule roster is accepted when it satisfies the guarantees', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  let calls = 0
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'],
+    chooseRoster: async ({ bench }) => {
+      calls += 1
+      return { roster_piece_ids: bench.slice(0, 10).map(piece => Number(piece.id)), palette: 'black', piece_jobs: [] }
+    }
+  })
+
+  assert.equal(calls, 1, 'a valid roster costs exactly one call')
+  assert.equal(result.source, 'model')
+  assert.equal(result.roster.length, 10)
+  assert.equal(result.palette, 'black')
+})
+
+test('an invalid model roster gets exactly one repair attempt, then the deterministic roster', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const attempts = []
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'],
+    // Always returns a roster of tops only: no bottoms, no shoes.
+    chooseRoster: async ({ bench, attempt, failures }) => {
+      attempts.push({ attempt, failureCodes: failures.map(entry => entry.code) })
+      const tops = bench.filter(piece => piece.category === 'top').map(piece => Number(piece.id))
+      return { roster_piece_ids: tops.slice(0, 10), palette: '', piece_jobs: [] }
+    }
+  })
+
+  assert.equal(attempts.length, 2, 'one call plus one repair — never a third')
+  assert.equal(attempts[0].attempt, 1)
+  assert.ok(attempts[1].failureCodes.length, 'the repair round is told exactly what failed')
+  assert.equal(result.source, 'deterministic_fallback')
+  assert.ok(result.roster.length > 0, 'a fallback capsule still ships')
+  assert.ok(result.roster.some(piece => wardrobeCategoryGroup(piece) === 'shoes'), 'and it is structurally sound')
+})
+
+test('a model roster reaching outside the candidate list is a contract failure, not silently clamped', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const seen = []
+  await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'],
+    chooseRoster: async ({ bench, attempt, failures }) => {
+      seen.push(failures.map(entry => entry.code))
+      // 999999 is in no wardrobe; clamping it away would hide the mistake the
+      // repair round exists to correct.
+      return { roster_piece_ids: [999999, ...bench.slice(0, 9).map(piece => Number(piece.id))], palette: '', piece_jobs: [] }
+    }
+  })
+
+  assert.deepEqual(seen[0], [], 'the first attempt is not told about failures that have not happened yet')
+  assert.ok(seen[1].includes('piece_outside_bench'), `expected a bench-membership failure, got ${JSON.stringify(seen[1])}`)
+})
+
+test('capsule roster selection stays deterministic when no model chooser is wired', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({ pool, budget: 10, slots, isSummer: true, occasions: ['casual'] })
+
+  assert.equal(result.source, 'deterministic', 'the flag being off must change nothing')
+  assert.deepEqual(
+    result.roster.map(piece => Number(piece.id)).sort(),
+    selectCapsuleRoster(pool, { budget: 10, isSummer: true, occasions: ['casual'], slots }).map(piece => Number(piece.id)).sort()
+  )
+})
+
+test('the validator checks every guarantee the selector enforces', () => {
+  const conditionCodes = capsuleRosterPostConditions({
+    quotas: { top: 5, bottom: 4, dress: 1, outerwear: 2, shoes: 3 },
+    reserve: { rank: formalityRank('everyday'), looks: 3, byGroup: { top: 2 } },
+    isWinter: true,
+    shoeDemands: [{ label: 'an everyday/casual look', required: 1, predicate: () => true }],
+    roster: [{ id: 1, category: 'top', needs_base: 'yes' }],
+  }).map(condition => condition.code)
+
+  for (const expected of ['statement_presence', 'base_for_dependent_top', 'winter_covered_bases', 'winter_indoor_layer', 'winter_transition_layer']) {
+    assert.ok(conditionCodes.includes(expected), `${expected} must be a declared guarantee`)
+  }
+
+  // A model roster that ignores a guarantee is rejected with a repairable code.
+  const plainTop = { id: 1, name: 'tee', category: 'top', formality: 'everyday' }
+  const bottom = { id: 2, name: 'jeans', category: 'bottom', formality: 'everyday' }
+  const shoe = { id: 3, name: 'sneakers', category: 'shoes', formality: 'everyday' }
+  const loudTop = { id: 4, name: 'bold print top', category: 'top', formality: 'everyday', pattern_complexity: 'loud' }
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const quiet = validateCapsuleRoster([plainTop, bottom, shoe], {
+    slots, budget: 24, pool: [plainTop, bottom, shoe, loudTop]
+  })
+  assert.ok(
+    quiet.failures.some(failure => failure.code === 'statement_presence'),
+    `a statement piece was available and unpicked, got ${JSON.stringify(quiet.failures)}`
+  )
+
+  // ...but the same roster passes when the wardrobe has no statement piece to
+  // offer. A supply gap is not a roster defect, and a validator that invents
+  // failures is worse than one that misses them.
+  const noneAvailable = validateCapsuleRoster([plainTop, bottom, shoe], {
+    slots, budget: 24, pool: [plainTop, bottom, shoe]
+  })
+  assert.ok(!noneAvailable.failures.some(failure => failure.code === 'statement_presence'))
+})
+
+// The ratified ordering rule: if the validator fails on today's deterministic
+// roster, the validator is wrong, not the roster. selectCapsuleRoster records
+// the guarantees it could not meet on the roster it returns, and the validator
+// trusts that record rather than re-accusing it — evidence computed with the
+// real pool beats any heuristic here.
+test('a guarantee the pipeline already disclosed is not re-reported as a roster defect', () => {
+  const top = { id: 1, name: 'tee', category: 'top', formality: 'everyday' }
+  const bottom = { id: 2, name: 'jeans', category: 'bottom', formality: 'everyday' }
+  const shoe = { id: 3, name: 'sneakers', category: 'shoes', formality: 'everyday' }
+  const loudTop = { id: 4, name: 'bold print top', category: 'top', formality: 'everyday', pattern_complexity: 'loud' }
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const roster = [top, bottom, shoe]
+  roster.postConditionGaps = ['statement_presence']
+
+  const result = validateCapsuleRoster(roster, { slots, budget: 24, pool: [top, bottom, shoe, loudTop] })
+  assert.ok(!result.failures.some(failure => failure.code === 'statement_presence'))
+})
+
 test('validateCapsuleRoster does not reject a roster for colour or aesthetic reasons', () => {
   db.prepare('DELETE FROM pieces').run()
   // A deliberately uncoordinated palette (clashing, no shared neutral) with
@@ -3730,6 +3942,62 @@ test('a rejected capsule look survives as a needs-review card carrying its block
   assert.deepEqual(card.brokenPieces.map(p => p.name), ['burgundy cork wedges'], 'only the blocked garment is flagged, not the whole outfit')
   assert.deepEqual(card.capsuleRepair, { slotId: 'city_museum', blockedPieceIds: [199] }, 'enough state to swap one garment without re-planning')
   assert.equal(card.title, 'Museum Day', "the model's own title survives")
+})
+
+// A needs-review card appended after every other slot reads as unrelated to the
+// use case it belongs to — and it is the card the person is meant to act on.
+// Live confabulation (thread_1785348988259): the closing model told the person a
+// card was flagged because the formula "runs warm for summer evenings" and
+// offered a lighter swap. It was flagged for having no shoes. The turn handed it
+// the COUNT of held-back looks but never the REASON, so it invented one — the
+// exact failure the final-answer guard exists to catch, arriving through a gap
+// the guard cannot see.
+test('a rejected capsule look carries a reason the closing turn can state truthfully', () => {
+  const top = { id: 1, name: 'tee', category: 'top' }
+  const bottom = { id: 2, name: 'jeans', category: 'bottom' }
+  const slot = {
+    id: 'dinner',
+    label: 'Restaurants / Social Events',
+    targetOutfits: 2,
+    gateAllowedIds: new Set([1, 2, 3]),
+    allowedPieces: [top, bottom],
+  }
+  const result = validateSubmittedPlanOutfits({
+    slots: [slot],
+    piecesById: new Map([[1, top], [2, bottom]]),
+    constraints: { pieceBudget: 24 },
+    isSeasonalCapsule: true,
+    boundedComposition: true,
+    heldOutfits: [],
+  }, [{ slot_id: 'dinner', title: 'Shoeless attempt', piece_ids: [1, 2] }])
+
+  const failure = result.failures.find(entry => entry.slot_id === 'dinner')
+  assert.ok(failure, 'the rejection is reported')
+  assert.match(failure.reasons.join(' '), /shoes/i, 'and it names the real cause, not a count')
+  assert.ok(failure.outfit, 'with the attempt attached, so the reason can reach both the card and the closing prose')
+})
+
+test('a rejected capsule card is grouped with its own slot, not appended last', () => {
+  const top = { id: 1, name: 'tee', category: 'top' }
+  const bottom = { id: 2, name: 'jeans', category: 'bottom' }
+  const shoe = { id: 3, name: 'sneakers', category: 'shoes' }
+  const pendingPlan = {
+    slots: [
+      { id: 'home', label: 'At Home', bestFor: 'home', occasion: 'casual' },
+      { id: 'dinner', label: 'Restaurant Dinner', bestFor: 'dinner', occasion: 'evening' },
+      { id: 'walks', label: 'Nature Walks', bestFor: 'walks', occasion: 'casual' },
+    ],
+  }
+  const [card] = buildRejectedCapsuleCards([{
+    slot_id: 'dinner',
+    label: 'Restaurant Dinner',
+    reasons: ['missing shoes'],
+    blockedPieceIds: [],
+    outfit: { title: 'Dinner attempt', pieces: [top, bottom, shoe], pieceIds: [1, 2, 3] },
+  }], pendingPlan)
+
+  assert.equal(card.label, 'Restaurant Dinner')
+  assert.equal(card.tripSlot, 'dinner', 'the card carries the slot it belongs to, so ordering by slot is possible')
 })
 
 test('a failure with no recoverable outfit produces no card rather than an empty one', () => {

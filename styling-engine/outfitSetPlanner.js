@@ -146,7 +146,8 @@ function buildPlanReport(pieceReuse, tripOutfits = [], {
   noRepeatCats = new Set(),
   pieceBudget = 0,
   capsuleRoster = [],
-  capsuleCapacity = 0
+  capsuleCapacity = 0,
+  statedPalette = []
 } = {}) {
   const outfitCount = tripOutfits.length
   const lines = []
@@ -164,6 +165,14 @@ function buildPlanReport(pieceReuse, tripOutfits = [], {
     lines.push(roster.length <= pieceBudget
       ? `Within the ${pieceBudget}-piece budget.`
       : `Over the ${pieceBudget}-piece budget by ${roster.length - pieceBudget} — tighten a slot or allow more repeats.`)
+    // Say what was done with a stated palette, including how faithfully. It is
+    // a preference, not a filter, so a roster that had to reach outside it for
+    // structural coverage is the expected outcome — and silently honouring it
+    // "mostly" without saying so is how a request quietly goes missing.
+    if (statedPalette.length && capsuleRoster.length) {
+      const inPalette = capsuleRoster.filter(piece => pieceMatchesStatedPalette(piece, statedPalette)).length
+      lines.push(`Palette requested (${statedPalette.join(', ')}): ${inPalette} of ${capsuleRoster.length} pieces match; the rest were needed to keep every use case wearable.`)
+    }
     return lines
   }
   if (reuseMode === 'diversify' || noRepeatCats.size) {
@@ -268,12 +277,12 @@ function buildCoverageGapLines(coverageGaps = []) {
   return (Array.isArray(coverageGaps) ? coverageGaps : []).filter(Boolean)
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, coverageGaps = [] } = {}) {
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [] } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const durationLabel = source === 'plan_outfit_set' ? 'Plan length' : 'Trip length'
   const pieceReuse = describeTripPieceReuse(tripOutfits)
-  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity })
+  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette })
   const weatherLine = buildWeatherLine(slotWeather)
   const gapLines = buildCoverageGapLines(coverageGaps)
   const capsulePlanContext = capsuleRoster.length ? {
@@ -584,7 +593,66 @@ const PLAN_WORKBENCH_PIECE_LIMIT = 40
 
 const CAPSULE_NEUTRAL_COLORS = ['black', 'white', 'ivory', 'cream', 'navy', 'blue', 'grey', 'gray', 'charcoal', 'beige', 'tan', 'khaki', 'stone', 'olive', 'denim', 'brown', 'camel']
 
-function capsuleVersatilityScore(piece = {}, { isSummer = false } = {}) {
+// Spec §7 path 1: a palette the person already stated in their request is the
+// cheapest input there is — the words are in `question` and were being dropped
+// entirely, because roster selection reads structured columns and never the
+// request text. Deliberately NOT a regex sweep: the vocabulary comes from the
+// wardrobe's own stored colour values (the same set the Wardrobe filter is
+// built from), so it is per-user and cannot drift from what is actually
+// taggable. Measured 2026-07-28: 38 distinct stored values, 37 of them inside
+// the picker vocabulary, one off-vocabulary mention in 466.
+//
+// Returns `{ colors, optOut }` rather than a bare list because "said nothing"
+// and "explicitly wants no colour constraint" are different states and must
+// stay distinguishable: a stored palette preference (spec §7 path 3) would
+// otherwise apply to every future capsule with no way to turn it off for one
+// request. `optOut` is that off switch.
+export function extractStatedPalette(question = '', pool = []) {
+  const text = ` ${String(question || '').toLowerCase().replace(/[^a-z\s-]/g, ' ').replace(/\s+/g, ' ')} ` // ratchet-allow: normalizing user request text, not garment matching
+  if (!text.trim()) return { colors: [], optOut: false }
+  // Phrased as whole intents rather than keywords: "any colour" and "no colour
+  // preference" are opt-outs; "any black" is not.
+  const OPT_OUT_PHRASES = [
+    'any colour', 'any color', 'any colours', 'any colors',
+    'all colours', 'all colors',
+    'no colour preference', 'no color preference',
+    'no palette', 'ignore the palette', 'ignore my palette', 'skip the palette',
+    'without a palette', 'no colour restriction', 'no color restriction',
+    'do not limit the colours', 'do not limit the colors',
+    "don t limit the colours", "don t limit the colors",
+  ]
+  if (OPT_OUT_PHRASES.some(phrase => text.includes(` ${phrase} `) || text.includes(`${phrase} `))) { // ratchet-allow: whole-phrase user intent in the request, not garment text
+    return { colors: [], optOut: true }
+  }
+  const vocabulary = new Set()
+  for (const piece of Array.isArray(pool) ? pool : []) {
+    for (const color of Array.isArray(piece?.colors) ? piece.colors : []) {
+      const value = String(color || '').toLowerCase().trim()
+      if (value) vocabulary.add(value)
+    }
+  }
+  if (!vocabulary.size) return { colors: [], optOut: false }
+  const stated = new Set()
+  for (const color of vocabulary) {
+    if (text.includes(` ${color} `)) stated.add(color) // ratchet-allow: the wardrobe's own colour vocabulary against the request, not garment names
+  }
+  // "neutrals" is the one word people reach for that names a set rather than a
+  // colour. Expand it against what they actually own, not against a fixed list.
+  if (text.includes(' neutral ') || text.includes(' neutrals ')) { // ratchet-allow: one set-naming word in the request, expanded from stored colours
+    for (const color of vocabulary) {
+      if (CAPSULE_NEUTRAL_COLORS.some(neutral => color.includes(neutral))) stated.add(color)
+    }
+  }
+  return { colors: [...stated].sort(), optOut: false }
+}
+
+function pieceMatchesStatedPalette(piece = {}, palette = []) {
+  if (!palette.length) return false
+  const colors = (Array.isArray(piece?.colors) ? piece.colors : []).map(color => String(color).toLowerCase().trim())
+  return colors.some(color => palette.includes(color))
+}
+
+function capsuleVersatilityScore(piece = {}, { isSummer = false, palette = [] } = {}) {
   let score = 0
   const colors = (Array.isArray(piece.colors) ? piece.colors : []).map(color => String(color).toLowerCase())
   // A piece tagged pattern_complexity 'loud' is a statement piece by the
@@ -605,6 +673,12 @@ function capsuleVersatilityScore(piece = {}, { isSummer = false } = {}) {
     if (hasFiberOrFabric(['linen', 'cotton', 'viscose', 'tencel', 'gauze'])) score += 6
   }
   if (piece.recommendation_status === 'trusted') score += 4
+  // A stated palette is a PREFERENCE, never a filter. This project's own gate
+  // history is the argument: a hard filter on a taste dimension starves
+  // capacity (the `home` gate ruling). A piece outside the palette still
+  // competes and can still be selected when structure needs it — coverage
+  // reserves and the supply precondition are unaffected by this term.
+  if (pieceMatchesStatedPalette(piece, palette)) score += CAPSULE_STATED_PALETTE_BONUS
   return score
 }
 
@@ -817,6 +891,18 @@ function ensureCapsuleGroupReserve(roster = [], groups = {}, group = '', require
 // a neutral: one place decides what "statement" means, so the score and the
 // guarantee cannot disagree about which pieces they are talking about.
 const CAPSULE_STATEMENT_MIN_MAIN_PIECES = 8
+// Comparable to the neutral-colour term so a stated palette actually moves the
+// ranking, but not so large it can outweigh several structural signals at once.
+const CAPSULE_STATED_PALETTE_BONUS = 14
+
+// Owner-set (and, for pieces the tagger touches, tagger-set) construction fact:
+// this garment cannot be worn against skin on its own. In a finite capsule it
+// therefore costs two roster slots to produce one look — fine when a base is
+// there, dead weight when it isn't. Only 'yes' counts: unset means nobody has
+// looked, and must behave exactly as it did before the field existed.
+function pieceNeedsBase(piece = {}) {
+  return String(piece?.needs_base || '').toLowerCase() === 'yes'
+}
 
 // Owner-set (and, for pieces the tagger touches, tagger-set) construction fact:
 // this garment cannot be worn against skin on its own. In a finite capsule it
@@ -1095,15 +1181,19 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
 // all, the condition is reported rather than silently abandoned. A roster with
 // no violated condition is returned untouched, which is what keeps every
 // already-ratified selection byte-identical.
+// group '*' is a whole-roster guarantee (a statement piece can be a top, a
+// bottom or a dress) rather than a per-category one. Shared so the enforcer and
+// the validator can never disagree about what a condition means — the whole
+// point of declaring the guarantees as data.
+function capsuleConditionMatches(piece, condition) {
+  return (condition.group === '*' || wardrobeCategoryGroup(piece) === condition.group) &&
+    condition.predicate(piece)
+}
+
 export function enforceCapsulePostConditions(roster = [], groups = {}, conditions = [], scoreOf = new Map(), protectedPieces = new Set()) {
   let nextRoster = [...roster]
   const unsatisfied = []
-  // group '*' is a whole-roster guarantee (a statement piece can be a top, a
-  // bottom or a dress) rather than a per-category one; its repair still swaps
-  // within the candidate's own category so category quotas stay intact.
-  const conditionMatches = (piece, condition) =>
-    (condition.group === '*' || wardrobeCategoryGroup(piece) === condition.group) &&
-    condition.predicate(piece)
+  const conditionMatches = capsuleConditionMatches
   const countFor = (candidateRoster, condition) =>
     candidateRoster.filter(piece => conditionMatches(piece, condition)).length
   // One repair per condition at most; the guard is belt-and-braces against a
@@ -1168,7 +1258,7 @@ export function enforceCapsulePostConditions(roster = [], groups = {}, condition
   return { roster: nextRoster, unsatisfied }
 }
 
-export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, isWinter = false, occasions = [], slots = [] } = {}) {
+export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, isWinter = false, occasions = [], slots = [], palette = [] } = {}) {
   const quotas = capsuleQuotas(budget, { isSummer, isWinter })
   const groups = { top: [], bottom: [], dress: [], outerwear: [], shoes: [] }
   const scoreOf = new Map()
@@ -1182,7 +1272,7 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
   for (const piece of usablePool) {
     const group = wardrobeCategoryGroup(piece)
     if (!groups[group]) continue
-    scoreOf.set(piece, capsuleVersatilityScore(piece, { isSummer }))
+    scoreOf.set(piece, capsuleVersatilityScore(piece, { isSummer, palette }))
     groups[group].push(piece)
   }
   for (const group of Object.keys(groups)) groups[group].sort((a, b) => scoreOf.get(b) - scoreOf.get(a))
@@ -1326,6 +1416,7 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
 // sees past. Additive only: does not change selectCapsuleRoster's own output.
 export function buildCapsuleBench(pool = [], {
   budget = 24, slots = [], isSummer = false, isWinter = false, benchSize = 40,
+  palette = [],
   seedWithDeterministicRoster = true
 } = {}) {
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
@@ -1376,8 +1467,14 @@ export function buildCapsuleBench(pool = [], {
   // can still print the pre-seed, rank-only measurement for reference —
   // production callers must leave it at the default.
   if (seedWithDeterministicRoster) {
+    // The seed must be built with the SAME palette the model is given, or the
+    // bench will not contain the roster it is meant to guarantee — and the
+    // model's candidate list would silently exclude the deterministic answer it
+    // is supposed to be able to reproduce. Caught by the comparison harness
+    // before any billed call: a palette run reported every roster piece as
+    // "not in the supplied pool".
     const deterministicRoster = selectCapsuleRoster(pool, {
-      budget, isSummer, isWinter, occasions: normalizedSlots.map(slot => slot.occasion), slots: normalizedSlots
+      budget, isSummer, isWinter, occasions: normalizedSlots.map(slot => slot.occasion), slots: normalizedSlots, palette
     })
     for (const piece of deterministicRoster) admit(piece, true)
   }
@@ -1796,74 +1893,73 @@ export function validateCapsuleRoster(roster = [], {
     }
   }
 
-  // category_floor — ensureCapsuleGroupReserve's target ("mainReserve" inside
-  // capsuleDemandReserve) is 2-3 register-compliant pieces per group so the
-  // rotation isn't carried by one piece. Measured against the live wardrobe,
-  // that target is NOT what survives to the final roster: a winter capsule's
-  // later ensureWinterIndoorTopBalance pass swaps on sleeve-coverage alone and
-  // does not protect the earlier reserve's register-compliant picks, so it can
-  // (and on the live matrix, does) undo the reserve back down to 1. That
-  // erosion looks like a real gap in selectCapsuleRoster, not a validator bug
-  // — see the implementation report. Per the brief's own ordering rule ("if it
-  // fails [on today's roster], the validator is wrong, not the roster"), this
-  // check fires on the floor the pipeline actually guarantees end-to-end
-  // (>=1 compliant piece), not the higher in-pass target, and reports both
-  // numbers so the failure stays repairable.
+  // Parity with the selector, by construction. Every guarantee selectCapsuleRoster
+  // enforces is declared once in capsuleRosterPostConditions; the validator
+  // evaluates those same declarations rather than keeping a second, drifting
+  // copy. Stage 3 hands roster choice to a model and this function becomes the
+  // only guard, so a guarantee the validator does not know about is a guarantee
+  // that silently stops existing.
+  //
+  // Legacy codes are preserved where one already existed (category_floor,
+  // winter_layer_role_missing, register_shoe_path_missing) so existing callers
+  // and docs keep working; the three that had no validator equivalent
+  // (winter_covered_bases, statement_presence, base_for_dependent_top) report
+  // under their own condition code.
+  const LEGACY_FAILURE_CODES = [
+    [/^register_reserve:/, 'category_floor'],
+    [/^winter_indoor_layer$|^winter_transition_layer$/, 'winter_layer_role_missing'],
+    [/^shoe_reserve:/, 'register_shoe_path_missing'],
+  ]
   const quotas = capsuleQuotas(budget, { isSummer, isWinter: isWinterCapsule })
   const reserve = capsuleDemandReserve(normalizedSlots, quotas)
-  if (reserve) {
-    for (const group of ['top', 'bottom', 'shoes']) {
-      const required = reserve.byGroup[group] || 0
-      if (!(required > 0)) continue
-      const compliant = normalizedRoster.filter(piece =>
-        wardrobeCategoryGroup(piece) === group && pieceClearsCeilingRank(piece, reserve.rank)
+  const shoeDemands = (quotas.shoes || 0) > 0 ? shoeReserveDemands(normalizedSlots, quotas) : []
+  const poolPieces = Array.isArray(pool) ? pool : []
+  const conditions = capsuleRosterPostConditions({
+    quotas,
+    reserve,
+    isWinter: isWinterCapsule,
+    shoeDemands,
+    roster: normalizedRoster
+  })
+  // selectCapsuleRoster records the guarantees it could not meet on the roster
+  // it returns. That is better evidence than any heuristic here — it was
+  // computed with the real pool and the real swap logic — so a gap the pipeline
+  // has already disclosed is not re-reported as a roster defect. A
+  // model-chosen roster carries no such record, so every condition applies to
+  // it strictly, which is the case this validator exists for.
+  const declaredGaps = new Set(Array.isArray(roster?.postConditionGaps) ? roster.postConditionGaps : [])
+  for (const condition of conditions) {
+    const have = normalizedRoster.filter(piece => capsuleConditionMatches(piece, condition)).length
+    if (have >= condition.required) continue
+    if (declaredGaps.has(condition.code)) continue
+    // A guarantee the WARDROBE cannot satisfy is not a defect in the roster —
+    // it is a supply gap, reported elsewhere. Only fail when the roster could
+    // actually have done better, so every failure here is repairable by
+    // swapping something.
+    if (poolPieces.length) {
+      // With a candidate pool (stage 3 passes the bench) this is exact: did a
+      // satisfying piece exist and go unpicked?
+      const rosterIds = idSetForPieces(normalizedRoster)
+      const availableUnused = poolPieces.some(piece =>
+        !rosterIds.has(Number(piece?.id)) && capsuleConditionMatches(piece, condition)
       )
-      if (compliant.length < 1) {
-        failures.push({
-          code: 'category_floor',
-          message: `roster has ${compliant.length} ${group}(s) clearing the ${registerRankName(reserve.rank)} ceiling the plan's lowest-register slots need (target ${required}), so it is carried by one piece`
-        })
-      }
+      if (!availableUnused) continue
+    } else {
+      // Without a pool, attribution is guesswork, so blame only what is
+      // provably the roster's doing: a category it spent slots on and filled
+      // badly. A whole-roster guarantee, or a category it never bought into,
+      // is indistinguishable from the wardrobe simply not having one — and a
+      // validator that invents failures is worse than one that misses them.
+      if (condition.group === '*') continue
+      const spentOnGroup = normalizedRoster.some(piece => wardrobeCategoryGroup(piece) === condition.group)
+      if (!spentOnGroup) continue
     }
-  }
-
-  // winter_layer_role_missing — the two winter outerwear jobs a >=12-piece
-  // winter capsule's quota reserves (capsuleQuotas: outerwear=2 at that size).
-  if (isWinterCapsule && budget >= 12) {
-    const hasIndoorLayer = normalizedRoster.some(isCapsuleIndoorKnitLayer)
-    const hasTransitionLayer = normalizedRoster.some(isCapsuleColdTransitionLayer)
-    if (!hasIndoorLayer || !hasTransitionLayer) {
-      const missing = [!hasIndoorLayer ? 'an indoor cardigan layer' : null, !hasTransitionLayer ? 'a cold-transition coat/jacket layer' : null]
-        .filter(Boolean).join(' and ')
-      failures.push({
-        code: 'winter_layer_role_missing',
-        message: `winter capsule at budget ${budget} is missing ${missing}`
-      })
-    }
-  }
-
-  // register_shoe_path_missing — shoeReserveDemands' own everyday/elevated
-  // split: if the slots span both registers, the roster needs a legal shoe at
-  // each end, not just enough shoes in aggregate.
-  const everydayRank = formalityRank('everyday')
-  const elevatedRank = formalityRank('elevated')
-  const everydayShoeLooks = normalizedSlots
-    .filter(slot => {
-      const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
-      return ceilingRank !== null && ceilingRank <= everydayRank
-    }).length
-  const elevatedShoeLooks = normalizedSlots.filter(slotWantsElevatedShoe).length
-  if (everydayShoeLooks > 0 && elevatedShoeLooks > 0) {
-    const roosterShoes = normalizedRoster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes')
-    const hasEverydayShoe = roosterShoes.some(piece => pieceClearsCeilingRank(piece, everydayRank))
-    const hasElevatedShoe = roosterShoes.some(piece => pieceMeetsFloorRank(piece, elevatedRank))
-    if (!hasEverydayShoe || !hasElevatedShoe) {
-      const missingEnd = !hasEverydayShoe ? 'an everyday/casual' : 'a dressy/elevated'
-      failures.push({
-        code: 'register_shoe_path_missing',
-        message: `slots span casual and elevated registers, but the roster has no legal shoe for the ${missingEnd} end`
-      })
-    }
+    const legacy = LEGACY_FAILURE_CODES.find(([pattern]) => pattern.test(condition.code))
+    const groupLabel = condition.group === '*' ? 'matching piece' : condition.group
+    failures.push({
+      code: legacy ? legacy[1] : condition.code,
+      message: `roster has ${have} ${groupLabel}(s) — needs ${condition.describe()}`
+    })
   }
 
   return { ok: failures.length === 0, failures }
@@ -1969,18 +2065,108 @@ function modelPlanPool({ allPieces = [], slots = [], constraints = {}, question 
   const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
   const isSummerContext = /\b(summer|warm|hot|80|90|heat)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
   const isWinterContext = /\b(winter|cold|chilly|snow|freezing)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
+  const { colors: statedPalette } = extractStatedPalette(question, allPieces)
   return isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
     ? selectCapsuleRoster(allPieces, {
         budget: pieceBudget,
         isSummer: isSummerContext,
         isWinter: isWinterContext && !isSummerContext,
         occasions: slots.map(slot => slot.occasion),
-        slots
+        slots,
+        palette: statedPalette
       })
     : allPieces
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', fetchImpl, ownerRules = [], planKind = '' } = {}) {
+// Spec §3 stage 2 — the model picks the roster, the engine validates it.
+//
+// Orchestration lives here rather than in the route so it is testable without a
+// provider: `chooseRoster` is injected, exactly like `composeCapsulePlanOnce`.
+// The contract is deliberately narrow — one bounded call, ONE repair attempt
+// given the specific structural failures, then the deterministic roster. Never
+// a third attempt, never a silent loop.
+//
+// Ordering matters and is ratified: validation runs BEFORE composition, so a
+// coherent-but-capacity-poor roster is a repairable structural fact rather than
+// missing cards discovered later.
+export async function selectCapsuleRosterViaModel({
+  pool = [],
+  budget = 24,
+  slots = [],
+  isSummer = false,
+  isWinter = false,
+  occasions = [],
+  palette = [],
+  benchSize = 40,
+  chooseRoster = null,
+  onDiagnostic = null
+} = {}) {
+  const deterministic = () => selectCapsuleRoster(pool, { budget, isSummer, isWinter, occasions, slots, palette })
+  const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
+  if (typeof chooseRoster !== 'function') {
+    return { roster: deterministic(), source: 'deterministic', palette: '', jobs: [], failures: [] }
+  }
+
+  const { bench, diagnostics } = buildCapsuleBench(pool, { budget, slots, isSummer, isWinter, benchSize, palette })
+  const benchById = pieceMapForPieces(bench)
+
+  // Resolve a model answer into real pieces. Anything outside the bench, or the
+  // wrong count, is a contract failure rather than something to quietly clamp —
+  // clamping would hide exactly the mistake the repair round exists to fix.
+  const resolve = (answer) => {
+    const ids = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : []).map(Number).filter(Boolean)
+    const unique = [...new Set(ids)]
+    const outsideBench = unique.filter(id => !benchById.has(id))
+    const roster = unique.map(id => benchById.get(id)).filter(Boolean)
+    const contractFailures = []
+    if (outsideBench.length) {
+      contractFailures.push({
+        code: 'piece_outside_bench',
+        message: `pieces ${outsideBench.join(', ')} are not in the supplied candidate list; choose only from it`
+      })
+    }
+    if (unique.length !== budget) {
+      contractFailures.push({
+        code: 'roster_size',
+        message: `selected ${unique.length} pieces; this capsule must contain exactly ${budget}`
+      })
+    }
+    return { roster, contractFailures, palette: String(answer?.palette || '').trim(), jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [] }
+  }
+
+  const check = (roster) => validateCapsuleRoster(roster, {
+    slots, budget, isSummer, isWinterCapsule: isWinter, pool: bench,
+    plannedCards: allocateCapsuleRepresentativeRotation(slots, roster, { cap: capsuleTotalOutfitCap(budget) })
+      .reduce((sum, slot) => sum + Math.max(0, Number(slot.targetOutfits) || 0), 0)
+  })
+
+  bump('capsuleRosterModelCalls')
+  const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, attempt: 1, failures: [] }))
+  let failures = [...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)]
+  if (!failures.length) {
+    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench }
+  }
+
+  // One repair, given the exact structural reasons. Not a fresh start: the
+  // model is asked to fix what failed, keeping the rest.
+  bump('capsuleRosterModelRepairs')
+  const second = resolve(await chooseRoster({
+    bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter,
+    attempt: 2, failures, previousRosterIds: first.roster.map(piece => Number(piece.id))
+  }))
+  const secondFailures = [...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)]
+  if (!secondFailures.length) {
+    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench }
+  }
+
+  // Two strikes: ship the deterministic roster and say so. A capsule the engine
+  // chose is a worse answer than one the model chose well, and a better answer
+  // than one that fails its own structural guarantees.
+  bump('capsuleRosterModelFallbacks')
+  return { roster: deterministic(), source: 'deterministic_fallback', palette: '', jobs: [], failures: secondFailures, bench }
+}
+
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
   const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
@@ -1988,7 +2174,27 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   const isWinterContext = /\b(winter|cold|chilly|snow|freezing)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
   const requiresTransitionLayerCoverage =
     /\bouterwear\b[\s\S]{0,80}\btransition|\btransition[\s\S]{0,80}\bouterwear\b/i.test(String(question || '')) // ratchet-allow: user plan directive
-  const composePool = modelPlanPool({ allPieces, slots, constraints, question, mood, planKind })
+  const { colors: requestPalette, optOut: paletteOptOut } = extractStatedPalette(question, allPieces)
+  // Stage 2 (spec §3): when a chooser is injected AND this is an enforced
+  // capsule, the model picks the roster and the engine validates it. Otherwise
+  // — and on any failure — this is byte-identical to the deterministic path.
+  let capsuleRosterSelection = null
+  if (typeof chooseCapsuleRoster === 'function' && isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET) {
+    capsuleRosterSelection = await selectCapsuleRosterViaModel({
+      pool: allPieces,
+      budget: pieceBudget,
+      slots,
+      isSummer: isSummerContext,
+      isWinter: isWinterContext && !isSummerContext,
+      occasions: slots.map(slot => slot.occasion),
+      palette: paletteOptOut ? [] : requestPalette,
+      chooseRoster: chooseCapsuleRoster,
+      onDiagnostic
+    })
+  }
+  const composePool = capsuleRosterSelection
+    ? capsuleRosterSelection.roster
+    : modelPlanPool({ allPieces, slots, constraints, question, mood, planKind })
   const piecesById = pieceMapForPieces(composePool)
   const catalogById = new Map()
   const slotWeather = []
@@ -2123,6 +2329,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     suppressedReasonsById: slot._modelWorkbench?.suppressedReasonsById || new Map(),
     slotRequestText: slot._modelWorkbench?.slotRequestText || ''
   }))
+  const statedPaletteResult = extractStatedPalette(question, allPieces)
   const capsuleRoster = isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET ? composePool : []
   if (capsuleRoster.length) {
     pendingSlots = allocateCapsuleRepresentativeRotation(pendingSlots, capsuleRoster, {
@@ -2196,6 +2403,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       constraints: { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget },
       capsuleRoster,
       capsuleCapacity: capsuleOutfitCoreCapacity(capsuleRoster, pendingSlots),
+      statedPalette: statedPaletteResult.colors,
+      paletteOptOut: statedPaletteResult.optOut,
+      capsuleRosterSource: capsuleRosterSelection?.source || 'deterministic',
+      capsuleRosterPalette: capsuleRosterSelection?.palette || '',
+      capsuleRosterJobs: capsuleRosterSelection?.jobs || [],
       slotWeather,
       coverageGaps,
       heldOutfits: [],
@@ -2866,6 +3078,7 @@ export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits =
     capsuleCapacity: Number(pendingPlan?.capsuleCapacity) || 0,
     capsuleSlots: pendingPlan?.slots || [],
     isWinterCapsule: Boolean(pendingPlan?.isWinterCapsule),
+    statedPalette: Array.isArray(pendingPlan?.statedPalette) ? pendingPlan.statedPalette : [],
     coverageGaps
   })
 }

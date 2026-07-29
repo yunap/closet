@@ -2426,6 +2426,50 @@ test('capsule look repair swaps the blocked piece from the saved roster with no 
   assert.match(data.answer, /swapped/i)
 })
 
+// Live failure (thread_1785348988259): a dinner look was submitted with no shoes
+// at all. Every substitution failed — you cannot swap a piece that isn't there —
+// and the endpoint then told the person "the pieces it would need are not in
+// this capsule" while five eligible shoes sat in that slot's roster. A look can
+// fail for a piece that is WRONG or one that is ABSENT; repair must handle both.
+test('capsule look repair completes a look that is missing a required piece', async () => {
+  const planContext = {
+    version: 1,
+    piece_budget: 10,
+    capacity: 4,
+    roster_ids: [seeded.top, seeded.bottom, seeded.shoe],
+    is_winter_capsule: false,
+    slots: [{
+      id: 'casual_indoors',
+      label: 'Casual Indoors',
+      occasion: 'casual',
+      activity: 'none',
+      environment: 'indoor',
+      register: '',
+      weather_label: 'indoor',
+      weather_profile: {},
+      allowed_piece_ids: [seeded.top, seeded.bottom, seeded.shoe],
+    }],
+  }
+  const data = await postJson('/api/ai/repair-capsule-look', {
+    planContext,
+    slotId: 'casual_indoors',
+    title: 'Shoeless attempt',
+    // No shoes — exactly what the composer submitted live.
+    pieceIds: [seeded.top, seeded.bottom],
+    blockedPieceIds: [],
+    existingOutfits: [],
+  })
+
+  assert.equal(data.debug.providerCalls, 0, 'completing a look must not call a model either')
+  assert.deepEqual(
+    data.structuredOutfits[0].pieceIds,
+    [seeded.top, seeded.bottom, seeded.shoe],
+    'the missing piece is added rather than the look being declared unfixable'
+  )
+  assert.match(data.answer, /added/i)
+  assert.match(data.structuredOutfits[0].engineNote, /missing shoes/i)
+})
+
 test('capsule look repair reports honestly when the roster cannot fix the look', async () => {
   const planContext = {
     version: 1,
@@ -2635,6 +2679,32 @@ test('capsule expansion uses provider-enforced structured output rather than pro
   assert.match(providerSrc, /response_format:\s*\{\s*type: 'json_schema'/)
   assert.match(providerSrc, /tool_choice: \{ type: 'tool', name \}/)
   assert.match(providerSrc, /block\?\.type === 'tool_use' && block\?\.name === name/)
+})
+
+// Spec §3 stage 2. Two things must hold before this can ever be switched on:
+// with the flag off nothing changes at all, and with it on the model's roster
+// is gated by the bench and validated before composition — never trusted raw.
+test('model capsule roster selection is opt-in and gated by the bench', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const plannerSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
+
+  // Default OFF. A capsule feature that turns itself on is a billed surprise.
+  assert.match(routeSrc, /WARDROBE_MODEL_CAPSULE_ROSTER/)
+  assert.match(routeSrc, /if \(modelCapsuleRosterEnabled\(\)\)[\s\S]{0,80}toolContext\.chooseCapsuleRoster =/)
+
+  // The model chooses from the bench and nothing else, and the schema pins the
+  // roster size rather than letting a short answer through.
+  assert.match(routeSrc, /choose ONLY from the candidate list/i)
+  assert.match(routeSrc, /roster_piece_ids: \{ type: 'array', items: \{ type: 'integer' \}, minItems: exact, maxItems: exact \}/)
+  assert.match(routeSrc, /prepareWardrobeThumb\(filePath, `capsule-roster:/)
+
+  // One call, one repair, then the deterministic roster — never a third attempt.
+  assert.match(plannerSrc, /bump\('capsuleRosterModelRepairs'\)/)
+  assert.match(plannerSrc, /bump\('capsuleRosterModelFallbacks'\)/)
+  assert.match(plannerSrc, /source: 'deterministic_fallback'/)
+  // Validation before composition: a capacity-poor roster is a repairable fact,
+  // not missing cards discovered afterwards.
+  assert.match(plannerSrc, /const check = \(roster\) => validateCapsuleRoster\(/)
 })
 
 test('atomic capsule composition receives roster thumbnails and full authoritative garment truth', () => {

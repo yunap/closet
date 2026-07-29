@@ -1100,6 +1100,19 @@ better here — `buildPieceText` carries `length_hits_at`, `silhouette`, `hem_fi
 `fit_on_body` — which makes this an asymmetry between the two paths rather than a system-wide gap,
 and the same shape as the Visual Composer athletic-pants incident already on record.
 
+> **FIXED 2026-07-29.** `anchorFidelityInstructions` now reads the structural columns first and
+> keeps the `name + notes` regexes only as the fallback for pieces that carry no tagged value, so
+> nothing that produced a clause before stopped producing one. Measured over the live wardrobe:
+> **206 of 243 active pieces now carry a length clause** (was 0), and the count producing no anchor
+> fidelity instruction at all fell from **49 to 1**. `editorialImagePrompt` now describes the anchor
+> with `buildPieceText` — the same truth text the whole-wardrobe path uses — which closes the
+> asymmetry and removes the `selectedPiece.fabric` line that read a non-existent column. One clause
+> was added beyond restoring parity: a tagged sleeve now says *do not cover it with a layer that
+> would crush it*, from the bishop-sleeve incident. Also fixed at the source: `trustedFieldText`
+> suppresses the tagger's not-applicable sentinel, so the truth text no longer emits `sleeve: none`
+> on 59 bottoms, 13 accessories and 6 shoes. Tests: `test/editorialIdealAdditions.test.js`.
+> The 900-character truncation below is **not** fixed.
+
 **One more loss on the better path:** `wholeWardrobeImagePrompt` truncates each piece's truth text
 at 900 characters, and the real median is **1,130** — so **169 of 236 pieces lose their tail**.
 `buildWardrobePieceTruthText` appends in a fixed order, with `fit_on_body`, tuck behavior,
