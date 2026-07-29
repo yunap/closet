@@ -1,5 +1,6 @@
 import path from 'path'
 import fs from 'fs'
+import crypto from 'crypto'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
@@ -15,11 +16,14 @@ import {
 
 import {
   askStylist,
+  askStylistWithUsage,
+  askStylistStructuredWithUsage,
   askStylistWithTools,
   prepareImageForClaude,
   AI_PROVIDER,
   ACTIVE_STYLIST_MODEL,
   PROMPT_CACHE_BREAKPOINT,
+  estimateAiUsageCost,
   mockAiEnabled,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
@@ -2497,6 +2501,84 @@ export function uploadedOrSavedOutfitPhotoPath(outfitPhoto = '') {
 // feedback text. The client splits on this exact line to collapse the details.
 export const CRITIQUE_DETAILS_DELIMITER = '--- Full structured read ---'
 
+const OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS = 10 * 60 * 1000
+const OUTFIT_EVALUATION_RESULT_CACHE_MAX = 50
+const OUTFIT_EVALUATION_CACHE_VERSION = 'critique-cost-v1'
+const outfitEvaluationResultCache = new Map()
+const outfitEvaluationInFlight = new Map()
+
+function critiqueResultCacheEnabled() {
+  return process.env.NODE_ENV !== 'test' || process.env.WARDROBE_TEST_EVALUATION_CACHE === 'true'
+}
+
+function cloneJsonValue(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value))
+}
+
+function pruneOutfitEvaluationResultCache(now = Date.now()) {
+  for (const [key, entry] of outfitEvaluationResultCache) {
+    if (entry.expiresAt <= now) outfitEvaluationResultCache.delete(key)
+  }
+  while (outfitEvaluationResultCache.size > OUTFIT_EVALUATION_RESULT_CACHE_MAX) {
+    const oldestKey = outfitEvaluationResultCache.keys().next().value
+    outfitEvaluationResultCache.delete(oldestKey)
+  }
+}
+
+function outfitEvaluationResultCacheKey({ system, messages, maxTokens, responseMode }) {
+  return crypto.createHash('sha256').update(JSON.stringify({
+    version: OUTFIT_EVALUATION_CACHE_VERSION,
+    provider: AI_PROVIDER,
+    model: ACTIVE_STYLIST_MODEL,
+    responseMode,
+    maxTokens,
+    system,
+    messages,
+  })).digest('hex')
+}
+
+function readOutfitEvaluationResultCache(key, now = Date.now()) {
+  if (!critiqueResultCacheEnabled()) return null
+  pruneOutfitEvaluationResultCache(now)
+  const entry = outfitEvaluationResultCache.get(key)
+  if (!entry) return null
+  // Refresh insertion order so the bounded map behaves as a small LRU.
+  outfitEvaluationResultCache.delete(key)
+  outfitEvaluationResultCache.set(key, entry)
+  const result = cloneJsonValue(entry.result)
+  result.debug = {
+    ...(result.debug || {}),
+    providerCalls: 0,
+    usage: null,
+    estimatedCost: {
+      estimatedUsd: 0,
+      pricingAvailable: true,
+      source: 'exact_result_cache',
+    },
+    resultCache: {
+      hit: true,
+      ageMs: Math.max(0, now - entry.createdAt),
+      ttlMs: OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS,
+    },
+  }
+  return result
+}
+
+function writeOutfitEvaluationResultCache(key, result, now = Date.now()) {
+  if (!critiqueResultCacheEnabled()) return
+  outfitEvaluationResultCache.set(key, {
+    createdAt: now,
+    expiresAt: now + OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS,
+    result: cloneJsonValue(result),
+  })
+  pruneOutfitEvaluationResultCache(now)
+}
+
+export function clearOutfitEvaluationResultCache() {
+  outfitEvaluationResultCache.clear()
+  outfitEvaluationInFlight.clear()
+}
+
 export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', question = '', attachedImageInventory = [] }) {
   const directFollowup = responseMode === 'followup'
     ? String(parsed?.answer || parsed?.feedback || parsed?.reply || parsed?.response || '').trim()
@@ -2763,32 +2845,120 @@ export async function evaluateOutfitThroughSharedPipeline({
     'Return direct advice only. Do not create render directions or image-generation prompts.'
   ].filter(Boolean).join('\n') })
 
-  const raw = await withTimeout(askStylist({
-    system: prompts.WHOLE_WARDROBE_EVALUATOR_SYSTEM,
-    // Sized from observed truncation: with critiqueProse the full critique JSON
-    // reached ~7.9k chars (~2000 tokens) before being cut off, so 1400 and even
-    // 2000 truncated real responses mid-string. 3000 leaves headroom.
-    maxTokens: 3000,
-    messages: [
-      ...(history || []).map(h => ({ role: h.role, content: h.content })),
-      { role: 'user', content }
-    ]
-  }), 90000, 'Whole-wardrobe outfit evaluator')
-  const parsed = safeJsonFromModel(raw)
-  const formatted = formatSharedOutfitEvaluation({ parsed, responseMode, question, attachedImageInventory })
-  return {
-    ...formatted,
-    provider: AI_PROVIDER,
-    model: ACTIVE_STYLIST_MODEL,
-    mode: routeMode,
-    pipeline: 'whole_wardrobe_outfit_evaluator',
-    evidenceMode,
-    debug: {
+  const isFollowup = responseMode === 'followup'
+  const system = `${
+    isFollowup
+      ? prompts.OUTFIT_EVALUATION_FOLLOWUP_SYSTEM
+      : prompts.WHOLE_WARDROBE_EVALUATOR_SYSTEM
+  }\n${PROMPT_CACHE_BREAKPOINT}`
+  const maxTokens = isFollowup ? 500 : 3000
+  const messages = [
+    ...(history || []).map(h => ({ role: h.role, content: h.content })),
+    { role: 'user', content }
+  ]
+  const resultCacheKey = outfitEvaluationResultCacheKey({
+    system,
+    messages,
+    maxTokens,
+    responseMode,
+  })
+  const cachedResult = readOutfitEvaluationResultCache(resultCacheKey)
+  if (cachedResult) {
+    cachedResult.debug = {
+      ...(cachedResult.debug || {}),
       timings: { totalMs: Date.now() - startedAt },
+    }
+    return cachedResult
+  }
+
+  const inFlight = outfitEvaluationInFlight.get(resultCacheKey)
+  if (inFlight) {
+    const sharedResult = cloneJsonValue(await inFlight)
+    sharedResult.debug = {
+      ...(sharedResult.debug || {}),
+      timings: { totalMs: Date.now() - startedAt },
+      providerCalls: 0,
+      usage: null,
+      estimatedCost: {
+        estimatedUsd: 0,
+        pricingAvailable: true,
+        source: 'in_flight_coalescing',
+      },
+      resultCache: {
+        hit: true,
+        coalesced: true,
+        ttlMs: OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS,
+      },
+    }
+    return sharedResult
+  }
+
+  const evaluationPromise = (async () => {
+    let parsed
+    let usage
+    if (isFollowup) {
+      const followupResult = await withTimeout(askStylistStructuredWithUsage({
+        system,
+        maxTokens,
+        name: 'outfit_critique_followup',
+        description: 'Answer the user’s follow-up about the current outfit directly and concisely.',
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            answer: { type: 'string' },
+          },
+          required: ['answer'],
+        },
+        messages,
+      }), 90000, 'Outfit critique follow-up')
+      parsed = followupResult.value
+      usage = followupResult.usage
+    } else {
+      // Sized from observed truncation: the full critique JSON reached ~7.9k
+      // chars (~2000 tokens) before being cut off, so 1400 and even 2000
+      // truncated real responses mid-string. 3000 leaves headroom.
+      const evaluationResult = await withTimeout(askStylistWithUsage({
+        system,
+        maxTokens,
+        messages,
+      }), 90000, 'Whole-wardrobe outfit evaluator')
+      parsed = safeJsonFromModel(evaluationResult.text)
+      usage = evaluationResult.usage
+    }
+    const formatted = formatSharedOutfitEvaluation({ parsed, responseMode, question, attachedImageInventory })
+    const result = {
+      ...formatted,
+      provider: AI_PROVIDER,
+      model: ACTIVE_STYLIST_MODEL,
+      mode: routeMode,
+      pipeline: 'whole_wardrobe_outfit_evaluator',
       evidenceMode,
-      linkedPieceCount: pieces.length,
-      outfitImageIncluded,
-      imageCount: imageRefs.filter(Boolean).length + (outfitImageIncluded ? 1 : 0)
+      debug: {
+        timings: { totalMs: Date.now() - startedAt },
+        providerCalls: 1,
+        usage,
+        estimatedCost: estimateAiUsageCost(usage),
+        resultCache: {
+          hit: false,
+          ttlMs: OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS,
+        },
+        evidenceMode,
+        linkedPieceCount: pieces.length,
+        outfitImageIncluded,
+        imageCount: imageRefs.filter(Boolean).length + (outfitImageIncluded ? 1 : 0)
+      }
+    }
+    writeOutfitEvaluationResultCache(resultCacheKey, result)
+    return result
+  })()
+
+  outfitEvaluationInFlight.set(resultCacheKey, evaluationPromise)
+  try {
+    return await evaluationPromise
+  } finally {
+    if (outfitEvaluationInFlight.get(resultCacheKey) === evaluationPromise) {
+      outfitEvaluationInFlight.delete(resultCacheKey)
     }
   }
 }

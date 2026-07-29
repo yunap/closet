@@ -14,6 +14,7 @@ const { formatSharedOutfitEvaluation, CRITIQUE_DETAILS_DELIMITER } = await impor
 const { buildPrompts } = await import('../styling-engine/prompts.js')
 const { db } = await import('../db.js')
 const WHOLE_WARDROBE_EVALUATOR_SYSTEM = buildPrompts().WHOLE_WARDROBE_EVALUATOR_SYSTEM
+const OUTFIT_EVALUATION_FOLLOWUP_SYSTEM = buildPrompts().OUTFIT_EVALUATION_FOLLOWUP_SYSTEM
 
 after(() => {
   db.close()
@@ -94,6 +95,16 @@ test('a successful outfit may say no change needed without manufacturing an issu
   assert.match(userRead, /\*\*No change needed\.\*\*/)
   assert.doesNotMatch(userRead, /\*\*Try this:\*\*/)
   assert.doesNotMatch(userRead, /\*\*Check:\*\*/)
+})
+
+test('critique followups use a lean answer-only contract without weakening evidence rules', () => {
+  assert.match(OUTFIT_EVALUATION_FOLLOWUP_SYSTEM, /Do not regenerate the full critique/)
+  assert.match(OUTFIT_EVALUATION_FOLLOWUP_SYSTEM, /2-5 concise sentences/)
+  assert.match(OUTFIT_EVALUATION_FOLLOWUP_SYSTEM, /current outfit photo as primary evidence/)
+  assert.match(OUTFIT_EVALUATION_FOLLOWUP_SYSTEM, /linked garment records as authority/)
+  assert.match(OUTFIT_EVALUATION_FOLLOWUP_SYSTEM, /"answer": "direct answer to the follow-up"/)
+  assert.doesNotMatch(OUTFIT_EVALUATION_FOLLOWUP_SYSTEM, /"visibleFacts"\s*:/)
+  assert.doesNotMatch(OUTFIT_EVALUATION_FOLLOWUP_SYSTEM, /"detailedCritique"\s*:/)
 })
 
 test('purpose-written detailed critique replaces the structured-field fallback', () => {

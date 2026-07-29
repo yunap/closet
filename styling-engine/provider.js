@@ -416,7 +416,11 @@ export function estimateAiUsageCost(usage = null) {
       reason: `No local pricing entry for ${usage.provider}:${usage.model}`
     }
   }
-  const billableInputTokens = Math.max(0, numberOrZero(usage.inputTokens) - numberOrZero(usage.cacheReadInputTokens))
+  // OpenAI prompt_tokens includes cached tokens; Anthropic input_tokens is the
+  // uncached remainder and reports cache reads/creation in separate fields.
+  const billableInputTokens = usage.provider === 'openai'
+    ? Math.max(0, numberOrZero(usage.inputTokens) - numberOrZero(usage.cacheReadInputTokens))
+    : numberOrZero(usage.inputTokens)
   const inputUsd = billableInputTokens * pricing.input / 1_000_000
   const outputUsd = numberOrZero(usage.outputTokens) * pricing.output / 1_000_000
   const cacheReadUsd = numberOrZero(usage.cacheReadInputTokens) * (pricing.cacheRead || pricing.cachedInput || pricing.input) / 1_000_000

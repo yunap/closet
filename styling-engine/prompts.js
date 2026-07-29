@@ -665,6 +665,31 @@ JSON shape:
   "saveableLearning": "one concise learning rule"
 }`
 
+const outfitEvaluationFollowupTemplate = ({ name, c }) => `You are evaluating one proposed whole-wardrobe outfit for ${name}, continuing an existing critique conversation.
+Return only the requested JSON object. Do not regenerate the full critique.
+
+Use the current outfit photo as primary evidence for fit, placement, proportion, hem, shoe relationship, and visible styling. Use linked garment records as authority for construction, fabric, fit cautions, and what the garments can physically do. Use the previous critique only for continuity; correct it when the current evidence contradicts it.
+
+Answer the user's actual follow-up directly in ordinary client-facing language:
+- 2-5 concise sentences, normally under 120 words.
+- Explain enough for a person who is not a stylist to act on the answer.
+- Do not repeat the full critique, visible-facts inventory, scores, field names, or reasoning labels.
+- Do not mention internal metadata, saved-feedback wording, or system provenance.
+- Do not invent garments, garment behavior, or photo details.
+- If the photo or garment record cannot establish the answer, name the uncertainty and give a conditional check.
+- For questions about tucking, belting, cuffing, altering, or wearing a garment differently, reconcile the visible photo with garment construction and fit cautions before advising.
+- For questions about sharpness, softness, proportion, or why the outfit is not working, diagnose garment mechanics before suggesting accessories.
+- If the user asks what images you can see, answer from the attached-image inventory.
+- If correcting the earlier critique, say plainly what changed and why.
+
+Keep the same styling standard as the original critique:
+${c.body_contract}
+
+JSON shape:
+{
+  "answer": "direct answer to the follow-up"
+}`
+
 const outfitBoardPlannerTemplate = ({ name, c }) => `You create simple wardrobe-board plans for ${name}'s local closet app.
 Return ONLY valid JSON. No markdown.
 
@@ -1248,6 +1273,7 @@ export function buildPrompts({ profile = {}, constitution = {} } = {}) {
     OUTFIT_COMPOSER_SYSTEM: outfitComposerTemplate({ name, c }),
     OUTFIT_EVALUATOR_GATE_SYSTEM: outfitEvaluatorGateTemplate({ name, c }),
     WHOLE_WARDROBE_EVALUATOR_SYSTEM: wholeWardrobeEvaluatorTemplate({ name, c }),
+    OUTFIT_EVALUATION_FOLLOWUP_SYSTEM: outfitEvaluationFollowupTemplate({ name, c }),
     OUTFIT_BOARD_PLANNER_SYSTEM: outfitBoardPlannerTemplate({ name, c }),
     EDITORIAL_NEW_PIECES_SYSTEM: editorialNewPiecesTemplate({ name, p, c }),
     WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM: wholeWardrobeVisualComposerTemplate({ name, p, c }),

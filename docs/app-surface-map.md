@@ -431,15 +431,20 @@ and internal-provenance language for now. Corrections happen through follow-up c
 > **Stores and follow-ups.** The evaluation object stores `visibleFacts`, `userCritique`, and
 > `detailedCritique`. Immediate follow-ups receive the recent critique through chat history plus a
 > compact evaluation memory (intent, verdict, floor line, fit placement, shoe read, first issue,
-> recommendation) and display an ordinary short chat answer. The current backend nevertheless
-> runs those turns through the full evaluator contract; an answer-only follow-up contract is a
-> pending cost optimization. Built by `formatSharedOutfitEvaluation`.
+> recommendation) and display an ordinary short chat answer. Follow-ups use their own
+> provider-enforced `{ answer }` contract with a 500-token ceiling rather than regenerating the
+> full diagnostic object and four-paragraph critique. The request still carries current outfit
+> images and linked garment truth, and `StylistChat` preserves the prior full evaluation memory.
+> Built by `evaluateOutfitThroughSharedPipeline` and `formatSharedOutfitEvaluation`.
 
-> **Cost boundary.** B2 is one provider call. It removes redundant generated prose rather than
-> adding a rewrite call, and formal before/after token proof is not a ratification gate. Pending
-> optimization work: cache the stable evaluator prompt, expose input/output/cache usage, use the
-> lean follow-up contract above, and protect exact retries with a short-lived result cache. Cache
-> stable image/evidence blocks only if measurements justify it.
+> **Cost boundary.** B2 is one provider call. The stable evaluator system prompt carries an
+> Anthropic cache breakpoint (and remains a normal repeated prefix on OpenAI). Debug telemetry now
+> records provider calls, normalized input/output/cache tokens, estimated cost, and exact-result
+> cache state; the development-only telemetry disclosure shows those values. Identical request
+> payloads reuse a bounded ten-minute result cache, and concurrent duplicates share one in-flight
+> call. The SHA-256 key covers provider/model, prompt version, complete system/messages, images,
+> garment truth, and current memory, so changed evidence or context cannot reuse a stale critique.
+> Stable image/evidence prompt caching remains deferred until measurements justify it.
 
 ---
 

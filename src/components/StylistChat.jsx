@@ -444,12 +444,24 @@ const renderTelemetryDetailBody = (timings, renderer) => {
 const MessageTelemetryDisclosure = ({ message }) => {
   if (!STYLIST_DEBUG_ENABLED) return null
   const composerUsage = message?.debug?.composerUsage
+  const critiqueUsage = message?.wardrobeEvaluation && message?.debug?.usage
+    ? { ...message.debug.usage, estimatedCost: message.debug.estimatedCost }
+    : null
+  const critiqueCache = message?.wardrobeEvaluation ? message?.debug?.resultCache : null
   const showTiming = (message?.wholeWardrobe || message?.wardrobeEvaluation) && message?.debug?.timings
-  if (!composerUsage && !showTiming) return null
+  if (!composerUsage && !critiqueUsage && !critiqueCache && !showTiming) return null
 
   const rows = []
   if (composerUsage) {
     rows.push(['Composer', composerUsageSummary(composerUsage)])
+  }
+  if (critiqueUsage) {
+    rows.push(['Critique', composerUsageSummary(critiqueUsage)])
+  }
+  if (critiqueCache) {
+    rows.push(['Critique cache', critiqueCache.hit
+      ? (critiqueCache.coalesced ? 'shared in-flight request' : 'exact-result hit')
+      : 'miss'])
   }
   if (showTiming) {
     rows.push(['Timing', `${timingSummary(message.debug.timings)}${renderCost(message.debug.timings)}`])
@@ -4829,12 +4841,17 @@ export default function StylistChat({
         replyEvaluationResponseMode = overrides.responseMode || 'full'
         replyOutfitName = outfitToSend.name
         replyDebug = data.debug || null
+        const isEvaluationFollowup = (overrides.responseMode || 'full') === 'followup'
         nextThreadMemory = {
           type: 'outfit',
           id: outfitToSend.id,
           name: outfitToSend.name,
-          latestEvaluation: data.evaluation || null,
-          latestEvaluationText: compactEvaluationMemory(data.evaluation),
+          latestEvaluation: isEvaluationFollowup
+            ? (threadMemory?.latestEvaluation || null)
+            : (data.evaluation || null),
+          latestEvaluationText: isEvaluationFollowup
+            ? priorEvaluationText
+            : compactEvaluationMemory(data.evaluation),
         }
         setThreadMemory(nextThreadMemory)
 

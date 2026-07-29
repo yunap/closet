@@ -349,13 +349,17 @@ one provider call, a bounded response, and redundant generated prose removed. Fo
 token proof is not required to ratify B2. Usage and JSON-parse failures should still be monitored;
 an observed regression is a tuning issue, not a reason to reopen the presentation decision.
 
-**Cost follow-up, separate from B2:** the critique path should add provider prompt caching and
-usage telemetry, then give follow-ups a lean answer-only response contract. Today the UI displays
-only a short follow-up, but the backend still sends the full evaluator instructions and permits a
-3,000-token response, so it may regenerate diagnostic fields and detailed prose that are discarded.
-After measuring those changes, add a short-lived exact-request cache for retries/double submissions.
-Cache stable image/evidence blocks only if telemetry shows that additional complexity is warranted.
-None of this should shorten the ratified four-paragraph explanation or add a second model call.
+**Cost follow-up implemented 2026-07-29, separate from B2:** full critiques now cache the stable
+evaluator system prefix through the provider's existing prompt-cache path and report normalized
+input/output/cache tokens plus estimated cost in debug telemetry. Follow-ups use a provider-enforced
+answer-only contract with a 500-token ceiling while retaining the current images, linked garment
+truth, compact prior evaluation, and conversation context; the client preserves the full evaluation
+memory instead of replacing it with the small follow-up result. A bounded ten-minute exact-request
+cache handles retries, and identical concurrent requests share the same in-flight provider call.
+The cache key includes provider/model, prompt version, system prompt, all message text, images, and
+garment/memory context, so any critique-relevant change is a miss. Stable image/evidence prompt
+caching remains deferred until telemetry shows that additional complexity is warranted. The
+ratified four-paragraph explanation is unchanged and no second model call was added.
 
 ### B3 — What the "needs review" card should be (proposition 3)
 - **Cost:** near-null surface (zero in the last 150 real threads); don't spend engineering here.

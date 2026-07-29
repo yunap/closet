@@ -18,7 +18,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_CANDIDATES = '18'
 process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, userUploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
-const { savedOutfitImagePrompt } = await import('../styling-engine/core.js')
+const { savedOutfitImagePrompt, clearOutfitEvaluationResultCache } = await import('../styling-engine/core.js')
 const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
 
 let server
@@ -39,6 +39,8 @@ after(async () => {
 })
 
 beforeEach(async () => {
+  delete process.env.WARDROBE_TEST_EVALUATION_CACHE
+  clearOutfitEvaluationResultCache()
   resetTables()
   seeded = await seedWardrobe()
   aiCalls = []
@@ -244,8 +246,8 @@ async function postJson(pathname, body) {
   return json
 }
 
-function mockAiHandler({ system, messages }) {
-  aiCalls.push({ system, messages })
+function mockAiHandler({ system, messages, maxTokens }) {
+  aiCalls.push({ system, messages, maxTokens })
   const text = String(system || '')
   const latestMessage = Array.isArray(messages) ? messages.at(-1) : null
   const latestText = Array.isArray(latestMessage?.content)
@@ -440,6 +442,12 @@ function mockAiHandler({ system, messages }) {
     if (/Response mode:\s*followup/i.test(latestText)) {
       return {
         answer: 'Direct follow-up answer about the attached outfit photos.',
+        usage: {
+          input_tokens: 1200,
+          output_tokens: 80,
+          cache_read_input_tokens: 900,
+          cache_creation_input_tokens: 0,
+        },
       }
     }
     return {
@@ -483,6 +491,12 @@ function mockAiHandler({ system, messages }) {
         action: 'Adjust the pant hem enough to keep the cream shoes readable.',
         check: 'Look for the leg line to stay long without fabric pooling over the shoes.',
         occasionNote: '',
+      },
+      usage: {
+        input_tokens: 5200,
+        output_tokens: 850,
+        cache_read_input_tokens: 4000,
+        cache_creation_input_tokens: 0,
       },
     }
   }
@@ -1452,6 +1466,11 @@ test('wardrobe outfit evaluator sends outfit and linked garment images', async (
   assert.equal(json.debug.outfitImageIncluded, true)
   assert.equal(json.debug.linkedPieceCount, 3)
   assert.ok(json.debug.imageCount >= 4)
+  assert.equal(json.debug.providerCalls, 1)
+  assert.equal(json.debug.usage.inputTokens, 5200)
+  assert.equal(json.debug.usage.outputTokens, 850)
+  assert.equal(json.debug.usage.cacheReadInputTokens, 4000)
+  assert.equal(json.debug.estimatedCost.pricingAvailable, true)
   assert.match(json.feedback, /^\*\*Works with one adjustment\.\*\*/)
   assert.match(json.feedback, /\*\*Try this:\*\* Adjust the pant hem/)
   assert.match(json.feedback, /\*\*Check:\*\* Look for the leg line/)
@@ -1506,12 +1525,47 @@ test('wardrobe outfit followup exposes current image inventory', async () => {
   assert.match(json.feedback, /Direct follow-up answer about the attached outfit photos/)
   assert.doesNotMatch(json.feedback, /Visible facts:/)
   assert.doesNotMatch(json.feedback, /Updated read:/)
+  assert.equal(json.debug.providerCalls, 1)
+  assert.equal(json.debug.resultCache.hit, false)
+  assert.equal(json.debug.usage.outputTokens, 80)
+  assert.equal(json.debug.usage.cacheReadInputTokens, 900)
 
   const lastCall = aiCalls.at(-1)
+  assert.equal(lastCall.maxTokens, 500)
+  assert.match(lastCall.system, /continuing an existing critique conversation/)
+  assert.doesNotMatch(lastCall.system, /detailedCritique/)
   const latestUserMessage = lastCall.messages.at(-1)
   assert.ok(Array.isArray(latestUserMessage.content))
   assert.match(latestUserMessage.content.at(-1).text, /Current attached image inventory for this turn/)
   assert.match(latestUserMessage.content.at(-1).text, /If the user asks what photos\/images you can see/)
+})
+
+test('exact duplicate outfit critiques reuse the short-lived result cache', async () => {
+  process.env.WARDROBE_TEST_EVALUATION_CACHE = 'true'
+  const request = {
+    outfit: { label: 'Cached mock outfit', photo: `/uploads/${seeded.photos.outfit}` },
+    pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+    occasion: 'city',
+    season: 'current season',
+    question: 'Evaluate this outfit.',
+  }
+
+  try {
+    const first = await postJson('/api/ai/evaluate-wardrobe-outfit', request)
+    const callsAfterFirst = aiCalls.length
+    const second = await postJson('/api/ai/evaluate-wardrobe-outfit', request)
+
+    assert.equal(first.debug.providerCalls, 1)
+    assert.equal(first.debug.resultCache.hit, false)
+    assert.equal(second.debug.providerCalls, 0)
+    assert.equal(second.debug.resultCache.hit, true)
+    assert.equal(second.debug.estimatedCost.estimatedUsd, 0)
+    assert.equal(aiCalls.length, callsAfterFirst, 'cache hit must not consume another provider response')
+    assert.equal(second.feedback, first.feedback)
+  } finally {
+    delete process.env.WARDROBE_TEST_EVALUATION_CACHE
+    clearOutfitEvaluationResultCache()
+  }
 })
 
 test('legacy saved outfit evaluator endpoint is removed', async () => {
@@ -2330,6 +2384,12 @@ test('StylistChat renders wardrobe evaluation replies in the chat thread', () =>
   assert.match(src, /<details open=\{true\}>/)
   assert.match(src, /<span>Outfit critique<\/span>/)
   assert.match(src, /<strong>\{m\.outfitName \|\| 'Generated outfit'\}<\/strong>/)
+  assert.match(src, /const isEvaluationFollowup = \(overrides\.responseMode \|\| 'full'\) === 'followup'/)
+  assert.match(src, /isEvaluationFollowup\s*\?\s*\(threadMemory\?\.latestEvaluation \|\| null\)/)
+  assert.match(src, /isEvaluationFollowup\s*\?\s*priorEvaluationText/)
+  assert.match(src, /rows\.push\(\['Critique', composerUsageSummary\(critiqueUsage\)\]\)/)
+  assert.match(src, /shared in-flight request/)
+  assert.match(src, /exact-result hit/)
 })
 
 test('StylistChat scopes rendered wardrobe boards to each generation result', () => {
@@ -3298,7 +3358,7 @@ test('provider usage helpers normalize tokens and estimate known model costs', (
   assert.equal(anthropicUsage.outputTokens, 2000)
   assert.equal(anthropicUsage.cacheReadInputTokens, 10000)
   assert.equal(anthropicCost.pricingAvailable, true)
-  assert.equal(anthropicCost.estimatedUsd, 0.303)
+  assert.equal(anthropicCost.estimatedUsd, 0.333)
 
   const openAiUsage = normalizeAiUsage({
     prompt_tokens: 4000,
