@@ -91,8 +91,35 @@ test('a successful outfit may say no change needed without manufacturing an issu
 
   const [userRead] = result.feedback.split(CRITIQUE_DETAILS_DELIMITER)
   assert.match(userRead, /^\*\*Works\.\*\*/)
-  assert.match(userRead, /\*\*Try this:\*\* No change needed\./)
+  assert.match(userRead, /\*\*No change needed\.\*\*/)
+  assert.doesNotMatch(userRead, /\*\*Try this:\*\*/)
   assert.doesNotMatch(userRead, /\*\*Check:\*\*/)
+})
+
+test('purpose-written detailed critique replaces the structured-field fallback', () => {
+  const paragraphs = [
+    'This outfit starts with a strong contrast between the quiet top and expressive skirt.',
+    'The top meets the skirt cleanly at the waist, so their proportions remain easy to read.',
+    'The shoe repeats the skirt’s darker note and gives the hem a clear finish.',
+    'The only change worth testing is a slightly shorter hem so more of that shoe remains visible.',
+  ]
+  const result = formatSharedOutfitEvaluation({
+    parsed: {
+      ...diagnosticRead,
+      detailedCritique: paragraphs,
+      userCritique: {
+        answer: 'Works with one adjustment',
+        reason: 'The outfit works, but the hem hides too much of the shoe.',
+        action: 'Test a slightly shorter hem.',
+        check: 'The shoe should remain visible.',
+        occasionNote: '',
+      },
+    },
+  })
+
+  const [, explanation] = result.feedback.split(CRITIQUE_DETAILS_DELIMITER)
+  assert.equal(explanation.trim(), paragraphs.join('\n\n'))
+  assert.deepEqual(result.evaluation.detailedCritique, paragraphs)
 })
 
 test('evaluator prompt requires the readable contract while retaining visible-fact diagnostics', () => {
@@ -100,4 +127,8 @@ test('evaluator prompt requires the readable contract while retaining visible-fa
   assert.match(WHOLE_WARDROBE_EVALUATOR_SYSTEM, /A keep may simply work/)
   assert.match(WHOLE_WARDROBE_EVALUATOR_SYSTEM, /Visible facts must include:/)
   assert.match(WHOLE_WARDROBE_EVALUATOR_SYSTEM, /"userCritique": \{/)
+  assert.match(WHOLE_WARDROBE_EVALUATOR_SYSTEM, /Return exactly four connected paragraph strings/)
+  assert.match(WHOLE_WARDROBE_EVALUATOR_SYSTEM, /"detailedCritique": \[/)
+  const schema = WHOLE_WARDROBE_EVALUATOR_SYSTEM.slice(WHOLE_WARDROBE_EVALUATOR_SYSTEM.lastIndexOf('JSON shape:'))
+  assert.doesNotMatch(schema, /"summary"|"roles"|"scores"|"works"|"risks"|"critiqueProse"|"styleIdea"|"mainSuccess"|"executionGap"/)
 })

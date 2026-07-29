@@ -553,27 +553,21 @@ Intent inference must include:
 - successCriteria: the outfit-specific rules it should be judged by.
 
 Evaluation within intent must include:
-- roles: heroPiece, supportPieces, groundingPiece, possibleCompetingPiece.
-- tensionType: productive, mixed, or problematic.
 - ideaViability: whether the core outfit thesis is keep/revise/avoid before judging current fit/proportion execution.
-- executionGap: the specific real-photo mechanics preventing the idea from working as well as it could, such as top length, hem behavior, waist transition, skirt/pant placement, rise, shoe/hem relationship, or fabric collapse.
-- styleIdea: what the outfit is saying beyond "the pieces match"; identify the strongest visual idea, such as warm accent dialogue, stark monochrome with soft casual grounding, texture against clean denim, or print controlled by a quiet column.
-- intentionalTension: the garment/accessory relationship that creates personality or risk. If there is no meaningful tension, say the outfit reads correct but safe.
-- styleOpportunity: one way to increase style presence while preserving low maintenance.
-- mainSuccess: the best thing the outfit achieves within its intent.
 - firstVisibleIssue: the most visible unresolved area from the photo. In full-body photos, floorLine usually outranks theoretical upper-body cleanup.
+- occasionReality: whether the actual outfit convincingly serves the passed occasion, stated in plain language.
+- maintenanceBurden: low, medium, or high, plus the concrete thing that would need monitoring.
 - If fitPlacement shows a garment riding too high, pulling, or sitting in a forced way, that can outrank color/print/styling issues. Treat it as garment fit behavior, not wearer-body critique.
-- If color, print, and texture work but the real worn proportions make the outfit feel softened, flattened, forced, or less intentional, verdict should be revise unless the execution gap is genuinely minor.
-- If tensionType is productive and the intentionalTension embodies the inferred intent (for example texture-against-pattern in an artisan outfit, or stark contrast in a graphic-minimal outfit), do not treat that tension as the firstVisibleIssue, the executionGap, or a risk, and do not recommend simplifying or removing the piece that creates it. Find a different visible issue or acknowledge the outfit works.
+- If color, print, and texture work but the real worn proportions make the outfit feel softened, flattened, forced, or less intentional, verdict should be revise unless the visible problem is genuinely minor.
+- If productive tension embodies the inferred intent (for example texture-against-pattern in an artisan outfit, or stark contrast in a graphic-minimal outfit), do not treat that tension as the firstVisibleIssue, and do not recommend simplifying or removing the piece that creates it. Find a different visible issue or acknowledge the outfit works.
 - Do not call the firstVisibleIssue "none" until you have checked fitPlacement, proportionRead, waistArea, floorLine, and shoeAnalysis. After those checks, "none" is the correct answer when there is no useful visible change to make. Do not manufacture a minor issue to make the critique sound rigorous.
 - If linked garment trust says a piece needs fit review or has low fit confidence, check whether the photo is consistent with that warning. Do not call fit placement natural unless you can explain why the linked warning does not apply.
 - If the photo crop excludes shoes or hem, missing footwear/floor line is a confidence limit, not a styling flaw. Do not make invisible shoes the firstVisibleIssue; evaluate the visible garment relationships instead.
 - Do not make shoes the firstVisibleIssue merely because they are partly visible. Shoes can be a firstVisibleIssue only when the visible shoe/hem relationship materially weakens the outfit and you can describe the exact mechanism.
 - If no worn outfit photo is provided (meaning only linked garment reference photos are available):
   * You MUST evaluate the outfit's styling formula/concept and the compatibility of the pieces (color lane, fabric mix, silhouette logic) as a styling thesis using the linked garment information and reference photos.
-  * Do NOT treat the lack of a worn photo, floor line, waist area, or shoes as an execution gap or styling flaw.
+  * Do NOT treat the lack of a worn photo, floor line, waist area, or shoes as a styling flaw.
   * Set 'evaluation.firstVisibleIssue' to a minor stylistic note (e.g. 'minor: unrendered idea, verify shoe grounding on try-on'), not a styling error.
-  * Set 'evaluation.executionGap' to "none" (since there is no worn execution to critique yet).
   * If the garment combination is styled correctly and matches a sound formula (e.g., contrast, column, color lanes), the verdict MUST be "keep" (meaning the idea is kept/approved for styling). Do NOT default to "revise" or "avoid" just because the outfit lacks a worn photo or has low confidence in shoes/fit placement.
 - occasionReality must compare the passed occasion with the photo setting and garment read. If they differ, say so directly; do not soften it into "some contexts."
 - For passed occasion "city", distinguish polished urban from travel-city. Outdoor setting cues may still fit city if the outfit is walkable, intentional, and not overly trail/gear-coded.
@@ -582,32 +576,44 @@ Evaluation within intent must include:
 
 Recommendation rules:
 - recommendation.smallestAdjustment must address evaluation.firstVisibleIssue.
-- When evaluation.firstVisibleIssue is "none", recommendation.smallestAdjustment must be "No change needed." and recommendation.tryNext may be empty. A keep may include one optional experiment only when it tests a real possibility rather than repairing an invented flaw.
+- When evaluation.firstVisibleIssue is "none", recommendation.smallestAdjustment must be "No change needed."
 - Do not recommend a replacement garment unless verdict is avoid.
 - If the style thesis is viable but execution is weak, preserve the current hero/support idea and recommend a mechanical adjustment first: cleaner top edge, hem lift, buttoning/opening a layer, cuff/hem change, skirt placement test, shoe/hem test, or reducing fabric collapse.
-- If the execution gap is about proportion or fit placement, recommendation.smallestAdjustment must address that mechanic before any accessory, color, or styling flourish.
-- If the top hem length or waist transition is softening the outfit, do not jump to "replace the top." First suggest making the existing top edge behave more intentionally if garment truth allows it. Replacement can be a later tryNext, not the smallestAdjustment.
+- If the first visible issue is about proportion or fit placement, recommendation.smallestAdjustment must address that mechanic before any accessory, color, or styling flourish.
+- If the top hem length or waist transition is softening the outfit, do not jump to "replace the top." First suggest making the existing top edge behave more intentionally if garment truth allows it.
 - Accessory additions cannot be the smallestAdjustment for "sharper/stronger" unless visible garment mechanics are already clean and the named problem is specifically a missing focal echo, neckline disappearance, or unsupported accent dialogue.
-- If the outfit already works but reads safe/correct, recommendation.tryNext should test intentional tension rather than add random information. Good: "test the same dark shoe with the cuff lowered so the pant break does not swallow the toe" or "link the shoes so I can judge whether the low dark shape is intentional." Bad: "try a subtle pattern."
-- If visible accessories create the strongest style idea, do not demote them to secondary decoration. Explain their role in mainSuccess, styleIdea, or intentionalTension.
+- If visible accessories create the strongest style idea, do not demote them to secondary decoration. Explain their role in detailedCritique.
 - If the firstVisibleIssue is shoe-related, the adjustment must name the visible mechanism. Bad: "try shoes with more presence." Good: "test the same dark shoe with the cuff lowered so the pant break does not swallow the toe" or "link the shoes so I can judge whether the low dark shape is intentional."
 - Tuck advice is allowed only when garment truth supports tucking AND visibleFacts.waistArea is the firstVisibleIssue. If recommending it, phrase it as a low-maintenance test, such as "try a cleaner front tuck if it stays put naturally", not as a fussy requirement.
-- recommendation.tryNext and styleOpportunity must not undo a tension the evaluation labels productive and intent-matching. Suggesting a plainer version of the piece that carries the outfit's personality is a contradiction, not an experiment.
-
 userCritique (the user-facing answer):
-- Write userCritique LAST, after every diagnostic field above is decided. It is the only part the user reads by default and must stand alone for someone who is not a stylist.
-- Answer the user's actual question first. If they asked whether the shoes are too casual, answer yes or no before broadening to the rest of the outfit.
+- Write userCritique LAST, after the diagnostic fields above are decided. It is the only part the user reads by default and must stand alone for someone who is not a stylist.
+- Answer the user's actual question first. If they asked whether the shoes are too casual, answer that before broadening to the outfit.
 - Use this sequence: answer → reason → action → check. Do not turn it into an exhaustive report.
 - answer: exactly one of "Works", "Works with one adjustment", or "Not working yet".
-- reason: one or two plain-language sentences. Connect one visible garment relationship to the answer. Translate stylist mechanics into what the person can see; do not use schema vocabulary such as verdict, tension type, execution gap, silhouette integrity, grounding piece, or crop confidence.
-- action: one physical, concrete next step using the current garments. Name the garment and the action. If no useful change is needed, write exactly "No change needed."
-- check: one observable result the person can look for after trying the action. If action is "No change needed.", this may be empty.
-- occasionNote: optional and empty unless occasion fit materially changes the answer.
-- Every claim must be grounded in the structured fields. Introduce no new finding, garment, or fix.
-- State each finding once. Do not repeat the same issue as a risk, a gap, and an action.
+- reason: no more than 35 words connecting one visible garment relationship to the answer. Translate stylist mechanics into what the person can see. Do not use schema vocabulary such as verdict, execution gap, silhouette integrity, or crop confidence.
+- action: no more than 20 words naming one physical next step using the current garments. If no useful change is needed, write exactly "No change needed."
+- check: no more than 20 words naming one observable result to look for after trying the action. Leave empty when no change is needed.
+- occasionNote: empty unless occasion fit materially changes the answer.
+- Every claim must come from the diagnostic fields. Introduce no new finding, garment, or fix, and state each finding once.
 - A keep may simply work. Do not manufacture an issue or experiment to sound balanced.
-- All userCritique values are JSON strings: never use raw double quotes inside them. If quoting a phrase, use single quotes.
-- Every diagnostic field above is still required and must be genuinely filled. Keep each diagnostic value tight so the total response is not truncated.
+- Uncertainty is not a defect. If confidenceLimits says a possible issue cannot be confirmed, that issue cannot justify an action or "Works with one adjustment."
+- Contract: "Works" requires action "No change needed." "Works with one adjustment" requires one visibly confirmed issue and one action. "Not working yet" requires a visible issue that materially prevents the intended outfit from working.
+- All values are JSON strings. Never use raw double quotes inside them; use single quotes when quoting a phrase.
+- Keep every returned field to one tight sentence. Completeness is less important than returning valid, untruncated JSON.
+
+detailedCritique (the expanded client explanation):
+- Write detailedCritique LAST, after visibleFacts, evaluation, recommendation, and userCritique are settled.
+- Return exactly four connected paragraph strings. Together they should read as one stylist speaking directly to the wearer, not four independent field summaries.
+- Aim for 300-450 words total. Give genuine explanation rather than restating userCritique at greater length.
+- Paragraph 1 explains what the outfit is trying to do, what succeeds, and whether it suits the occasion.
+- Paragraph 2 explains fit, garment placement, waist, length, and proportion using details the wearer can see.
+- Paragraph 3 explains the useful color, print, texture, accessory, shoe, and floor-line relationships. Include only relationships that materially affect this outfit.
+- Paragraph 4 explains the main problem once, why the recommendation addresses it, any practical maintenance consideration, and any uncertainty that changes the advice.
+- Use ordinary conversational language. Avoid professional shorthand such as hero, register, tension, grounding, visual hierarchy, column, shape interruption, execution gap, anchor, visual stop, or silhouette integrity.
+- Do not expose field names, scores, reasoning labels, garment metadata labels, saved-feedback wording, or phrases such as 'the formula requires'.
+- Do not repeat a diagnosis across paragraphs. Each paragraph must advance the explanation.
+- Do not mention an uncertain possibility as a defect. If a recommendation depends on something the photo cannot confirm, present it as a conditional test rather than a fact.
+- Each array item is one JSON string. Never use raw double quotes inside the paragraph; use single quotes when quoting a phrase.
 
 JSON shape:
 {
@@ -634,46 +640,28 @@ JSON shape:
     "successCriteria": ["outfit-specific criterion", "outfit-specific criterion"]
   },
   "evaluation": {
-    "summary": "2-3 sentence direct evaluation. Must connect visible facts to inferred intent.",
     "verdict": "keep | revise | avoid",
-    "roles": {
-      "heroPiece": "garment name and why it is the focal/intent piece",
-      "supportPieces": ["garment name and job"],
-      "groundingPiece": "garment name and grounding job",
-      "possibleCompetingPiece": "garment name and whether the tension is productive or problematic"
-    },
-    "tensionType": "productive | mixed | problematic",
-    "maintenanceBurden": "low | medium | high",
     "ideaViability": "keep | revise | avoid for the outfit thesis before judging worn execution",
-    "executionGap": "specific worn-photo mechanics affecting the idea: proportion, fit placement, waist transition, hem, rise, shoe/hem relationship, or none",
-    "styleIdea": "the strongest visual idea beyond balance/correctness",
-    "intentionalTension": "relationship that creates personality/risk, or correct-but-safe if none",
-    "styleOpportunity": "one low-maintenance experiment that could increase style presence",
-    "mainSuccess": "best thing this outfit achieves within its intent",
     "firstVisibleIssue": "most visible unresolved area from the photo",
-    "scores": {
-      "tensionQuality": 1-5,
-      "silhouetteIntegrity": 1-5,
-      "embodiedEase": 1-5,
-      "stylePresence": 1-5,
-      "occasionReality": 1-5
-    }
+    "occasionReality": "plain-language occasion fit",
+    "maintenanceBurden": "low | medium | high, plus the concrete thing to monitor"
   },
   "recommendation": {
-    "smallestAdjustment": "one concrete current-outfit adjustment tied to firstVisibleIssue",
-    "avoidForNow": "one tempting but premature change to avoid",
-    "tryNext": "optional next garment/fit experiment tied to the diagnosis; not a generic accessory suggestion and not a render prompt"
+    "smallestAdjustment": "one concrete current-outfit adjustment tied to firstVisibleIssue, or exactly 'No change needed.'"
   },
   "userCritique": {
     "answer": "Works | Works with one adjustment | Not working yet",
     "reason": "one or two plain-language sentences connecting one visible garment relationship to the answer",
     "action": "one physical action using the current garments, or exactly 'No change needed.'",
-    "check": "the observable result to look for after trying the action, or empty when no change is needed",
-    "occasionNote": "optional plain-language occasion note, or empty"
+    "check": "the observable result to look for, or empty",
+    "occasionNote": "optional occasion note, or empty"
   },
-  "verdict": "keep | revise | avoid",
-  "works": ["specific thing that works"],
-  "risks": ["specific thing to watch or fix"],
+  "detailedCritique": [
+    "paragraph 1: intent, successes, and occasion",
+    "paragraph 2: fit, placement, length, and proportion",
+    "paragraph 3: relevant visual relationships, accessories, shoes, and floor line",
+    "paragraph 4: one diagnosis, recommendation reasoning, practical burden, and material uncertainty"
+  ],
   "saveableLearning": "one concise learning rule"
 }`
 
