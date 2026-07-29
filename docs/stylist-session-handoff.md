@@ -115,6 +115,29 @@ hand-corrected), and **66% of all color mentions match `CAPSULE_NEUTRAL_COLORS`*
 `capsuleVersatilityScore`'s +12 neutral bonus fires on two-thirds of the wardrobe and is closer to
 a baseline offset than a selector.
 
+### Two tagger `_confidence` fields were declared but never requested — fixed 2026-07-28
+
+Found while wiring `needs_base`. `CONFIDENCE_FIELDS` in `styling-engine/taggerMerge.js` listed 23
+fields, but the tagger prompt's own `_confidence` JSON block in `styling-engine/prompts.js` asked
+for only 21: **`opacity` was missing, and `needs_base` inherited the gap by being wired to mirror
+it.** `normalizeConfidenceMap` defaults an absent field to `'low'`, so `opacity` has always
+reported low confidence for every piece regardless of what the tagger actually knew — the value
+ships, the self-reported certainty behind it is fabricated. Both are now in the schema; the
+membership check returns empty.
+
+Two things this does **not** do. It does not change any stored row: existing pieces keep
+`opacity: low` in their saved `_confidence` map until whenever the single planned re-tag happens,
+and this fix does not trigger or justify one. And it does not fix the same class of gap elsewhere —
+`routes/ai.js`'s `extract-pieces` schema still omits `tuck_behavior` and `waistband_type`, which is
+the existing "extract-pieces is trusted more than the tagger's, on less evidence" open item below.
+
+**Process note, worth more than the bug.** A delegated agent found this gap, correctly reported it,
+and then deliberately reproduced it in the new field because the brief said to "mirror every place
+`opacity` appears". The brief was wrong to say that without an exception, and a discovered defect is
+never a thing to copy forward. Verified before fixing (23 declared vs 21 requested) and verified
+after (`prompt_equivalence`'s byte-for-byte failure reproduces identically with the change reverted,
+so it is pre-existing and unrelated).
+
 ### Capsule-design session completion record
 
 This is the consolidated handoff for the capsule work completed in this session. The detailed

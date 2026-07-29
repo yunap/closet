@@ -941,6 +941,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             fabric_category: p.fabric_category,
             fabric_weight: p.fabric_weight,
             opacity: p.opacity,
+            needs_base: p.needs_base,
             neckline: p.neckline,
             sleeve_type: p.sleeve_type,
             length_hits_at: p.length_hits_at,

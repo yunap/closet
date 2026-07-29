@@ -248,6 +248,27 @@ test('manifest line surfaces non-opaque opacity with confidence marker', () => {
   assert.equal(opaque.includes('opacity'), false, 'opaque is the default and stays silent')
 })
 
+// docs/capsule-roster-selection-spec.md §7b: needs_base is readable evidence
+// for the model, not engine behaviour — 'yes' surfaces on both truth
+// surfaces; unset and an explicit 'no' both stay silent (identical to each
+// other today, even though only the second is owner evidence).
+test('needs_base surfaces on both truth surfaces only when explicitly yes', () => {
+  const manifestYes = buildWardrobeManifestLine({ id: 258, name: 'bold geometric top', category: 'top', needs_base: 'yes' })
+  assert.match(manifestYes, /needs base layer/)
+
+  const manifestNo = buildWardrobeManifestLine({ id: 259, name: 'plain top', category: 'top', needs_base: 'no' })
+  assert.equal(manifestNo.includes('needs base'), false, 'an explicit no must stay silent, same as unset')
+
+  const manifestUnset = buildWardrobeManifestLine({ id: 260, name: 'other top', category: 'top' })
+  assert.equal(manifestUnset.includes('needs base'), false)
+
+  const truthYes = buildWardrobePieceTruthText({ id: 258, name: 'bold geometric top', category: 'top', needs_base: 'yes' })
+  assert.match(truthYes, /cannot be worn alone/)
+
+  const truthNo = buildWardrobePieceTruthText({ id: 259, name: 'plain top', category: 'top', needs_base: 'no' })
+  assert.equal(truthNo.includes('cannot be worn alone'), false)
+})
+
 test('manifest groups by category with counts in deterministic id order', () => {
   const manifest = buildWardrobeManifest([
     { id: 9, name: 'blue tee', category: 'top' },

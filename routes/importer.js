@@ -569,7 +569,7 @@ const TAGGABLE_PIECE_COLUMNS = new Set([
   'pattern_complexity', 'reads_as', 'hem_finish', 'neckline', 'sleeve_type', 'length_hits_at',
   'silhouette', 'fabric_category', 'fabric_weight', 'stretch', 'fit_on_body', 'tuck_behavior',
   'waistband_type', 'background_color', 'style_profile_json', 'fiber_content', 'formality',
-  'heel_height', 'walk_support', 'opacity', 'tagger_version'
+  'heel_height', 'walk_support', 'opacity', 'needs_base', 'tagger_version'
 ])
 
 router.get('/sessions/:id/preflight', (req, res) => {

@@ -601,3 +601,40 @@ test('opacity truth field round-trips through piece create and update', async ()
 
   await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
 })
+
+// docs/capsule-roster-selection-spec.md §7b: unset must be a strict no-op —
+// creating a piece with no needs_base opinion must persist as null/unset,
+// not coerced into a truthy or falsy default that would read as evidence.
+test('needs_base defaults to unset (null) when not supplied on create', async () => {
+  const fd = new FormData()
+  fd.append('name', 'unjudged top')
+  fd.append('category', 'top')
+  const createRes = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd })
+  assert.equal(createRes.status, 200)
+  const created = await createRes.json()
+  assert.equal(created.needs_base, null, `unset needs_base must persist as null, got ${JSON.stringify(created.needs_base)}`)
+
+  await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
+})
+
+test('needs_base round-trips through piece create and update, distinguishing unset from explicit no', async () => {
+  const fd = new FormData()
+  fd.append('name', 'side-cutout top')
+  fd.append('category', 'top')
+  fd.append('needs_base', 'yes')
+  const createRes = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd })
+  assert.equal(createRes.status, 200)
+  const created = await createRes.json()
+  assert.equal(created.needs_base, 'yes')
+
+  const updateFd = new FormData()
+  updateFd.append('name', 'side-cutout top')
+  updateFd.append('category', 'top')
+  updateFd.append('needs_base', 'no')
+  const updateRes = await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'PUT', body: updateFd })
+  assert.equal(updateRes.status, 200)
+  const updated = await updateRes.json()
+  assert.equal(updated.needs_base, 'no', 'an owner-judged "no" must persist distinctly from unset, even though the engine treats them the same today')
+
+  await fetch(`${baseUrl}/api/pieces/${created.id}`, { method: 'DELETE' })
+})

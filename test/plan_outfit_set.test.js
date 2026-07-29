@@ -978,6 +978,113 @@ test('capsule workbench states validator requirements before the model composes'
   assert.match(requirements, /at least two different eligible shoe pairs/)
 })
 
+// Task 1 (2026-07-28 capsule repro, thread_1785288370357): the atomic capsule
+// composer validates once with no retry, and validateSubmittedPlanOutfits'
+// activity-footwear exclusion (via footwearComfortVerdict) was never stated
+// in submission_requirements — a walking slot could only discover "high heel
+// unsuitable" by having a whole look rejected. Pin that the constraint is now
+// stated in plain terms when a slot's resolved activity profile genuinely
+// excludes something, and stays silent (a no-op) for a slot with no such
+// activity, matching the brief's "must be a no-op otherwise" requirement.
+test('capsule workbench states the activity-footwear requirement only for a slot whose activity profile excludes it', async () => {
+  const allPieces = [
+    { id: 1, name: 'top', category: 'top', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 2, name: 'bottom', category: 'bottom', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 3, name: 'sneakers', category: 'shoes', formality: 'everyday', occasions: ['casual'], status: 'active', heel_height: 'flat', walk_support: 'high' },
+    { id: 4, name: 'block heels', category: 'shoes', formality: 'everyday', occasions: ['casual'], status: 'active', heel_height: 'mid', walk_support: 'low' },
+  ]
+  const slots = [
+    { id: 'city_walk', label: 'City Walking Tour', occasion: 'casual', activity: 'walking', targetOutfits: 1, requestedOutfits: 1 },
+    { id: 'home_day', label: 'Casual Indoor', occasion: 'casual', activity: 'none', bestFor: 'a relaxed day at home', targetOutfits: 1, requestedOutfits: 1 },
+  ]
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces,
+    question: 'Plan a walking tour day and a relaxed day at home.',
+    constraints: { piece_budget: 14, reuse: 'maximize' },
+    planKind: 'seasonal_capsule',
+  })
+  const walkingRequirements = workbench.slots.find(slot => slot.id === 'city_walk').submission_requirements.join(' ')
+  const homeRequirements = workbench.slots.find(slot => slot.id === 'home_day').submission_requirements.join(' ')
+
+  assert.match(walkingRequirements, /activity profile \(Lots of walking\) excludes/, `walking slot must state the constraint, got: ${walkingRequirements}`)
+  assert.doesNotMatch(homeRequirements, /activity profile/, `activity:'none' must be a no-op, got: ${homeRequirements}`)
+})
+
+// Task 1: "distinct main core" is enforced ACROSS THE WHOLE SET by
+// validateSubmittedPlanOutfits (usedCoreKeys spans every slot's accepted
+// looks), not per slot — a Nature Walk look was rejected for repeating a
+// core used by a different slot even though Nature Walk's own stated
+// requirements looked satisfied. Pin that the workbench now says so.
+test('capsule workbench states the cross-slot distinct-core requirement', async () => {
+  const allPieces = [
+    { id: 1, name: 'top A', category: 'top', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 2, name: 'top B', category: 'top', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 3, name: 'bottom A', category: 'bottom', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 4, name: 'bottom B', category: 'bottom', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 5, name: 'shoes A', category: 'shoes', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 6, name: 'shoes B', category: 'shoes', formality: 'everyday', occasions: ['casual'], status: 'active' },
+  ]
+  const slots = [
+    { id: 'nature_walk', label: 'Nature Walk', occasion: 'casual', activity: 'none', targetOutfits: 1, requestedOutfits: 1 },
+    { id: 'errands', label: 'Errands', occasion: 'casual', activity: 'none', targetOutfits: 1, requestedOutfits: 1 },
+  ]
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces,
+    question: 'Build a small capsule for a nature walk and errands.',
+    constraints: { piece_budget: 14, reuse: 'maximize' },
+    planKind: 'seasonal_capsule',
+  })
+  for (const slot of workbench.slots) {
+    assert.match(
+      slot.submission_requirements.join(' '),
+      /distinct from every other look already submitted across the ENTIRE capsule set/,
+      `slot ${slot.id} must state the cross-slot requirement, got: ${slot.submission_requirements.join(' ')}`
+    )
+  }
+})
+
+// A neutral color term used to add +12 regardless of pattern — but a
+// black/cream/burgundy geometric print (garment 258's real colors) does not
+// read as a recombine-with-everything neutral solid just because a neutral
+// happens to be in its color list. Pin that a 'loud' piece no longer
+// outranks an otherwise-identical 'quiet' piece on the strength of that bonus.
+test("capsuleVersatilityScore does not award the neutral-colour bonus to a piece pattern_complexity tags 'loud'", () => {
+  const loudButNeutral = { id: 258, name: 'bold geometric top', category: 'top', colors: ['black', 'cream', 'burgundy'], pattern_type: 'geometric', pattern_complexity: 'loud', occasions: ['casual', 'city'], formality: 'everyday' }
+  const quietNeutral = { id: 1, name: 'quiet geometric top', category: 'top', colors: ['black', 'cream', 'burgundy'], pattern_type: 'geometric', pattern_complexity: 'quiet', occasions: ['casual', 'city'], formality: 'everyday' }
+  const { bench } = buildCapsuleBench([loudButNeutral, quietNeutral], { budget: 10, slots: [] })
+
+  assert.equal(bench[0].id, quietNeutral.id, `the quiet piece must outrank the loud one despite identical neutral colors, got bench order: ${bench.map(piece => piece.id)}`)
+})
+
+// docs/capsule-roster-selection-spec.md §7b, owner ruling: needs_base ships
+// as a column with no capsule-selector behaviour yet (that is a later,
+// separate change) — unset MUST be a strict no-op, and an explicit 'no' must
+// behave identically to unset today, since only 'yes' is meant to ever mean
+// anything to the engine and 'yes' itself isn't wired to anything yet either.
+test('an unset needs_base changes nothing about capsule roster selection', () => {
+  const poolWithoutField = [
+    { id: 1, name: 'top A', category: 'top', colors: ['black'], pattern_type: 'solid', occasions: ['casual', 'city'], formality: 'everyday' },
+    { id: 2, name: 'top B', category: 'top', colors: ['navy'], pattern_type: 'solid', occasions: ['casual', 'city'], formality: 'everyday' },
+    { id: 3, name: 'bottom A', category: 'bottom', colors: ['black'], pattern_type: 'solid', occasions: ['casual', 'city'], formality: 'everyday' },
+    { id: 4, name: 'shoes A', category: 'shoes', colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' },
+  ]
+  const poolWithExplicitNo = poolWithoutField.map(piece => ({ ...piece, needs_base: 'no' }))
+  const poolWithNull = poolWithoutField.map(piece => ({ ...piece, needs_base: null }))
+
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const baseline = selectCapsuleRoster(poolWithoutField, { budget: 10, occasions: slots.map(slot => slot.occasion), slots })
+  const withExplicitNo = selectCapsuleRoster(poolWithExplicitNo, { budget: 10, occasions: slots.map(slot => slot.occasion), slots })
+  const withNull = selectCapsuleRoster(poolWithNull, { budget: 10, occasions: slots.map(slot => slot.occasion), slots })
+
+  const idsOf = roster => roster.map(piece => Number(piece.id)).sort()
+  assert.deepEqual(idsOf(withExplicitNo), idsOf(baseline), 'an explicit needs_base:no must not change roster selection')
+  assert.deepEqual(idsOf(withNull), idsOf(baseline), 'needs_base:null must not change roster selection')
+
+  const { bench: benchBaseline } = buildCapsuleBench(poolWithoutField, { budget: 10, slots })
+  const { bench: benchWithNo } = buildCapsuleBench(poolWithExplicitNo, { budget: 10, slots })
+  assert.deepEqual(idsOf(benchWithNo), idsOf(benchBaseline), 'needs_base must not change the bench either')
+})
+
 test('captured capsule shape rejects a completed use case with no requested transition layer', () => {
   const topA = { id: 1, name: 'top A', category: 'top', formality: 'everyday' }
   const topB = { id: 2, name: 'top B', category: 'top', formality: 'everyday' }
@@ -3563,6 +3670,38 @@ test('the post-condition check repairs a guarantee a later pass undid', () => {
     'the repair should reach for the garment satisfying BOTH rules, not merely the highest-scoring compliant one'
   )
   assert.equal(repaired.length, roster.length, 'a repair swaps, it never grows or shrinks the roster')
+})
+
+// Removing the neutral bonus from loud pieces was correct (a black/cream/burgundy
+// geometric print is not a neutral) but over-shot: the live 24-piece summer roster
+// came back with ZERO statement pieces, which the owner ruled is not a capsule
+// either. Presence is a guarantee, not something to bribe the score into
+// producing — and unlike a score nudge, a guarantee can't be traded away by a
+// later pass. Cross-category by nature: the statement can be a top, bottom or dress.
+test('a capsule of useful size guarantees a statement piece, swapping within its category', () => {
+  const quietTop = { id: 1, name: 'quiet cream tee', category: 'top', formality: 'everyday', pattern_complexity: 'quiet' }
+  const quietTopB = { id: 2, name: 'quiet navy tee', category: 'top', formality: 'everyday', pattern_complexity: 'quiet' }
+  const loudTop = { id: 3, name: 'bold geometric top', category: 'top', formality: 'everyday', pattern_complexity: 'loud' }
+  const quietBottom = { id: 4, name: 'black trouser', category: 'bottom', formality: 'everyday', pattern_complexity: 'quiet' }
+  const roster = [quietTop, quietTopB, quietBottom]
+  const groups = { top: [quietTop, quietTopB, loudTop], bottom: [quietBottom], dress: [], outerwear: [], shoes: [] }
+  const conditions = capsuleRosterPostConditions({ quotas: { top: 5, bottom: 4, dress: 1 } })
+
+  const { roster: withStatement, unsatisfied } = enforceCapsulePostConditions(
+    roster, groups, conditions, new Map([[quietTop, 40], [quietTopB, 10], [loudTop, 5]]), new Set()
+  )
+
+  assert.equal(unsatisfied.length, 0)
+  assert.ok(withStatement.includes(loudTop), 'a roster of all quiet basics is not a capsule')
+  assert.equal(withStatement.filter(p => p.category === 'top').length, 2, 'the swap stays inside the category, so quotas are untouched')
+  assert.ok(withStatement.includes(quietBottom), 'a cross-category guarantee must not raid another category')
+})
+
+test('a small capsule is not forced to spend a slot on a statement piece', () => {
+  // Below a useful size every slot is load-bearing; the guarantee is not added
+  // at all rather than being added and then reported as an unmeetable gap.
+  const conditions = capsuleRosterPostConditions({ quotas: { top: 3, bottom: 3, dress: 1 } })
+  assert.ok(!conditions.some(condition => condition.code === 'statement_presence'))
 })
 
 test('the post-condition check leaves a satisfied roster untouched', () => {

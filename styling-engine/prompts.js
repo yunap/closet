@@ -772,6 +772,7 @@ Evaluate the garment's visual structure and weight along these two axes:
   * "dressy": reserved for going-out signals: sheen, sequins, lace as a primary element, formal tailoring, cocktail/evening cuts.
   For shoes: "heel_height" is physical heel lift (flat, low, mid, high). "walk_support" is stability/support for lots of walking (high, medium, low); a flat ballet shoe can still be low-support.
   For "opacity": judge construction transparency for wearability. "opaque": solid or lined. "semi_sheer": skin/light hints through. "sheer": clearly see-through (chiffon, mesh, unlined lace). "open_weave": visible holes in the knit/weave (crochet, open knit, fishnet) — such a piece cannot work alone against skin as a base layer.
+  For "needs_base": this is CONSTRUCTION exposure, not fabric transparency (that is opacity) — a top, dress, or outerwear piece whose cut leaves too much torso/side bare to wear on its own against skin, so a base layer underneath is required rather than optional (e.g. dramatic high-low handkerchief side panels, deep cutouts, sheer paneling over bare skin). Tag "yes" only when the garment is genuinely unwearable alone; when in doubt, leave it null/omit rather than guessing — this field is deliberately conservative, and an unset value is the safe default, not a judgment.
 
 - Occasion Suitability — describe, do not stylize. Rate each occasion on the garment's
   OBJECTIVE construction, not on a texture-to-occasion shortcut:
@@ -869,6 +870,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
   "fabric_weight": "ultralight|light|medium|heavy — for SHOES use the shoe scale instead: delicate|slim|medium|chunky (a substantial shoe is chunky, not heavy)",
   "opacity": "opaque|semi_sheer|sheer|open_weave",
+  "needs_base": "yes|no|null (omit unless clearly a construction that cannot be worn alone against skin — conservative default is null, not 'no')",
   "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. You MUST align this list with your fabric_category (e.g. if fabric_category is silk, fiber_content must include silk; if fabric_category is linen, fiber_content must include linen). Use 'unknown' if not determinable."],
   "formality": "lounge|everyday|elevated|dressy",
   "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
@@ -938,7 +940,9 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "walk_support": "high|medium|low",
     "fit_on_body": "high|medium|low",
     "tuck_behavior": "high|medium|low",
-    "waistband_type": "high|medium|low"
+    "waistband_type": "high|medium|low",
+    "opacity": "high|medium|low",
+    "needs_base": "high|medium|low"
   },
   "photo_properties": {
     "HANGER PHOTO": { "fit_visible": false, "real_context": false, "notes": "short reason" },
