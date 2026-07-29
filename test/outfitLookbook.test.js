@@ -74,7 +74,7 @@ test('Outfit cards open detail directly and keep actions inside the modal', () =
   assert.match(source, /type="button"/)
   assert.match(source, /aria-label=\{`Open \$\{o\.name \|\| 'outfit'\} outfit`\}/)
   assert.match(source, /e\.stopPropagation\(\); handleFav\(o\)/)
-  assert.match(source, />\s*◇ Ask stylist about this outfit\s*<\/button>/)
+  assert.match(source, />\s*◇ Work with stylist\s*<\/button>/)
   assert.match(source, /onSendToStylist\(\{ \.\.\.outfit, pieces, main_piece_id: mainPieceId \}\)/)
   assert.match(css, /\.outfit-card-open:focus-visible/)
 })
@@ -91,12 +91,12 @@ test('Outfit detail modal separates identity, composition, and styling actions',
   assert.match(source, /className="outfit-linked-piece-photo"/)
   assert.match(source, /className="outfit-linked-piece-role"/)
   assert.match(source, /className="garment-ask-stylist"/)
-  assert.match(source, />\s*◇ Ask stylist about this outfit\s*<\/button>/)
+  assert.match(source, />\s*◇ Work with stylist\s*<\/button>/)
   assert.match(source, /'Edit linked pieces'/)
   assert.match(source, /className="outfit-management-actions"/)
-  assert.match(stylistSource, /title="Review this outfit"/)
-  assert.match(stylistSource, /title="Find similar looks"/)
-  assert.match(stylistSource, /title="Restyle the main piece"/)
+  assert.match(stylistSource, /'Reviewing…' : 'Review this outfit'/)
+  assert.match(stylistSource, /'Finding similar looks…' : 'Find similar looks'/)
+  assert.match(stylistSource, /'Restyling…' : 'Restyle the main piece'/)
   assert.match(stylistSource, /className="outfit-question-input"/)
   assert.match(source, />\s*Delete outfit\s*<\/button>/)
   assert.doesNotMatch(source, />\s*Find similar\s*<\/button>/)
@@ -105,6 +105,12 @@ test('Outfit detail modal separates identity, composition, and styling actions',
   assert.match(css, /\.outfit-detail-section/)
   assert.match(css, /\.outfit-management-actions/)
   assert.match(css, /\.garment-ask-stylist/)
+})
+
+test('Saved and generated outfits enter the same Stylist action chooser', () => {
+  assert.equal((source.match(/>\s*◇ Work with stylist\s*<\/button>/g) || []).length, 2)
+  assert.match(source, /onSendToStylist\(\{\s*id: null,[\s\S]*autoSend: false/)
+  assert.doesNotMatch(source, /stylistPrompt: 'Evaluate this styling direction/)
 })
 
 test('My Outfit detail owns scrolling and keeps its management actions visible', () => {
