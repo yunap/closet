@@ -43,6 +43,10 @@ const OPACITY_OPTIONS = [
   { value: 'sheer', label: 'sheer' },
   { value: 'open_weave', label: 'open weave' },
 ]
+const NEEDS_BASE_OPTIONS = [
+  { value: 'yes', label: 'needs a base layer' },
+  { value: 'no', label: 'wearable alone (checked)' },
+]
 
 const FIBER_OPTIONS = [
   'cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 
@@ -312,6 +316,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     fabric_category:    piece?.fabric_category    || null,
     fabric_weight:      piece?.fabric_weight      || null,
     opacity:            piece?.opacity            || null,
+    needs_base:         piece?.needs_base         || null,
     fiber_content:      piece?.fiber_content      || [],
     formality:          piece?.formality          || null,
     heel_height:        piece?.heel_height        || null,
@@ -462,6 +467,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'fabric_category', tags.fabric_category)
         applyTagValue(next, 'fabric_weight', tags.fabric_weight)
         applyTagValue(next, 'opacity', tags.opacity)
+        applyTagValue(next, 'needs_base', tags.needs_base)
         applyTagValue(next, 'fiber_content', tags.fiber_content)
         applyTagValue(next, 'formality', tags.formality)
         applyTagValue(next, 'heel_height', tags.heel_height)
@@ -509,7 +515,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       let changedCount = 0
       setForm(f => {
         const next = { ...f }
-        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_type','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','tagger_version'].forEach(field => {
+        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_type','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','tagger_version'].forEach(field => {
           applyTagValue(next, field, tags[field])
         })
         if (!f.name) applyTagValue(next, 'name', tags.name_suggestion || tags.name, '')
@@ -1085,6 +1091,13 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <div className="form-group">
               <FieldLabel field="opacity">Opacity</FieldLabel>
               <ChipRow options={OPACITY_OPTIONS} value={form.opacity} onChange={v => set('opacity', v)} />
+            </div>
+          )}
+
+          {form.category !== 'shoes' && form.category !== 'accessory' && (
+            <div className="form-group">
+              <FieldLabel field="needs_base">Needs a base layer</FieldLabel>
+              <ChipRow options={NEEDS_BASE_OPTIONS} value={form.needs_base} onChange={v => set('needs_base', v)} />
             </div>
           )}
 

@@ -584,7 +584,11 @@ const CAPSULE_NEUTRAL_COLORS = ['black', 'white', 'ivory', 'cream', 'navy', 'blu
 function capsuleVersatilityScore(piece = {}, { isSummer = false } = {}) {
   let score = 0
   const colors = (Array.isArray(piece.colors) ? piece.colors : []).map(color => String(color).toLowerCase())
-  if (colors.some(color => CAPSULE_NEUTRAL_COLORS.some(neutral => color.includes(neutral)))) score += 12
+  // A piece tagged pattern_complexity 'loud' is a statement piece by the
+  // wardrobe's own structured judgment — listing a neutral among several
+  // colors (e.g. a black/cream/burgundy geometric print) doesn't make it read
+  // as a neutral solid, so don't pay the "recombines with everything" bonus.
+  if (String(piece.pattern_complexity || '').toLowerCase() !== 'loud' && colors.some(color => CAPSULE_NEUTRAL_COLORS.some(neutral => color.includes(neutral)))) score += 12
   // A versatile capsule piece mixes across many occasions and reads as a solid.
   score += Math.min(4, (Array.isArray(piece.occasions) ? piece.occasions : []).length) * 4
   if (['solid', 'none', ''].includes(String(piece.pattern_type || '').toLowerCase())) score += 8
@@ -805,6 +809,18 @@ function ensureCapsuleGroupReserve(roster = [], groups = {}, group = '', require
 // Extracted so the end-of-selection post-condition check asserts the exact same
 // predicate this pass optimises for — a check that re-derives its own version of
 // the rule is a second source of truth waiting to drift.
+// A main-category garment the wardrobe's own structured judgment calls loud.
+// Deliberately the same column the versatility score now declines to reward as
+// a neutral: one place decides what "statement" means, so the score and the
+// guarantee cannot disagree about which pieces they are talking about.
+const CAPSULE_STATEMENT_MIN_MAIN_PIECES = 8
+
+function isCapsuleStatementPiece(piece = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  if (!['top', 'bottom', 'dress'].includes(group)) return false
+  return String(piece?.pattern_complexity || '').toLowerCase() === 'loud'
+}
+
 function isCapsuleWinterCoveredBase(piece = {}) {
   return wardrobeCategoryGroup(piece) === 'top' &&
     String(piece?.season || '').toLowerCase() !== 'warm' &&
@@ -932,6 +948,23 @@ function footwearPassesActivityProfile(piece = {}, activityProfile = null) {
   return verdict.verdict === 'pass'
 }
 
+// Task 1 (2026-07-28 capsule repro, thread_1785288370357): the atomic capsule
+// composer validates once with no retry, and the activity-footwear exclusion
+// enforced by validateSubmittedPlanOutfits (via footwearComfortVerdict) was
+// never stated in submission_requirements — a slot like 'city_museum' could
+// only discover "high heel unsuitable" by having a whole look rejected. State
+// the actual constraint in plain terms, not a generic "pick sensible shoes",
+// and only when the slot's resolved activity profile genuinely excludes
+// something (must be a no-op otherwise).
+function activityFootwearRequirementText(profile) {
+  const heelExclusions = profile?.rules?.excluded_heel_heights || []
+  const supportExclusions = profile?.rules?.excluded_walk_support || []
+  const parts = []
+  if (heelExclusions.length) parts.push(`${heelExclusions.join('/')}-height heels`)
+  if (supportExclusions.length) parts.push(`${supportExclusions.join('/')} walk-support shoes`)
+  return `This slot's activity profile (${profile.label}) excludes ${parts.join(' and ')} — choose footwear with adequate heel height and walk support for it (e.g. flats, sneakers, loafers, or low block heels).`
+}
+
 function demandingActivityProfilesForSlots(slots = []) {
   const profiles = new Map()
   for (const slot of Array.isArray(slots) ? slots : []) {
@@ -985,6 +1018,20 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       describe: () => `${Math.ceil(quotas.top / 2)} sleeve-covered winter top(s)`
     })
   }
+  // Removing the neutral bonus from loud pieces (correct: a black/cream/burgundy
+  // geometric print is not a neutral) pushed every statement piece below the cut
+  // — the live 24-piece summer roster came back with zero. Owner ruling: that is
+  // not a capsule either. Presence is a guarantee, not something to bribe the
+  // score into producing; state it here so a later pass cannot trade it away.
+  if ((quotas.top || 0) + (quotas.bottom || 0) + (quotas.dress || 0) >= CAPSULE_STATEMENT_MIN_MAIN_PIECES) {
+    conditions.push({
+      code: 'statement_presence',
+      group: '*',
+      required: 1,
+      predicate: isCapsuleStatementPiece,
+      describe: () => 'at least one statement piece, so the capsule is not all quiet basics'
+    })
+  }
   if (isWinter && (quotas.outerwear || 0) >= 2) {
     conditions.push({
       code: 'winter_indoor_layer',
@@ -1024,10 +1071,14 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
 export function enforceCapsulePostConditions(roster = [], groups = {}, conditions = [], scoreOf = new Map(), protectedPieces = new Set()) {
   let nextRoster = [...roster]
   const unsatisfied = []
+  // group '*' is a whole-roster guarantee (a statement piece can be a top, a
+  // bottom or a dress) rather than a per-category one; its repair still swaps
+  // within the candidate's own category so category quotas stay intact.
+  const conditionMatches = (piece, condition) =>
+    (condition.group === '*' || wardrobeCategoryGroup(piece) === condition.group) &&
+    condition.predicate(piece)
   const countFor = (candidateRoster, condition) =>
-    candidateRoster.filter(piece =>
-      wardrobeCategoryGroup(piece) === condition.group && condition.predicate(piece)
-    ).length
+    candidateRoster.filter(piece => conditionMatches(piece, condition)).length
   // One repair per condition at most; the guard is belt-and-braces against a
   // predicate pair that could otherwise trade places forever.
   for (let pass = 0; pass < conditions.length * 2; pass += 1) {
@@ -1039,29 +1090,42 @@ export function enforceCapsulePostConditions(roster = [], groups = {}, condition
     // Prefer a candidate that also satisfies the other conditions on this
     // group — that is exactly the sleeve-covered AND register-compliant top
     // the winter case needs, and taking it avoids a second repair.
-    const sameGroupConditions = conditions.filter(condition => condition.group === violated.group)
-    const candidate = (groups[violated.group] || [])
-      .filter(piece => !inRoster.has(piece) && violated.predicate(piece))
+    const candidatePool = violated.group === '*'
+      ? Object.values(groups).flat()
+      : (groups[violated.group] || [])
+    const candidate = candidatePool
+      .filter(piece => !inRoster.has(piece) && conditionMatches(piece, violated))
       .sort((a, b) => {
-        const satisfied = piece => sameGroupConditions.filter(condition => condition.predicate(piece)).length
+        // Prefer a candidate that also satisfies the other conditions bearing on
+        // its own category — the sleeve-covered AND register-compliant top the
+        // winter case needs — so one swap does not create the next violation.
+        const satisfied = piece => conditions
+          .filter(condition => condition.group === '*' || condition.group === wardrobeCategoryGroup(piece))
+          .filter(condition => conditionMatches(piece, condition)).length
         return satisfied(b) - satisfied(a) || (scoreOf.get(b) || 0) - (scoreOf.get(a) || 0)
       })[0]
     if (!candidate) {
       unsatisfied.push(violated.code)
       continue
     }
+    // Swap within the incoming candidate's own category, so a whole-roster
+    // guarantee cannot quietly rewrite the category quotas to satisfy itself.
+    const candidateGroup = wardrobeCategoryGroup(candidate)
+    const relevantConditions = conditions.filter(condition =>
+      condition.group === '*' || condition.group === candidateGroup
+    )
     const swapTarget = nextRoster
       .filter(piece => {
-        if (wardrobeCategoryGroup(piece) !== violated.group) return false
+        if (wardrobeCategoryGroup(piece) !== candidateGroup) return false
         if (protectedPieces.has(piece)) return false
-        if (violated.predicate(piece)) return false
+        if (conditionMatches(piece, violated)) return false
         // Judge the roster AFTER the swap, not merely after the removal: the
         // incoming candidate frequently carries the very property the outgoing
         // piece was holding (an everyday long-sleeved knit replacing an
         // elevated long-sleeved blouse keeps the covered-base count intact).
         // Testing removal alone rejects exactly the repairs worth making.
         const withSwap = nextRoster.map(other => other === piece ? candidate : other)
-        return sameGroupConditions.every(condition =>
+        return relevantConditions.every(condition =>
           condition === violated ||
           countFor(nextRoster, condition) < condition.required ||
           countFor(withSwap, condition) >= condition.required
@@ -2067,6 +2131,22 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const eligibleShoeCount = allowed.filter(piece => wardrobeCategoryGroup(piece) === 'shoes').length
     if (isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET && target > 1 && eligibleShoeCount > 1) {
       requirements.push('Across this recurring slot, use at least two different eligible shoe pairs.')
+    }
+    const slotActivityProfile = resolveActivityProfile({
+      activity: workbenchSlot.activity,
+      occasion: workbenchSlot.occasion,
+      request: pendingSlot?.slotRequestText || workbenchSlot.label || ''
+    })
+    if (slotActivityProfile?.rules && (slotActivityProfile.rules.excluded_heel_heights?.length || slotActivityProfile.rules.excluded_walk_support?.length)) {
+      requirements.push(activityFootwearRequirementText(slotActivityProfile))
+    }
+    if (isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET) {
+      // Task 1: "distinct main core" is enforced ACROSS THE WHOLE SET by
+      // validateSubmittedPlanOutfits (outfitMainCoreKey / usedCoreKeys), not
+      // per slot — a look here can still be rejected for repeating a core
+      // used by an earlier slot's look, even though this slot's own
+      // requirements looked satisfied in isolation.
+      requirements.push('This look\'s main core (top+bottom pair, or dress) must be distinct from every other look already submitted across the ENTIRE capsule set, not just within this slot — changing only shoes, a layer, or accessories does not make it a distinct core.')
     }
     workbenchSlot.submission_requirements = requirements
   }

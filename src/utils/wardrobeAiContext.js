@@ -215,6 +215,10 @@ export function buildWardrobePieceTruthText(piece = {}) {
     const opacityText = trustedFieldText(piece, 'opacity', 'opacity', piece.opacity)
     if (opacityText) parts.push(opacityText)
   }
+  if (piece.needs_base === 'yes') {
+    const needsBaseText = trustedFieldText(piece, 'needs_base', 'cannot be worn alone', 'needs a base layer underneath')
+    if (needsBaseText) parts.push(needsBaseText)
+  }
   const fitText = trustedFieldText(piece, 'fit_on_body', 'fit', piece.fit_on_body)
   if (fitText) parts.push(fitText)
 
@@ -300,6 +304,7 @@ export function buildWardrobeManifestLine(piece = {}) {
     color,
     fabric ? `fabric ${fabric}` : '',
     piece.opacity && piece.opacity !== 'opaque' ? `opacity ${manifestValue(piece, 'opacity', piece.opacity)}` : '',
+    piece.needs_base === 'yes' ? 'needs base layer' : '',
     piece.silhouette ? `silhouette ${manifestValue(piece, 'silhouette', piece.silhouette)}` : '',
     piece.length_hits_at ? `hits ${manifestValue(piece, 'length_hits_at', piece.length_hits_at)}` : '',
     pattern ? `pattern ${pattern}` : '',

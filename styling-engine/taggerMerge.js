@@ -31,7 +31,8 @@ export const CONFIDENCE_FIELDS = [
   'walk_support',
   'fit_on_body',
   'tuck_behavior',
-  'waistband_type'
+  'waistband_type',
+  'needs_base'
 ]
 
 export function normalizeConfidenceMap(value = {}, fields = CONFIDENCE_FIELDS) {

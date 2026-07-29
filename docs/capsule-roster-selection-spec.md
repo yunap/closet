@@ -350,7 +350,7 @@ request and returning a single look is worse than declining the frame and saying
 
 | today | why it is wrong away from a 243-piece wardrobe |
 |---|---|
-| bench `benchSize = 40` | at ~60 eligible pieces the bench is most of the wardrobe (no selection happens, and you pay 40 thumbnails for it); at 800 it is 5% and the seed does all the work |
+| bench `benchSize = 40` | at ~60 eligible pieces the bench is most of the wardrobe (no selection happens, and you pay 40 thumbnails for it). **Ruled 2026-07-28:** 40 is an absolute ceiling, not a target — it scales down with supply and never up. See "Too much supply" below |
 | default capsule budget `24` | at 45 eligible pieces a 24-piece capsule is half the closet — an inventory, not a capsule |
 | bench category floors `2 top / 2 bottom / 2 shoes` | unsatisfiable below a certain supply; must degrade to a stated gap, not a silent shortfall |
 | `MIN_ENFORCED_CAPSULE_BUDGET = 6` | never revisited against small wardrobes; it decides whether capsule machinery engages at all |
@@ -360,14 +360,56 @@ Express each relative to eligible supply for the requested slots, clamped to tod
 more than one wardrobe before ratification — the sandbox's 23 pieces are a second data point and
 still not a distribution.
 
-### A capsule the wardrobe cannot support should be declined, not delivered
+### Too little supply: ask them to digitize more of the closet
 
-Add a supply precondition ahead of composition: if eligible supply cannot cover a meaningful share
-of the requested contexts, or cannot produce enough distinct cores for a rotation to mean anything,
-the honest answer names what is missing (which contexts, which category) and offers the smaller
-thing that *is* possible. This is the same principle as the shortfall disclosure, moved one stage
-earlier — and it is the difference between a new user's first capsule teaching them something and
-looking broken.
+**Owner ruling 2026-07-28.** Add a supply precondition ahead of composition: when eligible supply
+cannot cover a meaningful share of the requested contexts, or cannot produce enough distinct cores
+for a rotation to mean anything, the stylist says so *before* composing and asks the person to **add
+more of their closet to the app**.
+
+The framing is the whole ruling, and it is easy to get wrong:
+
+- The constraint is **what has been digitized**, not what the person owns. A 23-piece wardrobe is
+  almost never someone with 23 garments; it is someone who has photographed 23. Name that.
+- **Never phrase it as a shopping recommendation.** "Your wardrobe is missing an elevated bottom"
+  reads as *buy one*. "I can only see 23 pieces so far — add more of what you already own and I can
+  build a real rotation" reads as *finish setup*. This project has an existing ruling in the same
+  spirit: a thin roster was diagnosed as a selector problem, explicitly "not a buy-more-clothes one".
+- Name **which contexts** could not be covered and **which category** was short, because that tells
+  the person what to photograph next. That is a genuinely useful onboarding prompt rather than a
+  failure message.
+- Offer the smaller thing that *is* possible rather than nothing at all.
+
+This is the shortfall disclosure moved one stage earlier, and it is the difference between a new
+user's first capsule teaching them how the app works and looking broken.
+
+### Too much supply: the bench needs an absolute ceiling, not just a ratio
+
+**Owner ruling 2026-07-28: a large wardrobe must not turn one capsule request into a month's
+budget.** Bench size therefore has a hard upper bound regardless of how much eligible supply exists
+— it scales *down* for small wardrobes and never scales up past the ceiling for large ones:
+
+```
+benchSize = min(ABSOLUTE_CEILING, f(eligible supply, piece_budget))
+```
+
+`ABSOLUTE_CEILING` is 40 today, and 40 stays the shipped value until measured on more than this
+wardrobe. The cost driver is images: every bench piece with a photo carries a 448px thumbnail into
+the roster-selection call, and that is what would scale linearly and painfully with wardrobe size.
+
+Consequences to design for, not discover:
+
+- At 800 eligible pieces the bench is a **sample**, not the field. Per this project's no-silent-caps
+  rule, say so — a bench that quietly ignores 95% of a large wardrobe while presenting itself as
+  "your capsule" is the same defect class as a silently trimmed rotation.
+- The seed (today's deterministic roster) is admitted first and is never dropped to hit the ceiling,
+  so a large wardrobe still gets at least the quality the current engine produces.
+- If 40 proves too narrow to compose well from a large wardrobe, the fix is the **two-tier** bench
+  from §6 — full garment truth as text for a wider set, thumbnails only for a top slice — rather
+  than raising the image count. Text is roughly an order of magnitude cheaper per piece than an
+  image, so quality and cost are not actually in direct conflict here.
+- BYOK means the user pays their own provider costs, which makes an unbounded request their bill
+  rather than the platform's. That is a reason for the ceiling, not a reason to relax it.
 
 ### How to read every measured number in this document
 

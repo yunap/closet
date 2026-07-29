@@ -284,6 +284,10 @@ function initDb(dbPath) {
     'tagger_version TEXT',
     'tag_state TEXT DEFAULT "untagged"',
     'manual_overrides TEXT DEFAULT "[]"',
+    // 'yes'|'no'|NULL. NULL is "no dependency" to the engine (strict no-op) —
+    // NOT the same as an owner-judged 'no'; only the second is evidence. See
+    // docs/capsule-roster-selection-spec.md §7b.
+    'needs_base TEXT',
   ]
   NEW_COLUMNS.forEach(col => {
     try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
