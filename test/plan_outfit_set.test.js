@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
@@ -221,6 +221,11 @@ test('an enforced capsule uses one injected atomic composition attempt and canno
   assert.equal(result.bounded_composition, true)
   assert.equal(compositionCalls, 1)
   assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.match(
+    toolContext.generatedOutfits[0].tripPlanLines.join(' '),
+    /capsule palette: \d+ colour famil(?:y|ies) across \d+ pieces/,
+    'set-level palette evidence must reach the bounded capsule result, not stay in diagnostics'
+  )
   assert.equal(toolContext.pendingPlan, null)
   assert.equal(toolContext.freeformDiagnostics.submitPlanCalls, 1)
 
@@ -4586,6 +4591,42 @@ test('roster utilization names the pieces that reached no look', () => {
   // A piece inside a needs-review card has a job waiting, so it is not unused.
   assert.equal(describeCapsuleRosterUtilization(roster, [{ pieceIds: [1, 2] }, { piece_ids: [3, 4] }]), '')
   assert.equal(describeCapsuleRosterUtilization([], cards), '')
+})
+
+// Step 4 stays observational until the corrected roster is evaluated. Family
+// breadth and unused accents are set-level facts the per-piece score cannot
+// expose; reporting them makes the Step 5 comparison falsifiable without
+// steering the generation being judged.
+test('capsule palette disclosure reports family breadth, neutral share, and unused accents', () => {
+  const roster = [
+    { id: 1, name: 'cream tee', category: 'top', colors: ['cream'] },
+    { id: 2, name: 'ivory trousers', category: 'bottom', colors: ['ivory'] },
+    { id: 3, name: 'navy shoes', category: 'shoes', colors: ['navy'] },
+    { id: 4, name: 'coral maxi dress', category: 'dress', colors: ['coral'] },
+    { id: 5, name: 'burgundy cardigan', category: 'outerwear', colors: ['burgundy'] },
+    { id: 6, name: 'untagged layer', category: 'outerwear', colors: ['not-a-colour'] },
+  ]
+  const cards = [{ pieces: [roster[0], roster[1], roster[2], roster[4]] }]
+
+  const line = describeCapsulePaletteCohesion(roster, cards)
+  assert.match(line, /4 colour families across 6 pieces/)
+  assert.match(line, /3 of 6 pieces \(50%\) form the neutral base/)
+  assert.match(line, /1 of 2 accent-colour pieces did not make it into a look/)
+  assert.match(line, /coral maxi dress/)
+  assert.doesNotMatch(line, /burgundy cardigan/)
+  assert.doesNotMatch(line, /unknown/)
+})
+
+test('capsule palette disclosure is evidence, not a palette validity check', () => {
+  const accentRoster = [
+    { id: 1, name: 'coral top', colors: ['coral'] },
+    { id: 2, name: 'green bottom', colors: ['green'] },
+  ]
+  assert.match(
+    describeCapsulePaletteCohesion(accentRoster, [{ pieceIds: [1, 2] }]),
+    /0 of 2 pieces \(0%\) form the neutral base/
+  )
+  assert.equal(describeCapsulePaletteCohesion([], []), '')
 })
 
 // Live thread_1785380251549: two of ten cards came back with no shoes while

@@ -47,6 +47,7 @@ import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
 import { resolveOccasionProfile } from './occasions.js'
 import {
+  colorFamilies,
   colorTaxonomyEntry,
   colorsArePaletteNeutral,
 } from '../lib/colorTaxonomy.js'
@@ -386,6 +387,51 @@ export function describeCapsuleRosterUtilization(roster = [], cards = []) {
   const named = unused.slice(0, 4).map(piece => piece.name || `piece ${piece.id}`).join(', ')
   const rest = unused.length > 4 ? `, and ${unused.length - 4} more` : ''
   return `[capsule roster: ${unused.length} of ${rosterPieces.length} pieces did not make it into a look — ${named}${rest}]`
+}
+
+// Palette cohesion is a set property, so the per-piece versatility score cannot
+// report it honestly. Keep this deliberately observational for the Step 5
+// evaluation: it names family breadth, the neutral-base share, and accent
+// pieces that the representative rotation did not demonstrate. It does not
+// reject, repair, reorder, or force a piece into a look. That preserves the
+// settled rule that palette is a preference rather than a validity gate and
+// gives the owner evidence before any V2 generation pressure is considered.
+export function describeCapsulePaletteCohesion(roster = [], cards = []) {
+  const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
+  if (!rosterPieces.length) return ''
+
+  const families = new Set()
+  const accentPieces = []
+  let neutralBaseCount = 0
+  for (const piece of rosterPieces) {
+    const colors = Array.isArray(piece?.colors) ? piece.colors : []
+    for (const family of colorFamilies(colors)) {
+      if (family !== 'unknown') families.add(family)
+    }
+    if (colorsArePaletteNeutral(colors)) neutralBaseCount += 1
+    if (colors.some(color => colorTaxonomyEntry(color).neutrality === 'accent')) {
+      accentPieces.push(piece)
+    }
+  }
+
+  const used = new Set()
+  for (const card of Array.isArray(cards) ? cards : []) {
+    const ids = card?.pieceIds || card?.piece_ids || card?.pieces || []
+    for (const id of Array.isArray(ids) ? ids : []) {
+      const numeric = Number(typeof id === 'object' ? id?.id : id)
+      if (numeric) used.add(numeric)
+    }
+  }
+  const unusedAccents = accentPieces.filter(piece => !used.has(Number(piece.id)))
+  const neutralPercent = Math.round((neutralBaseCount / rosterPieces.length) * 100)
+  const familyLabel = families.size === 1 ? 'colour family' : 'colour families'
+  let line = `[capsule palette: ${families.size} ${familyLabel} across ${rosterPieces.length} pieces · ${neutralBaseCount} of ${rosterPieces.length} pieces (${neutralPercent}%) form the neutral base`
+  if (unusedAccents.length) {
+    const named = unusedAccents.slice(0, 4).map(piece => piece.name || `piece ${piece.id}`).join(', ')
+    const rest = unusedAccents.length > 4 ? `, and ${unusedAccents.length - 4} more` : ''
+    line += ` · ${unusedAccents.length} of ${accentPieces.length} accent-colour pieces did not make it into a look — ${named}${rest}`
+  }
+  return `${line}]`
 }
 
 export function describeCapsuleCompositionShortfall(shortfalls = [], { plannedTotal = 0, acceptedTotal = 0 } = {}) {
