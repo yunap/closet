@@ -351,15 +351,40 @@ an observed regression is a tuning issue, not a reason to reopen the presentatio
 
 **Cost follow-up implemented 2026-07-29, separate from B2:** full critiques now cache the stable
 evaluator system prefix through the provider's existing prompt-cache path and report normalized
-input/output/cache tokens plus estimated cost in debug telemetry. Follow-ups use a provider-enforced
-answer-only contract with a 500-token ceiling while retaining the current images, linked garment
-truth, compact prior evaluation, and conversation context; the client preserves the full evaluation
-memory instead of replacing it with the small follow-up result. A bounded ten-minute exact-request
-cache handles retries, and identical concurrent requests share the same in-flight provider call.
-The cache key includes provider/model, prompt version, system prompt, all message text, images, and
-garment/memory context, so any critique-relevant change is a miss. Stable image/evidence prompt
-caching remains deferred until telemetry shows that additional complexity is warranted. The
-ratified four-paragraph explanation is unchanged and no second model call was added.
+input/output/cache tokens plus estimated cost in debug telemetry. Follow-ups keep the answer-only
+contract and 500-token ceiling while retaining the current images, linked garment truth, compact
+prior evaluation, and conversation context; the client preserves the full evaluation memory
+instead of replacing it with the small follow-up result.
+
+Ordinary questions about the current critique still finish in one provider call. The initial
+one-call implementation made every critique-thread message use the evaluator, which regressed a
+previous capability: a request such as “suggest one of the tops that I have” could no longer search
+the wardrobe. A phrase classifier was tried and rejected because arbitrary user language cannot be
+enumerated reliably. The ratified implementation instead gives critique follow-ups a restricted
+tool loop containing only `search_wardrobe`, `view_pieces`, and `get_garment_details`. The model
+answers directly without tools when current evidence is sufficient; an owned-alternative request
+may use a second call after retrieval, and visual/detail verification may use a third. Generation,
+rendering, planning, preference writes, and the general freeform output-retry guards are unavailable
+on this path.
+
+A bounded ten-minute exact-request cache handles retries, and identical concurrent requests share
+the same in-flight provider call. The cache key includes provider/model, prompt version, system
+prompt, all message text, images, and garment/memory context, so any critique-relevant change is a
+miss. Live verification recorded an exact retry at 11.8 seconds as `providerCalls: 0`, `$0`, and
+290 ms. Stable image/evidence prompt caching remains deferred until telemetry shows that additional
+complexity is warranted. The ratified four-paragraph full critique remains one provider call and
+is unchanged.
+
+**Evidence-integrity follow-up implemented in PR 188:** generated boards are marked
+`visualEvidenceType: generated_board`; the board image is labelled immediately before its image
+block as an AI-generated visualization, and each linked garment reference is separately labelled.
+The evaluator may judge the proposed composition and rendering errors from the board, but it may
+not treat generated tuck, fit, hem, placement, or invented construction as garment truth. Linked
+records and reference photos remain authoritative, and a final generated-board validity instruction
+rejects actions that conflict with any affected garment's construction or wear constraints. Saved
+**My Outfits** retain the opposite authority rule: their first image is the actual worn outfit
+photo. This distinction fixed the live “wear over only” shirt case without adding garment-specific
+prompt exceptions.
 
 ### B3 — What the "needs review" card should be (proposition 3)
 - **Cost:** near-null surface (zero in the last 150 real threads); don't spend engineering here.

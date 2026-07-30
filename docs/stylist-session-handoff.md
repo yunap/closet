@@ -3,7 +3,7 @@
 **Last updated:** 2026-07-29. Branch `experiment/critique-cost-optimization`, started from
 merged PR #187 on `origin/main` at `77fe064`.
 
-## 2026-07-29 — critique cost optimization after B2
+## 2026-07-29 — PR 188 critique optimization, evidence integrity, and entry-flow reconciliation
 
 Branch `experiment/critique-cost-optimization` starts cleanly from merged PR #187 at `77fe064`.
 It implements the first cost pass without changing the ratified full critique:
@@ -14,18 +14,32 @@ It implements the first cost pass without changing the ratified full critique:
 - `evaluateOutfitThroughSharedPipeline` now keeps normalized provider usage and
   `estimateAiUsageCost` in `debug`. The dev-only message telemetry shows critique tokens, cache
   reads, estimated cost, and exact-result cache hit/miss state.
-- Follow-ups use a dedicated, provider-enforced `{ answer }` contract capped at 500 output tokens
-  instead of the full 3,000-token critique contract. They still receive the current outfit and
-  linked-garment images, garment truth, compact prior evaluation, and relevant memory. The client
-  preserves the existing full evaluation in thread memory after the answer-only response.
+- Follow-ups use a dedicated `{ answer }` contract capped at 500 output tokens instead of the full
+  3,000-token critique contract. They still receive the current outfit and linked-garment images,
+  garment truth, compact prior evaluation, and relevant memory. The client preserves the existing
+  full evaluation in thread memory after the answer-only response.
 - Exact duplicate requests use a ten-minute, 50-entry in-memory result cache. The key hashes the
   provider/model, cache version, system prompt, response mode, token ceiling, complete messages,
   image bytes, garment truth, and memory. Concurrent identical misses share one in-flight promise.
-  Failures are not cached.
+  Failures are not cached. Live verification: an exact retry 11.8 seconds later returned in 290 ms
+  with `providerCalls: 0` and `$0`.
+- Direct questions about the current critique remain one provider call. Follow-ups now reuse a
+  three-iteration restricted tool loop containing only `search_wardrobe`, `view_pieces`, and
+  `get_garment_details`, so arbitrary wording can request an owned alternative without routing the
+  entire thread through the broad freeform agent. Retrieval may take a second call and optional
+  visual/detail verification a third. The general freeform output-retry guards are disabled.
+- Saved outfits and generated boards enter the same **Work with this outfit** chooser. Review
+  dismisses that chooser on submit; similar/restyle remain visible. The selected-piece
+  **Create outfits from my wardrobe** action also dismisses, while **Suggest new pieces** does not.
+- Garment truth now survives planner/card → image prompt → critique. Image prompts express
+  structural fields as positive render directions. Generated boards carry
+  `visualEvidenceType: generated_board`, label the synthetic board and each linked reference
+  adjacent to its image, and treat linked garment records as authoritative over generated fit,
+  tuck, hem, placement, or construction. Saved **My Outfits** retain actual-worn-photo authority.
 
 Stable image/evidence prompt caching remains deliberately deferred until the new telemetry shows
-it is worth the added request restructuring. No extra provider call was added and the four-paragraph
-`detailedCritique` prompt is unchanged.
+it is worth the added request restructuring. The four-paragraph full `detailedCritique` remains one
+provider call and is unchanged; only a follow-up that needs wardrobe retrieval can add calls.
 
 ## 2026-07-29 — B2 readable critique ratified
 
