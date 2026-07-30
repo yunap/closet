@@ -19,7 +19,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 
 const { app, db, userUploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt, clearOutfitEvaluationResultCache } = await import('../styling-engine/core.js')
-const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
+const { extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, stylistToolsForTurn, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
 
 let server
 let baseUrl
@@ -1581,6 +1581,16 @@ test('wardrobe outfit followup exposes current image inventory', async () => {
   assert.ok(Array.isArray(latestUserMessage.content))
   assert.match(latestUserMessage.content.at(-1).text, /Current attached image inventory for this turn/)
   assert.match(latestUserMessage.content.at(-1).text, /If the user asks what photos\/images you can see/)
+})
+
+test('critique followups expose only wardrobe retrieval tools', () => {
+  const tools = stylistToolsForTurn({
+    allowedToolNames: ['search_wardrobe', 'view_pieces', 'get_garment_details'],
+  })
+  assert.deepEqual(
+    tools.map(tool => tool.name),
+    ['search_wardrobe', 'view_pieces', 'get_garment_details'],
+  )
 })
 
 test('exact duplicate outfit critiques reuse the short-lived result cache', async () => {

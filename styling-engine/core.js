@@ -2881,7 +2881,7 @@ export async function evaluateOutfitThroughSharedPipeline({
       ? `Previous structured critique memory. Use this for continuity, but correct it if the current image/garment truth contradicts it:\n${String(previousEvaluation).slice(0, 1600)}`
       : '',
     responseMode === 'followup'
-      ? 'Response mode: followup. Answer the user directly in 2-5 concise sentences. If the user asks what photos/images you can see, answer with the Current attached image inventory first and do not give styling advice unless the user also asks for it. If the user asks whether a garment can be tucked, altered, cuffed, belted, or otherwise worn differently, first check both the actual outfit photo and the linked garment truth for fabric, hem behavior, fit confidence, engine notes, and visible waist placement; if evidence is missing, say what is low-confidence instead of pretending. The current outfit image and linked garment records are the authority; do not introduce garments that are not visible or listed unless you clearly label them as a possible future test. If the user asks about sharpness, softness, proportion, or why an outfit is not working, lead with garment mechanics: hem length, waist transition, fit placement, silhouette continuity, and proportion behavior. Do not use jewelry/accessories as the first fix unless the garment mechanics are already working. Do not repeat the full critique, visible facts, scores, roles, or JSON sections in prose. If correcting an earlier read, say what changed and give one practical next step.'
+      ? 'Response mode: followup. Answer the user directly in 2-5 concise sentences. You may use search_wardrobe when—and only when—the user’s meaning requires garments beyond the linked outfit, regardless of their exact wording. Search proactively when they ask for an owned alternative, replacement, or another wardrobe option; never claim the rest of the closet is unavailable. Use view_pieces or get_garment_details only when the search result needs visual or construction verification. If the question can be answered from the current outfit, do not call a tool. If the user asks what photos/images you can see, answer with the Current attached image inventory first and do not give styling advice unless the user also asks for it. If the user asks whether a garment can be tucked, altered, cuffed, belted, or otherwise worn differently, first check both the actual outfit photo and the linked garment truth for fabric, hem behavior, fit confidence, engine notes, and visible waist placement; if evidence is missing, say what is low-confidence instead of pretending. The current outfit image and linked garment records are the authority. If the user asks about sharpness, softness, proportion, or why an outfit is not working, lead with garment mechanics: hem length, waist transition, fit placement, silhouette continuity, and proportion behavior. Do not use jewelry/accessories as the first fix unless the garment mechanics are already working. Do not repeat the full critique, visible facts, scores, roles, or JSON sections in prose. If correcting an earlier read, say what changed and give one practical next step.'
       : 'Response mode: full critique.',
     '',
     wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',
@@ -2942,24 +2942,51 @@ export async function evaluateOutfitThroughSharedPipeline({
   const evaluationPromise = (async () => {
     let parsed
     let usage
+    let providerCalls = 1
     if (isFollowup) {
-      const followupResult = await withTimeout(askStylistStructuredWithUsage({
+      const toolContext = {
+        allowedToolNames: ['search_wardrobe', 'view_pieces', 'get_garment_details'],
+        maxProviderIterations: 3,
+        skipFreeformOutputChecks: true,
+        trackMockUsage: true,
+        returnObjectAnswer: true,
+        occasion,
+        season,
+        mood,
+        question,
+        request: question,
+        retrievedPieceIds: new Set(pieces.map(piece => Number(piece.id)).filter(Boolean)),
+        visuallySeenPieceIds: new Set(imageRefs.filter(Boolean).map(ref => Number(ref.piece.id)).filter(Boolean)),
+      }
+      const followupResult = await withTimeout(askStylistWithTools({
         system,
         maxTokens,
-        name: 'outfit_critique_followup',
-        description: 'Answer the user’s follow-up about the current outfit directly and concisely.',
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            answer: { type: 'string' },
-          },
-          required: ['answer'],
-        },
         messages,
+        toolContext,
       }), 90000, 'Outfit critique follow-up')
-      parsed = followupResult.value
-      usage = followupResult.usage
+      let followupAnswer = String(followupResult.answer || '').trim()
+      if (followupAnswer.startsWith('{')) {
+        try {
+          const structuredAnswer = JSON.parse(followupAnswer)
+          if (typeof structuredAnswer?.answer === 'string') followupAnswer = structuredAnswer.answer
+        } catch {
+          // The tool-capable provider normally follows the answer-only JSON contract, but a
+          // plain-text answer is also safe to display. Leave malformed/non-JSON text untouched.
+        }
+      }
+      parsed = { answer: followupAnswer }
+      const diagnostics = toolContext.freeformDiagnostics || {}
+      providerCalls = Math.max(1, Number(diagnostics.providerIterations) || 0)
+      usage = {
+        provider: AI_PROVIDER,
+        model: ACTIVE_STYLIST_MODEL,
+        inputTokens: Number(diagnostics.providerInputTokens) || 0,
+        outputTokens: Number(diagnostics.providerOutputTokens) || 0,
+        cacheReadInputTokens: Number(diagnostics.providerCacheReadInputTokens) || 0,
+        cacheCreationInputTokens: Number(diagnostics.providerCacheCreationInputTokens) || 0,
+      }
+      usage.totalTokens = usage.inputTokens + usage.outputTokens +
+        usage.cacheReadInputTokens + usage.cacheCreationInputTokens
     } else {
       // Sized from observed truncation: the full critique JSON reached ~7.9k
       // chars (~2000 tokens) before being cut off, so 1400 and even 2000
@@ -2982,7 +3009,7 @@ export async function evaluateOutfitThroughSharedPipeline({
       evidenceMode,
       debug: {
         timings: { totalMs: Date.now() - startedAt },
-        providerCalls: 1,
+        providerCalls,
         usage,
         estimatedCost: estimateAiUsageCost(usage),
         resultCache: {
