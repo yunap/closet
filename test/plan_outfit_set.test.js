@@ -224,7 +224,10 @@ test('an enforced capsule uses one injected atomic composition attempt and canno
   assert.equal(toolContext.generatedOutfits.length, 1)
   assert.match(
     toolContext.generatedOutfits[0].tripPlanLines.join(' '),
-    /capsule palette: \d+ colour famil(?:y|ies) across \d+ pieces/,
+    // This fixture is entirely neutral, and the line now says so ("no colour
+    // family beyond a 2-family neutral base") where it used to report those
+    // two base families as breadth.
+    /capsule palette: (?:\d+ colour famil(?:y|ies)|no colour family) beyond /,
     'set-level palette evidence must reach the bounded capsule result, not stay in diagnostics'
   )
   assert.equal(toolContext.pendingPlan, null)
@@ -5105,12 +5108,17 @@ test('capsule palette disclosure reports family breadth, neutral share, and unus
   const cards = [{ pieces: [roster[0], roster[1], roster[2], roster[4]] }]
 
   const line = describeCapsulePaletteCohesion(roster, cards)
-  assert.match(line, /4 colour families across 6 pieces/)
+  // The neutral base is reported as the base, never as palette breadth: white
+  // and blue (navy) are the base here, pink and red are the actual colour.
+  assert.match(line, /2 colour families beyond a 2-family neutral base — pink \(1\), red \(1\)/)
   assert.match(line, /3 of 6 pieces \(50%\) form the neutral base/)
   assert.match(line, /1 of 2 accent-colour pieces did not make it into a look/)
   assert.match(line, /coral maxi dress/)
   assert.doesNotMatch(line, /burgundy cardigan/)
   assert.doesNotMatch(line, /unknown/)
+  // Both colour families lead a piece of their own here, so nothing is flagged
+  // as secondary-only.
+  assert.doesNotMatch(line, /secondary colour/)
 })
 
 test('capsule palette disclosure is evidence, not a palette validity check', () => {
@@ -5118,11 +5126,39 @@ test('capsule palette disclosure is evidence, not a palette validity check', () 
     { id: 1, name: 'coral top', colors: ['coral'] },
     { id: 2, name: 'green bottom', colors: ['green'] },
   ]
-  assert.match(
-    describeCapsulePaletteCohesion(accentRoster, [{ pieceIds: [1, 2] }]),
-    /0 of 2 pieces \(0%\) form the neutral base/
-  )
+  const line = describeCapsulePaletteCohesion(accentRoster, [{ pieceIds: [1, 2] }])
+  assert.match(line, /0 of 2 pieces \(0%\) form the neutral base/)
+  assert.match(line, /2 colour families beyond no neutral family at all/)
   assert.equal(describeCapsulePaletteCohesion([], []), '')
+})
+
+// Live thread_1785451253837 reported "10 colour families" for a roster holding
+// 4 non-neutral garments. A flat family count is the palette equivalent of the
+// raw-utilization headline: technically true, and it reads as a verdict.
+// Published guidance counts a palette as what the set reads as, so a number
+// compared against it has to be built the same way.
+test('the palette line counts what the capsule reads as, not every colour term mentioned', () => {
+  const roster = [
+    // One multi-colour piece used to supply three families by itself.
+    { id: 1, name: 'black canvas sneakers', category: 'shoes', colors: ['black', 'white', 'brown'] },
+    // And `red` existed nowhere except as this piece's third listed colour.
+    { id: 2, name: 'geometric tassel crop top', category: 'top', colors: ['black', 'cream', 'burgundy'] },
+    { id: 3, name: 'oatmeal skirt', category: 'bottom', colors: ['oatmeal'] },
+    { id: 4, name: 'navy slip shoes', category: 'shoes', colors: ['navy'] },
+    { id: 5, name: 'olive jacket', category: 'outerwear', colors: ['olive'] },
+    { id: 6, name: 'green midi dress', category: 'dress', colors: ['green'] },
+  ]
+  const line = describeCapsulePaletteCohesion(roster, [{ pieceIds: [1, 2, 3, 4, 5, 6] }])
+
+  // black, white, brown, beige and blue(navy) are all base; green and red are
+  // the only families carrying an accent term.
+  assert.match(line, /2 colour families beyond a 5-family neutral base — green \(2\), red \(1\)/)
+  // The inflation is named rather than folded into the count: nothing in this
+  // capsule leads with red.
+  assert.match(line, /red appears only as a secondary colour inside a multi-colour piece, never leading one/)
+  // Guard against the old behaviour returning: a bare "N colour families"
+  // headline counting the neutral base as breadth.
+  assert.doesNotMatch(line, /7 colour families/)
 })
 
 // Live thread_1785380251549: two of ten cards came back with no shoes while

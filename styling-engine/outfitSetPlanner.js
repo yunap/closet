@@ -404,29 +404,72 @@ export function describeCapsuleRosterUtilization(roster = [], cards = []) {
 // reject, repair, reorder, or force a piece into a look. That preserves the
 // settled rule that palette is a preference rather than a validity gate and
 // gives the owner evidence before any V2 generation pressure is considered.
+// A flat family count was the wrong measure, in the same way raw utilization
+// was. On live thread_1785451253837 it reported "10 colour families" for a
+// roster whose 24 pieces hold 4 non-neutral garments, because it counted every
+// family any colour term touched:
+//
+//   - 5 of the 10 were the neutral base itself (white, beige, grey, black,
+//     brown), so the same line could say "10 families" and "83% neutral"
+//     without noticing the contradiction;
+//   - a multi-colour piece was counted into every family it touched (one pair
+//     of black/white/brown sneakers supplied three);
+//   - `red` existed nowhere in the capsule except as `burgundy`, the third
+//     listed colour of one patterned crop top.
+//
+// Published guidance counts a palette as what the set READS as, so a number
+// compared against it has to be built the same way. Split the neutral base out
+// and name the thin families rather than folding them into one count. Still
+// observational: this rejects, repairs and reorders nothing.
 export function describeCapsulePaletteCohesion(roster = [], cards = []) {
   const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
   if (!rosterPieces.length) return ''
 
-  const families = new Set()
+  // Per family: which pieces touch it, whether any mention of it is an actual
+  // accent, and whether it ever leads a piece rather than trailing inside a
+  // multi-colour list. The taxonomy carries neutrality per COLOUR, not per
+  // family, and the distinction matters — navy and blue share a family.
+  const byFamily = new Map()
   const accentPieces = []
   let neutralBaseCount = 0
   for (const piece of rosterPieces) {
     const colors = Array.isArray(piece?.colors) ? piece.colors : []
-    for (const family of colorFamilies(colors)) {
-      if (family !== 'unknown') families.add(family)
+    const dominantFamily = colorFamilies(colors.slice(0, 1)).find(family => family !== 'unknown') || ''
+    for (const color of colors) {
+      const entry = colorTaxonomyEntry(color)
+      const family = entry.family
+      if (!family || family === 'unknown') continue
+      if (!byFamily.has(family)) byFamily.set(family, { pieces: new Set(), hasAccent: false, leadsAPiece: false })
+      const record = byFamily.get(family)
+      record.pieces.add(Number(piece.id))
+      if (entry.neutrality === 'accent') record.hasAccent = true
+      if (family === dominantFamily) record.leadsAPiece = true
     }
     if (colorsArePaletteNeutral(colors)) neutralBaseCount += 1
-    if (colors.some(color => colorTaxonomyEntry(color).neutrality === 'accent')) {
-      accentPieces.push(piece)
-    }
+    if (colors.some(color => colorTaxonomyEntry(color).neutrality === 'accent')) accentPieces.push(piece)
   }
+
+  const colourFamilies = [...byFamily].filter(([, record]) => record.hasAccent)
+    .sort((a, b) => b[1].pieces.size - a[1].pieces.size || a[0].localeCompare(b[0]))
+  const neutralFamilyCount = byFamily.size - colourFamilies.length
 
   const used = capsulePieceIdsInCards(cards)
   const unusedAccents = accentPieces.filter(piece => !used.has(Number(piece.id)))
   const neutralPercent = Math.round((neutralBaseCount / rosterPieces.length) * 100)
-  const familyLabel = families.size === 1 ? 'colour family' : 'colour families'
-  let line = `[capsule palette: ${families.size} ${familyLabel} across ${rosterPieces.length} pieces · ${neutralBaseCount} of ${rosterPieces.length} pieces (${neutralPercent}%) form the neutral base`
+
+  const baseLabel = neutralFamilyCount
+    ? `a ${neutralFamilyCount}-family neutral base`
+    : 'no neutral family at all'
+  const colourLabel = colourFamilies.length
+    ? `${colourFamilies.length} colour ${colourFamilies.length === 1 ? 'family' : 'families'} beyond ${baseLabel} — ${colourFamilies.map(([family, record]) => `${family} (${record.pieces.size})`).join(', ')}`
+    : `no colour family beyond ${baseLabel}`
+  let line = `[capsule palette: ${colourLabel} · ${neutralBaseCount} of ${rosterPieces.length} pieces (${neutralPercent}%) form the neutral base`
+  // The specific inflation worth naming: a family nothing in the capsule
+  // actually leads with, present only inside a multi-colour garment.
+  const secondaryOnly = colourFamilies.filter(([, record]) => !record.leadsAPiece).map(([family]) => family)
+  if (secondaryOnly.length) {
+    line += ` · ${secondaryOnly.join(', ')} appear${secondaryOnly.length === 1 ? 's' : ''} only as a secondary colour inside a multi-colour piece, never leading one`
+  }
   if (unusedAccents.length) {
     const named = unusedAccents.slice(0, 4).map(piece => piece.name || `piece ${piece.id}`).join(', ')
     const rest = unusedAccents.length > 4 ? `, and ${unusedAccents.length - 4} more` : ''

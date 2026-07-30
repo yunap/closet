@@ -262,9 +262,11 @@ replay, roster-utility audit and bench diagnostics are byte-identical to the pre
 ### First rerun under the correction — `thread_1785451253837`, 2026-07-30
 
 **The run did not evaluate the correction, and the reason is itself a finding.** The model's roster
-was rejected, repaired, rejected again, and the deterministic fallback shipped. The 12 cards were
-therefore engine-chosen, so criteria 5-7 (footwear credibility, protagonists, dependent-top
-breadth) cannot be read from this run at all. The comparison is direct: run 1074 at 14:53, before
+was rejected, repaired, rejected again, and the deterministic fallback shipped. Composition then ran
+normally — the 12 looks are genuinely model-composed, three of them patched by engine
+auto-completion — but they were composed from an **engine-chosen roster**, so criteria 5-7 (footwear
+credibility, protagonists, dependent-top breadth), which are all judgments about *selection*, cannot
+be read from this run at all. The comparison is direct: run 1074 at 14:53, before
 the correction, took 1 call + 1 repair and **0** fallbacks; run 1076 at 15:43, after it, took 1 call
 + 1 repair and **1** fallback. Model roster choice is stochastic, so this is strong evidence rather
 than proof.

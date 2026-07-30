@@ -22,7 +22,8 @@ composition auto-completion fired. The result nevertheless failed as a capsule:
 - its 92% utilization headline concealed that the two unused pieces were the only layer and the
   questionable fifth shoe;
 - it reached 10 colour families and an 83% neutral base, outside the published 5–9 and 60–70%
-  guidance.
+  guidance. **Corrected 2026-07-30 — see §7. The family count was inflated by how it was measured
+  and is not evidence of excess breadth; the neutral share stands.**
 
 This meets Step 5's severe-failure exception. Formula diversity and roster demonstration are no
 longer merely hypothetical V2 refinements: the rotation claimed versatility that its category
@@ -203,3 +204,47 @@ Do **not** add:
 5. After owner review of the implementation, one explicitly approved Step 5 rerun is captured.
 6. The rerun is reviewed against all nine criteria above. Passing structural validation alone is
    not sufficient for default-on.
+
+## 7. Correction to §1's palette finding — the family count was measuring the wrong thing
+
+Written 2026-07-30 after the owner questioned the number on sight. The rerun
+(`thread_1785451253837`) reproduced it exactly — 10 families, 83% neutral — on a roster whose
+**four** non-neutral garments are a green midi dress, a coral maxi dress, an orange tank, and a
+black/cream/burgundy crop top. Both runs are right about the arithmetic and wrong about the palette.
+
+Three things inflated it, and they compound:
+
+1. **Five of the ten families were the neutral base** — white, beige, grey, black, brown. The same
+   line could report "10 colour families" and "83% neutral" without noticing the contradiction.
+2. **A multi-colour piece counted into every family it touched.** One pair of black/white/brown
+   sneakers supplied three families by itself; the crop top supplied white, black and red.
+3. **Three families rested on a single piece**, and `red` existed nowhere in the capsule except as
+   `burgundy`, the third listed colour of that one patterned top.
+
+Counting only dominant colours gives 9 — inside the published 5–9 range. That is not offered as the
+correct metric, only as evidence that the finding was an artefact of measurement rather than a
+property of the roster.
+
+**Consequence for §1 and §3.** The colour-breadth half of the palette observation is withdrawn as
+evidence. The neutral-base half is not: 20 of 24 pieces carrying no colour of their own is a real
+measurement, unaffected by any of the above, and remains outside the 60–70% guidance. Criterion 9
+still stands — palette remains observational, hard-filters nothing, and waits for V2.
+
+**The disclosure now reports the split** rather than one flat count:
+
+```
+[capsule palette: 4 colour families beyond a 6-family neutral base — green (4), orange (1),
+ pink (1), red (1) · 20 of 24 pieces (83%) form the neutral base · red appears only as a secondary
+ colour inside a multi-colour piece, never leading one · 1 of 4 accent-colour pieces did not make
+ it into a look — coral solid maxi dress]
+```
+
+Families are split by the taxonomy's own per-colour `neutrality`, not by a hard-coded list of
+neutral family names — navy and blue share a family and are not the same evidence.
+
+**The general lesson, and it is the second instance in one session.** A raw count reads as a
+verdict. Utilization counted IDs and hid an undemonstrated category (§3 criterion 4); family
+breadth counted colour terms and invented breadth this wardrobe does not have. Both were true
+numbers that answered a question nobody asked. Before a count is compared against published
+guidance, check that it is built the way the guidance builds it — capsule frameworks count a
+palette as what the set *reads as*.
