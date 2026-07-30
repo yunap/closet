@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { GATE_CRITICAL_FIELDS, missingGateFields } from '../../styling-engine/attributes.js'
-import { COLOR_OPTIONS, LIGHT_COLORS } from '../utils/colors.js'
+import { ColorEditor } from './ColorSelector.jsx'
 
 const CATEGORIES  = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
@@ -836,13 +836,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
 
           <div className="form-group">
             <div id="piece-form-colors-label" className="form-label">Colors</div>
-            <div className="chip-grid" role="group" aria-labelledby="piece-form-colors-label">
-              {COLOR_OPTIONS.map(c => (
-                <button type="button" key={c.name} aria-label={c.name} aria-pressed={form.colors.includes(c.name)} className={`color-chip ${form.colors.includes(c.name) ? 'active' : ''}`} style={{ background: c.hex }} title={c.name} onClick={() => toggleArr('colors', c.name)}>
-                  {form.colors.includes(c.name) && <span className="color-chip-check" style={{ color: LIGHT_COLORS.includes(c.name) ? '#666' : '#fff' }}>✓</span>}
-                </button>
-              ))}
-            </div>
+            <ColorEditor value={form.colors} onChange={value => set('colors', value)} labelledBy="piece-form-colors-label" />
           </div>
 
           <div className="form-group">
