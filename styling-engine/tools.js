@@ -504,7 +504,16 @@ export const STYLIST_TOOLS = [
             type: "object",
             properties: {
               label: { type: "string", description: "Short user-facing slot label (e.g. 'Winery Days', 'Dinner Out', 'Coastal Day')." },
-              occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. Map dinner/evening-restaurant/night-out use cases to 'evening'." },
+              // Owner ruling 2026-07-30: evening is dressier than a restaurant. An
+              // ordinary restaurant dinner reads smart casual, or maybe city. This
+              // description previously said to map dinner and evening-restaurant use
+              // cases to 'evening', which contradicted the engine's own occasion
+              // profiles — `city_smart_casual` lists `dinner` and `museum` among its
+              // keywords (ceiling elevated), while `evening_social` lists `dinner date,
+              // wine bar, theater, night out` (ceiling dressy). Following the old
+              // wording pushed a restaurant slot to a dressy ceiling the owner does not
+              // want. Unratified scaffolding from PR #58, not a ruling.
+              occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. An ordinary restaurant dinner or a night out that is not dressy is 'smart casual' (or 'city'); reserve 'evening' for genuinely dressier night-out use cases — a dinner date, wine bar, theater, cocktails." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
               environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting. Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling and overrides contradictory weather:'indoor'. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries). Omit when unsure; outdoor is the default." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },

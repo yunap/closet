@@ -79,12 +79,32 @@ slot**, leaving **two of five slots unable to admit any layer**. After the fix e
 a layer and the two most indoor slots can reach both — which is what makes the outerwear quota
 correction real rather than cosmetic, since the quota was buying layers the gate then discarded.
 
-**Still open — the declared-facts half.** The model marked museums and evening restaurants
-`outdoor`, and chose `smart casual` rather than `evening` for the restaurant slot, each against
-explicit schema guidance (the `weather` field description names restaurants; the `occasion` field
-says to map restaurant slots to `evening`). Occasion profiles carry no indoor/outdoor property, so
-the engine cannot currently derive what the model got wrong. Deciding what the engine derives versus
-what it accepts from the model is still a design question.
+**Corrected 2026-07-30 by the owner — the occasion was not an error.** This section previously
+called the model's `smart casual` choice for the restaurant slot a failure to follow schema
+guidance. That was wrong, and the contradiction is inside this codebase, not in the model:
+
+- `city_smart_casual`'s own keywords are `city, museum, shopping, **dinner**, brunch, office,
+  everyday` — ceiling `elevated`.
+- `evening_social`'s are `evening, dinner date, wine bar, theater, evening drinks, night out` —
+  ceiling `dressy`.
+- **Owner's semantics:** evening has historically been dressier than a restaurant; a restaurant
+  usually reads smart casual, or maybe city.
+
+So the model matched both the profile taxonomy and the owner's mental model. The `occasion` field
+description telling it to *"map dinner/evening-restaurant/night-out use cases to 'evening'"* is what
+disagrees — unratified scaffolding from PR #58, not an owner ruling, and it would have pushed the
+restaurant slot to a `dressy` ceiling the owner does not want.
+
+**Also corrected: occasion profiles do encode setting**, just not as a queryable field.
+`outdoor_daytime_social` is outdoor by name; `gallery_art_event` and `home_loungewear` are indoor by
+nature. A structured `climate_controlled` property would formalise what the ids and keywords already
+imply rather than invent something new.
+
+**Genuinely still open — `environment`.** Museums and evening restaurants were declared `outdoor`,
+which is wrong. Its practical bite has shrunk, though: `environment: 'indoor'` mostly fed
+`season: 'indoor'` to neutralise hot/cold gating, and for a seasonal capsule the
+`seasonIsCalendarOnly` fix now neutralises heat anyway. What remains is its effect on winter capsule
+indoor slots and on `beach_coastal` handling.
 
 ### 3b. The composer omits shoes when the roster has them
 
@@ -137,12 +157,17 @@ Testable offline against the saved thread.
 
 ### Step 2 — slot facts *(weather half done; declared-facts half still design work)*
 
-The weather half is fixed — see §3a. What remains is the model's declared slot facts: environment
-and occasion were both wrong on the live run despite explicit schema guidance, and the engine has no
-independent way to know better because occasion profiles carry no indoor/outdoor property. Options,
-none yet chosen: add a `climate_controlled` property to the occasion profiles and let the engine
-default it; cross-check declared facts against the slot's own label and flag contradictions; or
-change the `register` guidance so adjacent contexts stop inheriting one another's register.
+The weather half is fixed and the occasion half turned out not to be a defect at all — see §3a.
+What remains:
+
+1. **The `occasion` field description contradicts the engine's own profile keywords** and the
+   owner's register semantics. It should stop routing ordinary restaurant dinners to `evening`, and
+   reserve `evening` for the dressy night-out contexts `evening_social` actually lists.
+2. **`environment` is still model-declared and was wrong**, though the weather fix has removed most
+   of its bite. A `climate_controlled` property on the occasion profiles would let the engine
+   default it rather than trust it.
+3. **The `register` guidance** — *"omit for ordinary slots"* — still lets adjacent contexts inherit
+   one another's register, which is how "Weekends Out" ended up casual.
 
 ### Step 3 — colour taxonomy *(blocks step 4)*
 

@@ -24,6 +24,7 @@ const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, build
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
+const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { capsulePlanCompositionSchema } = await import('../routes/ai.js')
 
@@ -4670,4 +4671,36 @@ test('a winter capsule keeps its cold profile', () => {
   const profile = weatherProfileFromContext({ mood: 'I want a winter capsule', season: '', seasonIsCalendarOnly: true })
   assert.equal(profile.isCold, true)
   assert.equal(profile.isHot, false)
+})
+
+// Owner ruling 2026-07-30: evening is dressier than a restaurant; an ordinary
+// restaurant dinner reads smart casual, or maybe city. The schema previously
+// told the model to map dinner and evening-restaurant use cases to 'evening',
+// contradicting the engine's own occasion profiles — city_smart_casual lists
+// `dinner` and `museum` (ceiling elevated) while evening_social lists
+// `dinner date, wine bar, theater, night out` (ceiling dressy).
+test('the plan slot occasion guidance matches the occasion profiles and the owner register semantics', () => {
+  const description = planOutfitSetSlotSchema()?.properties?.occasion?.description || ''
+
+  assert.doesNotMatch(description, /map dinner\/evening-restaurant/i, 'the contradicted wording must not return')
+  assert.match(description, /restaurant dinner/i)
+  assert.match(description, /smart casual/i)
+  assert.match(description, /reserve 'evening'/i)
+})
+
+// The guidance is only correct if the profiles it describes still behave that
+// way — this fails if someone re-tunes a ceiling without revisiting the wording.
+test('restaurant-register semantics hold in the occasion profiles themselves', () => {
+  const smartCasual = resolveOccasionProfile('smart casual')
+  const evening = resolveOccasionProfile('evening')
+
+  assert.equal(smartCasual.id, 'city_smart_casual')
+  assert.equal(evening.id, 'evening_social')
+  assert.ok((smartCasual.keywords || []).includes('dinner'), 'city_smart_casual should still own plain "dinner"')
+  assert.equal(smartCasual.register_ceiling, 'elevated')
+  assert.equal(evening.register_ceiling, 'dressy')
+  assert.ok(
+    formalityRank(evening.register_ceiling) > formalityRank(smartCasual.register_ceiling),
+    'evening must remain the dressier register'
+  )
 })
