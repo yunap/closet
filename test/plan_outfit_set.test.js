@@ -22,7 +22,7 @@ const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
-const { parsePiece } = await import('../styling-engine/rules.js')
+const { parsePiece, weatherProfileFromContext } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { capsulePlanCompositionSchema } = await import('../routes/ai.js')
@@ -4637,4 +4637,37 @@ test('completion never creates a duplicate core with an already-accepted look', 
   assert.equal(completed.completions.length, 0, 'no completion should be reported')
   assert.ok(String(completed.failures[0]?.reasons?.join(' ') || '').length > 0)
   assert.ok(Number(shoeB) > 0)
+})
+
+// "I want a summer capsule" names the calendar, not the weather. Inferring a
+// blanket isHot from it stamped every slot hot on live thread_1785380251549 —
+// including the air-conditioned museum and the evening restaurant — and the hot
+// gate then suppressed 17-26 outerwear pieces from EVERY slot, leaving two of
+// five unable to admit any layer at all. That is the same capsule the layer
+// research says must carry two.
+test('a seasonal capsule does not inherit a blanket hot profile from the season word', () => {
+  const bare = weatherProfileFromContext({ mood: 'I want a summer capsule', season: '' })
+  assert.equal(bare.isHot, true, 'an ordinary request still reads summer as hot')
+
+  const capsule = weatherProfileFromContext({ mood: 'I want a summer capsule', season: '', seasonIsCalendarOnly: true })
+  assert.equal(capsule.isHot, false)
+  assert.equal(capsule.isCold, false)
+})
+
+// The asymmetry is the point: a stated condition is a claim about the weather
+// and keeps its meaning; only the bare season word is demoted.
+test('an explicit heat signal still wins inside a seasonal capsule', () => {
+  for (const mood of ['a summer capsule, it is 95 here', 'summer capsule during a heatwave']) {
+    const profile = weatherProfileFromContext({ mood, season: '', seasonIsCalendarOnly: true })
+    assert.equal(profile.isHot, true, `"${mood}" should still gate as hot`)
+  }
+})
+
+// Cold is deliberately untouched — the measured defect was on the hot side, and
+// the winter covered-base and transition-layer post-conditions depend on cold
+// gating behaving as it does.
+test('a winter capsule keeps its cold profile', () => {
+  const profile = weatherProfileFromContext({ mood: 'I want a winter capsule', season: '', seasonIsCalendarOnly: true })
+  assert.equal(profile.isCold, true)
+  assert.equal(profile.isHot, false)
 })

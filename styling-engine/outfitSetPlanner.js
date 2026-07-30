@@ -615,8 +615,11 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // trip; and getWeatherProfileForPlan itself falls back to the heuristic when no
 // location/date is available or the fetch fails. The returned `label` is what
 // the plan lines state back to the user so they can correct it conversationally.
-async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, fetchImpl } = {}) {
+async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, fetchImpl, seasonIsCalendarOnly = false } = {}) {
   const moodText = mood || question
+  // A weather the person or the model STATED for this slot is a claim about
+  // this slot's conditions, so it keeps its full meaning even for a capsule.
+  // Only the inferred, plan-wide season word is demoted.
   if (slot.statedWeather) {
     return {
       profile: { ...weatherProfileFromContext({ mood: moodText, season: slot.statedWeather }), weatherSource: 'stated' },
@@ -634,6 +637,7 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
     location: slot.location || '',
     season: slot.season,
     mood: moodText,
+    seasonIsCalendarOnly,
     ...(fetchImpl ? { fetchImpl } : {})
   })
   const descriptor = describeWeatherProfile(profile)
@@ -2462,7 +2466,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   if (Array.isArray(composePool.shoeReserveGaps)) coverageGaps.push(...composePool.shoeReserveGaps)
   for (const [index, slot] of slots.entries()) {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
-    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl })
+    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl, seasonIsCalendarOnly: isSeasonalCapsule })
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot

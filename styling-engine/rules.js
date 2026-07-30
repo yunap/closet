@@ -46,7 +46,26 @@ export function isStyleSelectedQuestion(question = '') {
   return !q.trim() || /style|wear|pair|outfit|how should|how do i|what goes|what would work|proposal|suggest/.test(q)
 }
 
-export function weatherProfileFromContext({ mood = '', season = '', currentDate = new Date() } = {}) {
+// `seasonIsCalendarOnly` — set by callers whose request spans a whole season
+// rather than describing a day's conditions. A seasonal capsule is the case
+// this exists for: "I want a summer capsule" names the calendar, not the
+// weather. Inferring `isHot` from it stamps every slot of the plan hot,
+// including the air-conditioned museum and the evening restaurant, and the hot
+// gate then suppresses the layers the capsule is specifically supposed to
+// carry. Measured on live thread_1785380251549: the blanket hot profile
+// removed 17-26 outerwear pieces from EVERY slot's gate, and left two of the
+// five slots unable to admit any layer at all.
+//
+// An EXPLICIT heat signal still wins — "a summer capsule, it's 95 here" is a
+// statement about conditions and keeps its meaning. Only the bare season word
+// is demoted, which is the same asymmetry this function already applies to
+// cool signals.
+//
+// Cold is deliberately untouched. The measured defect is on the hot side, and
+// a winter capsule's covered-base and transition-layer post-conditions depend
+// on cold gating behaving as it does; changing both directions at once without
+// evidence for the second would be guesswork.
+export function weatherProfileFromContext({ mood = '', season = '', currentDate = new Date(), seasonIsCalendarOnly = false } = {}) {
   if (String(season || '').trim().toLowerCase() === 'indoor') {
     return { isHot: false, isCold: false }
   }
@@ -70,7 +89,7 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const hasRainSignal = /\b(drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const strongHotSignal = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text) || hasHotTemperature
   const seasonHotSignal = explicitWarmWeather || /\bsummer\b/.test(text)
-  const explicitHot = strongHotSignal || (seasonHotSignal && !hasCoolSignal)
+  const explicitHot = strongHotSignal || (seasonHotSignal && !hasCoolSignal && !seasonIsCalendarOnly)
   const explicitCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
     || hasColdTemperature
     || (hasCoolSignal && !strongHotSignal)

@@ -68,8 +68,23 @@ schema's `register` field is described as an event-weekend escalation tool — *
 slots (the occasion carries the register)"* — so the model omitted it on "Weekends Out", which
 inherited a casual register from a neighbouring context.
 
-**Status: open.** This is the deepest remaining issue and is a design question, not a fix: either
-the engine derives these facts itself, or it stops treating model-declared ones as authoritative.
+**Status: partly fixed 2026-07-30 — the weather half.** The blanket `isHot` did not come from the
+model at all; it came from the engine inferring heat from the word "summer" in the request.
+`weatherProfileFromContext` now takes `seasonIsCalendarOnly`, set for a seasonal capsule, and a bare
+season word no longer produces a hot profile. An explicit signal ("it's 95 here", "heatwave") still
+wins, and cold is untouched.
+
+Measured on the live plan: the hot gate had been removing **17-26 outerwear pieces from every
+slot**, leaving **two of five slots unable to admit any layer**. After the fix every slot can reach
+a layer and the two most indoor slots can reach both — which is what makes the outerwear quota
+correction real rather than cosmetic, since the quota was buying layers the gate then discarded.
+
+**Still open — the declared-facts half.** The model marked museums and evening restaurants
+`outdoor`, and chose `smart casual` rather than `evening` for the restaurant slot, each against
+explicit schema guidance (the `weather` field description names restaurants; the `occasion` field
+says to map restaurant slots to `evening`). Occasion profiles carry no indoor/outdoor property, so
+the engine cannot currently derive what the model got wrong. Deciding what the engine derives versus
+what it accepts from the model is still a design question.
 
 ### 3b. The composer omits shoes when the roster has them
 
@@ -120,11 +135,14 @@ at composition time instead of rejecting it to a needs-review card. The logic al
 On the live run this converts **7 good + 3 needs-review into 9 good + 1**, at no model cost.
 Testable offline against the saved thread.
 
-### Step 2 — slot facts *(design work; blocks nothing, distorts everything)*
+### Step 2 — slot facts *(weather half done; declared-facts half still design work)*
 
-Address §3a. Scope it before writing code: decide what the engine derives versus what it accepts
-from the model, and whether `register` guidance should change so adjacent contexts stop inheriting
-one another's register.
+The weather half is fixed — see §3a. What remains is the model's declared slot facts: environment
+and occasion were both wrong on the live run despite explicit schema guidance, and the engine has no
+independent way to know better because occasion profiles carry no indoor/outdoor property. Options,
+none yet chosen: add a `climate_controlled` property to the occasion profiles and let the engine
+default it; cross-check declared facts against the slot's own label and flag contradictions; or
+change the `register` guidance so adjacent contexts stop inheriting one another's register.
 
 ### Step 3 — colour taxonomy *(blocks step 4)*
 
