@@ -2778,7 +2778,14 @@ export async function evaluateOutfitThroughSharedPipeline({
   const outfitPhoto = outfit.photo || outfit.imageUrl || outfit.image_url || ''
   const generatedBoardEvidence = outfit.visualEvidenceType === 'generated_board'
   const savedPhotoPath = uploadedPhotoPath || uploadedOrSavedOutfitPhotoPath(outfitPhoto)
+  if (generatedBoardEvidence && savedPhotoPath) {
+    content.push({
+      type: 'text',
+      text: `IMAGE 1 — AI-GENERATED STYLING VISUALIZATION: ${outfit.label || outfit.title || outfit.name || 'current outfit'}. This is the composition being evaluated, not evidence of how the real garments fit or can be worn.`
+    })
+  }
   const outfitImageIncluded = await addEvaluationImage(content, savedPhotoPath)
+  if (generatedBoardEvidence && savedPhotoPath && !outfitImageIncluded) content.pop()
   if (!outfitImageIncluded && pieces.length < 2 && !allowPhotoOnly) {
     const err = new Error('An outfit photo or at least two linked wardrobe pieces are required')
     err.statusCode = 400
@@ -2793,7 +2800,13 @@ export async function evaluateOutfitThroughSharedPipeline({
     const { base64, mime } = await prepareImageForClaude(filePath)
     return { piece, base64, mime }
   }))
-  for (const ref of imageRefs.filter(Boolean)) {
+  for (const [index, ref] of imageRefs.filter(Boolean).entries()) {
+    if (generatedBoardEvidence) {
+      content.push({
+        type: 'text',
+        text: `IMAGE ${index + 2} — LINKED GARMENT REFERENCE: ${ref.piece.name} (${ref.piece.category}). Use this image only to verify this garment's identity and construction.`
+      })
+    }
     content.push({ type: 'image', source: { type: 'base64', media_type: ref.mime, data: ref.base64 } })
   }
   const attachedImageInventory = [
@@ -2856,6 +2869,9 @@ export async function evaluateOutfitThroughSharedPipeline({
       : '',
     pieceLines
       ? 'Constraint-composition rule: before recommending any physical styling action that involves multiple garments, verify that every affected garment permits it. A capability on one garment cannot override a prohibition or construction constraint on another.'
+      : '',
+    generatedBoardEvidence && pieceLines
+      ? 'Generated-board output validity check: before returning the critique, compare the proposed userCritique.action and recommendation.smallestAdjustment against every affected linked garment record. If either action conflicts with any construction or wear constraint, discard that action and choose a compatible action using the current pieces, or say no valid adjustment is available. A contradictory action makes the response invalid even if the prose acknowledges the constraint.'
       : '',
     linkedFitCautionsText
       ? `Linked fit/trust cautions. Treat these as authoritative and reconcile visible fit placement against them before judging whether a garment fits naturally:\n${linkedFitCautionsText}`

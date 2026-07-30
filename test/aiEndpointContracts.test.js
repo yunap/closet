@@ -1495,10 +1495,17 @@ test('generated board evaluation labels the board as synthetic while My Outfits 
   })
 
   const generatedCall = aiCalls.at(-1)
-  const generatedText = generatedCall.messages.at(-1).content.at(-1).text
+  const generatedContent = generatedCall.messages.at(-1).content
+  const generatedText = generatedContent.at(-1).text
+  assert.match(generatedContent[0].text, /IMAGE 1 — AI-GENERATED STYLING VISUALIZATION: Generated mock board/)
+  assert.equal(generatedContent[1].type, 'image')
+  assert.match(generatedContent[2].text, /IMAGE 2 — LINKED GARMENT REFERENCE: black button detail top \(top\)/)
+  assert.equal(generatedContent[3].type, 'image')
   assert.match(generatedText, /first image is an AI-generated styling visualization, not a worn outfit photo/)
   assert.match(generatedText, /AI-generated styling visualization: Generated mock board/)
   assert.match(generatedText, /identify rendering errors/)
+  assert.match(generatedText, /Generated-board output validity check/)
+  assert.match(generatedText, /contradictory action makes the response invalid/)
 
   await postJson('/api/ai/evaluate-wardrobe-outfit', {
     outfit: { id: seeded.outfitId, label: 'Saved mock outfit', photo: `/uploads/${seeded.photos.outfit}` },
@@ -1508,7 +1515,10 @@ test('generated board evaluation labels the board as synthetic while My Outfits 
   })
 
   const savedCall = aiCalls.at(-1)
-  const savedText = savedCall.messages.at(-1).content.at(-1).text
+  const savedContent = savedCall.messages.at(-1).content
+  const savedText = savedContent.at(-1).text
+  assert.equal(savedContent[0].type, 'image')
+  assert.doesNotMatch(savedText, /Generated-board output validity check/)
   assert.match(savedText, /first image is the actual worn outfit photo/)
   assert.match(savedText, /actual worn outfit photo: Saved mock outfit/)
   assert.doesNotMatch(savedText, /first image is an AI-generated styling visualization/)
