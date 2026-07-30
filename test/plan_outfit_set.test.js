@@ -4704,3 +4704,24 @@ test('restaurant-register semantics hold in the occasion profiles themselves', (
     'evening must remain the dressier register'
   )
 })
+
+// Live thread_1785380251549: "City Outings / Museums" was gated as a hot
+// outdoor day. The indoor classifier already covered offices, meetings and
+// restaurants but not museums or galleries, though the engine has a
+// gallery_art_event occasion profile.
+test('museum and gallery slots infer indoor weather', () => {
+  for (const label of ['City Outings / Museums', 'Museum Visit', 'Gallery Day']) {
+    const [slot] = normalizePlanSlots([{ label, occasion: 'city', activity: 'none', count: 2 }])
+    assert.equal(slot.statedWeather, 'indoor', `"${label}" should infer indoor`)
+  }
+})
+
+// The inference must stay narrow: an explicitly outdoor place and a walking
+// activity both keep their outdoor weather.
+test('the indoor inference yields to an outdoor place or a walking activity', () => {
+  const [garden] = normalizePlanSlots([{ label: 'Outdoor Sculpture Garden', occasion: 'city', activity: 'none', count: 2 }])
+  assert.equal(garden.statedWeather || '', '')
+
+  const [walking] = normalizePlanSlots([{ label: 'City Outings / Museums', occasion: 'city', activity: 'walking', count: 2 }])
+  assert.equal(walking.statedWeather || '', '')
+})

@@ -576,7 +576,12 @@ function isIndoorPlanSlot(slot = {}, { occasion = '', activity = '' } = {}) {
   ].filter(Boolean).join(' ').toLowerCase()
   if (!text || activity === 'walking' || activity === 'hiking') return false
   if (/\b(outdoor|outside|patio|garden|hike|hiking|walk|walking|sightseeing|winery|wineries|coast|beach)\b/.test(text)) return false // ratchet-allow: slot-place classifier, not garment matching
-  return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurants?|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
+  // `museum` and `gallery` added 2026-07-30. Both are indoor by nature — the
+  // engine already has a `gallery_art_event` occasion profile — and both were
+  // missing, so the live "City Outings / Museums" slot inferred no indoor
+  // weather and was gated as a hot outdoor day. Their absence is also why the
+  // classifier could not correct the model there.
+  return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurants?|museums?|galler(y|ies)|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
 }
 
 function hasDeclaredPlanSlotActivity(slot = {}) {
