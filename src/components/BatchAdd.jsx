@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { GATE_CRITICAL_FIELDS } from '../../styling-engine/attributes.js'
 import { confidenceMapForPiece, intakeReviewSummary, intakeReviewSummaryText } from '../utils/intakeReview.js'
-import { COLOR_OPTIONS, LIGHT_COLORS } from '../utils/colors.js'
+import { ColorEditor } from './ColorSelector.jsx'
 
 const CATEGORIES = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
 const OCCASIONS  = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
@@ -669,14 +669,8 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
 
         {/* Colors */}
         <div className="form-group">
-          <label className="form-label">Colors</label>
-          <div className="chip-grid">
-            {COLOR_OPTIONS.map(c => (
-              <button key={c.name} className={`color-chip ${form.colors.includes(c.name) ? 'active' : ''}`} style={{ background: c.hex }} title={c.name} onClick={() => toggleArr('colors', c.name)}>
-                {form.colors.includes(c.name) && <span className="color-chip-check" style={{ color: LIGHT_COLORS.includes(c.name) ? '#666' : '#fff' }}>✓</span>}
-              </button>
-            ))}
-          </div>
+          <div id="batch-colors-label" className="form-label">Colors</div>
+          <ColorEditor value={form.colors} onChange={value => set('colors', value)} labelledBy="batch-colors-label" />
         </div>
 
         {/* Occasions */}
