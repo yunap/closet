@@ -4800,3 +4800,44 @@ test('the label override changes no occasion', () => {
     assert.equal(slot.occasion, expected, `"${label}" occasion must stay ${expected}`)
   }
 })
+
+// Live thread_1785380251549: the lifestyle answer listed three distinct
+// contexts — days at home, errands, weekends out — and all three came back
+// `occasion: casual`, so a going-out slot inherited a stay-at-home register.
+// The field's own description was the cause: it framed `register` as an
+// event-weekend escalation tool and told the model to omit it otherwise.
+test('the slot register guidance covers ordinary going-out slots, not just event weekends', () => {
+  const description = planOutfitSetSlotSchema()?.properties?.register?.description || ''
+
+  assert.doesNotMatch(description, /Omit for ordinary slots/i, 'the wording that suppressed the field must not return')
+  assert.match(description, /going-out/i)
+  assert.match(description, /requires nothing/i, 'elevated must be described as permission, not obligation')
+  assert.match(description, /dressy-or-better main piece/i, 'the dressy/formal floor must stay stated')
+})
+
+// The guidance above is only honest because of this asymmetry: the per-look
+// register floor applies at `dressy` and above only, so `elevated` widens what
+// a slot may use without demanding anything. If that threshold ever moves, the
+// description becomes a lie — this is the pin that catches it.
+test('register elevated imposes no per-look floor; dressy does', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'everyday tee', occasions: ['casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'everyday jeans', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'everyday sneakers', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'top', name: 'dressy silk blouse', occasions: ['casual'], formality: 'dressy' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const allEveryday = [Number(topId), Number(bottomId), Number(shoesId)]
+
+  const submit = async register => {
+    const slots = normalizePlanSlots([{ label: 'Weekends Out', occasion: 'casual', activity: 'none', count: 1, weather: 'indoor', ...(register ? { register } : {}) }])
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'weekends out' })
+    return validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+      slot_id: workbench.pendingPlan.slots[0].id, title: 'All everyday', piece_ids: allEveryday,
+    }])
+  }
+
+  assert.equal((await submit('elevated')).accepted.length, 1, 'elevated must not demand an elevated piece')
+  const dressy = await submit('dressy')
+  assert.equal(dressy.accepted.length, 0, 'dressy must demand a dressy-or-better main piece')
+  assert.match(dressy.failures[0].reasons.join(' '), /register floor/i)
+})

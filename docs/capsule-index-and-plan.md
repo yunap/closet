@@ -157,7 +157,7 @@ at composition time instead of rejecting it to a needs-review card. The logic al
 On the live run this converts **7 good + 3 needs-review into 9 good + 1**, at no model cost.
 Testable offline against the saved thread.
 
-### Step 2 — slot facts *(weather half done; declared-facts half still design work)*
+### Step 2 — slot facts *(complete, apart from the `environment` trust question)*
 
 The weather half is fixed and the occasion half turned out not to be a defect at all — see §3a.
 What remains:
@@ -168,8 +168,22 @@ What remains:
 2. **`environment` is still model-declared and was wrong**, though the weather fix has removed most
    of its bite. A `climate_controlled` property on the occasion profiles would let the engine
    default it rather than trust it.
-3. **The `register` guidance** — *"omit for ordinary slots"* — still lets adjacent contexts inherit
-   one another's register, which is how "Weekends Out" ended up casual.
+3. ~~**The `register` guidance**~~ — **done 2026-07-30.** The field's own description was the
+   cause: it framed `register` as an event-weekend escalation tool ("rehearsal dinner", "wedding
+   ceremony") and then said to *"omit for ordinary slots"*, so the model never reached for it and a
+   going-out slot inherited a stay-at-home register.
+
+   Measured before rewriting: `register: 'elevated'` on the live "Weekends Out" slot lifts its
+   roster from **7 to 11** elevated/dressy pieces (against 13 for a plain smart-casual slot), so the
+   lever does work. And the per-look register **floor applies only at `dressy` and above**
+   (`floorRank >= formalityRank('dressy')`) — verified empirically after a code-reading suggested
+   otherwise — so `elevated` is permission without obligation, which is exactly what a going-out
+   casual slot wants and what makes it safe to encourage.
+
+   The description now says to set `register` whenever one slot reads dressier than its neighbours,
+   states that `elevated` requires nothing, and states that `dressy`/`formal` require a
+   dressy-or-better main piece in every look. Two tests: one on the wording, one pinning the
+   floor-threshold asymmetry the wording depends on.
 
 ### Step 3 — colour taxonomy *(blocks step 4)*
 

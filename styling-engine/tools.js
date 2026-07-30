@@ -520,7 +520,22 @@ export const STYLIST_TOOLS = [
               weather: { type: "string", description: "This slot's known weather/context when it should override the outdoor forecast. Use `indoor` for climate-controlled slots such as office/work days, client meetings, indoor events, and restaurants, so outdoor heat/cold does not drive the outfit. For a slot at a different outdoor place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
               location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
               date: { type: "string", description: "This slot's specific date as YYYY-MM-DD, when it maps to one day (e.g. the Thursday of a work week), so its own forecast is used rather than the range average. Omit to inherit the plan date_range." },
-              register: { type: "string", enum: ["everyday", "elevated", "dressy", "formal"], description: "How dressed-up this slot should read. Use it to ESCALATE across an event weekend so the marquee slot is dressiest: rehearsal dinner 'dressy', wedding ceremony 'formal', brunch 'elevated'. A 'dressy'/'formal' slot pushes away denim, casual jackets, tees, and sneakers and toward a dress/tailored separates + heels. Omit for ordinary slots (the occasion carries the register)." },
+              // Live thread_1785380251549: the plan's lifestyle answer listed
+              // three distinct contexts — days at home, errands, weekends out —
+              // and the model gave all three `occasion: casual`, so a going-out
+              // slot inherited a stay-at-home register. The old wording is why:
+              // it framed this field as an event-weekend escalation tool
+              // ("rehearsal dinner", "wedding ceremony") and then said to omit
+              // it for ordinary slots, so the model never reached for it.
+              //
+              // The asymmetry that makes 'elevated' safe to encourage is real
+              // and was verified in the code: the per-look register FLOOR only
+              // applies at `dressy` or above (validateSlotOutfitConstraints
+              // checks `floorRank >= formalityRank('dressy')`). So 'elevated'
+              // raises the ceiling and demands nothing — permission, not
+              // obligation — while 'dressy'/'formal' additionally require a
+              // dressy-or-better main piece in every look of that slot.
+              register: { type: "string", enum: ["everyday", "elevated", "dressy", "formal"], description: "How dressed-up this slot should read, when that differs from what its occasion implies. Set it whenever one slot in the plan reads dressier than its neighbours — a going-out version of an otherwise casual week ('elevated'), or escalation across an event weekend so the marquee slot is dressiest (rehearsal dinner 'dressy', wedding ceremony 'formal'). 'elevated' only widens what the slot may use and requires nothing; 'dressy'/'formal' additionally require every look in the slot to carry a dressy-or-better main piece, and push away denim, casual jackets, tees and sneakers toward tailored separates or a dress with heels. Omit only when the slot's occasion already describes how dressed-up it is." },
               best_for: { type: "string", description: "The specific use case this slot covers (defaults to the label)." },
               plan_note: { type: "string", description: "Optional one-sentence composer guidance for this slot." }
             },
