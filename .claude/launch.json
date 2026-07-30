@@ -14,6 +14,15 @@
       "port": 5173
     },
     {
+      "name": "wardrobe-api-modelroster",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "WARDROBE_MODEL_CAPSULE_ROSTER=true node server.js"
+      ],
+      "port": 3001
+    },
+    {
       "name": "sandbox-api",
       "runtimeExecutable": "bash",
       "runtimeArgs": [

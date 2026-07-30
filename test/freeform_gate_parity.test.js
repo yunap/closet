@@ -86,3 +86,39 @@ test('registerCeilingVerdict: pass / exclude / unknown / accessory-exempt', () =
   assert.deepEqual(registerCeilingVerdict({ category: 'top', formality: 'dressy' }, null), { verdict: 'pass' }) // no ceiling
   assert.deepEqual(registerCeilingVerdict({ category: 'accessory', formality: 'dressy' }, everyday), { verdict: 'pass' }) // accessories exempt
 })
+
+// Owner ruling 2026-07-30 (live thread_1785380251549): the beige tailored linen
+// shorts are tagged `occasions: casual` and were still refused from a casual
+// slot by the profile's `everyday` ceiling. An explicit tag is a statement about
+// that garment; a profile ceiling is a default for pieces nobody judged.
+test('register: an explicit occasion tag exempts a piece from that occasion ceiling', () => {
+  const elevatedTaggedCasual = { id: 9010, category: 'bottom', formality: 'elevated', occasions: ['casual', 'smart-casual'] }
+  const everyday = formalityRank('everyday')
+
+  assert.equal(registerCeilingVerdict(elevatedTaggedCasual, everyday).verdict, 'exclude')
+  const exempt = registerCeilingVerdict(elevatedTaggedCasual, everyday, { occasion: 'casual' })
+  assert.equal(exempt.verdict, 'pass')
+  assert.equal(exempt.exemptedByExplicitTag, true)
+
+  // …and it reaches the gate the composer actually consults.
+  const fit = profileRuleFit(elevatedTaggedCasual, {}, {
+    registerCeiling: 'everyday',
+    occasionProfile: { id: 'casual', register_ceiling: 'everyday' },
+  })
+  assert.notEqual(fit.tier, 'prohibited')
+})
+
+// One step only — the exemption is a correction, not a hole.
+test('register: the explicit-tag exemption does not stretch two registers', () => {
+  const dressyTaggedCasual = { id: 9011, category: 'top', formality: 'dressy', occasions: ['casual'] }
+  const verdict = registerCeilingVerdict(dressyTaggedCasual, formalityRank('everyday'), { occasion: 'casual' })
+  assert.equal(verdict.verdict, 'exclude')
+  assert.equal(verdict.formality, 'dressy')
+})
+
+// A piece not tagged for the requested occasion gets no exemption.
+test('register: an untagged elevated piece is still blocked by the ceiling', () => {
+  const elevatedUntagged = { id: 9012, category: 'top', formality: 'elevated', occasions: ['evening'] }
+  const verdict = registerCeilingVerdict(elevatedUntagged, formalityRank('everyday'), { occasion: 'casual' })
+  assert.equal(verdict.verdict, 'exclude')
+})

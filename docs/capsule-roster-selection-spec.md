@@ -4,9 +4,18 @@
 evaluation in this session; the correctness fixes that came out of the same evaluation are
 already shipped and are **not** blocked on this spec.
 
+**Start at [capsule-index-and-plan.md](capsule-index-and-plan.md)** for the full document map and
+the sequenced plan; this spec is stage 1-3 of it.
+
 **Read first:** `docs/stylist-session-handoff.md` → the 2026-07-28 capsule completion record (the
 owner rulings this spec must not overturn), and `docs/stylist-bugfix-spec.md` → "Research done
 2026-07-25 — what the capsule number should be" (the published-practice research this builds on).
+
+**Before changing any category quota:** `docs/capsule-real-world-rules.md` (added 2026-07-30) —
+what the published capsule frameworks actually specify per category, with citations. Every number
+in `capsuleQuotas` predates it and was invented in code; the outerwear figure has since been
+corrected against it. The remaining known divergence is the tops:bottoms ratio (this engine
+~1.1:1, published guidance 3:1), which is **not** yet changed.
 
 **Implementing steps 1–2?** Use `docs/capsule-bench-implementation-brief.md`, not this document.
 This is a design doc; the brief carries the operating rules, the acceptance commands, and the test

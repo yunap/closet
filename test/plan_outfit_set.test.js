@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
@@ -1049,8 +1049,13 @@ test('capsule workbench states the cross-slot distinct-core requirement', async 
 // happens to be in its color list. Pin that a 'loud' piece no longer
 // outranks an otherwise-identical 'quiet' piece on the strength of that bonus.
 test("capsuleVersatilityScore does not award the neutral-colour bonus to a piece pattern_complexity tags 'loud'", () => {
-  const loudButNeutral = { id: 258, name: 'bold geometric top', category: 'top', colors: ['black', 'cream', 'burgundy'], pattern_type: 'geometric', pattern_complexity: 'loud', occasions: ['casual', 'city'], formality: 'everyday' }
-  const quietNeutral = { id: 1, name: 'quiet geometric top', category: 'top', colors: ['black', 'cream', 'burgundy'], pattern_type: 'geometric', pattern_complexity: 'quiet', occasions: ['casual', 'city'], formality: 'everyday' }
+  // Colours must be genuinely all-neutral for this test to isolate what it
+  // claims to. The fixture previously included `burgundy` and still described
+  // itself as "identical neutral colors" — harmless while the neutral test was
+  // "any colour matches", but under pieceReadsAsNeutral ("every colour matches")
+  // neither piece would be neutral and the bonus could not tell them apart.
+  const loudButNeutral = { id: 258, name: 'bold geometric top', category: 'top', colors: ['black', 'cream'], pattern_type: 'geometric', pattern_complexity: 'loud', occasions: ['casual', 'city'], formality: 'everyday' }
+  const quietNeutral = { id: 1, name: 'quiet geometric top', category: 'top', colors: ['black', 'cream'], pattern_type: 'geometric', pattern_complexity: 'quiet', occasions: ['casual', 'city'], formality: 'everyday' }
   const { bench } = buildCapsuleBench([loudButNeutral, quietNeutral], { budget: 10, slots: [] })
 
   assert.equal(bench[0].id, quietNeutral.id, `the quiet piece must outrank the loud one despite identical neutral colors, got bench order: ${bench.map(piece => piece.id)}`)
@@ -4376,4 +4381,177 @@ test('capsule rotation assigns zero cards to an impossible slot so it can be dis
   ], roster, { cap: 3 })
 
   assert.deepEqual(allocated.map(slot => slot.targetOutfits), [1, 0])
+})
+
+// Live run thread_1785380251549: the model spent 1 of 24 roster places on a
+// pendant necklace, which then appeared in none of the ten looks — the capsule
+// composition prompt forbids accessories, so a bench that offers one is
+// offering a guaranteed dead slot. The deterministic selector never picked
+// accessories; only the bench's rank-fill did.
+test('the capsule bench never offers a piece the composer cannot use', () => {
+  const pool = [
+    { id: 1, name: 'white tee', category: 'top', colors: ['white'], occasions: ['casual'] },
+    { id: 2, name: 'black tee', category: 'top', colors: ['black'], occasions: ['casual'] },
+    { id: 3, name: 'tan shorts', category: 'bottom', colors: ['tan'], occasions: ['casual'] },
+    { id: 4, name: 'olive shorts', category: 'bottom', colors: ['olive'], occasions: ['casual'] },
+    { id: 5, name: 'white sneakers', category: 'shoes', colors: ['white'], occasions: ['casual'] },
+    { id: 6, name: 'pendant necklace', category: 'accessory', colors: ['silver'], occasions: ['casual'] },
+    { id: 7, name: 'leather belt', category: 'accessory', colors: ['brown'], occasions: ['casual'] },
+  ]
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+
+  // benchSize deliberately larger than the pool, so the rank-fill loop would
+  // admit every remaining piece if nothing stopped it.
+  const { bench } = buildCapsuleBench(pool, { budget: 6, slots, isSummer: true, benchSize: 40 })
+
+  assert.equal(bench.some(piece => piece.category === 'accessory'), false)
+  assert.equal(bench.length, 5)
+})
+
+// docs/capsule-real-world-rules.md: published capsule frameworks allot two
+// layers regardless of season and swap WHICH outerwear is active, never how
+// many. The old formula evaluated to ZERO outerwear for a summer capsule at
+// every budget — unsupported by any framework, and the reason the model on
+// live thread_1785380251549 overrode it by taking 4.
+test('a summer capsule gets the same layer allowance as a winter one', () => {
+  const pool = []
+  let id = 1
+  const add = (n, category, extra = {}) => {
+    for (let i = 0; i < n; i += 1) {
+      pool.push({ id: id++, name: `${category} ${i}`, category, colors: ['black'], occasions: ['casual', 'city', 'smart-casual'], ...extra })
+    }
+  }
+  add(20, 'top'); add(20, 'bottom'); add(4, 'dress'); add(8, 'outerwear'); add(10, 'shoes')
+  const slots = [
+    { id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 3 },
+    { id: 'city', label: 'City', occasion: 'city', bestFor: 'city', targetOutfits: 3 },
+  ]
+  const countOuterwear = roster => roster.filter(piece => piece.category === 'outerwear').length
+
+  const summer = selectCapsuleRoster(pool, { budget: 24, isSummer: true, isWinter: false, occasions: ['casual', 'city'], slots })
+  const winter = selectCapsuleRoster(pool, { budget: 24, isSummer: false, isWinter: true, occasions: ['casual', 'city'], slots })
+
+  assert.equal(countOuterwear(summer), 2)
+  // Winter's allowance is unchanged by the fix — it was already the right number.
+  assert.equal(countOuterwear(winter), 2)
+})
+
+// Every post-condition used to be a floor, so nothing noticed a roster
+// overspending a category. 4 outerwear against a quota of 2 cost 18 outfit
+// cores on the live run.
+test('a roster over the layer quota fails validation with a repairable message', () => {
+  const mk = (id, category, extra = {}) => ({ id, name: `${category} ${id}`, category, colors: ['black'], occasions: ['casual'], ...extra })
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+  const base = [
+    ...Array.from({ length: 9 }, (_, i) => mk(100 + i, 'top')),
+    ...Array.from({ length: 8 }, (_, i) => mk(200 + i, 'bottom')),
+    mk(300, 'dress'),
+    ...Array.from({ length: 4 }, (_, i) => mk(400 + i, 'shoes')),
+  ]
+
+  const withinQuota = [...base.slice(0, 18), mk(500, 'outerwear'), mk(501, 'outerwear')]
+  const overQuota = [...base.slice(0, 16), mk(500, 'outerwear'), mk(501, 'outerwear'), mk(502, 'outerwear'), mk(503, 'outerwear')]
+
+  const ceilingFailures = roster => validateCapsuleRoster(roster, { slots, budget: 24, isSummer: true, isWinterCapsule: false })
+    .failures.filter(failure => failure.code === 'category_ceiling:outerwear')
+
+  assert.equal(ceilingFailures(withinQuota).length, 0)
+  const failed = ceilingFailures(overQuota)
+  assert.equal(failed.length, 1)
+  assert.match(failed[0].message, /roster has 4 outerwear\(s\)/)
+  assert.match(failed[0].message, /at most 2 outerwear piece\(s\)/)
+})
+
+// docs/capsule-real-world-rules.md: every published breakdown that lists
+// dresses separately allots 2-3. A flat 1 also silently capped the BENCH — on
+// live thread_1785380251549 the model was shown one dress while 10 of the
+// wardrobe's 18 passed a slot gate.
+test('the dress quota matches published breakdowns and stops starving the bench', () => {
+  const pool = []
+  let id = 1
+  const add = (n, category) => { for (let i = 0; i < n; i += 1) pool.push({ id: id++, name: `${category} ${i}`, category, colors: ['black'], occasions: ['casual', 'city'] }) }
+  add(20, 'top'); add(20, 'bottom'); add(10, 'dress'); add(6, 'outerwear'); add(8, 'shoes')
+  const slots = [
+    { id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 3 },
+    { id: 'city', label: 'City', occasion: 'city', bestFor: 'city', targetOutfits: 3 },
+  ]
+  const dressesIn = pieces => pieces.filter(piece => piece.category === 'dress').length
+
+  const roster = selectCapsuleRoster(pool, { budget: 24, isSummer: true, isWinter: false, occasions: ['casual', 'city'], slots })
+  assert.equal(dressesIn(roster), 3)
+
+  // The bench must offer at least the quota, or the model cannot choose dresses.
+  const { bench } = buildCapsuleBench(pool, { budget: 24, slots, isSummer: true, benchSize: 40 })
+  assert.ok(dressesIn(bench) >= 3, `bench offered ${dressesIn(bench)} dresses`)
+})
+
+// Season eligibility is deliberately asymmetric. Winter drops warm-season
+// pieces outright; summer drops cool-season CORE pieces but keeps cool-season
+// outerwear, because the layer's job is the cool part of a warm day. A blanket
+// mirror rule deleted the live wardrobe's olive lightweight jacket — the one
+// correct summer layer — while corduroy trousers stayed in on rank alone.
+test('a summer capsule drops cool-season cores but keeps a cool-season layer', () => {
+  const pool = [
+    { id: 1, name: 'linen tank', category: 'top', season: 'warm', colors: ['white'], occasions: ['casual'] },
+    { id: 2, name: 'cotton tee', category: 'top', season: 'year-round', colors: ['black'], occasions: ['casual'] },
+    { id: 3, name: 'corduroy trousers', category: 'bottom', season: 'cool', colors: ['brown'], occasions: ['casual'] },
+    { id: 4, name: 'cotton shorts', category: 'bottom', season: 'warm', colors: ['beige'], occasions: ['casual'] },
+    { id: 5, name: 'lightweight jacket', category: 'outerwear', season: 'cool', colors: ['olive'], occasions: ['casual'] },
+    { id: 6, name: 'sneakers', category: 'shoes', season: 'year-round', colors: ['white'], occasions: ['casual'] },
+  ]
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+  const roster = selectCapsuleRoster(pool, { budget: 12, isSummer: true, isWinter: false, occasions: ['casual'], slots })
+  const names = roster.map(piece => piece.name)
+
+  assert.equal(names.includes('corduroy trousers'), false, 'a cool-season bottom is not summer capsule material')
+  assert.equal(names.includes('lightweight jacket'), true, 'the cool-season layer is exactly what a summer capsule needs')
+})
+
+// docs/capsule-palette-rules.md: "recombines with everything" is what the +12
+// neutral bonus pays for, and a piece only earns it if it introduces no colour
+// of its own. Live example: piece 87, `pink/green/blue/yellow/white`, collected
+// the full bonus on the strength of one "blue".
+test('the neutral bonus goes to pieces that introduce no colour, not to prints containing one', () => {
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+  const stripeTee = { id: 1, name: 'navy white stripe tee', category: 'top', colors: ['navy', 'white'], pattern_type: 'stripe', pattern_complexity: 'medium', occasions: ['casual'], formality: 'everyday' }
+  const floral = { id: 2, name: 'floral chiffon blouse', category: 'top', colors: ['pink', 'green', 'blue', 'yellow', 'white'], pattern_type: 'floral', pattern_complexity: 'medium', occasions: ['casual'], formality: 'everyday' }
+
+  const { bench } = buildCapsuleBench([stripeTee, floral], { budget: 10, slots, isSummer: true, benchSize: 40 })
+
+  // A two-tone neutral stripe genuinely recombines; a five-colour floral does not.
+  assert.equal(bench[0].id, stripeTee.id, `bench order was ${bench.map(piece => piece.id)}`)
+})
+
+// The neutral list has to be complete once the test is "every colour matches",
+// or an unrecognised neutral name disqualifies a genuinely neutral piece.
+test('taupe and oatmeal count as neutrals', () => {
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+  const taupeKnit = { id: 1, name: 'grey taupe knit cardigan', category: 'top', colors: ['light grey', 'taupe'], pattern_complexity: 'quiet', occasions: ['casual'], formality: 'everyday' }
+  const coloured = { id: 2, name: 'rust knit cardigan', category: 'top', colors: ['rust'], pattern_complexity: 'quiet', occasions: ['casual'], formality: 'everyday' }
+
+  const { bench } = buildCapsuleBench([taupeKnit, coloured], { budget: 10, slots, isSummer: true, benchSize: 40 })
+  assert.equal(bench[0].id, taupeKnit.id, `bench order was ${bench.map(piece => piece.id)}`)
+})
+
+// Live thread_1785380251549: 4 of 24 roster pieces reached none of the ten
+// cards and no surface said so. Disclosure, not enforcement — forcing an unused
+// piece into a card buys the metric with a worse outfit.
+test('roster utilization names the pieces that reached no look', () => {
+  const roster = [
+    { id: 1, name: 'white tee', category: 'top' },
+    { id: 2, name: 'tan shorts', category: 'bottom' },
+    { id: 3, name: 'coral maxi dress', category: 'dress' },
+    { id: 4, name: 'olive jacket', category: 'outerwear' },
+  ]
+  const cards = [{ pieceIds: [1, 2] }]
+
+  const line = describeCapsuleRosterUtilization(roster, cards)
+  assert.match(line, /2 of 4 pieces did not make it into a look/)
+  assert.match(line, /coral maxi dress/)
+  assert.match(line, /olive jacket/)
+  assert.doesNotMatch(line, /white tee/)
+
+  // A piece inside a needs-review card has a job waiting, so it is not unused.
+  assert.equal(describeCapsuleRosterUtilization(roster, [{ pieceIds: [1, 2] }, { piece_ids: [3, 4] }]), '')
+  assert.equal(describeCapsuleRosterUtilization([], cards), '')
 })

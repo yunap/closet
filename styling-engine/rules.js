@@ -2027,13 +2027,34 @@ export function footwearComfortVerdict(piece = {}, excludedHeels = [], excludedS
 }
 
 // Shared register-ceiling decision — consumed by the composer roster gate (registerGateReason) and profileRuleFit.
-export function registerCeilingVerdict(piece = {}, registerCeilingRank = null) {
+//
+// Owner ruling 2026-07-30, from live thread_1785380251549: the beige tailored
+// linen shorts are tagged `occasions: casual, smart-casual, city` and were
+// still refused from a casual slot, because the casual profile's `everyday`
+// ceiling outranked the owner's own tag on the garment. An explicit occasion
+// tag is a direct statement about THAT piece; a profile ceiling is a default
+// for pieces nobody has judged. The tag wins — the same precedent
+// `pieceMatchesOccasion` already sets ("User tag overrides AI profile
+// confidence").
+//
+// Capped at ONE register step so the exemption stays a correction, not a hole:
+// across this wardrobe 52 casual-tagged pieces sit above the ceiling, and the
+// two `dressy` ones (a gold print blouse, a silk floral ruffle midi) read as
+// tagging noise rather than genuine casual wear. Elevated is admitted, dressy
+// is not.
+export function registerCeilingVerdict(piece = {}, registerCeilingRank = null, { occasion = '' } = {}) {
   if (registerCeilingRank === null || registerCeilingRank === undefined || isAccessory(piece)) return { verdict: 'pass' }
   const formality = pieceFormality(piece)
   const rank = formalityRank(formality)
   if (rank === null) return { verdict: 'unknown' }
-  if (rank > registerCeilingRank) return { verdict: 'exclude', formality }
-  return { verdict: 'pass' }
+  if (rank <= registerCeilingRank) return { verdict: 'pass' }
+  const requested = String(occasion || '').toLowerCase().trim()
+  if (requested &&
+      explicitOccasionsForPiece(piece).includes(requested) &&
+      rank <= registerCeilingRank + 1) {
+    return { verdict: 'pass', exemptedByExplicitTag: true, formality }
+  }
+  return { verdict: 'exclude', formality }
 }
 
 export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = {}, occasionProfile = null, activityProfile = null, registerCeiling = null } = {}) {
@@ -2074,7 +2095,7 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     if (fw.verdict === 'unknown') unknownLabel = 'footwear comfort not tagged'
   }
   if (registerCeiling) {
-    const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling))
+    const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling), { occasion: occasionProfile?.id })
     if (rv.verdict === 'exclude') {
       return { tier: 'prohibited', label: `${rv.formality} exceeds ${registerCeiling} ceiling`, reason: `register: ${rv.formality} exceeds ${registerCeiling} ceiling` }
     }
@@ -2439,7 +2460,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   }
 
   const registerGateReason = (piece) => {
-    const rv = registerCeilingVerdict(piece, registerCeilingRank)
+    const rv = registerCeilingVerdict(piece, registerCeilingRank, { occasion: resolvedOccasionProfile?.id })
     if (rv.verdict === 'unknown') return 'metadata missing: formality (register gate active)'
     if (rv.verdict === 'exclude') return `register: ${rv.formality} exceeds ${registerCeiling} ceiling`
     return null

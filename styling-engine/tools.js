@@ -18,6 +18,7 @@ import {
   mergePendingPlanForReplan,
   reasonRevisesMidSentence,
   describeCapsuleCompositionShortfall,
+  describeCapsuleRosterUtilization,
   REASON_REVISION_MESSAGE,
   printPairingSightIssue,
   MIN_ENFORCED_CAPSULE_BUDGET
@@ -1713,6 +1714,21 @@ async function executeToolInternal(name, args, toolContext = {}) {
             .filter(failure => Array.isArray(failure.reasons) && failure.reasons.length && failure.outfit)
             .map(failure => `"${failure.label}" — ${failure.reasons[0]}`)
             .join('; ')
+          // Roster utilization, disclosed alongside the shortfall. Counted over
+          // every card the person will see — accepted plus the needs-review
+          // ones — because a piece sitting in a repairable card has a job
+          // waiting, and calling it unused would be wrong.
+          const displayedForUtilization = [
+            ...accepted,
+            ...failures.map(failure => failure.outfit).filter(Boolean)
+          ]
+          const utilizationLine = describeCapsuleRosterUtilization(
+            pendingPlan.capsuleRoster || [],
+            displayedForUtilization
+          )
+          if (utilizationLine) {
+            pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), utilizationLine]
+          }
           if (shortfallLine) {
             pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), shortfallLine]
             toolContext.capsuleShortfall = {

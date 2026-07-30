@@ -9,6 +9,9 @@ A1/A2/A5 are implemented; A3 was rejected; A4 was implemented as part of the lat
 redesign; A6 remains a cost-instrumentation and monetization question. C3 and B2 are ratified. B1 is
 substantially closed. Later owner rulings also answer or supersede the
 original C1/C2/D1 capsule recommendations; their entries below state exactly which parts survived.
+**For anything capsule-related, read [capsule-index-and-plan.md](capsule-index-and-plan.md) first** —
+the capsule design has since been re-grounded in published practice and this document's capsule
+sections are superseded history.
 B3, C4, C5's wording, and the unresolved E propositions remain open. B2's presentation and
 interaction model were ratified on 2026-07-29; provider-cost optimizations are tracked separately
 and do not reopen that product ruling.
@@ -414,6 +417,12 @@ gate vocabulary."
 ---
 
 ## C. Design questions with concrete recommendations
+
+> **Capsule work has moved on and is now indexed.** Start at
+> [capsule-index-and-plan.md](capsule-index-and-plan.md) for the current state: the three research
+> documents that gave the capsule constants sources, the live-run findings, and the sequenced plan.
+> C1, C2 and D1 below record what the panel recommended and which parts survived later owner
+> rulings — they are history, not the current design.
 
 ### C1 — The capsule redesign (proposition 7's open question)
 **Convergence across all three, arrived at independently:** state capacity, curate the shown set.
