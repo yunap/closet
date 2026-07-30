@@ -1,5 +1,6 @@
 // Attributes Module
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
+import { colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { confidenceFromProfile } from './taggerMerge.js'
 
 export const FIBER_VALUES = ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
@@ -193,13 +194,11 @@ export function colorFamily(p) {
   const darkAnchorList = ['black', 'navy', 'denim', 'charcoal', 'dark grey', 'dark gray', 'deep navy', 'chocolate', 'dark blue', 'espresso']
   const warmEarthList = ['brown', 'tan', 'cognac', 'rust', 'terracotta', 'mustard', 'ochre', 'olive', 'amber', 'plum', 'burgundy']
   const softNeutralList = ['white', 'cream', 'beige', 'taupe', 'oatmeal', 'ivory', 'nude', 'light grey', 'light gray', 'soft white', 'sand']
-  const accentList = ['coral', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'red']
-
   if (colors.length > 0) {
     if (colors.some(c => darkAnchorList.includes(c))) return 'dark-anchor'
     if (colors.some(c => warmEarthList.includes(c))) return 'warm-earth'
     if (colors.some(c => softNeutralList.includes(c))) return 'soft-neutral'
-    if (colors.some(c => accentList.includes(c))) return 'accent'
+    if (colors.some(c => colorTaxonomyEntry(c).neutrality === 'accent')) return 'accent'
   }
 
   const text = `${p.name || ''} ${p.reads_as || ''}`.toLowerCase()

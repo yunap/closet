@@ -26,6 +26,7 @@ import { wardrobeCategoryGroup, pieceFormality } from '../styling-engine/attribu
 import { filterWholeWardrobePiecesForGeneration, weatherProfileFromContext } from '../styling-engine/rules.js'
 
 const WITH_MODEL = process.argv.includes('--with-model')
+const VERBOSE = process.argv.includes('--verbose')
 // --live <file>: pin the slots from a real plan's saved capsulePlanContext, so
 // both sides are measured on the ground an actual request produced rather than
 // slots invented here. A synthetic "Restaurant Dinner" at occasion `evening`
@@ -159,6 +160,14 @@ function printRow(label, d) {
   console.log(`  ${''.padEnd(22)} per-slot capacity: ${d.perSlot}${d.gaps !== '—' ? `  | disclosed gaps: ${d.gaps}` : ''}`)
 }
 
+function printRoster(label, roster) {
+  if (!VERBOSE) return
+  console.log(`  ${label} roster:`)
+  for (const piece of roster) {
+    console.log(`    ${piece.id} · ${piece.name} · ${(piece.colors || []).join('/') || 'no-colour'}`)
+  }
+}
+
 console.log(`wardrobe: ${allPieces.length} active pieces · model side: ${WITH_MODEL ? 'ENABLED (billed)' : 'skipped (free run)'}\n`)
 
 const scenarios = LIVE_PAYLOAD ? [liveScenarioFrom(LIVE_PAYLOAD)] : SCENARIOS
@@ -178,6 +187,7 @@ for (const scenario of scenarios) {
     budget, isSummer, isWinter, occasions: slots.map(s => s.occasion), slots, palette,
   })
   printRow('deterministic', describeRoster(deterministic, { slots, budget, isSummer, isWinter, palette, bench }))
+  printRoster('deterministic', deterministic)
 
   if (WITH_MODEL) {
     const { chooseCapsuleRosterForComparison } = await import('./_capsule_model_chooser.js')
@@ -187,6 +197,7 @@ for (const scenario of scenarios) {
       chooseRoster: chooseCapsuleRosterForComparison,
     })
     printRow(`model (${result.source})`, describeRoster(result.roster, { slots, budget, isSummer, isWinter, palette, bench }))
+    printRoster(`model (${result.source})`, result.roster)
     if (result.palette) console.log(`  ${''.padEnd(22)} model's palette: ${result.palette}`)
     for (const job of (result.jobs || []).slice(0, 6)) console.log(`  ${''.padEnd(22)} ${job.piece_id}: ${job.job}`)
   }

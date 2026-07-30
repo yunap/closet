@@ -46,6 +46,10 @@ import {
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
 import { resolveOccasionProfile } from './occasions.js'
+import {
+  colorTaxonomyEntry,
+  colorsArePaletteNeutral,
+} from '../lib/colorTaxonomy.js'
 
 export function normalizeTripPieceName(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -734,8 +738,6 @@ const PLAN_WORKBENCH_PIECE_LIMIT = 40
 // in the wardrobe; these two were the only genuine neutrals the list missed.
 // `silver` is deliberately not here — published practice treats metallics as
 // their own tier, not as a base neutral.
-const CAPSULE_NEUTRAL_COLORS = ['black', 'white', 'ivory', 'cream', 'navy', 'blue', 'grey', 'gray', 'charcoal', 'beige', 'tan', 'taupe', 'oatmeal', 'khaki', 'stone', 'olive', 'denim', 'brown', 'camel']
-
 // "Recombines with everything" is the claim the neutral bonus pays for, and a
 // piece only earns it if it introduces no colour of its own. The test used to
 // be whether ANY tagged colour was neutral, which paid the full bonus to a
@@ -747,12 +749,10 @@ const CAPSULE_NEUTRAL_COLORS = ['black', 'white', 'ivory', 'cream', 'navy', 'blu
 // See docs/capsule-palette-rules.md: this is the neutral/accent distinction the
 // published frameworks draw, applied to the score that was blurring it.
 function pieceReadsAsNeutral(piece = {}) {
-  const colors = (Array.isArray(piece.colors) ? piece.colors : []).map(color => String(color).toLowerCase())
-  if (!colors.length) return false
   // A piece the wardrobe itself calls loud is a statement piece regardless of
   // palette, and must not collect the recombination bonus.
   if (String(piece.pattern_complexity || '').toLowerCase() === 'loud') return false
-  return colors.every(color => CAPSULE_NEUTRAL_COLORS.some(neutral => color.includes(neutral)))
+  return colorsArePaletteNeutral(piece.colors)
 }
 
 // Spec §7 path 1: a palette the person already stated in their request is the
@@ -802,7 +802,8 @@ export function extractStatedPalette(question = '', pool = []) {
   // colour. Expand it against what they actually own, not against a fixed list.
   if (text.includes(' neutral ') || text.includes(' neutrals ')) { // ratchet-allow: one set-naming word in the request, expanded from stored colours
     for (const color of vocabulary) {
-      if (CAPSULE_NEUTRAL_COLORS.some(neutral => color.includes(neutral))) stated.add(color)
+      const { neutrality } = colorTaxonomyEntry(color)
+      if (neutrality === 'neutral' || neutrality === 'neutral-adjacent') stated.add(color)
     }
   }
   return { colors: [...stated].sort(), optOut: false }
@@ -895,7 +896,7 @@ function capsuleQuotas(budget = 10, { isSummer = false, isWinter = false } = {})
 // solid crew tees collapse to one key; a black tee and a white tee do not.
 function capsuleSimilarityKey(piece = {}) {
   const group = wardrobeCategoryGroup(piece)
-  const color = String((Array.isArray(piece.colors) ? piece.colors : [])[0] || '').toLowerCase()
+  const color = colorTaxonomyEntry((Array.isArray(piece.colors) ? piece.colors : [])[0]).family
   const kind = group === 'bottom' ? bottomKind(piece) : garmentKind(piece)
   const pattern = String(piece.pattern_type || '').toLowerCase()
   return `${group}:${color}:${kind}:${pattern}`

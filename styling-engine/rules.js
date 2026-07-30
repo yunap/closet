@@ -1913,8 +1913,7 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
     if (isSoft) score += 15
     if (isStructured) score += 15
   } else if (missionId === 'color_anchor') {
-    const focalColors = ['coral', 'orange', 'yellow', 'green', 'olive', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
-    const hasFocalColor = pieceHasFocalColor(piece, focalColors)
+    const hasFocalColor = pieceHasFocalColor(piece, MISSION_FOCAL_COLORS)
     if (hasFocalColor) {
       score += 40
     } else {
@@ -3613,8 +3612,7 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
         add(-80, 'lacks structured/soft tension')
       }
     } else if (activeMissionId === 'color_anchor') {
-      const focalColors = ['coral', 'orange', 'yellow', 'green', 'olive', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
-      const focalCount = pieces.filter(p => pieceHasFocalColor(p, focalColors)).length
+      const focalCount = pieces.filter(p => pieceHasFocalColor(p, MISSION_FOCAL_COLORS)).length
       
       if (focalCount === 1) {
         add(30, 'exactly one focal color anchor')
@@ -3622,7 +3620,7 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
         add(-80, 'does not have exactly one focal color anchor')
       }
       
-      const nonFocalPieces = pieces.filter(p => !pieceHasFocalColor(p, focalColors))
+      const nonFocalPieces = pieces.filter(p => !pieceHasFocalColor(p, MISSION_FOCAL_COLORS))
       const allNonFocalNeutral = nonFocalPieces.every(p => {
         const colors = (p.colors || []).map(c => c.toLowerCase())
         const readsAs = String(p.reads_as || '').toLowerCase()

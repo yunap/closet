@@ -1,3 +1,5 @@
+import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
+
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
 - Additional expressive pieces are welcome when they share the hero's register (mood, formality, material family) and do a DIFFERENT job — e.g. an expressive skirt + a small accent bag + a structural pendant can coexist. Layered artisan texture in one register is richness, not noise.
@@ -869,7 +871,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
   "category": "top|bottom|dress|outerwear|shoes|accessory",
   "background_color": "the literal base/background color of the garment, e.g. black, navy, cream, white",
-  "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, yellow, orange, rust, red, burgundy, pink, mauve, lavender, lilac, plum, green, sage, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
+  "colors": ["${colorTaggerInstruction()}"],
   "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
   "season": "warm|cool|year-round",
   "pattern_type": "solid|floral|stripe|botanical|geometric|abstract|animal|graphic|plaid|other",
