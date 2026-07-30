@@ -3486,7 +3486,24 @@ export function normalizePlanSlots(rawSlots = [], {
       const weatherAsEnvironment = normalizePlanEnvironment(rawExplicitWeather)
       const explicitEnvironment = normalizePlanEnvironment(slot?.environment)
       const proseEnvironment = explicitEnvironment ? '' : normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
-      const declaredEnvironment = explicitEnvironment || (weatherAsEnvironment && (weatherAsEnvironment === 'beach_coastal' || !proseEnvironment) ? weatherAsEnvironment : '')
+      const declaredDeclaredEnvironment = explicitEnvironment || (weatherAsEnvironment && (weatherAsEnvironment === 'beach_coastal' || !proseEnvironment) ? weatherAsEnvironment : '')
+      // Owner ruling 2026-07-30: the slot's own label wins over a declared
+      // `outdoor`. Live thread_1785380251549 declared `outdoor` for both
+      // "Restaurants / Social Events" and "City Outings / Museums" — the engine
+      // then dressed both for the weather outside the room. The label-based
+      // classifier already gets these right on its own; the declaration was
+      // switching it off, because any declared environment short-circuited past
+      // it.
+      //
+      // Narrow by construction: isIndoorPlanSlot only fires on unambiguously
+      // indoor places, and it already returns false for a walking/hiking
+      // activity or a label naming an outdoor one ("Outdoor Sculpture Garden",
+      // "Patio Dinner"). `beach_coastal` stays authoritative — it is a specific,
+      // deliberate signal that drives sand/water handling, not a default.
+      const labelReadsIndoor = isIndoorPlanSlot(slot, { occasion: String(slot?.occasion || ''), activity })
+      const declaredEnvironment = declaredDeclaredEnvironment === 'outdoor' && labelReadsIndoor
+        ? 'indoor'
+        : declaredDeclaredEnvironment
       const inferredEnvironment = declaredEnvironment ? '' : proseEnvironment
       const environment = declaredEnvironment || inferredEnvironment
       if (!declaredEnvironment && inferredEnvironment && typeof onDiagnostic === 'function') onDiagnostic('planSlotEnvironmentInferred')
@@ -3503,7 +3520,7 @@ export function normalizePlanSlots(rawSlots = [], {
       const statedWeather = beachCoastalStatedWeather(explicitWeather, { environment }) || (
         environment === 'indoor'
           ? 'indoor'
-          : environment
+          : environment === 'beach_coastal'
             ? ''
             : (isIndoorPlanSlot(slot, { occasion, activity }) ? 'indoor' : '')
       )

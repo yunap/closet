@@ -4725,3 +4725,47 @@ test('the indoor inference yields to an outdoor place or a walking activity', ()
   const [walking] = normalizePlanSlots([{ label: 'City Outings / Museums', occasion: 'city', activity: 'walking', count: 2 }])
   assert.equal(walking.statedWeather || '', '')
 })
+
+// Owner ruling 2026-07-30: a slot's own label wins over a declared `outdoor`.
+// Live thread_1785380251549 declared `outdoor` for both the restaurant and the
+// museum slot, and the engine then dressed each for the weather outside the
+// room. Any declared environment used to short-circuit past the label
+// classifier entirely.
+test('an unambiguously indoor label overrides a declared outdoor environment', () => {
+  for (const label of ['Restaurants / Social Events', 'City Outings / Museums']) {
+    const [slot] = normalizePlanSlots([{ label, occasion: 'city', activity: 'none', environment: 'outdoor', count: 2 }])
+    assert.equal(slot.environment, 'indoor', `"${label}" should resolve indoor`)
+    assert.equal(slot.statedWeather, 'indoor')
+  }
+})
+
+// Narrow by construction: an outdoor place, a walking activity, and the
+// deliberate beach_coastal signal all keep their declared setting.
+test('the label override does not touch genuinely outdoor or coastal slots', () => {
+  const cases = [
+    ['Patio Dinner', 'none', 'outdoor'],
+    ['Outdoor Sculpture Garden', 'none', 'outdoor'],
+    ['Nature Walks', 'walking', 'outdoor'],
+    ['Beach Day', 'none', 'beach_coastal'],
+  ]
+  for (const [label, activity, environment] of cases) {
+    const [slot] = normalizePlanSlots([{ label, occasion: 'casual', activity, environment, count: 2 }])
+    assert.equal(slot.environment, environment, `"${label}" must keep ${environment}`)
+  }
+})
+
+// The ratified occasion behaviour is not in scope of the environment override:
+// occasions must resolve exactly as before (docs/occasion_profiles_ratification.md).
+test('the label override changes no occasion', () => {
+  const cases = [
+    ['Restaurants / Social Events', 'smart casual', 'outdoor', 'smart casual'],
+    ['City Outings / Museums', 'city', 'outdoor', 'city'],
+    ['At Home / Errands', 'casual', 'indoor', 'casual'],
+    ['Nature Walks', 'casual', 'outdoor', 'casual'],
+    ['Beach Day', 'casual', 'beach_coastal', 'casual'],
+  ]
+  for (const [label, occasion, environment, expected] of cases) {
+    const [slot] = normalizePlanSlots([{ label, occasion, activity: 'none', environment, count: 2 }])
+    assert.equal(slot.occasion, expected, `"${label}" occasion must stay ${expected}`)
+  }
+})
