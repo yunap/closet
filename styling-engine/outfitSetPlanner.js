@@ -270,6 +270,102 @@ function describePlanCapTrim(slot = {}) {
 // card would buy the metric with a worse outfit. Counted against every card the
 // person can see, accepted and needs-review alike, because a piece inside a
 // repairable card has a job waiting rather than no job at all.
+// A look can fail for a piece that is WRONG or for a piece that is ABSENT. The
+// atomic composer produces the second kind: on live thread_1785380251549 two of
+// ten cards came back with no shoes while their own slot rosters held four and
+// three gate-passing pairs respectively. Both were shipped as needs-review
+// cards for the person to repair by hand — for an omission the engine could
+// have filled itself, deterministically, at zero model cost.
+//
+// `repair-capsule-look` already completes a look this way when the person
+// clicks Fix. Running the same completion during composition means the card
+// arrives finished instead of broken.
+//
+// Two deliberate constraints:
+//
+// 1. The WHOLE set is re-validated after each completion, never the single
+//    look. Distinct-core enforcement is a property of the rotation, so a look
+//    completed in isolation could duplicate an already-accepted core and turn
+//    one broken card into two.
+// 2. Only structural ABSENCE is completed. A look rejected for register, trust
+//    or weather is left alone — those need a different piece, not another one,
+//    and re-validation would reject the attempt anyway.
+const CAPSULE_GAP_GROUPS = [
+  [/missing shoes/i, 'shoes'],
+  [/missing bottom/i, 'bottom'],
+  [/missing top or dress/i, 'top'],
+]
+
+export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set() } = {}) {
+  const options = { visuallySeenPieceIds }
+  let current = (Array.isArray(submissions) ? submissions : []).map(entry => ({ ...entry }))
+  let result = validateSubmittedPlanOutfits(pendingPlan, current, options)
+  const completions = []
+  const slotById = new Map((pendingPlan?.slots || []).map(slot => [slot.id, slot]))
+
+  // One completion attempt per submitted look, at most.
+  for (let pass = 0; pass < current.length; pass += 1) {
+    const failure = result.failures.find(entry =>
+      entry?.outfit && !completions.some(done => done.slotId === entry.slot_id && done.title === entry.outfit?.title)
+    )
+    if (!failure) break
+
+    const slot = slotById.get(failure.slot_id)
+    const pieces = Array.isArray(failure.outfit?.pieces) ? failure.outfit.pieces : []
+    const gap = describeOutfitStructureGap(pieces, { requireShoes: true })
+    const missingGroup = (CAPSULE_GAP_GROUPS.find(([pattern]) => pattern.test(gap)) || [])[1]
+    if (!slot || !missingGroup) {
+      completions.push({ slotId: failure.slot_id, title: failure.outfit?.title, filled: false })
+      continue
+    }
+
+    const presentIds = pieces.map(piece => Number(piece?.id)).filter(Boolean)
+    const index = current.findIndex(entry =>
+      entry?.slot_id === failure.slot_id &&
+      String(entry?.title || '') === String(failure.outfit?.title || '')
+    )
+    if (index < 0) {
+      completions.push({ slotId: failure.slot_id, title: failure.outfit?.title, filled: false })
+      continue
+    }
+
+    // Deterministic candidate order, and only from this slot's own gate-passing
+    // roster — a completion can never introduce a piece the slot excludes.
+    const candidates = (slot.allowedPieces || [])
+      .filter(piece => wardrobeCategoryGroup(piece) === missingGroup && !presentIds.includes(Number(piece.id)))
+      .sort((a, b) => Number(a.id) - Number(b.id))
+
+    let filled = null
+    for (const candidate of candidates) {
+      const trial = current.map((entry, position) => position === index
+        ? { ...entry, piece_ids: [...presentIds, Number(candidate.id)] }
+        : entry)
+      const trialResult = validateSubmittedPlanOutfits(pendingPlan, trial, options)
+      if (trialResult.accepted.length > result.accepted.length) {
+        current = trial
+        result = trialResult
+        filled = candidate
+        break
+      }
+    }
+    completions.push({
+      slotId: failure.slot_id,
+      title: failure.outfit?.title,
+      filled: Boolean(filled),
+      group: missingGroup,
+      addedPieceId: filled ? Number(filled.id) : null,
+      addedPieceName: filled?.name || ''
+    })
+  }
+
+  return {
+    accepted: result.accepted,
+    failures: result.failures,
+    submissions: current,
+    completions: completions.filter(entry => entry.filled)
+  }
+}
+
 export function describeCapsuleRosterUtilization(roster = [], cards = []) {
   const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
   if (!rosterPieces.length) return ''

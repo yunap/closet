@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
@@ -4554,4 +4554,87 @@ test('roster utilization names the pieces that reached no look', () => {
   // A piece inside a needs-review card has a job waiting, so it is not unused.
   assert.equal(describeCapsuleRosterUtilization(roster, [{ pieceIds: [1, 2] }, { piece_ids: [3, 4] }]), '')
   assert.equal(describeCapsuleRosterUtilization([], cards), '')
+})
+
+// Live thread_1785380251549: two of ten cards came back with no shoes while
+// their own slot rosters held four and three gate-passing pairs. Both shipped
+// as needs-review cards for the person to fix by hand — for an omission the
+// engine can fill itself, deterministically, at zero model cost.
+test('a look submitted without shoes is completed from its own slot roster', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'city loafers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const submission = [{ slot_id: workbench.pendingPlan.slots[0].id, title: 'Shoeless', piece_ids: [Number(topId), Number(bottomId)] }]
+
+  // Without completion the look is rejected outright.
+  const plain = validateSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(plain.accepted.length, 0)
+  assert.match(plain.failures[0].reasons.join(' '), /shoe/i)
+
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(completed.accepted.length, 1, 'the look should be completed, not rejected')
+  assert.equal(completed.failures.length, 0)
+  assert.equal(completed.completions.length, 1)
+  assert.equal(completed.completions[0].group, 'shoes')
+  assert.equal(completed.completions[0].addedPieceId, Number(shoesId))
+  assert.ok((completed.accepted[0].pieces || []).some(piece => Number(piece.id) === Number(shoesId)))
+})
+
+// Completion must never invent supply. When the slot roster genuinely has no
+// shoe, the look stays a needs-review card and the person is told the truth.
+test('completion does not fabricate a piece the slot roster lacks', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const submission = [{ slot_id: workbench.pendingPlan.slots[0].id, title: 'Shoeless', piece_ids: [Number(topId), Number(bottomId)] }]
+
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(completed.accepted.length, 0)
+  assert.equal(completed.completions.length, 0)
+  assert.equal(completed.failures.length, 1)
+})
+
+// Distinct-core enforcement is a property of the whole rotation, so a look
+// completed in isolation could duplicate an already-accepted core and turn one
+// broken card into two. completeSubmittedPlanOutfits re-validates the entire
+// set after each completion for exactly this reason.
+test('completion never creates a duplicate core with an already-accepted look', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  const shoeA = insertPiece({ category: 'shoes', name: 'city loafers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const shoeB = insertPiece({ category: 'shoes', name: 'city sneakers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 2, weather: 'indoor' }])
+  // Distinct cores are enforced for a CAPSULE, not for an ordinary plan, where a
+  // shoe swap legitimately re-skins a look. The safeguard only has meaning here.
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces,
+    question: 'summer capsule',
+    planKind: 'seasonal_capsule',
+    constraints: { piece_budget: 8 },
+  })
+  const slotId = workbench.pendingPlan.slots[0].id
+  assert.equal(workbench.pendingPlan.isSeasonalCapsule, true, 'fixture must be an enforced capsule')
+
+  // The only completion available reuses the accepted look's exact core, so a
+  // second shoe would re-skin it rather than make a distinct look.
+  const submission = [
+    { slot_id: slotId, title: 'Complete', piece_ids: [Number(topId), Number(bottomId), Number(shoeA)] },
+    { slot_id: slotId, title: 'Shoeless', piece_ids: [Number(topId), Number(bottomId)] },
+  ]
+
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(completed.accepted.length, 1, 'only the genuinely distinct look survives')
+  assert.equal(completed.accepted[0].title, 'Complete')
+  assert.equal(completed.completions.length, 0, 'no completion should be reported')
+  assert.ok(String(completed.failures[0]?.reasons?.join(' ') || '').length > 0)
+  assert.ok(Number(shoeB) > 0)
 })

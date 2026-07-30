@@ -19,6 +19,7 @@ import {
   reasonRevisesMidSentence,
   describeCapsuleCompositionShortfall,
   describeCapsuleRosterUtilization,
+  completeSubmittedPlanOutfits,
   REASON_REVISION_MESSAGE,
   printPairingSightIssue,
   MIN_ENFORCED_CAPSULE_BUDGET
@@ -174,6 +175,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       submitPlanPartialAccepts: 0,
       capsuleFinalFallbacks: 0,
       capsuleSupplyGaps: 0,
+      capsuleLooksAutoCompleted: 0,
       capsuleRosterModelCalls: 0,
       capsuleRosterModelRepairs: 0,
       capsuleRosterModelFallbacks: 0,
@@ -1669,9 +1671,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
               message: 'The bounded capsule composer returned no outfits even though the deterministic roster has valid capacity. Do not build the capsule manually or call other styling tools in this turn; explain that composition failed and ask the user to retry after the engine issue is corrected.'
             }
           }
-          const { accepted, failures } = validateSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
-            visuallySeenPieceIds: toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+          // Complete before judging. A look the composer submitted without shoes
+          // is an omission the engine can fill from that slot's own roster for
+          // free — shipping it as a needs-review card makes the person do by
+          // hand what the repair endpoint would have done in one click.
+          const seenForValidation = toolContext.visuallySeenPieceIds instanceof Set ? toolContext.visuallySeenPieceIds : new Set()
+          const { accepted, failures, completions } = completeSubmittedPlanOutfits(pendingPlan, submittedOutfits, {
+            visuallySeenPieceIds: seenForValidation
           })
+          for (const completion of completions) {
+            bumpFreeformDiagnostic(toolContext, 'capsuleLooksAutoCompleted')
+            console.log('[Atomic Capsule Completion]', `${completion.title || completion.slotId}: added ${completion.group} ${completion.addedPieceName} (${completion.addedPieceId})`)
+          }
           const acceptedCounts = new Map()
           for (const outfit of accepted) {
             const slotId = outfit?._slotId || outfit?.slot_id

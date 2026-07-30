@@ -44,6 +44,7 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     submitPlanPartialAccepts: 0,
     capsuleFinalFallbacks: 0,
     capsuleSupplyGaps: 0,
+    capsuleLooksAutoCompleted: 0,
     capsuleRosterModelCalls: 0,
     capsuleRosterModelRepairs: 0,
     capsuleRosterModelFallbacks: 0,
