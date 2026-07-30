@@ -1402,3 +1402,20 @@ landing next turn). Sandbox contrast (23 pieces): `thread_1784969942592`, `threa
   `readableFeedbackNote`'s own markdown-stripping regex, which already parses this exact pattern
   for *display*, just discards the match instead of using it to look anything up) and match it the
   same way `matchedBoardByPieceSet` matches on piece sets. Not started.
+
+## 2026-07-30 — colour taxonomy owner rulings
+
+- Silver is `metallic`; gold is also canonical so metallic tagging is not silver-only.
+- Burgundy remains a red-family `accent`.
+- Sage and olive are green-family `neutral-adjacent`: eligible for palette-neutral recombination,
+  ineligible for focal-accent mission scoring.
+- Periwinkle is removed from the canonical vocabulary because it had no stored wardrobe usage.
+- Black, white, and grey remain three separate retrieval families while sharing the `neutral`
+  palette role.
+- Garments continue to persist exact shades. Families are derived for grouping and retrieval, not
+  written as garment colours.
+- No wardrobe-wide retag was authorized. Only a later, owner-reviewed targeted retag of garments
+  whose true colour the old vocabulary could not express is in scope; the known coral case remains
+  outstanding.
+- The Wardrobe filter, Add/Edit, Batch Add, and Lookbook “Link pieces” modal form one future UI
+  review/implementation workstream documented in `docs/wardrobe-color-controls-spec.md`.
