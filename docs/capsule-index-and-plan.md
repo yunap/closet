@@ -39,6 +39,7 @@ a comment explaining the reasoning is not one of those.**
 | document | what it holds |
 |---|---|
 | [capsule-roster-selection-spec.md](capsule-roster-selection-spec.md) | The three-stage roster-selection design (bench → model chooses → engine validates). Stage 3 is built and behind `WARDROBE_MODEL_CAPSULE_ROSTER`, default off. |
+| [capsule-step5-evaluation.md](capsule-step5-evaluation.md) | The first corrected live rerun, why it failed despite passing structural validation, the acceptance criteria and enforcement boundary for the smallest V1 correction. |
 | [capsule-bench-implementation-brief.md](capsule-bench-implementation-brief.md) | Operating rules and acceptance commands for spec steps 1–2. Delegation brief. |
 | [stylist-bugfix-spec.md](stylist-bugfix-spec.md) | "Research done 2026-07-25 — what the capsule number should be": the *outfit-count* axis. Solid capacity measurements; its published-practice claim cites no source. |
 | [occasion_profiles_ratification.md](occasion_profiles_ratification.md) | **Authoritative for occasion behaviour.** The register ceilings (ratified 2026-07-05, a month of testing), the occasion profiles, and the amendments since. **Read before changing any ceiling, profile keyword, or slot-occasion guidance.** |
@@ -210,11 +211,15 @@ This is disclosure, **not a hard filter or a new generation instruction**. The `
 precedent is that hard filters on taste dimensions starve capacity, and the corrected roster has
 not yet been evaluated. Step 5 supplies that evidence before any V2 scoring pressure is considered.
 
-### Step 5 — decide stage 3 *(owner cost decision, not engineering)*
+### Step 5 — decide stage 3 *(evaluated 2026-07-30: remains default-off)*
 
-The roster the model sees is now materially different: no accessories, 3 dresses instead of 1,
-layers capped at 2. Whether it earns its ~$0.075 needs one re-run at ~$0.33. Until then it stays
-default-off.
+The corrected live rerun is recorded in
+[capsule-step5-evaluation.md](capsule-step5-evaluation.md). Stage 3 fired, used one repair and no
+fallback, and composition returned 12 valid cards. The result nevertheless met this section's
+severe-failure exception: it traded the second layer for a fifth shoe, never demonstrated its only
+layer, selected and did not use taupe suede ankle boots for summer, relied on one base for two
+dependent tops, and cleared a binary statement-piece check without producing a convincing spread
+of hero-led options. It remains default-off.
 
 Evaluate two additional qualities in that rerun and one or two further captured capsule outputs:
 
@@ -225,10 +230,17 @@ Evaluate two additional qualities in that rerun and one or two further captured 
   across contexts and pairings? This is not a 100% utilization target; forcing every roster piece
   into a weaker outfit would buy the metric at the expense of styling quality.
 
-These are evaluation criteria only. Do not add prompt instructions, quotas, scoring terms, repair
-logic, or post-conditions for either one before the captures are reviewed. Treat any fix as V2
-unless testing reveals a severe failure, such as near-identical formulas across the whole rotation
-or a capsule whose claimed versatility is not demonstrated at all.
+The first capture has now been reviewed and **did reveal a severe failure**. The next design step
+is complete in `capsule-step5-evaluation.md`: settled allocation constraints and structural
+availability remain deterministic; hero/support/grounding balance, seasonally convincing footwear
+and whether selected pieces earn distinct jobs remain model judgments; post-composition disclosure
+reports undemonstrated functions rather than letting a high raw utilization percentage hide them.
+
+No correction is implemented yet. The proposed V1 boundary requires owner review before code:
+restore the researched layer floor on the model path, give roster selection and repair the
+qualitative capsule jobs, and ask composition to demonstrate selected functions. Palette pressure,
+formula optimisation, deterministic hero scoring, a blanket dependent-piece cap and retagging
+remain out of scope.
 
 ### Deferred with reasons
 
