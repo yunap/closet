@@ -48,6 +48,9 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     capsuleRosterModelCalls: 0,
     capsuleRosterModelRepairs: 0,
     capsuleRosterModelFallbacks: 0,
+    // String, like weatherSource: a fallback that records only its own count
+    // sends the next question to a paid run instead of a query.
+    capsuleRosterFailureCodes: '',
     providerIterations: 0,
     providerInputTokens: 0,
     providerOutputTokens: 0,

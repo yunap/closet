@@ -181,6 +181,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       capsuleRosterModelCalls: 0,
       capsuleRosterModelRepairs: 0,
       capsuleRosterModelFallbacks: 0,
+      capsuleRosterFailureCodes: '',
       providerIterations: 0,
       providerInputTokens: 0,
       providerOutputTokens: 0,
@@ -198,6 +199,18 @@ export function setFreeformWeatherSource(toolContext, source) {
   if (!toolContext) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
   toolContext.freeformDiagnostics.weatherSource = source
+}
+
+// Same string-diagnostic shape as the weather source above. Records WHICH
+// roster guarantees the model's selection missed — without it, a fallback is
+// only a number and the next step is another paid run rather than a query
+// (live thread_1785451253837).
+export function setFreeformCapsuleRosterFailureCodes(toolContext, codes = []) {
+  if (!toolContext) return
+  const list = (Array.isArray(codes) ? codes : []).filter(Boolean)
+  if (!list.length) return
+  bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
+  toolContext.freeformDiagnostics.capsuleRosterFailureCodes = list.join(',')
 }
 
 // Stated weather (this tool call's own weather/season text) wins outright over a
@@ -1637,6 +1650,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : null,
           onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
+        setFreeformCapsuleRosterFailureCodes(toolContext, workbench?.pendingPlan?.capsuleRosterFailureCodes)
         const useAtomicCapsuleComposition =
           planKind === 'seasonal_capsule' &&
           Number(planConstraints.piece_budget) >= MIN_ENFORCED_CAPSULE_BUDGET &&

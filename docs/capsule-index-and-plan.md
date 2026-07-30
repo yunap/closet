@@ -259,6 +259,47 @@ and retagging remain out of scope, and none of them was added. Verified offline:
 against the 243-piece wardrobe reports 0 differing scenarios, and the scenario matrix, summer
 replay, roster-utility audit and bench diagnostics are byte-identical to the pre-change baseline.
 
+### First rerun under the correction — `thread_1785451253837`, 2026-07-30
+
+**The run did not evaluate the correction, and the reason is itself a finding.** The model's roster
+was rejected, repaired, rejected again, and the deterministic fallback shipped. The 12 cards were
+therefore engine-chosen, so criteria 5-7 (footwear credibility, protagonists, dependent-top
+breadth) cannot be read from this run at all. The comparison is direct: run 1074 at 14:53, before
+the correction, took 1 call + 1 repair and **0** fallbacks; run 1076 at 15:43, after it, took 1 call
++ 1 repair and **1** fallback. Model roster choice is stochastic, so this is strong evidence rather
+than proof.
+
+What the run did establish:
+
+- **Criterion 4 works on real data.** The disclosure fired as designed and named the failure that a
+  raw percentage would have blurred: *19 of 24 roster pieces (79%) appear in a look, but 1 selected
+  job(s) went undemonstrated — no look uses a layer.*
+- **Criterion 8 did not take.** The per-run functional-demonstration clause was in the workbench,
+  the olive jacket was in At Home's allowed IDs, and the composer still demonstrated no layer —
+  while needing 3 engine auto-completions against 0 on the prior run. Instruction present, behaviour
+  unchanged.
+- **Two observability gaps, both now closed.** The validator's failure codes were discarded, so a
+  fallback recorded only that it happened; and `capsuleRosterSource` was written and read by
+  nothing, so the spec's stage-3 fallback disclosure — ratified, never implemented — meant an
+  engine-chosen capsule presented exactly like a model-chosen one.
+- **Two assumptions in `capsule-step5-evaluation.md` §2 need qualifying.** The taupe suede ankle
+  boots are in the deterministic roster too and unused again, so that pick is not a model-roster
+  failure; and the 10 colour families / 83% neutral result reproduced exactly, which makes it a
+  property of the selector rather than of model taste. Both strengthen the case for keeping palette
+  observational for now.
+
+Corrections applied after this run (owner ruling 2026-07-30):
+
+1. `capsule_roster_failure_codes` records which guarantees a rejection cited, so the next question
+   is a query rather than another paid run.
+2. Both outcomes now disclose themselves: a fallback says the engine chose the roster and why.
+3. **The layer floor is coachable.** It still fails, so the model is always told and always gets its
+   one correction round — but on its own it no longer spends the fallback. If the repair still
+   misses it and nothing else is wrong, the model's roster ships as `model_repaired_with_gaps` with
+   the unmet allocation stated. `dependent_base_unavailable` is deliberately not coachable: a piece
+   that cannot form a look in a slot it was offered in is a wearability defect, not an allocation
+   preference.
+
 ### Deferred with reasons
 
 - **tops:bottoms ratio.** Attempted, measured, reverted — see

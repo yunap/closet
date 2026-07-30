@@ -4583,6 +4583,99 @@ test('the layer floor states the missing count in terms the repair round can act
   assert.equal(floorFailures(twoLayers).length, 0, 'the researched allocation validates clean')
 })
 
+// Live thread_1785451253837: the floor shipped, the model missed it on both
+// attempts, and the fallback threw away a structurally sound 24-piece selection
+// for the engine's — trading a specific, stateable defect for a roster chosen
+// by the very thing the model path exists to improve on. The correction round
+// still happens; only the fallback is withheld.
+test('a repair that still misses only the layer floor keeps the model roster and states the gap', async () => {
+  const pool = layerTradeWardrobe()
+  const slots = normalizePlanSlots([
+    { label: 'At Home', occasion: 'casual', count: 3 },
+    { label: 'City Outing', occasion: 'city', count: 3 },
+  ])
+  const attempts = []
+  const bumped = []
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 24, slots, isSummer: true, occasions: ['casual', 'city'],
+    onDiagnostic: field => bumped.push(field),
+    chooseRoster: async ({ bench, attempt, failures }) => {
+      attempts.push(failures.map(entry => entry.code))
+      const of = group => bench.filter(piece => piece.category === group)
+      // Stubbornly one layer and five shoes, both times.
+      const roster = [
+        ...of('top').slice(0, 8),
+        ...of('bottom').slice(0, 7),
+        ...of('dress').slice(0, 3),
+        ...of('outerwear').slice(0, 1),
+        ...of('shoes').slice(0, 5),
+      ]
+      return { roster_piece_ids: roster.map(piece => Number(piece.id)), palette: 'black', piece_jobs: [] }
+    }
+  })
+
+  assert.equal(attempts.length, 2, 'the model still gets exactly one correction round')
+  assert.ok(attempts[1].includes('layer_floor:outerwear'), 'and is still told what it missed')
+  assert.equal(result.source, 'model_repaired_with_gaps')
+  assert.equal(result.roster.length, 24, "the model's own selection ships")
+  assert.equal(bumped.includes('capsuleRosterModelFallbacks'), false, 'a coachable miss must not spend the fallback')
+
+  const disclosure = result.coverageGaps.find(line => /structural guarantees/.test(line))
+  assert.ok(disclosure, `expected an unmet-guarantee disclosure, got ${JSON.stringify(result.coverageGaps)}`)
+  assert.match(disclosure, /did not meet 1 of this capsule's structural guarantees/)
+  assert.match(disclosure, /2 layering piece\(s\)/)
+  assert.match(disclosure, /kept anyway because it is otherwise sound/)
+})
+
+// The concession is scoped to allocation preferences. A piece that cannot form
+// a look in a slot it was offered in is a different kind of wrong, and still
+// costs the roster.
+test('a structural failure still falls back, and the fallback is no longer silent', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const bumped = []
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'],
+    onDiagnostic: field => bumped.push(field),
+    chooseRoster: async ({ bench }) => {
+      const tops = bench.filter(piece => piece.category === 'top').map(piece => Number(piece.id))
+      return { roster_piece_ids: tops.slice(0, 10), palette: '', piece_jobs: [] }
+    }
+  })
+
+  assert.equal(result.source, 'deterministic_fallback')
+  assert.ok(bumped.includes('capsuleRosterModelFallbacks'))
+  // docs/capsule-roster-selection-spec.md §3 required this line at stage 3 and
+  // it was never implemented: capsuleRosterSource was written and read by
+  // nothing, so a fallback capsule presented exactly like a chosen one.
+  const disclosure = result.coverageGaps.find(line => /the engine chose the roster instead/.test(line))
+  assert.ok(disclosure, `the fallback must disclose itself, got ${JSON.stringify(result.coverageGaps)}`)
+  assert.match(disclosure, /could not meet this capsule's structural guarantees/)
+})
+
+test('the codes behind a rejection are recorded across both attempts', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'],
+    chooseRoster: async ({ bench, attempt }) => {
+      // A different defect each round, so the record has to accumulate.
+      if (attempt === 1) return { roster_piece_ids: [999999], palette: '', piece_jobs: [] }
+      const tops = bench.filter(piece => piece.category === 'top').map(piece => Number(piece.id))
+      return { roster_piece_ids: tops.slice(0, 10), palette: '', piece_jobs: [] }
+    }
+  })
+
+  assert.ok(result.failureCodes.includes('piece_outside_bench'), `got ${JSON.stringify(result.failureCodes)}`)
+  assert.ok(result.failureCodes.length > 1, 'the second round\'s codes are recorded too')
+  // A clean run records nothing, so the column stays empty for the normal case.
+  const clean = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'],
+    chooseRoster: async ({ bench }) => ({ roster_piece_ids: bench.slice(0, 10).map(piece => Number(piece.id)), palette: 'black', piece_jobs: [] })
+  })
+  assert.deepEqual(clean.failureCodes, [])
+})
+
 test('a genuine layer-supply shortfall is disclosed, not failed forever', async () => {
   // One layer in the whole wardrobe: the floor cannot be met by any swap, so
   // failing it would be unrepairable. Accept and say so instead.

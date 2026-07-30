@@ -487,6 +487,32 @@ export function describeCapsuleUndemonstratedJobs(roster = [], cards = []) {
   return `[capsule jobs: ${usedCount} of ${rosterPieces.length} roster pieces (${percent}%) appear in a look, but ${jobs.length} selected job(s) went undemonstrated — ${jobs.join('; ')}]`
 }
 
+// A guarantee worth a correction round, but not worth throwing the model's
+// whole roster away for. Live thread_1785451253837: the layer floor shipped,
+// the model missed it twice, and the fallback discarded a structurally sound
+// 24-piece selection in favour of the engine's — trading a specific defect for
+// a roster chosen by the thing the model path exists to improve on.
+//
+// So a coachable code always fails (the model is told, and always gets its one
+// repair round to fix it), but on its own it never spends the fallback. If the
+// repair still misses it and nothing else is wrong, the model's roster ships
+// with the unmet guarantee stated. Deliberately NOT extended to
+// dependent_base_unavailable: that one means a selected piece cannot form a
+// look in a slot it was offered in, which is a wearability defect rather than
+// an allocation preference.
+const COACHABLE_ROSTER_FAILURE_CODES = new Set(['layer_floor:outerwear'])
+
+// The disclosure that makes the concession honest. Reads the failure the
+// validator already produced, so it cannot drift from what was actually
+// checked, and stays generic so a second coachable code needs no new copy.
+export function describeCapsuleUnmetRosterGuarantees(failures = []) {
+  const coachable = (Array.isArray(failures) ? failures : [])
+    .filter(failure => COACHABLE_ROSTER_FAILURE_CODES.has(failure?.code))
+  if (!coachable.length) return ''
+  const detail = coachable.map(failure => String(failure.message || '').trim()).filter(Boolean).join('; ')
+  return `[capsule roster: the selection did not meet ${coachable.length} of this capsule's structural guarantees after its correction round, and was kept anyway because it is otherwise sound — ${detail}]`
+}
+
 // Criterion 1's graceful half. The layer floor below fails a roster that traded
 // a researched layer slot into another category WHEN the bench could supply the
 // layer; when the wardrobe genuinely cannot, the roster is accepted and the
@@ -2596,12 +2622,19 @@ export async function selectCapsuleRosterViaModel({
   // the validator excuses a floor the bench could not supply, which is correct
   // and must not be silent. Every accepted return states it.
   const supplyGaps = roster => [describeCapsuleLayerSupplyGap({ roster, bench, budget, isSummer, isWinter })].filter(Boolean)
+  // Every code seen across both attempts, so a fallback records WHY it happened
+  // instead of only that it did.
+  const seenCodes = []
+  const record = entries => {
+    for (const entry of entries) if (entry?.code && !seenCodes.includes(entry.code)) seenCodes.push(entry.code)
+    return entries
+  }
 
   bump('capsuleRosterModelCalls')
   const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, attempt: 1, failures: [] }))
-  let failures = [...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)]
+  let failures = record([...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)])
   if (!failures.length) {
-    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: supplyGaps(first.roster) }
+    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: supplyGaps(first.roster), failureCodes: seenCodes }
   }
 
   // One repair, given the exact structural reasons. Not a fresh start: the
@@ -2611,16 +2644,47 @@ export async function selectCapsuleRosterViaModel({
     bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter,
     attempt: 2, failures, previousRosterIds: first.roster.map(piece => Number(piece.id))
   }))
-  const secondFailures = [...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)]
+  const secondFailures = record([...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)])
   if (!secondFailures.length) {
-    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: supplyGaps(second.roster) }
+    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: supplyGaps(second.roster), failureCodes: seenCodes }
   }
 
-  // Two strikes: ship the deterministic roster and say so. A capsule the engine
-  // chose is a worse answer than one the model chose well, and a better answer
-  // than one that fails its own structural guarantees.
+  // The model has now had its correction round. If everything still wrong is
+  // coachable, keeping this roster and stating the gap beats discarding a sound
+  // 24-piece selection for the engine's — which is what happened on
+  // thread_1785451253837 and cost the run its whole purpose.
+  const fallbackWorthy = secondFailures.filter(failure => !COACHABLE_ROSTER_FAILURE_CODES.has(failure.code))
+  if (!fallbackWorthy.length) {
+    return {
+      roster: second.roster,
+      source: 'model_repaired_with_gaps',
+      palette: second.palette,
+      jobs: second.jobs,
+      failures: secondFailures,
+      bench,
+      coverageGaps: [...supplyGaps(second.roster), describeCapsuleUnmetRosterGuarantees(secondFailures)].filter(Boolean),
+      failureCodes: seenCodes
+    }
+  }
+
+  // Two strikes on something structural: ship the deterministic roster and say
+  // so. A capsule the engine chose is a worse answer than one the model chose
+  // well, and a better answer than one that fails a guarantee about whether its
+  // pieces can be worn at all.
   bump('capsuleRosterModelFallbacks')
-  return { roster: deterministic(), source: 'deterministic_fallback', palette: '', jobs: [], failures: secondFailures, bench, coverageGaps: [] }
+  return {
+    roster: deterministic(),
+    source: 'deterministic_fallback',
+    palette: '',
+    jobs: [],
+    failures: fallbackWorthy,
+    bench,
+    // The spec required this disclosure at stage 3 and it was never
+    // implemented: capsuleRosterSource was written and read by nothing, so a
+    // fallback capsule presented exactly like a chosen one.
+    coverageGaps: [`[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${fallbackWorthy.map(failure => failure.message).join('; ')}]`],
+    failureCodes: seenCodes
+  }
 }
 
 export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
@@ -2899,6 +2963,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       capsuleRosterSource: capsuleRosterSelection?.source || 'deterministic',
       capsuleRosterPalette: capsuleRosterSelection?.palette || '',
       capsuleRosterJobs: capsuleRosterSelection?.jobs || [],
+      capsuleRosterFailureCodes: capsuleRosterSelection?.failureCodes || [],
       slotWeather,
       coverageGaps,
       heldOutfits: [],

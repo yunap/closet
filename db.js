@@ -229,6 +229,7 @@ function initDb(dbPath) {
       capsule_roster_model_calls INTEGER DEFAULT 0,
       capsule_roster_model_repairs INTEGER DEFAULT 0,
       capsule_roster_model_fallbacks INTEGER DEFAULT 0,
+      capsule_roster_failure_codes TEXT DEFAULT '',
       provider_iterations    INTEGER DEFAULT 0,
       provider_input_tokens  INTEGER DEFAULT 0,
       provider_output_tokens INTEGER DEFAULT 0,
@@ -360,6 +361,10 @@ function initDb(dbPath) {
     'capsule_roster_model_calls INTEGER DEFAULT 0',
     'capsule_roster_model_repairs INTEGER DEFAULT 0',
     'capsule_roster_model_fallbacks INTEGER DEFAULT 0',
+    // A fallback used to record only that it happened. thread_1785451253837
+    // fell back and the reason was discarded, so the next step was one more
+    // paid run rather than a lookup.
+    'capsule_roster_failure_codes TEXT DEFAULT ""',
     'provider_iterations INTEGER DEFAULT 0',
     'provider_input_tokens INTEGER DEFAULT 0',
     'provider_output_tokens INTEGER DEFAULT 0',
