@@ -2776,6 +2776,7 @@ export async function evaluateOutfitThroughSharedPipeline({
   const { pieces } = resolveOutfitEvaluationPieces({ outfit, pieceIds })
   const content = []
   const outfitPhoto = outfit.photo || outfit.imageUrl || outfit.image_url || ''
+  const generatedBoardEvidence = outfit.visualEvidenceType === 'generated_board'
   const savedPhotoPath = uploadedPhotoPath || uploadedOrSavedOutfitPhotoPath(outfitPhoto)
   const outfitImageIncluded = await addEvaluationImage(content, savedPhotoPath)
   if (!outfitImageIncluded && pieces.length < 2 && !allowPhotoOnly) {
@@ -2797,7 +2798,7 @@ export async function evaluateOutfitThroughSharedPipeline({
   }
   const attachedImageInventory = [
     outfitImageIncluded
-      ? `actual worn outfit photo: ${outfit.label || outfit.title || outfit.name || 'current outfit'}`
+      ? `${generatedBoardEvidence ? 'AI-generated styling visualization' : 'actual worn outfit photo'}: ${outfit.label || outfit.title || outfit.name || 'current outfit'}`
       : '',
     ...imageRefs
       .filter(Boolean)
@@ -2826,7 +2827,9 @@ export async function evaluateOutfitThroughSharedPipeline({
   ].filter(Boolean).join('\n')
 
   const imageAuthorityText = outfitImageIncluded && pieces.length
-    ? 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.'
+    ? (generatedBoardEvidence
+        ? 'The first image is an AI-generated styling visualization, not a worn outfit photo. Use it to evaluate the proposed composition and to identify rendering errors, but never treat its fit, placement, tuck, hem, or invented construction as proof about the real garments. Later linked garment references and structured garment truth are authoritative when the visualization conflicts with them.'
+        : 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.')
     : outfitImageIncluded
       ? 'The image is the actual worn outfit photo. There are no linked garment records, so identify garments cautiously and mark garment-truth uncertainty in confidenceLimits.'
       : 'No worn outfit photo was provided. Use linked garment references and garment truth cautiously.'
@@ -2850,6 +2853,9 @@ export async function evaluateOutfitThroughSharedPipeline({
       : 'Owned garment truth: no linked pieces. Use visual evidence only; do not overclaim exact garment identity, fabric, or shoe type.',
     pieceLines
       ? 'Authority rule: structured owned-garment truth and the current attached images outrank card titles, reasons, watch notes, prior critique prose, and other generated descriptions. Use card prose only to understand intended mood or occasion; never use it to redefine garment construction or how a garment can be worn.'
+      : '',
+    pieceLines
+      ? 'Constraint-composition rule: before recommending any physical styling action that involves multiple garments, verify that every affected garment permits it. A capability on one garment cannot override a prohibition or construction constraint on another.'
       : '',
     linkedFitCautionsText
       ? `Linked fit/trust cautions. Treat these as authoritative and reconcile visible fit placement against them before judging whether a garment fits naturally:\n${linkedFitCautionsText}`

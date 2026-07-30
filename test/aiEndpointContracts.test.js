@@ -1481,6 +1481,39 @@ test('wardrobe outfit evaluator sends outfit and linked garment images', async (
   assert.match(json.feedback, /Execution gap: minor floor-line watch only/)
 })
 
+test('generated board evaluation labels the board as synthetic while My Outfits keeps worn-photo authority', async () => {
+  await postJson('/api/ai/evaluate-wardrobe-outfit', {
+    outfit: {
+      label: 'Generated mock board',
+      photo: `/uploads/${seeded.photos.outfit}`,
+      visualEvidenceType: 'generated_board',
+    },
+    pieceIds: [seeded.top, seeded.bottom, seeded.shoe],
+    occasion: 'city',
+    season: 'current season',
+    question: 'Evaluate this generated board.',
+  })
+
+  const generatedCall = aiCalls.at(-1)
+  const generatedText = generatedCall.messages.at(-1).content.at(-1).text
+  assert.match(generatedText, /first image is an AI-generated styling visualization, not a worn outfit photo/)
+  assert.match(generatedText, /AI-generated styling visualization: Generated mock board/)
+  assert.match(generatedText, /identify rendering errors/)
+
+  await postJson('/api/ai/evaluate-wardrobe-outfit', {
+    outfit: { id: seeded.outfitId, label: 'Saved mock outfit', photo: `/uploads/${seeded.photos.outfit}` },
+    occasion: 'city',
+    season: 'year-round',
+    question: 'Evaluate this saved outfit.',
+  })
+
+  const savedCall = aiCalls.at(-1)
+  const savedText = savedCall.messages.at(-1).content.at(-1).text
+  assert.match(savedText, /first image is the actual worn outfit photo/)
+  assert.match(savedText, /actual worn outfit photo: Saved mock outfit/)
+  assert.doesNotMatch(savedText, /first image is an AI-generated styling visualization/)
+})
+
 test('wardrobe outfit evaluator enriches saved outfit cards with linked garment authority', async () => {
   const json = await postJson('/api/ai/evaluate-wardrobe-outfit', {
     outfit: { id: seeded.outfitId, label: 'Vest top + white blouse', photo: `/uploads/${seeded.photos.outfit}` },

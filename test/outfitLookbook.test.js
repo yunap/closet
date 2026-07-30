@@ -109,7 +109,7 @@ test('Outfit detail modal separates identity, composition, and styling actions',
 
 test('Saved and generated outfits enter the same Stylist action chooser', () => {
   assert.equal((source.match(/>\s*◇ Work with stylist\s*<\/button>/g) || []).length, 2)
-  assert.match(source, /onSendToStylist\(\{\s*id: null,[\s\S]*autoSend: false/)
+  assert.match(source, /onSendToStylist\(\{\s*id: null,[\s\S]*visualEvidenceType: 'generated_board',[\s\S]*autoSend: false/)
   assert.doesNotMatch(source, /stylistPrompt: 'Evaluate this styling direction/)
 })
 

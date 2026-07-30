@@ -173,4 +173,6 @@ test('critique request ranks linked garment truth above generated card rationale
   const coreSource = fs.readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
   assert.match(coreSource, /Card rationale \(non-authoritative styling intent only/)
   assert.match(coreSource, /structured owned-garment truth and the current attached images outrank card titles, reasons/)
+  assert.match(coreSource, /before recommending any physical styling action that involves multiple garments/)
+  assert.match(coreSource, /capability on one garment cannot override a prohibition or construction constraint on another/)
 })

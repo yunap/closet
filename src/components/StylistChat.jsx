@@ -4044,7 +4044,7 @@ export default function StylistChat({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          outfit,
+          outfit: { ...outfit, visualEvidenceType: 'generated_board' },
           pieceIds: ids,
           occasion: options.occasion || wardrobeOutfitOccasion,
           season: options.season || wardrobeOutfitSeason,
@@ -4194,7 +4194,7 @@ export default function StylistChat({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          outfit,
+          outfit: { ...outfit, visualEvidenceType: 'generated_board' },
           pieceIds: ids,
           occasion: wardrobeOutfitOccasion,
           season: wardrobeOutfitSeason,
@@ -4842,6 +4842,7 @@ export default function StylistChat({
               pieces: outfitToSend.pieces || [],
               pieceIds: outfitPieceIds,
               reason: outfitToSend.notes || '',
+              visualEvidenceType: outfitToSend.visualEvidenceType || '',
             },
             pieceIds: outfitPieceIds,
             occasion: outfitToSend.occasion || effectiveGenerateOccasion,
@@ -4876,6 +4877,7 @@ export default function StylistChat({
           pieces: outfitToSend.pieces || [],
           pieceIds: outfitPieceIds,
           reason: outfitToSend.notes || '',
+          visualEvidenceType: outfitToSend.visualEvidenceType || '',
         }
         nextThreadMemory = {
           type: outfitToSend.id == null ? 'generated_outfit' : 'outfit',

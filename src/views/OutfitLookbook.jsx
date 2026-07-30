@@ -2233,6 +2233,7 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
               pieces: board.pieces,
               occasion: board.context_name || '',
               notes: board.reason,
+              visualEvidenceType: 'generated_board',
               autoSend: false
             })
           }}
