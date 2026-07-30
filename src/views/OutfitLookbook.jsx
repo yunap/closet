@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
-import { getColorSwatch, sortColorNames } from '../utils/colors'
+import { getColorSwatch, sortColorNames, colorTaxonomyEntry } from '../utils/colors'
+import { ColorFamilyFilter } from '../components/ColorSelector'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { SAVED_BOARD_FEEDBACK_DISPLAY_LABELS } from '../../lib/feedbackTaxonomy.js'
 
@@ -104,7 +105,13 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
   const [search, setSearch]       = useState('')
   const [filterCat, setFilterCat] = useState(initialCategory)
   const [filterColor, setFilterColor] = useState('')
+  const [filterColorFamily, setFilterColorFamily] = useState('')
   const [saving, setSaving]       = useState(false)
+  const dialogRef = useRef(null)
+  const returnFocusRef = useRef(null)
+  const onCancelRef = useRef(onCancel)
+  onCancelRef.current = onCancel
+  const titleId = `piece-selector-title-${outfitId || 'new'}`
 
   const CATEGORIES = [
     { value: '',          label: 'All' },
@@ -118,6 +125,35 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
 
   useEffect(() => {
     fetch('/api/pieces').then(r => r.json()).then(setAllPieces)
+  }, [])
+  useEffect(() => {
+    returnFocusRef.current = document.activeElement
+    dialogRef.current?.querySelector('input[type="search"]')?.focus()
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCancelRef.current()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const focusable = Array.from(dialogRef.current?.querySelectorAll('button, input, [tabindex="0"]') || [])
+        .filter(element => !element.disabled && element.offsetParent !== null)
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      returnFocusRef.current?.focus?.()
+    }
   }, [])
 
   const toggle = (rawId) => setSelected(prev => {
@@ -146,12 +182,19 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
   const availableColors = sortColorNames(Array.from(
     new Set(allPieces.flatMap(p => p.colors || []))
   ).filter(Boolean))
+  const familyCounts = allPieces.reduce((counts, piece) => {
+    const families = new Set((piece.colors || []).map(color => colorTaxonomyEntry(color).family).filter(family => family !== 'unknown'))
+    families.forEach(family => { counts[family] = (counts[family] || 0) + 1 })
+    return counts
+  }, {})
 
   const filtered = allPieces.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) ||
                           (p.reads_as || '').toLowerCase().includes(search.toLowerCase())
     const matchesCat = !filterCat || (p.category || '').toLowerCase() === filterCat.toLowerCase()
-    const matchesColor = !filterColor || (p.colors || []).map(c => c.toLowerCase()).includes(filterColor.toLowerCase())
+    const matchesColor = filterColor
+      ? (p.colors || []).map(c => c.toLowerCase()).includes(filterColor.toLowerCase())
+      : !filterColorFamily || (p.colors || []).some(color => colorTaxonomyEntry(color).family === filterColorFamily)
     return matchesSearch && matchesCat && matchesColor
   })
 
@@ -180,11 +223,11 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
 
   return (
     <div className="modal-overlay" style={{ zIndex: 300 }}>
-      <div className="modal-sheet outfit-piece-selector" onClick={e => e.stopPropagation()}>
+      <div ref={dialogRef} className="modal-sheet outfit-piece-selector" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={e => e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-header">
-          <span className="modal-title">Link pieces</span>
-          <button className="modal-close" onClick={onCancel}>✕</button>
+          <span id={titleId} className="modal-title">Link pieces</span>
+          <button className="modal-close" onClick={onCancel} aria-label="Close Link pieces">✕</button>
         </div>
 
         {/* Filters Panel */}
@@ -208,6 +251,7 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
                   type="button"
                   className={`chip ${filterCat === c.value ? 'active' : ''}`}
                   onClick={() => setFilterCat(c.value)}
+                  aria-pressed={filterCat === c.value}
                 >
                   {c.label}
                 </button>
@@ -217,30 +261,15 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
 
           {/* Colors */}
           {availableColors.length > 0 && (
-            <div className="outfit-piece-colors" aria-label="Filter pieces by color">
-              <button
-                type="button"
-                className={`outfit-color-filter ${!filterColor ? 'active' : ''}`}
-                onClick={() => setFilterColor('')}
-              >
-                Any color
-              </button>
-              {availableColors.map(color => {
-                const hex = getColorSwatch(color)
-                const active = filterColor === color
-                return (
-                  <button
-                    key={color}
-                    type="button"
-                    className={`outfit-color-filter ${active ? 'active' : ''}`}
-                    onClick={() => setFilterColor(active ? '' : color)}
-                  >
-                    <span className="outfit-color-swatch" style={{ background: hex }} aria-hidden="true" />
-                    <span>{color}</span>
-                  </button>
-                )
-              })}
-            </div>
+            <ColorFamilyFilter
+              availableColors={availableColors}
+              familyCounts={familyCounts}
+              valueFamily={filterColorFamily}
+              valueColor={filterColor}
+              onChange={({ family, color }) => { setFilterColorFamily(family); setFilterColor(color) }}
+              compact
+              collapsible
+            />
           )}
         </div>
 
@@ -261,6 +290,16 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
                     <div
                       key={piece.id}
                       onClick={() => toggle(pieceId)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          toggle(pieceId)
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed="true"
+                      aria-label={`Unlink ${piece.name}`}
                       className="piece-card"
                       style={{
                         position: 'relative',
@@ -354,6 +393,16 @@ function PieceSelector({ outfitId, linkedPieceIds, mainPieceId = null, onSave, o
                     <div
                       key={piece.id}
                       onClick={() => toggle(piece.id)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          toggle(piece.id)
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isSelected}
+                      aria-label={`${isSelected ? 'Unlink' : 'Link'} ${piece.name}`}
                       className="piece-card"
                       style={{
                         position: 'relative',

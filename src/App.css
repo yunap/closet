@@ -1817,6 +1817,233 @@ img { display: block; max-width: 100%; }
   color: #fff;
 }
 
+.color-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.color-selected-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 40px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+.color-selected-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.color-selected-empty {
+  color: var(--text-light);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.color-selected-chip,
+.color-shade-option,
+.color-filter-shades button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.color-selected-chip {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+}
+
+.color-family-disclosures {
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+.color-editor-family-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.color-editor-family-btn {
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.color-editor-family-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.color-family-badge {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  text-align: center;
+}
+
+.color-family-group + .color-family-group,
+.color-filter-family + .color-filter-family {
+  border-top: 1px solid var(--border-light);
+}
+
+.color-family-trigger,
+.color-filter-family-btn,
+.color-family-any {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.color-family-trigger:hover,
+.color-filter-family-btn:hover,
+.color-family-any:hover,
+.color-filter-family-btn.active,
+.color-family-any.active {
+  background: var(--accent-light);
+}
+
+.color-family-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.color-family-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-shade-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  gap: 7px;
+  padding: 10px 12px 12px;
+  background: var(--surface-2);
+}
+
+.color-shade-option.active,
+.color-filter-shades button.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.color-selector-swatch {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 1px solid color-mix(in srgb, var(--text) 20%, transparent);
+  border-radius: 50%;
+}
+
+.color-family-filter {
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.color-picker-trigger {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.color-picker-trigger > span:last-child {
+  color: var(--accent);
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.color-family-filter-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.color-filter-shades {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px 11px;
+  background: var(--surface-2);
+}
+
+.color-filter-shades button {
+  min-height: 34px;
+}
+
+.wardrobe-color-popover .color-family-filter {
+  border: 0;
+  border-radius: 0;
+}
+
+.outfit-piece-colors .color-family-filter {
+  width: min(100%, 520px);
+}
+
+@media (max-width: 768px) {
+  .color-family-trigger,
+  .color-filter-family-btn,
+  .color-family-any,
+  .color-selected-chip,
+  .color-shade-option,
+  .color-filter-shades button {
+    min-height: 44px;
+  }
+  .color-shade-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .color-editor-family-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 /* Season radio */
 .radio-row { display: flex; gap: 8px; }
 .radio-btn {

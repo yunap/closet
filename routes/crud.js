@@ -25,6 +25,7 @@ import {
   ensureCachedThumbnail,
   subjectThumbnailUrl
 } from '../lib/subjectThumbnails.js'
+import { COLOR_TAXONOMY, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 
 const router = express.Router()
 
@@ -100,7 +101,7 @@ function withRetagSuggestions(piece, suggestionsByPiece = null) {
 
 // ── Pieces API ─────────────────────────────────────────────────────────────────
 router.get('/pieces', (req, res) => {
-  const { category, occasion, season, status, search, favorites, color, fabric } = req.query
+  const { category, occasion, season, status, search, favorites, color, color_family, fabric } = req.query
   let q = 'SELECT * FROM pieces WHERE 1=1'
   const params = []
   if (category)  { q += ' AND category = ?';              params.push(category) }
@@ -128,6 +129,13 @@ router.get('/pieces', (req, res) => {
   }
   if (occasion)  { q += ' AND occasions LIKE ?';          params.push(`%"${occasion}"%`) }
   if (color)     { q += ' AND colors LIKE ?';             params.push(`%"${color}"%`) }
+  else if (color_family) {
+    const familyColors = COLOR_TAXONOMY.filter(entry => entry.family === color_family).map(entry => entry.name)
+    if (familyColors.length) {
+      q += ` AND (${familyColors.map(() => 'colors LIKE ?').join(' OR ')})`
+      params.push(...familyColors.map(name => `%"${name}"%`))
+    }
+  }
   if (fabric)    { q += ' AND fabric_category = ?';       params.push(fabric) }
   if (favorites === 'true') { q += ' AND favorite = 1' }
   q += ' ORDER BY favorite DESC, date_added DESC'
@@ -139,20 +147,31 @@ router.get('/pieces', (req, res) => {
 router.get('/pieces/meta', (req, res) => {
   const rows = db.prepare("SELECT colors, fabric_category FROM pieces WHERE status = 'active'").all()
   const colorsSet = new Set()
+  const colorCounts = {}
+  const familyPieceIds = new Map()
   const fabricsSet = new Set()
-  for (const row of rows) {
+  rows.forEach((row, rowIndex) => {
     if (row.fabric_category) {
       fabricsSet.add(row.fabric_category.toLowerCase())
     }
     try {
       const colors = JSON.parse(row.colors || '[]')
       for (const c of colors) {
-        colorsSet.add(c.toLowerCase())
+        const name = c.toLowerCase()
+        colorsSet.add(name)
+        colorCounts[name] = (colorCounts[name] || 0) + 1
+        const family = colorTaxonomyEntry(name).family
+        if (family !== 'unknown') {
+          if (!familyPieceIds.has(family)) familyPieceIds.set(family, new Set())
+          familyPieceIds.get(family).add(rowIndex)
+        }
       }
     } catch {}
-  }
+  })
   res.json({
     colors: Array.from(colorsSet).sort(),
+    color_counts: colorCounts,
+    family_counts: Object.fromEntries([...familyPieceIds].map(([family, ids]) => [family, ids.size])),
     fabrics: Array.from(fabricsSet).sort()
   })
 })

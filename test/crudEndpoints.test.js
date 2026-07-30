@@ -219,6 +219,13 @@ test('GET /api/pieces/meta and color/fabric filtering', async () => {
   const res2 = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd2 })
   const piece2 = await res2.json()
 
+  const fd3 = new FormData()
+  fd3.append('name', 'navy and light blue shirt')
+  fd3.append('category', 'top')
+  fd3.append('colors', JSON.stringify(['navy', 'light blue']))
+  const res3 = await fetch(`${baseUrl}/api/pieces`, { method: 'POST', body: fd3 })
+  const piece3 = await res3.json()
+
   const metaRes = await fetch(`${baseUrl}/api/pieces/meta`)
   assert.equal(metaRes.status, 200)
   const meta = await metaRes.json()
@@ -227,11 +234,19 @@ test('GET /api/pieces/meta and color/fabric filtering', async () => {
   assert.ok(meta.colors.includes('emerald'))
   assert.ok(meta.fabrics.includes('cashmere'))
   assert.ok(meta.fabrics.includes('linen'))
+  assert.equal(meta.color_counts.navy, 1)
+  assert.equal(meta.color_counts['light blue'], 1)
+  assert.equal(meta.family_counts.blue, 1, 'a multi-shade piece counts once in its family')
 
   const colorFilterRes = await fetch(`${baseUrl}/api/pieces?color=orange`)
   const colorFiltered = await colorFilterRes.json()
   assert.ok(colorFiltered.some(p => p.id === piece1.id))
   assert.ok(!colorFiltered.some(p => p.id === piece2.id))
+
+  const familyFilterRes = await fetch(`${baseUrl}/api/pieces?color_family=blue`)
+  const familyFiltered = await familyFilterRes.json()
+  assert.ok(familyFiltered.some(p => p.id === piece3.id))
+  assert.ok(!familyFiltered.some(p => p.id === piece1.id))
 
   const fabricFilterRes = await fetch(`${baseUrl}/api/pieces?fabric=linen`)
   const fabricFiltered = await fabricFilterRes.json()
@@ -240,6 +255,7 @@ test('GET /api/pieces/meta and color/fabric filtering', async () => {
 
   await fetch(`${baseUrl}/api/pieces/${piece1.id}`, { method: 'DELETE' })
   await fetch(`${baseUrl}/api/pieces/${piece2.id}`, { method: 'DELETE' })
+  await fetch(`${baseUrl}/api/pieces/${piece3.id}`, { method: 'DELETE' })
 })
 
 test('CRUD operations for /api/chat-threads', async () => {

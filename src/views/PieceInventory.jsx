@@ -8,7 +8,8 @@ import BatchAdd from '../components/BatchAdd'
 import TodoList from './TodoList'
 import usePendingWardrobeTaskCount from '../utils/usePendingWardrobeTaskCount'
 import { wardrobeMixSort } from '../utils/wardrobeMixSort'
-import { getColorSwatch, sortColorNames } from '../utils/colors'
+import { sortColorNames, COLOR_FAMILY_LABELS, colorTaxonomyEntry } from '../utils/colors'
+import { ColorFamilyFilter } from '../components/ColorSelector'
 
 const CATEGORIES = [
   { value: '',          label: 'All' },
@@ -58,6 +59,8 @@ export default function PieceInventory({ onSendToStylist }) {
   const filterOcc    = searchParams.get('occasion') ?? ''
   const filterSeason = searchParams.get('season')   ?? ''
   const filterColor  = searchParams.get('color')    ?? ''
+  const filterColorFamily = searchParams.get('color_family') ?? ''
+  const activeColorFamily = filterColorFamily || (filterColor ? colorTaxonomyEntry(filterColor).family : '')
   const filterFabric = searchParams.get('fabric')   ?? ''
   const favOnly      = searchParams.get('fav') === '1'
   const sort         = searchParams.get('sort')     || 'mix'
@@ -94,6 +97,7 @@ export default function PieceInventory({ onSendToStylist }) {
   const addMenuRef = useRef(null)
   const addMenuTriggerRef = useRef(null)
   const [availableColors, setAvailableColors]   = useState([])
+  const [colorFamilyCounts, setColorFamilyCounts] = useState({})
   const [availableFabrics, setAvailableFabrics] = useState([])
   const [usageStats, setUsageStats] = useState({})
   const [demoWardrobe, setDemoWardrobe] = useState(null)
@@ -107,6 +111,7 @@ export default function PieceInventory({ onSendToStylist }) {
       const res = await fetch('/api/pieces/meta')
       const data = await res.json()
       setAvailableColors(sortColorNames(data.colors || []))
+      setColorFamilyCounts(data.family_counts || {})
       setAvailableFabrics(data.fabrics || [])
     } catch {}
   }, [])
@@ -132,6 +137,7 @@ export default function PieceInventory({ onSendToStylist }) {
     if (filterOcc)    params.set('occasion', filterOcc)
     if (filterSeason) params.set('season', filterSeason)
     if (filterColor)  params.set('color', filterColor)
+    else if (filterColorFamily) params.set('color_family', filterColorFamily)
     if (filterFabric) params.set('fabric', filterFabric)
     if (debouncedSearch) params.set('search', debouncedSearch)
     if (favOnly)      params.set('favorites', 'true')
@@ -153,7 +159,7 @@ export default function PieceInventory({ onSendToStylist }) {
     } finally {
       if (piecesRequestRef.current.id === requestId) setLoading(false)
     }
-  }, [filterCat, filterOcc, filterSeason, filterColor, filterFabric, debouncedSearch, favOnly])
+  }, [filterCat, filterOcc, filterSeason, filterColor, filterColorFamily, filterFabric, debouncedSearch, favOnly])
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => () => piecesRequestRef.current.controller?.abort(), [])
@@ -162,7 +168,7 @@ export default function PieceInventory({ onSendToStylist }) {
     return () => clearTimeout(timer)
   }, [search])
 
-  const isUnfilteredWardrobe = !search && !filterCat && !filterOcc && !filterSeason && !filterColor && !filterFabric && !favOnly
+  const isUnfilteredWardrobe = !search && !filterCat && !filterOcc && !filterSeason && !filterColor && !filterColorFamily && !filterFabric && !favOnly
 
   useEffect(() => {
     if (loading || pieces.length > 0 || !isUnfilteredWardrobe) return
@@ -252,7 +258,7 @@ export default function PieceInventory({ onSendToStylist }) {
     const menu = compactFilterRef.current?.querySelector(`[data-filter-menu="${openFilterMenu}"]`)
     const initialTarget = openFilterMenu === 'fabric'
       ? menu?.querySelector('input')
-      : menu?.querySelector('[role="option"]')
+      : menu?.querySelector('[role="option"], button')
     initialTarget?.focus()
     const handlePointerDown = (event) => {
       if (!compactFilterRef.current?.contains(event.target)) {
@@ -288,17 +294,18 @@ export default function PieceInventory({ onSendToStylist }) {
   const activeCompactFilters = [
     filterOcc    ? { key: 'occasion', label: occasionLabel, clear: () => setFilter({ occasion: '' }) } : null,
     filterSeason ? { key: 'season',   label: seasonLabel,   clear: () => setFilter({ season: '' }) } : null,
-    filterColor  ? { key: 'color',    label: filterColor,   clear: () => setFilter({ color: '' }) } : null,
+    (filterColor || filterColorFamily) ? { key: 'color', label: filterColor ? `${COLOR_FAMILY_LABELS[activeColorFamily]} · ${filterColor}` : COLOR_FAMILY_LABELS[filterColorFamily], clear: () => setFilter({ color: '', color_family: '' }) } : null,
     filterFabric ? { key: 'fabric',   label: filterFabric,  clear: () => setFilter({ fabric: '' }) } : null,
   ].filter(Boolean)
-  const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', color: '', fabric: '' })
-  const hasActiveFilters = Boolean(search || filterCat || filterOcc || filterSeason || filterColor || filterFabric || favOnly)
+  const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', color: '', color_family: '', fabric: '' })
+  const hasActiveFilters = Boolean(search || filterCat || filterOcc || filterSeason || filterColor || filterColorFamily || filterFabric || favOnly)
   const clearWardrobeFilters = () => setFilter({
     q: '',
     category: '',
     occasion: '',
     season: '',
     color: '',
+    color_family: '',
     fabric: '',
     fav: false,
   })
@@ -340,12 +347,25 @@ export default function PieceInventory({ onSendToStylist }) {
     next?.focus()
   }
   const handleFilterMenuKeyDown = (event) => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-    event.preventDefault()
     const menu = event.currentTarget
-    const items = Array.from(menu.querySelectorAll('[role="option"]'))
+    const items = Array.from(menu.querySelectorAll('[role="option"], button')).filter(item => !item.disabled)
     if (!items.length) return
+    if (/^[a-z0-9]$/i.test(event.key)) {
+      const match = items.find(item => item.textContent.trim().toLowerCase().startsWith(event.key.toLowerCase()))
+      match?.focus()
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
     const index = items.indexOf(document.activeElement)
+    if (event.key === 'Home') {
+      items[0]?.focus()
+      return
+    }
+    if (event.key === 'End') {
+      items[items.length - 1]?.focus()
+      return
+    }
     const delta = event.key === 'ArrowDown' ? 1 : -1
     const nextIndex = index < 0
       ? (delta > 0 ? 0 : items.length - 1)
@@ -496,47 +516,24 @@ export default function PieceInventory({ onSendToStylist }) {
           {availableColors.length > 0 && (
             <div className="wardrobe-filter-menu">
               <button
-                className={`filter-menu-btn ${openFilterMenu === 'color' || filterColor ? 'active' : ''}`}
+                className={`filter-menu-btn ${openFilterMenu === 'color' || filterColor || filterColorFamily ? 'active' : ''}`}
                 onClick={() => { setFabricSearch(''); setOpenFilterMenu(openFilterMenu === 'color' ? null : 'color') }}
                 aria-expanded={openFilterMenu === 'color'}
-                aria-haspopup="listbox"
                 data-filter-trigger="color"
               >
-                <span>{filterColor ? `Color: ${filterColor}` : 'Color'}</span>
+                <span>{filterColor ? `${COLOR_FAMILY_LABELS[activeColorFamily]} · ${filterColor}` : filterColorFamily ? COLOR_FAMILY_LABELS[filterColorFamily] : 'Color'}</span>
                 <span className="filter-menu-chevron">⌄</span>
               </button>
               {openFilterMenu === 'color' && (
-                <div className="filter-menu-popover wardrobe-color-popover" role="listbox" aria-label="Color" data-filter-menu="color" onKeyDown={handleFilterMenuKeyDown}>
-                  <button
-                    className={`wardrobe-color-any ${!filterColor ? 'active' : ''}`}
-                    onClick={() => selectFilterOption('color', { color: '' })}
-                    role="option"
-                    aria-selected={!filterColor}
-                  >
-                    <span>Any color</span>
-                    {!filterColor && <span className="wardrobe-filter-check" aria-hidden="true">✓</span>}
-                  </button>
-                  <div className="wardrobe-color-list">
-                    {availableColors.map(color => {
-                      const hex = getColorSwatch(color)
-                      const active = filterColor === color
-                      return (
-                        <button
-                          key={color}
-                          className={`wardrobe-color-option ${active ? 'active' : ''}`}
-                          onClick={() => selectFilterOption('color', { color: active ? '' : color })}
-                          title={color}
-                          aria-label={`${active ? 'Clear' : 'Filter by'} ${color}`}
-                          role="option"
-                          aria-selected={active}
-                        >
-                          <span className="wardrobe-color-swatch" style={{ background: hex }} aria-hidden="true" />
-                          <span className="wardrobe-color-name">{color}</span>
-                          {active && <span className="wardrobe-filter-check" aria-hidden="true">✓</span>}
-                        </button>
-                      )
-                    })}
-                  </div>
+                <div className="filter-menu-popover wardrobe-color-popover" aria-label="Color" data-filter-menu="color" onKeyDown={handleFilterMenuKeyDown}>
+                  <ColorFamilyFilter
+                    availableColors={availableColors}
+                    familyCounts={colorFamilyCounts}
+                    valueFamily={activeColorFamily}
+                    valueColor={filterColor}
+                    onChange={({ family, color }) => setFilter({ color_family: family, color })}
+                    compact
+                  />
                 </div>
               )}
             </div>
