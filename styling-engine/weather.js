@@ -103,8 +103,8 @@ async function resolveLive({ startDate, endDate, location, fetchImpl, exclusive 
   return { ...classify(range.highs, range.lows, { exclusive }), weatherSource: 'live' }
 }
 
-function heuristic({ mood, season, currentDate }) {
-  return { ...weatherProfileFromContext({ mood, season, currentDate }), weatherSource: 'heuristic' }
+function heuristic({ mood, season, currentDate, seasonIsCalendarOnly }) {
+  return { ...weatherProfileFromContext({ mood, season, currentDate, seasonIsCalendarOnly }), weatherSource: 'heuristic' }
 }
 
 // Skip live resolution entirely under `node --test` unless a test explicitly injects its own
@@ -125,14 +125,14 @@ export async function getCurrentWeatherProfile({ date = new Date(), location = '
   }
 }
 
-export async function getWeatherProfileForPlan({ dateRange = {}, location = '', mood = '', season = '', fetchImpl = defaultFetch } = {}) {
+export async function getWeatherProfileForPlan({ dateRange = {}, location = '', mood = '', season = '', fetchImpl = defaultFetch, seasonIsCalendarOnly = false } = {}) {
   const { start, end } = dateRange || {}
-  if (!location || !start || shouldSkipLive(fetchImpl)) return heuristic({ mood, season, currentDate: start })
+  if (!location || !start || shouldSkipLive(fetchImpl)) return heuristic({ mood, season, currentDate: start, seasonIsCalendarOnly })
   try {
     const live = await resolveLive({ startDate: start, endDate: end || start, location, fetchImpl, exclusive: false })
-    return live || heuristic({ mood, season, currentDate: start })
+    return live || heuristic({ mood, season, currentDate: start, seasonIsCalendarOnly })
   } catch {
-    return heuristic({ mood, season, currentDate: start })
+    return heuristic({ mood, season, currentDate: start, seasonIsCalendarOnly })
   }
 }
 

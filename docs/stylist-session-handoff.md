@@ -1,7 +1,50 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-29. Branch `experiment/critique-cost-optimization`, started from
-merged PR #187 on `origin/main` at `77fe064`.
+**Last updated:** 2026-07-30. Branch `stylist-docs-staleness-fixes`, reset to `origin/main`
+at `6f94f6f` (PR #188).
+
+> **Historical design specs live outside this repo.** 35 of them in `~/Downloads/spec_*.md`
+> ([index](spec-archive-index.md)). They predate several redesigns, so treat them as provenance
+> for odd-looking live code, not as authority — and note their status lines are stale (specs
+> marked "Not implemented" whose code shipped).
+>
+> **Occasion behaviour is ratified separately.** `docs/occasion_profiles_ratification.md` holds
+> the register ceilings and occasion profiles, ratified after a month of testing. Read it before
+> touching any of them; record amendments there.
+>
+> **All capsule work is now indexed.** Start at
+> [capsule-index-and-plan.md](capsule-index-and-plan.md) — it maps every capsule document, records
+> the live-run findings that exist nowhere else, and carries the sequenced plan. The entries in
+> this file remain the authority on **owner rulings**; the index is the authority on **what is done
+> and what is next**.
+
+## 2026-07-30 — capsule constants given sources, and three research documents
+
+The capsule mechanics were sound; the **numbers were invented in code**, each with a plausible
+comment and no source. Asking where they came from produced this session's work.
+
+Researched and documented, all with citations —
+[capsule-real-world-rules.md](capsule-real-world-rules.md) (category counts),
+[capsule-palette-rules.md](capsule-palette-rules.md) (palette),
+[color-taxonomy-rules.md](color-taxonomy-rules.md) (the colour model).
+
+**Shipped:** accessories removed from the bench (they can never reach a card, so every one was a
+dead slot); an explicit occasion tag now beats the occasion's register ceiling (owner ruling —
+a tag on a garment outranks a category default); summer outerwear corrected from **0 to 2**, the
+season conditional deleted entirely because published practice is unanimous that the layer count
+is season-invariant; quota **ceilings** added, since every post-condition had only ever been a
+floor; the dress quota raised to 2–3, which also unblocked the bench (it had been showing the
+model **1 of 10 eligible dresses**); season eligibility made deliberately non-symmetric; the
+neutral bonus restricted to pieces that introduce no colour of their own; roster utilization
+disclosed.
+
+**Attempted and reverted:** the tops:bottoms ratio. It reduces measured capacity rather than
+raising it, and it broke the evening-separates reserve. Reasons recorded in
+`capsule-real-world-rules.md` so it is not naively re-attempted.
+
+**Owner decision:** the colour taxonomy is redesigned and the data reconciled before any further
+capsule-palette work. Palette breadth and accent connectivity are both properties of colour
+families, and this system has no concept of one.
 
 ## 2026-07-29 — PR 188 critique optimization, evidence integrity, and entry-flow reconciliation
 
@@ -172,6 +215,10 @@ with no repair round available just deletes a wearable look. Accurate as a compo
 not a hard guarantee there.
 
 ## 2026-07-28 — comprehensive capsule work and related fixes
+
+> Later capsule work continues in the 2026-07-30 entry above and is indexed in
+> [capsule-index-and-plan.md](capsule-index-and-plan.md). The owner rulings recorded in this
+> section still stand and must not be overturned without re-reading them.
 
 ### Capsule design evaluation, six correctness fixes, and a selection rethink
 

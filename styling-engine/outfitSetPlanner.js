@@ -258,6 +258,132 @@ function describePlanCapTrim(slot = {}) {
 // know: without this line the turn shows fewer cards than planned while every
 // other surface asserts the result is complete, which is what pushed the
 // closing model into inventing outfits to fill the hole.
+// A capsule piece that reaches no look is a slot the person spent for nothing.
+// Live thread_1785380251549: 4 of 24 roster pieces appeared in none of the ten
+// cards — a coral maxi, two layers and a pendant — and nothing on any surface
+// said so. The published palette guidance names this exact failure for accent
+// pieces ("a single accent should link into several outfits instead of
+// demanding new companion pieces", docs/capsule-palette-rules.md), and the same
+// logic applies to any category.
+//
+// Deliberately a disclosure, not an enforcement: forcing an unused piece into a
+// card would buy the metric with a worse outfit. Counted against every card the
+// person can see, accepted and needs-review alike, because a piece inside a
+// repairable card has a job waiting rather than no job at all.
+// A look can fail for a piece that is WRONG or for a piece that is ABSENT. The
+// atomic composer produces the second kind: on live thread_1785380251549 two of
+// ten cards came back with no shoes while their own slot rosters held four and
+// three gate-passing pairs respectively. Both were shipped as needs-review
+// cards for the person to repair by hand — for an omission the engine could
+// have filled itself, deterministically, at zero model cost.
+//
+// `repair-capsule-look` already completes a look this way when the person
+// clicks Fix. Running the same completion during composition means the card
+// arrives finished instead of broken.
+//
+// Two deliberate constraints:
+//
+// 1. The WHOLE set is re-validated after each completion, never the single
+//    look. Distinct-core enforcement is a property of the rotation, so a look
+//    completed in isolation could duplicate an already-accepted core and turn
+//    one broken card into two.
+// 2. Only structural ABSENCE is completed. A look rejected for register, trust
+//    or weather is left alone — those need a different piece, not another one,
+//    and re-validation would reject the attempt anyway.
+const CAPSULE_GAP_GROUPS = [
+  [/missing shoes/i, 'shoes'],
+  [/missing bottom/i, 'bottom'],
+  [/missing top or dress/i, 'top'],
+]
+
+export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set() } = {}) {
+  const options = { visuallySeenPieceIds }
+  let current = (Array.isArray(submissions) ? submissions : []).map(entry => ({ ...entry }))
+  let result = validateSubmittedPlanOutfits(pendingPlan, current, options)
+  const completions = []
+  const slotById = new Map((pendingPlan?.slots || []).map(slot => [slot.id, slot]))
+
+  // One completion attempt per submitted look, at most.
+  for (let pass = 0; pass < current.length; pass += 1) {
+    const failure = result.failures.find(entry =>
+      entry?.outfit && !completions.some(done => done.slotId === entry.slot_id && done.title === entry.outfit?.title)
+    )
+    if (!failure) break
+
+    const slot = slotById.get(failure.slot_id)
+    const pieces = Array.isArray(failure.outfit?.pieces) ? failure.outfit.pieces : []
+    const gap = describeOutfitStructureGap(pieces, { requireShoes: true })
+    const missingGroup = (CAPSULE_GAP_GROUPS.find(([pattern]) => pattern.test(gap)) || [])[1]
+    if (!slot || !missingGroup) {
+      completions.push({ slotId: failure.slot_id, title: failure.outfit?.title, filled: false })
+      continue
+    }
+
+    const presentIds = pieces.map(piece => Number(piece?.id)).filter(Boolean)
+    const index = current.findIndex(entry =>
+      entry?.slot_id === failure.slot_id &&
+      String(entry?.title || '') === String(failure.outfit?.title || '')
+    )
+    if (index < 0) {
+      completions.push({ slotId: failure.slot_id, title: failure.outfit?.title, filled: false })
+      continue
+    }
+
+    // Deterministic candidate order, and only from this slot's own gate-passing
+    // roster — a completion can never introduce a piece the slot excludes.
+    const candidates = (slot.allowedPieces || [])
+      .filter(piece => wardrobeCategoryGroup(piece) === missingGroup && !presentIds.includes(Number(piece.id)))
+      .sort((a, b) => Number(a.id) - Number(b.id))
+
+    let filled = null
+    for (const candidate of candidates) {
+      const trial = current.map((entry, position) => position === index
+        ? { ...entry, piece_ids: [...presentIds, Number(candidate.id)] }
+        : entry)
+      const trialResult = validateSubmittedPlanOutfits(pendingPlan, trial, options)
+      if (trialResult.accepted.length > result.accepted.length) {
+        current = trial
+        result = trialResult
+        filled = candidate
+        break
+      }
+    }
+    completions.push({
+      slotId: failure.slot_id,
+      title: failure.outfit?.title,
+      filled: Boolean(filled),
+      group: missingGroup,
+      addedPieceId: filled ? Number(filled.id) : null,
+      addedPieceName: filled?.name || ''
+    })
+  }
+
+  return {
+    accepted: result.accepted,
+    failures: result.failures,
+    submissions: current,
+    completions: completions.filter(entry => entry.filled)
+  }
+}
+
+export function describeCapsuleRosterUtilization(roster = [], cards = []) {
+  const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
+  if (!rosterPieces.length) return ''
+  const used = new Set()
+  for (const card of Array.isArray(cards) ? cards : []) {
+    const ids = card?.pieceIds || card?.piece_ids || card?.pieces || []
+    for (const id of Array.isArray(ids) ? ids : []) {
+      const numeric = Number(typeof id === 'object' ? id?.id : id)
+      if (numeric) used.add(numeric)
+    }
+  }
+  const unused = rosterPieces.filter(piece => !used.has(Number(piece.id)))
+  if (!unused.length) return ''
+  const named = unused.slice(0, 4).map(piece => piece.name || `piece ${piece.id}`).join(', ')
+  const rest = unused.length > 4 ? `, and ${unused.length - 4} more` : ''
+  return `[capsule roster: ${unused.length} of ${rosterPieces.length} pieces did not make it into a look — ${named}${rest}]`
+}
+
 export function describeCapsuleCompositionShortfall(shortfalls = [], { plannedTotal = 0, acceptedTotal = 0 } = {}) {
   const missing = (Array.isArray(shortfalls) ? shortfalls : []).filter(entry => Number(entry?.missing) > 0)
   if (!missing.length || !(plannedTotal > 0)) return ''
@@ -450,7 +576,12 @@ function isIndoorPlanSlot(slot = {}, { occasion = '', activity = '' } = {}) {
   ].filter(Boolean).join(' ').toLowerCase()
   if (!text || activity === 'walking' || activity === 'hiking') return false
   if (/\b(outdoor|outside|patio|garden|hike|hiking|walk|walking|sightseeing|winery|wineries|coast|beach)\b/.test(text)) return false // ratchet-allow: slot-place classifier, not garment matching
-  return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurants?|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
+  // `museum` and `gallery` added 2026-07-30. Both are indoor by nature — the
+  // engine already has a `gallery_art_event` occasion profile — and both were
+  // missing, so the live "City Outings / Museums" slot inferred no indoor
+  // weather and was gated as a hot outdoor day. Their absence is also why the
+  // classifier could not correct the model there.
+  return /\b(office|work\s*(day|days|week)?|workday|client[- ]?facing|client|meeting|restaurants?|museums?|galler(y|ies)|indoor)\b/.test(text) // ratchet-allow: slot-place classifier, not garment matching
 }
 
 function hasDeclaredPlanSlotActivity(slot = {}) {
@@ -489,8 +620,11 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // trip; and getWeatherProfileForPlan itself falls back to the heuristic when no
 // location/date is available or the fetch fails. The returned `label` is what
 // the plan lines state back to the user so they can correct it conversationally.
-async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, fetchImpl } = {}) {
+async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, fetchImpl, seasonIsCalendarOnly = false } = {}) {
   const moodText = mood || question
+  // A weather the person or the model STATED for this slot is a claim about
+  // this slot's conditions, so it keeps its full meaning even for a capsule.
+  // Only the inferred, plan-wide season word is demoted.
   if (slot.statedWeather) {
     return {
       profile: { ...weatherProfileFromContext({ mood: moodText, season: slot.statedWeather }), weatherSource: 'stated' },
@@ -508,6 +642,7 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
     location: slot.location || '',
     season: slot.season,
     mood: moodText,
+    seasonIsCalendarOnly,
     ...(fetchImpl ? { fetchImpl } : {})
   })
   const descriptor = describeWeatherProfile(profile)
@@ -591,7 +726,34 @@ function outfitDressId(outfit = {}) {
 export const MIN_ENFORCED_CAPSULE_BUDGET = 6
 const PLAN_WORKBENCH_PIECE_LIMIT = 40
 
-const CAPSULE_NEUTRAL_COLORS = ['black', 'white', 'ivory', 'cream', 'navy', 'blue', 'grey', 'gray', 'charcoal', 'beige', 'tan', 'khaki', 'stone', 'olive', 'denim', 'brown', 'camel']
+// `taupe` and `oatmeal` were added 2026-07-30. They were missing, which was
+// harmless while the neutral test was "does ANY colour match" — one recognised
+// neutral carried the piece. It stopped being harmless when the test became
+// "do ALL colours match" (see pieceReadsAsNeutral): an unrecognised neutral
+// name then wrongly disqualifies the piece. Audited against every colour name
+// in the wardrobe; these two were the only genuine neutrals the list missed.
+// `silver` is deliberately not here — published practice treats metallics as
+// their own tier, not as a base neutral.
+const CAPSULE_NEUTRAL_COLORS = ['black', 'white', 'ivory', 'cream', 'navy', 'blue', 'grey', 'gray', 'charcoal', 'beige', 'tan', 'taupe', 'oatmeal', 'khaki', 'stone', 'olive', 'denim', 'brown', 'camel']
+
+// "Recombines with everything" is the claim the neutral bonus pays for, and a
+// piece only earns it if it introduces no colour of its own. The test used to
+// be whether ANY tagged colour was neutral, which paid the full bonus to a
+// five-colour floral (live example: piece 87, `pink/green/blue/yellow/white`,
+// which qualified on the strength of one "blue"). Requiring EVERY colour to be
+// neutral keeps the two-tone patterns that genuinely do recombine — a navy/white
+// stripe tee, a grey/black striped cardigan — and drops the prints that do not.
+//
+// See docs/capsule-palette-rules.md: this is the neutral/accent distinction the
+// published frameworks draw, applied to the score that was blurring it.
+function pieceReadsAsNeutral(piece = {}) {
+  const colors = (Array.isArray(piece.colors) ? piece.colors : []).map(color => String(color).toLowerCase())
+  if (!colors.length) return false
+  // A piece the wardrobe itself calls loud is a statement piece regardless of
+  // palette, and must not collect the recombination bonus.
+  if (String(piece.pattern_complexity || '').toLowerCase() === 'loud') return false
+  return colors.every(color => CAPSULE_NEUTRAL_COLORS.some(neutral => color.includes(neutral)))
+}
 
 // Spec §7 path 1: a palette the person already stated in their request is the
 // cheapest input there is — the words are in `question` and were being dropped
@@ -655,11 +817,9 @@ function pieceMatchesStatedPalette(piece = {}, palette = []) {
 function capsuleVersatilityScore(piece = {}, { isSummer = false, palette = [] } = {}) {
   let score = 0
   const colors = (Array.isArray(piece.colors) ? piece.colors : []).map(color => String(color).toLowerCase())
-  // A piece tagged pattern_complexity 'loud' is a statement piece by the
-  // wardrobe's own structured judgment — listing a neutral among several
-  // colors (e.g. a black/cream/burgundy geometric print) doesn't make it read
-  // as a neutral solid, so don't pay the "recombines with everything" bonus.
-  if (String(piece.pattern_complexity || '').toLowerCase() !== 'loud' && colors.some(color => CAPSULE_NEUTRAL_COLORS.some(neutral => color.includes(neutral)))) score += 12
+  // The recombination bonus, paid only to pieces that introduce no colour of
+  // their own — see pieceReadsAsNeutral for why "any neutral" was too generous.
+  if (pieceReadsAsNeutral(piece)) score += 12
   // A versatile capsule piece mixes across many occasions and reads as a solid.
   score += Math.min(4, (Array.isArray(piece.occasions) ? piece.occasions : []).length) * 4
   if (['solid', 'none', ''].includes(String(piece.pattern_type || '').toLowerCase())) score += 8
@@ -686,15 +846,45 @@ function capsuleVersatilityScore(piece = {}, { isSummer = false, palette = [] } 
 // budget widens tops/bottoms rather than piling on shoes.
 function capsuleQuotas(budget = 10, { isSummer = false, isWinter = false } = {}) {
   const shoes = budget >= 30 ? 5 : budget >= 24 ? 4 : budget >= 12 ? 3 : Math.min(3, Math.max(2, Math.round(budget * 0.2)))
-  // At a useful winter-capsule size, "layer" is two separate jobs: a knit
-  // layer that can stay on indoors and cold-capable outerwear for transitions.
-  // Shift one top slot into outerwear rather than pretending one jacket does
-  // both. Smaller budgets retain the compressed one-layer behavior.
-  const outerwear = isWinter && budget >= 12
-    ? 2
-    : (budget >= 8 && (!isSummer || budget < 12) ? 1 : 0)
-  const dress = budget >= 6 ? 1 : 0
+  // Season-invariant by research, not by assumption — see
+  // docs/capsule-real-world-rules.md. Published capsule frameworks allot two
+  // layers regardless of season and swap WHICH outerwear is active (the wool
+  // coat goes into storage in summer, a lightweight layer takes its place);
+  // the count does not move. The 24-piece summer capsule allots exactly 2
+  // layering items, for the two reasons that apply to any capsule covering
+  // whole days: air-conditioned interiors and evenings that cool off.
+  //
+  // This previously read `isWinter && budget >= 12 ? 2 : (budget >= 8 &&
+  // (!isSummer || budget < 12) ? 1 : 0)`, which evaluated to ZERO outerwear
+  // for a summer capsule at every budget. No framework supports that, and on
+  // live thread_1785380251549 the model overrode it by taking 4. The winter
+  // special case was right about the number and wrong to think it was about
+  // winter: season belongs in the gate that decides which outerwear qualifies,
+  // never in how many the capsule can hold. Winter's threshold is preserved
+  // exactly, so no winter capsule changes.
+  const outerwear = budget >= 12 ? 2 : (budget >= 8 ? 1 : 0)
+  // Every published breakdown that lists dresses separately allots 2–3 and
+  // treats a dress as a complete outfit core rather than a top-equivalent (see
+  // docs/capsule-real-world-rules.md: 3 at the 24-piece summer capsule, 2 at
+  // Un-Fancy's 37, 2–3 across the 30–40 range). A flat 1 was below every one of
+  // them, and it did more damage than a quota usually can: the bench's
+  // per-category minimum reads this number, so on live thread_1785380251549 the
+  // model was shown ONE dress when 10 of the wardrobe's 18 passed at least one
+  // slot's gate. Nine eligible dresses were invisible to a stage whose whole
+  // purpose is letting the model choose.
+  const dress = budget >= 24 ? 3 : budget >= 12 ? 2 : budget >= 6 ? 1 : 0
   const remaining = Math.max(0, budget - shoes - outerwear - dress)
+  // Tops carry the combinatorial load: they create the visible variety while
+  // bottoms repeat unnoticed, which is why published guidance puts the ratio at
+  // 3:1 and every actual breakdown lands between 1.7:1 and 2:1 (Un-Fancy 15:9,
+  // the 24-piece summer capsule 8:4). The 0.45 split here produced ~1.1:1 —
+  // below even this wardrobe's own 85:59 (1.44:1), so the engine was actively
+  // skewing toward bottoms relative to what the closet holds.
+  //
+  // 0.35 targets the observed breakdowns (~1.9:1) rather than the stated 3:1.
+  // Deliberate: 3:1 is advice for someone acquiring a wardrobe, and this engine
+  // selects from a closet that already exists. The measured breakdowns are what
+  // real capsules of this size are actually made of.
   const bottom = Math.max(2, Math.round(remaining * 0.45))
   const top = Math.max(2, remaining - bottom)
   return { top, bottom, dress, outerwear, shoes }
@@ -894,6 +1084,11 @@ const CAPSULE_STATEMENT_MIN_MAIN_PIECES = 8
 // Comparable to the neutral-colour term so a stated palette actually moves the
 // ranking, but not so large it can outweigh several structural signals at once.
 const CAPSULE_STATED_PALETTE_BONUS = 14
+
+// The groups a capsule look is actually built from. Deliberately the same set
+// buildCapsuleBench's byGroup buckets and the composer's structure gap use, so
+// the bench cannot offer a piece no card could ever contain.
+const CAPSULE_COMPOSABLE_GROUPS = new Set(['top', 'bottom', 'dress', 'outerwear', 'shoes'])
 
 // Owner-set (and, for pieces the tagger touches, tagger-set) construction fact:
 // this garment cannot be worn against skin on its own. In a finite capsule it
@@ -1152,6 +1347,29 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       describe: () => `a top that can be worn alone, to go under ${dependentTops[0]?.name || 'the layering piece'}`
     })
   }
+  // Every condition above is a FLOOR. Until now nothing declared a ceiling, so
+  // a model-chosen roster could overspend a category and no guard noticed: on
+  // live thread_1785380251549 it bought 4 outerwear pieces against a quota of
+  // 2, and 2 of them appeared in none of the ten looks. Overspending a
+  // non-core category is not a neutral preference — it is capacity deleted,
+  // measured at 45 -> 63 outfit cores when those slots went to tops instead.
+  //
+  // Declared only for outerwear, the one category with evidence behind it.
+  // Tops and bottoms are self-correcting (spending there buys cores, it does
+  // not destroy them), and a shoes ceiling could collide with the shoe reserve
+  // demands below. `maximum` is honoured by validateCapsuleRoster;
+  // enforceCapsulePostConditions leaves ceilings alone because the
+  // deterministic selector builds to quota and cannot exceed one.
+  if (Number.isFinite(quotas.outerwear)) {
+    conditions.push({
+      code: 'category_ceiling:outerwear',
+      group: 'outerwear',
+      required: 0,
+      maximum: quotas.outerwear,
+      predicate: () => true,
+      describe: () => `at most ${quotas.outerwear} outerwear piece(s) — this budget's layer quota`
+    })
+  }
   for (const [index, demand] of (Array.isArray(shoeDemands) ? shoeDemands : []).entries()) {
     if (!(demand?.required > 0) || typeof demand.predicate !== 'function') continue
     conditions.push({
@@ -1249,6 +1467,33 @@ export function enforceCapsulePostConditions(roster = [], groups = {}, condition
   return { roster: nextRoster, unsatisfied }
 }
 
+// Season eligibility for a capsule roster, and it is deliberately NOT symmetric.
+//
+// A winter capsule excludes warm-season-only pieces outright: a linen tank has
+// no job in winter. The mirror rule for summer would exclude cool-season
+// pieces — and that would delete exactly the piece a summer capsule most needs,
+// because the layer's whole purpose is the cool part of a warm day (see
+// docs/capsule-real-world-rules.md: air-conditioned interiors and evenings that
+// cool off, which is why the layer allowance is season-invariant). Measured on
+// the live wardrobe, a blanket summer exclusion removed piece 996767, the olive
+// lightweight jacket — the correct summer layer — while leaving the real
+// offender to be caught only by rank.
+//
+// So: a summer capsule excludes cool-season pieces from the CORE groups it will
+// build looks out of (corduroy straight pants have no place in a summer
+// capsule), and keeps them eligible as outerwear.
+function capsuleSeasonEligiblePool(pool = [], { isSummer = false, isWinter = false } = {}) {
+  const seasonOf = piece => String(piece?.season || '').toLowerCase()
+  if (isWinter) return pool.filter(piece => seasonOf(piece) !== 'warm')
+  if (isSummer) {
+    return pool.filter(piece => {
+      if (!['cool', 'cold'].includes(seasonOf(piece))) return true
+      return wardrobeCategoryGroup(piece) === 'outerwear'
+    })
+  }
+  return pool
+}
+
 export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, isWinter = false, occasions = [], slots = [], palette = [] } = {}) {
   const quotas = capsuleQuotas(budget, { isSummer, isWinter })
   const groups = { top: [], bottom: [], dress: [], outerwear: [], shoes: [] }
@@ -1256,9 +1501,7 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
   // An explicitly winter capsule should not spend its finite roster on pieces
   // authored as warm-season-only. Year-round sleeveless bases remain eligible
   // for indoor layering; the balance reserve below prevents them dominating.
-  const seasonEligiblePool = isWinter
-    ? pool.filter(piece => String(piece?.season || '').toLowerCase() !== 'warm')
-    : pool
+  const seasonEligiblePool = capsuleSeasonEligiblePool(pool, { isSummer, isWinter })
   const usablePool = capsulePiecesEligibleForAnySlot(seasonEligiblePool, slots, { isSummer, isWinter })
   for (const piece of usablePool) {
     const group = wardrobeCategoryGroup(piece)
@@ -1413,10 +1656,16 @@ export function buildCapsuleBench(pool = [], {
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
   // Same winter warm-season exclusion selectCapsuleRoster applies before
   // eligibility — the bench must not offer pieces the roster itself can't use.
-  const seasonEligiblePool = isWinter
-    ? pool.filter(piece => String(piece?.season || '').toLowerCase() !== 'warm')
-    : pool
+  const seasonEligiblePool = capsuleSeasonEligiblePool(pool, { isSummer, isWinter })
+  // A roster slot spent on a piece the composer is forbidden to use is a
+  // guaranteed dead slot. The capsule composition prompt says "Do not add
+  // accessories", so an accessory on the bench can never reach a card — and on
+  // thread_1785380251549 the model duly spent 1 of 24 places on a pendant that
+  // appeared in none of the ten looks. The deterministic selector never picked
+  // accessories; only this bench's rank-fill offered them. Restrict the bench
+  // to the groups a look is actually built from.
   const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, { isSummer, isWinter })
+    .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
   const scoreOf = new Map()
   for (const piece of eligible) scoreOf.set(piece, capsuleVersatilityScore(piece, { isSummer }))
   const ranked = [...eligible].sort((a, b) => {
@@ -1934,6 +2183,17 @@ export function validateCapsuleRoster(roster = [], {
   const declaredGaps = new Set(Array.isArray(roster?.postConditionGaps) ? roster.postConditionGaps : [])
   for (const condition of conditions) {
     const have = normalizedRoster.filter(piece => capsuleConditionMatches(piece, condition)).length
+    // Ceilings are checked before floors and never excused. The
+    // supply-attribution logic below exists to avoid blaming a roster for what
+    // the wardrobe could not supply — that reasoning has no analogue here,
+    // because overspending is always the roster's own doing.
+    if (Number.isFinite(condition.maximum) && have > condition.maximum) {
+      failures.push({
+        code: condition.code,
+        message: `roster has ${have} ${condition.group}(s) — ${condition.describe()}`
+      })
+      continue
+    }
     if (have >= condition.required) continue
     if (declaredGaps.has(condition.code)) continue
     // A guarantee the WARDROBE cannot satisfy is not a defect in the roster —
@@ -2211,7 +2471,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   if (Array.isArray(composePool.shoeReserveGaps)) coverageGaps.push(...composePool.shoeReserveGaps)
   for (const [index, slot] of slots.entries()) {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
-    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl })
+    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl, seasonIsCalendarOnly: isSeasonalCapsule })
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot
@@ -3226,7 +3486,24 @@ export function normalizePlanSlots(rawSlots = [], {
       const weatherAsEnvironment = normalizePlanEnvironment(rawExplicitWeather)
       const explicitEnvironment = normalizePlanEnvironment(slot?.environment)
       const proseEnvironment = explicitEnvironment ? '' : normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
-      const declaredEnvironment = explicitEnvironment || (weatherAsEnvironment && (weatherAsEnvironment === 'beach_coastal' || !proseEnvironment) ? weatherAsEnvironment : '')
+      const declaredDeclaredEnvironment = explicitEnvironment || (weatherAsEnvironment && (weatherAsEnvironment === 'beach_coastal' || !proseEnvironment) ? weatherAsEnvironment : '')
+      // Owner ruling 2026-07-30: the slot's own label wins over a declared
+      // `outdoor`. Live thread_1785380251549 declared `outdoor` for both
+      // "Restaurants / Social Events" and "City Outings / Museums" — the engine
+      // then dressed both for the weather outside the room. The label-based
+      // classifier already gets these right on its own; the declaration was
+      // switching it off, because any declared environment short-circuited past
+      // it.
+      //
+      // Narrow by construction: isIndoorPlanSlot only fires on unambiguously
+      // indoor places, and it already returns false for a walking/hiking
+      // activity or a label naming an outdoor one ("Outdoor Sculpture Garden",
+      // "Patio Dinner"). `beach_coastal` stays authoritative — it is a specific,
+      // deliberate signal that drives sand/water handling, not a default.
+      const labelReadsIndoor = isIndoorPlanSlot(slot, { occasion: String(slot?.occasion || ''), activity })
+      const declaredEnvironment = declaredDeclaredEnvironment === 'outdoor' && labelReadsIndoor
+        ? 'indoor'
+        : declaredDeclaredEnvironment
       const inferredEnvironment = declaredEnvironment ? '' : proseEnvironment
       const environment = declaredEnvironment || inferredEnvironment
       if (!declaredEnvironment && inferredEnvironment && typeof onDiagnostic === 'function') onDiagnostic('planSlotEnvironmentInferred')
@@ -3243,7 +3520,7 @@ export function normalizePlanSlots(rawSlots = [], {
       const statedWeather = beachCoastalStatedWeather(explicitWeather, { environment }) || (
         environment === 'indoor'
           ? 'indoor'
-          : environment
+          : environment === 'beach_coastal'
             ? ''
             : (isIndoorPlanSlot(slot, { occasion, activity }) ? 'indoor' : '')
       )

@@ -46,7 +46,26 @@ export function isStyleSelectedQuestion(question = '') {
   return !q.trim() || /style|wear|pair|outfit|how should|how do i|what goes|what would work|proposal|suggest/.test(q)
 }
 
-export function weatherProfileFromContext({ mood = '', season = '', currentDate = new Date() } = {}) {
+// `seasonIsCalendarOnly` — set by callers whose request spans a whole season
+// rather than describing a day's conditions. A seasonal capsule is the case
+// this exists for: "I want a summer capsule" names the calendar, not the
+// weather. Inferring `isHot` from it stamps every slot of the plan hot,
+// including the air-conditioned museum and the evening restaurant, and the hot
+// gate then suppresses the layers the capsule is specifically supposed to
+// carry. Measured on live thread_1785380251549: the blanket hot profile
+// removed 17-26 outerwear pieces from EVERY slot's gate, and left two of the
+// five slots unable to admit any layer at all.
+//
+// An EXPLICIT heat signal still wins — "a summer capsule, it's 95 here" is a
+// statement about conditions and keeps its meaning. Only the bare season word
+// is demoted, which is the same asymmetry this function already applies to
+// cool signals.
+//
+// Cold is deliberately untouched. The measured defect is on the hot side, and
+// a winter capsule's covered-base and transition-layer post-conditions depend
+// on cold gating behaving as it does; changing both directions at once without
+// evidence for the second would be guesswork.
+export function weatherProfileFromContext({ mood = '', season = '', currentDate = new Date(), seasonIsCalendarOnly = false } = {}) {
   if (String(season || '').trim().toLowerCase() === 'indoor') {
     return { isHot: false, isCold: false }
   }
@@ -70,7 +89,7 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const hasRainSignal = /\b(drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const strongHotSignal = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text) || hasHotTemperature
   const seasonHotSignal = explicitWarmWeather || /\bsummer\b/.test(text)
-  const explicitHot = strongHotSignal || (seasonHotSignal && !hasCoolSignal)
+  const explicitHot = strongHotSignal || (seasonHotSignal && !hasCoolSignal && !seasonIsCalendarOnly)
   const explicitCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
     || hasColdTemperature
     || (hasCoolSignal && !strongHotSignal)
@@ -2027,13 +2046,34 @@ export function footwearComfortVerdict(piece = {}, excludedHeels = [], excludedS
 }
 
 // Shared register-ceiling decision — consumed by the composer roster gate (registerGateReason) and profileRuleFit.
-export function registerCeilingVerdict(piece = {}, registerCeilingRank = null) {
+//
+// Owner ruling 2026-07-30, from live thread_1785380251549: the beige tailored
+// linen shorts are tagged `occasions: casual, smart-casual, city` and were
+// still refused from a casual slot, because the casual profile's `everyday`
+// ceiling outranked the owner's own tag on the garment. An explicit occasion
+// tag is a direct statement about THAT piece; a profile ceiling is a default
+// for pieces nobody has judged. The tag wins — the same precedent
+// `pieceMatchesOccasion` already sets ("User tag overrides AI profile
+// confidence").
+//
+// Capped at ONE register step so the exemption stays a correction, not a hole:
+// across this wardrobe 52 casual-tagged pieces sit above the ceiling, and the
+// two `dressy` ones (a gold print blouse, a silk floral ruffle midi) read as
+// tagging noise rather than genuine casual wear. Elevated is admitted, dressy
+// is not.
+export function registerCeilingVerdict(piece = {}, registerCeilingRank = null, { occasion = '' } = {}) {
   if (registerCeilingRank === null || registerCeilingRank === undefined || isAccessory(piece)) return { verdict: 'pass' }
   const formality = pieceFormality(piece)
   const rank = formalityRank(formality)
   if (rank === null) return { verdict: 'unknown' }
-  if (rank > registerCeilingRank) return { verdict: 'exclude', formality }
-  return { verdict: 'pass' }
+  if (rank <= registerCeilingRank) return { verdict: 'pass' }
+  const requested = String(occasion || '').toLowerCase().trim()
+  if (requested &&
+      explicitOccasionsForPiece(piece).includes(requested) &&
+      rank <= registerCeilingRank + 1) {
+    return { verdict: 'pass', exemptedByExplicitTag: true, formality }
+  }
+  return { verdict: 'exclude', formality }
 }
 
 export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = {}, occasionProfile = null, activityProfile = null, registerCeiling = null } = {}) {
@@ -2074,7 +2114,7 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     if (fw.verdict === 'unknown') unknownLabel = 'footwear comfort not tagged'
   }
   if (registerCeiling) {
-    const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling))
+    const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling), { occasion: occasionProfile?.id })
     if (rv.verdict === 'exclude') {
       return { tier: 'prohibited', label: `${rv.formality} exceeds ${registerCeiling} ceiling`, reason: `register: ${rv.formality} exceeds ${registerCeiling} ceiling` }
     }
@@ -2439,7 +2479,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   }
 
   const registerGateReason = (piece) => {
-    const rv = registerCeilingVerdict(piece, registerCeilingRank)
+    const rv = registerCeilingVerdict(piece, registerCeilingRank, { occasion: resolvedOccasionProfile?.id })
     if (rv.verdict === 'unknown') return 'metadata missing: formality (register gate active)'
     if (rv.verdict === 'exclude') return `register: ${rv.formality} exceeds ${registerCeiling} ceiling`
     return null

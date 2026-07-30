@@ -20,10 +20,11 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
-const { parsePiece } = await import('../styling-engine/rules.js')
+const { parsePiece, weatherProfileFromContext } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
+const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { capsulePlanCompositionSchema } = await import('../routes/ai.js')
 
@@ -1049,8 +1050,13 @@ test('capsule workbench states the cross-slot distinct-core requirement', async 
 // happens to be in its color list. Pin that a 'loud' piece no longer
 // outranks an otherwise-identical 'quiet' piece on the strength of that bonus.
 test("capsuleVersatilityScore does not award the neutral-colour bonus to a piece pattern_complexity tags 'loud'", () => {
-  const loudButNeutral = { id: 258, name: 'bold geometric top', category: 'top', colors: ['black', 'cream', 'burgundy'], pattern_type: 'geometric', pattern_complexity: 'loud', occasions: ['casual', 'city'], formality: 'everyday' }
-  const quietNeutral = { id: 1, name: 'quiet geometric top', category: 'top', colors: ['black', 'cream', 'burgundy'], pattern_type: 'geometric', pattern_complexity: 'quiet', occasions: ['casual', 'city'], formality: 'everyday' }
+  // Colours must be genuinely all-neutral for this test to isolate what it
+  // claims to. The fixture previously included `burgundy` and still described
+  // itself as "identical neutral colors" — harmless while the neutral test was
+  // "any colour matches", but under pieceReadsAsNeutral ("every colour matches")
+  // neither piece would be neutral and the bonus could not tell them apart.
+  const loudButNeutral = { id: 258, name: 'bold geometric top', category: 'top', colors: ['black', 'cream'], pattern_type: 'geometric', pattern_complexity: 'loud', occasions: ['casual', 'city'], formality: 'everyday' }
+  const quietNeutral = { id: 1, name: 'quiet geometric top', category: 'top', colors: ['black', 'cream'], pattern_type: 'geometric', pattern_complexity: 'quiet', occasions: ['casual', 'city'], formality: 'everyday' }
   const { bench } = buildCapsuleBench([loudButNeutral, quietNeutral], { budget: 10, slots: [] })
 
   assert.equal(bench[0].id, quietNeutral.id, `the quiet piece must outrank the loud one despite identical neutral colors, got bench order: ${bench.map(piece => piece.id)}`)
@@ -2747,14 +2753,45 @@ test('normalizePlanSlots preserves beach-coastal contradiction handling for indo
   assert.equal(slots[1].statedWeather, '')
 })
 
-test('normalizePlanSlots lets explicit outdoor environment beat indoor text defaults', () => {
-  const slots = normalizePlanSlots([
+// Was: "normalizePlanSlots lets explicit outdoor environment beat indoor text
+// defaults", pinning spec 17 Part 1's deliberate choice that a declared
+// `outdoor` should suppress the label classifier.
+//
+// TWO problems, both fixed here. The assertion was VACUOUS: its label was
+// "Outdoor Office Picnic", and the word "Outdoor" trips the classifier's own
+// exclusion list, so the text default never fired and the declaration was never
+// actually exercised. It passed identically whether or not declarations won —
+// which is why nothing failed when owner ruling 2026-07-30 reversed the
+// behaviour to label-wins.
+//
+// It now tests what it names, against the current ruling: a declared `outdoor`
+// yields to a label that unambiguously reads indoor, and still wins everywhere
+// else.
+test('an outdoor declaration wins except where the label unambiguously reads indoor', () => {
+  // The word "Outdoor" in the label is itself an outdoor signal, so this stays
+  // outdoor under any rule — kept as the original fixture, now with a sibling
+  // that isolates the actual property.
+  const [named] = normalizePlanSlots([
     { label: 'Outdoor Office Picnic', occasion: 'city', activity: 'none', weather: 'outdoor' },
   ], { fallbackWeather: 'mild' })
+  assert.equal(named.environment, 'outdoor')
+  assert.equal(named.statedWeather, '')
+  assert.equal(named.season, 'mild')
 
-  assert.equal(slots[0].environment, 'outdoor')
-  assert.equal(slots[0].statedWeather, '')
-  assert.equal(slots[0].season, 'mild')
+  // Same declaration, label no longer self-identifying as outdoor. Owner ruling
+  // 2026-07-30: the label wins here. Under spec 17 this asserted 'outdoor'.
+  const [office] = normalizePlanSlots([
+    { label: 'Office Picnic', occasion: 'city', activity: 'none', weather: 'outdoor' },
+  ], { fallbackWeather: 'mild' })
+  assert.equal(office.environment, 'indoor')
+  assert.equal(office.statedWeather, 'indoor')
+
+  // A declaration still wins over a label that says nothing either way.
+  const [neutral] = normalizePlanSlots([
+    { label: 'Day Two', occasion: 'city', activity: 'none', weather: 'outdoor' },
+  ], { fallbackWeather: 'mild' })
+  assert.equal(neutral.environment, 'outdoor')
+  assert.equal(neutral.statedWeather, '')
 })
 
 test('normalizePlanSlots treats office and client-meeting slots as indoor when the model omits weather', () => {
@@ -4376,4 +4413,431 @@ test('capsule rotation assigns zero cards to an impossible slot so it can be dis
   ], roster, { cap: 3 })
 
   assert.deepEqual(allocated.map(slot => slot.targetOutfits), [1, 0])
+})
+
+// Live run thread_1785380251549: the model spent 1 of 24 roster places on a
+// pendant necklace, which then appeared in none of the ten looks — the capsule
+// composition prompt forbids accessories, so a bench that offers one is
+// offering a guaranteed dead slot. The deterministic selector never picked
+// accessories; only the bench's rank-fill did.
+test('the capsule bench never offers a piece the composer cannot use', () => {
+  const pool = [
+    { id: 1, name: 'white tee', category: 'top', colors: ['white'], occasions: ['casual'] },
+    { id: 2, name: 'black tee', category: 'top', colors: ['black'], occasions: ['casual'] },
+    { id: 3, name: 'tan shorts', category: 'bottom', colors: ['tan'], occasions: ['casual'] },
+    { id: 4, name: 'olive shorts', category: 'bottom', colors: ['olive'], occasions: ['casual'] },
+    { id: 5, name: 'white sneakers', category: 'shoes', colors: ['white'], occasions: ['casual'] },
+    { id: 6, name: 'pendant necklace', category: 'accessory', colors: ['silver'], occasions: ['casual'] },
+    { id: 7, name: 'leather belt', category: 'accessory', colors: ['brown'], occasions: ['casual'] },
+  ]
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+
+  // benchSize deliberately larger than the pool, so the rank-fill loop would
+  // admit every remaining piece if nothing stopped it.
+  const { bench } = buildCapsuleBench(pool, { budget: 6, slots, isSummer: true, benchSize: 40 })
+
+  assert.equal(bench.some(piece => piece.category === 'accessory'), false)
+  assert.equal(bench.length, 5)
+})
+
+// docs/capsule-real-world-rules.md: published capsule frameworks allot two
+// layers regardless of season and swap WHICH outerwear is active, never how
+// many. The old formula evaluated to ZERO outerwear for a summer capsule at
+// every budget — unsupported by any framework, and the reason the model on
+// live thread_1785380251549 overrode it by taking 4.
+test('a summer capsule gets the same layer allowance as a winter one', () => {
+  const pool = []
+  let id = 1
+  const add = (n, category, extra = {}) => {
+    for (let i = 0; i < n; i += 1) {
+      pool.push({ id: id++, name: `${category} ${i}`, category, colors: ['black'], occasions: ['casual', 'city', 'smart-casual'], ...extra })
+    }
+  }
+  add(20, 'top'); add(20, 'bottom'); add(4, 'dress'); add(8, 'outerwear'); add(10, 'shoes')
+  const slots = [
+    { id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 3 },
+    { id: 'city', label: 'City', occasion: 'city', bestFor: 'city', targetOutfits: 3 },
+  ]
+  const countOuterwear = roster => roster.filter(piece => piece.category === 'outerwear').length
+
+  const summer = selectCapsuleRoster(pool, { budget: 24, isSummer: true, isWinter: false, occasions: ['casual', 'city'], slots })
+  const winter = selectCapsuleRoster(pool, { budget: 24, isSummer: false, isWinter: true, occasions: ['casual', 'city'], slots })
+
+  assert.equal(countOuterwear(summer), 2)
+  // Winter's allowance is unchanged by the fix — it was already the right number.
+  assert.equal(countOuterwear(winter), 2)
+})
+
+// Every post-condition used to be a floor, so nothing noticed a roster
+// overspending a category. 4 outerwear against a quota of 2 cost 18 outfit
+// cores on the live run.
+test('a roster over the layer quota fails validation with a repairable message', () => {
+  const mk = (id, category, extra = {}) => ({ id, name: `${category} ${id}`, category, colors: ['black'], occasions: ['casual'], ...extra })
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+  const base = [
+    ...Array.from({ length: 9 }, (_, i) => mk(100 + i, 'top')),
+    ...Array.from({ length: 8 }, (_, i) => mk(200 + i, 'bottom')),
+    mk(300, 'dress'),
+    ...Array.from({ length: 4 }, (_, i) => mk(400 + i, 'shoes')),
+  ]
+
+  const withinQuota = [...base.slice(0, 18), mk(500, 'outerwear'), mk(501, 'outerwear')]
+  const overQuota = [...base.slice(0, 16), mk(500, 'outerwear'), mk(501, 'outerwear'), mk(502, 'outerwear'), mk(503, 'outerwear')]
+
+  const ceilingFailures = roster => validateCapsuleRoster(roster, { slots, budget: 24, isSummer: true, isWinterCapsule: false })
+    .failures.filter(failure => failure.code === 'category_ceiling:outerwear')
+
+  assert.equal(ceilingFailures(withinQuota).length, 0)
+  const failed = ceilingFailures(overQuota)
+  assert.equal(failed.length, 1)
+  assert.match(failed[0].message, /roster has 4 outerwear\(s\)/)
+  assert.match(failed[0].message, /at most 2 outerwear piece\(s\)/)
+})
+
+// docs/capsule-real-world-rules.md: every published breakdown that lists
+// dresses separately allots 2-3. A flat 1 also silently capped the BENCH — on
+// live thread_1785380251549 the model was shown one dress while 10 of the
+// wardrobe's 18 passed a slot gate.
+test('the dress quota matches published breakdowns and stops starving the bench', () => {
+  const pool = []
+  let id = 1
+  const add = (n, category) => { for (let i = 0; i < n; i += 1) pool.push({ id: id++, name: `${category} ${i}`, category, colors: ['black'], occasions: ['casual', 'city'] }) }
+  add(20, 'top'); add(20, 'bottom'); add(10, 'dress'); add(6, 'outerwear'); add(8, 'shoes')
+  const slots = [
+    { id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 3 },
+    { id: 'city', label: 'City', occasion: 'city', bestFor: 'city', targetOutfits: 3 },
+  ]
+  const dressesIn = pieces => pieces.filter(piece => piece.category === 'dress').length
+
+  const roster = selectCapsuleRoster(pool, { budget: 24, isSummer: true, isWinter: false, occasions: ['casual', 'city'], slots })
+  assert.equal(dressesIn(roster), 3)
+
+  // The bench must offer at least the quota, or the model cannot choose dresses.
+  const { bench } = buildCapsuleBench(pool, { budget: 24, slots, isSummer: true, benchSize: 40 })
+  assert.ok(dressesIn(bench) >= 3, `bench offered ${dressesIn(bench)} dresses`)
+})
+
+// Season eligibility is deliberately asymmetric. Winter drops warm-season
+// pieces outright; summer drops cool-season CORE pieces but keeps cool-season
+// outerwear, because the layer's job is the cool part of a warm day. A blanket
+// mirror rule deleted the live wardrobe's olive lightweight jacket — the one
+// correct summer layer — while corduroy trousers stayed in on rank alone.
+test('a summer capsule drops cool-season cores but keeps a cool-season layer', () => {
+  const pool = [
+    { id: 1, name: 'linen tank', category: 'top', season: 'warm', colors: ['white'], occasions: ['casual'] },
+    { id: 2, name: 'cotton tee', category: 'top', season: 'year-round', colors: ['black'], occasions: ['casual'] },
+    { id: 3, name: 'corduroy trousers', category: 'bottom', season: 'cool', colors: ['brown'], occasions: ['casual'] },
+    { id: 4, name: 'cotton shorts', category: 'bottom', season: 'warm', colors: ['beige'], occasions: ['casual'] },
+    { id: 5, name: 'lightweight jacket', category: 'outerwear', season: 'cool', colors: ['olive'], occasions: ['casual'] },
+    { id: 6, name: 'sneakers', category: 'shoes', season: 'year-round', colors: ['white'], occasions: ['casual'] },
+  ]
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+  const roster = selectCapsuleRoster(pool, { budget: 12, isSummer: true, isWinter: false, occasions: ['casual'], slots })
+  const names = roster.map(piece => piece.name)
+
+  assert.equal(names.includes('corduroy trousers'), false, 'a cool-season bottom is not summer capsule material')
+  assert.equal(names.includes('lightweight jacket'), true, 'the cool-season layer is exactly what a summer capsule needs')
+})
+
+// docs/capsule-palette-rules.md: "recombines with everything" is what the +12
+// neutral bonus pays for, and a piece only earns it if it introduces no colour
+// of its own. Live example: piece 87, `pink/green/blue/yellow/white`, collected
+// the full bonus on the strength of one "blue".
+test('the neutral bonus goes to pieces that introduce no colour, not to prints containing one', () => {
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+  const stripeTee = { id: 1, name: 'navy white stripe tee', category: 'top', colors: ['navy', 'white'], pattern_type: 'stripe', pattern_complexity: 'medium', occasions: ['casual'], formality: 'everyday' }
+  const floral = { id: 2, name: 'floral chiffon blouse', category: 'top', colors: ['pink', 'green', 'blue', 'yellow', 'white'], pattern_type: 'floral', pattern_complexity: 'medium', occasions: ['casual'], formality: 'everyday' }
+
+  const { bench } = buildCapsuleBench([stripeTee, floral], { budget: 10, slots, isSummer: true, benchSize: 40 })
+
+  // A two-tone neutral stripe genuinely recombines; a five-colour floral does not.
+  assert.equal(bench[0].id, stripeTee.id, `bench order was ${bench.map(piece => piece.id)}`)
+})
+
+// The neutral list has to be complete once the test is "every colour matches",
+// or an unrecognised neutral name disqualifies a genuinely neutral piece.
+test('taupe and oatmeal count as neutrals', () => {
+  const slots = [{ id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'home', targetOutfits: 2 }]
+  const taupeKnit = { id: 1, name: 'grey taupe knit cardigan', category: 'top', colors: ['light grey', 'taupe'], pattern_complexity: 'quiet', occasions: ['casual'], formality: 'everyday' }
+  const coloured = { id: 2, name: 'rust knit cardigan', category: 'top', colors: ['rust'], pattern_complexity: 'quiet', occasions: ['casual'], formality: 'everyday' }
+
+  const { bench } = buildCapsuleBench([taupeKnit, coloured], { budget: 10, slots, isSummer: true, benchSize: 40 })
+  assert.equal(bench[0].id, taupeKnit.id, `bench order was ${bench.map(piece => piece.id)}`)
+})
+
+// Live thread_1785380251549: 4 of 24 roster pieces reached none of the ten
+// cards and no surface said so. Disclosure, not enforcement — forcing an unused
+// piece into a card buys the metric with a worse outfit.
+test('roster utilization names the pieces that reached no look', () => {
+  const roster = [
+    { id: 1, name: 'white tee', category: 'top' },
+    { id: 2, name: 'tan shorts', category: 'bottom' },
+    { id: 3, name: 'coral maxi dress', category: 'dress' },
+    { id: 4, name: 'olive jacket', category: 'outerwear' },
+  ]
+  const cards = [{ pieceIds: [1, 2] }]
+
+  const line = describeCapsuleRosterUtilization(roster, cards)
+  assert.match(line, /2 of 4 pieces did not make it into a look/)
+  assert.match(line, /coral maxi dress/)
+  assert.match(line, /olive jacket/)
+  assert.doesNotMatch(line, /white tee/)
+
+  // A piece inside a needs-review card has a job waiting, so it is not unused.
+  assert.equal(describeCapsuleRosterUtilization(roster, [{ pieceIds: [1, 2] }, { piece_ids: [3, 4] }]), '')
+  assert.equal(describeCapsuleRosterUtilization([], cards), '')
+})
+
+// Live thread_1785380251549: two of ten cards came back with no shoes while
+// their own slot rosters held four and three gate-passing pairs. Both shipped
+// as needs-review cards for the person to fix by hand — for an omission the
+// engine can fill itself, deterministically, at zero model cost.
+test('a look submitted without shoes is completed from its own slot roster', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'city loafers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const submission = [{ slot_id: workbench.pendingPlan.slots[0].id, title: 'Shoeless', piece_ids: [Number(topId), Number(bottomId)] }]
+
+  // Without completion the look is rejected outright.
+  const plain = validateSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(plain.accepted.length, 0)
+  assert.match(plain.failures[0].reasons.join(' '), /shoe/i)
+
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(completed.accepted.length, 1, 'the look should be completed, not rejected')
+  assert.equal(completed.failures.length, 0)
+  assert.equal(completed.completions.length, 1)
+  assert.equal(completed.completions[0].group, 'shoes')
+  assert.equal(completed.completions[0].addedPieceId, Number(shoesId))
+  assert.ok((completed.accepted[0].pieces || []).some(piece => Number(piece.id) === Number(shoesId)))
+})
+
+// Completion must never invent supply. When the slot roster genuinely has no
+// shoe, the look stays a needs-review card and the person is told the truth.
+test('completion does not fabricate a piece the slot roster lacks', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const submission = [{ slot_id: workbench.pendingPlan.slots[0].id, title: 'Shoeless', piece_ids: [Number(topId), Number(bottomId)] }]
+
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(completed.accepted.length, 0)
+  assert.equal(completed.completions.length, 0)
+  assert.equal(completed.failures.length, 1)
+})
+
+// Distinct-core enforcement is a property of the whole rotation, so a look
+// completed in isolation could duplicate an already-accepted core and turn one
+// broken card into two. completeSubmittedPlanOutfits re-validates the entire
+// set after each completion for exactly this reason.
+test('completion never creates a duplicate core with an already-accepted look', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  const shoeA = insertPiece({ category: 'shoes', name: 'city loafers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const shoeB = insertPiece({ category: 'shoes', name: 'city sneakers', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 2, weather: 'indoor' }])
+  // Distinct cores are enforced for a CAPSULE, not for an ordinary plan, where a
+  // shoe swap legitimately re-skins a look. The safeguard only has meaning here.
+  const workbench = await buildPlanSlotWorkbench(slots, {
+    allPieces,
+    question: 'summer capsule',
+    planKind: 'seasonal_capsule',
+    constraints: { piece_budget: 8 },
+  })
+  const slotId = workbench.pendingPlan.slots[0].id
+  assert.equal(workbench.pendingPlan.isSeasonalCapsule, true, 'fixture must be an enforced capsule')
+
+  // The only completion available reuses the accepted look's exact core, so a
+  // second shoe would re-skin it rather than make a distinct look.
+  const submission = [
+    { slot_id: slotId, title: 'Complete', piece_ids: [Number(topId), Number(bottomId), Number(shoeA)] },
+    { slot_id: slotId, title: 'Shoeless', piece_ids: [Number(topId), Number(bottomId)] },
+  ]
+
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(completed.accepted.length, 1, 'only the genuinely distinct look survives')
+  assert.equal(completed.accepted[0].title, 'Complete')
+  assert.equal(completed.completions.length, 0, 'no completion should be reported')
+  assert.ok(String(completed.failures[0]?.reasons?.join(' ') || '').length > 0)
+  assert.ok(Number(shoeB) > 0)
+})
+
+// "I want a summer capsule" names the calendar, not the weather. Inferring a
+// blanket isHot from it stamped every slot hot on live thread_1785380251549 —
+// including the air-conditioned museum and the evening restaurant — and the hot
+// gate then suppressed 17-26 outerwear pieces from EVERY slot, leaving two of
+// five unable to admit any layer at all. That is the same capsule the layer
+// research says must carry two.
+test('a seasonal capsule does not inherit a blanket hot profile from the season word', () => {
+  const bare = weatherProfileFromContext({ mood: 'I want a summer capsule', season: '' })
+  assert.equal(bare.isHot, true, 'an ordinary request still reads summer as hot')
+
+  const capsule = weatherProfileFromContext({ mood: 'I want a summer capsule', season: '', seasonIsCalendarOnly: true })
+  assert.equal(capsule.isHot, false)
+  assert.equal(capsule.isCold, false)
+})
+
+// The asymmetry is the point: a stated condition is a claim about the weather
+// and keeps its meaning; only the bare season word is demoted.
+test('an explicit heat signal still wins inside a seasonal capsule', () => {
+  for (const mood of ['a summer capsule, it is 95 here', 'summer capsule during a heatwave']) {
+    const profile = weatherProfileFromContext({ mood, season: '', seasonIsCalendarOnly: true })
+    assert.equal(profile.isHot, true, `"${mood}" should still gate as hot`)
+  }
+})
+
+// Cold is deliberately untouched — the measured defect was on the hot side, and
+// the winter covered-base and transition-layer post-conditions depend on cold
+// gating behaving as it does.
+test('a winter capsule keeps its cold profile', () => {
+  const profile = weatherProfileFromContext({ mood: 'I want a winter capsule', season: '', seasonIsCalendarOnly: true })
+  assert.equal(profile.isCold, true)
+  assert.equal(profile.isHot, false)
+})
+
+// Owner ruling 2026-07-30: evening is dressier than a restaurant; an ordinary
+// restaurant dinner reads smart casual, or maybe city. The schema previously
+// told the model to map dinner and evening-restaurant use cases to 'evening',
+// contradicting the engine's own occasion profiles — city_smart_casual lists
+// `dinner` and `museum` (ceiling elevated) while evening_social lists
+// `dinner date, wine bar, theater, night out` (ceiling dressy).
+test('the plan slot occasion guidance matches the occasion profiles and the owner register semantics', () => {
+  const description = planOutfitSetSlotSchema()?.properties?.occasion?.description || ''
+
+  assert.doesNotMatch(description, /map dinner\/evening-restaurant/i, 'the contradicted wording must not return')
+  assert.match(description, /restaurant dinner/i)
+  assert.match(description, /smart casual/i)
+  assert.match(description, /reserve 'evening'/i)
+})
+
+// The guidance is only correct if the profiles it describes still behave that
+// way — this fails if someone re-tunes a ceiling without revisiting the wording.
+test('restaurant-register semantics hold in the occasion profiles themselves', () => {
+  const smartCasual = resolveOccasionProfile('smart casual')
+  const evening = resolveOccasionProfile('evening')
+
+  assert.equal(smartCasual.id, 'city_smart_casual')
+  assert.equal(evening.id, 'evening_social')
+  assert.ok((smartCasual.keywords || []).includes('dinner'), 'city_smart_casual should still own plain "dinner"')
+  assert.equal(smartCasual.register_ceiling, 'elevated')
+  assert.equal(evening.register_ceiling, 'dressy')
+  assert.ok(
+    formalityRank(evening.register_ceiling) > formalityRank(smartCasual.register_ceiling),
+    'evening must remain the dressier register'
+  )
+})
+
+// Live thread_1785380251549: "City Outings / Museums" was gated as a hot
+// outdoor day. The indoor classifier already covered offices, meetings and
+// restaurants but not museums or galleries, though the engine has a
+// gallery_art_event occasion profile.
+test('museum and gallery slots infer indoor weather', () => {
+  for (const label of ['City Outings / Museums', 'Museum Visit', 'Gallery Day']) {
+    const [slot] = normalizePlanSlots([{ label, occasion: 'city', activity: 'none', count: 2 }])
+    assert.equal(slot.statedWeather, 'indoor', `"${label}" should infer indoor`)
+  }
+})
+
+// The inference must stay narrow: an explicitly outdoor place and a walking
+// activity both keep their outdoor weather.
+test('the indoor inference yields to an outdoor place or a walking activity', () => {
+  const [garden] = normalizePlanSlots([{ label: 'Outdoor Sculpture Garden', occasion: 'city', activity: 'none', count: 2 }])
+  assert.equal(garden.statedWeather || '', '')
+
+  const [walking] = normalizePlanSlots([{ label: 'City Outings / Museums', occasion: 'city', activity: 'walking', count: 2 }])
+  assert.equal(walking.statedWeather || '', '')
+})
+
+// Owner ruling 2026-07-30: a slot's own label wins over a declared `outdoor`.
+// Live thread_1785380251549 declared `outdoor` for both the restaurant and the
+// museum slot, and the engine then dressed each for the weather outside the
+// room. Any declared environment used to short-circuit past the label
+// classifier entirely.
+test('an unambiguously indoor label overrides a declared outdoor environment', () => {
+  for (const label of ['Restaurants / Social Events', 'City Outings / Museums']) {
+    const [slot] = normalizePlanSlots([{ label, occasion: 'city', activity: 'none', environment: 'outdoor', count: 2 }])
+    assert.equal(slot.environment, 'indoor', `"${label}" should resolve indoor`)
+    assert.equal(slot.statedWeather, 'indoor')
+  }
+})
+
+// Narrow by construction: an outdoor place, a walking activity, and the
+// deliberate beach_coastal signal all keep their declared setting.
+test('the label override does not touch genuinely outdoor or coastal slots', () => {
+  const cases = [
+    ['Patio Dinner', 'none', 'outdoor'],
+    ['Outdoor Sculpture Garden', 'none', 'outdoor'],
+    ['Nature Walks', 'walking', 'outdoor'],
+    ['Beach Day', 'none', 'beach_coastal'],
+  ]
+  for (const [label, activity, environment] of cases) {
+    const [slot] = normalizePlanSlots([{ label, occasion: 'casual', activity, environment, count: 2 }])
+    assert.equal(slot.environment, environment, `"${label}" must keep ${environment}`)
+  }
+})
+
+// The ratified occasion behaviour is not in scope of the environment override:
+// occasions must resolve exactly as before (docs/occasion_profiles_ratification.md).
+test('the label override changes no occasion', () => {
+  const cases = [
+    ['Restaurants / Social Events', 'smart casual', 'outdoor', 'smart casual'],
+    ['City Outings / Museums', 'city', 'outdoor', 'city'],
+    ['At Home / Errands', 'casual', 'indoor', 'casual'],
+    ['Nature Walks', 'casual', 'outdoor', 'casual'],
+    ['Beach Day', 'casual', 'beach_coastal', 'casual'],
+  ]
+  for (const [label, occasion, environment, expected] of cases) {
+    const [slot] = normalizePlanSlots([{ label, occasion, activity: 'none', environment, count: 2 }])
+    assert.equal(slot.occasion, expected, `"${label}" occasion must stay ${expected}`)
+  }
+})
+
+// Live thread_1785380251549: the lifestyle answer listed three distinct
+// contexts — days at home, errands, weekends out — and all three came back
+// `occasion: casual`, so a going-out slot inherited a stay-at-home register.
+// The field's own description was the cause: it framed `register` as an
+// event-weekend escalation tool and told the model to omit it otherwise.
+test('the slot register guidance covers ordinary going-out slots, not just event weekends', () => {
+  const description = planOutfitSetSlotSchema()?.properties?.register?.description || ''
+
+  assert.doesNotMatch(description, /Omit for ordinary slots/i, 'the wording that suppressed the field must not return')
+  assert.match(description, /going-out/i)
+  assert.match(description, /requires nothing/i, 'elevated must be described as permission, not obligation')
+  assert.match(description, /dressy-or-better main piece/i, 'the dressy/formal floor must stay stated')
+})
+
+// The guidance above is only honest because of this asymmetry: the per-look
+// register floor applies at `dressy` and above only, so `elevated` widens what
+// a slot may use without demanding anything. If that threshold ever moves, the
+// description becomes a lie — this is the pin that catches it.
+test('register elevated imposes no per-look floor; dressy does', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'everyday tee', occasions: ['casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'everyday jeans', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'everyday sneakers', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'top', name: 'dressy silk blouse', occasions: ['casual'], formality: 'dressy' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const allEveryday = [Number(topId), Number(bottomId), Number(shoesId)]
+
+  const submit = async register => {
+    const slots = normalizePlanSlots([{ label: 'Weekends Out', occasion: 'casual', activity: 'none', count: 1, weather: 'indoor', ...(register ? { register } : {}) }])
+    const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'weekends out' })
+    return validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+      slot_id: workbench.pendingPlan.slots[0].id, title: 'All everyday', piece_ids: allEveryday,
+    }])
+  }
+
+  assert.equal((await submit('elevated')).accepted.length, 1, 'elevated must not demand an elevated piece')
+  const dressy = await submit('dressy')
+  assert.equal(dressy.accepted.length, 0, 'dressy must demand a dressy-or-better main piece')
+  assert.match(dressy.failures[0].reasons.join(' '), /register floor/i)
 })
