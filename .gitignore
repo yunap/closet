@@ -28,3 +28,5 @@ scratch/*
 !scratch/diagnose_capsule_bench.js
 !scratch/compare_capsule_rosters.js
 !scratch/build_capsule_disclosure_demo_thread.js
+!scratch/audit_color_taxonomy.js
+!scratch/rankings_ab_diff.js
