@@ -5,9 +5,16 @@ import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from './styling-engine/constitutionSeed.js'
 import { DEFAULT_USER_ID, getCurrentUserId } from './lib/requestContext.js'
+import {
+  assertDefaultDatabaseAccess,
+  createRotatingSqliteBackup,
+  isServerEntrypoint,
+} from './lib/databaseSafety.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const usersRootDir = process.env.WARDROBE_USERS_DIR || path.join(__dirname, 'data', 'users')
+const defaultDbPath = path.join(__dirname, 'wardrobe.db')
+const serverPath = path.join(__dirname, 'server.js')
 
 const LEGACY_SEED_TODOS = [
   { type: 'repair', description: 'Fix zipper on mustard corduroy skinnies' },
@@ -28,7 +35,15 @@ const LEGACY_SEED_TODOS = [
 // non-default userIds (which can't exist until Part 2 ships auth) resolve there already.
 export function resolveDbPath(userId) {
   if (process.env.WARDROBE_DB_PATH) return process.env.WARDROBE_DB_PATH
-  if (userId === DEFAULT_USER_ID) return path.join(__dirname, 'wardrobe.db')
+  if (userId === DEFAULT_USER_ID) {
+    assertDefaultDatabaseAccess({
+      explicitDbPath: process.env.WARDROBE_DB_PATH,
+      allowLiveDb: process.env.WARDROBE_ALLOW_LIVE_DB,
+      entrypoint: process.argv[1],
+      serverPath,
+    })
+    return defaultDbPath
+  }
   return path.join(usersRootDir, String(userId), 'wardrobe.db')
 }
 
@@ -550,6 +565,11 @@ function initDb(dbPath) {
     }
   } catch (err) {
     console.warn('Legacy todo cleanup warning:', err.message)
+  }
+
+  if (path.resolve(dbPath) === path.resolve(defaultDbPath) && isServerEntrypoint(process.argv[1], serverPath)) {
+    const backupPath = createRotatingSqliteBackup(db, { dbPath })
+    console.log(`🛟 Wardrobe backup verified → ${backupPath}`)
   }
 
   return db
