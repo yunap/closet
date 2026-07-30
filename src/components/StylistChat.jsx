@@ -515,6 +515,15 @@ const CRITIQUE_NEW_TOPIC_PATTERNS = [
   /\b(?:another|different|new)\s+(?:outfit|look|photo|image)\b/i,
 ]
 
+// The lean critique evaluator sees only the current outfit and its linked pieces. Requests
+// to choose a different owned garment must escape to the tool-enabled stylist pipeline so
+// it can search the wardrobe instead of claiming that the rest of the closet is unavailable.
+const CRITIQUE_WARDROBE_SEARCH_PATTERNS = [
+  /\b(?:find|suggest|recommend|show|give|pick|choose|use|swap|replace|try|which|what)\b(?=[\s\S]{0,120}\b(?:top|shirt|blouse|tee|tank|sweater|jacket|coat|layer|bottom|pants|trousers|jeans|skirt|shorts|dress|shoe|shoes|boot|boots|sandal|sandals|bag|belt|accessory|piece|garment|something)\b)[\s\S]{0,120}\b(?:my|i have|i own|in my wardrobe|from my wardrobe|in my closet|from my closet|something i have|something i own)\b/i,
+  /\b(?:another|different|alternative|replacement)\s+(?:top|shirt|blouse|tee|tank|sweater|jacket|coat|layer|bottom|pants|trousers|jeans|skirt|shorts|dress|shoe|shoes|boot|boots|sandal|sandals|bag|belt|accessory|piece|garment)\b/i,
+  /\b(?:what|which)\s+(?:other\s+)?(?:top|shirt|blouse|tee|tank|sweater|jacket|coat|layer|bottom|pants|trousers|jeans|skirt|shorts|dress|shoe|shoes|boot|boots|sandal|sandals|bag|belt|accessory|piece|garment)\b[\s\S]{0,60}\b(?:work|wear|use|try|better)\b/i,
+]
+
 const hasOutfitCritiqueMemory = (memory = null) => Boolean(
   (memory?.type === 'outfit' || memory?.type === 'generated_outfit') &&
   memory?.latestEvaluationText
@@ -522,7 +531,8 @@ const hasOutfitCritiqueMemory = (memory = null) => Boolean(
 
 const isExplicitCritiqueTopicChange = (text = '') => {
   const q = String(text || '').trim()
-  return CRITIQUE_NEW_TOPIC_PATTERNS.some(pattern => pattern.test(q))
+  return [...CRITIQUE_NEW_TOPIC_PATTERNS, ...CRITIQUE_WARDROBE_SEARCH_PATTERNS]
+    .some(pattern => pattern.test(q))
 }
 
 const shouldUseOutfitCritiqueFollowup = (text = '', memory = null) => (

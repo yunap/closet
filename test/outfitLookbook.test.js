@@ -123,6 +123,9 @@ test('Generated outfit critiques retain their linked outfit context for follow-u
 test('Critique follow-ups use one dedicated evaluator request while explicit new topics escape', () => {
   assert.match(stylistSource, /const shouldUseOutfitCritiqueFollowup = \(text = '', memory = null\) => \(\s*hasOutfitCritiqueMemory\(memory\) && !isExplicitCritiqueTopicChange\(text\)/)
   assert.match(stylistSource, /what should i wear/)
+  assert.match(stylistSource, /const CRITIQUE_WARDROBE_SEARCH_PATTERNS = \[/)
+  assert.match(stylistSource, /something i have\|something i own/)
+  assert.match(stylistSource, /\[\.\.\.CRITIQUE_NEW_TOPIC_PATTERNS, \.\.\.CRITIQUE_WARDROBE_SEARCH_PATTERNS\]/)
   assert.match(stylistSource, /shouldUseOutfitCritiqueFollowup\(q, threadMemory\)[\s\S]*?fetch\('\/api\/ai\/evaluate-wardrobe-outfit'/)
   assert.match(stylistSource, /previousEvaluation: threadMemory\.latestEvaluationText \|\| ''/)
   assert.match(stylistSource, /responseMode: 'followup'/)
