@@ -162,8 +162,10 @@ test('generated outfit image prompt treats garment truth as authoritative over c
   })
 
   assert.match(prompt, /Structured garment fields and reference images are authoritative/)
-  assert.match(prompt, /silhouette=oversized; length=hip; hem=design_hem; fit=hangs_straight; tuck=wear_over_only/)
+  assert.match(prompt, /preserve its oversized silhouette; keep its hip length; show its complete design hem; render its fit as hangs straight/)
+  assert.match(prompt, /wear it fully outside the bottom waistband, with the complete hem visible and no part tucked in/)
   assert.match(prompt, /Non-authoritative styling intent: Tuck the shirt/)
+  assert.match(prompt, /Final render check: the visible outfit must satisfy every authoritative garment-construction direction/)
   assert.doesNotMatch(prompt, /Stylist mechanics:/)
 })
 

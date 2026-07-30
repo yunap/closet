@@ -1899,15 +1899,17 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
   }).join('\n')
   const constructionChecklist = pieces.map((piece, index) => {
     const fields = [
-      piece.silhouette ? `silhouette=${piece.silhouette}` : '',
-      piece.length_hits_at ? `length=${piece.length_hits_at}` : '',
-      piece.hem_finish ? `hem=${piece.hem_finish}` : '',
-      piece.sleeve_type && piece.sleeve_type !== 'none' ? `sleeve=${piece.sleeve_type}` : '',
-      piece.fit_on_body && piece.fit_on_body !== 'none' ? `fit=${piece.fit_on_body}` : '',
-      piece.tuck_behavior ? `tuck=${piece.tuck_behavior}` : '',
-      piece.waistband_type ? `waistband=${piece.waistband_type}` : '',
-      piece.opacity && piece.opacity !== 'opaque' ? `opacity=${piece.opacity}` : '',
-      piece.needs_base === 'yes' ? 'needs_base=yes' : '',
+      piece.silhouette ? `preserve its ${String(piece.silhouette).replaceAll('_', ' ')} silhouette` : '',
+      piece.length_hits_at ? `keep its ${String(piece.length_hits_at).replaceAll('_', ' ')} length` : '',
+      piece.hem_finish ? `show its complete ${String(piece.hem_finish).replaceAll('_', ' ')}` : '',
+      piece.sleeve_type && piece.sleeve_type !== 'none' ? `preserve its ${String(piece.sleeve_type).replaceAll('_', ' ')} sleeves` : '',
+      piece.fit_on_body && piece.fit_on_body !== 'none' ? `render its fit as ${String(piece.fit_on_body).replaceAll('_', ' ')}` : '',
+      piece.tuck_behavior === 'wear_over_only'
+        ? 'wear it fully outside the bottom waistband, with the complete hem visible and no part tucked in'
+        : (piece.tuck_behavior ? `respect its ${String(piece.tuck_behavior).replaceAll('_', ' ')} wear behavior` : ''),
+      piece.waistband_type ? `preserve the ${String(piece.waistband_type).replaceAll('_', ' ')} waistband` : '',
+      piece.opacity && piece.opacity !== 'opaque' ? `preserve its ${String(piece.opacity).replaceAll('_', ' ')} opacity` : '',
+      piece.needs_base === 'yes' ? 'show it with a base layer' : '',
     ].filter(Boolean)
     return `${index + 1}. ${piece.name}: ${fields.length ? fields.join('; ') : 'use the reference image and garment truth as provided'}.`
   }).join('\n')
@@ -1940,7 +1942,9 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     outfit.watchFor ? `Avoid drift: ${outfit.watchFor}` : '',
     `Occasion: ${occasion}. Season: ${season}.`,
     '',
-    `Saved wardrobe pieces to use:\n${pieceLines}`
+    `Saved wardrobe pieces to use:\n${pieceLines}`,
+    '',
+    'Final render check: the visible outfit must satisfy every authoritative garment-construction direction above, even when a more conventional styling choice would look plausible.'
   ].filter(Boolean).join('\n')
 }
 
