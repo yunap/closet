@@ -3,10 +3,10 @@
 **Last updated:** 2026-07-30. Branch `stylist-docs-staleness-fixes`, reset to `origin/main`
 at `6f94f6f` (PR #188).
 
-> **Design history lives partly outside this repo.** 35 specs in `~/Downloads/spec_*.md` carry
-> decisions and rationale absent from `docs/` — see
-> [spec-archive-index.md](spec-archive-index.md), which also warns that their status lines are
-> stale (specs marked "Not implemented" whose code is shipped).
+> **Historical design specs live outside this repo.** 35 of them in `~/Downloads/spec_*.md`
+> ([index](spec-archive-index.md)). They predate several redesigns, so treat them as provenance
+> for odd-looking live code, not as authority — and note their status lines are stale (specs
+> marked "Not implemented" whose code shipped).
 >
 > **Occasion behaviour is ratified separately.** `docs/occasion_profiles_ratification.md` holds
 > the register ceilings and occasion profiles, ratified after a month of testing. Read it before

@@ -1,22 +1,38 @@
-# Spec archive — index, and the decisions that live only there
+# Spec archive — historical design specs held outside the repo
 
 Written 2026-07-30.
 
-## Where it is, and why this file exists
+## What this archive is — and is not
 
-35 specs sit in **`~/Downloads/spec_*.md`** — outside the repository, so outside every search a
-session runs. They contain design decisions, their rationale, and owner rulings that exist **nowhere
-in `docs/`**.
+35 specs sit in **`~/Downloads/spec_*.md`**, outside the repository and so outside every search a
+session runs.
 
-This was not a theoretical risk. On 2026-07-30 a session spent a day changing slot-weather and
-occasion behaviour and reversed two deliberate decisions without knowing they existed, because
-nothing reachable from the repository mentioned them. This index is the minimum fix: it does not
-reproduce the specs, it records what is in them and which of their decisions are load-bearing.
+**They are historical.** The app has been redesigned several times since most of them were written
+— the legacy pre-compose stack was deleted, de-Yunafication landed, the whole thing became a
+multiuser platform. Much of what these specs describe is about an architecture that no longer
+exists. They are **not** a design authority and must not be treated as one.
 
-## Read this before trusting a spec's status line
+**Authority order, when they disagree:**
 
-**The status lines are stale and cannot be trusted.** Most specs read `Proposed … Not implemented`
-while their contents are in the code:
+1. **The code** — what actually runs.
+2. **`docs/occasion_profiles_ratification.md` and the owner rulings in
+   `docs/stylist-session-handoff.md`** — what has been ratified.
+3. **This archive** — why something was once done that way.
+
+What the archive is genuinely good for is **provenance**: when live code does something odd and no
+comment explains it, a spec may say why. That is worth real money occasionally, and it is the only
+claim this index makes for it.
+
+The concrete case that prompted this file: on 2026-07-30 a session reversed two decisions that were
+**still live in the code that morning** — verified, not assumed — without knowing they had been
+made deliberately. The specs did not make those decisions binding; they explained them. Knowing the
+reasoning first would have changed how the reversal was proposed, not necessarily whether it
+happened.
+
+## Every claim here needs checking against the code
+
+**The status lines are stale and cannot be trusted**, and given the redesigns, neither can the
+contents. Most specs read `Proposed … Not implemented` while their contents are in the code:
 
 - `spec_17_indoor_weather_regression.md` says *"Proposed (2026-07-15). Not implemented."* Both its
   Part 1 (`environment` implies stated weather) and Part 2 (`restaurant` → `restaurants?`) are in
@@ -116,16 +132,18 @@ remain unshipped and still need the same decision.
 
 Specs 11 and any gaps are absent from the directory, not omitted here.
 
-## What still needs doing
+## Notes
 
-- **Specs 12, 19, 23, 26 and 30 all concern register or slot semantics** and none of their decisions
-  are recorded in `docs/`. Register work — including the outstanding `register` field guidance
-  question ("omit for ordinary slots") — should start by reading them.
+- **Specs 12, 19, 23, 26 and 30 concern register or slot semantics.** If register work turns up
+  behaviour in the code that no comment explains, they may hold the reasoning. Read them for
+  *provenance only* — several predate the redesigns, and any claim must be checked against the code
+  before it is acted on. Do not treat an old spec as a reason not to change something.
 - **Two files named `spec_3_freeform_observability`** exist, one suffixed `(1)`, with different
-  statuses. Nobody knows which is current.
-- The archive lives in `~/Downloads`, a directory whose contents are not backed by the repository
-  and are easy to lose. Moving the specs into `docs/specs/` would make them searchable and
-  survivable; that is an owner decision, not something to do unasked.
+  statuses. Neither is known to be current.
+- The archive is in `~/Downloads`, not backed by the repository. Whether it is worth moving into
+  the repo depends on how much of it is still true, which is an owner call — a large archive of
+  obsolete design docs inside `docs/` would create exactly the false-authority problem this section
+  is warning about.
 
 ## Related
 
