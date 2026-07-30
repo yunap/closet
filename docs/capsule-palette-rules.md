@@ -134,15 +134,14 @@ neutral-adjacent. The list is broader than any source supports at that one entry
 | `CAPSULE_NEUTRAL_COLORS` missing genuine neutrals | **fixed** — `taupe` and `oatmeal` added |
 | bare `'blue'` in the neutral list | **owner is reviewing the tags** — the auto-tagger's colour recognition is unreliable under varying lighting, so this is being corrected at the garment level rather than by narrowing the list |
 | accents that link into no outfit (the coral maxi) | **disclosed, not enforced** — `describeCapsuleRosterUtilization` |
-| no set-level palette breadth control | **open — blocked**, see below |
-| no cohesion pressure when no palette is stated | **open — blocked**, see below |
+| no set-level palette breadth control | **evaluation disclosure added** — family breadth is reported after composition |
+| no cohesion pressure when no palette is stated | **deferred pending Step 5 evidence** — no generation pressure added yet |
 
-**Owner decision 2026-07-30: the two open items are blocked on the colour model.** Breadth and
-cohesion are both properties of colour *families*, and this system has no concept of one — every
-consumer re-invents a hardcoded list matched by substring, with 18 entries across the engine that
-can never match anything. The measurement in this document had to invent its own family grouping in
-a scratch script for exactly that reason. See `docs/color-taxonomy-rules.md` for the audit, the
-proposed family/neutrality model, and the migration order. Do not build a breadth term before it.
+**Owner decision 2026-07-30:** the colour-model blocker is resolved. The first set-level
+implementation is disclosure rather than generation pressure: family breadth, neutral-base share,
+and unused accent-colour pieces are reported after composition. This lets the corrected model roster
+be evaluated without steering the result being judged. Any scoring or prompt change waits for the
+Step 5 rerun and additional captured outputs.
 
 ### What the neutral-bonus fix actually changed
 

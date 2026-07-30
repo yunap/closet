@@ -123,7 +123,9 @@ the *second* did not. The atomic composer returns the whole rotation in one resp
 that says "keep titles and reasons concise so the complete rotation fits comfortably" — consistent
 with output-budget pressure, the model economising on later outfits.
 
-**Status: open, and it is the recommended next piece of work** — see §4.
+**Status: fixed 2026-07-30.** `completeSubmittedPlanOutfits` fills only structural absence from
+the slot's own gate-valid roster at zero provider calls, revalidating the entire rotation after
+each completion so a repair cannot duplicate another card's core.
 
 ### 3c. What the run cost, and what stage 3 cost
 
@@ -148,27 +150,27 @@ non-symmetric so a summer capsule drops cool-season cores but keeps a cool-seaso
 bonus restricted to pieces that introduce no colour; `taupe`/`oatmeal` added; roster utilization
 disclosed.
 
-### Step 1 — composition auto-complete *(no dependencies, recommended next)*
+### Step 1 — composition auto-complete *(complete 2026-07-30)*
 
 When a submitted look is missing a structural piece and its slot roster can supply one, complete it
 at composition time instead of rejecting it to a needs-review card. The logic already exists:
 `repair-capsule-look` does exactly this at `providerCalls: 0`, using `describeOutfitStructureGap`.
 
 On the live run this converts **7 good + 3 needs-review into 9 good + 1**, at no model cost.
-Testable offline against the saved thread.
+Testable offline against the saved thread. Implemented as `completeSubmittedPlanOutfits`; only
+structural absence is completed, and the entire rotation is revalidated after each completion.
 
-### Step 2 — slot facts *(complete, apart from the `environment` trust question)*
+### Step 2 — slot facts *(complete 2026-07-30)*
 
 The weather half is fixed and the occasion half turned out not to be a defect at all — see §3a.
-What remains:
+What was completed:
 
-1. **The `occasion` field description contradicts the engine's own profile keywords** and the
-   owner's register semantics. It should stop routing ordinary restaurant dinners to `evening`, and
-   reserve `evening` for the dressy night-out contexts `evening_social` actually lists.
-2. **`environment` is still model-declared and was wrong**, though the weather fix has removed most
-   of its bite. A `climate_controlled` property on the occasion profiles would let the engine
-   default it rather than trust it.
-3. ~~**The `register` guidance**~~ — **done 2026-07-30.** The field's own description was the
+1. **The `occasion` field description was corrected** to stop routing ordinary restaurant dinners
+   to `evening`; dressy night-out contexts still route to `evening_social`.
+2. **Indoor-reading slot labels now override a wrong declared outdoor environment.** Explicitly
+   outdoor places, walking/hiking activities, and `beach_coastal` remain outdoor. Occasion
+   resolution is unchanged.
+3. **The `register` guidance was corrected.** The field's own description was the
    cause: it framed `register` as an event-weekend escalation tool ("rehearsal dinner", "wedding
    ceremony") and then said to *"omit for ordinary slots"*, so the model never reached for it and a
    going-out slot inherited a stay-at-home register.
@@ -197,17 +199,36 @@ sage and olive are neutral-adjacent; periwinkle is dropped; and black, white, an
 separate retrieval families. A *targeted* retag of garments whose colour the old vocabulary could
 not express remains outstanding data work. It is not, and must not become, a wardrobe-wide retag.
 
-### Step 4 — palette cohesion *(blocked on step 3)*
+### Step 4 — palette cohesion *(complete as evaluation disclosure 2026-07-30)*
 
-Set-level breadth control and accent connectivity. Both are properties of colour *families*, so
-neither can be built before step 3. Must be scoring pressure or disclosure, **not a hard filter** —
-the `home`-gate precedent is that hard filters on taste dimensions starve capacity.
+Set-level breadth and accent connectivity are properties of colour *families*, so neither could be
+measured before step 3. The first implementation is deliberately observational:
+`describeCapsulePaletteCohesion` reports family breadth, neutral-base share, and accent-colour
+pieces that the representative rotation did not demonstrate.
+
+This is disclosure, **not a hard filter or a new generation instruction**. The `home`-gate
+precedent is that hard filters on taste dimensions starve capacity, and the corrected roster has
+not yet been evaluated. Step 5 supplies that evidence before any V2 scoring pressure is considered.
 
 ### Step 5 — decide stage 3 *(owner cost decision, not engineering)*
 
 The roster the model sees is now materially different: no accessories, 3 dresses instead of 1,
 layers capped at 2. Whether it earns its ~$0.075 needs one re-run at ~$0.33. Until then it stays
 default-off.
+
+Evaluate two additional qualities in that rerun and one or two further captured capsule outputs:
+
+- **Formula diversity:** does the rotation demonstrate meaningfully different outfit structures,
+  rather than mostly substituting pieces into one repeated formula? This is not a demand for
+  maximum novelty; repeating a strong formula with materially different expression can be right.
+- **Roster demonstration:** do the representative looks make the capsule's reuse logic visible
+  across contexts and pairings? This is not a 100% utilization target; forcing every roster piece
+  into a weaker outfit would buy the metric at the expense of styling quality.
+
+These are evaluation criteria only. Do not add prompt instructions, quotas, scoring terms, repair
+logic, or post-conditions for either one before the captures are reviewed. Treat any fix as V2
+unless testing reveals a severe failure, such as near-identical formulas across the whole rotation
+or a capsule whose claimed versatility is not demonstrated at all.
 
 ### Deferred with reasons
 

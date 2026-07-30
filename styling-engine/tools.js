@@ -18,6 +18,7 @@ import {
   mergePendingPlanForReplan,
   reasonRevisesMidSentence,
   describeCapsuleCompositionShortfall,
+  describeCapsulePaletteCohesion,
   describeCapsuleRosterUtilization,
   completeSubmittedPlanOutfits,
   REASON_REVISION_MESSAGE,
@@ -1761,6 +1762,13 @@ async function executeToolInternal(name, args, toolContext = {}) {
             pendingPlan.capsuleRoster || [],
             displayedForUtilization
           )
+          const paletteLine = describeCapsulePaletteCohesion(
+            pendingPlan.capsuleRoster || [],
+            displayedForUtilization
+          )
+          if (paletteLine) {
+            pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), paletteLine]
+          }
           if (utilizationLine) {
             pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), utilizationLine]
           }
