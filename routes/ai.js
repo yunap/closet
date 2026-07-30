@@ -5,6 +5,7 @@ import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
+import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
 import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult, normalizeManualOverrides } from '../styling-engine/taggerMerge.js'
 
 import {
@@ -857,7 +858,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
       "category": "top|bottom|dress|outerwear|shoes|accessory",
       "background_color": "base color of the garment, e.g. black, navy, cream, white",
-      "colors": ["only from: black, white, cream, beige, taupe, grey, charcoal, navy, denim, brown, tan, oatmeal, amber, mustard, orange, red, pink, mauve, lavender, lilac, plum, green, olive, turquoise, dark blue, dark grey, light grey, light blue, periwinkle, multi"],
+      "colors": ["${colorTaggerInstruction()}"],
       "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
       "season": "warm|cool|year-round",
       "pattern_type": "solid|floral|stripe|botanical|geometric|abstract|animal|graphic|plaid|other",
