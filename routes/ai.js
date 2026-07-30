@@ -2799,7 +2799,17 @@ export function capsuleRosterSelectionSchema(budget = 24) {
   }
 }
 
-function capsuleRosterSelectionSystemPrompt() {
+// The qualitative half of the Step 5 correction (docs/capsule-step5-evaluation.md
+// §4, "enforcement boundary"). Every judgment added below is relational and
+// visual — hero/support balance, whether a shoe is credible for this season,
+// whether a piece earns a job distinct from its neighbours. The evaluation is
+// explicit that a keyword rule, a numeric taste score, or a larger hard quota
+// would put that judgment in the wrong layer, so it arrives as brief here and
+// is checked by deterministic structure only where structure can decide.
+//
+// Used verbatim for both the initial call and the bounded repair, so a repair
+// cannot silently drop the standard the first attempt was held to.
+export function capsuleRosterSelectionSystemPrompt() {
   return `You are choosing the garments for a seasonal capsule wardrobe. The conversational stylist has already interpreted the request and fixed the use-case slots; a deterministic engine has already gated the candidates you are given.
 
 Pick exactly the requested number of pieces from the supplied candidates, using their IDs. Choose ONLY from the candidate list — nothing else exists for this task.
@@ -2808,6 +2818,16 @@ A capsule is a set, not a ranked list of good garments. Judge the pieces against
 
 Cover every requested use case. A roster with a beautiful palette that leaves one use case unwearable is a failed roster — the engine will reject it and you will get one chance to repair it. Make sure each use case can form complete outfits (a top and a bottom, or a dress, plus shoes that suit it).
 
+Every place in this capsule is finite, and one piece taking a place is another piece not taken. Before you finalise, check the set against all four of these:
+
+1. PROTAGONISTS. A capsule needs pieces that lead, pieces that support them, and pieces that ground the whole set. Aim for more than one visually distinct option that can lead a look, serving more than one of the requested contexts — not one token expressive garment surrounded by quiet basics, and not a crowd of pieces all competing for the same job. Judge this from the photographs: a garment that reads expressive in its written description can still read flat in the image, and the image is what the person will wear.
+
+2. INDEPENDENT WEARABILITY. Prefer pieces that work on their own. A piece that always needs something else under or over it costs two places to produce one look, so it has to earn that cost with a look the capsule could not otherwise make. If you take more than one such piece, make sure they lead to genuinely different outfits — different silhouette, different context, or a different base — rather than the same combination twice.
+
+3. FOOTWEAR THAT SUITS THE SEASON AND THE CONTEXTS. A shoe passing the engine's gates only means it is technically eligible. Ask instead whether you would actually wear it in this season for these use cases, and what job it does that another chosen pair does not. If the requested contexts include anywhere polished, give the set more than one convincing polished option — or, if the candidates genuinely cannot, say so in your palette line rather than padding the count with a pair that has no job.
+
+4. A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this do that nothing else here does?" If your own job line for a piece could be written about another piece you already chose, one of them is the wrong pick.
+
 State the palette you built around in your own words. If the request named colours, respect them as a strong preference, but never at the cost of leaving a use case uncovered — say so in the palette line when you had to reach outside them.
 
 For each piece, give one short line naming the job it does in this capsule. Write it for the wearer, not as engine vocabulary: what it is for and what it goes with. Do not restate the garment's own description.
@@ -2815,15 +2835,23 @@ For each piece, give one short line naming the job it does in this capsule. Writ
 Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether two pieces belong in one wardrobe.`
 }
 
-async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds }, toolContext) {
+// Extracted from the provider call so both the initial and the repair contract
+// are assertable offline, with no provider and no images. The repair block is
+// the only difference between them by construction.
+export function capsuleRosterSelectionUserText({
+  bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
+  attempt = 1, failures = [], previousRosterIds = []
+} = {}) {
   const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
   const slotLines = slots.map(slot => `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}): ${slot.bestFor || slot.label}`)
+  // A repair is a correction, not a fresh brief: the structural failures are
+  // exact and must be fixed, and the four judgments above still apply to
+  // whatever the fix displaces — otherwise "swap a shoe for a layer" can be
+  // satisfied by any layer at all.
   const repairBlock = attempt > 1
-    ? `\n\nYOUR PREVIOUS SELECTION WAS REJECTED. Previous IDs: [${(previousRosterIds || []).join(', ')}]\nFix exactly these problems, keeping the rest of your selection:\n${failures.map(entry => `- ${entry.message}`).join('\n')}`
+    ? `\n\nYOUR PREVIOUS SELECTION WAS REJECTED. Previous IDs: [${(previousRosterIds || []).join(', ')}]\nFix exactly these problems, keeping the rest of your selection:\n${failures.map(entry => `- ${entry.message}`).join('\n')}\n\nThe replacements you bring in are held to the same standard as the original picks: protagonists, independent wearability, seasonally credible footwear, and a distinct job per piece. Whatever you drop to make room should be the piece with the weakest job, not simply the easiest one to remove.`
     : ''
-  const content = [{
-    type: 'text',
-    text: `SEASON: ${isWinter ? 'winter' : isSummer ? 'summer' : 'unspecified'}
+  return `SEASON: ${isWinter ? 'winter' : isSummer ? 'summer' : 'unspecified'}
 CAPSULE SIZE: exactly ${budget} pieces
 ${palette.length ? `COLOURS THE PERSON ASKED FOR: ${palette.join(', ')}` : 'The person did not state a palette; choose one that suits these garments.'}
 
@@ -2832,6 +2860,12 @@ ${slotLines.join('\n')}
 
 CANDIDATES:
 ${truthCatalog.join('\n')}${repairBlock}`
+}
+
+async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds }, toolContext) {
+  const content = [{
+    type: 'text',
+    text: capsuleRosterSelectionUserText({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds })
   }]
 
   // Photographs for the candidates, same reasoning as the composer: this stage
@@ -2862,8 +2896,17 @@ ${truthCatalog.join('\n')}${repairBlock}`
   return value || {}
 }
 
-function capsulePlanCompositionSystemPrompt() {
+// Step 5 criterion 8: the rotation is the capsule's evidence, so it has to
+// demonstrate what the roster claims. The roster-specific version of this
+// ("show the layer, show each dependent piece over a different base, give each
+// shoe pair a look that calls for it") is built per run in
+// buildPlanSlotWorkbench's instructions, because it depends on what was
+// actually selected; this states the standing principle those instructions are
+// an instance of.
+export function capsulePlanCompositionSystemPrompt() {
   return `You are the composition stage of a capsule-planning tool. The conversational stylist has already interpreted the request, chosen the use-case slots, and fixed the capsule roster.
+
+The rotation is what proves the capsule works. Every piece in the roster was chosen for a job, so the set of looks you return must demonstrate those jobs — a layer worn somewhere, a piece that cannot stand alone shown over a base, a specialised shoe in a look that genuinely calls for it — and not merely touch most of the pieces. A rotation that uses almost every ID while never showing a whole function has not demonstrated the capsule. Where a piece's job genuinely cannot be shown well, say so plainly in the reason of the look that comes closest rather than passing over it in silence.
 
 Return the complete representative rotation in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Every look needs a distinct main core: a different top+bottom pair, or a different dress — this is enforced across the ENTIRE rotation you submit, not just within one slot, so a look can repeat another slot's core and still be rejected. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context (for example, home versus errands). When a slot combines adjacent contexts, state the narrower context the look genuinely serves instead of claiming it works for all of them. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
 

@@ -236,11 +236,28 @@ availability remain deterministic; hero/support/grounding balance, seasonally co
 and whether selected pieces earn distinct jobs remain model judgments; post-composition disclosure
 reports undemonstrated functions rather than letting a high raw utilization percentage hide them.
 
-No correction is implemented yet. The proposed V1 boundary requires owner review before code:
-restore the researched layer floor on the model path, give roster selection and repair the
-qualitative capsule jobs, and ask composition to demonstrate selected functions. Palette pressure,
-formula optimisation, deterministic hero scoring, a blanket dependent-piece cap and retagging
-remain out of scope.
+**The V1 correction is now implemented and awaiting owner review before the approved rerun.** It
+is exactly the boundary above and nothing more:
+
+- `layer_floor:outerwear` makes the researched layer allocation a validator floor as well as a
+  ceiling. It is `validatorOnly`, so the deterministic selector is untouched; the validator's
+  existing supply attribution supplies the "when the bench can supply it" condition, and
+  `describeCapsuleLayerSupplyGap` discloses a genuine shortfall instead of failing forever.
+- `dependent_base_unavailable` closes the roster-level loophole: a standalone base must be
+  gate-valid in every slot where a `needs_base` piece is offered. Structural availability only —
+  visual compatibility stays with the model.
+- The roster-selection brief (used verbatim for the initial call and the bounded repair) asks for
+  hero/support/grounding balance, independent wearability, seasonally credible footwear, and a
+  distinct job per piece.
+- The composition brief, plus a per-run clause derived from what the roster actually holds, asks
+  the rotation to demonstrate its layers, dependent pieces and specialised shoes.
+- `describeCapsuleUndemonstratedJobs` reports an undemonstrated category or special job with the
+  utilization percentage stated beside it, so a high raw number cannot stand alone.
+
+Palette pressure, formula optimisation, deterministic hero scoring, a blanket dependent-piece cap
+and retagging remain out of scope, and none of them was added. Verified offline: the ranking A/B
+against the 243-piece wardrobe reports 0 differing scenarios, and the scenario matrix, summer
+replay, roster-utility audit and bench diagnostics are byte-identical to the pre-change baseline.
 
 ### Deferred with reasons
 

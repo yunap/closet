@@ -20,6 +20,7 @@ import {
   describeCapsuleCompositionShortfall,
   describeCapsulePaletteCohesion,
   describeCapsuleRosterUtilization,
+  describeCapsuleUndemonstratedJobs,
   completeSubmittedPlanOutfits,
   REASON_REVISION_MESSAGE,
   printPairingSightIssue,
@@ -1766,6 +1767,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
             pendingPlan.capsuleRoster || [],
             displayedForUtilization
           )
+          // Step 5 criterion 4: utilization above counts IDs, and on the live
+          // run its 92% headline hid that the two unused pieces were the
+          // capsule's ONLY layer and a shoe that earned no formula. This names
+          // the undemonstrated JOB and restates the percentage alongside it, so
+          // a high raw number cannot read as success on its own.
+          const jobsLine = describeCapsuleUndemonstratedJobs(
+            pendingPlan.capsuleRoster || [],
+            displayedForUtilization
+          )
+          if (jobsLine) {
+            pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), jobsLine]
+          }
           if (paletteLine) {
             pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), paletteLine]
           }
