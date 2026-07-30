@@ -6,6 +6,7 @@ import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
 import { FEEDBACK_REASON_LABELS } from '../lib/feedbackTaxonomy.js'
+import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 
 import {
   fabricWeight,
@@ -1680,7 +1681,7 @@ export function occasionScoreForOutfit(pieces = [], occasion = '') {
 
 const ARCHETYPE_MIN_SCORE = 1
 
-const MISSION_FOCAL_COLORS = ['coral', 'orange', 'yellow', 'green', 'olive', 'blue', 'purple', 'pink', 'lavender', 'fuchsia', 'magenta', 'teal', 'turquoise', 'chartreuse', 'violet', 'lilac', 'rust', 'terracotta', 'mustard', 'ochre', 'plum', 'burgundy', 'emerald', 'red', 'cognac']
+const MISSION_FOCAL_COLORS = ACCENT_COLOR_NAMES
 const MISSION_NEUTRAL_COLORS = ['black', 'charcoal', 'grey', 'gray', 'navy', 'white', 'cream', 'ivory', 'beige', 'taupe', 'sand', 'oatmeal', 'espresso', 'brown', 'tan']
 const MISSION_PATTERN_VALUES = ['floral', 'print', 'pattern', 'stripe', 'striped', 'abstract', 'tapestry', 'paisley', 'botanical', 'graphic', 'plaid']
 const MISSION_TEXTURE_VALUES = ['crochet', 'knit', 'cashmere', 'corduroy', 'linen', 'silk', 'satin', 'leather', 'suede', 'tweed', 'velvet', 'gauzy', 'drape', 'drapey', 'textured', 'wool']
