@@ -1,6 +1,6 @@
 # Wardrobe color controls — pre-panel interaction specification
 
-**Status:** pre-panel scope; not yet owner-ratified or implemented.
+**Status:** implemented and post-build panel-reviewed 2026-07-30; awaiting owner UI review.
 **Depends on:** [color-taxonomy-rules.md](color-taxonomy-rules.md).
 **Explicitly excludes:** capsule palette controls and Lookbook color filtering.
 
@@ -133,19 +133,35 @@ available for accurate tagging without taking equal top-level space in the Wardr
 - Touch targets move toward 40–44px on narrow screens.
 - No desktop-only hover dependency.
 
-## 5. Decisions for the UI panel
+## 5. Implemented interaction decisions
 
-The panel should choose the presentation, not reopen the data model:
+The implementation and post-build Mode A review resolved the presentation questions without
+changing the ratified taxonomy:
 
-1. Wardrobe filter: family rows that expand in place versus a family-first view with a back action.
-2. Add/Edit: grouped always-visible shade rows versus family disclosures plus a persistent selected
-   summary.
-3. Whether counts belong on every family row, only in the filter, or nowhere in garment entry.
-4. How black, white, grey, metallic, and multi should be ordered relative to hue families.
-5. Whether one shared visual component can serve both the single-select filter and multi-select
-   editor without making their different jobs ambiguous.
-6. Whether the Wardrobe filter and “Link pieces” modal share one compact family-picker
-   presentation or use different shells around the same retrieval model.
+1. The Wardrobe filter uses in-place family expansion inside the existing popover. It shows only
+   populated families, a representative swatch, and the deduplicated active-piece count.
+2. Add/Edit/Batch use a compact family grid, one visible exact-shade region, and a persistent
+   selected-shade summary. Rendering fifteen full-width disclosure rows was rejected after review
+   because it made a supporting metadata field dominate the forms.
+3. Counts appear in retrieval controls only. Garment entry shows selected counts, not wardrobe
+   inventory counts.
+4. Ordering is neutral-first (`black`, `white`, `grey`, `beige`, `brown`), then hue families,
+   with `metallic` and `multi` last.
+5. Retrieval and entry share taxonomy utilities and visual primitives but remain separate
+   components: `ColorFamilyFilter` is single-select retrieval; `ColorEditor` is multi-select exact
+   tagging.
+6. Link Pieces uses the same family picker and retrieval semantics but wraps it in a collapsed
+   `Color` trigger so linked and available garments remain the dominant modal content.
+7. One-shade populated families do not offer a redundant exact-refinement level: broad and exact
+   would return the same garments.
+8. Family rows include representative swatches. Exact shades always include their own swatch and
+   visible label.
+9. The Link Pieces sheet is a focus-managed modal; Escape cancels, focus is contained and returned,
+   category and garment selections expose pressed state, and garment cards support Enter/Space.
+
+These decisions were unanimous across product-design, UX/accessibility, and fashion-product
+review. They are implemented evidence for owner review, not described as owner-ratified until that
+review occurs.
 
 ## 6. Acceptance boundaries
 
@@ -159,3 +175,15 @@ The panel should choose the presentation, not reopen the data model:
 - Filtering the available roster never removes or saves pending linked-piece selections.
 - Add/Edit changes require the repository's four-layer form-state verification and manual
   load → AI Retag → Save → SQLite handoff check against a disposable database and mock AI.
+
+## 7. Verification record
+
+- Production build passes.
+- Focused deterministic contracts pass for taxonomy, shared entry controls, Wardrobe family/exact
+  URL state, Batch Add wiring, and Link Pieces state separation.
+- Live read-only verification against the restored 243-piece wardrobe confirmed broad
+  `color_family=blue`, exact `color=navy`, correct broad/exact trigger labels, populated family
+  counts, and the persistent selected-shade summary. No garment or outfit writes were made.
+- The full suite and disposable-DB mock-retag/save handoff remain required before commit. The
+  current execution sandbox cannot bind the suite's temporary Express servers, and the available
+  server points to the owner's live database, so it was deliberately not repurposed for this test.
