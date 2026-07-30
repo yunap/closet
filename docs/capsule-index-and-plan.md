@@ -41,6 +41,7 @@ a comment explaining the reasoning is not one of those.**
 | [capsule-roster-selection-spec.md](capsule-roster-selection-spec.md) | The three-stage roster-selection design (bench → model chooses → engine validates). Stage 3 is built and behind `WARDROBE_MODEL_CAPSULE_ROSTER`, default off. |
 | [capsule-bench-implementation-brief.md](capsule-bench-implementation-brief.md) | Operating rules and acceptance commands for spec steps 1–2. Delegation brief. |
 | [stylist-bugfix-spec.md](stylist-bugfix-spec.md) | "Research done 2026-07-25 — what the capsule number should be": the *outfit-count* axis. Solid capacity measurements; its published-practice claim cites no source. |
+| [occasion_profiles_ratification.md](occasion_profiles_ratification.md) | **Authoritative for occasion behaviour.** The register ceilings (ratified 2026-07-05, a month of testing), the occasion profiles, and the amendments since. **Read before changing any ceiling, profile keyword, or slot-occasion guidance.** |
 | [stylist-session-handoff.md](stylist-session-handoff.md) | Running record of owner rulings. **Read before overturning anything.** |
 | [engine-behaviour-map.md](engine-behaviour-map.md) | Measured behaviour of the engine's paths, including the editorial-prompt findings. |
 
@@ -203,6 +204,10 @@ default-off.
 
 ## 5. Standing constraints
 
+- **Occasion behaviour is ratified.** `occasion_profiles_ratification.md` holds a month of
+  testing. Do not change a register ceiling, an occasion profile, or the guidance that routes a
+  slot to an occasion without reading it first, and record any amendment there rather than only in
+  code comments.
 - Never make a billed model call without explicit owner approval.
 - Do not retag the wardrobe. Fix the tagger first, then retag once, narrowly.
 - Palette is a preference, not a filter.

@@ -3,6 +3,10 @@
 **Last updated:** 2026-07-30. Branch `stylist-docs-staleness-fixes`, reset to `origin/main`
 at `6f94f6f` (PR #188).
 
+> **Occasion behaviour is ratified separately.** `docs/occasion_profiles_ratification.md` holds
+> the register ceilings and occasion profiles, ratified after a month of testing. Read it before
+> touching any of them; record amendments there.
+>
 > **All capsule work is now indexed.** Start at
 > [capsule-index-and-plan.md](capsule-index-and-plan.md) — it maps every capsule document, records
 > the live-run findings that exist nowhere else, and carries the sequenced plan. The entries in

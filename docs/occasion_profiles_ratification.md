@@ -1,4 +1,13 @@
-# Occasion Profiles — Ratification Checklist (DRAFT)
+# Occasion Profiles — Ratification Checklist
+
+**Not a draft.** The title said DRAFT until 2026-07-30 while the body carried a ratified
+amendment (register ceilings, 2026-07-05) plus two more added since. Nothing in the repository
+linked here, which is why a later session spent a day changing occasion behaviour without finding
+it. Linked from `docs/capsule-index-and-plan.md`.
+
+**This document is authoritative for occasion behaviour.** Read it before changing a
+`register_ceiling`, an occasion profile's keywords, or the prompt guidance that routes a slot to an
+occasion.
 
 Same rules as the Style Constitution: check `[x]` to keep, edit freely, unchecked = cut.
 Verdict legend: **HARD** = stays a prohibition (validity), **SOFT** = becomes discouraged
@@ -120,3 +129,80 @@ Notes:
   constrains clothing register, not just shoe comfort.
 - Explicit typed register requests override upward. For example, `dressy` on a city or
   gallery request raises the effective ceiling to `dressy`; `not dressy` lowers it.
+
+---
+
+## Amendment 1: An explicit occasion tag overrides that occasion's ceiling, by one step
+
+Status: **ratified by Yuna, 2026-07-30. Marked for revisit during testing.**
+Amends the register-ceiling table above; does not replace it.
+
+### What changed
+
+A piece the owner has explicitly tagged for an occasion is exempt from that occasion's
+`register_ceiling`, **capped at one register step**. Implemented in `registerCeilingVerdict`
+(`styling-engine/rules.js`), which now takes the occasion; tests in
+`test/freeform_gate_parity.test.js`.
+
+- `elevated` tagged `casual` → **admitted** to casual slots
+- `dressy` tagged `casual` → **still excluded** (two steps)
+- a piece *not* tagged for the occasion → **still excluded**, unchanged
+
+### Why
+
+Live thread_1785380251549: the beige tailored linen shorts (piece 242, `formality: elevated`,
+`occasions: casual, smart-casual, city`) were refused from a casual slot and the look shipped as
+a needs-review card. The owner's ruling was that an explicit tag on a garment is a statement about
+*that garment*, and should outrank a category default written for pieces nobody has judged. This
+mirrors the precedent already in `pieceMatchesOccasion`: *"User tag overrides AI profile
+confidence."*
+
+### Measured effect on this wardrobe
+
+- **174** pieces are tagged `casual`; **52** of those sit above the `everyday` ceiling.
+- Of those 52: **50 are `elevated`** and now enter casual slots; **2 are `dressy`** and remain
+  excluded by the one-step cap.
+- **No other occasion profile changes at all** — no piece tagged for any other occasion exceeds
+  that occasion's ceiling. This is exclusively a casual-ceiling-versus-casual-tag amendment.
+
+### Tension with the original ratification — stated plainly
+
+The 2026-07-05 note on this table reads: *"`casual -> everyday` is the largest behavior change. It
+would make park-friend, coffee, errands, and low-key social rosters reject `elevated` and `dressy`
+pieces."* This amendment keeps the `dressy` half of that intent and **relaxes the `elevated`
+half**.
+
+The owner chose this amendment before the 2026-07-05 ratification had been found — nothing in the
+repository linked to this document. It was then re-confirmed on 2026-07-30 with the conflict
+explicit, and **flagged to revisit in testing**: the question to answer live is whether casual
+slots now pull in elevated pieces that read wrong for park-friend, coffee and errands, which is
+exactly what the original ratification was protecting against.
+
+Two narrower fallbacks were considered and are still available if testing says so: revert to the
+ratified ceiling outright, or apply the exemption only to slots above `casual` (city, smart casual)
+and leave low-key casual exactly as ratified.
+
+---
+
+## Amendment 2: Ordinary restaurant dinners are smart casual, not evening
+
+Status: **ratified by Yuna, 2026-07-30.** Prompt guidance only — no ceiling in the table above
+changes.
+
+The plan-slot `occasion` field description told the model to *"map dinner/evening-restaurant/
+night-out use cases to 'evening'"*, which contradicted the profiles this document ratifies:
+
+- `city_smart_casual` keywords include **`dinner`** and `museum` → ceiling `elevated`
+- `evening_social` keywords are `evening, dinner date, wine bar, theater, night out` → ceiling
+  `dressy`
+
+Owner's semantics: *"evening has historically been dressier than restaurant, and restaurant would
+usually get smart casual or maybe city."* Following the old wording pushed a restaurant slot to a
+`dressy` ceiling the owner does not want.
+
+The description now routes ordinary restaurant dinners to `smart casual`/`city` and reserves
+`evening` for genuinely dressier night-out contexts. **This aligns the prompt with the ratified
+ceilings rather than changing them.** The old wording was unratified scaffolding from PR #58.
+
+Pinned by two tests in `test/plan_outfit_set.test.js`: one on the guidance, one on the profile
+semantics it describes, so a future ceiling change cannot silently invalidate the wording.
