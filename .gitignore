@@ -6,6 +6,7 @@ data/
 wardrobe.db
 wardrobe.db-shm
 wardrobe.db-wal
+backups/
 uploads/
 .DS_Store
 scratch/*
