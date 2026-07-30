@@ -19,9 +19,28 @@ exists. They are **not** a design authority and must not be treated as one.
    `docs/stylist-session-handoff.md`** — what has been ratified.
 3. **This archive** — why something was once done that way.
 
-What the archive is genuinely good for is **provenance**: when live code does something odd and no
-comment explains it, a spec may say why. That is worth real money occasionally, and it is the only
-claim this index makes for it.
+What the archive is genuinely good for is **research and provenance**: when live code does
+something odd and no comment explains it, a spec may say why. That is worth real money
+occasionally, and it is the only claim this index makes for it.
+
+### How to use it when a spec contradicts a current decision
+
+**Nothing here has been vetted against the current codebase.** Which parts survived the redesigns
+and which are dead is simply unknown, file by file, until someone checks. So "an old spec decided
+otherwise" is an *unverified claim*, not a finding.
+
+The method, set by the owner on 2026-07-30 after exactly this situation:
+
+- A decision made from **fresh evidence** — a live run, a measurement — **stands.** It is not
+  reverted because an unvetted historical document disagrees.
+- The disagreement is **recorded** (with the quote, so the reasoning is not lost) and the decision
+  is **marked to revisit in testing.**
+- **Testing settles it, not archaeology.** If the old reasoning was right, a live run will show it,
+  and the fallbacks are already written down.
+
+The failure mode this avoids is deferring to a document that describes an architecture that may no
+longer exist — which would let stale specs quietly veto decisions made against the system as it
+actually is.
 
 The concrete case that prompted this file: on 2026-07-30 a session reversed two decisions that were
 **still live in the code that morning** — verified, not assumed — without knowing they had been
