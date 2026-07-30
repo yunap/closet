@@ -416,7 +416,11 @@ export function estimateAiUsageCost(usage = null) {
       reason: `No local pricing entry for ${usage.provider}:${usage.model}`
     }
   }
-  const billableInputTokens = Math.max(0, numberOrZero(usage.inputTokens) - numberOrZero(usage.cacheReadInputTokens))
+  // OpenAI prompt_tokens includes cached tokens; Anthropic input_tokens is the
+  // uncached remainder and reports cache reads/creation in separate fields.
+  const billableInputTokens = usage.provider === 'openai'
+    ? Math.max(0, numberOrZero(usage.inputTokens) - numberOrZero(usage.cacheReadInputTokens))
+    : numberOrZero(usage.inputTokens)
   const inputUsd = billableInputTokens * pricing.input / 1_000_000
   const outputUsd = numberOrZero(usage.outputTokens) * pricing.output / 1_000_000
   const cacheReadUsd = numberOrZero(usage.cacheReadInputTokens) * (pricing.cacheRead || pricing.cachedInput || pricing.input) / 1_000_000
@@ -579,7 +583,13 @@ export function extractToolResultImages(result) {
 }
 
 export function stylistToolsForTurn(toolContext = {}) {
-  return toolContext?.capsuleAtomicCompleted ? [] : STYLIST_TOOLS
+  if (toolContext?.capsuleAtomicCompleted) return []
+  const allowedNames = Array.isArray(toolContext?.allowedToolNames)
+    ? new Set(toolContext.allowedToolNames)
+    : null
+  return allowedNames
+    ? STYLIST_TOOLS.filter(tool => allowedNames.has(tool.name))
+    : STYLIST_TOOLS
 }
 
 // Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"
@@ -857,16 +867,23 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
+    if (toolContext.trackMockUsage) {
+      recordToolLoopUsage(toolContext, normalizeAiUsage(testResponse?.usage || null))
+    }
     // Mirror the real loop's output checks and one-retry-per-guard semantics so
     // contract tests can exercise guard behavior end-to-end (previously this
     // short-circuit skipped the checks entirely, making every guard untestable
     // through /ask).
-    let answerStr = typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse)
+    let answerStr = toolContext.returnObjectAnswer && typeof testResponse?.answer === 'string'
+      ? testResponse.answer
+      : (typeof testResponse === 'string' ? testResponse : JSON.stringify(testResponse))
     const retriedChecks = new Set()
     for (let i = 0; i < 6; i++) {
       const capsuleFinal = boundedCapsuleFinalAnswer(answerStr, toolContext)
       if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections: [] }
-      const check = applyFreeformOutputChecks(answerStr, toolContext, retriedChecks)
+      const check = toolContext.skipFreeformOutputChecks
+        ? { block: false }
+        : applyFreeformOutputChecks(answerStr, toolContext, retriedChecks)
       if (!check.block) break
       retriedChecks.add(check.blockType)
       const retryResponse = takeTestAiResponse({
@@ -889,7 +906,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   // 10 iterations: the disciplined flow (declare, search, view supports, view
   // layers, propose xN) legitimately needs 6-8; the old cap of 7 left no margin
   // for a single corrective bounce and live turns died with zero cards.
-  for (let iter = 0; iter < 10; iter++) {
+  const maxProviderIterations = Number(toolContext.maxProviderIterations) > 0
+    ? Math.min(10, Number(toolContext.maxProviderIterations))
+    : 10
+  for (let iter = 0; iter < maxProviderIterations; iter++) {
     if (AI_PROVIDER === 'openai') {
       const client = new OpenAI({ apiKey: resolveOpenAiKey() })
       const availableTools = stylistToolsForTurn(toolContext)
@@ -985,7 +1005,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         const finalText = message.content || ''
         const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
         if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
-        const check = applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
+        const check = toolContext.skipFreeformOutputChecks
+          ? { block: false }
+          : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
           currentMessages.push({ role: 'assistant', content: finalText })
@@ -1076,7 +1098,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         const finalText = response.content?.[0]?.text || ''
         const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
         if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
-        const check = applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
+        const check = toolContext.skipFreeformOutputChecks
+          ? { block: false }
+          : applyFreeformOutputChecks(finalText, toolContext, retriedChecks)
         if (check.block) {
           retriedChecks.add(check.blockType)
           currentMessages.push({ role: 'assistant', content: response.content })

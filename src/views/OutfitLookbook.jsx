@@ -1134,7 +1134,7 @@ function OutfitDetail({ outfit, onClose, onEdit, onDelete, onSendToStylist, onPi
                 className="garment-ask-stylist"
                 onClick={() => onSendToStylist({ ...outfit, pieces, main_piece_id: mainPieceId })}
               >
-                ◇ Ask stylist about this outfit
+                ◇ Work with stylist
               </button>
               <div className="outfit-management-actions" aria-label="Outfit management">
                 <button
@@ -1423,7 +1423,7 @@ function BoardDetail({ board, onClose, onDelete, onSendToStylist, onGoToThread, 
 
             <section className="board-detail-section board-actions-section" aria-label="Generated outfit actions">
               <button type="button" onClick={() => onSendToStylist(board)} className="garment-ask-stylist board-stylist-action">
-                ◇ Ask stylist about this outfit
+                ◇ Work with stylist
               </button>
               <button
                 type="button"
@@ -2233,8 +2233,8 @@ export default function OutfitLookbook({ onSendToStylist, onGoToThread, onOpenVi
               pieces: board.pieces,
               occasion: board.context_name || '',
               notes: board.reason,
-              autoSend: true,
-              stylistPrompt: 'Evaluate this styling direction. Tell me whether the pieces work together, what feels risky, and what I should change first.'
+              visualEvidenceType: 'generated_board',
+              autoSend: false
             })
           }}
         />

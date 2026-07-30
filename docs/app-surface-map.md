@@ -368,13 +368,23 @@ interview**.
 
 - **New chat** (`/stylist`) — the landing page, with the Visual Composer brief.
 - **Ask stylist about this piece** — from a garment card or garment detail in Wardrobe.
-- **Ask stylist about this outfit** — from an outfit in Lookbook.
-- **Generated Outfits → Visual Composer** — from Lookbook's generated collection.
+- **Work with stylist / Ask stylist about this outfit** — from a saved outfit in Lookbook.
+- **Ask stylist about this outfit** — from a generated board in Lookbook.
 
 **What actually happens.** **[by design]** Each seeds a different `activeContext` (`piece`,
 `outfit`, or wardrobe-level), and the landing panel, the available actions, and the thread's title
-and rail grouping all follow from it. The outfit and piece panels differ because the starting
-object and available decisions differ — do not assume every thread began with an outfit.
+and rail grouping all follow from it. Saved outfits and generated boards now enter the same
+**Work with this outfit** chooser: **Review this outfit**, **Find similar looks**, **Restyle the
+main piece**, or a specific question. A generated-board handoff carries its real linked piece IDs,
+its rendered board image, `visualEvidenceType: generated_board`, and does not auto-submit a
+critique. The outfit and piece panels still differ because their starting object and available
+decisions differ.
+
+**[owner ruling 2026-07-29] Submit dismissal is action-specific.** **Review this outfit** dismisses
+the chooser immediately so the existing chat loading presentation owns the wait. Similar/restyle
+keep the chooser visible because those flows do not yet have an equivalent processing
+presentation. On the selected-piece chooser, **Create outfits from my wardrobe** dismisses after
+submit; **Suggest new pieces** remains visible. This is not a global “all submits dismiss” rule.
 
 > **Stores.** `App.jsx:134/139/144` hand the context to `AskClaude` → `StylistChat`. Persisted in
 > `chat_threads.payload.activeContext`.
@@ -401,6 +411,12 @@ behind **Why this outfit**, and an action row.
 - **[by design] `Preview all directions (~$0.07)` costs the same as rendering one card.** So
   rendering three directions individually costs three times as much as the batch. The batch sits
   below the free compare strip.
+- **[by design] Garment truth survives card → render → critique.** Generated outfit payloads carry
+  the full linked garment records needed for image generation. Structural constraints are stated
+  to the image model as positive visual directions (for example, render a `wear_over_only` shirt
+  hanging naturally over the waistband) rather than as an ever-growing list of prohibited styling
+  tricks. Generated boards are then handed to critique with the same linked IDs and an explicit
+  synthetic-image provenance flag.
 
 > **Stores.** Rendered boards land in `saved_boards`; evaluation results in the thread payload
 > (`evaluationResultsByKey`, `evaluatedKeys`). `StylistChat.jsx:3098/3105/3129/3143/3154`, `:2619`.
@@ -428,18 +444,37 @@ repeated wholesale in **More detail**. The owner accepts the current occasional 
 and internal-provenance language for now. Corrections happen through follow-up conversation;
 `Intent` is not a separate editable control.
 
+> **Evidence authority.** A saved **My Outfit** uses its first image as the actual worn-photo
+> authority for fit, scale, and proportion. A generated board is explicitly different: its first
+> image is labelled as an AI-generated styling visualization, and every subsequent linked garment
+> image is labelled as a garment reference. The board can establish the proposed composition and
+> expose rendering mistakes; it cannot establish real tuck, fit, hem, placement, or construction.
+> Linked garment truth wins any conflict, and generated-board recommendations receive a final
+> cross-garment constraint check. The saved-outfit path is intentionally unchanged.
+
 > **Stores and follow-ups.** The evaluation object stores `visibleFacts`, `userCritique`, and
 > `detailedCritique`. Immediate follow-ups receive the recent critique through chat history plus a
 > compact evaluation memory (intent, verdict, floor line, fit placement, shoe read, first issue,
-> recommendation) and display an ordinary short chat answer. The current backend nevertheless
-> runs those turns through the full evaluator contract; an answer-only follow-up contract is a
-> pending cost optimization. Built by `formatSharedOutfitEvaluation`.
+> recommendation) and display an ordinary short chat answer. Follow-ups use their own `{ answer }`
+> contract with a 500-token ceiling rather than regenerating the full diagnostic object and
+> four-paragraph critique. The request still carries current outfit images and linked garment
+> truth, and `StylistChat` preserves the prior full evaluation memory. The follow-up evaluator has
+> a restricted retrieval toolset (`search_wardrobe`, `view_pieces`, `get_garment_details`): current-
+> outfit questions stay one call, while requests for another owned garment can search without
+> falling back to the broad freeform agent. No phrase list decides this boundary.
+> Built by `evaluateOutfitThroughSharedPipeline` and `formatSharedOutfitEvaluation`.
 
-> **Cost boundary.** B2 is one provider call. It removes redundant generated prose rather than
-> adding a rewrite call, and formal before/after token proof is not a ratification gate. Pending
-> optimization work: cache the stable evaluator prompt, expose input/output/cache usage, use the
-> lean follow-up contract above, and protect exact retries with a short-lived result cache. Cache
-> stable image/evidence blocks only if measurements justify it.
+> **Cost boundary.** A full B2 critique is one provider call. A direct follow-up is also one; a
+> follow-up that actually retrieves wardrobe alternatives may use two calls, or three when
+> visual/detail verification is needed. The restricted path has a three-iteration ceiling and does
+> not run the general freeform answer-retry guards. The stable evaluator system prompt carries an
+> Anthropic cache breakpoint (and remains a normal repeated prefix on OpenAI). Debug telemetry now
+> records provider calls, normalized input/output/cache tokens, estimated cost, and exact-result
+> cache state; the development-only telemetry disclosure shows those values. Identical request
+> payloads reuse a bounded ten-minute result cache, and concurrent duplicates share one in-flight
+> call. The SHA-256 key covers provider/model, prompt version, complete system/messages, images,
+> garment truth, and current memory, so changed evidence or context cannot reuse a stale critique.
+> Stable image/evidence prompt caching remains deferred until measurements justify it.
 
 ---
 

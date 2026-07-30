@@ -110,7 +110,8 @@ about why a piece reappeared: eleven generations ago is invisible.
 
 ## Retry loops around model calls
 
-Two, both in `askStylistWithTools`, and both cost money when they fire.
+Two mechanisms live in `askStylistWithTools`, with a second bounded operating profile for critique
+follow-ups. All cost money when they advance to another provider iteration.
 
 **[by design] The tool loop runs up to 10 iterations.** The comment records the reasoning and the
 history: the disciplined flow — declare, search, view supports, view layers, propose ×N —
@@ -121,6 +122,15 @@ live turns died with zero cards."* So 10 is a deliberate margin, raised after li
 inspects the finished answer; if it violates a guard, the model is re-prompted with a correction
 message. `retriedChecks` ensures each distinct guard only triggers one retry, so the loop cannot
 ping-pong on the same violation.
+
+**[by design] Critique follow-ups reuse the tool loop but not its broad authority.** Their
+`allowedToolNames` list contains only `search_wardrobe`, `view_pieces`, and
+`get_garment_details`; `stylistToolsForTurn` filters the provider-visible schemas to that set.
+Their loop ceiling is 3 rather than 10, and `skipFreeformOutputChecks` disables the six general
+freeform correction retries. A question answerable from the board/photo and linked pieces therefore
+finishes in one call. A semantically phrased request for another owned garment can search and
+continue without any client keyword classifier; verification can consume the third and final call.
+The aggregate telemetry reports all iterations and tokens as one critique response.
 
 **Consequence:** a single user turn can be several model calls — tool iterations plus guard
 retries. **Instrumented 2026-07-28:** every tool-loop iteration now accumulates input, output,
@@ -480,8 +490,9 @@ pieces"* in the composer footer.
 
 ## Caches
 
-Five real caches. The derivation script reports 47 `new Map()` hits; most are local lookups inside
-one function and are not caches at all. These five outlive a request:
+Six cache systems now outlive a request. The original derivation script reported 47 `new Map()`
+hits; most are local lookups inside one function and are not caches at all. PR 188 added the
+outfit-evaluation result cache and a paired in-flight registry:
 
 | cache | scope | key | eviction |
 |---|---|---|---|
@@ -490,6 +501,13 @@ one function and are not caches at all. These five outlive a request:
 | `geocodeCache` / `weatherCache` (`weather.js:16-17`) | server, module-wide | location / `dates|lat,lon` | 3-hour TTL |
 | `threadCache` (`src/utils/chatThreadCache.js`) | browser tab | thread id | none — lives until reload |
 | `relationshipCache` (`src/utils/garmentRelationships.js`) | browser tab | piece id | none, but `loadGarmentRelationships(id, {refresh:true})` bypasses it |
+| `outfitEvaluationResultCache` (`core.js`) | server, module-wide | SHA-256 of cache version + provider/model + mode/token cap + complete system/messages (including images and garment/memory context) | 10-minute TTL; LRU insertion order; max 50 |
+
+`outfitEvaluationInFlight` uses the same key but is a coalescing registry rather than a retained
+cache: concurrent identical evaluations await one promise, report `providerCalls: 0` to the
+followers, and delete the entry when that request settles. Exact-result hits also report zero
+provider calls and zero estimated cost. Tests disable the result cache by default unless
+`WARDROBE_TEST_EVALUATION_CACHE=true`, keeping endpoint contracts isolated.
 
 **[by design]** The thumbnail cache is user-id-prefixed as defense-in-depth — the comment is
 explicit that no leak was observed, but the cache is module-wide across concurrent requests and
@@ -1036,6 +1054,22 @@ realistic proportions, no beauty retouching, no text or watermark, "closer to a 
 fashion ad"); and the outfit's own label, direction, silhouette, mechanics and `watchFor` — the
 `watchFor` line is passed as *"Avoid drift:"*, so the outfit-level warning becomes a rendering
 instruction. Pieces are described with `buildPieceText`, the structured truth text.
+
+**PR 188 closes a card-to-render truth gap.** Generated outfit/card payloads now retain the linked
+piece records needed by the renderer instead of relying on the card's short rationale. Planner
+rosters preserve the same render-relevant structural fields. `wholeWardrobeImagePrompt` converts
+those records into positive visual directions — what the garment must visibly do — so a constraint
+such as `tuck_behavior: wear_over_only` becomes an instruction to show the shirt hanging naturally
+over the waistband. This is deliberately a general constraint-composition rule, not a catalogue of
+forbidden tuck/belt/layer cases. Structured garment truth outranks card prose throughout.
+
+The same provenance continues into evaluation. A generated render carries
+`visualEvidenceType: generated_board`; its image block is labelled as an AI-generated styling
+visualization, and linked reference images are individually labelled with garment identity and
+category. The evaluator may judge the composition or call out a renderer error, but cannot infer
+real tuck, fit, hem, placement, or construction from the synthetic board. A final cross-garment
+validity instruction rejects a proposed action if any affected linked record forbids it. Saved
+**My Outfits** do not use this rule: their first image remains the actual worn-photo authority.
 
 **`editorialImagePrompt`** (`core.js:3011`) splices `BODY_CONTRACT`, `PROVEN_FORMULAS`,
 `AESTHETIC_GRAVITY`, `LANE_NEUTRALITY` and `EXPRESSIVE_HIERARCHY_RULES`, then a

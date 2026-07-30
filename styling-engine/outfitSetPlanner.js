@@ -1666,6 +1666,9 @@ function describeShoeReserveGaps(gaps = [], budget = 0) {
 function planWorkbenchPieceLine(piece = {}) {
   const colors = Array.isArray(piece.colors) && piece.colors.length ? piece.colors.join('/') : ''
   const occasions = Array.isArray(piece.occasions) && piece.occasions.length ? piece.occasions.slice(0, 4).join('/') : ''
+  const waistbandConstraint = piece.waistband_type
+    ? `waistband:${piece.waistband_type}`
+    : ''
   const bits = [
     `ID ${piece.id}`,
     piece.name || 'Garment',
@@ -1673,6 +1676,16 @@ function planWorkbenchPieceLine(piece = {}) {
     colors ? `colors:${colors}` : '',
     occasions ? `occasions:${occasions}` : '',
     piece.formality ? `formality:${piece.formality}` : '',
+    piece.silhouette ? `silhouette:${piece.silhouette}` : '',
+    piece.length_hits_at ? `length:${piece.length_hits_at}` : '',
+    piece.hem_finish ? `hem:${piece.hem_finish}` : '',
+    piece.sleeve_type && piece.sleeve_type !== 'none' ? `sleeve:${piece.sleeve_type}` : '',
+    piece.fit_on_body && piece.fit_on_body !== 'none' ? `fit:${piece.fit_on_body}` : '',
+    piece.tuck_behavior ? `tuck:${piece.tuck_behavior}` : '',
+    waistbandConstraint,
+    piece.opacity && piece.opacity !== 'opaque' ? `opacity:${piece.opacity}` : '',
+    piece.needs_base === 'yes' ? 'NEEDS_BASE_LAYER' : '',
+    piece.fabric_category ? `fabric:${piece.fabric_category}` : '',
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
@@ -2275,6 +2288,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // (catalog: pattern floral, six colors) as "solid-base... muted print",
     // fabricating past the catalog truth it already had in piece_catalog.
     'The catalog\'s pattern and color fields are the truth about prints — never describe a piece as solid, muted, or subtle unless its line says so.',
+    'The catalog\'s silhouette, length, hem, sleeve, fit, tuck, waistband, opacity, and base-layer fields are authoritative garment construction. Never write a card reason or styling instruction that contradicts them. Card prose expresses styling intent only; it cannot redefine how a garment is constructed or worn.',
     // Part 3 (spec 19): live miss — a submitted card's reason said "Actually
     // revising: emerald v-neck top + oatmeal textured elastic waist pants..."
     // while piece_ids still carried the abstract midi dress the prose had just

@@ -1,5 +1,6 @@
 import path from 'path'
 import fs from 'fs'
+import crypto from 'crypto'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
@@ -15,11 +16,14 @@ import {
 
 import {
   askStylist,
+  askStylistWithUsage,
+  askStylistStructuredWithUsage,
   askStylistWithTools,
   prepareImageForClaude,
   AI_PROVIDER,
   ACTIVE_STYLIST_MODEL,
   PROMPT_CACHE_BREAKPOINT,
+  estimateAiUsageCost,
   mockAiEnabled,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
@@ -1893,6 +1897,22 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     if (!constraints.length) constraints.push('preserve category, color, shape, and visible texture')
     return `${index + 1}. ${piece.name}: ${constraints.join('; ')}.`
   }).join('\n')
+  const constructionChecklist = pieces.map((piece, index) => {
+    const fields = [
+      piece.silhouette ? `preserve its ${String(piece.silhouette).replaceAll('_', ' ')} silhouette` : '',
+      piece.length_hits_at ? `keep its ${String(piece.length_hits_at).replaceAll('_', ' ')} length` : '',
+      piece.hem_finish ? `show its complete ${String(piece.hem_finish).replaceAll('_', ' ')}` : '',
+      piece.sleeve_type && piece.sleeve_type !== 'none' ? `preserve its ${String(piece.sleeve_type).replaceAll('_', ' ')} sleeves` : '',
+      piece.fit_on_body && piece.fit_on_body !== 'none' ? `render its fit as ${String(piece.fit_on_body).replaceAll('_', ' ')}` : '',
+      piece.tuck_behavior === 'wear_over_only'
+        ? 'wear it fully outside the bottom waistband, with the complete hem visible and no part tucked in'
+        : (piece.tuck_behavior ? `respect its ${String(piece.tuck_behavior).replaceAll('_', ' ')} wear behavior` : ''),
+      piece.waistband_type ? `preserve the ${String(piece.waistband_type).replaceAll('_', ' ')} waistband` : '',
+      piece.opacity && piece.opacity !== 'opaque' ? `preserve its ${String(piece.opacity).replaceAll('_', ' ')} opacity` : '',
+      piece.needs_base === 'yes' ? 'show it with a base layer' : '',
+    ].filter(Boolean)
+    return `${index + 1}. ${piece.name}: ${fields.length ? fields.join('; ') : 'use the reference image and garment truth as provided'}.`
+  }).join('\n')
   return [
     'Generate one realistic full-outfit styling image using the provided saved wardrobe garment references.',
     'This is NOT a shopping/editorial concept and NOT a generated fantasy outfit. Use the listed saved garments as the outfit components.',
@@ -1904,8 +1924,11 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     '- If two listed garments are both printed, keep both actual prints recognizable; do not merge them into one invented print.',
     '- Do not add extra hero garments, patterned layers, belts, scarves, or accessories unless the listed outfit explicitly includes them.',
     '- Shoes must match the listed shoe reference if shoes are included.',
+    '- Structured garment fields and reference images are authoritative. Outfit labels, reasons, and style prose are intent notes only and must be ignored wherever they conflict with garment construction, fit, length, hem, sleeve, tuck, waistband, opacity, or layering behavior.',
     '',
     `Piece-specific fidelity checklist:\n${fidelityChecklist}`,
+    '',
+    `Authoritative garment construction:\n${constructionChecklist}`,
     '',
     'Person / scene:',
     '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
@@ -1915,11 +1938,13 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     `Outfit label: ${outfit.label || 'Whole wardrobe outfit'}`,
     outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
     outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
-    outfit.reason ? `Stylist mechanics: ${outfit.reason}` : '',
+    outfit.reason ? `Non-authoritative styling intent: ${outfit.reason}` : '',
     outfit.watchFor ? `Avoid drift: ${outfit.watchFor}` : '',
     `Occasion: ${occasion}. Season: ${season}.`,
     '',
-    `Saved wardrobe pieces to use:\n${pieceLines}`
+    `Saved wardrobe pieces to use:\n${pieceLines}`,
+    '',
+    'Final render check: the visible outfit must satisfy every authoritative garment-construction direction above, even when a more conventional styling choice would look plausible.'
   ].filter(Boolean).join('\n')
 }
 
@@ -2497,6 +2522,84 @@ export function uploadedOrSavedOutfitPhotoPath(outfitPhoto = '') {
 // feedback text. The client splits on this exact line to collapse the details.
 export const CRITIQUE_DETAILS_DELIMITER = '--- Full structured read ---'
 
+const OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS = 10 * 60 * 1000
+const OUTFIT_EVALUATION_RESULT_CACHE_MAX = 50
+const OUTFIT_EVALUATION_CACHE_VERSION = 'critique-cost-v1'
+const outfitEvaluationResultCache = new Map()
+const outfitEvaluationInFlight = new Map()
+
+function critiqueResultCacheEnabled() {
+  return process.env.NODE_ENV !== 'test' || process.env.WARDROBE_TEST_EVALUATION_CACHE === 'true'
+}
+
+function cloneJsonValue(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value))
+}
+
+function pruneOutfitEvaluationResultCache(now = Date.now()) {
+  for (const [key, entry] of outfitEvaluationResultCache) {
+    if (entry.expiresAt <= now) outfitEvaluationResultCache.delete(key)
+  }
+  while (outfitEvaluationResultCache.size > OUTFIT_EVALUATION_RESULT_CACHE_MAX) {
+    const oldestKey = outfitEvaluationResultCache.keys().next().value
+    outfitEvaluationResultCache.delete(oldestKey)
+  }
+}
+
+function outfitEvaluationResultCacheKey({ system, messages, maxTokens, responseMode }) {
+  return crypto.createHash('sha256').update(JSON.stringify({
+    version: OUTFIT_EVALUATION_CACHE_VERSION,
+    provider: AI_PROVIDER,
+    model: ACTIVE_STYLIST_MODEL,
+    responseMode,
+    maxTokens,
+    system,
+    messages,
+  })).digest('hex')
+}
+
+function readOutfitEvaluationResultCache(key, now = Date.now()) {
+  if (!critiqueResultCacheEnabled()) return null
+  pruneOutfitEvaluationResultCache(now)
+  const entry = outfitEvaluationResultCache.get(key)
+  if (!entry) return null
+  // Refresh insertion order so the bounded map behaves as a small LRU.
+  outfitEvaluationResultCache.delete(key)
+  outfitEvaluationResultCache.set(key, entry)
+  const result = cloneJsonValue(entry.result)
+  result.debug = {
+    ...(result.debug || {}),
+    providerCalls: 0,
+    usage: null,
+    estimatedCost: {
+      estimatedUsd: 0,
+      pricingAvailable: true,
+      source: 'exact_result_cache',
+    },
+    resultCache: {
+      hit: true,
+      ageMs: Math.max(0, now - entry.createdAt),
+      ttlMs: OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS,
+    },
+  }
+  return result
+}
+
+function writeOutfitEvaluationResultCache(key, result, now = Date.now()) {
+  if (!critiqueResultCacheEnabled()) return
+  outfitEvaluationResultCache.set(key, {
+    createdAt: now,
+    expiresAt: now + OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS,
+    result: cloneJsonValue(result),
+  })
+  pruneOutfitEvaluationResultCache(now)
+}
+
+export function clearOutfitEvaluationResultCache() {
+  outfitEvaluationResultCache.clear()
+  outfitEvaluationInFlight.clear()
+}
+
 export function formatSharedOutfitEvaluation({ parsed, responseMode = 'full', question = '', attachedImageInventory = [] }) {
   const directFollowup = responseMode === 'followup'
     ? String(parsed?.answer || parsed?.feedback || parsed?.reply || parsed?.response || '').trim()
@@ -2673,8 +2776,16 @@ export async function evaluateOutfitThroughSharedPipeline({
   const { pieces } = resolveOutfitEvaluationPieces({ outfit, pieceIds })
   const content = []
   const outfitPhoto = outfit.photo || outfit.imageUrl || outfit.image_url || ''
+  const generatedBoardEvidence = outfit.visualEvidenceType === 'generated_board'
   const savedPhotoPath = uploadedPhotoPath || uploadedOrSavedOutfitPhotoPath(outfitPhoto)
+  if (generatedBoardEvidence && savedPhotoPath) {
+    content.push({
+      type: 'text',
+      text: `IMAGE 1 — AI-GENERATED STYLING VISUALIZATION: ${outfit.label || outfit.title || outfit.name || 'current outfit'}. This is the composition being evaluated, not evidence of how the real garments fit or can be worn.`
+    })
+  }
   const outfitImageIncluded = await addEvaluationImage(content, savedPhotoPath)
+  if (generatedBoardEvidence && savedPhotoPath && !outfitImageIncluded) content.pop()
   if (!outfitImageIncluded && pieces.length < 2 && !allowPhotoOnly) {
     const err = new Error('An outfit photo or at least two linked wardrobe pieces are required')
     err.statusCode = 400
@@ -2689,12 +2800,18 @@ export async function evaluateOutfitThroughSharedPipeline({
     const { base64, mime } = await prepareImageForClaude(filePath)
     return { piece, base64, mime }
   }))
-  for (const ref of imageRefs.filter(Boolean)) {
+  for (const [index, ref] of imageRefs.filter(Boolean).entries()) {
+    if (generatedBoardEvidence) {
+      content.push({
+        type: 'text',
+        text: `IMAGE ${index + 2} — LINKED GARMENT REFERENCE: ${ref.piece.name} (${ref.piece.category}). Use this image only to verify this garment's identity and construction.`
+      })
+    }
     content.push({ type: 'image', source: { type: 'base64', media_type: ref.mime, data: ref.base64 } })
   }
   const attachedImageInventory = [
     outfitImageIncluded
-      ? `actual worn outfit photo: ${outfit.label || outfit.title || outfit.name || 'current outfit'}`
+      ? `${generatedBoardEvidence ? 'AI-generated styling visualization' : 'actual worn outfit photo'}: ${outfit.label || outfit.title || outfit.name || 'current outfit'}`
       : '',
     ...imageRefs
       .filter(Boolean)
@@ -2715,7 +2832,7 @@ export async function evaluateOutfitThroughSharedPipeline({
     `Label: ${outfit.label || outfit.title || outfit.name || 'Whole wardrobe outfit'}`,
     outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
     outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
-    outfit.reason ? `Current reason: ${outfit.reason}` : '',
+    outfit.reason ? `Card rationale (non-authoritative styling intent only; ignore any construction, fit, placement, or wear claim that conflicts with linked garment truth or the current image): ${outfit.reason}` : '',
     outfit.watchFor ? `Current watch note: ${outfit.watchFor}` : '',
     outfit.formulaFamily ? `Formula family: ${outfit.formulaFamily}` : '',
     outfit.archetypeId ? `Archetype: ${outfit.archetypeId}` : '',
@@ -2723,7 +2840,9 @@ export async function evaluateOutfitThroughSharedPipeline({
   ].filter(Boolean).join('\n')
 
   const imageAuthorityText = outfitImageIncluded && pieces.length
-    ? 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.'
+    ? (generatedBoardEvidence
+        ? 'The first image is an AI-generated styling visualization, not a worn outfit photo. Use it to evaluate the proposed composition and to identify rendering errors, but never treat its fit, placement, tuck, hem, or invented construction as proof about the real garments. Later linked garment references and structured garment truth are authoritative when the visualization conflicts with them.'
+        : 'The first image is the actual worn outfit photo. Treat it as primary visual evidence for fit, scale, proportion, and whether the combination works. Later images are linked garment references that clarify the saved pieces.')
     : outfitImageIncluded
       ? 'The image is the actual worn outfit photo. There are no linked garment records, so identify garments cautiously and mark garment-truth uncertainty in confidenceLimits.'
       : 'No worn outfit photo was provided. Use linked garment references and garment truth cautiously.'
@@ -2745,6 +2864,15 @@ export async function evaluateOutfitThroughSharedPipeline({
     pieceLines
       ? `Owned garment truth. Use these exact garments for the critique:\n${pieceLines}`
       : 'Owned garment truth: no linked pieces. Use visual evidence only; do not overclaim exact garment identity, fabric, or shoe type.',
+    pieceLines
+      ? 'Authority rule: structured owned-garment truth and the current attached images outrank card titles, reasons, watch notes, prior critique prose, and other generated descriptions. Use card prose only to understand intended mood or occasion; never use it to redefine garment construction or how a garment can be worn.'
+      : '',
+    pieceLines
+      ? 'Constraint-composition rule: before recommending any physical styling action that involves multiple garments, verify that every affected garment permits it. A capability on one garment cannot override a prohibition or construction constraint on another.'
+      : '',
+    generatedBoardEvidence && pieceLines
+      ? 'Generated-board output validity check: before returning the critique, compare the proposed userCritique.action and recommendation.smallestAdjustment against every affected linked garment record. If either action conflicts with any construction or wear constraint, discard that action and choose a compatible action using the current pieces, or say no valid adjustment is available. A contradictory action makes the response invalid even if the prose acknowledges the constraint.'
+      : '',
     linkedFitCautionsText
       ? `Linked fit/trust cautions. Treat these as authoritative and reconcile visible fit placement against them before judging whether a garment fits naturally:\n${linkedFitCautionsText}`
       : '',
@@ -2753,7 +2881,7 @@ export async function evaluateOutfitThroughSharedPipeline({
       ? `Previous structured critique memory. Use this for continuity, but correct it if the current image/garment truth contradicts it:\n${String(previousEvaluation).slice(0, 1600)}`
       : '',
     responseMode === 'followup'
-      ? 'Response mode: followup. Answer the user directly in 2-5 concise sentences. If the user asks what photos/images you can see, answer with the Current attached image inventory first and do not give styling advice unless the user also asks for it. If the user asks whether a garment can be tucked, altered, cuffed, belted, or otherwise worn differently, first check both the actual outfit photo and the linked garment truth for fabric, hem behavior, fit confidence, engine notes, and visible waist placement; if evidence is missing, say what is low-confidence instead of pretending. The current outfit image and linked garment records are the authority; do not introduce garments that are not visible or listed unless you clearly label them as a possible future test. If the user asks about sharpness, softness, proportion, or why an outfit is not working, lead with garment mechanics: hem length, waist transition, fit placement, silhouette continuity, and proportion behavior. Do not use jewelry/accessories as the first fix unless the garment mechanics are already working. Do not repeat the full critique, visible facts, scores, roles, or JSON sections in prose. If correcting an earlier read, say what changed and give one practical next step.'
+      ? 'Response mode: followup. Answer the user directly in 2-5 concise sentences. You may use search_wardrobe when—and only when—the user’s meaning requires garments beyond the linked outfit, regardless of their exact wording. Search proactively when they ask for an owned alternative, replacement, or another wardrobe option; never claim the rest of the closet is unavailable. Use view_pieces or get_garment_details only when the search result needs visual or construction verification. If the question can be answered from the current outfit, do not call a tool. If the user asks what photos/images you can see, answer with the Current attached image inventory first and do not give styling advice unless the user also asks for it. If the user asks whether a garment can be tucked, altered, cuffed, belted, or otherwise worn differently, first check both the actual outfit photo and the linked garment truth for fabric, hem behavior, fit confidence, engine notes, and visible waist placement; if evidence is missing, say what is low-confidence instead of pretending. The current outfit image and linked garment records are the authority. If the user asks about sharpness, softness, proportion, or why an outfit is not working, lead with garment mechanics: hem length, waist transition, fit placement, silhouette continuity, and proportion behavior. Do not use jewelry/accessories as the first fix unless the garment mechanics are already working. Do not repeat the full critique, visible facts, scores, roles, or JSON sections in prose. If correcting an earlier read, say what changed and give one practical next step.'
       : 'Response mode: full critique.',
     '',
     wholeWardrobeFeedbackText ? `Whole-wardrobe feedback memory:\n${wholeWardrobeFeedbackText}` : '',
@@ -2763,32 +2891,147 @@ export async function evaluateOutfitThroughSharedPipeline({
     'Return direct advice only. Do not create render directions or image-generation prompts.'
   ].filter(Boolean).join('\n') })
 
-  const raw = await withTimeout(askStylist({
-    system: prompts.WHOLE_WARDROBE_EVALUATOR_SYSTEM,
-    // Sized from observed truncation: with critiqueProse the full critique JSON
-    // reached ~7.9k chars (~2000 tokens) before being cut off, so 1400 and even
-    // 2000 truncated real responses mid-string. 3000 leaves headroom.
-    maxTokens: 3000,
-    messages: [
-      ...(history || []).map(h => ({ role: h.role, content: h.content })),
-      { role: 'user', content }
-    ]
-  }), 90000, 'Whole-wardrobe outfit evaluator')
-  const parsed = safeJsonFromModel(raw)
-  const formatted = formatSharedOutfitEvaluation({ parsed, responseMode, question, attachedImageInventory })
-  return {
-    ...formatted,
-    provider: AI_PROVIDER,
-    model: ACTIVE_STYLIST_MODEL,
-    mode: routeMode,
-    pipeline: 'whole_wardrobe_outfit_evaluator',
-    evidenceMode,
-    debug: {
+  const isFollowup = responseMode === 'followup'
+  const system = `${
+    isFollowup
+      ? prompts.OUTFIT_EVALUATION_FOLLOWUP_SYSTEM
+      : prompts.WHOLE_WARDROBE_EVALUATOR_SYSTEM
+  }\n${PROMPT_CACHE_BREAKPOINT}`
+  const maxTokens = isFollowup ? 500 : 3000
+  const messages = [
+    ...(history || []).map(h => ({ role: h.role, content: h.content })),
+    { role: 'user', content }
+  ]
+  const resultCacheKey = outfitEvaluationResultCacheKey({
+    system,
+    messages,
+    maxTokens,
+    responseMode,
+  })
+  const cachedResult = readOutfitEvaluationResultCache(resultCacheKey)
+  if (cachedResult) {
+    cachedResult.debug = {
+      ...(cachedResult.debug || {}),
       timings: { totalMs: Date.now() - startedAt },
+    }
+    return cachedResult
+  }
+
+  const inFlight = outfitEvaluationInFlight.get(resultCacheKey)
+  if (inFlight) {
+    const sharedResult = cloneJsonValue(await inFlight)
+    sharedResult.debug = {
+      ...(sharedResult.debug || {}),
+      timings: { totalMs: Date.now() - startedAt },
+      providerCalls: 0,
+      usage: null,
+      estimatedCost: {
+        estimatedUsd: 0,
+        pricingAvailable: true,
+        source: 'in_flight_coalescing',
+      },
+      resultCache: {
+        hit: true,
+        coalesced: true,
+        ttlMs: OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS,
+      },
+    }
+    return sharedResult
+  }
+
+  const evaluationPromise = (async () => {
+    let parsed
+    let usage
+    let providerCalls = 1
+    if (isFollowup) {
+      const toolContext = {
+        allowedToolNames: ['search_wardrobe', 'view_pieces', 'get_garment_details'],
+        maxProviderIterations: 3,
+        skipFreeformOutputChecks: true,
+        trackMockUsage: true,
+        returnObjectAnswer: true,
+        occasion,
+        season,
+        mood,
+        question,
+        request: question,
+        retrievedPieceIds: new Set(pieces.map(piece => Number(piece.id)).filter(Boolean)),
+        visuallySeenPieceIds: new Set(imageRefs.filter(Boolean).map(ref => Number(ref.piece.id)).filter(Boolean)),
+      }
+      const followupResult = await withTimeout(askStylistWithTools({
+        system,
+        maxTokens,
+        messages,
+        toolContext,
+      }), 90000, 'Outfit critique follow-up')
+      let followupAnswer = String(followupResult.answer || '').trim()
+      if (followupAnswer.startsWith('{')) {
+        try {
+          const structuredAnswer = JSON.parse(followupAnswer)
+          if (typeof structuredAnswer?.answer === 'string') followupAnswer = structuredAnswer.answer
+        } catch {
+          // The tool-capable provider normally follows the answer-only JSON contract, but a
+          // plain-text answer is also safe to display. Leave malformed/non-JSON text untouched.
+        }
+      }
+      parsed = { answer: followupAnswer }
+      const diagnostics = toolContext.freeformDiagnostics || {}
+      providerCalls = Math.max(1, Number(diagnostics.providerIterations) || 0)
+      usage = {
+        provider: AI_PROVIDER,
+        model: ACTIVE_STYLIST_MODEL,
+        inputTokens: Number(diagnostics.providerInputTokens) || 0,
+        outputTokens: Number(diagnostics.providerOutputTokens) || 0,
+        cacheReadInputTokens: Number(diagnostics.providerCacheReadInputTokens) || 0,
+        cacheCreationInputTokens: Number(diagnostics.providerCacheCreationInputTokens) || 0,
+      }
+      usage.totalTokens = usage.inputTokens + usage.outputTokens +
+        usage.cacheReadInputTokens + usage.cacheCreationInputTokens
+    } else {
+      // Sized from observed truncation: the full critique JSON reached ~7.9k
+      // chars (~2000 tokens) before being cut off, so 1400 and even 2000
+      // truncated real responses mid-string. 3000 leaves headroom.
+      const evaluationResult = await withTimeout(askStylistWithUsage({
+        system,
+        maxTokens,
+        messages,
+      }), 90000, 'Whole-wardrobe outfit evaluator')
+      parsed = safeJsonFromModel(evaluationResult.text)
+      usage = evaluationResult.usage
+    }
+    const formatted = formatSharedOutfitEvaluation({ parsed, responseMode, question, attachedImageInventory })
+    const result = {
+      ...formatted,
+      provider: AI_PROVIDER,
+      model: ACTIVE_STYLIST_MODEL,
+      mode: routeMode,
+      pipeline: 'whole_wardrobe_outfit_evaluator',
       evidenceMode,
-      linkedPieceCount: pieces.length,
-      outfitImageIncluded,
-      imageCount: imageRefs.filter(Boolean).length + (outfitImageIncluded ? 1 : 0)
+      debug: {
+        timings: { totalMs: Date.now() - startedAt },
+        providerCalls,
+        usage,
+        estimatedCost: estimateAiUsageCost(usage),
+        resultCache: {
+          hit: false,
+          ttlMs: OUTFIT_EVALUATION_RESULT_CACHE_TTL_MS,
+        },
+        evidenceMode,
+        linkedPieceCount: pieces.length,
+        outfitImageIncluded,
+        imageCount: imageRefs.filter(Boolean).length + (outfitImageIncluded ? 1 : 0)
+      }
+    }
+    writeOutfitEvaluationResultCache(resultCacheKey, result)
+    return result
+  })()
+
+  outfitEvaluationInFlight.set(resultCacheKey, evaluationPromise)
+  try {
+    return await evaluationPromise
+  } finally {
+    if (outfitEvaluationInFlight.get(resultCacheKey) === evaluationPromise) {
+      outfitEvaluationInFlight.delete(resultCacheKey)
     }
   }
 }

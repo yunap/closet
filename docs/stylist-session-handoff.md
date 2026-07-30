@@ -1,7 +1,45 @@
 # Stylist work — session handoff
 
-**Last updated:** 2026-07-29. Branch `experiment/b2-readable-critique-clean`, rebased onto
-`origin/main` at `160d992`.
+**Last updated:** 2026-07-29. Branch `experiment/critique-cost-optimization`, started from
+merged PR #187 on `origin/main` at `77fe064`.
+
+## 2026-07-29 — PR 188 critique optimization, evidence integrity, and entry-flow reconciliation
+
+Branch `experiment/critique-cost-optimization` starts cleanly from merged PR #187 at `77fe064`.
+It implements the first cost pass without changing the ratified full critique:
+
+- Full critiques append the existing `PROMPT_CACHE_BREAKPOINT` to the stable evaluator system
+  prompt. Anthropic receives a cache-controlled stable system block; OpenAI receives the same plain
+  prompt and can apply its normal repeated-prefix caching.
+- `evaluateOutfitThroughSharedPipeline` now keeps normalized provider usage and
+  `estimateAiUsageCost` in `debug`. The dev-only message telemetry shows critique tokens, cache
+  reads, estimated cost, and exact-result cache hit/miss state.
+- Follow-ups use a dedicated `{ answer }` contract capped at 500 output tokens instead of the full
+  3,000-token critique contract. They still receive the current outfit and linked-garment images,
+  garment truth, compact prior evaluation, and relevant memory. The client preserves the existing
+  full evaluation in thread memory after the answer-only response.
+- Exact duplicate requests use a ten-minute, 50-entry in-memory result cache. The key hashes the
+  provider/model, cache version, system prompt, response mode, token ceiling, complete messages,
+  image bytes, garment truth, and memory. Concurrent identical misses share one in-flight promise.
+  Failures are not cached. Live verification: an exact retry 11.8 seconds later returned in 290 ms
+  with `providerCalls: 0` and `$0`.
+- Direct questions about the current critique remain one provider call. Follow-ups now reuse a
+  three-iteration restricted tool loop containing only `search_wardrobe`, `view_pieces`, and
+  `get_garment_details`, so arbitrary wording can request an owned alternative without routing the
+  entire thread through the broad freeform agent. Retrieval may take a second call and optional
+  visual/detail verification a third. The general freeform output-retry guards are disabled.
+- Saved outfits and generated boards enter the same **Work with this outfit** chooser. Review
+  dismisses that chooser on submit; similar/restyle remain visible. The selected-piece
+  **Create outfits from my wardrobe** action also dismisses, while **Suggest new pieces** does not.
+- Garment truth now survives planner/card → image prompt → critique. Image prompts express
+  structural fields as positive render directions. Generated boards carry
+  `visualEvidenceType: generated_board`, label the synthetic board and each linked reference
+  adjacent to its image, and treat linked garment records as authoritative over generated fit,
+  tuck, hem, placement, or construction. Saved **My Outfits** retain actual-worn-photo authority.
+
+Stable image/evidence prompt caching remains deliberately deferred until the new telemetry shows
+it is worth the added request restructuring. The four-paragraph full `detailedCritique` remains one
+provider call and is unchanged; only a follow-up that needs wardrobe retrieval can add calls.
 
 ## 2026-07-29 — B2 readable critique ratified
 
@@ -33,12 +71,8 @@ old structured-read labels; fresh main contains their migrated versions. After r
 `origin/main` declared `pieceNeedsBase` twice; the branch removes the second identical declaration
 as a separate merge-repair commit.
 
-**Separate cost follow-up:** add prompt-cache marking and critique usage telemetry first; replace
-the current full evaluator contract on follow-up turns with a lean answer-only contract; then add
-a short-lived exact-request cache. Although the UI currently displays only a short follow-up, the
-backend still runs that turn through the full 3,000-token evaluator path. Stable image/evidence
-caching should wait for measurements. These optimizations must not shorten the ratified detailed
-critique or introduce a second provider call.
+**Separate cost follow-up:** implemented on `experiment/critique-cost-optimization`; see the entry
+above. Stable image/evidence caching still waits for measurements.
 
 ## 2026-07-29 — rejected looks are shown and repaired, not discarded
 
