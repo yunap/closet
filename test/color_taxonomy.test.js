@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {
+  ACCENT_COLOR_NAMES,
   COLOR_NAMES,
   COLOR_TAXONOMY,
   colorFamilies,
@@ -35,6 +36,10 @@ test('owner-ratified color classifications are pinned', () => {
   assert.equal(colorTaxonomyEntry('olive').neutrality, 'neutral-adjacent')
   assert.equal(COLOR_NAMES.includes('periwinkle'), false)
   assert.deepEqual(colorFamilies(['black', 'white', 'grey']), ['black', 'white', 'grey'])
+  assert.equal(ACCENT_COLOR_NAMES.includes('burgundy'), true)
+  assert.equal(ACCENT_COLOR_NAMES.includes('olive'), false)
+  assert.equal(ACCENT_COLOR_NAMES.includes('sage'), false)
+  assert.equal(ACCENT_COLOR_NAMES.includes('silver'), false)
 })
 
 test('unknown values are explicit and never earn the palette-neutral classification', () => {
@@ -55,4 +60,17 @@ test('all tagger prompts derive their color vocabulary from the taxonomy', () =>
     assert.ok(source.includes('colorTaggerInstruction()'), `${path} must derive the prompt enum`)
     assert.equal(source.includes('"colors": ["only from: black,'), false, `${path} retains a copied color enum`)
   }
+})
+
+test('mission focal-color scoring derives from taxonomy accents', () => {
+  const source = fs.readFileSync('styling-engine/rules.js', 'utf8')
+  assert.ok(source.includes("import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'"))
+  assert.ok(source.includes('const MISSION_FOCAL_COLORS = ACCENT_COLOR_NAMES'))
+  assert.equal(source.includes("const MISSION_FOCAL_COLORS = ['"), false)
+  for (const deadColor of ['fuchsia', 'magenta', 'chartreuse', 'violet', 'terracotta', 'ochre', 'emerald', 'cognac']) {
+    assert.equal(ACCENT_COLOR_NAMES.includes(deadColor), false)
+  }
+  const attributes = fs.readFileSync('styling-engine/attributes.js', 'utf8')
+  assert.ok(attributes.includes('ACCENT_COLOR_NAMES.join'))
+  assert.equal(/\baccentList\b/.test(attributes), false)
 })

@@ -1,6 +1,6 @@
 // Attributes Module
 // Acts as the single entry point for interpreting garment text when structured metadata is not yet populated.
-import { colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
+import { ACCENT_COLOR_NAMES, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { confidenceFromProfile } from './taggerMerge.js'
 
 export const FIBER_VALUES = ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
@@ -205,7 +205,7 @@ export function colorFamily(p) {
   if (new RegExp(`\\b(${darkAnchorList.join('|')}|dark denim)\\b`).test(text)) return 'dark-anchor'
   if (new RegExp(`\\b(${warmEarthList.join('|')})\\b`).test(text)) return 'warm-earth'
   if (new RegExp(`\\b(${softNeutralList.join('|')}|light)\\b`).test(text)) return 'soft-neutral'
-  if (new RegExp(`\\b(${accentList.join('|')})\\b`).test(text)) return 'accent'
+  if (new RegExp(`\\b(${ACCENT_COLOR_NAMES.join('|')})\\b`).test(text)) return 'accent'
 
   return 'other'
 }

@@ -36,6 +36,9 @@ const LEGACY_SEED_TODOS = [
 export function resolveDbPath(userId) {
   if (process.env.WARDROBE_DB_PATH) return process.env.WARDROBE_DB_PATH
   if (userId === DEFAULT_USER_ID) {
+    if (process.env.NODE_ENV === 'test' && process.env.WARDROBE_USERS_DIR) {
+      return path.join(usersRootDir, String(userId), 'wardrobe.db')
+    }
     assertDefaultDatabaseAccess({
       explicitDbPath: process.env.WARDROBE_DB_PATH,
       allowLiveDb: process.env.WARDROBE_ALLOW_LIVE_DB,

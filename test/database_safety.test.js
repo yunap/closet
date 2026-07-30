@@ -71,6 +71,26 @@ test('an explicit isolated database remains available to standalone scripts', ()
   assert.match(result.stdout, /0/)
 })
 
+test('test-only multi-user roots isolate the default user without weakening live fallback', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-safe-users-'))
+  const usersDir = path.join(root, 'users')
+  const env = {
+    ...process.env,
+    NODE_ENV: 'test',
+    WARDROBE_USERS_DIR: usersDir,
+  }
+  delete env.WARDROBE_DB_PATH
+  delete env.WARDROBE_ALLOW_LIVE_DB
+  const result = spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e',
+      "const { db } = await import('./db.js'); console.log(db.prepare('SELECT COUNT(*) AS n FROM pieces').get().n)"],
+    { cwd: process.cwd(), env, encoding: 'utf8' }
+  )
+  assert.strictEqual(result.status, 0, result.stderr)
+  assert.equal(fs.existsSync(path.join(usersDir, '1', 'wardrobe.db')), true)
+})
+
 test('rotating backups are valid SQLite snapshots and retain only the newest files', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wardrobe-backup-'))
   const dbPath = path.join(root, 'wardrobe.db')

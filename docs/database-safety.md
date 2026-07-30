@@ -5,13 +5,16 @@ longer opens that file implicitly.
 
 ## Standalone diagnostics
 
-Every diagnostic, probe, migration, or one-off script must choose its database before importing
-`db.js`:
+Every diagnostic, probe, migration, or one-off script must choose its isolated database or
+multi-user root before importing `db.js`:
 
 ```js
 process.env.WARDROBE_DB_PATH = '/tmp/wardrobe-probe/wardrobe.db'
 const { db } = await import('../db.js')
 ```
+
+`WARDROBE_USERS_DIR` is the equivalent explicit isolation mechanism for multi-user diagnostics and
+tests.
 
 Use a copied database when real garment data is required. Do not point destructive or fixture-based
 diagnostics at the live file. An intentional live-data maintenance operation must opt in with

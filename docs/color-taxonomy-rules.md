@@ -111,7 +111,7 @@ survives only in the garment's name, which is why it never appeared in any colou
 why `coral` sits dead in two engine lists that were written expecting it. Also absent: `gold`,
 `khaki`, `greige`.
 
-## 4. Proposed model
+## 4. Ratified model
 
 Two derived properties per shade, kept orthogonal:
 
@@ -124,13 +124,14 @@ list cannot express and which every fashion source treats as essential.
 
 | shade | family | neutrality |
 |---|---|---|
-| black, charcoal, dark grey, grey, light grey | `achromatic` | neutral |
-| white, ivory, cream | `achromatic` | neutral |
+| black | `black` | neutral |
+| charcoal, dark grey, grey, light grey | `grey` | neutral |
+| white, ivory, cream | `white` | neutral |
 | oatmeal, beige, tan, taupe, *camel*, *khaki*, *greige* | `beige` | neutral |
 | brown | `brown` | neutral-adjacent |
 | navy, dark blue | `blue` | neutral |
 | denim | `blue` | neutral-adjacent |
-| blue, light blue, *periwinkle* | `blue` | accent |
+| blue, light blue | `blue` | accent |
 | teal, turquoise | `cyan` | accent |
 | olive, sage | `green` | neutral-adjacent |
 | green | `green` | accent |
@@ -142,9 +143,11 @@ list cannot express and which every fashion source treats as essential.
 | silver, *gold* | `metallic` | metallic |
 | multi | `multi` | multi |
 
-*Italic* entries are shades to add. 11 families, close to Google's 13, with `beige` added and
-`achromatic` merging White/Gray/Black — appropriate here because the distinction that matters for a
-wardrobe is neutral-vs-accent, not white-vs-black.
+*Italic* entries are shades added by this work. The ratified model has 15 families. Black, white,
+and grey remain separate families because they are distinct retrieval and garment-entry choices,
+even though all three share `neutrality: neutral`. Family answers “which colour area?”; neutrality
+answers “what palette role?”. Keeping those questions orthogonal avoids collapsing useful wardrobe
+filters merely because the shades play the same capsule role.
 
 ### What this collapses
 
@@ -163,33 +166,60 @@ wardrobe is neutral-vs-accent, not white-vs-black.
 `family` and `neutrality` are *derived* by lookup. This is much cheaper than a schema migration and
 it keeps the tagger's output human-readable.
 
-What does need doing, in order:
+Implementation status:
 
-1. **Reconcile the vocabulary** in `src/utils/colors.js`: add `family` and `neutrality` to each
-   entry, add the missing shades (`coral`, `gold`, `khaki`, `greige`, `camel`), and resolve `silver`
-   (in data, undeclared) and `periwinkle` (declared, unused).
-2. **Fix the tagger prompt** so it emits only vocabulary terms, and can now say `coral`. Per the
-   standing rule — fix the tagger first, retag once afterwards — this precedes any retagging.
-3. **Point the engine at the taxonomy**, deleting the four hardcoded lists and the two inline
-   duplicates, and replacing substring matching with exact lookup.
-4. **Targeted retag only.** Not the wardrobe. Only pieces whose true colour the old vocabulary
-   could not express — the coral maxi is the known case; a listing pass over `pink`/`orange`/`red`
-   pieces would find the rest. This is a handful of pieces, not 243.
-5. **Panel UI**: swatch chips grouped by family, per Baymard, with the long tail reachable but not
-   listed as top-level peers.
+1. **Complete — reconcile the vocabulary.** `lib/colorTaxonomy.js` is the canonical table;
+   `src/utils/colors.js` derives its UI values from it. Coral, gold, khaki, greige, and camel are
+   expressible; silver is canonical; periwinkle is removed.
+2. **Complete — fix the tagger prompt.** Every tagger surface derives the allowed shade names from
+   the taxonomy.
+3. **Complete — point the engine at the taxonomy.** Palette-neutral checks, family similarity,
+   palette extraction, and focal-colour missions use exact taxonomy properties. The final surviving
+   `MISSION_FOCAL_COLORS` copy was removed in the follow-up: it now aliases the derived
+   `ACCENT_COLOR_NAMES`.
+4. **Outstanding data work — targeted retag only.** Not the wardrobe. Only pieces whose true colour
+   the old vocabulary could not express — the coral maxi is the known case; an owner-reviewed
+   listing pass over `pink`/`orange`/`red` pieces would find the rest. This is a handful of pieces,
+   not 243.
+5. **Specified, not implemented — Wardrobe UI.** The four related surfaces and their shared
+   interaction contract are recorded in
+   [wardrobe-color-controls-spec.md](wardrobe-color-controls-spec.md). The mandatory expert-panel
+   review still precedes material UI implementation.
 
 **Ordering risk:** step 3 changes engine behaviour (which pieces read as neutral), so it should land
 with its own before/after measurement on the capsule replay, exactly as the quota changes did.
 
-## 6. Open questions for the owner
+**Follow-up measurement, 2026-07-30:** deriving mission focal colors from
+`neutrality === 'accent'` produced zero roster or capacity differences across the provider-free
+capsule A/B matrix. There were therefore no `EXPLAINED BY` stubs to resolve. Direct acceptance tests
+cover the behavior the capsule matrix does not exercise: olive cannot be the focal accent of a
+`color_anchor` mission, while burgundy can.
 
-- **Silver.** Modelled as `metallic` per published practice, but a silver knit reads as grey in
-  wear. `metallic` or `achromatic`/neutral?
-- **Burgundy.** Listed as `accent` above. Some fashion sources treat deep burgundy as a dark
-  neutral. Two pieces, so low stakes either way.
-- **Periwinkle.** Declared and unused — drop it, or keep it available?
-- **Sage and olive as `neutral-adjacent`.** Sources support "soft olive" as a modern neutral. This
-  makes 17 olive/sage pieces count toward the neutral proportion, which moves capsule scoring.
+## 6. Owner rulings — 2026-07-30
+
+These are settled product decisions, not open taxonomy questions:
+
+- **Silver is metallic.** It does not earn the palette-neutral classification merely because its
+  swatch is visually grey. Gold was added alongside it so metallic tagging is not silver-only.
+- **Burgundy is an accent.** It remains in the red family and may satisfy focal-colour mission
+  scoring.
+- **Periwinkle is dropped.** It had no stored wardrobe usage and remains outside the canonical
+  tagger vocabulary.
+- **Sage and olive are neutral-adjacent.** They count as palette-neutral for recombination, but
+  retain the green family for retrieval. They must not satisfy accent/focal-colour scoring.
+- **Black, white, and grey remain separate families.** Their shared neutral role does not erase the
+  retrieval distinction between them.
+
+Additional implementation rulings from the same review:
+
+- Exact canonical shades remain the persisted garment facts; families are derived for grouping and
+  retrieval and are never saved in place of a shade.
+- There is no wardrobe-wide retag. Only garments whose visible colour could not be represented by
+  the old vocabulary are candidates for a later targeted retag. The known coral case remains
+  outstanding data work.
+- The Wardrobe filter, garment Add/Edit, Batch Add, and Lookbook “Link pieces” modal must be
+  reviewed as one UI workstream before implementation; see
+  [wardrobe-color-controls-spec.md](wardrobe-color-controls-spec.md).
 
 ## 7. Caveats
 
@@ -201,9 +231,9 @@ with its own before/after measurement on the capsule replay, exactly as the quot
   taken as indicative rather than binding.
 - **The neutral consensus is practitioner consensus**, same caveat as the other two documents.
   Convergence across independent sources is the evidence.
-- **The family map above is a proposal, not a measurement.** Hue grouping is a judgement call at
-  the boundaries — teal/turquoise between blue and green, coral between pink and orange, rust
-  between orange and brown. Those placements should be reviewed before they are encoded.
+- **The family map above is a ratified product model, not a measured natural law.** Boundary
+  placements such as cyan, coral, and rust remain explicit product choices and should be changed
+  only through another owner ruling.
 
 ## Sources
 

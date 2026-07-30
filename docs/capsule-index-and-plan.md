@@ -187,14 +187,15 @@ What remains:
 
 ### Step 3 — colour taxonomy *(blocks step 4)*
 
-Execute [color-taxonomy-rules.md](color-taxonomy-rules.md) §5. **The database schema does not need
-to change** — family and neutrality are derived by lookup from the shade name. Order: reconcile the
-vocabulary, fix the tagger, repoint the engine and delete the four hardcoded lists, then a
-*targeted* retag of only the pieces whose colour the old vocabulary could not express. Not a
-wardrobe-wide retag.
+Implemented 2026-07-30 from [color-taxonomy-rules.md](color-taxonomy-rules.md) §5. **The database
+schema did not change** — family and neutrality are derived by lookup from the shade name. The
+vocabulary, tagger, capsule-neutral logic, family similarity, and mission focal-colour list now
+derive from the shared taxonomy.
 
-Four judgement calls need owner rulings first — silver, sage/olive, burgundy, periwinkle
-(§6 of that document).
+The owner rulings are recorded in §6 of that document: silver is metallic; burgundy is an accent;
+sage and olive are neutral-adjacent; periwinkle is dropped; and black, white, and grey remain
+separate retrieval families. A *targeted* retag of garments whose colour the old vocabulary could
+not express remains outstanding data work. It is not, and must not become, a wardrobe-wide retag.
 
 ### Step 4 — palette cohesion *(blocked on step 3)*
 
