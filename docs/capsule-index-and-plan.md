@@ -44,6 +44,7 @@ a comment explaining the reasoning is not one of those.**
 | [occasion_profiles_ratification.md](occasion_profiles_ratification.md) | **Authoritative for occasion behaviour.** The register ceilings (ratified 2026-07-05, a month of testing), the occasion profiles, and the amendments since. **Read before changing any ceiling, profile keyword, or slot-occasion guidance.** |
 | [stylist-session-handoff.md](stylist-session-handoff.md) | Running record of owner rulings. **Read before overturning anything.** |
 | [engine-behaviour-map.md](engine-behaviour-map.md) | Measured behaviour of the engine's paths, including the editorial-prompt findings. |
+| [spec-archive-index.md](spec-archive-index.md) | **35 specs live outside the repo in `~/Downloads/spec_*.md`.** Their decisions exist nowhere in `docs/`. Records what is in them, which decisions are load-bearing, and warns that their status lines are stale. |
 
 ## 3. Findings from the live run that are in no other document
 
@@ -204,6 +205,10 @@ default-off.
 
 ## 5. Standing constraints
 
+- **Design decisions may predate this repo's docs.** 35 specs live in `~/Downloads/spec_*.md`;
+  see [spec-archive-index.md](spec-archive-index.md). Two deliberate decisions were reversed on
+  2026-07-30 without anyone knowing they existed. Check it before changing slot semantics,
+  register handling, or gate trust boundaries.
 - **Occasion behaviour is ratified.** `occasion_profiles_ratification.md` holds a month of
   testing. Do not change a register ceiling, an occasion profile, or the guidance that routes a
   slot to an occasion without reading it first, and record any amendment there rather than only in

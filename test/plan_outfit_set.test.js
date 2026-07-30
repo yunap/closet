@@ -2753,14 +2753,45 @@ test('normalizePlanSlots preserves beach-coastal contradiction handling for indo
   assert.equal(slots[1].statedWeather, '')
 })
 
-test('normalizePlanSlots lets explicit outdoor environment beat indoor text defaults', () => {
-  const slots = normalizePlanSlots([
+// Was: "normalizePlanSlots lets explicit outdoor environment beat indoor text
+// defaults", pinning spec 17 Part 1's deliberate choice that a declared
+// `outdoor` should suppress the label classifier.
+//
+// TWO problems, both fixed here. The assertion was VACUOUS: its label was
+// "Outdoor Office Picnic", and the word "Outdoor" trips the classifier's own
+// exclusion list, so the text default never fired and the declaration was never
+// actually exercised. It passed identically whether or not declarations won —
+// which is why nothing failed when owner ruling 2026-07-30 reversed the
+// behaviour to label-wins.
+//
+// It now tests what it names, against the current ruling: a declared `outdoor`
+// yields to a label that unambiguously reads indoor, and still wins everywhere
+// else.
+test('an outdoor declaration wins except where the label unambiguously reads indoor', () => {
+  // The word "Outdoor" in the label is itself an outdoor signal, so this stays
+  // outdoor under any rule — kept as the original fixture, now with a sibling
+  // that isolates the actual property.
+  const [named] = normalizePlanSlots([
     { label: 'Outdoor Office Picnic', occasion: 'city', activity: 'none', weather: 'outdoor' },
   ], { fallbackWeather: 'mild' })
+  assert.equal(named.environment, 'outdoor')
+  assert.equal(named.statedWeather, '')
+  assert.equal(named.season, 'mild')
 
-  assert.equal(slots[0].environment, 'outdoor')
-  assert.equal(slots[0].statedWeather, '')
-  assert.equal(slots[0].season, 'mild')
+  // Same declaration, label no longer self-identifying as outdoor. Owner ruling
+  // 2026-07-30: the label wins here. Under spec 17 this asserted 'outdoor'.
+  const [office] = normalizePlanSlots([
+    { label: 'Office Picnic', occasion: 'city', activity: 'none', weather: 'outdoor' },
+  ], { fallbackWeather: 'mild' })
+  assert.equal(office.environment, 'indoor')
+  assert.equal(office.statedWeather, 'indoor')
+
+  // A declaration still wins over a label that says nothing either way.
+  const [neutral] = normalizePlanSlots([
+    { label: 'Day Two', occasion: 'city', activity: 'none', weather: 'outdoor' },
+  ], { fallbackWeather: 'mild' })
+  assert.equal(neutral.environment, 'outdoor')
+  assert.equal(neutral.statedWeather, '')
 })
 
 test('normalizePlanSlots treats office and client-meeting slots as indoor when the model omits weather', () => {
