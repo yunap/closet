@@ -6413,6 +6413,7 @@ export default function StylistChat({
                     onClick={() => {
                       if (pendingPieceMode === 'wardrobe') {
                         send({ piece: pendingPiece, input: 'Style this piece using my existing wardrobe.', generateOutfitMode: true, editorialVisualMode: false, includeMissingPieces: false, idealOnlyMode: false })
+                        closePendingPiece()
                       } else {
                         send({ piece: pendingPiece, input: 'Suggest ideal new pieces for this selected item. Ignore my wardrobe except for the selected item.', generateOutfitMode: false, editorialVisualMode: true, includeMissingPieces: false, idealOnlyMode: true })
                       }

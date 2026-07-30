@@ -135,6 +135,11 @@ test('Review dismisses the outfit chooser while the other outfit actions keep it
   assert.doesNotMatch(stylistSource, /setPendingOutfitAction\('restyle'\)[\s\S]*?variantMode: 'creative'[\s\S]*?setPendingOutfit\(null\)/)
 })
 
+test('Creating wardrobe outfits dismisses the selected-piece chooser while new-piece exploration keeps it visible', () => {
+  assert.match(stylistSource, /pendingPieceMode === 'wardrobe'[\s\S]*?generateOutfitMode: true[\s\S]*?closePendingPiece\(\)/)
+  assert.doesNotMatch(stylistSource, /input: 'Suggest ideal new pieces[^']*'[\s\S]*?idealOnlyMode: true \}\)\s*closePendingPiece\(\)/)
+})
+
 test('My Outfit detail owns scrolling and keeps its management actions visible', () => {
   assert.match(source, /className="modal-overlay outfit-detail-overlay"/)
   assert.match(source, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-labelledby="outfit-detail-title"/)
