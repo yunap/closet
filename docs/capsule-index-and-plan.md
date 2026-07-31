@@ -332,43 +332,52 @@ deterministic exclusion.
 deferred):**
 
 1. **Capacity honesty** (`capsuleSlotCoreKeys`). A dependent top only contributes `separates:` cores
-   in a slot when a standalone (non-`needs_base`) top also passes that slot's own gates — mirroring
+   in a slot when a standalone base also passes that slot's own gates — mirroring
    `dependent_base_unavailable`'s own definition of "available," so the two checks can never
    disagree. Confirmed real by reading the function before touching it: it previously paired every
-   top against every bottom with zero `needs_base` awareness.
-2. **Standalone vs. dependent top capacity, counted separately.** Every post-condition with
-   `group: 'top'` (except `base_for_dependent_top`, which IS the dependent-base guarantee and must
-   keep reading standalone tops as standalone) now excludes `needs_base` pieces from satisfying it.
-   Applied once, generically, to the conditions array — not threaded into each predicate separately
-   — per the negation-test principle.
-3. **Outfit-level enforcement** (`validateSubmittedPlanOutfits`, shared by the atomic capsule
+   top against every bottom with zero `needs_base` awareness. A piece's own core-forming ability
+   (can it be its own outfit's top) is governed by `needs_base` alone; a caught-by-test conflation
+   briefly made it depend on opacity too — a sheer top not tagged `needs_base` still forms its own
+   core, it just cannot rescue a *different* dependent's core.
+2. **Standalone vs. dependent top capacity, counted separately — revised after owner review of the
+   first version's overcorrection.** That version made a `needs_base` piece fail every `group: 'top'`
+   condition unconditionally, which is stricter than "a dependent cannot satisfy the guarantee by
+   itself": it swapped out an expressive dependent (piece 258) even when its base was genuinely
+   present and usable. The corrected rule, in `capsuleConditionMatches` (now roster-aware): a
+   `needs_base` piece counts toward a top-group guarantee only when a standalone base coexists in the
+   SAME candidate pool — an unsupported dependent contributes nothing, a supported one is real
+   dependent-top capacity. `base_for_dependent_top` is exempt, unchanged.
+3. **One shared base-candidate predicate** (`isCapsuleBaseCandidate`), used everywhere "is this a
+   valid base" is asked — capacity, the roster-level guarantee, slot validation, outfit validation —
+   so none of them can disagree. Top category, not itself `needs_base`, and (new) not structurally
+   sheer/semi_sheer/open_weave per the tagger's own definition of what "cannot work alone against
+   skin as a base layer." Unknown/unset opacity (206 of 243 live pieces) stays eligible — absence of
+   a tag is not evidence of unsuitability. Neckline, strap/sleeve shape, bulk, colour and visual fit
+   stay model judgment.
+4. **Outfit-level enforcement** (`validateSubmittedPlanOutfits`, shared by the atomic capsule
    composer and the model tool-loop `submit_plan_outfits`). A submitted look containing a `needs_base`
-   top must also include a standalone top; confirmed before implementing that **no such check existed
-   anywhere** — a dependent could ship with just a bottom and shoes, presented as if standalone. This
-   is the achievable form of "cards must show the base and the dependent, never present the dependent
-   as standalone": adding literal `primary_top`/`layer_top` roles to the atomic composer's schema was
-   considered and set aside, because the frontend does not render `role` distinctly anywhere today
-   (confirmed by grep) — the visual half of that ask needs an actual UI change, not requested here.
-4. **Brief language** (points 3/4/8): the roster-selection brief's "INDEPENDENT WEARABILITY" section
-   now names concrete visual-compatibility checks (opacity, neckline, strap/sleeve shape, length,
-   bulk, colour relationship, concealment intent) and the strong-vs-weak-dependency judgment,
-   matching how hero/support/wearability guidance was already written. No deterministic score, no
-   exclusion — model judgment, as designed.
+   top must also include a standalone top (per item 3's predicate); confirmed before implementing
+   that **no such check existed anywhere** — a dependent could ship with just a bottom and shoes,
+   presented as if standalone. This is the achievable form of "cards must show the base and the
+   dependent, never present the dependent as standalone": adding literal `primary_top`/`layer_top`
+   roles to the atomic composer's schema was considered and set aside, because the frontend does not
+   render `role` distinctly anywhere today (confirmed by grep) — the visual half of that ask needs an
+   actual UI change, not requested here.
+5. **Brief language** (points 3/4/8 of the review): the roster-selection brief's "INDEPENDENT
+   WEARABILITY" section now names concrete visual-compatibility checks (opacity, neckline,
+   strap/sleeve shape, length, bulk, colour relationship, concealment intent) and the
+   strong-vs-weak-dependency judgment, matching how hero/support/wearability guidance was already
+   written. No deterministic score, no exclusion — model judgment, as designed.
 
-**Ranking A/B: 1 scenario differs, fully attributed — not the no-op the V1 correction was.** Unlike
-`layer_floor:outerwear`, item 2 above is not `validatorOnly`: `capsuleRosterPostConditions` and
-`enforceCapsulePostConditions` are shared by `selectCapsuleRoster` itself, so a genuine correctness
-fix (not a supply-shortfall accommodation) improves the deterministic path too. Traced precisely:
-`pieceClearsCeilingRank` only checks formality rank against a ceiling, and piece 258 is
-`formality: everyday` — it was trivially counting toward "enough tops clearing the plan's
-lowest-register slots" despite being unable to independently supply a wearable top there without its
-base. Fixed, the deterministic reserve-repair pass swaps it for piece 990361 (`scoop neck abstract
-floral tank`, everyday, not dependent) in every scenario where 258 was previously in contention for
-that reserve. Confirmed clean: the new roster validates with zero failures and zero
-`postConditionGaps`; capacity stays far above what any scenario needs (e.g. 53→52 cores against 2-3
-targeted looks per slot); the statement-piece guarantee stays satisfied (990361 is also
-`pattern_complexity: loud`). All four offline capsule scripts' diffs trace to this one swap — no
-second, unexplained cause.
+**Ranking A/B: 0 scenarios differ — the corrected version is the no-op the V1 correction was too.**
+The first implementation of item 2 was NOT `validatorOnly` like `layer_floor:outerwear`, and it
+changed the deterministic path in one scenario: piece 258 (`formality: everyday`, `needs_base: yes`)
+was swapped for a non-dependent, because the too-broad rule denied it credit toward a register
+reserve even though its base (the orange tank) was present in the same roster. That was overcorrection,
+not the intended fix — confirmed by the owner from the code, not from the observed symptom alone.
+With the corrected, roster-aware "supported dependent counts" rule, 258 has its base in the roster,
+counts again, and the deterministic selector's output returns to exactly the pre-correction baseline.
+All four offline capsule scripts are byte-identical to baseline too.
 
 ### Deferred with reasons
 

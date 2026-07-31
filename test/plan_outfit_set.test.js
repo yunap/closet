@@ -26,7 +26,7 @@ const { parsePiece, weatherProfileFromContext } = await import('../styling-engin
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
-const { describeCapsuleUndemonstratedJobs, describeCapsuleLayerSupplyGap } = await import('../styling-engine/outfitSetPlanner.js')
+const { describeCapsuleUndemonstratedJobs, describeCapsuleLayerSupplyGap, capsuleConditionMatches } = await import('../styling-engine/outfitSetPlanner.js')
 const { capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsulePlanCompositionSystemPrompt } = await import('../routes/ai.js')
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
@@ -4808,6 +4808,25 @@ test('a slot-valid standalone base clears the dependent check', () => {
     `expected no dependent failure, got ${JSON.stringify(result.failures)}`)
 })
 
+test('a sheer or open-weave top in the same slot does not clear the slot-level dependent check', () => {
+  const roster = [
+    ...dependentBaseWardrobe(),
+    { id: 5, name: 'sheer chiffon cami', category: 'top', colors: ['ivory'], formality: 'everyday', occasions: ['casual'], opacity: 'sheer' },
+  ]
+  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2 }])
+  // The supply-attribution guard needs a genuinely available base OUTSIDE the
+  // roster to blame the roster at all — same pattern as "a dependent top
+  // needs a standalone base valid in the slot..." above. Without one, "the
+  // sheer top in the roster doesn't count" and "the wardrobe simply has
+  // nothing better" are indistinguishable, and correctly not failed.
+  const availableBase = { id: 6, name: 'cotton tank', category: 'top', colors: ['orange'], formality: 'everyday', occasions: ['casual'] }
+  const result = validateCapsuleRoster(roster, { slots, budget: 24, isSummer: true, pool: [...roster, availableBase] })
+  assert.ok(
+    result.failures.some(entry => entry.code === 'dependent_base_unavailable'),
+    `a sheer top must not clear the dependent check, got ${JSON.stringify(result.failures)}`
+  )
+})
+
 test('the dependent check blames the roster only when the wardrobe could have done better', () => {
   const roster = dependentBaseWardrobe()
   const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2 }])
@@ -4878,12 +4897,101 @@ test('capsule core capacity is unaffected when no piece is a dependent', () => {
   assert.equal(capsuleOutfitCoreCapacity(roster, slots), 2, 'ordinary capacity math is a strict no-op')
 })
 
+// Owner review 2026-07-30: "the prompt already says open-weave or sheer
+// pieces cannot serve as standalone bases" — the shared base-candidate
+// predicate must read structured opacity, not just needs_base, or a sheer
+// top could "support" a dependent it cannot actually cover.
+// Opacity gates only whether a top can serve as a BASE for something else —
+// not whether it is wearable as its own outfit's top. A sheer top that is
+// not itself tagged needs_base still forms its own core; what it cannot do
+// is rescue a DIFFERENT dependent top's core. These are separate questions,
+// caught by this test after an earlier version conflated them (a sheer top
+// briefly lost its own core-forming ability along with its base eligibility).
+test('a sheer or open-weave top cannot serve as the base for a dependent, but still forms its own core', () => {
+  const dependentTop = { id: 1, category: 'top', needs_base: 'yes' }
+  const sheerTop = { id: 2, category: 'top', opacity: 'sheer' }
+  const openWeaveTop = { id: 3, category: 'top', opacity: 'open_weave' }
+  const bottom = { id: 4, category: 'bottom' }
+  const shoe = { id: 5, category: 'shoes' }
+
+  const withSheerOnly = [dependentTop, sheerTop, bottom, shoe]
+  assert.equal(
+    capsuleOutfitCoreCapacity(withSheerOnly, [{ gateAllowedIds: new Set([1, 2, 4, 5]) }]),
+    1,
+    'the sheer top forms its own core; the dependent contributes zero because a sheer top cannot rescue it'
+  )
+  const withOpenWeaveOnly = [dependentTop, openWeaveTop, bottom, shoe]
+  assert.equal(
+    capsuleOutfitCoreCapacity(withOpenWeaveOnly, [{ gateAllowedIds: new Set([1, 3, 4, 5]) }]),
+    1,
+    'open-weave is the same case — visible holes cannot function as coverage for the dependent'
+  )
+})
+
+test('unpopulated opacity leaves a top eligible as a base — a strict no-op for the 206 of 243 unset pieces on the live wardrobe', () => {
+  const dependentTop = { id: 1, category: 'top', needs_base: 'yes' }
+  const unknownOpacityTop = { id: 2, category: 'top' } // no opacity field at all
+  const bottom = { id: 3, category: 'bottom' }
+  const shoe = { id: 4, category: 'shoes' }
+  const roster = [dependentTop, unknownOpacityTop, bottom, shoe]
+  assert.equal(
+    capsuleOutfitCoreCapacity(roster, [{ gateAllowedIds: new Set([1, 2, 3, 4]) }]),
+    2,
+    'unset opacity is not evidence of unsuitability — both tops must form cores'
+  )
+})
+
 // Point 2: "standalone top capacity vs. dependent top capacity should be
 // counted separately." register_reserve and winter_covered_bases both assert
 // that many INDEPENDENTLY wearable tops exist; a dependent cannot satisfy
 // either on its own, or the guarantee passes on paper with no real capacity
 // behind it.
-test('a register floor cannot be satisfied by dependent tops alone', () => {
+// Revised 2026-07-30 after owner review of the first version's
+// overcorrection: making a needs_base piece fail every group:'top' condition
+// UNCONDITIONALLY swapped out expressive dependent pieces even when their
+// base was genuinely present and usable (piece 258 in the recorded ranking
+// A/B). The correct rule is "a dependent cannot satisfy the guarantee BY
+// ITSELF" — a SUPPORTED dependent (a standalone base coexists in the same
+// pool) represents real dependent-top capacity and should count.
+test('an unsupported dependent does not count toward a register floor', () => {
+  const dependentA = { id: 1, category: 'top', needs_base: 'yes', formality: 'elevated' }
+  const dependentB = { id: 2, category: 'top', needs_base: 'yes', formality: 'elevated' }
+  const conditions = capsuleRosterPostConditions({
+    quotas: { top: 3 },
+    reserve: { rank: formalityRank('elevated'), byGroup: { top: 2 } },
+  })
+  const registerCondition = conditions.find(condition => condition.code === 'register_reserve:top')
+  assert.ok(registerCondition, 'sanity: the register_reserve condition must be declared')
+
+  // No standalone base anywhere in this pool: neither dependent has support.
+  const unsupportedPool = [dependentA, dependentB]
+  assert.equal(capsuleConditionMatches(dependentA, registerCondition, unsupportedPool), false)
+  assert.equal(capsuleConditionMatches(dependentB, registerCondition, unsupportedPool), false)
+})
+
+test('a supported dependent counts as real dependent-top capacity toward a register floor', () => {
+  // A geometric hero top with a suitable tank is exactly this case: the
+  // dependent clears the register floor, and a standalone base is present.
+  // "Clears the ceiling" means at-or-under it (FORMALITY_VALUES:
+  // lounge < everyday < elevated < dressy), so the base is deliberately
+  // 'dressy' here — a rank the elevated ceiling itself does NOT clear —
+  // to prove this is about the base's mere PRESENCE, not double-counting it
+  // as if it also satisfied the register.
+  const dependent = { id: 1, category: 'top', needs_base: 'yes', formality: 'elevated' }
+  const base = { id: 2, category: 'top', formality: 'dressy' }
+  const conditions = capsuleRosterPostConditions({
+    quotas: { top: 3 },
+    reserve: { rank: formalityRank('elevated'), byGroup: { top: 1 } },
+  })
+  const registerCondition = conditions.find(condition => condition.code === 'register_reserve:top')
+  const supportedPool = [dependent, base]
+  assert.equal(capsuleConditionMatches(dependent, registerCondition, supportedPool), true,
+    'a dependent with a standalone base in the same pool is real capacity, not fiction')
+  assert.equal(capsuleConditionMatches(base, registerCondition, supportedPool), false,
+    "the base itself, being dressy, does not clear the elevated ceiling — only the dependent's own formality does")
+})
+
+test('standalone and dependent capacity remain distinguishable end to end through the repair', () => {
   const dependentA = { id: 1, category: 'top', needs_base: 'yes', formality: 'elevated' }
   const dependentB = { id: 2, category: 'top', needs_base: 'yes', formality: 'elevated' }
   const standalone = { id: 3, category: 'top', formality: 'elevated' }
@@ -4892,18 +5000,9 @@ test('a register floor cannot be satisfied by dependent tops alone', () => {
     reserve: { rank: formalityRank('elevated'), byGroup: { top: 2 } },
   })
   const registerCondition = conditions.find(condition => condition.code === 'register_reserve:top')
-  assert.ok(registerCondition, 'sanity: the register_reserve condition must be declared')
 
-  // Two dependents clear the register rank on paper — neither should count.
-  assert.equal(registerCondition.predicate(dependentA), false)
-  assert.equal(registerCondition.predicate(dependentB), false)
-  assert.equal(registerCondition.predicate(standalone), true, 'a genuinely standalone top still counts')
-
-  // End to end through the repair mechanism: a roster of 2 register-clearing
-  // dependents and 0 standalone tops does not satisfy the reserve, so the
-  // repair swaps both dependents out for standalone alternatives rather than
-  // accepting them as if they were real capacity. Two standalone candidates
-  // in the pool, since the reserve requires 2.
+  // No standalone base at all: unsupported, unrepairable by adding more
+  // dependents — the repair must swap toward a standalone alternative.
   const standalone2 = { id: 6, category: 'top', formality: 'elevated' }
   const bottomPiece = { id: 4, category: 'bottom' }
   const shoePiece = { id: 5, category: 'shoes' }
@@ -4911,8 +5010,19 @@ test('a register floor cannot be satisfied by dependent tops alone', () => {
   const roster = [dependentA, dependentB, bottomPiece, shoePiece]
   const { roster: repaired, unsatisfied } = enforceCapsulePostConditions(roster, groups, conditions, new Map())
   assert.equal(unsatisfied.includes('register_reserve:top'), false, 'the repair must be able to satisfy this guarantee')
-  const clearingCount = repaired.filter(piece => registerCondition.predicate(piece)).length
-  assert.ok(clearingCount >= 2, `expected the standalone top to be swapped in, got ${JSON.stringify(repaired.map(p => p.id))}`)
+  const clearingCount = repaired.filter(piece => capsuleConditionMatches(piece, registerCondition, repaired)).length
+  assert.ok(clearingCount >= 2, `expected a standalone top to be swapped in, got ${JSON.stringify(repaired.map(p => p.id))}`)
+
+  // Contrast: give the SAME starting roster one standalone base already
+  // present. Now both dependents are supported and the reserve is already
+  // satisfied — the repair must leave the roster untouched (byte-identical,
+  // per the function's own contract), not swap out an expressive dependent
+  // it no longer needs to.
+  const supportedRoster = [dependentA, dependentB, standalone, bottomPiece, shoePiece]
+  const supportedGroups = { top: [dependentA, dependentB, standalone, standalone2], bottom: [bottomPiece], shoes: [shoePiece] }
+  const { roster: untouched, unsatisfied: stillUnsatisfied } = enforceCapsulePostConditions(supportedRoster, supportedGroups, conditions, new Map())
+  assert.deepEqual(untouched, supportedRoster, 'a roster that already satisfies the guarantee via supported dependents must not be touched')
+  assert.equal(stillUnsatisfied.includes('register_reserve:top'), false)
 })
 
 test('base_for_dependent_top is exempt from the standalone-only rule — it IS the dependent-base guarantee', () => {
@@ -4926,14 +5036,22 @@ test('base_for_dependent_top is exempt from the standalone-only rule — it IS t
   assert.equal(baseCondition.predicate(dependent), false)
 })
 
-test('winter covered-base guarantee also excludes dependents', () => {
+test('winter covered-base guarantee: an unsupported dependent does not count, a supported one does', () => {
   const dependentCovered = { id: 1, category: 'top', needs_base: 'yes', season: 'cool', sleeve_type: 'long' }
   const standaloneCovered = { id: 2, category: 'top', season: 'cool', sleeve_type: 'long' }
   const conditions = capsuleRosterPostConditions({ quotas: { top: 4 }, isWinter: true })
   const coveredCondition = conditions.find(condition => condition.code === 'winter_covered_bases')
   assert.ok(coveredCondition, 'sanity: declared for a winter capsule with a top quota')
-  assert.equal(coveredCondition.predicate(dependentCovered), false)
-  assert.equal(coveredCondition.predicate(standaloneCovered), true)
+  // Its own predicate (sleeve coverage + season) is unaffected by the
+  // needs_base rule — that lives in capsuleConditionMatches, not the raw
+  // predicate, so the two stay independently correct.
+  assert.equal(coveredCondition.predicate(dependentCovered), true, "the piece's own coverage still reads true")
+  assert.equal(capsuleConditionMatches(dependentCovered, coveredCondition, [dependentCovered]), false,
+    'but it cannot count with no standalone base in the pool')
+  assert.equal(capsuleConditionMatches(dependentCovered, coveredCondition, [dependentCovered, standaloneCovered]), true,
+    'a supported dependent counts as real covered-base capacity')
+  assert.equal(capsuleConditionMatches(standaloneCovered, coveredCondition, [standaloneCovered]), true,
+    'a genuinely standalone covered top counts with no base needed')
 })
 
 // Point 5: "it should never present the crochet top as if it were a
@@ -4968,6 +5086,27 @@ test('a submitted outfit cannot ship a dependent top without a standalone base',
     piece_ids: [Number(dependentId), Number(baseId), Number(bottomId), Number(shoesId)],
   }])
   assert.equal(layered.accepted.length, 1, `expected acceptance, got ${JSON.stringify(layered.failures)}`)
+})
+
+test('a submitted outfit cannot use a sheer top as the dependent\'s base', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dependentId = insertPiece({ category: 'top', name: 'geometric tassel top', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
+  const sheerBaseId = insertPiece({ category: 'top', name: 'sheer chiffon cami', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET opacity = ? WHERE id = ?').run('sheer', sheerBaseId)
+  const bottomId = insertPiece({ category: 'bottom', name: 'wide leg trousers', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'canvas slip shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'casual', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(dependentId), Number(sheerBaseId), Number(bottomId), Number(shoesId)],
+  }])
+  assert.equal(result.accepted.length, 0)
+  assert.match(result.failures[0].reasons.join(' '), /cannot be worn alone/)
 })
 
 test('a standalone-only outfit is unaffected by the dependent-base check', async () => {

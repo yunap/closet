@@ -1286,6 +1286,27 @@ function pieceNeedsBase(piece = {}) {
   return String(piece?.needs_base || '').toLowerCase() === 'yes'
 }
 
+// The single, shared definition of "a top that can serve as a base," used
+// everywhere a dependent's base needs to be found — capacity math, slot
+// validation, outfit validation, and the roster-level guarantee — so none of
+// them can ever disagree about what "available" means (owner review
+// 2026-07-30). A top tagged needs_base cannot itself be a base. Structured
+// opacity rules out sheer/semi_sheer/open_weave — the tagger prompt already
+// states these "cannot work alone against skin as a base layer"
+// (styling-engine/prompts.js). Unknown/unset opacity (206 of 243 pieces on
+// the live wardrobe) stays eligible: absence of a tag is not evidence of
+// unsuitability, and excluding on missing metadata would not be the
+// additive no-op this correction requires. Neckline, strap/sleeve shape,
+// bulk, colour and visual fit stay model judgment — this predicate answers
+// only "could this structurally function as coverage," never "does it look
+// right under this specific piece."
+function isCapsuleBaseCandidate(piece = {}) {
+  if (wardrobeCategoryGroup(piece) !== 'top') return false
+  if (pieceNeedsBase(piece)) return false
+  const opacity = String(piece?.opacity || '').toLowerCase().trim()
+  return !['sheer', 'semi_sheer', 'open_weave'].includes(opacity)
+}
+
 function isCapsuleStatementPiece(piece = {}) {
   const group = wardrobeCategoryGroup(piece)
   if (!['top', 'bottom', 'dress'].includes(group)) return false
@@ -1530,7 +1551,7 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       code: 'base_for_dependent_top',
       group: 'top',
       required: 1,
-      predicate: piece => !pieceNeedsBase(piece),
+      predicate: isCapsuleBaseCandidate,
       describe: () => `a top that can be worn alone, to go under ${dependentTops[0]?.name || 'the layering piece'}`
     })
   }
@@ -1594,24 +1615,7 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       describe: () => `${demand.required} shoe(s) for ${demand.label || 'a reserved use case'}`
     })
   }
-  // Step 5 V1 follow-up (owner review 2026-07-30, "standalone top capacity
-  // vs. dependent top capacity should be counted separately"): every
-  // condition above with group:'top' is asserting that many INDEPENDENTLY
-  // wearable tops exist — register_reserve for a register floor,
-  // winter_covered_bases for warmth. A needs_base piece cannot satisfy
-  // either on its own; without this, a roster could pass "2 tops clear the
-  // evening register" on paper using two dependents and no compatible base,
-  // and the guarantee would be fiction. Applied once here, to every
-  // top-group condition uniformly, rather than threading `&& !pieceNeedsBase`
-  // into each predicate separately (the negation-test rule) — a future
-  // top-group guarantee inherits this by construction. base_for_dependent_top
-  // is exempt: it IS the guarantee that a standalone base exists for a
-  // dependent, so it must keep reading standalone tops as standalone tops.
-  return conditions.map(condition => {
-    if (condition.group !== 'top' || condition.code === 'base_for_dependent_top') return condition
-    const basePredicate = condition.predicate
-    return { ...condition, predicate: piece => !pieceNeedsBase(piece) && basePredicate(piece) }
-  })
+  return conditions
 }
 
 // Repair only what is actually broken, and never at the cost of something that
@@ -1625,9 +1629,29 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
 // bottom or a dress) rather than a per-category one. Shared so the enforcer and
 // the validator can never disagree about what a condition means — the whole
 // point of declaring the guarantees as data.
-function capsuleConditionMatches(piece, condition) {
-  return (condition.group === '*' || wardrobeCategoryGroup(piece) === condition.group) &&
-    condition.predicate(piece)
+//
+// `roster` is the candidate pool being evaluated against — required for the
+// dependent-top rule below, revised 2026-07-30 after owner review of the
+// first version's overcorrection. The original rule made a needs_base piece
+// fail EVERY group:'top' condition unconditionally, which swapped out
+// expressive dependent pieces (piece 258 in the recorded ranking A/B) even
+// when their base was genuinely present and usable — "a dependent cannot
+// satisfy the guarantee by itself" was implemented as "a dependent can never
+// satisfy a top guarantee," which is stricter than intended. The correct
+// rule: a needs_base piece counts toward a top-group guarantee only when a
+// standalone base (isCapsuleBaseCandidate) exists in the SAME candidate
+// pool — a supported dependent is real dependent-top capacity, an
+// unsupported one is not. base_for_dependent_top is exempt: it IS the
+// guarantee that a standalone base exists, so it must keep reading
+// standalone tops as standalone tops rather than deferring to itself.
+export function capsuleConditionMatches(piece, condition, roster = []) {
+  if (!((condition.group === '*' || wardrobeCategoryGroup(piece) === condition.group) && condition.predicate(piece))) {
+    return false
+  }
+  if (condition.group === 'top' && condition.code !== 'base_for_dependent_top' && pieceNeedsBase(piece)) {
+    return (Array.isArray(roster) ? roster : []).some(isCapsuleBaseCandidate)
+  }
+  return true
 }
 
 export function enforceCapsulePostConditions(roster = [], groups = {}, allConditions = [], scoreOf = new Map(), protectedPieces = new Set()) {
@@ -1638,9 +1662,16 @@ export function enforceCapsulePostConditions(roster = [], groups = {}, allCondit
   const conditions = (Array.isArray(allConditions) ? allConditions : []).filter(condition => !condition?.validatorOnly)
   let nextRoster = [...roster]
   const unsatisfied = []
-  const conditionMatches = capsuleConditionMatches
+  // countFor's own candidateRoster IS the support context for the piece being
+  // tested — correct by construction. The two bare calls below (evaluating a
+  // candidate not yet admitted) use nextRoster, the current pre-swap state:
+  // for a top-group swap this cannot remove an existing base out from under a
+  // dependent (swaps stay within the incoming candidate's own category), and
+  // the swap this function actually commits to is re-verified against
+  // withSwap via countFor immediately below, so an imprecise candidate filter
+  // here costs at most a missed repair opportunity, never a false accept.
   const countFor = (candidateRoster, condition) =>
-    candidateRoster.filter(piece => conditionMatches(piece, condition)).length
+    candidateRoster.filter(piece => capsuleConditionMatches(piece, condition, candidateRoster)).length
   // One repair per condition at most; the guard is belt-and-braces against a
   // predicate pair that could otherwise trade places forever.
   for (let pass = 0; pass < conditions.length * 2; pass += 1) {
@@ -1656,14 +1687,14 @@ export function enforceCapsulePostConditions(roster = [], groups = {}, allCondit
       ? Object.values(groups).flat()
       : (groups[violated.group] || [])
     const candidate = candidatePool
-      .filter(piece => !inRoster.has(piece) && conditionMatches(piece, violated))
+      .filter(piece => !inRoster.has(piece) && capsuleConditionMatches(piece, violated, nextRoster))
       .sort((a, b) => {
         // Prefer a candidate that also satisfies the other conditions bearing on
         // its own category — the sleeve-covered AND register-compliant top the
         // winter case needs — so one swap does not create the next violation.
         const satisfied = piece => conditions
           .filter(condition => condition.group === '*' || condition.group === wardrobeCategoryGroup(piece))
-          .filter(condition => conditionMatches(piece, condition)).length
+          .filter(condition => capsuleConditionMatches(piece, condition, nextRoster)).length
         return satisfied(b) - satisfied(a) || (scoreOf.get(b) || 0) - (scoreOf.get(a) || 0)
       })[0]
     if (!candidate) {
@@ -1680,7 +1711,7 @@ export function enforceCapsulePostConditions(roster = [], groups = {}, allCondit
       .filter(piece => {
         if (wardrobeCategoryGroup(piece) !== candidateGroup) return false
         if (protectedPieces.has(piece)) return false
-        if (conditionMatches(piece, violated)) return false
+        if (capsuleConditionMatches(piece, violated, nextRoster)) return false
         // Judge the roster AFTER the swap, not merely after the removal: the
         // incoming candidate frequently carries the very property the outgoing
         // piece was holding (an everyday long-sleeved knit replacing an
@@ -2203,12 +2234,18 @@ function capsuleSlotCoreKeys(piecesById = new Map(), slot = {}) {
   // itself; counting one anyway is exactly how capacity gets overstated —
   // this function is what every capacity number in the feature is built from
   // (capsuleOutfitCoreCapacity, capacity_below_rotation, the representative
-  // rotation allocator). Gate on a standalone base coexisting in THIS SAME
-  // slot's allowed set, mirroring dependent_base_unavailable's own condition,
-  // so the two checks can never disagree about what "available" means. A
-  // dependent top with no base here contributes zero cores, not a phantom one.
-  const hasStandaloneTopHere = tops.some(piece => !pieceNeedsBase(piece))
-  const coreCapableTops = hasStandaloneTopHere ? tops : tops.filter(piece => !pieceNeedsBase(piece))
+  // rotation allocator). Gate on a genuine base (isCapsuleBaseCandidate,
+  // opacity-aware) coexisting in THIS SAME slot's allowed set, mirroring
+  // dependent_base_unavailable's own condition.
+  //
+  // Two separate questions, corrected 2026-07-30 after a test caught the
+  // conflation: "can this top serve as a BASE for something else" is
+  // opacity-aware (isCapsuleBaseCandidate); "can this top form its OWN core"
+  // is governed by needs_base alone — a sheer top not tagged needs_base is
+  // not thereby barred from being its own outfit's top. Only a dependent
+  // top's OWN core-forming ability depends on whether a base exists here.
+  const hasStandaloneBaseHere = tops.some(isCapsuleBaseCandidate)
+  const coreCapableTops = tops.filter(top => !pieceNeedsBase(top) || hasStandaloneBaseHere)
   for (const top of coreCapableTops) {
     for (const bottom of bottoms) cores.add(`separates:${Number(top.id)}:${Number(bottom.id)}`)
   }
@@ -2396,7 +2433,7 @@ export function validateCapsuleRoster(roster = [], {
     const dependents = slotEligible.filter(piece =>
       wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
     if (!dependents.length) continue
-    if (slotEligible.some(piece => wardrobeCategoryGroup(piece) === 'top' && !pieceNeedsBase(piece))) continue
+    if (slotEligible.some(isCapsuleBaseCandidate)) continue
     // Same supply attribution the post-conditions use: a wardrobe that has no
     // standalone top clearing this slot's gates is a supply gap, not a roster
     // defect, and failing it would be unrepairable by any swap.
@@ -2406,7 +2443,7 @@ export function validateCapsuleRoster(roster = [], {
         poolPieces.filter(piece => !rosterIds.has(Number(piece?.id))),
         slot,
         { isSummer, isWinter: isWinterCapsule }
-      ).filter(piece => wardrobeCategoryGroup(piece) === 'top' && !pieceNeedsBase(piece))
+      ).filter(isCapsuleBaseCandidate)
       if (!availableBases.length) continue
     }
     const label = slot.slot || slot.label || `slot_${index}`
@@ -2468,7 +2505,7 @@ export function validateCapsuleRoster(roster = [], {
   // it strictly, which is the case this validator exists for.
   const declaredGaps = new Set(Array.isArray(roster?.postConditionGaps) ? roster.postConditionGaps : [])
   for (const condition of conditions) {
-    const have = normalizedRoster.filter(piece => capsuleConditionMatches(piece, condition)).length
+    const have = normalizedRoster.filter(piece => capsuleConditionMatches(piece, condition, normalizedRoster)).length
     // Ceilings are checked before floors and never excused. The
     // supply-attribution logic below exists to avoid blaming a roster for what
     // the wardrobe could not supply — that reasoning has no analogue here,
@@ -2491,7 +2528,7 @@ export function validateCapsuleRoster(roster = [], {
       // satisfying piece exist and go unpicked?
       const rosterIds = idSetForPieces(normalizedRoster)
       const availableUnused = poolPieces.some(piece =>
-        !rosterIds.has(Number(piece?.id)) && capsuleConditionMatches(piece, condition)
+        !rosterIds.has(Number(piece?.id)) && capsuleConditionMatches(piece, condition, normalizedRoster)
       )
       if (!availableUnused) continue
     } else {
@@ -3408,7 +3445,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       // that happens to include a needs_base piece is covered too — same
       // defect, same fix, not new scope.
       const dependentTops = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
-      if (dependentTops.length && !pieces.some(piece => wardrobeCategoryGroup(piece) === 'top' && !pieceNeedsBase(piece))) {
+      if (dependentTops.length && !pieces.some(isCapsuleBaseCandidate)) {
         reasons.push(`${dependentTops.map(piece => piece.name || `piece ${piece.id}`).join(', ')} cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom`)
       }
       if (pendingPlan.isWinterCapsule && slot.environment === 'indoor') {
