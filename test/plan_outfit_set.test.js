@@ -4833,6 +4833,158 @@ test('an unpopulated needs_base field changes nothing', () => {
   )
 })
 
+// ---------------------------------------------------------------------------
+// Step 5 V1 follow-up (owner review 2026-07-30, prompted by thread_1785451253837's
+// "black geometric tassel hem crop top + wide leg trousers" card and the
+// owner's "a dependent piece is not a standalone capsule piece" ruling). Three
+// structural gaps the earlier correction did not close: capacity math counted
+// a dependent top's core without requiring its base to coexist; a "top"
+// register floor could be satisfied entirely by dependents; and no check
+// existed at the OUTFIT level preventing a needs_base piece from shipping
+// without a base at all. All three are additive/no-op absent a needs_base
+// piece — this wardrobe has exactly two.
+// ---------------------------------------------------------------------------
+
+// Point 7: "a valid dependent-top core is not crochet top + bottom + shoes —
+// it is compatible base + crochet top + bottom + shoes." capsuleOutfitCoreCapacity
+// is what every capacity number in this feature is built from.
+test('capsule core capacity requires a standalone base to coexist with a dependent top', () => {
+  const dependentTop = { id: 1, category: 'top', needs_base: 'yes' }
+  const standaloneTop = { id: 2, category: 'top' }
+  const bottom = { id: 3, category: 'bottom' }
+  const shoe = { id: 4, category: 'shoes' }
+
+  // No standalone base in this slot: the dependent top cannot produce a
+  // wearable core, so capacity is zero, not one.
+  const noBaseRoster = [dependentTop, bottom, shoe]
+  const noBaseSlots = [{ gateAllowedIds: new Set([1, 3, 4]) }]
+  assert.equal(capsuleOutfitCoreCapacity(noBaseRoster, noBaseSlots), 0,
+    'a dependent top with no base in its own slot must not count as a core')
+
+  // A standalone base is present in the SAME slot: both the dependent-top
+  // core and the standalone-top's own core are now real.
+  const withBaseRoster = [dependentTop, standaloneTop, bottom, shoe]
+  const withBaseSlots = [{ gateAllowedIds: new Set([1, 2, 3, 4]) }]
+  assert.equal(capsuleOutfitCoreCapacity(withBaseRoster, withBaseSlots), 2,
+    'once a base coexists in the slot, both the dependent and the standalone top form valid cores')
+})
+
+test('capsule core capacity is unaffected when no piece is a dependent', () => {
+  const roster = [
+    { id: 1, category: 'top' }, { id: 2, category: 'top' },
+    { id: 3, category: 'bottom' }, { id: 4, category: 'shoes' },
+  ]
+  const slots = [{ gateAllowedIds: new Set([1, 2, 3, 4]) }]
+  assert.equal(capsuleOutfitCoreCapacity(roster, slots), 2, 'ordinary capacity math is a strict no-op')
+})
+
+// Point 2: "standalone top capacity vs. dependent top capacity should be
+// counted separately." register_reserve and winter_covered_bases both assert
+// that many INDEPENDENTLY wearable tops exist; a dependent cannot satisfy
+// either on its own, or the guarantee passes on paper with no real capacity
+// behind it.
+test('a register floor cannot be satisfied by dependent tops alone', () => {
+  const dependentA = { id: 1, category: 'top', needs_base: 'yes', formality: 'elevated' }
+  const dependentB = { id: 2, category: 'top', needs_base: 'yes', formality: 'elevated' }
+  const standalone = { id: 3, category: 'top', formality: 'elevated' }
+  const conditions = capsuleRosterPostConditions({
+    quotas: { top: 3 },
+    reserve: { rank: formalityRank('elevated'), byGroup: { top: 2 } },
+  })
+  const registerCondition = conditions.find(condition => condition.code === 'register_reserve:top')
+  assert.ok(registerCondition, 'sanity: the register_reserve condition must be declared')
+
+  // Two dependents clear the register rank on paper — neither should count.
+  assert.equal(registerCondition.predicate(dependentA), false)
+  assert.equal(registerCondition.predicate(dependentB), false)
+  assert.equal(registerCondition.predicate(standalone), true, 'a genuinely standalone top still counts')
+
+  // End to end through the repair mechanism: a roster of 2 register-clearing
+  // dependents and 0 standalone tops does not satisfy the reserve, so the
+  // repair swaps both dependents out for standalone alternatives rather than
+  // accepting them as if they were real capacity. Two standalone candidates
+  // in the pool, since the reserve requires 2.
+  const standalone2 = { id: 6, category: 'top', formality: 'elevated' }
+  const bottomPiece = { id: 4, category: 'bottom' }
+  const shoePiece = { id: 5, category: 'shoes' }
+  const groups = { top: [dependentA, dependentB, standalone, standalone2], bottom: [bottomPiece], shoes: [shoePiece] }
+  const roster = [dependentA, dependentB, bottomPiece, shoePiece]
+  const { roster: repaired, unsatisfied } = enforceCapsulePostConditions(roster, groups, conditions, new Map())
+  assert.equal(unsatisfied.includes('register_reserve:top'), false, 'the repair must be able to satisfy this guarantee')
+  const clearingCount = repaired.filter(piece => registerCondition.predicate(piece)).length
+  assert.ok(clearingCount >= 2, `expected the standalone top to be swapped in, got ${JSON.stringify(repaired.map(p => p.id))}`)
+})
+
+test('base_for_dependent_top is exempt from the standalone-only rule — it IS the dependent-base guarantee', () => {
+  const dependent = { id: 1, category: 'top', needs_base: 'yes' }
+  const conditions = capsuleRosterPostConditions({ quotas: { top: 2 }, roster: [dependent] })
+  const baseCondition = conditions.find(condition => condition.code === 'base_for_dependent_top')
+  assert.ok(baseCondition)
+  // Its own job is finding a piece that is NOT a dependent — confirm the
+  // wrap did not double up or invert that.
+  assert.equal(baseCondition.predicate({ id: 2, category: 'top' }), true)
+  assert.equal(baseCondition.predicate(dependent), false)
+})
+
+test('winter covered-base guarantee also excludes dependents', () => {
+  const dependentCovered = { id: 1, category: 'top', needs_base: 'yes', season: 'cool', sleeve_type: 'long' }
+  const standaloneCovered = { id: 2, category: 'top', season: 'cool', sleeve_type: 'long' }
+  const conditions = capsuleRosterPostConditions({ quotas: { top: 4 }, isWinter: true })
+  const coveredCondition = conditions.find(condition => condition.code === 'winter_covered_bases')
+  assert.ok(coveredCondition, 'sanity: declared for a winter capsule with a top quota')
+  assert.equal(coveredCondition.predicate(dependentCovered), false)
+  assert.equal(coveredCondition.predicate(standaloneCovered), true)
+})
+
+// Point 5: "it should never present the crochet top as if it were a
+// standalone top." Nothing checked, at the OUTFIT level, that a needs_base
+// piece actually shipped with a base underneath it — only that a standalone
+// base existed somewhere in the roster or slot. Shared validator, so this
+// also protects a trip/coordinated plan that happens to include one.
+test('a submitted outfit cannot ship a dependent top without a standalone base', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dependentId = insertPiece({ category: 'top', name: 'geometric tassel top', occasions: ['casual'], formality: 'everyday' })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentId)
+  const baseId = insertPiece({ category: 'top', name: 'orange ribbed tank', occasions: ['casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'wide leg trousers', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'canvas slip shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'casual', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const slot = workbench.pendingPlan.slots[0]
+
+  // Solo: the dependent top with a bottom and shoes, no base at all.
+  const solo = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(dependentId), Number(bottomId), Number(shoesId)],
+  }])
+  assert.equal(solo.accepted.length, 0)
+  assert.match(solo.failures[0].reasons.join(' '), /cannot be worn alone/)
+  assert.match(solo.failures[0].reasons.join(' '), /geometric tassel top/)
+
+  // With its base: accepted normally.
+  const layered = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(dependentId), Number(baseId), Number(bottomId), Number(shoesId)],
+  }])
+  assert.equal(layered.accepted.length, 1, `expected acceptance, got ${JSON.stringify(layered.failures)}`)
+})
+
+test('a standalone-only outfit is unaffected by the dependent-base check', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'plain tee', occasions: ['casual'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'jeans', occasions: ['casual'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'sneakers', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'casual', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    piece_ids: [Number(topId), Number(bottomId), Number(shoesId)],
+  }])
+  assert.equal(result.accepted.length, 1, `expected acceptance, got ${JSON.stringify(result.failures)}`)
+})
+
 // Criterion 3 (structural) is deterministic; criteria 5-7 are not. The
 // evaluation is explicit that hero balance, seasonal shoe credibility and
 // "does this piece earn a distinct job" are relational visual judgments that

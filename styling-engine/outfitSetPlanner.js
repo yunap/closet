@@ -1594,7 +1594,24 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       describe: () => `${demand.required} shoe(s) for ${demand.label || 'a reserved use case'}`
     })
   }
-  return conditions
+  // Step 5 V1 follow-up (owner review 2026-07-30, "standalone top capacity
+  // vs. dependent top capacity should be counted separately"): every
+  // condition above with group:'top' is asserting that many INDEPENDENTLY
+  // wearable tops exist — register_reserve for a register floor,
+  // winter_covered_bases for warmth. A needs_base piece cannot satisfy
+  // either on its own; without this, a roster could pass "2 tops clear the
+  // evening register" on paper using two dependents and no compatible base,
+  // and the guarantee would be fiction. Applied once here, to every
+  // top-group condition uniformly, rather than threading `&& !pieceNeedsBase`
+  // into each predicate separately (the negation-test rule) — a future
+  // top-group guarantee inherits this by construction. base_for_dependent_top
+  // is exempt: it IS the guarantee that a standalone base exists for a
+  // dependent, so it must keep reading standalone tops as standalone tops.
+  return conditions.map(condition => {
+    if (condition.group !== 'top' || condition.code === 'base_for_dependent_top') return condition
+    const basePredicate = condition.predicate
+    return { ...condition, predicate: piece => !pieceNeedsBase(piece) && basePredicate(piece) }
+  })
 }
 
 // Repair only what is actually broken, and never at the cost of something that
@@ -2180,7 +2197,19 @@ function capsuleSlotCoreKeys(piecesById = new Map(), slot = {}) {
   const tops = allowed.filter(piece => wardrobeCategoryGroup(piece) === 'top')
   const bottoms = allowed.filter(piece => wardrobeCategoryGroup(piece) === 'bottom')
   const dresses = allowed.filter(piece => wardrobeCategoryGroup(piece) === 'dress')
-  for (const top of tops) {
+  // Step 5 V1 follow-up (owner review 2026-07-30): "a valid dependent-top core
+  // is not crochet top + bottom + shoes — it is compatible base + crochet top
+  // + bottom + shoes." A needs_base top cannot produce a wearable core by
+  // itself; counting one anyway is exactly how capacity gets overstated —
+  // this function is what every capacity number in the feature is built from
+  // (capsuleOutfitCoreCapacity, capacity_below_rotation, the representative
+  // rotation allocator). Gate on a standalone base coexisting in THIS SAME
+  // slot's allowed set, mirroring dependent_base_unavailable's own condition,
+  // so the two checks can never disagree about what "available" means. A
+  // dependent top with no base here contributes zero cores, not a phantom one.
+  const hasStandaloneTopHere = tops.some(piece => !pieceNeedsBase(piece))
+  const coreCapableTops = hasStandaloneTopHere ? tops : tops.filter(piece => !pieceNeedsBase(piece))
+  for (const top of coreCapableTops) {
     for (const bottom of bottoms) cores.add(`separates:${Number(top.id)}:${Number(bottom.id)}`)
   }
   for (const dress of dresses) cores.add(`dress:${Number(dress.id)}`)
@@ -3367,6 +3396,20 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       const structureGap = describeOutfitStructureGap(pieces, { requireShoes: true })
       if (structureGap || !isOutfitStructurallyValid(pieces, { requireShoes: true })) {
         reasons.push(structureGap || 'outfit is structurally incomplete or has duplicate core roles')
+      }
+      // Step 5 V1 follow-up (owner review 2026-07-30): a needs_base piece is
+      // tagged unwearable alone by construction, but nothing checked that at
+      // the OUTFIT level before — only that a standalone base existed
+      // somewhere in the roster or slot. A submitted look could pair a
+      // needs_base top with just a bottom and shoes and ship as an ordinary
+      // card, presenting the dependent as if it were standalone. Shared by
+      // every caller of this validator (atomic capsule composition and the
+      // model tool-loop submit_plan_outfits), so a trip or work-week plan
+      // that happens to include a needs_base piece is covered too — same
+      // defect, same fix, not new scope.
+      const dependentTops = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
+      if (dependentTops.length && !pieces.some(piece => wardrobeCategoryGroup(piece) === 'top' && !pieceNeedsBase(piece))) {
+        reasons.push(`${dependentTops.map(piece => piece.name || `piece ${piece.id}`).join(', ')} cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom`)
       }
       if (pendingPlan.isWinterCapsule && slot.environment === 'indoor') {
         const hasSleevelessBase = pieces.some(piece =>
