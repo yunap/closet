@@ -2705,7 +2705,7 @@ export async function selectCapsuleRosterViaModel({
   isWinter = false,
   occasions = [],
   palette = [],
-  benchSize = 40,
+  benchSize = 70,
   chooseRoster = null,
   onDiagnostic = null,
   ownerRules = []
