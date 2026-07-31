@@ -427,6 +427,28 @@ version — a floating duplicate risked drifting out of sync with the carefully-
 No deterministic score, cap, or exclusion added — still purely a brief change, consistent with every
 other "do not add" ruling in this document.
 
+### Owner rules wired into roster selection, not just composition
+
+**Owner: "wiring `getOwnerRuleNotes` generically into roster selection is a good idea."** Confirmed
+before implementing: `buildPlanSlotWorkbench` already threads `ownerRules` (from
+`getOwnerRuleNotes(8)`) into `workbenchInstructions`, reaching the **composer**. Roster
+**selection** (`selectCapsuleRosterViaModel` → `chooseCapsuleRosterWithProvider` →
+`capsuleRosterSelectionUserText`) never received it at all — a stored rule like "no maxi skirts at
+work" could keep an unsuitable piece out of every composed look while it still spent a roster slot
+the composer then had nothing to do with.
+
+Threaded through the whole chain — `buildPlanSlotWorkbench`'s existing `ownerRules` param now also
+flows into `selectCapsuleRosterViaModel`, into both the initial `chooseRoster` call and the repair
+call, into `chooseCapsuleRosterWithProvider`, into `capsuleRosterSelectionUserText`. Rendered with
+the same "hard requirements, not suggestions" framing `workbenchInstructions` already uses, and
+placed early in the user text — before the (often long) candidate catalog — per this codebase's own
+measured lesson (spec 25/26) that stored rules lose out from tail position. Strict no-op when no
+rules are stored (empty array skips the block entirely).
+
+Data-threading and prompt-only; touches nothing `selectCapsuleRoster` (deterministic) reads, so no
+ranking A/B run. 3 new tests (user-text placement/no-op, both roster-selection attempts, end to end
+through `buildPlanSlotWorkbench`). Capsule suite 225/225; full suite same 10 pre-existing failures.
+
 ### Deferred with reasons
 
 - **tops:bottoms ratio.** Attempted, measured, reverted — see

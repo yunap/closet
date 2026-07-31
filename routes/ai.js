@@ -2845,7 +2845,7 @@ Use the supplied structured garment truth and photographs together: the record i
 // the only difference between them by construction.
 export function capsuleRosterSelectionUserText({
   bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
-  attempt = 1, failures = [], previousRosterIds = []
+  attempt = 1, failures = [], previousRosterIds = [], ownerRules = []
 } = {}) {
   const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
   const slotLines = slots.map(slot => `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}): ${slot.bestFor || slot.label}`)
@@ -2856,9 +2856,20 @@ export function capsuleRosterSelectionUserText({
   const repairBlock = attempt > 1
     ? `\n\nYOUR PREVIOUS SELECTION WAS REJECTED. Previous IDs: [${(previousRosterIds || []).join(', ')}]\nFix exactly these problems, keeping the rest of your selection:\n${failures.map(entry => `- ${entry.message}`).join('\n')}\n\nThe replacements you bring in are held to the same standard as the original picks: protagonists, independent wearability, seasonally credible footwear, and a distinct job per piece. Whatever you drop to make room should be the piece with the weakest job, not simply the easiest one to remove.`
     : ''
+  // Previously reached the composer (buildPlanSlotWorkbench's instructions)
+  // but never the roster pick itself — a stored rule like "avoid maxi skirts
+  // at work" could keep an unsuitable piece out of every COMPOSED look while
+  // it still spent a roster slot the composer then had nothing to do with.
+  // Placed early, right after the fixed facts (season/size/palette) and
+  // before the — often long — candidate catalog: this codebase has already
+  // measured stored rules losing out from tail position (spec 25/26,
+  // workbenchInstructions), so keep it close to where attention starts.
+  const ownerRulesBlock = Array.isArray(ownerRules) && ownerRules.length
+    ? `\n\nOWNER RULES — hard requirements, not suggestions. Do not construct exceptions or conditional workarounds. If a rule makes a genuinely usable roster impossible, say so in your palette line rather than bending the rule. Apply to every piece you select: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
+    : ''
   return `SEASON: ${isWinter ? 'winter' : isSummer ? 'summer' : 'unspecified'}
 CAPSULE SIZE: exactly ${budget} pieces
-${palette.length ? `COLOURS THE PERSON ASKED FOR: ${palette.join(', ')}` : 'The person did not state a palette; choose one that suits these garments.'}
+${palette.length ? `COLOURS THE PERSON ASKED FOR: ${palette.join(', ')}` : 'The person did not state a palette; choose one that suits these garments.'}${ownerRulesBlock}
 
 USE CASES THIS CAPSULE MUST COVER:
 ${slotLines.join('\n')}
@@ -2867,10 +2878,10 @@ CANDIDATES:
 ${truthCatalog.join('\n')}${repairBlock}`
 }
 
-async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds }, toolContext) {
+async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }, toolContext) {
   const content = [{
     type: 'text',
-    text: capsuleRosterSelectionUserText({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds })
+    text: capsuleRosterSelectionUserText({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules })
   }]
 
   // Photographs for the candidates, same reasoning as the composer: this stage

@@ -5167,6 +5167,81 @@ test('the roster-selection brief states independent wearability as a settled, ha
   assert.doesNotMatch(brief, /(exclude|disqualify|reject) (a |any )?needs_base/i)
 })
 
+// Owner: "wiring getOwnerRuleNotes generically into roster selection is a
+// good idea." Previously owner rules reached only composition
+// (buildPlanSlotWorkbench's instructions) — the roster PICK itself never saw
+// them, so a stored rule could keep an unsuitable piece out of every composed
+// look while it still spent a roster slot the composer had nothing to do
+// with. Threaded through selectCapsuleRosterViaModel -> chooseRoster ->
+// capsuleRosterSelectionUserText, both the initial call and the repair.
+test('owner rules reach the roster-selection user text, placed before the candidate catalog', () => {
+  const withRules = capsuleRosterSelectionUserText({
+    bench: layerTradeWardrobe().slice(0, 6),
+    slots: [{ label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home' }],
+    budget: 24, palette: [], isSummer: true,
+    ownerRules: ['Yuna prefers to travel in pants, not dresses, for airplane travel days.']
+  })
+  assert.match(withRules, /OWNER RULES — hard requirements, not suggestions/)
+  assert.match(withRules, /travel in pants, not dresses/)
+  // Placed before CANDIDATES (a potentially long catalog), not after — this
+  // codebase has already measured stored rules losing out from tail position.
+  assert.ok(withRules.indexOf('OWNER RULES') < withRules.indexOf('CANDIDATES:'))
+
+  // Absent ownerRules, or an empty array, is a strict no-op.
+  const withoutRules = capsuleRosterSelectionUserText({
+    bench: layerTradeWardrobe().slice(0, 6),
+    slots: [{ label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home' }],
+    budget: 24, palette: [], isSummer: true
+  })
+  assert.doesNotMatch(withoutRules, /OWNER RULES/)
+})
+
+test('selectCapsuleRosterViaModel passes ownerRules through to both the initial call and the repair', async () => {
+  const pool = layerTradeWardrobe()
+  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2 }])
+  const seenOwnerRules = []
+  const rule = 'Yuna prefers to travel in pants, not dresses, for airplane travel days.'
+  await selectCapsuleRosterViaModel({
+    pool, budget: 24, slots, isSummer: true, occasions: ['casual'],
+    ownerRules: [rule],
+    // Force a repair round so both attempts are observed.
+    chooseRoster: async ({ bench, ownerRules }) => {
+      seenOwnerRules.push(ownerRules)
+      const tops = bench.filter(piece => piece.category === 'top').map(piece => Number(piece.id))
+      return { roster_piece_ids: tops.slice(0, 24), palette: '', piece_jobs: [] }
+    }
+  })
+  assert.equal(seenOwnerRules.length, 2, 'sanity: this fixture always fails and repairs once')
+  assert.deepEqual(seenOwnerRules[0], [rule])
+  assert.deepEqual(seenOwnerRules[1], [rule])
+})
+
+test('buildPlanSlotWorkbench forwards its ownerRules into roster selection, not just composition', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  for (let i = 0; i < 8; i += 1) insertPiece({ category: 'top', name: `tee ${i}`, colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' })
+  for (let i = 0; i < 7; i += 1) insertPiece({ category: 'bottom', name: `pants ${i}`, colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' })
+  for (let i = 0; i < 3; i += 1) insertPiece({ category: 'dress', name: `dress ${i}`, colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' })
+  for (let i = 0; i < 2; i += 1) insertPiece({ category: 'outerwear', name: `jacket ${i}`, colors: ['olive'], occasions: ['casual', 'city'], formality: 'everyday' })
+  for (let i = 0; i < 4; i += 1) insertPiece({ category: 'shoes', name: `shoe ${i}`, colors: ['white'], occasions: ['casual', 'city'], formality: 'everyday' })
+
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2 }])
+  const rule = 'Yuna prefers to travel in pants, not dresses, for airplane travel days.'
+  let seenOwnerRules = null
+  await buildPlanSlotWorkbench(slots, {
+    constraints: { piece_budget: 24, reuse: 'maximize' },
+    allPieces,
+    question: 'I want a summer capsule',
+    planKind: 'seasonal_capsule',
+    ownerRules: [rule],
+    chooseCapsuleRoster: async ({ bench, ownerRules }) => {
+      seenOwnerRules = ownerRules
+      return { roster_piece_ids: bench.slice(0, 24).map(piece => Number(piece.id)), palette: 'black', piece_jobs: [] }
+    }
+  })
+  assert.deepEqual(seenOwnerRules, [rule], 'the same ownerRules passed to buildPlanSlotWorkbench must reach roster selection')
+})
+
 test('the repair call is held to the same brief as the first attempt', () => {
   const bench = layerTradeWardrobe().slice(0, 6)
   const slots = [{ label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home' }]

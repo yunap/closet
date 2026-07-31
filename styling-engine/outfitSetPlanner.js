@@ -2686,7 +2686,8 @@ export async function selectCapsuleRosterViaModel({
   palette = [],
   benchSize = 40,
   chooseRoster = null,
-  onDiagnostic = null
+  onDiagnostic = null,
+  ownerRules = []
 } = {}) {
   const deterministic = () => selectCapsuleRoster(pool, { budget, isSummer, isWinter, occasions, slots, palette })
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
@@ -2740,7 +2741,7 @@ export async function selectCapsuleRosterViaModel({
   }
 
   bump('capsuleRosterModelCalls')
-  const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, attempt: 1, failures: [] }))
+  const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, attempt: 1, failures: [], ownerRules }))
   let failures = record([...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)])
   if (!failures.length) {
     return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: supplyGaps(first.roster), failureCodes: seenCodes }
@@ -2751,7 +2752,7 @@ export async function selectCapsuleRosterViaModel({
   bump('capsuleRosterModelRepairs')
   const second = resolve(await chooseRoster({
     bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter,
-    attempt: 2, failures, previousRosterIds: first.roster.map(piece => Number(piece.id))
+    attempt: 2, failures, previousRosterIds: first.roster.map(piece => Number(piece.id)), ownerRules
   }))
   const secondFailures = record([...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)])
   if (!secondFailures.length) {
@@ -2819,7 +2820,10 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       occasions: slots.map(slot => slot.occasion),
       palette: paletteOptOut ? [] : requestPalette,
       chooseRoster: chooseCapsuleRoster,
-      onDiagnostic
+      onDiagnostic,
+      // Previously reached only composition (below, in workbenchInstructions);
+      // the roster pick itself never saw a stored owner rule at all.
+      ownerRules
     })
   }
   const composePool = capsuleRosterSelection
