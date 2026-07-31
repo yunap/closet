@@ -5143,6 +5143,30 @@ test('the roster-selection brief asks for the four judgments, without inventing 
   assert.doesNotMatch(brief, /at least (two|three|2|3) statement/i)
 })
 
+// Owner ruling 2026-07-30, reassessing thread_1785467959899: "different bases
+// alone does not [justify a dependent's two-slot cost]." A needs_base piece is
+// a selection DISADVANTAGE, not merely an extra cost the model may justify —
+// "a harder rule," explicitly not a ban, so it belongs in the brief (model
+// judgment) and NOT as a deterministic exclusion or cap. Superseded the
+// generic stylist_feedback owner_rule row (id 399, now archived) — this is
+// the settled home for it.
+test('the roster-selection brief states independent wearability as a settled, harder default — not a ban, not a hard filter', () => {
+  const brief = capsuleRosterSelectionSystemPrompt()
+  assert.match(brief, /default to independently wearable garments/)
+  assert.match(brief, /clearly outweighs the flexibility lost/)
+  assert.match(brief, /If a comparable standalone option exists.*choose the standalone option/)
+  assert.match(brief, /not a ban/)
+  // "Different bases" is necessary but not sufficient — each dependent must
+  // still individually clear the bar, not be waved through by variety alone.
+  assert.match(brief, /does not by itself justify either one's two-slot cost/)
+  // Still model judgment: no deterministic score, cap, or exclusion smuggled
+  // in. "Reject" already appears elsewhere in this brief for structural
+  // validator repair (unrelated), so scope the guard to needs_base language
+  // specifically rather than banning the word outright.
+  assert.doesNotMatch(brief, /never (select|include|choose) (a |any )?needs_base/i)
+  assert.doesNotMatch(brief, /(exclude|disqualify|reject) (a |any )?needs_base/i)
+})
+
 test('the repair call is held to the same brief as the first attempt', () => {
   const bench = layerTradeWardrobe().slice(0, 6)
   const slots = [{ label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home' }]

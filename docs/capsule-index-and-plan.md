@@ -379,6 +379,54 @@ With the corrected, roster-aware "supported dependent counts" rule, 258 has its 
 counts again, and the deterministic selector's output returns to exactly the pre-correction baseline.
 All four offline capsule scripts are byte-identical to baseline too.
 
+### First clean model-roster acceptance, and a sharpened dependent-piece ruling — `thread_1785467959899`, 2026-07-30
+
+After `ccb669d`, the next captured run was the first to genuinely succeed on the model path: **1
+roster call, 0 repairs, 0 fallbacks.** Two `needs_base` tops were selected (the crop top and the
+cream crochet top) and both were demonstrated over **different** bases — criterion 7's exact ask,
+and the opposite of the original failing run's same-tank-twice pattern. The layer floor was met
+(2/2 outerwear). The final-answer guard caught and discarded a real hallucination in the model's
+closing prose (two accessory pieces, 357 and 996776, that were never part of the roster or verified
+that turn) — the owner never saw that text; a safe generic replacement shipped instead, confirming
+the guard works as designed.
+
+Two further findings from reviewing the actual cards, both real, neither fixed yet:
+
+- **A title/piece mismatch caused by auto-completion.** One card's title named "Ankle Boots"; its
+  actual `piece_ids` held the navy canvas slip shoes. Root cause confirmed from the dev log: the
+  model's own submission for that look had no shoe at all, `completeSubmittedPlanOutfits` filled
+  the missing slot deterministically (lowest ID), and nothing reconciles a card's title/reason text
+  against a piece the engine adds afterward. Logged, not fixed — see
+  [[capsule-auto-completion-title-mismatch]] memory note.
+- **Taupe suede ankle boots (200) unused for the third straight captured run**, this time in a
+  genuinely clean model roster. Diagnosed as a seasonal-material-credibility gap (suede reads
+  cool-weather; nothing structured captures that) matching `capsule-step5-evaluation.md` §2's
+  original observation. Held for one more run before any brief change — see
+  [[capsule-taupe-boots-seasonal-credibility-pattern]].
+
+**Owner reassessment of the dependent-piece verdict, and a settled ruling.** Reviewing this run, the
+owner revised the read on "two dependents, different bases": *"'different bases' alone does not
+[justify the two-slot cost]. It passed demonstration mechanics, but may still have failed roster
+judgment: it spent four roster positions on two dependent tops and two bases when standalone
+alternatives could likely have produced more flexible capacity."* Sharpened verdict — criterion 3
+passed structurally (bases existed), criterion 7 passed narrowly (demonstrated differently), overall
+capsule citizenship remains questionable (different bases is necessary, not sufficient).
+
+This produced a new, settled product ruling, deliberately **model-judged, not a deterministic
+exclusion — "a harder rule, not a ban."** `needs_base` is not merely an extra cost the model may
+justify; it is a **selection disadvantage**: default to independently wearable garments, and select
+a dependent only when its distinctive contribution *clearly outweighs* the flexibility lost to its
+required base — if a comparable standalone option exists among the candidates, choose it instead.
+An exceptional piece can still earn inclusion; "the composer demonstrated it well" or "it used a
+different base than the other dependent" does not, by itself, meet that bar.
+
+Implemented directly in `capsuleRosterSelectionSystemPrompt`'s "INDEPENDENT WEARABILITY" section
+(routes/ai.js) — the settled home for this ruling, not a generic `stylist_feedback` `owner_rule` row
+(one was briefly stored as id 399, then archived once the brief itself became the authoritative
+version — a floating duplicate risked drifting out of sync with the carefully-worded settled text).
+No deterministic score, cap, or exclusion added — still purely a brief change, consistent with every
+other "do not add" ruling in this document.
+
 ### Deferred with reasons
 
 - **tops:bottoms ratio.** Attempted, measured, reverted — see
