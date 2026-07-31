@@ -2825,7 +2825,7 @@ Every place in this capsule is finite, and one piece taking a place is another p
 
 1. PROTAGONISTS. A capsule needs pieces that lead, pieces that support them, and pieces that ground the whole set. Aim for more than one visually distinct option that can lead a look, serving more than one of the requested contexts — not one token expressive garment surrounded by quiet basics, and not a crowd of pieces all competing for the same job. Judge this from the photographs: a garment that reads expressive in its written description can still read flat in the image, and the image is what the person will wear.
 
-2. INDEPENDENT WEARABILITY. In a finite capsule, default to independently wearable garments — a piece that always needs something else under or over it costs two places to produce one look, it and its base each taking a separate slot out of the fixed budget, not one shared slot. This is a settled, deliberately harder rule, not a passing preference: select a piece that needs a base only when its distinctive contribution clearly outweighs the flexibility lost to that required base. If a comparable standalone option exists in the candidates, choose the standalone option. This is not a ban — an exceptional piece (a genuinely singular hero top, an overlay nothing else in the wardrobe replaces) can still earn its two-slot cost — but the bar is now "clearly outweighs," not merely "earns its cost." Do not treat this as automatically satisfied by demonstrating the piece well or by giving two dependents different bases; that shows the composer can execute the pairing, not that the roster was right to spend two slots on it when a standalone alternative existed.
+2. INDEPENDENT WEARABILITY. In a finite capsule, default to independently wearable garments — a piece that always needs something else under or over it costs two places to produce one look, it and its base each taking a separate slot out of the fixed budget, not one shared slot. This is a settled, deliberately harder rule, not a passing preference: select a piece that needs a base only when its distinctive contribution clearly outweighs the flexibility lost to that required base. When candidate statement/hero pieces exist, prefer standalone statement pieces over pieces that require a base layer ('needs_base: yes'), unless the prompt explicitly asks for layering. If a comparable standalone option exists in the candidates, choose the standalone option. This is not a ban — an exceptional piece (a genuinely singular hero top, an overlay nothing else in the wardrobe replaces) can still earn its two-slot cost — but the bar is now "clearly outweighs," not merely "earns its cost." Do not treat this as automatically satisfied by demonstrating the piece well or by giving two dependents different bases; that shows the composer can execute the pairing, not that the roster was right to spend two slots on it when a standalone alternative existed.
 
 When you do take a piece that needs a base, its base must be a genuine visual match, not merely present: check opacity and coverage (an open-weave or sheer base does not conceal what it needs to), neckline and strap or sleeve shape, length, bulk, and colour relationship — whether the base is meant to stay hidden or to show intentionally as part of the look. "A tank exists in the roster" is not sufficient; the tank has to actually sit right under that particular construction. Weigh which kind of dependency this is: a strong one, where the base also works alone, supports another piece, and appears in other looks — a connector with multiple jobs, more likely to justify the second slot — versus a weak one, where the base exists only to make this one piece wearable, is never shown alone, and produces only a look or two. A weak dependency needs unusual visual strength, useful context coverage, or a role nothing else in the set fills to justify itself at all. If you do take more than one piece that needs a base, each one individually has to clear this bar on its own merits — giving them different bases is necessary, but it does not by itself justify either one's two-slot cost.
 
@@ -2881,7 +2881,8 @@ ${truthCatalog.join('\n')}${repairBlock}`
 async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }, toolContext) {
   const content = [{
     type: 'text',
-    text: capsuleRosterSelectionUserText({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules })
+    text: capsuleRosterSelectionUserText({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }),
+    cache_control: { type: 'ephemeral' }
   }]
 
   // Photographs for the candidates, same reasoning as the composer: this stage
@@ -2892,11 +2893,18 @@ async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, 
     const filePath = path.join(userUploadsDir(), photoFile)
     if (!fs.existsSync(filePath)) continue
     try {
-      const thumb = await prepareWardrobeThumb(filePath, `capsule-roster:${piece.id}:${photoFile}`, { maxPx: 448 })
+      const thumb = await prepareWardrobeThumb(filePath, `capsule-roster:${piece.id}:${photoFile}`, { maxPx: 800 })
       content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
-      content.push({ type: 'image', detail: 'low', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+      content.push({ type: 'image', detail: 'auto', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
     } catch (err) {
       console.error(`Error loading capsule roster thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+
+  if (content.length > 1) {
+    content[content.length - 1] = {
+      ...content[content.length - 1],
+      cache_control: { type: 'ephemeral' }
     }
   }
 
@@ -2924,7 +2932,7 @@ export function capsulePlanCompositionSystemPrompt() {
 
 The rotation is what proves the capsule works. Every piece in the roster was chosen for a job, so the set of looks you return must demonstrate those jobs — a layer worn somewhere, a piece that cannot stand alone shown over a base, a specialised shoe in a look that genuinely calls for it — and not merely touch most of the pieces. A rotation that uses almost every ID while never showing a whole function has not demonstrated the capsule. Where a piece's job genuinely cannot be shown well, say so plainly in the reason of the look that comes closest rather than passing over it in silence.
 
-Return the complete representative rotation in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Every look needs a distinct main core: a different top+bottom pair, or a different dress — this is enforced across the ENTIRE rotation you submit, not just within one slot, so a look can repeat another slot's core and still be rejected. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context (for example, home versus errands). When a slot combines adjacent contexts, state the narrower context the look genuinely serves instead of claiming it works for all of them. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+Return the complete representative rotation in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Every look needs a distinct main core: a different top+bottom pair, or a different dress — this is enforced across the ENTIRE rotation you submit, not just within one slot, so a look can repeat another slot's core and still be rejected. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit. Allowed pieces include the whole roster; you must read each piece's explicit formality (\`lounge\`, \`casual\`, \`elevated\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context (for example, home versus errands). When a slot combines adjacent contexts, state the narrower context the look genuinely serves instead of claiming it works for all of them. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -2967,7 +2975,8 @@ async function composeCapsulePlanOnce(workbench, toolContext) {
   }
   const content = [{
     type: 'text',
-    text: `Compose this fixed capsule workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`
+    text: `Compose this fixed capsule workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
+    cache_control: { type: 'ephemeral' }
   }]
   const visuallySeenIds = []
   for (const piece of rosterPieces) {
@@ -2976,16 +2985,22 @@ async function composeCapsulePlanOnce(workbench, toolContext) {
     const filePath = path.join(userUploadsDir(), photoFile)
     if (!fs.existsSync(filePath)) continue
     try {
-      const thumb = await prepareWardrobeThumb(filePath, `capsule-plan:${piece.id}:${photoFile}`, { maxPx: 448 })
+      const thumb = await prepareWardrobeThumb(filePath, `capsule-plan:${piece.id}:${photoFile}`, { maxPx: 800 })
       content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
       content.push({
         type: 'image',
-        detail: 'low',
+        detail: 'auto',
         source: { type: 'base64', media_type: thumb.media_type, data: thumb.data }
       })
       visuallySeenIds.push(Number(piece.id))
     } catch (err) {
       console.error(`Error loading atomic capsule thumbnail for piece ${piece.id}:`, err)
+    }
+  }
+  if (content.length > 1) {
+    content[content.length - 1] = {
+      ...content[content.length - 1],
+      cache_control: { type: 'ephemeral' }
     }
   }
   if (!(toolContext.retrievedPieceIds instanceof Set)) toolContext.retrievedPieceIds = new Set()

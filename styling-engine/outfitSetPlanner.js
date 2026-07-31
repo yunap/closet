@@ -31,7 +31,8 @@ import {
   isOutfitStructurallyValid,
   weatherProfileFromContext,
   wardrobeCategoryGroup,
-  footwearComfortVerdict
+  footwearComfortVerdict,
+  pieceStyleProfile
 } from './rules.js'
 import {
   bottomKind,
@@ -1916,7 +1917,7 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
 // a category or a requested slot out of the candidate pool the model never
 // sees past. Additive only: does not change selectCapsuleRoster's own output.
 export function buildCapsuleBench(pool = [], {
-  budget = 24, slots = [], isSummer = false, isWinter = false, benchSize = 40,
+  budget = 24, slots = [], isSummer = false, isWinter = false, benchSize = 70,
   palette = [],
   seedWithDeterministicRoster = true
 } = {}) {
@@ -2039,6 +2040,26 @@ export function buildCapsuleBench(pool = [], {
     else if (bestDress) { admit(bestDress, true) }
     admit(bestShoe, true)
   })
+
+  // Protagonist / Statement Piece Guarantee: reserve candidate slots for expressive/hero pieces
+  // (pattern_complexity === 'loud' || visual_roles includes 'hero_piece').
+  // Prefer standalone statement pieces (needs_base !== 'yes') over dependent ones so the roster model
+  // sees a rich choice of standalone hero tops/dresses alongside dependent options.
+  const isProtagonist = piece => {
+    const profile = pieceStyleProfile(piece)
+    const roles = Array.isArray(profile?.visual_roles) ? profile.visual_roles : []
+    return piece.pattern_complexity === 'loud' || roles.includes('hero_piece')
+  }
+  const protagonists = ranked.filter(isProtagonist)
+  protagonists.sort((a, b) => {
+    const aNeedsBase = a.needs_base === 'yes' ? 1 : 0
+    const bNeedsBase = b.needs_base === 'yes' ? 1 : 0
+    if (aNeedsBase !== bNeedsBase) return aNeedsBase - bNeedsBase
+    return (scoreOf.get(b) || 0) - (scoreOf.get(a) || 0)
+  })
+  for (const piece of protagonists.slice(0, 8)) {
+    admit(piece, true)
+  }
 
   // Truncation: fill remaining places by rank until benchSize. Guarantees
   // already admitted are never dropped, even if that pushes the bench past
