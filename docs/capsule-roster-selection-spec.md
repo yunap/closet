@@ -190,8 +190,10 @@ Two-tier (text truth for all, thumbnails for a slice) remains the fallback if 40
 
 ## 7. Palette as an input — how the person decides
 
-**Owner ruling 2026-07-28: palette becomes an input.** The question this section answers is *how*
-it arrives, given the standing ruling that intake must not become a stylist's questionnaire.
+**Owner ruling 2026-07-28: palette becomes an input.** The question this section answered was *how*
+it arrives, given the standing ruling that intake must not become a stylist's questionnaire. The
+original three arrival paths are preserved below for reference but are superseded — see the
+2026-07-30 reassessment.
 
 **First, a correction to an earlier draft of this section.** It claimed "nobody knows what palette
 their closet can support until they see the capsule." That is wrong, and the owner caught it: the
@@ -219,10 +221,12 @@ gives +12 to any piece with a neutral color term, and **66% of all color mention
 that list.** A bonus that fires on two-thirds of the population barely discriminates. It is not
 picking neutrals out of a colorful wardrobe; it is close to a baseline offset.
 
-So the ruling stands with one change: **still never ask at intake** — pre-capsule the person knows
-which colors they *own*, not which of them *cohere* into a capsule, and the one natural question is
-already spent on lifestyle. But the redirect path below should be a **chip row over this same
-vocabulary**, not free text.
+---
+
+### 2026-07-30 reassessment: paths 1, 2, and 3 are the wrong framing
+
+**The three paths below were the original plan. They are superseded by research findings
+that did not exist when they were written. They are preserved for reference — do not implement them.**
 
 Three arrival paths, in ascending cost to the person, none of them a new intake question.
 
@@ -267,13 +271,123 @@ Wardrobe page today — but because it makes the person decide which of their co
 before anything has shown them, which is the same mistake as asking them to supply a piece count.
 The same control after the fact is welcome; that is path 2.
 
-**One design constraint on the implementation.** Palette must be an *instruction to the selector*,
-not a deterministic filter over the pool. This project's own gate history is the argument: a hard
-filter on a taste dimension starves capacity, which is exactly why the `home` gate was rejected
-when the metadata could not support it (`docs/stylist-session-handoff.md`, lifestyle-audit entry).
-A palette is also not a flat list — it is a dominant set plus an accent, and "one warm note in an
-otherwise cool roster" is a good capsule, not a violation. Stage 3 validates capacity; it must not
-validate color.
+---
+
+### Why the three paths were retired
+
+Researched 2026-07-30 against three external documents with cited sources
+(`docs/capsule-palette-rules.md`, `docs/capsule-real-world-rules.md`,
+`docs/color-taxonomy-rules.md`). Three findings, each with a source, each of which undermines a
+different path.
+
+**Finding 1 — the wardrobe's palette is already fixed.** Every palette framework studied assumes
+you are building a wardrobe by shopping to a target palette
+([Rue Sophie](https://ruesophie.com/blogs/the-style-edit/capsule-wardrobe-color-palette),
+[A Considered Life](https://www.aconsideredlife.co.uk/2023/11/create-a-wardrobe-colour-palette.html),
+[AI Color Analysis](https://aicoloranalysis.com/blog/capsule-wardrobe-color-palette)). In this
+app, the closet already exists. Its palette is whatever it is — measured at 21 colour families,
+60% pure neutral. A palette preference stated at intake does not change what the wardrobe contains;
+it biases selection over a pool that was almost certainly going to produce a neutral-dominant result
+anyway. `docs/capsule-palette-rules.md` records this directly: *"These frameworks assume you are
+choosing a palette and then acquiring to it. This engine selects from a closet that already exists,
+whose palette is whatever it is."*
+
+This undermines path 1 (stated at intake). Mapping "neutrals plus warm accent" onto the vocabulary
+adds one new bonused set of pieces. It does not change what the roster will look like at 60–70%
+neutral — which it was going to be regardless — and it cannot supply a colour the wardrobe does not
+hold.
+
+**Finding 2 — the real palette problem is connectivity, not preference.** The one published colour
+rule described as "directly testable against a roster" is the connectivity rule: *"each accent
+should pair with every neutral and at least two main colors, so that a single accent sweater or
+skirt links into several outfits instead of demanding new companion pieces"*
+([AI Color Analysis](https://aicoloranalysis.com/blog/capsule-wardrobe-color-palette)). The live
+run confirmed this finding directly: the coral maxi sat in the roster and appeared in zero looks
+— the exact failure the rule describes. A palette preference (path 2's chip-row redirect) does not
+fix a connectivity gap. What fixes it is the composition stage being explicitly told to demonstrate
+each accent piece in a look — which is the extension to `capsuleFunctionalJobs` described below.
+
+This undermines path 2 (redirect after seeing it). The re-pick addresses the wrong layer: if
+the coral dress appeared in no looks, the problem is that the composer never got told to demonstrate
+it, not that the palette should have been stated differently.
+
+**Finding 3 — a palette preference repeated is a mood, not a rule; and the research draws no
+distinction.** *"Palette is deliberately a preference, not a filter, and this research does not
+overturn that"* (`docs/capsule-palette-rules.md`). The same document notes that the home-gate
+precedent — *"hard filters on taste dimensions starve capacity"* — holds for colour. Encoding a
+repeated palette preference as a permanent owner rule would inject it into every future capsule,
+regardless of season or context, and would act as a soft filter on the roster — exactly the
+mechanism the research argues against. A preference stated because you wanted a muted July palette
+should not constrain a December capsule.
+
+This undermines path 3 (stated twice becomes a rule). If someone has a genuine, long-standing
+aversion to a specific shade (say, mustard on their skin tone), the right home for it is a
+garment-level note on the specific pieces (`styling_rules_learned`), not a palette preference that
+reaches roster selection.
+
+---
+
+### What the research supports instead
+
+Three features grounded in the research findings, replacing the three paths.
+
+**Feature 1 — Accent connectivity as a composition instruction** (replaces path 2's chip-row
+redirect). The connectivity rule is the only published palette principle that is directly testable
+against a roster. Its natural implementation is not a palette input but an extension of the
+per-run `capsuleFunctionalJobs` clause in `buildPlanSlotWorkbench`: if the roster contains
+accent-coloured pieces (identified via the `neutrality: 'accent'` property of the colour taxonomy
+ratified in `docs/color-taxonomy-rules.md`), the composition brief names each one and asks the
+rotation to demonstrate it in at least one look. This is the same mechanism as layers, dependent
+tops, and specialized shoes — it derives from what the roster actually holds, not from a stated
+preference, and it is a strict no-op when no accent piece is in the roster.
+
+**Feature 2 — Colour-family breadth pressure in roster scoring** (supplements the neutral bonus).
+Measured in `docs/capsule-palette-rules.md`: both rosters spanned 12–13 colour families against
+a researched recommendation of 5–9 shades structured in tiers
+([Rue Sophie](https://ruesophie.com/blogs/the-style-edit/capsule-wardrobe-color-palette),
+[AI Color Analysis](https://aicoloranalysis.com/blog/capsule-wardrobe-color-palette)).
+Nothing in the current engine pushes down on breadth because every lever is per-piece. A small
+breadth pressure in `capsuleVersatilityScore` — prefer a piece whose colour family is already
+represented in the selected roster, over a piece that adds a novel family when a comparable
+represented-family piece exists — would reduce breadth from the scoring level without filtering
+anything. This is not a gate; a piece from an unrepresented family is not excluded, it is scored
+slightly lower. Correct implementation is a strict no-op when the wardrobe cannot fill a category
+any other way.
+
+**Feature 3 — Colour-story routing for large wardrobes** (new, not a replacement for any path).
+When the wardrobe is large enough to support multiple accent identities — enough mustard/amber/yellow
+pieces to build around, enough burgundy/wine/red pieces to build around separately — the meaningful
+request is not "nudge this capsule toward yellow" but "build this capsule from my warm-tone
+subset." That is a routing decision, not a preference nudge, and it is structurally different from
+paths 1–3. The implementation would be:
+
+1. **Bench pre-filter by accent family:** before roster selection, retain all pieces whose
+   `neutrality` is `neutral` or `neutral-adjacent` (the connectors, always pass through), and all
+   pieces whose primary colour family matches the requested story. Pieces from other accent families
+   are excluded from the bench for this run only.
+2. **Supply precondition first:** before committing to colour-story mode, verify the filtered bench
+   can produce a valid capsule across all requested slots. If the yellow bench cannot fill the shoe
+   quota with shoes that are plausibly yellow-compatible, report the gap rather than producing a
+   capsule that misses a category.
+3. **Colour theory research still required:** this feature depends on knowing which non-neutral
+   colours pair with a given accent family — not just "what other colours does this person own" but
+   "which other accent families are harmonious with yellow." Published colour theory (analogous,
+   complementary, triadic relationships) could give this structure; it has not been researched for
+   this codebase yet. The feature is **not buildable without that research**, because bench
+   pre-filtering on family alone would exclude burgundy even if burgundy-and-yellow is a valid
+   pairing. A future research document (`docs/capsule-color-harmony-rules.md`) is the correct
+   prerequisite, not a spec-level assumption.
+
+**One design constraint that survives from the original section.** Palette must remain an
+*instruction to the selector*, not a deterministic filter over the pool — for the reasons the
+original §7 stated and the research confirmed. `docs/capsule-palette-rules.md`: *"Palette is
+deliberately a preference, not a filter, and this research does not overturn that. The project's
+`home`-gate precedent is that hard filters on taste dimensions starve capacity."* Feature 3 is the
+only proposed feature that pre-filters the bench; it does so at the accent-family level, not the
+shade level, and only when the person has explicitly requested a colour story, not as a default.
+Stage 3 validates capacity; it must not validate color.
+
+
 
 ## 7b. Pieces that cannot be worn alone — `needs_base`
 
@@ -456,8 +570,11 @@ The same caution applies to `docs/tagger-cost-spec.md`, which is priced entirely
    them to owner-facing. The prior default (hide it) was a guess; this is checkable. The one firm
    constraint: whatever ships must not read as validator coaching or engine vocabulary — the same
    bar the plan notes now meet.
-3. ~~**Should the palette be an input?**~~ — **ruled 2026-07-28: yes**, see §7 for how it arrives
-   without adding a question.
+3. ~~**Should the palette be an input?**~~ — **ruled 2026-07-28: yes. Reassessed 2026-07-30: paths
+   1, 2, and 3 are the wrong framing for an existing wardrobe.** The research-grounded replacement
+   (accent connectivity as a composition instruction, colour-family breadth pressure, colour-story
+   routing for large wardrobes) is documented in §7. Colour-story routing depends on colour harmony
+   research not yet conducted; see `docs/capsule-color-harmony-rules.md` (to be written).
 4. **What happens to `capsuleVersatilityScore` long-term?** This spec keeps it as the bench ranking.
    If a model roster consistently beats it, the score's remaining job is ordering, not selection —
    worth revisiting only with evidence.
