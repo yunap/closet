@@ -1641,6 +1641,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           dateRange: planDateRange,
           mood: toolContext.mood || '',
           question: toolContext.question || '',
+          location: toolContext.location || '',
           ownerRules,
           planKind,
           // Injected only when the route wired one (flag on). Absent, the

@@ -422,6 +422,12 @@ export function describeCapsuleRosterUtilization(roster = [], cards = []) {
 // compared against it has to be built the same way. Split the neutral base out
 // and name the thin families rather than folding them into one count. Still
 // observational: this rejects, repairs and reorders nothing.
+export function colorFamilyDisplayName(family = '') {
+  const key = String(family || '').trim().toLowerCase()
+  if (key === 'cyan') return 'teal & turquoise'
+  return key
+}
+
 export function describeCapsulePaletteCohesion(roster = [], cards = []) {
   const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
   if (!rosterPieces.length) return ''
@@ -462,14 +468,14 @@ export function describeCapsulePaletteCohesion(roster = [], cards = []) {
     ? `a ${neutralFamilyCount}-family neutral base`
     : 'no neutral family at all'
   const colourLabel = colourFamilies.length
-    ? `${colourFamilies.length} colour ${colourFamilies.length === 1 ? 'family' : 'families'} beyond ${baseLabel} — ${colourFamilies.map(([family, record]) => `${family} (${record.pieces.size})`).join(', ')}`
+    ? `${colourFamilies.length} colour ${colourFamilies.length === 1 ? 'family' : 'families'} beyond ${baseLabel} — ${colourFamilies.map(([family, record]) => `${colorFamilyDisplayName(family)} (${record.pieces.size})`).join(', ')}`
     : `no colour family beyond ${baseLabel}`
   let line = `[capsule palette: ${colourLabel} · ${neutralBaseCount} of ${rosterPieces.length} pieces (${neutralPercent}%) form the neutral base`
   // The specific inflation worth naming: a family nothing in the capsule
   // actually leads with, present only inside a multi-colour garment.
   const secondaryOnly = colourFamilies.filter(([, record]) => !record.leadsAPiece).map(([family]) => family)
   if (secondaryOnly.length) {
-    line += ` · ${secondaryOnly.join(', ')} appear${secondaryOnly.length === 1 ? 's' : ''} only as a secondary colour inside a multi-colour piece, never leading one`
+    line += ` · ${secondaryOnly.map(colorFamilyDisplayName).join(', ')} appear${secondaryOnly.length === 1 ? 's' : ''} only as a secondary colour inside a multi-colour piece, never leading one`
   }
   if (unusedAccents.length) {
     const named = unusedAccents.slice(0, 4).map(piece => piece.name || `piece ${piece.id}`).join(', ')
@@ -811,7 +817,7 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // trip; and getWeatherProfileForPlan itself falls back to the heuristic when no
 // location/date is available or the fetch fails. The returned `label` is what
 // the plan lines state back to the user so they can correct it conversationally.
-async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, fetchImpl, seasonIsCalendarOnly = false } = {}) {
+async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, location = '', fetchImpl, seasonIsCalendarOnly = false } = {}) {
   const moodText = mood || question
   // A weather the person or the model STATED for this slot is a claim about
   // this slot's conditions, so it keeps its full meaning even for a capsule.
@@ -828,9 +834,10 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
   // calendar guess — an empty string reads as a provided-but-invalid Date and
   // silently disables it, which would regress the keyword pre-route's weather.
   const day = slot.date || undefined
+  const targetLocation = slot.location || location || ''
   const profile = await getWeatherProfileForPlan({
     dateRange: { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined },
-    location: slot.location || '',
+    location: targetLocation,
     season: slot.season,
     mood: moodText,
     seasonIsCalendarOnly,
@@ -2818,7 +2825,7 @@ export async function selectCapsuleRosterViaModel({
   }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
   const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
@@ -2865,7 +2872,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   if (Array.isArray(capsuleRosterSelection?.coverageGaps)) coverageGaps.push(...capsuleRosterSelection.coverageGaps)
   for (const [index, slot] of slots.entries()) {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
-    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl, seasonIsCalendarOnly: isSeasonalCapsule })
+    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, location, fetchImpl, seasonIsCalendarOnly: isSeasonalCapsule })
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot
