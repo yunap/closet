@@ -20,6 +20,7 @@ import {
   describeCapsuleCompositionShortfall,
   describeCapsulePaletteCohesion,
   describeCapsuleRosterUtilization,
+  describeCapsuleUndemonstratedJobs,
   completeSubmittedPlanOutfits,
   REASON_REVISION_MESSAGE,
   printPairingSightIssue,
@@ -180,6 +181,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       capsuleRosterModelCalls: 0,
       capsuleRosterModelRepairs: 0,
       capsuleRosterModelFallbacks: 0,
+      capsuleRosterFailureCodes: '',
       providerIterations: 0,
       providerInputTokens: 0,
       providerOutputTokens: 0,
@@ -197,6 +199,18 @@ export function setFreeformWeatherSource(toolContext, source) {
   if (!toolContext) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
   toolContext.freeformDiagnostics.weatherSource = source
+}
+
+// Same string-diagnostic shape as the weather source above. Records WHICH
+// roster guarantees the model's selection missed — without it, a fallback is
+// only a number and the next step is another paid run rather than a query
+// (live thread_1785451253837).
+export function setFreeformCapsuleRosterFailureCodes(toolContext, codes = []) {
+  if (!toolContext) return
+  const list = (Array.isArray(codes) ? codes : []).filter(Boolean)
+  if (!list.length) return
+  bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
+  toolContext.freeformDiagnostics.capsuleRosterFailureCodes = list.join(',')
 }
 
 // Stated weather (this tool call's own weather/season text) wins outright over a
@@ -1627,6 +1641,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           dateRange: planDateRange,
           mood: toolContext.mood || '',
           question: toolContext.question || '',
+          location: toolContext.location || '',
           ownerRules,
           planKind,
           // Injected only when the route wired one (flag on). Absent, the
@@ -1636,6 +1651,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             : null,
           onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
+        setFreeformCapsuleRosterFailureCodes(toolContext, workbench?.pendingPlan?.capsuleRosterFailureCodes)
         const useAtomicCapsuleComposition =
           planKind === 'seasonal_capsule' &&
           Number(planConstraints.piece_budget) >= MIN_ENFORCED_CAPSULE_BUDGET &&
@@ -1766,6 +1782,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
             pendingPlan.capsuleRoster || [],
             displayedForUtilization
           )
+          // Step 5 criterion 4: utilization above counts IDs, and on the live
+          // run its 92% headline hid that the two unused pieces were the
+          // capsule's ONLY layer and a shoe that earned no formula. This names
+          // the undemonstrated JOB and restates the percentage alongside it, so
+          // a high raw number cannot read as success on its own.
+          const jobsLine = describeCapsuleUndemonstratedJobs(
+            pendingPlan.capsuleRoster || [],
+            displayedForUtilization
+          )
+          if (jobsLine) {
+            pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), jobsLine]
+          }
           if (paletteLine) {
             pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), paletteLine]
           }

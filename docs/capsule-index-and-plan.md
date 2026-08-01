@@ -236,11 +236,218 @@ availability remain deterministic; hero/support/grounding balance, seasonally co
 and whether selected pieces earn distinct jobs remain model judgments; post-composition disclosure
 reports undemonstrated functions rather than letting a high raw utilization percentage hide them.
 
-No correction is implemented yet. The proposed V1 boundary requires owner review before code:
-restore the researched layer floor on the model path, give roster selection and repair the
-qualitative capsule jobs, and ask composition to demonstrate selected functions. Palette pressure,
-formula optimisation, deterministic hero scoring, a blanket dependent-piece cap and retagging
-remain out of scope.
+**The V1 correction is now implemented and awaiting owner review before the approved rerun.** It
+is exactly the boundary above and nothing more:
+
+- `layer_floor:outerwear` makes the researched layer allocation a validator floor as well as a
+  ceiling. It is `validatorOnly`, so the deterministic selector is untouched; the validator's
+  existing supply attribution supplies the "when the bench can supply it" condition, and
+  `describeCapsuleLayerSupplyGap` discloses a genuine shortfall instead of failing forever.
+- `dependent_base_unavailable` closes the roster-level loophole: a standalone base must be
+  gate-valid in every slot where a `needs_base` piece is offered. Structural availability only —
+  visual compatibility stays with the model.
+- The roster-selection brief (used verbatim for the initial call and the bounded repair) asks for
+  hero/support/grounding balance, independent wearability, seasonally credible footwear, and a
+  distinct job per piece.
+- The composition brief, plus a per-run clause derived from what the roster actually holds, asks
+  the rotation to demonstrate its layers, dependent pieces and specialised shoes.
+- `describeCapsuleUndemonstratedJobs` reports an undemonstrated category or special job with the
+  utilization percentage stated beside it, so a high raw number cannot stand alone.
+
+Palette pressure, formula optimisation, deterministic hero scoring, a blanket dependent-piece cap
+and retagging remain out of scope, and none of them was added. Verified offline: the ranking A/B
+against the 243-piece wardrobe reports 0 differing scenarios, and the scenario matrix, summer
+replay, roster-utility audit and bench diagnostics are byte-identical to the pre-change baseline.
+
+### First rerun under the correction — `thread_1785451253837`, 2026-07-30
+
+**The run did not evaluate the correction, and the reason is itself a finding.** The model's roster
+was rejected, repaired, rejected again, and the deterministic fallback shipped. Composition then ran
+normally — the 12 looks are genuinely model-composed, three of them patched by engine
+auto-completion — but they were composed from an **engine-chosen roster**, so criteria 5-7 (footwear
+credibility, protagonists, dependent-top breadth), which are all judgments about *selection*, cannot
+be read from this run at all. The comparison is direct: run 1074 at 14:53, before
+the correction, took 1 call + 1 repair and **0** fallbacks; run 1076 at 15:43, after it, took 1 call
++ 1 repair and **1** fallback. Model roster choice is stochastic, so this is strong evidence rather
+than proof.
+
+What the run did establish:
+
+- **Criterion 4 works on real data.** The disclosure fired as designed and named the failure that a
+  raw percentage would have blurred: *19 of 24 roster pieces (79%) appear in a look, but 1 selected
+  job(s) went undemonstrated — no look uses a layer.*
+- **Criterion 8 did not take.** The per-run functional-demonstration clause was in the workbench,
+  the olive jacket was in At Home's allowed IDs, and the composer still demonstrated no layer —
+  while needing 3 engine auto-completions against 0 on the prior run. Instruction present, behaviour
+  unchanged.
+- **Two observability gaps, both now closed.** The validator's failure codes were discarded, so a
+  fallback recorded only that it happened; and `capsuleRosterSource` was written and read by
+  nothing, so the spec's stage-3 fallback disclosure — ratified, never implemented — meant an
+  engine-chosen capsule presented exactly like a model-chosen one.
+- **Two assumptions in `capsule-step5-evaluation.md` §2 need qualifying.** The taupe suede ankle
+  boots are in the deterministic roster too and unused again, so that pick is not a model-roster
+  failure; and the 10 colour families / 83% neutral result reproduced exactly, which makes it a
+  property of the selector rather than of model taste. Both strengthen the case for keeping palette
+  observational for now.
+
+Corrections applied after this run (owner ruling 2026-07-30):
+
+1. `capsule_roster_failure_codes` records which guarantees a rejection cited, so the next question
+   is a query rather than another paid run.
+2. Both outcomes now disclose themselves: a fallback says the engine chose the roster and why.
+3. **The layer floor is coachable.** It still fails, so the model is always told and always gets its
+   one correction round — but on its own it no longer spends the fallback. If the repair still
+   misses it and nothing else is wrong, the model's roster ships as `model_repaired_with_gaps` with
+   the unmet allocation stated. `dependent_base_unavailable` is deliberately not coachable: a piece
+   that cannot form a look in a slot it was offered in is a wearability defect, not an allocation
+   preference.
+
+### Dependent-piece semantics — owner design review, 2026-07-30
+
+Reviewing the same rerun, the owner examined the "Geometric Hero with Lace Trousers" card directly
+(piece 258, `black geometric tassel hem crop top`, over piece 101, `wide leg trousers`) and made two
+corrections to the initial diagnosis, then wrote a full proposed rule set for how a `needs_base`
+piece should be treated as capsule arithmetic, not a convenience bundle:
+
+- **The model did see both pieces' photos**, not just text — `atomicCapsuleVisualPieces: 24` in that
+  turn's debug data. The stated `do_not_pair_rules` conflict (wide bottom vs. handkerchief volume)
+  was in the model's context and it composed the pairing anyway.
+- **The real friction the critique names is the lace waistband trim competing with the top's tassel
+  trim** — not volume. This has no structured field to live in: piece 101 is tagged
+  `pattern_complexity: solid` (lace trim isn't a print), so no `do_not_pair_rules` clause could ever
+  have named it. Same shape as the pre-`needs_base` gap — a known, prose-only property.
+- Logged to memory (`capsule-do-not-pair-rules-unenforced`), no code change — a single confirmed
+  instance, not yet a pattern.
+
+The rule-set proposal itself: both pieces of a dependency always count separately toward budget;
+standalone and dependent top capacity must be counted separately, not folded into one "top" number;
+a dependent's base must be genuinely compatible, not merely present; the base's own independent
+value (strong vs. weak dependency) is a model judgment; outfit cores must require the compatible
+base explicitly, not just the dependent top; cards should reveal the dependency rather than present
+the dependent as standalone; reuse reporting should distinguish productive connector reuse from
+forced dependency; the model decides whether a dependent earns its two-slot cost, never a
+deterministic exclusion.
+
+**Owner-scoped implementation, 2026-07-30 ("structural gaps + brief language," reuse reporting
+deferred):**
+
+1. **Capacity honesty** (`capsuleSlotCoreKeys`). A dependent top only contributes `separates:` cores
+   in a slot when a standalone base also passes that slot's own gates — mirroring
+   `dependent_base_unavailable`'s own definition of "available," so the two checks can never
+   disagree. Confirmed real by reading the function before touching it: it previously paired every
+   top against every bottom with zero `needs_base` awareness. A piece's own core-forming ability
+   (can it be its own outfit's top) is governed by `needs_base` alone; a caught-by-test conflation
+   briefly made it depend on opacity too — a sheer top not tagged `needs_base` still forms its own
+   core, it just cannot rescue a *different* dependent's core.
+2. **Standalone vs. dependent top capacity, counted separately — revised after owner review of the
+   first version's overcorrection.** That version made a `needs_base` piece fail every `group: 'top'`
+   condition unconditionally, which is stricter than "a dependent cannot satisfy the guarantee by
+   itself": it swapped out an expressive dependent (piece 258) even when its base was genuinely
+   present and usable. The corrected rule, in `capsuleConditionMatches` (now roster-aware): a
+   `needs_base` piece counts toward a top-group guarantee only when a standalone base coexists in the
+   SAME candidate pool — an unsupported dependent contributes nothing, a supported one is real
+   dependent-top capacity. `base_for_dependent_top` is exempt, unchanged.
+3. **One shared base-candidate predicate** (`isCapsuleBaseCandidate`), used everywhere "is this a
+   valid base" is asked — capacity, the roster-level guarantee, slot validation, outfit validation —
+   so none of them can disagree. Top category, not itself `needs_base`, and (new) not structurally
+   sheer/semi_sheer/open_weave per the tagger's own definition of what "cannot work alone against
+   skin as a base layer." Unknown/unset opacity (206 of 243 live pieces) stays eligible — absence of
+   a tag is not evidence of unsuitability. Neckline, strap/sleeve shape, bulk, colour and visual fit
+   stay model judgment.
+4. **Outfit-level enforcement** (`validateSubmittedPlanOutfits`, shared by the atomic capsule
+   composer and the model tool-loop `submit_plan_outfits`). A submitted look containing a `needs_base`
+   top must also include a standalone top (per item 3's predicate); confirmed before implementing
+   that **no such check existed anywhere** — a dependent could ship with just a bottom and shoes,
+   presented as if standalone. This is the achievable form of "cards must show the base and the
+   dependent, never present the dependent as standalone": adding literal `primary_top`/`layer_top`
+   roles to the atomic composer's schema was considered and set aside, because the frontend does not
+   render `role` distinctly anywhere today (confirmed by grep) — the visual half of that ask needs an
+   actual UI change, not requested here.
+5. **Brief language** (points 3/4/8 of the review): the roster-selection brief's "INDEPENDENT
+   WEARABILITY" section now names concrete visual-compatibility checks (opacity, neckline,
+   strap/sleeve shape, length, bulk, colour relationship, concealment intent) and the
+   strong-vs-weak-dependency judgment, matching how hero/support/wearability guidance was already
+   written. No deterministic score, no exclusion — model judgment, as designed.
+
+**Ranking A/B: 0 scenarios differ — the corrected version is the no-op the V1 correction was too.**
+The first implementation of item 2 was NOT `validatorOnly` like `layer_floor:outerwear`, and it
+changed the deterministic path in one scenario: piece 258 (`formality: everyday`, `needs_base: yes`)
+was swapped for a non-dependent, because the too-broad rule denied it credit toward a register
+reserve even though its base (the orange tank) was present in the same roster. That was overcorrection,
+not the intended fix — confirmed by the owner from the code, not from the observed symptom alone.
+With the corrected, roster-aware "supported dependent counts" rule, 258 has its base in the roster,
+counts again, and the deterministic selector's output returns to exactly the pre-correction baseline.
+All four offline capsule scripts are byte-identical to baseline too.
+
+### First clean model-roster acceptance, and a sharpened dependent-piece ruling — `thread_1785467959899`, 2026-07-30
+
+After `ccb669d`, the next captured run was the first to genuinely succeed on the model path: **1
+roster call, 0 repairs, 0 fallbacks.** Two `needs_base` tops were selected (the crop top and the
+cream crochet top) and both were demonstrated over **different** bases — criterion 7's exact ask,
+and the opposite of the original failing run's same-tank-twice pattern. The layer floor was met
+(2/2 outerwear). The final-answer guard caught and discarded a real hallucination in the model's
+closing prose (two accessory pieces, 357 and 996776, that were never part of the roster or verified
+that turn) — the owner never saw that text; a safe generic replacement shipped instead, confirming
+the guard works as designed.
+
+Two further findings from reviewing the actual cards, both real, neither fixed yet:
+
+- **A title/piece mismatch caused by auto-completion.** One card's title named "Ankle Boots"; its
+  actual `piece_ids` held the navy canvas slip shoes. Root cause confirmed from the dev log: the
+  model's own submission for that look had no shoe at all, `completeSubmittedPlanOutfits` filled
+  the missing slot deterministically (lowest ID), and nothing reconciles a card's title/reason text
+  against a piece the engine adds afterward. Logged, not fixed — see
+  [[capsule-auto-completion-title-mismatch]] memory note.
+- **Taupe suede ankle boots (200) unused for the third straight captured run**, this time in a
+  genuinely clean model roster. Diagnosed as a seasonal-material-credibility gap (suede reads
+  cool-weather; nothing structured captures that) matching `capsule-step5-evaluation.md` §2's
+  original observation. Held for one more run before any brief change — see
+  [[capsule-taupe-boots-seasonal-credibility-pattern]].
+
+**Owner reassessment of the dependent-piece verdict, and a settled ruling.** Reviewing this run, the
+owner revised the read on "two dependents, different bases": *"'different bases' alone does not
+[justify the two-slot cost]. It passed demonstration mechanics, but may still have failed roster
+judgment: it spent four roster positions on two dependent tops and two bases when standalone
+alternatives could likely have produced more flexible capacity."* Sharpened verdict — criterion 3
+passed structurally (bases existed), criterion 7 passed narrowly (demonstrated differently), overall
+capsule citizenship remains questionable (different bases is necessary, not sufficient).
+
+This produced a new, settled product ruling, deliberately **model-judged, not a deterministic
+exclusion — "a harder rule, not a ban."** `needs_base` is not merely an extra cost the model may
+justify; it is a **selection disadvantage**: default to independently wearable garments, and select
+a dependent only when its distinctive contribution *clearly outweighs* the flexibility lost to its
+required base — if a comparable standalone option exists among the candidates, choose it instead.
+An exceptional piece can still earn inclusion; "the composer demonstrated it well" or "it used a
+different base than the other dependent" does not, by itself, meet that bar.
+
+Implemented directly in `capsuleRosterSelectionSystemPrompt`'s "INDEPENDENT WEARABILITY" section
+(routes/ai.js) — the settled home for this ruling, not a generic `stylist_feedback` `owner_rule` row
+(one was briefly stored as id 399, then archived once the brief itself became the authoritative
+version — a floating duplicate risked drifting out of sync with the carefully-worded settled text).
+No deterministic score, cap, or exclusion added — still purely a brief change, consistent with every
+other "do not add" ruling in this document.
+
+### Owner rules wired into roster selection, not just composition
+
+**Owner: "wiring `getOwnerRuleNotes` generically into roster selection is a good idea."** Confirmed
+before implementing: `buildPlanSlotWorkbench` already threads `ownerRules` (from
+`getOwnerRuleNotes(8)`) into `workbenchInstructions`, reaching the **composer**. Roster
+**selection** (`selectCapsuleRosterViaModel` → `chooseCapsuleRosterWithProvider` →
+`capsuleRosterSelectionUserText`) never received it at all — a stored rule like "no maxi skirts at
+work" could keep an unsuitable piece out of every composed look while it still spent a roster slot
+the composer then had nothing to do with.
+
+Threaded through the whole chain — `buildPlanSlotWorkbench`'s existing `ownerRules` param now also
+flows into `selectCapsuleRosterViaModel`, into both the initial `chooseRoster` call and the repair
+call, into `chooseCapsuleRosterWithProvider`, into `capsuleRosterSelectionUserText`. Rendered with
+the same "hard requirements, not suggestions" framing `workbenchInstructions` already uses, and
+placed early in the user text — before the (often long) candidate catalog — per this codebase's own
+measured lesson (spec 25/26) that stored rules lose out from tail position. Strict no-op when no
+rules are stored (empty array skips the block entirely).
+
+Data-threading and prompt-only; touches nothing `selectCapsuleRoster` (deterministic) reads, so no
+ranking A/B run. 3 new tests (user-text placement/no-op, both roster-selection attempts, end to end
+through `buildPlanSlotWorkbench`). Capsule suite 225/225; full suite same 10 pre-existing failures.
 
 ### Deferred with reasons
 

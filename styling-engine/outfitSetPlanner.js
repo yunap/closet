@@ -31,7 +31,8 @@ import {
   isOutfitStructurallyValid,
   weatherProfileFromContext,
   wardrobeCategoryGroup,
-  footwearComfortVerdict
+  footwearComfortVerdict,
+  pieceStyleProfile
 } from './rules.js'
 import {
   bottomKind,
@@ -371,9 +372,10 @@ export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
   }
 }
 
-export function describeCapsuleRosterUtilization(roster = [], cards = []) {
-  const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
-  if (!rosterPieces.length) return ''
+// Three disclosure lines now count "which roster pieces reached a card", and a
+// card carries its pieces under any of three keys depending on where it came
+// from. One reader, so they can never disagree about what "used" means.
+function capsulePieceIdsInCards(cards = []) {
   const used = new Set()
   for (const card of Array.isArray(cards) ? cards : []) {
     const ids = card?.pieceIds || card?.piece_ids || card?.pieces || []
@@ -382,6 +384,13 @@ export function describeCapsuleRosterUtilization(roster = [], cards = []) {
       if (numeric) used.add(numeric)
     }
   }
+  return used
+}
+
+export function describeCapsuleRosterUtilization(roster = [], cards = []) {
+  const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
+  if (!rosterPieces.length) return ''
+  const used = capsulePieceIdsInCards(cards)
   const unused = rosterPieces.filter(piece => !used.has(Number(piece.id)))
   if (!unused.length) return ''
   const named = unused.slice(0, 4).map(piece => piece.name || `piece ${piece.id}`).join(', ')
@@ -396,42 +405,180 @@ export function describeCapsuleRosterUtilization(roster = [], cards = []) {
 // reject, repair, reorder, or force a piece into a look. That preserves the
 // settled rule that palette is a preference rather than a validity gate and
 // gives the owner evidence before any V2 generation pressure is considered.
+// A flat family count was the wrong measure, in the same way raw utilization
+// was. On live thread_1785451253837 it reported "10 colour families" for a
+// roster whose 24 pieces hold 4 non-neutral garments, because it counted every
+// family any colour term touched:
+//
+//   - 5 of the 10 were the neutral base itself (white, beige, grey, black,
+//     brown), so the same line could say "10 families" and "83% neutral"
+//     without noticing the contradiction;
+//   - a multi-colour piece was counted into every family it touched (one pair
+//     of black/white/brown sneakers supplied three);
+//   - `red` existed nowhere in the capsule except as `burgundy`, the third
+//     listed colour of one patterned crop top.
+//
+// Published guidance counts a palette as what the set READS as, so a number
+// compared against it has to be built the same way. Split the neutral base out
+// and name the thin families rather than folding them into one count. Still
+// observational: this rejects, repairs and reorders nothing.
+export function colorFamilyDisplayName(family = '') {
+  const key = String(family || '').trim().toLowerCase()
+  if (key === 'cyan') return 'teal & turquoise'
+  return key
+}
+
 export function describeCapsulePaletteCohesion(roster = [], cards = []) {
   const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
   if (!rosterPieces.length) return ''
 
-  const families = new Set()
+  // Per family: which pieces touch it, whether any mention of it is an actual
+  // accent, and whether it ever leads a piece rather than trailing inside a
+  // multi-colour list. The taxonomy carries neutrality per COLOUR, not per
+  // family, and the distinction matters — navy and blue share a family.
+  const byFamily = new Map()
   const accentPieces = []
   let neutralBaseCount = 0
   for (const piece of rosterPieces) {
     const colors = Array.isArray(piece?.colors) ? piece.colors : []
-    for (const family of colorFamilies(colors)) {
-      if (family !== 'unknown') families.add(family)
+    const dominantFamily = colorFamilies(colors.slice(0, 1)).find(family => family !== 'unknown') || ''
+    for (const color of colors) {
+      const entry = colorTaxonomyEntry(color)
+      const family = entry.family
+      if (!family || family === 'unknown') continue
+      if (!byFamily.has(family)) byFamily.set(family, { pieces: new Set(), hasAccent: false, leadsAPiece: false })
+      const record = byFamily.get(family)
+      record.pieces.add(Number(piece.id))
+      if (entry.neutrality === 'accent') record.hasAccent = true
+      if (family === dominantFamily) record.leadsAPiece = true
     }
     if (colorsArePaletteNeutral(colors)) neutralBaseCount += 1
-    if (colors.some(color => colorTaxonomyEntry(color).neutrality === 'accent')) {
-      accentPieces.push(piece)
-    }
+    if (colors.some(color => colorTaxonomyEntry(color).neutrality === 'accent')) accentPieces.push(piece)
   }
 
-  const used = new Set()
-  for (const card of Array.isArray(cards) ? cards : []) {
-    const ids = card?.pieceIds || card?.piece_ids || card?.pieces || []
-    for (const id of Array.isArray(ids) ? ids : []) {
-      const numeric = Number(typeof id === 'object' ? id?.id : id)
-      if (numeric) used.add(numeric)
-    }
-  }
+  const colourFamilies = [...byFamily].filter(([, record]) => record.hasAccent)
+    .sort((a, b) => b[1].pieces.size - a[1].pieces.size || a[0].localeCompare(b[0]))
+  const neutralFamilyCount = byFamily.size - colourFamilies.length
+
+  const used = capsulePieceIdsInCards(cards)
   const unusedAccents = accentPieces.filter(piece => !used.has(Number(piece.id)))
   const neutralPercent = Math.round((neutralBaseCount / rosterPieces.length) * 100)
-  const familyLabel = families.size === 1 ? 'colour family' : 'colour families'
-  let line = `[capsule palette: ${families.size} ${familyLabel} across ${rosterPieces.length} pieces · ${neutralBaseCount} of ${rosterPieces.length} pieces (${neutralPercent}%) form the neutral base`
+
+  const baseLabel = neutralFamilyCount
+    ? `a ${neutralFamilyCount}-family neutral base`
+    : 'no neutral family at all'
+  const colourLabel = colourFamilies.length
+    ? `${colourFamilies.length} colour ${colourFamilies.length === 1 ? 'family' : 'families'} beyond ${baseLabel} — ${colourFamilies.map(([family, record]) => `${colorFamilyDisplayName(family)} (${record.pieces.size})`).join(', ')}`
+    : `no colour family beyond ${baseLabel}`
+  let line = `[capsule palette: ${colourLabel} · ${neutralBaseCount} of ${rosterPieces.length} pieces (${neutralPercent}%) form the neutral base`
+  // The specific inflation worth naming: a family nothing in the capsule
+  // actually leads with, present only inside a multi-colour garment.
+  const secondaryOnly = colourFamilies.filter(([, record]) => !record.leadsAPiece).map(([family]) => family)
+  if (secondaryOnly.length) {
+    line += ` · ${secondaryOnly.map(colorFamilyDisplayName).join(', ')} appear${secondaryOnly.length === 1 ? 's' : ''} only as a secondary colour inside a multi-colour piece, never leading one`
+  }
   if (unusedAccents.length) {
     const named = unusedAccents.slice(0, 4).map(piece => piece.name || `piece ${piece.id}`).join(', ')
     const rest = unusedAccents.length > 4 ? `, and ${unusedAccents.length - 4} more` : ''
     line += ` · ${unusedAccents.length} of ${accentPieces.length} accent-colour pieces did not make it into a look — ${named}${rest}`
   }
   return `${line}]`
+}
+
+// Step 5 criterion 4 (docs/capsule-step5-evaluation.md §3): "the result
+// discloses jobs, not just utilization". On thread_1785448241452, 22 of 24
+// roster pieces reached a look — a 92% headline — and the two that did not were
+// the capsule's ONLY layer and its questionable fifth shoe. Raw utilization
+// gave the wrong verdict because it counts IDs, and a capsule's claim is about
+// functions: a rotation can use most pieces while demonstrating no layer at
+// all, never wearing the dependent piece it spent a slot on, or never letting a
+// statement piece lead.
+//
+// Deterministic and observational, exactly like the palette line: it names what
+// the cards did not demonstrate and rejects, repairs and reorders nothing.
+// Forcing an unused piece into a look would buy the metric with a worse outfit.
+// The utilization percentage is stated INSIDE this line on purpose — the
+// failure mode being closed is a high percentage standing alone and reading as
+// success.
+export function describeCapsuleUndemonstratedJobs(roster = [], cards = []) {
+  const rosterPieces = (Array.isArray(roster) ? roster : []).filter(piece => Number(piece?.id))
+  if (!rosterPieces.length) return ''
+  const used = capsulePieceIdsInCards(cards)
+  const isUsed = piece => used.has(Number(piece.id))
+  const nameList = pieces => pieces.slice(0, 3).map(piece => piece.name || `piece ${piece.id}`).join(', ') +
+    (pieces.length > 3 ? `, and ${pieces.length - 3} more` : '')
+
+  const jobs = []
+  // A whole category selected for the capsule and absent from every look. The
+  // researched allocation bought those slots for a reason; if none of them is
+  // demonstrated, the rotation has not shown what the capsule claims to do.
+  for (const group of ['top', 'bottom', 'dress', 'outerwear', 'shoes']) {
+    const inGroup = rosterPieces.filter(piece => wardrobeCategoryGroup(piece) === group)
+    if (!inGroup.length || inGroup.some(isUsed)) continue
+    const label = group === 'outerwear' ? 'layer' : group
+    jobs.push(`no look uses a ${label} (${inGroup.length} in the roster: ${nameList(inGroup)})`)
+  }
+  // Special jobs, each one a structured fact rather than an inference. A
+  // dependent piece costs two roster slots to produce one look, so a
+  // never-demonstrated one is the most expensive kind of unused piece.
+  const dependents = rosterPieces.filter(pieceNeedsBase)
+  const unusedDependents = dependents.filter(piece => !isUsed(piece))
+  if (unusedDependents.length) {
+    jobs.push(`${unusedDependents.length} of ${dependents.length} piece(s) that need a base under them appear in no look — ${nameList(unusedDependents)}`)
+  }
+  const statements = rosterPieces.filter(isCapsuleStatementPiece)
+  if (statements.length && !statements.some(isUsed)) {
+    jobs.push(`no statement piece leads a look (${nameList(statements)})`)
+  }
+  if (!jobs.length) return ''
+
+  const usedCount = rosterPieces.filter(isUsed).length
+  const percent = Math.round((usedCount / rosterPieces.length) * 100)
+  return `[capsule jobs: ${usedCount} of ${rosterPieces.length} roster pieces (${percent}%) appear in a look, but ${jobs.length} selected job(s) went undemonstrated — ${jobs.join('; ')}]`
+}
+
+// A guarantee worth a correction round, but not worth throwing the model's
+// whole roster away for. Live thread_1785451253837: the layer floor shipped,
+// the model missed it twice, and the fallback discarded a structurally sound
+// 24-piece selection in favour of the engine's — trading a specific defect for
+// a roster chosen by the thing the model path exists to improve on.
+//
+// So a coachable code always fails (the model is told, and always gets its one
+// repair round to fix it), but on its own it never spends the fallback. If the
+// repair still misses it and nothing else is wrong, the model's roster ships
+// with the unmet guarantee stated. Deliberately NOT extended to
+// dependent_base_unavailable: that one means a selected piece cannot form a
+// look in a slot it was offered in, which is a wearability defect rather than
+// an allocation preference.
+const COACHABLE_ROSTER_FAILURE_CODES = new Set(['layer_floor:outerwear'])
+
+// The disclosure that makes the concession honest. Reads the failure the
+// validator already produced, so it cannot drift from what was actually
+// checked, and stays generic so a second coachable code needs no new copy.
+export function describeCapsuleUnmetRosterGuarantees(failures = []) {
+  const coachable = (Array.isArray(failures) ? failures : [])
+    .filter(failure => COACHABLE_ROSTER_FAILURE_CODES.has(failure?.code))
+  if (!coachable.length) return ''
+  const detail = coachable.map(failure => String(failure.message || '').trim()).filter(Boolean).join('; ')
+  return `[capsule roster: the selection did not meet ${coachable.length} of this capsule's structural guarantees after its correction round, and was kept anyway because it is otherwise sound — ${detail}]`
+}
+
+// Criterion 1's graceful half. The layer floor below fails a roster that traded
+// a researched layer slot into another category WHEN the bench could supply the
+// layer; when the wardrobe genuinely cannot, the roster is accepted and the
+// shortfall is said out loud instead of failing forever or pretending the
+// allocation was met.
+export function describeCapsuleLayerSupplyGap({ roster = [], bench = [], budget = 24, isSummer = false, isWinter = false } = {}) {
+  const quotas = capsuleQuotas(budget, { isSummer, isWinter })
+  const wanted = Number(quotas.outerwear) || 0
+  if (!(wanted > 0)) return ''
+  const rosterLayers = (Array.isArray(roster) ? roster : []).filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  if (rosterLayers.length >= wanted) return ''
+  const benchLayers = (Array.isArray(bench) ? bench : []).filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
+  // Only a supply story belongs here. If the bench held layers the roster did
+  // not take, that is the validator's failure to report, not a wardrobe gap.
+  if (benchLayers.length > rosterLayers.length) return ''
+  return `[capsule layers: this ${budget}-piece capsule allots ${wanted} layering piece(s), and the wardrobe supplied ${benchLayers.length} that passed a use case's gates — the capsule ships with ${rosterLayers.length}. Adding a light layer to the app would give the rotation its air-conditioned-interiors and cool-evening coverage.]`
 }
 
 export function describeCapsuleCompositionShortfall(shortfalls = [], { plannedTotal = 0, acceptedTotal = 0 } = {}) {
@@ -670,7 +817,7 @@ function inferPlanSlotActivity(slot = {}, fallbackActivity = 'none') {
 // trip; and getWeatherProfileForPlan itself falls back to the heuristic when no
 // location/date is available or the fetch fails. The returned `label` is what
 // the plan lines state back to the user so they can correct it conversationally.
-async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, fetchImpl, seasonIsCalendarOnly = false } = {}) {
+async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, location = '', fetchImpl, seasonIsCalendarOnly = false } = {}) {
   const moodText = mood || question
   // A weather the person or the model STATED for this slot is a claim about
   // this slot's conditions, so it keeps its full meaning even for a capsule.
@@ -687,9 +834,10 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
   // calendar guess — an empty string reads as a provided-but-invalid Date and
   // silently disables it, which would regress the keyword pre-route's weather.
   const day = slot.date || undefined
+  const targetLocation = slot.location || location || ''
   const profile = await getWeatherProfileForPlan({
     dateRange: { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined },
-    location: slot.location || '',
+    location: targetLocation,
     season: slot.season,
     mood: moodText,
     seasonIsCalendarOnly,
@@ -1146,6 +1294,27 @@ function pieceNeedsBase(piece = {}) {
   return String(piece?.needs_base || '').toLowerCase() === 'yes'
 }
 
+// The single, shared definition of "a top that can serve as a base," used
+// everywhere a dependent's base needs to be found — capacity math, slot
+// validation, outfit validation, and the roster-level guarantee — so none of
+// them can ever disagree about what "available" means (owner review
+// 2026-07-30). A top tagged needs_base cannot itself be a base. Structured
+// opacity rules out sheer/semi_sheer/open_weave — the tagger prompt already
+// states these "cannot work alone against skin as a base layer"
+// (styling-engine/prompts.js). Unknown/unset opacity (206 of 243 pieces on
+// the live wardrobe) stays eligible: absence of a tag is not evidence of
+// unsuitability, and excluding on missing metadata would not be the
+// additive no-op this correction requires. Neckline, strap/sleeve shape,
+// bulk, colour and visual fit stay model judgment — this predicate answers
+// only "could this structurally function as coverage," never "does it look
+// right under this specific piece."
+function isCapsuleBaseCandidate(piece = {}) {
+  if (wardrobeCategoryGroup(piece) !== 'top') return false
+  if (pieceNeedsBase(piece)) return false
+  const opacity = String(piece?.opacity || '').toLowerCase().trim()
+  return !['sheer', 'semi_sheer', 'open_weave'].includes(opacity)
+}
+
 function isCapsuleStatementPiece(piece = {}) {
   const group = wardrobeCategoryGroup(piece)
   if (!['top', 'bottom', 'dress'].includes(group)) return false
@@ -1390,7 +1559,7 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       code: 'base_for_dependent_top',
       group: 'top',
       required: 1,
-      predicate: piece => !pieceNeedsBase(piece),
+      predicate: isCapsuleBaseCandidate,
       describe: () => `a top that can be worn alone, to go under ${dependentTops[0]?.name || 'the layering piece'}`
     })
   }
@@ -1416,6 +1585,33 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       predicate: () => true,
       describe: () => `at most ${quotas.outerwear} outerwear piece(s) — this budget's layer quota`
     })
+    // Step 5 criterion 1 (docs/capsule-step5-evaluation.md): the SAME number is
+    // now a floor. The ceiling above stopped a model roster overspending the
+    // layer allowance; live thread_1785448241452 then underspent it — one layer
+    // instead of the researched two — and because the roster budget is exact,
+    // the freed slot went straight into a fifth pair of shoes that earned no
+    // demonstrated formula. The layer allowance is season-invariant and sourced
+    // (docs/capsule-real-world-rules.md); a settled allocation must not be
+    // tradeable by the path that bypasses the selector which honours it.
+    //
+    // validatorOnly, for the same reason the ceiling is: the deterministic
+    // selector builds to quota and cannot underspend a category the wardrobe
+    // can fill, so enforcing this would change nothing it does RIGHT — but on a
+    // wardrobe with too few layers it would record a new postConditionGaps
+    // entry and alter shipped deterministic disclosure. validateCapsuleRoster's
+    // supply attribution already answers "when the bench can supply it": a
+    // floor is only a roster defect when a satisfying piece sat unused in the
+    // pool. A genuine shortfall is disclosed by describeCapsuleLayerSupplyGap.
+    if (quotas.outerwear > 0) {
+      conditions.push({
+        code: 'layer_floor:outerwear',
+        group: 'outerwear',
+        required: quotas.outerwear,
+        validatorOnly: true,
+        predicate: () => true,
+        describe: () => `${quotas.outerwear} layering piece(s) — this capsule's season-invariant layer allocation, which another category may not absorb`
+      })
+    }
   }
   for (const [index, demand] of (Array.isArray(shoeDemands) ? shoeDemands : []).entries()) {
     if (!(demand?.required > 0) || typeof demand.predicate !== 'function') continue
@@ -1441,17 +1637,49 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
 // bottom or a dress) rather than a per-category one. Shared so the enforcer and
 // the validator can never disagree about what a condition means — the whole
 // point of declaring the guarantees as data.
-function capsuleConditionMatches(piece, condition) {
-  return (condition.group === '*' || wardrobeCategoryGroup(piece) === condition.group) &&
-    condition.predicate(piece)
+//
+// `roster` is the candidate pool being evaluated against — required for the
+// dependent-top rule below, revised 2026-07-30 after owner review of the
+// first version's overcorrection. The original rule made a needs_base piece
+// fail EVERY group:'top' condition unconditionally, which swapped out
+// expressive dependent pieces (piece 258 in the recorded ranking A/B) even
+// when their base was genuinely present and usable — "a dependent cannot
+// satisfy the guarantee by itself" was implemented as "a dependent can never
+// satisfy a top guarantee," which is stricter than intended. The correct
+// rule: a needs_base piece counts toward a top-group guarantee only when a
+// standalone base (isCapsuleBaseCandidate) exists in the SAME candidate
+// pool — a supported dependent is real dependent-top capacity, an
+// unsupported one is not. base_for_dependent_top is exempt: it IS the
+// guarantee that a standalone base exists, so it must keep reading
+// standalone tops as standalone tops rather than deferring to itself.
+export function capsuleConditionMatches(piece, condition, roster = []) {
+  if (!((condition.group === '*' || wardrobeCategoryGroup(piece) === condition.group) && condition.predicate(piece))) {
+    return false
+  }
+  if (condition.group === 'top' && condition.code !== 'base_for_dependent_top' && pieceNeedsBase(piece)) {
+    return (Array.isArray(roster) ? roster : []).some(isCapsuleBaseCandidate)
+  }
+  return true
 }
 
-export function enforceCapsulePostConditions(roster = [], groups = {}, conditions = [], scoreOf = new Map(), protectedPieces = new Set()) {
+export function enforceCapsulePostConditions(roster = [], groups = {}, allConditions = [], scoreOf = new Map(), protectedPieces = new Set()) {
+  // Ceilings were already inert here (required: 0), and `validatorOnly` makes
+  // that exclusion explicit and reusable: a guarantee the VALIDATOR owns must
+  // not become a swap the deterministic selector performs, or a shipped roster
+  // changes as a side effect of teaching the model path a new rule.
+  const conditions = (Array.isArray(allConditions) ? allConditions : []).filter(condition => !condition?.validatorOnly)
   let nextRoster = [...roster]
   const unsatisfied = []
-  const conditionMatches = capsuleConditionMatches
+  // countFor's own candidateRoster IS the support context for the piece being
+  // tested — correct by construction. The two bare calls below (evaluating a
+  // candidate not yet admitted) use nextRoster, the current pre-swap state:
+  // for a top-group swap this cannot remove an existing base out from under a
+  // dependent (swaps stay within the incoming candidate's own category), and
+  // the swap this function actually commits to is re-verified against
+  // withSwap via countFor immediately below, so an imprecise candidate filter
+  // here costs at most a missed repair opportunity, never a false accept.
   const countFor = (candidateRoster, condition) =>
-    candidateRoster.filter(piece => conditionMatches(piece, condition)).length
+    candidateRoster.filter(piece => capsuleConditionMatches(piece, condition, candidateRoster)).length
   // One repair per condition at most; the guard is belt-and-braces against a
   // predicate pair that could otherwise trade places forever.
   for (let pass = 0; pass < conditions.length * 2; pass += 1) {
@@ -1467,14 +1695,14 @@ export function enforceCapsulePostConditions(roster = [], groups = {}, condition
       ? Object.values(groups).flat()
       : (groups[violated.group] || [])
     const candidate = candidatePool
-      .filter(piece => !inRoster.has(piece) && conditionMatches(piece, violated))
+      .filter(piece => !inRoster.has(piece) && capsuleConditionMatches(piece, violated, nextRoster))
       .sort((a, b) => {
         // Prefer a candidate that also satisfies the other conditions bearing on
         // its own category — the sleeve-covered AND register-compliant top the
         // winter case needs — so one swap does not create the next violation.
         const satisfied = piece => conditions
           .filter(condition => condition.group === '*' || condition.group === wardrobeCategoryGroup(piece))
-          .filter(condition => conditionMatches(piece, condition)).length
+          .filter(condition => capsuleConditionMatches(piece, condition, nextRoster)).length
         return satisfied(b) - satisfied(a) || (scoreOf.get(b) || 0) - (scoreOf.get(a) || 0)
       })[0]
     if (!candidate) {
@@ -1491,7 +1719,7 @@ export function enforceCapsulePostConditions(roster = [], groups = {}, condition
       .filter(piece => {
         if (wardrobeCategoryGroup(piece) !== candidateGroup) return false
         if (protectedPieces.has(piece)) return false
-        if (conditionMatches(piece, violated)) return false
+        if (capsuleConditionMatches(piece, violated, nextRoster)) return false
         // Judge the roster AFTER the swap, not merely after the removal: the
         // incoming candidate frequently carries the very property the outgoing
         // piece was holding (an everyday long-sleeved knit replacing an
@@ -1696,7 +1924,7 @@ export function selectCapsuleRoster(pool = [], { budget = 10, isSummer = false, 
 // a category or a requested slot out of the candidate pool the model never
 // sees past. Additive only: does not change selectCapsuleRoster's own output.
 export function buildCapsuleBench(pool = [], {
-  budget = 24, slots = [], isSummer = false, isWinter = false, benchSize = 40,
+  budget = 24, slots = [], isSummer = false, isWinter = false, benchSize = 70,
   palette = [],
   seedWithDeterministicRoster = true
 } = {}) {
@@ -1819,6 +2047,26 @@ export function buildCapsuleBench(pool = [], {
     else if (bestDress) { admit(bestDress, true) }
     admit(bestShoe, true)
   })
+
+  // Protagonist / Statement Piece Guarantee: reserve candidate slots for expressive/hero pieces
+  // (pattern_complexity === 'loud' || visual_roles includes 'hero_piece').
+  // Prefer standalone statement pieces (needs_base !== 'yes') over dependent ones so the roster model
+  // sees a rich choice of standalone hero tops/dresses alongside dependent options.
+  const isProtagonist = piece => {
+    const profile = pieceStyleProfile(piece)
+    const roles = Array.isArray(profile?.visual_roles) ? profile.visual_roles : []
+    return piece.pattern_complexity === 'loud' || roles.includes('hero_piece')
+  }
+  const protagonists = ranked.filter(isProtagonist)
+  protagonists.sort((a, b) => {
+    const aNeedsBase = a.needs_base === 'yes' ? 1 : 0
+    const bNeedsBase = b.needs_base === 'yes' ? 1 : 0
+    if (aNeedsBase !== bNeedsBase) return aNeedsBase - bNeedsBase
+    return (scoreOf.get(b) || 0) - (scoreOf.get(a) || 0)
+  })
+  for (const piece of protagonists.slice(0, 8)) {
+    admit(piece, true)
+  }
 
   // Truncation: fill remaining places by rank until benchSize. Guarantees
   // already admitted are never dropped, even if that pushes the bench past
@@ -2008,7 +2256,25 @@ function capsuleSlotCoreKeys(piecesById = new Map(), slot = {}) {
   const tops = allowed.filter(piece => wardrobeCategoryGroup(piece) === 'top')
   const bottoms = allowed.filter(piece => wardrobeCategoryGroup(piece) === 'bottom')
   const dresses = allowed.filter(piece => wardrobeCategoryGroup(piece) === 'dress')
-  for (const top of tops) {
+  // Step 5 V1 follow-up (owner review 2026-07-30): "a valid dependent-top core
+  // is not crochet top + bottom + shoes — it is compatible base + crochet top
+  // + bottom + shoes." A needs_base top cannot produce a wearable core by
+  // itself; counting one anyway is exactly how capacity gets overstated —
+  // this function is what every capacity number in the feature is built from
+  // (capsuleOutfitCoreCapacity, capacity_below_rotation, the representative
+  // rotation allocator). Gate on a genuine base (isCapsuleBaseCandidate,
+  // opacity-aware) coexisting in THIS SAME slot's allowed set, mirroring
+  // dependent_base_unavailable's own condition.
+  //
+  // Two separate questions, corrected 2026-07-30 after a test caught the
+  // conflation: "can this top serve as a BASE for something else" is
+  // opacity-aware (isCapsuleBaseCandidate); "can this top form its OWN core"
+  // is governed by needs_base alone — a sheer top not tagged needs_base is
+  // not thereby barred from being its own outfit's top. Only a dependent
+  // top's OWN core-forming ability depends on whether a base exists here.
+  const hasStandaloneBaseHere = tops.some(isCapsuleBaseCandidate)
+  const coreCapableTops = tops.filter(top => !pieceNeedsBase(top) || hasStandaloneBaseHere)
+  for (const top of coreCapableTops) {
     for (const bottom of bottoms) cores.add(`separates:${Number(top.id)}:${Number(bottom.id)}`)
   }
   for (const dress of dresses) cores.add(`dress:${Number(dress.id)}`)
@@ -2130,6 +2396,7 @@ export function validateCapsuleRoster(roster = [], {
 } = {}) {
   const normalizedRoster = Array.isArray(roster) ? roster : []
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
+  const poolPieces = Array.isArray(pool) ? pool : []
   const failures = []
 
   // budget_exceeded — size, activeness, pool membership.
@@ -2177,6 +2444,44 @@ export function validateCapsuleRoster(roster = [], {
     })
   }
 
+  // dependent_base_unavailable — Step 5 criterion 3. The roster-level condition
+  // below (base_for_dependent_top) only proves that SOME standalone top exists
+  // somewhere in the roster. That is not the same as the dependent piece being
+  // wearable: a dependent top offered in a slot whose gates reject every
+  // standalone top in the roster is a piece that cannot form a look there, and
+  // the roster spent a slot on it anyway.
+  //
+  // Structural availability only. Whether the base and the dependent piece
+  // actually look right together stays with the roster model and the composer —
+  // this is the deterministic half of the enforcement boundary the evaluation
+  // draws, and the run is explicitly NOT evidence that two dependent pieces is
+  // always too many. Absent any `needs_base` piece nothing here executes, so an
+  // unpopulated field is a strict no-op.
+  for (const { slot, index, slotEligible } of gateSlots) {
+    const dependents = slotEligible.filter(piece =>
+      wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
+    if (!dependents.length) continue
+    if (slotEligible.some(isCapsuleBaseCandidate)) continue
+    // Same supply attribution the post-conditions use: a wardrobe that has no
+    // standalone top clearing this slot's gates is a supply gap, not a roster
+    // defect, and failing it would be unrepairable by any swap.
+    if (poolPieces.length) {
+      const rosterIds = idSetForPieces(normalizedRoster)
+      const availableBases = slotGateEligiblePieces(
+        poolPieces.filter(piece => !rosterIds.has(Number(piece?.id))),
+        slot,
+        { isSummer, isWinter: isWinterCapsule }
+      ).filter(isCapsuleBaseCandidate)
+      if (!availableBases.length) continue
+    }
+    const label = slot.slot || slot.label || `slot_${index}`
+    const named = dependents.map(piece => piece.name || `ID ${piece.id}`).join(', ')
+    failures.push({
+      code: 'dependent_base_unavailable',
+      message: `${label} offers ${dependents.length} top(s) that cannot be worn alone (${named}) but no top from this roster that can be worn alone passes that slot's gates — add a standalone top valid there, or drop the dependent piece`
+    })
+  }
+
   // capacity_below_rotation — total distinct-core capacity across the WHOLE
   // plan (union of cores across slots, same de-dup capsuleOutfitCoreCapacity
   // already does for overlapping slots) must reach the planned card count.
@@ -2213,7 +2518,6 @@ export function validateCapsuleRoster(roster = [], {
   const quotas = capsuleQuotas(budget, { isSummer, isWinter: isWinterCapsule })
   const reserve = capsuleDemandReserve(normalizedSlots, quotas)
   const shoeDemands = (quotas.shoes || 0) > 0 ? shoeReserveDemands(normalizedSlots, quotas) : []
-  const poolPieces = Array.isArray(pool) ? pool : []
   const conditions = capsuleRosterPostConditions({
     quotas,
     reserve,
@@ -2229,7 +2533,7 @@ export function validateCapsuleRoster(roster = [], {
   // it strictly, which is the case this validator exists for.
   const declaredGaps = new Set(Array.isArray(roster?.postConditionGaps) ? roster.postConditionGaps : [])
   for (const condition of conditions) {
-    const have = normalizedRoster.filter(piece => capsuleConditionMatches(piece, condition)).length
+    const have = normalizedRoster.filter(piece => capsuleConditionMatches(piece, condition, normalizedRoster)).length
     // Ceilings are checked before floors and never excused. The
     // supply-attribution logic below exists to avoid blaming a roster for what
     // the wardrobe could not supply — that reasoning has no analogue here,
@@ -2252,7 +2556,7 @@ export function validateCapsuleRoster(roster = [], {
       // satisfying piece exist and go unpicked?
       const rosterIds = idSetForPieces(normalizedRoster)
       const availableUnused = poolPieces.some(piece =>
-        !rosterIds.has(Number(piece?.id)) && capsuleConditionMatches(piece, condition)
+        !rosterIds.has(Number(piece?.id)) && capsuleConditionMatches(piece, condition, normalizedRoster)
       )
       if (!availableUnused) continue
     } else {
@@ -2408,14 +2712,15 @@ export async function selectCapsuleRosterViaModel({
   isWinter = false,
   occasions = [],
   palette = [],
-  benchSize = 40,
+  benchSize = 70,
   chooseRoster = null,
-  onDiagnostic = null
+  onDiagnostic = null,
+  ownerRules = []
 } = {}) {
   const deterministic = () => selectCapsuleRoster(pool, { budget, isSummer, isWinter, occasions, slots, palette })
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
   if (typeof chooseRoster !== 'function') {
-    return { roster: deterministic(), source: 'deterministic', palette: '', jobs: [], failures: [] }
+    return { roster: deterministic(), source: 'deterministic', palette: '', jobs: [], failures: [], coverageGaps: [] }
   }
 
   const { bench, diagnostics } = buildCapsuleBench(pool, { budget, slots, isSummer, isWinter, benchSize, palette })
@@ -2451,11 +2756,23 @@ export async function selectCapsuleRosterViaModel({
       .reduce((sum, slot) => sum + Math.max(0, Number(slot.targetOutfits) || 0), 0)
   })
 
+  // An accepted roster can still be short of the researched layer allocation —
+  // the validator excuses a floor the bench could not supply, which is correct
+  // and must not be silent. Every accepted return states it.
+  const supplyGaps = roster => [describeCapsuleLayerSupplyGap({ roster, bench, budget, isSummer, isWinter })].filter(Boolean)
+  // Every code seen across both attempts, so a fallback records WHY it happened
+  // instead of only that it did.
+  const seenCodes = []
+  const record = entries => {
+    for (const entry of entries) if (entry?.code && !seenCodes.includes(entry.code)) seenCodes.push(entry.code)
+    return entries
+  }
+
   bump('capsuleRosterModelCalls')
-  const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, attempt: 1, failures: [] }))
-  let failures = [...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)]
+  const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, attempt: 1, failures: [], ownerRules }))
+  let failures = record([...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)])
   if (!failures.length) {
-    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench }
+    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: supplyGaps(first.roster), failureCodes: seenCodes }
   }
 
   // One repair, given the exact structural reasons. Not a fresh start: the
@@ -2463,21 +2780,52 @@ export async function selectCapsuleRosterViaModel({
   bump('capsuleRosterModelRepairs')
   const second = resolve(await chooseRoster({
     bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter,
-    attempt: 2, failures, previousRosterIds: first.roster.map(piece => Number(piece.id))
+    attempt: 2, failures, previousRosterIds: first.roster.map(piece => Number(piece.id)), ownerRules
   }))
-  const secondFailures = [...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)]
+  const secondFailures = record([...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)])
   if (!secondFailures.length) {
-    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench }
+    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: supplyGaps(second.roster), failureCodes: seenCodes }
   }
 
-  // Two strikes: ship the deterministic roster and say so. A capsule the engine
-  // chose is a worse answer than one the model chose well, and a better answer
-  // than one that fails its own structural guarantees.
+  // The model has now had its correction round. If everything still wrong is
+  // coachable, keeping this roster and stating the gap beats discarding a sound
+  // 24-piece selection for the engine's — which is what happened on
+  // thread_1785451253837 and cost the run its whole purpose.
+  const fallbackWorthy = secondFailures.filter(failure => !COACHABLE_ROSTER_FAILURE_CODES.has(failure.code))
+  if (!fallbackWorthy.length) {
+    return {
+      roster: second.roster,
+      source: 'model_repaired_with_gaps',
+      palette: second.palette,
+      jobs: second.jobs,
+      failures: secondFailures,
+      bench,
+      coverageGaps: [...supplyGaps(second.roster), describeCapsuleUnmetRosterGuarantees(secondFailures)].filter(Boolean),
+      failureCodes: seenCodes
+    }
+  }
+
+  // Two strikes on something structural: ship the deterministic roster and say
+  // so. A capsule the engine chose is a worse answer than one the model chose
+  // well, and a better answer than one that fails a guarantee about whether its
+  // pieces can be worn at all.
   bump('capsuleRosterModelFallbacks')
-  return { roster: deterministic(), source: 'deterministic_fallback', palette: '', jobs: [], failures: secondFailures, bench }
+  return {
+    roster: deterministic(),
+    source: 'deterministic_fallback',
+    palette: '',
+    jobs: [],
+    failures: fallbackWorthy,
+    bench,
+    // The spec required this disclosure at stage 3 and it was never
+    // implemented: capsuleRosterSource was written and read by nothing, so a
+    // fallback capsule presented exactly like a chosen one.
+    coverageGaps: [`[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${fallbackWorthy.map(failure => failure.message).join('; ')}]`],
+    failureCodes: seenCodes
+  }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, onDiagnostic = null } = {}) {
   const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
   const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
@@ -2500,7 +2848,10 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       occasions: slots.map(slot => slot.occasion),
       palette: paletteOptOut ? [] : requestPalette,
       chooseRoster: chooseCapsuleRoster,
-      onDiagnostic
+      onDiagnostic,
+      // Previously reached only composition (below, in workbenchInstructions);
+      // the roster pick itself never saw a stored owner rule at all.
+      ownerRules
     })
   }
   const composePool = capsuleRosterSelection
@@ -2516,9 +2867,12 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     coverageGaps.push(`[plan trimmed: ${droppedSlotLabels.length} use case${droppedSlotLabels.length === 1 ? '' : 's'} dropped — ${droppedSlotLabels.map(label => `"${label}"`).join(', ')} — a plan can only include up to ${slots.length} use-case slots at once; ask again with the dropped one${droppedSlotLabels.length === 1 ? '' : 's'} as a follow-up]`)
   }
   if (Array.isArray(composePool.shoeReserveGaps)) coverageGaps.push(...composePool.shoeReserveGaps)
+  // A layer allocation the wardrobe could not supply is disclosed, never
+  // silently absorbed by another category (Step 5 criterion 1's graceful half).
+  if (Array.isArray(capsuleRosterSelection?.coverageGaps)) coverageGaps.push(...capsuleRosterSelection.coverageGaps)
   for (const [index, slot] of slots.entries()) {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
-    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, fetchImpl, seasonIsCalendarOnly: isSeasonalCapsule })
+    const { profile: weatherProfile, label: weatherLabel } = await resolveSlotWeather(slot, { mood, question: slotRequestText, dateRange, location, fetchImpl, seasonIsCalendarOnly: isSeasonalCapsule })
     slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot
@@ -2570,6 +2924,33 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   const pieceCatalog = [...catalogById.values()]
     .sort((a, b) => Number(a.id) - Number(b.id))
     .map(planWorkbenchPieceLine)
+  // Step 5 criterion 8 (docs/capsule-step5-evaluation.md): the composer must
+  // DEMONSTRATE the roster's functional logic, not merely use most of its IDs.
+  // On thread_1785448241452 the rotation reached 22 of 24 pieces and still
+  // showed no layer at all, and both dependent tops over the same tank.
+  //
+  // Derived from what this roster actually holds, so it is a strict no-op for a
+  // roster with none of these jobs, and it never names a garment or an ID — it
+  // names the function the allocation bought. Which look carries each job, and
+  // whether omitting one is the honest answer, stays the model's judgment; this
+  // states the requirement, not the assignment.
+  const capsuleFunctionalJobs = []
+  if (isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET) {
+    const rosterPieces = Array.isArray(composePool) ? composePool : []
+    if (rosterPieces.some(piece => wardrobeCategoryGroup(piece) === 'outerwear')) {
+      capsuleFunctionalJobs.push('the layer(s) it holds, worn in at least one look')
+    }
+    const dependents = rosterPieces.filter(pieceNeedsBase)
+    if (dependents.length) {
+      capsuleFunctionalJobs.push(dependents.length > 1
+        ? 'each piece that cannot be worn alone, over a DIFFERENT base and in a different context — repeating one base under all of them demonstrates bookkeeping, not breadth'
+        : 'the piece that cannot be worn alone, over a base that suits it')
+    }
+    const shoeCount = rosterPieces.filter(piece => wardrobeCategoryGroup(piece) === 'shoes').length
+    if (shoeCount > 2) {
+      capsuleFunctionalJobs.push(`each of the ${shoeCount} shoe pairs in a look whose register and activity genuinely call for it`)
+    }
+  }
   const workbenchInstructions = [
     // Spec 27 Part 2 (owner ruling: norms enumeration is DEAD — the failures
     // were blind visual judgments, not missing occasion knowledge). Replaces
@@ -2590,6 +2971,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       : '',
     isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
       ? 'This is a representative capsule rotation: every card needs a different main core (a different top+bottom pair, or a different dress). Use the casual and elevated shoes the roster reserved where their slots call for them; avoid letting one pair dominate when another eligible pair expresses the requested register or activity better.'
+      : '',
+    capsuleFunctionalJobs.length
+      ? `The rotation is what PROVES this capsule works, so it must demonstrate the roster's functional logic, not just use most of its pieces. Across the whole set, show: ${capsuleFunctionalJobs.join('; ')}. If one of these genuinely cannot be shown well, say which and why in that look's reason rather than quietly skipping it — an omitted look is honest, an unexplained missing function is not.`
       : '',
     // Part 5 (spec 18): live miss — a card described the Tropical pants
     // (catalog: pattern floral, six colors) as "solid-base... muted print",
@@ -2720,6 +3104,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       capsuleRosterSource: capsuleRosterSelection?.source || 'deterministic',
       capsuleRosterPalette: capsuleRosterSelection?.palette || '',
       capsuleRosterJobs: capsuleRosterSelection?.jobs || [],
+      capsuleRosterFailureCodes: capsuleRosterSelection?.failureCodes || [],
       slotWeather,
       coverageGaps,
       heldOutfits: [],
@@ -3080,6 +3465,20 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       const structureGap = describeOutfitStructureGap(pieces, { requireShoes: true })
       if (structureGap || !isOutfitStructurallyValid(pieces, { requireShoes: true })) {
         reasons.push(structureGap || 'outfit is structurally incomplete or has duplicate core roles')
+      }
+      // Step 5 V1 follow-up (owner review 2026-07-30): a needs_base piece is
+      // tagged unwearable alone by construction, but nothing checked that at
+      // the OUTFIT level before — only that a standalone base existed
+      // somewhere in the roster or slot. A submitted look could pair a
+      // needs_base top with just a bottom and shoes and ship as an ordinary
+      // card, presenting the dependent as if it were standalone. Shared by
+      // every caller of this validator (atomic capsule composition and the
+      // model tool-loop submit_plan_outfits), so a trip or work-week plan
+      // that happens to include a needs_base piece is covered too — same
+      // defect, same fix, not new scope.
+      const dependentTops = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top' && pieceNeedsBase(piece))
+      if (dependentTops.length && !pieces.some(isCapsuleBaseCandidate)) {
+        reasons.push(`${dependentTops.map(piece => piece.name || `piece ${piece.id}`).join(', ')} cannot be worn alone — this outfit needs a base layer underneath it, not just a bottom`)
       }
       if (pendingPlan.isWinterCapsule && slot.environment === 'indoor') {
         const hasSleevelessBase = pieces.some(piece =>
