@@ -865,8 +865,8 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
     assert.ok(!call.messages[0].content.some(part => part.type === 'image' && part.detail === 'low'))
   }
 
-  const firstCallText = visualComposerCalls[0].messages[0].content[0].text
-  const secondCallText = visualComposerCalls[1].messages[0].content[0].text
+  const firstCallText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
+  const secondCallText = visualComposerCalls[1].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
 
   // The first call shouldn't have rotation warning text for 'city' occasion (as it was empty)
   assert.ok(!firstCallText.includes('Recently shown garments'))
@@ -889,7 +889,7 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
   
-  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.ok(contentText.includes('Activity: walking'), 'The visual composer prompt must contain Activity: walking')
   assert.ok(contentText.includes('All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots'), 'The visual composer prompt must contain walking guidance')
   const returnedNames = json.structuredOutfits.flatMap(o => o.pieces || []).map(p => p.name).join(' ').toLowerCase()
@@ -940,7 +940,7 @@ test('visual wardrobe composer derives hot weather from styling request text bef
 
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
-  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.ok(contentText.includes('Styling request: not too dressy, hot weather'))
   assert.ok(contentText.includes('Off-season pieces have been deprioritized or removed; everything shown is weather-optimized.'))
   assert.doesNotMatch(contentText, /plum wool dress/i, 'hot-weather-invalid wool dress should not be shown to the visual composer')
@@ -963,7 +963,7 @@ test('visual wardrobe composer excludes lightweight linen bottoms for cold reque
 
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
-  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.ok(contentText.includes('Styling request: not too dressy, cold weather'))
   assert.doesNotMatch(contentText, /light beige linen wide-leg pants/i, 'lightweight linen pants should not be shown to the visual composer for cold weather')
 })
@@ -1155,7 +1155,7 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
   assert.equal(json.debug.finalSelection.modelGateOutfits, 2)
 
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
-  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.match(contentText, /use sparingly and justify in watchFor:/i)
   assert.match(contentText, /hoodie/i)
   assert.match(contentText, /athletic running shoe/i)
@@ -3620,9 +3620,9 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
     { id: 1, name: 'Floral Print Top', category: 'top', pattern_type: 'floral', status: 'active', colors: ['white', 'blue'], styling_rules_learned: [], occasions: ['casual'], notes: 'floral prints' },
     { id: 2, name: 'Structured Denim Pants', category: 'bottom', status: 'active', fit_on_body: 'structured', notes: 'structured raw denim', colors: ['navy'], styling_rules_learned: [], occasions: ['casual'] },
     { id: 3, name: 'Black Leather Boot', category: 'shoes', status: 'active', notes: 'pointed black leather', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
-    { id: 4, name: 'Silk Cowl Neck Top', category: 'top', status: 'active', notes: 'cowl neck silk drape top', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
-    { id: 5, name: 'Fitted Black Tank', category: 'top', status: 'active', notes: 'fitted knit tank', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
-    { id: 6, name: 'Linen Wide Pants', category: 'bottom', status: 'active', notes: 'relaxed linen wide leg', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 4, name: 'Silk Cowl Neck Top', category: 'top', status: 'active', reads_as: 'cream', notes: 'cowl neck silk drape top', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 5, name: 'Fitted Black Tank', category: 'top', status: 'active', status: 'active', notes: 'fitted knit tank', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 6, name: 'Linen Wide Pants', category: 'bottom', status: 'active', reads_as: 'cream', notes: 'relaxed linen wide leg', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
   ]
 
   const candidates = buildWholeWardrobeCandidateOutfits(allPieces, {

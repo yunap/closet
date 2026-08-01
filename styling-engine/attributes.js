@@ -484,3 +484,26 @@ export function hasSleevelessConstruction(p) {
   const sleeve = String(p?.sleeve_type || '').toLowerCase().trim()
   return ['none', 'sleeveless', 'strap', 'tank', 'cami', 'camisole', 'halter'].includes(sleeve)
 }
+
+/**
+ * Shared, deterministic image detail policy for Anthropic candidate thumbnails.
+ * High visual complexity (hero/accent roles, non-solid patterns, textured weaves)
+ * gets 800px maxPx with 'auto' detail for drape/print clarity.
+ * Solid neutral basics get 448px maxPx with 'low' detail to optimize input tokens.
+ */
+export function pieceVisualDetailPolicy(p, { allowLow = true } = {}) {
+  if (!p) return { maxPx: 448, detail: 'low' }
+  if (!allowLow) return { maxPx: 768, detail: 'auto' }
+  const pattern = String(p.pattern_complexity || '').toLowerCase().trim()
+  const hasComplexPattern = pattern === 'loud' || pattern === 'medium'
+  const visualRoles = Array.isArray(p.style_profile_json?.visual_roles) ? p.style_profile_json.visual_roles : []
+  const isExpressiveRole = visualRoles.some(r => r === 'hero_piece' || r === 'color_accent' || r === 'sharpener_piece')
+  const fabric = String(p.fabric_category || p.fabric_weight || '').toLowerCase().trim()
+  const isTexturedFabric = /\b(tweed|jacquard|crochet|knit|lace|embroidery|sequin)\b/i.test(fabric)
+
+  if (hasComplexPattern || isExpressiveRole || isTexturedFabric) {
+    return { maxPx: 800, detail: 'auto' }
+  }
+  return { maxPx: 448, detail: 'low' }
+}
+
