@@ -2887,15 +2887,21 @@ async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, 
 
   // Photographs for the candidates, same reasoning as the composer: this stage
   // is more aesthetic than composition, and until now it was the blind one.
+  // Hero, printed, and accent pieces use 800px maxPx/auto detail for high visual
+  // clarity, while solid neutral basics use 448px low detail to optimize tokens.
   for (const piece of bench) {
     const photoFile = piece.worn_photo || piece.photo || ''
     if (!photoFile) continue
     const filePath = path.join(userUploadsDir(), photoFile)
     if (!fs.existsSync(filePath)) continue
     try {
-      const thumb = await prepareWardrobeThumb(filePath, `capsule-roster:${piece.id}:${photoFile}`, { maxPx: 800 })
+      const isExpressiveOrHero = piece.pattern_complexity === 'loud' || piece.pattern_complexity === 'medium' ||
+        (piece.style_profile_json?.visual_roles || []).some(r => r === 'hero_piece' || r === 'color_accent' || r === 'sharpener_piece')
+      const maxPx = isExpressiveOrHero ? 800 : 448
+      const detail = isExpressiveOrHero ? 'auto' : 'low'
+      const thumb = await prepareWardrobeThumb(filePath, `capsule-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
       content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
-      content.push({ type: 'image', detail: 'auto', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+      content.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
     } catch (err) {
       console.error(`Error loading capsule roster thumbnail for piece ${piece.id}:`, err)
     }
