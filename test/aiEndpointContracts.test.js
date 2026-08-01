@@ -2797,12 +2797,11 @@ test('capsule expansion uses provider-enforced structured output rather than pro
 
 // Spec §3 stage 2. Two things must hold before this can ever be switched on:
 // with the flag off nothing changes at all, and with it on the model's roster
-// is gated by the bench and validated before composition — never trusted raw.
-test('model capsule roster selection is opt-in and gated by the bench', () => {
+// Spec §3 stage 2 — model capsule roster selection is default ON and gated by the bench.
+test('model capsule roster selection is default ON and gated by the bench', () => {
   const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
   const plannerSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/outfitSetPlanner.js'), 'utf8')
 
-  // Default OFF. A capsule feature that turns itself on is a billed surprise.
   assert.match(routeSrc, /WARDROBE_MODEL_CAPSULE_ROSTER/)
   assert.match(routeSrc, /if \(modelCapsuleRosterEnabled\(\)\)[\s\S]{0,80}toolContext\.chooseCapsuleRoster =/)
 

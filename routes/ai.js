@@ -2774,10 +2774,10 @@ export function capsulePlanCompositionSchema(targetOutfits = 1) {
 }
 
 // Spec §3 stage 2 — the model picks the roster from a bench the engine gated.
-// Behind WARDROBE_MODEL_CAPSULE_ROSTER (default off): until it is switched on
-// deliberately, capsule behaviour is exactly what shipped.
+// Default ON: model picks the roster from the gated 70-piece bench. Can be set
+// to 'false' via environment variable if deterministic roster pick is needed.
 export function modelCapsuleRosterEnabled() {
-  return String(process.env.WARDROBE_MODEL_CAPSULE_ROSTER || '').toLowerCase() === 'true'
+  return String(process.env.WARDROBE_MODEL_CAPSULE_ROSTER || 'true').toLowerCase() !== 'false'
 }
 
 export function capsuleRosterSelectionSchema(budget = 24) {
