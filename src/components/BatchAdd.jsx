@@ -563,6 +563,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
       Object.entries(form).forEach(([k, v]) => {
         if (v !== null && v !== undefined) fd.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
       })
+      fd.append('color_taxonomy_gaps', JSON.stringify(item.tags?.color_taxonomy_gaps || []))
       fd.append('photo', item.file)
       if (item.wornFile) {
         fd.append('worn_photo', item.wornFile)
@@ -608,6 +609,11 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
 
       {/* Scrollable content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {item.tags?.color_taxonomy_gaps?.length > 0 && (
+          <div className="piece-form-status" role="status">
+            Unsupported {item.tags.color_taxonomy_gaps.length === 1 ? 'shade' : 'shades'} {item.tags.color_taxonomy_gaps.join(', ')} will be added to Retag suggestions when you save and were not applied.
+          </div>
+        )}
 
         {/* Photos */}
         {item.wornPreview ? (
