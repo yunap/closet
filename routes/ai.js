@@ -21,6 +21,7 @@ import {
   estimateAiUsageCost,
   parseModelJson,
   salvageFirstJson,
+  PROMPT_CACHE_BREAKPOINT,
   AI_PROVIDER,
   ACTIVE_STYLIST_MODEL,
   describeAiError
@@ -45,7 +46,8 @@ import { validateSubmittedPlanOutfits, describeOutfitStructureGap } from '../sty
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
 import {
   pieceMatchesMaterial,
-  pieceMatchesFootwear
+  pieceMatchesFootwear,
+  pieceVisualDetailPolicy
 } from '../styling-engine/attributes.js'
 import {
   extractWeatherContext,
@@ -403,7 +405,9 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
 
   content.push({ type: 'text', text: prompts.TAG_PIECE_PROMPT })
   const payload = {
-    system: TAG_PIECE_SYSTEM,
+    // Cache structure belongs to the provider request, not the frozen semantic
+    // prompt constant guarded by prompt_equivalence.test.js.
+    system: `${TAG_PIECE_SYSTEM}${PROMPT_CACHE_BREAKPOINT}`,
     // Spec 26 Part 7: the full tag schema was truncating mid-JSON
     // ("Unterminated string in JSON at position 5084") at the prior cap —
     // spec 22 fixed the 400 the truncated body caused on the Anthropic
@@ -1554,7 +1558,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const composerThumbPx = 768
     const composerImageDetail = visualComposerImageDetailForRoster(roster.length)
 
-    // Build the multimodal content array, grouped by category (only showing rostered pieces)
+    // Build the multimodal content array.
+    // STABLE PREFIX FIRST: candidate thumbnails & catalog text (cached across requests within 5 minutes)
     const groupsOrder = ['top', 'bottom', 'dress', 'shoes', 'outerwear', 'accessory']
     const grouped = new Map(groupsOrder.map(g => [g, []]))
     for (const p of roster) {
@@ -1563,8 +1568,39 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       grouped.get(group).push(p)
     }
 
-    const isWeatherFiltered = weatherProfile.isHot || weatherProfile.isCold
     const content = []
+    content.push({ type: 'text', text: 'Below are photos of every available piece, grouped by category. Reference pieces by exact ID.' })
+
+    let shownPieceCount = 0
+    const shownPieces = []
+    for (const group of grouped.keys()) {
+      const pieces = grouped.get(group)
+      if (!pieces?.length) continue
+      content.push({ type: 'text', text: `=== ${group.toUpperCase()}S ===` })
+      for (const p of pieces) {
+        const photoFile = p.worn_photo || p.photo || ''
+        if (!photoFile) continue
+        const filePath = path.join(userUploadsDir(), photoFile)
+        if (!fs.existsSync(filePath)) continue
+        const { maxPx, detail } = pieceVisualDetailPolicy(p, { allowLow: false })
+        const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${maxPx}:${photoFile}`, { maxPx })
+        content.push({ type: 'text', text: `ID ${p.id}: ${p.name}${composerPieceLineSuffix(p)}` })
+        content.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+        shownPieceCount++
+        shownPieces.push(p)
+      }
+    }
+
+    // Attach cache_control to the last candidate thumbnail so the entire candidate manifest is cached
+    if (content.length > 1) {
+      content[content.length - 1] = {
+        ...content[content.length - 1],
+        cache_control: { type: 'ephemeral' }
+      }
+    }
+
+    // VOLATILE TAIL SECOND: occasion, season, mood, saved outfit photo, feedback memory
+    const isWeatherFiltered = weatherProfile.isHot || weatherProfile.isCold
     content.push({ type: 'text', text: [
       `Occasion: ${occasion}`,
       `Season: ${season}`,
@@ -1578,9 +1614,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       savedVariantGuidance,
       rotationWarningsText,
       wholeWardrobeFeedbackText ? `Feedback memory (rejected pairings are settled — do not repeat them):\n${wholeWardrobeFeedbackText}` : '',
-      confirmedOutfitsText ? `Confirmed favorite outfits:\n${confirmedOutfitsText}` : '',
-      '',
-      'Below are photos of every available piece, grouped by category. Reference pieces by exact ID.'
+      confirmedOutfitsText ? `Confirmed favorite outfits:\n${confirmedOutfitsText}` : ''
     ].filter(Boolean).join('\n') })
 
     const savedOutfitPhotoPath = savedOutfitSeed?.photo
@@ -1592,25 +1626,6 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
     }
 
-    let shownPieceCount = 0
-    const shownPieces = []
-    for (const group of grouped.keys()) {
-      const pieces = grouped.get(group)
-      if (!pieces?.length) continue
-      content.push({ type: 'text', text: `=== ${group.toUpperCase()}S ===` })
-      for (const p of pieces) {
-        const photoFile = p.worn_photo || p.photo || ''
-        if (!photoFile) continue
-        const filePath = path.join(userUploadsDir(), photoFile)
-        if (!fs.existsSync(filePath)) continue
-        const thumb = await prepareWardrobeThumb(filePath, `${p.id}:${photoFile}`, { maxPx: composerThumbPx })
-        content.push({ type: 'text', text: `ID ${p.id}: ${p.name}${composerPieceLineSuffix(p)}` })
-        // Composition depends on texture and construction cues; never hardcode this to low detail.
-        content.push({ type: 'image', detail: composerImageDetail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
-        shownPieceCount++
-        shownPieces.push(p)
-      }
-    }
     const timings = { thumbPrepMs: Date.now() - routeStartedAt }
 
     // Single model call — no tools
@@ -1618,11 +1633,10 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let composerError = null
     let composerUsage = null
     const composerStartedAt = Date.now()
+    const systemPrompt = `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}[[PROMPT_CACHE_BREAKPOINT]]${savedVariantGuidance ? `\n\n${savedVariantGuidance}` : ''}`
     try {
       const composerResult = await withTimeout(askStylistWithUsage({
-        system: savedVariantGuidance
-          ? `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\n${savedVariantGuidance}`
-          : prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM,
+        system: systemPrompt,
         maxTokens: 2200,
         messages: [{ role: 'user', content }]
       }), 90000, 'Visual wardrobe composer')
@@ -2092,10 +2106,9 @@ router.post('/generate-outfit-boards', async (req, res) => {
 
     if (!boardPlans.length) {
       const candidateText = candidatePieces.map(p => `${p.id}: ${p.name} (${p.category}) — ${buildPieceText(p)}`).join('\n')
-      const rawPlan = await askStylist({
-        system: prompts.OUTFIT_BOARD_PLANNER_SYSTEM,
-        maxTokens: 1000,
-        messages: [{ role: 'user', content: [{ type: 'text', text: [
+      const content = [
+        { type: 'text', text: `Candidate saved wardrobe pieces. Use ONLY these ids:\n${candidateText}`, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: [
           `Selected garment id: ${selectedPiece.id}`,
           `Selected garment: ${selectedPiece.name} (${selectedPiece.category})`,
           `Occasion: ${occasion}`,
@@ -2103,10 +2116,13 @@ router.post('/generate-outfit-boards', async (req, res) => {
           '',
           conceptsText ? `Text outfit ideas to translate into boards:\n${conceptsText}` : 'No prior concept text was provided. Create useful boards from the candidates.',
           '',
-          `Candidate saved wardrobe pieces. Use ONLY these ids:\n${candidateText}`,
-          '',
           `Return 2-3 boards if possible. Every board must include selected id ${selectedPiece.id}.`
-        ].join('\n') }] }]
+        ].join('\n') }
+      ]
+      const rawPlan = await askStylist({
+        system: `${prompts.OUTFIT_BOARD_PLANNER_SYSTEM}[[PROMPT_CACHE_BREAKPOINT]]`,
+        maxTokens: 1000,
+        messages: [{ role: 'user', content }]
       })
       const parsed = safeJsonFromModel(rawPlan)
       boardPlans = parsed.boards || []
@@ -2903,10 +2919,7 @@ async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, 
     const filePath = path.join(userUploadsDir(), photoFile)
     if (!fs.existsSync(filePath)) continue
     try {
-      const isExpressiveOrHero = piece.pattern_complexity === 'loud' || piece.pattern_complexity === 'medium' ||
-        (piece.style_profile_json?.visual_roles || []).some(r => r === 'hero_piece' || r === 'color_accent' || r === 'sharpener_piece')
-      const maxPx = isExpressiveOrHero ? 800 : 448
-      const detail = isExpressiveOrHero ? 'auto' : 'low'
+      const { maxPx, detail } = pieceVisualDetailPolicy(piece)
       const thumb = await prepareWardrobeThumb(filePath, `capsule-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
       content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
       content.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })

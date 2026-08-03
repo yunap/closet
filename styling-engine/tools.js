@@ -365,6 +365,108 @@ export function validateOutfitRoles(pieces = [], missingGaps = []) {
   return issues
 }
 
+function roleForPieceCategory(piece = {}) {
+  const category = String(piece?.category || '').toLowerCase().trim()
+  if (category === 'top') return 'primary_top'
+  if (category === 'bottom') return 'primary_bottom'
+  if (category === 'dress') return 'dress'
+  if (category === 'shoes') return 'shoes'
+  if (category === 'outerwear') return 'outerwear'
+  if (category === 'accessory') return 'accessory'
+  return ''
+}
+
+function categoryForSlotRole(role = '') {
+  return {
+    primary_top: 'top',
+    primary_bottom: 'bottom',
+    dress: 'dress',
+    shoes: 'shoes',
+    outerwear: 'outerwear',
+  }[String(role || '').trim()] || ''
+}
+
+function outfitPieceIds(outfit = {}) {
+  return (Array.isArray(outfit?.pieceIds) && outfit.pieceIds.length
+    ? outfit.pieceIds
+    : (Array.isArray(outfit?.piece_ids) && outfit.piece_ids.length
+      ? outfit.piece_ids
+      : (Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.id) : []))
+  ).map(Number).filter(Number.isFinite)
+}
+
+function resolveCurrentOutfitForSwap(toolContext = {}, { outfitIndex, outfitLabel } = {}) {
+  const generated = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
+  const current = Array.isArray(toolContext.currentOutfitSet) ? toolContext.currentOutfitSet : []
+  const cards = [...generated, ...current].filter(outfit => outfit && outfitPieceIds(outfit).length)
+  if (!cards.length) return null
+
+  const index = Number(outfitIndex)
+  if (Number.isInteger(index) && index >= 1) return cards[index - 1] || null
+
+  const label = normalizePieceLookupName(outfitLabel)
+  if (label) {
+    return cards.find(outfit => normalizePieceLookupName(outfit.label || outfit.title || outfit.name || '').includes(label)) || null
+  }
+  return cards[0] || null
+}
+
+function resolvePiecesByIds(ids = []) {
+  const pieces = []
+  for (const rawId of ids) {
+    const id = Number(rawId)
+    if (!Number.isFinite(id)) continue
+    const row = db.prepare("SELECT * FROM pieces WHERE id = ? AND status = 'active'").get(id)
+    if (row) pieces.push(parsePiece(row))
+  }
+  return pieces
+}
+
+function slotSwapWhy({ replacement = {}, removed = {}, basePieces = [], slotRole = '', request = '' } = {}) {
+  const stablePieces = basePieces
+    .filter(piece => Number(piece?.id) !== Number(removed?.id))
+    .filter(piece => String(piece?.category || '') !== 'accessory')
+    .map(piece => piece.name)
+    .filter(Boolean)
+    .slice(0, 3)
+  const withText = stablePieces.length ? ` with ${stablePieces.join(' + ')}` : ''
+  const roleText = slotRole === 'shoes' ? 'changes the grounding' : slotRole === 'outerwear' ? 'changes the layer' : 'changes the balance'
+  const requestText = request ? ` for ${request}` : ''
+  return `${replacement.name} ${roleText}${withText}${requestText}.`
+}
+
+function userAskedForMultipleSlotSwapOptions(text = '', slotRole = '') {
+  const normalized = String(text || '').toLowerCase()
+  if (/\b(?:two|three|2|3)\b/.test(normalized)) return true
+  if (/\b(?:a\s+few|several|couple\s+of)\b/.test(normalized)) return true
+  if (slotRole === 'primary_top' && /\b(?:other|different|more|alternate|alternative)\s+tops\b/.test(normalized)) return true
+  if (slotRole === 'primary_bottom' && /\b(?:other|different|more|alternate|alternative)\s+bottoms\b/.test(normalized)) return true
+  if (slotRole === 'dress' && /\b(?:other|different|more|alternate|alternative)\s+dresses\b/.test(normalized)) return true
+  if (slotRole === 'outerwear' && /\b(?:other|different|more|alternate|alternative)\s+(?:jackets|coats|layers|outerwear)\b/.test(normalized)) return true
+  return false
+}
+
+function slotSwapQueryScore(piece = {}, query = '') {
+  const tokens = String(query || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map(token => token.trim())
+    .filter(token => token.length >= 4)
+    .filter(token => !['other', 'different', 'alternate', 'alternative', 'options', 'option', 'comfortable'].includes(token))
+  if (!tokens.length) return 0
+  const text = [
+    piece.name,
+    piece.reads_as,
+    piece.notes,
+    piece.formality,
+    piece.fabric_weight,
+    piece.fabric_category,
+    ...(Array.isArray(piece.colors) ? piece.colors : []),
+    ...(Array.isArray(piece.occasions) ? piece.occasions : []),
+  ].filter(Boolean).join(' ').toLowerCase()
+  return tokens.reduce((score, token) => score + (new RegExp(`\\b${token}\\b`).test(text) ? 4 : 0), 0) // ratchet-allow: user-query relevance ranking, not garment classification
+}
+
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
@@ -412,6 +514,28 @@ export const STYLIST_TOOLS = [
         size: { type: "string", enum: ["thumb", "large"], description: "thumb (default): quick fit/color/texture read. large: construction detail — weave, lining, sheerness — for layer/base decisions." }
       },
       required: ["ids"]
+    }
+  },
+  {
+    name: "suggest_slot_swaps",
+    description: "For a follow-up that asks for alternatives to ONE slot in an existing outfit card (e.g. 'other tops for Coast Floral', 'same outfit, different shoes', 'swap the skirt'), generate 1-3 complete variant cards in one local tool call. Resolve against THREAD STATE's current_outfit_set by outfit_index or outfit_label. Use this instead of calling propose_outfit once per alternative. Do not use for fresh outfits, multi-slot plans, or changing the whole outfit.",
+    input_schema: {
+      type: "object",
+      properties: {
+        outfit_index: { type: "integer", description: "Optional 1-based current outfit index. Defaults to the first current outfit when omitted." },
+        outfit_label: { type: "string", description: "Optional label substring for the outfit to revise, e.g. 'Coast Floral'." },
+        slot_role: { type: "string", enum: ["primary_top", "primary_bottom", "dress", "shoes", "outerwear"], description: "The single outfit slot to replace." },
+        category: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear"], description: "Optional category filter; inferred from slot_role when omitted." },
+        target_piece_id: { type: "integer", description: "Optional exact piece ID to replace when the outfit has more than one plausible target." },
+        replacement_ids: { type: "array", items: { type: "integer" }, description: "Optional specific replacement candidate IDs. When omitted, the tool searches active wardrobe pieces in the requested category." },
+        query: { type: "string", description: "Optional text filter for replacements, such as color/register/style words." },
+        color: { type: "string", description: "Optional color filter for replacements." },
+        occasion: { type: "string", enum: OCCASION_VALUES, description: "Optional occasion override. Defaults to the current outfit/thread occasion." },
+        season: { type: "string", description: "Optional season/weather override. Defaults to thread weather/season." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Optional activity override. Defaults to thread activity." },
+        limit: { type: "integer", minimum: 1, maximum: 3, description: "Number of variant cards to return. Default to 1 best swap. Use 2-3 only when the user explicitly asks for a number or says a few/several/couple." }
+      },
+      required: ["slot_role"]
     }
   },
   {
@@ -532,7 +656,7 @@ export const STYLIST_TOOLS = [
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
               environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting. Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling and overrides contradictory weather:'indoor'. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries). Omit when unsure; outdoor is the default." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
-              weather: { type: "string", description: "This slot's known weather/context when it should override the outdoor forecast. Use `indoor` for climate-controlled slots such as office/work days, client meetings, indoor events, and restaurants, so outdoor heat/cold does not drive the outfit. For a slot at a different outdoor place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
+              weather: { type: "string", description: "This slot's known weather/context. Use `indoor` for climate-controlled destinations such as offices, restaurants, and galleries; the plan/location weather still governs the base outfit needed for transit, while indoor comfort may add a light optional layer. For a slot at a different outdoor place — a cooler coastal day — set `location` instead and let the live forecast catch it. Omit to use the forecast." },
               location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
               date: { type: "string", description: "This slot's specific date as YYYY-MM-DD, when it maps to one day (e.g. the Thursday of a work week), so its own forecast is used rather than the range average. Omit to inherit the plan date_range." },
               // Live thread_1785380251549: the plan's lifestyle answer listed
@@ -766,7 +890,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           const seededCount = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits.filter(o => !o?.broken).length : 0
           return {
             status: "success",
-            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}Contract: for a SINGLE outfit or a small fixed set, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
+            message: `Intent recorded: cards${outfitCount ? ` (${outfitCount} outfits owed)` : ''}. ${seededCount ? `NOTE: ${seededCount} verified card${seededCount === 1 ? ' is' : 's are'} ALREADY composed for this turn — present those as the answer and propose additional cards ONLY for a need the user asked for that they do not cover. ` : ''}Contract: for a SINGLE outfit or a small fixed set, every card goes through propose_outfit with piece IDs verified this turn (view_pieces / search_wardrobe / get_garment_details); layer pieces must have been SEEN (photo attached — view_pieces is the cheap way). Exception: if this is a follow-up asking for alternatives to ONE slot in an existing card ("other tops", "different shoes", "swap the skirt"), call suggest_slot_swaps ONCE; its returned cards are complete and must be presented directly, not recreated with propose_outfit. For a multi-slot plan (a trip, capsule, work week, or any request spanning several use cases), call plan_outfit_set ONCE instead — its cards already satisfy this contract; do NOT also call propose_outfit to rebuild or top up that same set, even if its total is less than what you'd otherwise deliver via propose_outfit (a shortfall there means a real cap or wardrobe gap, which plan_outfit_set's own plan_lines already disclose — do not paper over it with hand-composed cards). A plan_outfit_set success response, even one whose plan_lines list gap/trim disclosures, is a COMPLETE answer: you MUST present its cards plus those plan_lines verbatim — never discard the cards and fall back to a text-only explanation instead (a partial set with honest disclosed gaps is the correct outcome, not a failure to talk your way around). Only skip cards entirely if plan_outfit_set itself returned status:"error" (zero outfits composed). ${outfitCount ? `Do not finish with fewer than ${outfitCount} complete cards without explaining the wardrobe gap.` : ''}`
           }
         }
         if (want === 'image') {
@@ -1090,6 +1214,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeAfterPlanOutfitSetBlocked')
           contractIssues.push("plan_outfit_set already composed this turn's cards — do not call propose_outfit to rebuild, top up, or replace them; present the existing cards plus their plan_lines as the answer instead. If a genuinely new use case is needed beyond the composed slots, call plan_outfit_set again with just that additional slot rather than hand-composing it here.")
         }
+        if (toolContext.source === 'slot_swap' && toolContext.sourceLocked &&
+            Array.isArray(toolContext.generatedOutfits) &&
+            toolContext.generatedOutfits.some(o => o?.source === 'slot_swap')) {
+          bumpFreeformDiagnostic(toolContext, 'proposeAfterSlotSwapBlocked')
+          contractIssues.push("suggest_slot_swaps already composed this turn's variant card(s) — do not call propose_outfit to recreate or duplicate them; present the existing slot_swap cards as the answer instead.")
+        }
         if (toolContext.pendingPlan?.mode === 'model') {
           bumpFreeformDiagnostic(toolContext, 'proposeAfterPlanOutfitSetBlocked')
           contractIssues.push("plan_outfit_set returned slot rosters for model-composition mode — do not call propose_outfit. Submit the plan cards with submit_plan_outfits, using only piece IDs from each slot roster.")
@@ -1382,6 +1512,223 @@ async function executeToolInternal(name, args, toolContext = {}) {
         recordRetrievedPieces(toolContext, viewed.filter(item => item.image).map(item => item.id), { seen: true })
         bumpFreeformDiagnostic(toolContext, 'viewCalls')
         return viewed
+      }
+      case 'suggest_slot_swaps': {
+        if (toolContext.declaredIntent?.want !== 'cards') {
+          return {
+            status: "validation_error",
+            message: "suggest_slot_swaps produces outfit cards, so call declare_intent({ want: 'cards', turn_mode: 'followup' }) first."
+          }
+        }
+        const slotRole = String(args?.slot_role || '').trim()
+        const inferredCategory = categoryForSlotRole(slotRole)
+        const { category, unknown: unknownCategory } = normalizeCategoryFilter(args?.category || inferredCategory)
+        if (!slotRole || !inferredCategory || unknownCategory || category !== inferredCategory) {
+          return {
+            status: "validation_error",
+            message: "suggest_slot_swaps needs one slot_role matching its category: primary_top/top, primary_bottom/bottom, dress/dress, shoes/shoes, or outerwear/outerwear."
+          }
+        }
+
+        const outfit = resolveCurrentOutfitForSwap(toolContext, {
+          outfitIndex: args?.outfit_index,
+          outfitLabel: args?.outfit_label
+        })
+        if (!outfit) {
+          return {
+            status: "validation_error",
+            message: "No current outfit card is available to revise. Use this only for follow-ups against THREAD STATE's current_outfit_set or a card already produced this turn."
+          }
+        }
+
+        const baseIds = outfitPieceIds(outfit)
+        const basePieces = resolvePiecesByIds(baseIds)
+        const targetId = Number(args?.target_piece_id)
+        const removed = Number.isFinite(targetId)
+          ? basePieces.find(piece => Number(piece.id) === targetId)
+          : basePieces.find(piece => String(piece.category || '') === category)
+        if (!removed || String(removed.category || '') !== category) {
+          return {
+            status: "validation_error",
+            message: `The selected outfit does not have a ${category} piece to replace. Pick another outfit or slot.`
+          }
+        }
+
+        const requestText = [
+          toolContext.request,
+          toolContext.question,
+          args?.query
+        ].filter(Boolean).join(' ')
+        const rawLimit = Number(args?.limit) || 0
+        const multipleRequested = userAskedForMultipleSlotSwapOptions(requestText, slotRole)
+        const limit = multipleRequested
+          ? Math.max(1, Math.min(3, rawLimit || 3))
+          : 1
+        const resolvedOccasion = args?.occasion ? normalizeOccasion(args.occasion) : (outfit.occasion || toolContext.occasion || 'casual')
+        const resolvedSeason = args?.season || toolContext.weather || toolContext.season || 'current season'
+        const resolvedActivity = args?.activity !== undefined && args?.activity !== null && args?.activity !== ''
+          ? normalizeActivity(args.activity)
+          : (outfit.activity || toolContext.activity || '')
+        const resolvedWeather = args?.season
+          ? await resolveStatedOrLiveWeather({ statedWeather: args.season, mood: toolContext.mood || '' })
+          : (toolContext.weatherProfile || await resolveStatedOrLiveWeather({
+              date: toolContext.currentDate ? new Date(toolContext.currentDate) : new Date(),
+              location: toolContext.location || '',
+              mood: toolContext.mood || '',
+              fallbackSeason: toolContext.weather || resolvedSeason || ''
+            }))
+
+        const replacementIds = Array.isArray(args?.replacement_ids)
+          ? args.replacement_ids.map(Number).filter(Number.isFinite)
+          : []
+        const currentIdSet = new Set(baseIds.map(Number))
+        let candidates = replacementIds.length
+          ? resolvePiecesByIds(replacementIds).filter(piece => String(piece.category || '') === category)
+          : db.prepare("SELECT * FROM pieces WHERE status = 'active' AND category = ? ORDER BY id").all(category).map(parsePiece)
+        candidates = candidates.filter(piece => Number(piece.id) !== Number(removed.id))
+        if (slotRole === 'primary_top' || slotRole === 'dress') {
+          candidates = candidates.filter(piece => String(piece.needs_base || '').toLowerCase().trim() !== 'yes')
+        }
+        const query = String(args?.query || '').toLowerCase().trim()
+        const color = String(args?.color || '').toLowerCase().trim()
+        if (color) {
+          candidates = candidates.filter(piece =>
+            String(piece.reads_as || '').toLowerCase().includes(color) ||
+            (Array.isArray(piece.colors) && piece.colors.some(c => String(c || '').toLowerCase().includes(color))))
+        }
+
+        const occasionProfile = resolveOccasionProfile(resolvedOccasion, '')
+        const activityProfile = resolveActivityProfile({ activity: resolvedActivity })
+        const mergedRules = getMergedProfileRules(occasionProfile, activityProfile)
+        const registerCeiling = resolveRegisterCeiling({
+          occasion: resolvedOccasion,
+          activity: resolvedActivity,
+          mood: toolContext.mood || '',
+          request: toolContext.request || toolContext.question || '',
+          question: args?.query || toolContext.question || '',
+          occasionProfile,
+          activityProfile
+        })
+        const tierRank = { preferred: 0, neutral: 1, discouraged: 2, prohibited: 3 }
+        const scoredCandidates = candidates
+          .map(piece => {
+            const trust = wholeWardrobePieceTrustDecision(piece, {
+              occasion: resolvedOccasion,
+              mood: toolContext.mood || '',
+              activity: resolvedActivity,
+              request: requestText,
+              question: toolContext.question || '',
+              weatherProfile: resolvedWeather
+            })
+            const ruleFit = (occasionProfile || activityProfile)
+              ? profileRuleFit(piece, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling })
+              : { tier: 'neutral', label: '' }
+            const weatherFit = weatherFitForPiece(piece, resolvedWeather)
+            const occasionScore = pieceOccasionCompatible(piece, resolvedOccasion) ? 12 : 0
+            const newnessScore = currentIdSet.has(Number(piece.id)) ? -20 : 0
+            const queryScore = slotSwapQueryScore(piece, query)
+            return {
+              piece,
+              trust,
+              ruleFit,
+              weatherFit,
+              score: newnessScore + occasionScore + queryScore + (weatherFit.score || 0) - ((tierRank[ruleFit.tier] ?? 1) * 8)
+            }
+          })
+          .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
+          .sort((a, b) => b.score - a.score || Number(a.piece.id) - Number(b.piece.id))
+
+        const variants = []
+        const failures = []
+        for (const candidate of scoredCandidates) {
+          if (variants.length >= limit) break
+          const replacement = candidate.piece
+          const resolved = basePieces
+            .filter(piece => Number(piece.id) !== Number(removed.id))
+            .map(piece => ({ ...piece, role: roleForPieceCategory(piece) }))
+          resolved.push({ ...replacement, role: slotRole })
+          resolved.sort((a, b) => OUTFIT_ROLES.indexOf(a.role) - OUTFIT_ROLES.indexOf(b.role))
+          const roleIssues = validateOutfitRoles(resolved, [])
+          const hardGateIssues = resolved.flatMap(piece => {
+            if (Number(piece.id) !== Number(replacement.id)) return []
+            const decision = wholeWardrobePieceTrustDecision(piece, {
+              occasion: resolvedOccasion,
+              mood: toolContext.mood || '',
+              activity: resolvedActivity,
+              request: requestText,
+              question: toolContext.question || '',
+              weatherProfile: resolvedWeather
+            })
+            return decision.allowed ? [] : [`${piece.name}: ${decision.reasons.join(', ')}`]
+          })
+          if (roleIssues.length || hardGateIssues.length) {
+            failures.push({ id: replacement.id, name: replacement.name, issues: [...roleIssues, ...hardGateIssues] })
+            continue
+          }
+          const label = `${outfit.label || outfit.title || 'Current outfit'} — ${replacement.name}`
+          const why = slotSwapWhy({ replacement, removed, basePieces, slotRole, request: args?.query || '' })
+          variants.push({
+            label,
+            occasion: resolvedOccasion,
+            season: resolvedSeason,
+            occasionContext: outfit.occasionContext || outfit.occasion_context || resolvedOccasion,
+            why,
+            reason: why,
+            pieceIds: resolved.map(piece => Number(piece.id)),
+            pieces: resolved,
+            missingPieces: [],
+            source: 'slot_swap',
+            activity: resolvedActivity,
+            debug: {
+              mode: 'suggest_slot_swaps',
+              swappedOut: { id: Number(removed.id), name: removed.name },
+              swappedIn: { id: Number(replacement.id), name: replacement.name },
+              ruleFit: candidate.ruleFit.label || candidate.ruleFit.tier,
+              weatherFit: candidate.weatherFit.label
+            },
+            engineNote: `Slot-swap variant: replaced ${removed.name} with ${replacement.name}.`,
+            previewOnly: true
+          })
+        }
+
+        if (!variants.length) {
+          return {
+            status: "error",
+            message: `No valid ${category} swaps were found for "${outfit.label || outfit.title || 'the selected outfit'}" under the current occasion/weather gates.`,
+            rejected: failures.slice(0, 8)
+          }
+        }
+
+        toolContext.generatedOutfits = [
+          ...(Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []),
+          ...variants
+        ]
+        if (!toolContext.sourceLocked) toolContext.source = 'slot_swap'
+        toolContext.sourceLocked = true
+        toolContext.slotSwapCompleted = true
+        if (toolContext.declaredIntent?.want === 'cards') {
+          toolContext.declaredIntent.outfitCount = variants.length
+        }
+        toolContext.occasion = resolvedOccasion
+        toolContext.season = resolvedSeason
+        toolContext.activity = resolvedActivity
+        recordRetrievedPieces(toolContext, [
+          ...basePieces.map(piece => piece.id),
+          ...variants.flatMap(outfit => outfit.pieceIds)
+        ])
+        bumpFreeformDiagnostic(toolContext, 'slotSwapCalls')
+        return {
+          status: "success",
+          message: `Created ${variants.length} ${category} swap option${variants.length === 1 ? '' : 's'} for "${outfit.label || outfit.title || 'the selected outfit'}". Present these cards; do not call propose_outfit to recreate them.`,
+          swappedOut: { id: Number(removed.id), name: removed.name },
+          options: variants.map(outfit => ({
+            label: outfit.label,
+            pieceIds: outfit.pieceIds,
+            replacement: outfit.debug.swappedIn,
+            why: outfit.why
+          })),
+          ...(failures.length ? { rejected: failures.slice(0, 5) } : {})
+        }
       }
       case 'render_preview': {
         if (toolContext.declaredIntent?.want !== 'image') {

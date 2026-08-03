@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
@@ -552,6 +552,81 @@ test('plan slot weather label marks a heuristic guess as an estimate, not a live
   assert.doesNotMatch(liveWorkbench.slots[0].weather_used, /\(estimated\)/, 'live forecast must not also carry the heuristic estimate marker')
 })
 
+test('an indoor slot in extreme heat keeps transit heat and permits only light AC coverage', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const lightTop = insertPiece({ category: 'top', name: 'breathable museum top', occasions: ['city'], formality: 'everyday', fabric_weight: 'light' })
+  const lightBottom = insertPiece({ category: 'bottom', name: 'breathable museum pants', occasions: ['city'], formality: 'everyday', fabric_weight: 'light' })
+  const shoes = insertPiece({ category: 'shoes', name: 'museum walking shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const lightLayer = insertPiece({ category: 'outerwear', name: 'light AC layer', occasions: ['city'], formality: 'everyday', fabric_weight: 'light' })
+  const heavyMain = insertPiece({ category: 'top', name: 'heavy wool museum top', occasions: ['city'], formality: 'everyday', fabric_weight: 'heavy' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'Museum Visit', occasion: 'city', activity: 'none', environment: 'indoor', count: 1 },
+  ], { fallbackWeather: 'hot, highs 100-105F, sunny' })
+
+  assert.equal(slots[0].statedWeather, 'indoor')
+  assert.equal(slots[0].transitSeason, 'hot, highs 100-105F, sunny')
+
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'museum visit during a 100F trip' })
+  const allowed = new Set(workbench.slots[0].allowed_piece_ids)
+  assert.match(workbench.slots[0].weather_used, /^indoor; transit: hot, highs 100-105F, sunny \(estimated\)$/)
+  assert.ok(allowed.has(lightTop))
+  assert.ok(allowed.has(lightBottom))
+  assert.ok(allowed.has(shoes))
+  assert.ok(allowed.has(lightLayer), 'a light optional AC layer remains available')
+  assert.equal(allowed.has(heavyMain), false, 'a heavy main is still rejected for hot transit')
+  assert.match(workbench.slots[0].submission_requirements.join(' '), /breathable hot-weather base for transit/)
+  assert.match(workbench.slots[0].submission_requirements.join(' '), /optional light layer/)
+})
+
+test('extreme heat and active movement reach the model as independent pre-composition assessments', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const closedSupportiveShoe = insertPiece({
+    category: 'shoes', name: 'cream knit slip-on shoes', reads_as: 'closed knit slip-on sneaker',
+    occasions: ['casual'], formality: 'everyday', fabric_weight: 'light', heel_height: 'flat', walk_support: 'high'
+  })
+  const lightPants = insertPiece({
+    category: 'bottom', name: 'light linen pants', reads_as: 'relaxed linen pants', bottom_kind: 'pants',
+    occasions: ['casual'], formality: 'everyday', fabric_weight: 'light', fabric_category: 'linen', length_hits_at: 'ankle'
+  })
+  const lightShorts = insertPiece({
+    category: 'bottom', name: 'light linen shorts', reads_as: 'relaxed linen shorts', bottom_kind: 'shorts',
+    occasions: ['casual'], formality: 'everyday', fabric_weight: 'light', fabric_category: 'linen', length_hits_at: 'mid-thigh'
+  })
+  const elevatedTop = insertPiece({
+    category: 'top', name: 'elevated structured top', reads_as: 'structured top', occasions: ['casual'],
+    formality: 'elevated', fabric_weight: 'light', sleeve_type: 'sleeveless'
+  })
+  const everydayTop = insertPiece({
+    category: 'top', name: 'easy everyday tank', reads_as: 'easy tank', occasions: ['casual'],
+    formality: 'everyday', fabric_weight: 'light', sleeve_type: 'sleeveless'
+  })
+  insertPiece({ category: 'shoes', name: 'second flat shoes', reads_as: 'open toe sandals', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{
+    label: 'Active Kid Day', occasion: 'casual', activity: 'none', environment: 'outdoor', count: 1,
+    best_for: 'Chasing a five-year-old at home and in the backyard'
+  }], { fallbackWeather: 'extreme heat, highs 100-105F' })
+
+  assert.equal(slotRequiresActiveMovement(slots[0]), true)
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'active kid day in 105F heat' })
+  const assessments = new Map(workbench.slots[0].piece_assessments.map(item => [item.id, item]))
+
+  assert.equal(assessments.get(closedSupportiveShoe).movement.tier, 'preferred')
+  assert.equal(assessments.get(closedSupportiveShoe).extreme_heat.tier, 'workable')
+  assert.match(assessments.get(closedSupportiveShoe).extreme_heat.reason, /runs warmer/)
+  assert.equal(assessments.get(lightPants).extreme_heat.tier, 'discouraged')
+  assert.match(assessments.get(lightPants).extreme_heat.reason, /full-leg coverage/)
+  assert.equal(assessments.get(lightShorts).extreme_heat.tier, 'preferred')
+  assert.equal(assessments.get(elevatedTop).movement.tier, 'discouraged', 'elevated mains remain visible as model-judged tradeoffs')
+  assert.equal(assessments.get(everydayTop).movement.tier, 'preferred')
+  assert.match(workbench.slots[0].submission_requirements.join(' '), /Evaluate movement fit independently from heat fit/)
+  assert.match(workbench.slots[0].submission_requirements.join(' '), /“light” describes fabric mass/)
+
+  assert.equal(activeMovementPieceAdvisory({ category: 'shoes', heel_height: 'flat', walk_support: 'high' }, true).tier, 'preferred')
+  assert.equal(extremeHeatPieceAdvisory({ category: 'bottom', bottom_kind: 'pants', fabric_weight: 'light' }, { isExtremeHeat: true }).tier, 'discouraged')
+})
+
 test('model plan slot workbench force-includes a shared anchor that would fall past the cap', async () => {
   db.prepare('DELETE FROM pieces').run()
   insertPiece({ category: 'bottom', name: 'anchor cap pants', occasions: ['city'], formality: 'everyday' })
@@ -874,6 +949,35 @@ test('describeOutfitStructureGap reports the specific structural gap', () => {
   assert.equal(describeOutfitStructureGap([bottomA, shoesA]), 'missing top or dress')
   assert.equal(describeOutfitStructureGap([topA, topB, shoesA]), '2 tops were submitted without a bottom')
   assert.equal(describeOutfitStructureGap([topA, bottomA, shoesA]), '')
+})
+
+test('plan use-case advisories keep movement and home-play tradeoffs visible without hard filtering', () => {
+  const kidSlot = { label: 'Kid Chase', bestFor: 'parks, playgrounds, chasing a 5-year-old' }
+  const homeSlot = { label: 'Relaxed Home / Downtime', bestFor: 'home base, indoor play, low-key days' }
+  assert.equal(slotRequiresActiveMovement(kidSlot), true)
+  assert.equal(slotRequiresOperationalEase(homeSlot), true)
+  assert.equal(activeMovementPieceAdvisory({ category: 'bottom', formality: 'elevated' }, true).tier, 'discouraged')
+  assert.equal(activeMovementPieceAdvisory({ category: 'bottom', formality: 'everyday' }, true).tier, 'preferred')
+  assert.equal(operationalEasePieceAdvisory({ category: 'shoes', heel_height: 'mid' }, true).tier, 'discouraged')
+  assert.equal(operationalEasePieceAdvisory({ category: 'shoes', heel_height: 'flat' }, true).tier, 'preferred')
+})
+
+test('an owner-rejected garment pairing reaches the composer and cannot pass plan validation', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dressId = insertPiece({ category: 'dress', name: 'coral maxi dress', occasions: ['city'], formality: 'everyday' })
+  const topId = insertPiece({ category: 'top', name: 'emerald shell top', occasions: ['city'], formality: 'elevated' })
+  db.prepare('UPDATE pieces SET tried_and_rejected = ? WHERE id = ?').run(JSON.stringify(['coral maxi dress — rejected pairing']), topId)
+  db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?').run(JSON.stringify(['Do not use over the coral maxi dress']), topId)
+  const shoeId = insertPiece({ category: 'shoes', name: 'flat sandals', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Indoor City', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces })
+  assert.match(workbench.piece_catalog.join('\n'), /REJECTED PAIRINGS:coral maxi dress/)
+  assert.match(workbench.piece_catalog.join('\n'), /RULES \(authoritative\):Do not use over the coral maxi dress/)
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{ slot_id: slots[0].id, piece_ids: [dressId, topId, shoeId] }], {
+    visuallySeenPieceIds: new Set([dressId, topId])
+  })
+  assert.match(result.failures[0].reasons.join(' '), /owner-rejected pairing/)
 })
 
 test('model-composed plan titles survive assembly instead of being replaced by the slot label', () => {

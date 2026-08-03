@@ -153,6 +153,19 @@ export function pieceHasInsulatingFiber(p) {
   return fibers.some(f => INSULATING_FIBERS.has(String(f).toLowerCase().trim()))
 }
 
+export function shoeCoverage(p) {
+  if (wardrobeCategoryGroup(p) !== 'shoes') return null
+  const structured = String(p?.shoe_coverage || p?.style_profile_json?.shoe_coverage || '').toLowerCase().trim()
+  if (['open', 'closed'].includes(structured)) return structured
+
+  // TODO: backfill shoe_coverage. This fallback belongs here because attributes.js
+  // is the sole garment-text interpretation boundary.
+  const text = `${p?.name || ''} ${p?.reads_as || ''}`.toLowerCase()
+  if (/\b(open[- ]toe|peep[- ]toe|sandal|slide)\b/.test(text)) return 'open' // ratchet-allow: TODO backfill shoe_coverage fallback at the garment interpretation boundary
+  if (/\b(sneaker|athletic|trainer|loafer|slip[- ]on|boot|closed[- ]toe|lace[- ]up)\b/.test(text)) return 'closed' // ratchet-allow: TODO backfill shoe_coverage fallback at the garment interpretation boundary
+  return null
+}
+
 export function bottomKind(p) {
   // TODO: backfill bottom_kind
   const category = String(p.category || '').toLowerCase().trim()
@@ -483,4 +496,26 @@ export function sleeveCoverage(p) {
 export function hasSleevelessConstruction(p) {
   const sleeve = String(p?.sleeve_type || '').toLowerCase().trim()
   return ['none', 'sleeveless', 'strap', 'tank', 'cami', 'camisole', 'halter'].includes(sleeve)
+}
+
+/**
+ * Shared, deterministic image detail policy for Anthropic candidate thumbnails.
+ * High visual complexity (hero/accent roles, non-solid patterns, textured weaves)
+ * gets 800px maxPx with 'auto' detail for drape/print clarity.
+ * Solid neutral basics get 448px maxPx with 'low' detail to optimize input tokens.
+ */
+export function pieceVisualDetailPolicy(p, { allowLow = true } = {}) {
+  if (!p) return { maxPx: 448, detail: 'low' }
+  if (!allowLow) return { maxPx: 768, detail: 'auto' }
+  const pattern = String(p.pattern_complexity || '').toLowerCase().trim()
+  const hasComplexPattern = pattern === 'loud' || pattern === 'medium'
+  const visualRoles = Array.isArray(p.style_profile_json?.visual_roles) ? p.style_profile_json.visual_roles : []
+  const isExpressiveRole = visualRoles.some(r => r === 'hero_piece' || r === 'color_accent' || r === 'sharpener_piece')
+  const fabric = String(p.fabric_category || p.fabric_weight || '').toLowerCase().trim()
+  const isTexturedFabric = /\b(tweed|jacquard|crochet|knit|lace|embroidery|sequin)\b/i.test(fabric)
+
+  if (hasComplexPattern || isExpressiveRole || isTexturedFabric) {
+    return { maxPx: 800, detail: 'auto' }
+  }
+  return { maxPx: 448, detail: 'low' }
 }

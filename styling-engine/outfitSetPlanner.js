@@ -32,7 +32,8 @@ import {
   weatherProfileFromContext,
   wardrobeCategoryGroup,
   footwearComfortVerdict,
-  pieceStyleProfile
+  pieceStyleProfile,
+  hasRejectedReference
 } from './rules.js'
 import {
   bottomKind,
@@ -42,6 +43,9 @@ import {
   formalityRank,
   pieceFormality,
   pieceHasInsulatingFiber,
+  pieceBareness,
+  pieceCoverage,
+  shoeCoverage,
   sleeveCoverage
 } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
@@ -822,7 +826,7 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
   // A weather the person or the model STATED for this slot is a claim about
   // this slot's conditions, so it keeps its full meaning even for a capsule.
   // Only the inferred, plan-wide season word is demoted.
-  if (slot.statedWeather) {
+  if (slot.statedWeather && slot.statedWeather !== 'indoor') {
     return {
       profile: { ...weatherProfileFromContext({ mood: moodText, season: slot.statedWeather }), weatherSource: 'stated' },
       label: slot.statedWeather
@@ -838,12 +842,26 @@ async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRan
   const profile = await getWeatherProfileForPlan({
     dateRange: { start: day || dateRange.start || undefined, end: day || dateRange.end || dateRange.start || undefined },
     location: targetLocation,
-    season: slot.season,
+    season: slot.statedWeather === 'indoor' ? (slot.transitSeason || '') : slot.season,
     mood: moodText,
     seasonIsCalendarOnly,
     ...(fetchImpl ? { fetchImpl } : {})
   })
   const descriptor = describeWeatherProfile(profile)
+  if (slot.statedWeather === 'indoor') {
+    const transitLabel = profile.weatherSource === 'live'
+      ? `${descriptor} (live forecast${slot.location ? `, ${slot.location}` : ''})`
+      : `${isGenericSeason(slot.transitSeason) ? descriptor : (slot.transitSeason || descriptor)} (estimated)`
+    return {
+      // Extreme heat must constrain the base because a heavy main cannot be
+      // removed during transit. Cold remains handled by the established
+      // indoor-base + reusable transition-layer rules; applying the ordinary
+      // cold main gate here would suppress valid indoor bases before those
+      // layer requirements can do their job.
+      profile: { ...profile, isCold: false, isIndoor: true, weatherSource: 'indoor_transit' },
+      label: `indoor; transit: ${transitLabel}`
+    }
+  }
   if (profile.weatherSource === 'live') {
     const where = slot.location ? `, ${slot.location}` : ''
     return { profile, label: `${descriptor} (live forecast${where})` }
@@ -1151,15 +1169,18 @@ function strictestRegisterCeilingRank(occasions = []) {
 // validator can ask the identical per-slot question without re-deriving it.
 function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWinter = false } = {}) {
   const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ')
-  const season = slot.statedWeather ||
-    (slot.environment === 'indoor' ? 'indoor' : slot.season) ||
-    (isSummer ? 'summer' : (isWinter ? 'winter' : ''))
+  const indoorSlot = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
+  const season = indoorSlot
+    ? (slot.transitSeason || 'indoor')
+    : (slot.statedWeather || slot.season || (isSummer ? 'summer' : (isWinter ? 'winter' : '')))
+  const slotWeatherProfile = weatherProfileFromContext({ mood: slotRequestText, season })
+  if (indoorSlot) slotWeatherProfile.isCold = false
   const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
   const registerCeiling = registerRankName(ceilingRank) || null
   const { allowedPieces } = filterWholeWardrobePiecesForGeneration(pool, {
     occasion: slot.occasion,
     explorationMode: 'moderate',
-    weatherProfile: weatherProfileFromContext({ mood: slotRequestText, season }),
+    weatherProfile: slotWeatherProfile,
     mood: slotRequestText,
     activity: slot.activity,
     request: slotRequestText,
@@ -1419,7 +1440,12 @@ function elevatedCapsuleDemands(slots = [], pool = [], { isSummer = false } = {}
     const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
     if (ceilingRank === null || ceilingRank < floorRank) continue
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ')
-    const season = slot.statedWeather || (slot.environment === 'indoor' ? 'indoor' : slot.season) || (isSummer ? 'summer' : 'winter')
+    const indoorSlot = slot.statedWeather === 'indoor' || slot.environment === 'indoor'
+    const season = indoorSlot
+      ? (slot.transitSeason || 'indoor')
+      : (slot.statedWeather || slot.season || (isSummer ? 'summer' : 'winter'))
+    const slotWeatherProfile = weatherProfileFromContext({ mood: slotRequestText, season })
+    if (indoorSlot) slotWeatherProfile.isCold = false
     const occasionCeilingRank = formalityRank(resolveOccasionProfile(slot?.occasion)?.register_ceiling)
     const registerCeilingOverride = occasionCeilingRank !== null && ceilingRank > occasionCeilingRank
       ? registerRankName(ceilingRank)
@@ -1427,7 +1453,7 @@ function elevatedCapsuleDemands(slots = [], pool = [], { isSummer = false } = {}
     const { allowedPieces } = filterWholeWardrobePiecesForGeneration(pool, {
       occasion: slot.occasion,
       explorationMode: 'moderate',
-      weatherProfile: weatherProfileFromContext({ mood: slotRequestText, season }),
+      weatherProfile: slotWeatherProfile,
       mood: slotRequestText,
       activity: slot.activity,
       request: slotRequestText,
@@ -2233,9 +2259,111 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
-    piece.reads_as ? `reads:${String(piece.reads_as).slice(0, 80)}` : ''
+    piece.reads_as ? `reads:${String(piece.reads_as).slice(0, 80)}` : '',
+    Array.isArray(piece.styling_rules_learned) && piece.styling_rules_learned.length
+      ? `RULES (authoritative):${piece.styling_rules_learned.join(' / ')}`
+      : '',
+    Array.isArray(piece.tried_and_rejected) && piece.tried_and_rejected.length
+      ? `REJECTED PAIRINGS:${piece.tried_and_rejected.join(' / ')}`
+      : ''
   ].filter(Boolean)
   return bits.join(' | ')
+}
+
+export function slotRequiresActiveMovement(slot = {}) {
+  const text = [slot?.label, slot?.bestFor, slot?.coverage, slot?.planNote]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return /\b(chas(?:e|ing)|kid[- ]active|active kid|playground|active caregiv(?:ing|er)|rough[- ]and[- ]tumble)\b/.test(text) // ratchet-allow: plan-use-case classifier, not garment matching
+}
+
+export function slotRequiresOperationalEase(slot = {}) {
+  if (slotRequiresActiveMovement(slot)) return true
+  const text = [slot?.label, slot?.bestFor, slot?.coverage, slot?.planNote]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return /\b(indoor play|home base|low-key (?:home|day|days)|downtime at home)\b/.test(text) // ratchet-allow: plan-use-case classifier, not garment matching
+}
+
+export function extremeHeatPieceAdvisory(piece = {}, weatherProfile = {}) {
+  if (!weatherProfile?.isExtremeHeat) return { tier: 'neutral', score: 0, reason: '' }
+  const group = wardrobeCategoryGroup(piece)
+  const weight = fabricWeight(piece)
+  const coverage = pieceCoverage(piece)
+  const bareness = pieceBareness(piece)
+
+  if (group === 'outerwear') {
+    if (weight === 'light') return { tier: 'workable', score: 0, reason: 'light removable layer for indoor AC only; never the transit base' }
+    return { tier: 'discouraged', score: -24, reason: 'too warm to solve extreme-heat transit; use only a light removable AC layer' }
+  }
+  if (group === 'shoes') {
+    const coverageKind = shoeCoverage(piece)
+    if (coverageKind === 'open') return { tier: 'preferred', score: 16, reason: 'open footwear releases more heat' }
+    if (coverageKind === 'closed') return { tier: 'workable', score: -12, reason: 'closed footwear can handle movement but runs warmer in triple-digit heat' }
+    return { tier: 'workable', score: -4, reason: 'thermal coverage is unknown; compare against more ventilated footwear' }
+  }
+  if (group === 'bottom' && bottomKind(piece) === 'pants') {
+    return {
+      tier: 'discouraged',
+      score: -22,
+      reason: weight === 'light'
+        ? 'light fabric helps, but full-leg coverage is still a tradeoff for active triple-digit heat'
+        : 'full-leg coverage plus non-light fabric is a poor first choice for active triple-digit heat'
+    }
+  }
+  if ((group === 'dress' || group === 'bottom') && coverage === 'full-insulating') {
+    return { tier: 'discouraged', score: -18, reason: 'full-length coverage is a heat-retention tradeoff in active triple-digit heat' }
+  }
+  if (weight === 'heavy' || pieceHasInsulatingFiber(piece)) {
+    return { tier: 'prohibited', score: -100, reason: 'heavy or insulating main is incompatible with triple-digit heat' }
+  }
+  if (weight === 'light' && bareness === 'high') {
+    return { tier: 'preferred', score: 20, reason: 'light fabric and low coverage release heat' }
+  }
+  if (weight === 'light') return { tier: 'preferred', score: 12, reason: 'light fabric is a strong extreme-heat base candidate' }
+  if (weight === 'medium' && bareness === 'high') return { tier: 'workable', score: 2, reason: 'open cut helps, though medium fabric retains more heat' }
+  return { tier: 'workable', score: -6, reason: 'not heavy, but lacks a strong low-coverage or lightweight heat signal' }
+}
+
+export function activeMovementPieceAdvisory(piece = {}, activeMovement = false) {
+  if (!activeMovement) return { tier: 'neutral', score: 0, reason: '' }
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'shoes') {
+    const heel = String(piece?.heel_height || '').toLowerCase()
+    const support = String(piece?.walk_support || '').toLowerCase()
+    if (['flat', 'low'].includes(heel) && ['high', 'medium'].includes(support)) {
+      return { tier: 'preferred', score: 18, reason: 'flat, supportive footwear suits quick active movement' }
+    }
+    if (['high', 'medium'].includes(support)) return { tier: 'workable', score: 2, reason: 'support is adequate, but heel height is not the easiest active option' }
+    return { tier: 'discouraged', score: -18, reason: 'insufficient structured evidence for quick active movement' }
+  }
+  if (['top', 'bottom', 'dress'].includes(group)) {
+    const rank = formalityRank(pieceFormality(piece))
+    if (rank !== null && rank >= formalityRank('elevated')) {
+      return { tier: 'discouraged', score: -16, reason: 'elevated register is a tradeoff for rough active caregiving; prefer easy everyday pieces' }
+    }
+    return { tier: 'preferred', score: 8, reason: 'everyday register is appropriate for rough active use' }
+  }
+  return { tier: 'neutral', score: 0, reason: '' }
+}
+
+export function operationalEasePieceAdvisory(piece = {}, operationalEase = false) {
+  if (!operationalEase || wardrobeCategoryGroup(piece) !== 'shoes') return { tier: 'neutral', score: 0, reason: '' }
+  const heel = String(piece?.heel_height || '').toLowerCase()
+  if (['flat', 'low'].includes(heel)) return { tier: 'preferred', score: 10, reason: 'easy footwear suits home play and low-key movement' }
+  if (heel) return { tier: 'discouraged', score: -14, reason: `${heel} heel adds avoidable operational effort for home play or low-key movement` }
+  return { tier: 'workable', score: -2, reason: 'heel height is unknown for an operationally easy use case' }
+}
+
+function planPieceAssessments(piece = {}, { weatherProfile = {}, activeMovement = false, operationalEase = false } = {}) {
+  return {
+    id: Number(piece?.id),
+    extreme_heat: extremeHeatPieceAdvisory(piece, weatherProfile),
+    movement: activeMovementPieceAdvisory(piece, activeMovement),
+    operational_ease: operationalEasePieceAdvisory(piece, operationalEase)
+  }
 }
 
 function idSetForPieces(pieces = []) {
@@ -2613,7 +2741,7 @@ export function describeOutfitStructureGap(pieces = [], { requireShoes = true } 
   return ''
 }
 
-function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set() } = {}) {
+function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false } = {}) {
   const id = Number(piece.id)
   let score = 0
   if (anchorIds.has(id)) score += 100000
@@ -2632,12 +2760,15 @@ function planWorkbenchPieceScore(piece = {}, slot = {}, { anchorIds = new Set() 
     score += Math.max(0, 20 - Math.abs(pieceRank - slotFloor) * 5)
   }
   if (fabricWeight(piece) === 'light') score += 5
+  score += extremeHeatPieceAdvisory(piece, weatherProfile).score
+  score += activeMovementPieceAdvisory(piece, activeMovement).score
+  score += operationalEasePieceAdvisory(piece, operationalEase).score
   return score
 }
 
-function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
+function selectPlanWorkbenchPieces(allowedPieces = [], slot = {}, { anchorIds = new Set(), weatherProfile = {}, activeMovement = false, operationalEase = false, limit = PLAN_WORKBENCH_PIECE_LIMIT } = {}) {
   const scored = allowedPieces
-    .map((piece, index) => ({ piece, index, score: planWorkbenchPieceScore(piece, slot, { anchorIds }) }))
+    .map((piece, index) => ({ piece, index, score: planWorkbenchPieceScore(piece, slot, { anchorIds, weatherProfile, activeMovement, operationalEase }) }))
     .sort((a, b) => b.score - a.score || Number(b.piece.id || 0) - Number(a.piece.id || 0) || a.index - b.index)
   const selected = []
   const seen = new Set()
@@ -2881,7 +3012,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // existing declared-register escalation behavior.
     const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
     const registerCeilingOverride = registerRankName(ceilingRank) || null
-    const { allowedPieces, suppressedPieces } = filterWholeWardrobePiecesForGeneration(composePool, {
+    const gateResult = filterWholeWardrobePiecesForGeneration(composePool, {
       occasion: slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,
@@ -2890,7 +3021,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       request: slotRequestText,
       ...(registerCeilingOverride ? { registerCeiling: registerCeilingOverride } : {})
     })
-    const shownPieces = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds })
+    const allowedPieces = gateResult.allowedPieces
+    const suppressedPieces = gateResult.suppressedPieces
+    const activeMovement = slotRequiresActiveMovement(slot)
+    const operationalEase = slotRequiresOperationalEase(slot)
+    const shownPieces = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase })
     for (const piece of shownPieces) {
       const id = Number(piece?.id)
       if (id && !catalogById.has(id)) catalogById.set(id, piece)
@@ -2908,6 +3043,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       register_ceiling: registerRankName(ceilingRank),
       register_floor: registerRankName(floorRank),
       allowed_piece_ids: shownPieces.map(piece => Number(piece.id)).filter(Boolean),
+      piece_assessments: shownPieces.map(piece => planPieceAssessments(piece, { weatherProfile, activeMovement, operationalEase })),
       suppressed_note: `${Array.isArray(suppressedPieces) ? suppressedPieces.length : 0} pieces excluded by register/weather/footwear gates${allowedPieces.length > shownPieces.length ? `; showing ${shownPieces.length} prioritized of ${allowedPieces.length} allowed pieces` : ''}`
     })
     slot._modelWorkbench = {
@@ -3049,6 +3185,18 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
       'Every outfit must contain exactly one top plus one bottom, OR one dress; exactly one pair of shoes; and at most one optional outerwear layer. Outerwear never replaces the required top.'
     ]
+    if (workbenchSlot.environment === 'indoor' && pendingSlot?.weatherProfile?.isHot) {
+      requirements.push('This is a climate-controlled destination reached through hot weather: compose a breathable hot-weather base for transit. If indoor AC needs coverage, use only an optional light layer; do not use a heavy main garment to solve for AC.')
+    }
+    if (pendingSlot?.weatherProfile?.isExtremeHeat) {
+      requirements.push('Extreme-heat fit is advisory unless marked prohibited: lead with pieces rated preferred, use workable pieces only when they better serve another stated need, and avoid discouraged pieces when a preferred or workable option can do the same job. For full-length light pants, “light” describes fabric mass, not guaranteed comfort in triple-digit heat.')
+    }
+    if (slotRequiresActiveMovement(pendingSlot)) {
+      requirements.push('This use case requires quick active movement. Prefer the movement-rated pieces and easy everyday mains. Evaluate movement fit independently from heat fit: a supportive closed shoe may be excellent for movement while still being a warmer choice in triple-digit heat.')
+    }
+    if (slotRequiresOperationalEase(pendingSlot) && !slotRequiresActiveMovement(pendingSlot)) {
+      requirements.push('This is a low-key home/play use case. Prefer pieces rated for operational ease; elevated footwear is a deliberate tradeoff, not the default.')
+    }
     if (isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET && isWinterContext && !isSummerContext &&
         workbenchSlot.environment === 'indoor' &&
         allowed.some(piece => wardrobeCategoryGroup(piece) === 'top' && hasSleevelessConstruction(piece))) {
@@ -3330,6 +3478,15 @@ export function validateSlotOutfitConstraints(outfit = {}, slot = {}, { weatherP
   const layer = pieces.find(piece => wardrobeCategoryGroup(piece) === 'outerwear')
   const top = pieces.find(piece => wardrobeCategoryGroup(piece) === 'top')
   const dress = pieces.find(piece => wardrobeCategoryGroup(piece) === 'dress')
+  for (let index = 0; index < pieces.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < pieces.length; otherIndex += 1) {
+      const first = pieces[index]
+      const second = pieces[otherIndex]
+      if (hasRejectedReference(first, second) || hasRejectedReference(second, first)) {
+        reasons.push(`${first.name || first.id} + ${second.name || second.id} is an owner-rejected pairing`)
+      }
+    }
+  }
   if (weatherProfile?.isCold) {
     const hasWarmLayer = Boolean(layer) || (top && fabricWeight(top) === 'heavy') || (dress && fabricWeight(dress) === 'heavy')
     if (!hasWarmLayer) reasons.push('no warm layer for cold weather')
@@ -3977,6 +4134,9 @@ export function normalizePlanSlots(rawSlots = [], {
         activity,
         season: String(statedWeather || slot?.season || fallbackWeather || 'current season').trim(),
         statedWeather,
+        transitSeason: environment === 'indoor'
+          ? String(slot?.season || fallbackWeather || '').trim()
+          : '',
         location,
         environment,
         date: String(slot?.date || '').trim(),
