@@ -520,7 +520,7 @@ export function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidateP
   const strength = String(outfit?.strength || '').toLowerCase().trim()
   return {
     label,
-    strength: ['signature', 'strong', 'usable', 'experimental'].includes(strength) ? strength : (label.toLowerCase().includes('signature') ? 'signature' : 'strong'),
+    strength: ['signature', 'strong', 'usable', 'experimental'].includes(strength) ? strength : (label.toLowerCase().includes('signature') ? 'signature' : 'strong'), // ratchet-allow: normalizing a style-memory label, not matching garment text
     dominantDirection: outfit?.dominantDirection || outfit?.dominant_direction || outfit?.direction || '',
     silhouette: outfit?.silhouette || '',
     bestFor: outfit?.bestFor || outfit?.best_for || '',

@@ -4,6 +4,7 @@ import path from 'path'
 const PATTERNS = [
   /textIncludesAny\(/,
   /\b(blob|text|name|readsAs|reads_as|silhouette|notes|combined|hay|haystack|normalizedLine|noteBlob|n|value|q|question|lower|filename|category|normalizedCandName|normalizedAiName|targetName)\.includes\(/,
+  /\.toLowerCase\(\)\.includes\(/,
   /\.test\(\s*(blob|text|name|readsAs|reads_as|silhouette|notes|combined|hay|haystack|normalizedLine|noteBlob|n|value|q|question|lower|filename|category|normalizedCandName|normalizedAiName|targetName|piece\.name|p\.name|p\.reads_as|piece\.reads_as|p\.category|piece\.category|p\.notes|piece\.notes|piece\.silhouette|p\.silhouette|p\.readsAs|piece\.readsAs|c\.name|b\.piece\.name|a\.piece\.name|rawName|normalizedLine)\b/
 ]
 
