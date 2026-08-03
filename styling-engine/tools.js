@@ -467,6 +467,15 @@ function slotSwapQueryScore(piece = {}, query = '') {
   return tokens.reduce((score, token) => score + (new RegExp(`\\b${token}\\b`).test(text) ? 4 : 0), 0) // ratchet-allow: user-query relevance ranking, not garment classification
 }
 
+const SLOT_SWAP_STATED_COLOR_BONUS = 14
+
+function pieceHasStructuredColor(piece = {}, requestedColor = '') {
+  const color = String(requestedColor || '').toLowerCase().trim()
+  if (!color) return false
+  return (Array.isArray(piece.colors) ? piece.colors : [])
+    .some(value => String(value || '').toLowerCase().trim() === color)
+}
+
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
@@ -529,7 +538,7 @@ export const STYLIST_TOOLS = [
         target_piece_id: { type: "integer", description: "Optional exact piece ID to replace when the outfit has more than one plausible target." },
         replacement_ids: { type: "array", items: { type: "integer" }, description: "Optional specific replacement candidate IDs. When omitted, the tool searches active wardrobe pieces in the requested category." },
         query: { type: "string", description: "Optional text filter for replacements, such as color/register/style words." },
-        color: { type: "string", description: "Optional color filter for replacements." },
+        color: { type: "string", description: "Optional preferred color for replacements. This boosts exact structured color-tag matches without excluding other workable pieces." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Optional occasion override. Defaults to the current outfit/thread occasion." },
         season: { type: "string", description: "Optional season/weather override. Defaults to thread weather/season." },
         activity: { type: "string", enum: ACTIVITY_VALUES, description: "Optional activity override. Defaults to thread activity." },
@@ -937,11 +946,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         
         let filtered = rows
         if (color) {
-          const cLower = color.toLowerCase()
-          filtered = filtered.filter(p => 
-            (p.reads_as && p.reads_as.toLowerCase().includes(cLower)) || 
-            p.colors.some(c => c.toLowerCase().includes(cLower))
-          )
+          filtered = filtered.filter(piece => pieceHasStructuredColor(piece, color))
         }
         let fallbackNote = ''
         if (occasion) {
@@ -971,9 +976,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
               fallbackNote = `No active pieces are explicitly tagged for "${queryOccasion}"; showing flexible active wardrobe pieces instead, with ruleFit/weatherFit annotations for the requested context.`
             }
           } else {
-            filtered = filtered.filter(p => 
-              p.name.toLowerCase().includes(qLower) || 
-              (p.notes && p.notes.toLowerCase().includes(qLower))
+            filtered = filtered.filter(p =>
+              p.name.toLowerCase().includes(qLower) || // ratchet-allow: explicit free-text wardrobe search over the user-visible piece name
+              (p.notes && p.notes.toLowerCase().includes(qLower)) // ratchet-allow: explicit free-text wardrobe search over user-authored notes
             )
           }
         }
@@ -1591,11 +1596,6 @@ async function executeToolInternal(name, args, toolContext = {}) {
         }
         const query = String(args?.query || '').toLowerCase().trim()
         const color = String(args?.color || '').toLowerCase().trim()
-        if (color) {
-          candidates = candidates.filter(piece =>
-            String(piece.reads_as || '').toLowerCase().includes(color) ||
-            (Array.isArray(piece.colors) && piece.colors.some(c => String(c || '').toLowerCase().includes(color))))
-        }
 
         const occasionProfile = resolveOccasionProfile(resolvedOccasion, '')
         const activityProfile = resolveActivityProfile({ activity: resolvedActivity })
@@ -1627,12 +1627,14 @@ async function executeToolInternal(name, args, toolContext = {}) {
             const occasionScore = pieceOccasionCompatible(piece, resolvedOccasion) ? 12 : 0
             const newnessScore = currentIdSet.has(Number(piece.id)) ? -20 : 0
             const queryScore = slotSwapQueryScore(piece, query)
+            const colorScore = pieceHasStructuredColor(piece, color) ? SLOT_SWAP_STATED_COLOR_BONUS : 0
             return {
               piece,
               trust,
               ruleFit,
               weatherFit,
-              score: newnessScore + occasionScore + queryScore + (weatherFit.score || 0) - ((tierRank[ruleFit.tier] ?? 1) * 8)
+              colorScore,
+              score: newnessScore + occasionScore + queryScore + colorScore + (weatherFit.score || 0) - ((tierRank[ruleFit.tier] ?? 1) * 8)
             }
           })
           .filter(candidate => candidate.trust.allowed && candidate.ruleFit.tier !== 'prohibited')
@@ -1683,6 +1685,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
               mode: 'suggest_slot_swaps',
               swappedOut: { id: Number(removed.id), name: removed.name },
               swappedIn: { id: Number(replacement.id), name: replacement.name },
+              colorPreference: color ? { requested: color, matched: candidate.colorScore > 0, score: candidate.colorScore } : null,
               ruleFit: candidate.ruleFit.label || candidate.ruleFit.tier,
               weatherFit: candidate.weatherFit.label
             },

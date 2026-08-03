@@ -443,12 +443,12 @@ export function buildVisualWeightText(p) {
 
 export function hasPairingReference(sourcePiece, targetPiece) {
   const targetName = String(targetPiece.name || '').toLowerCase()
-  return (sourcePiece.pairs_well_with || []).some(note => String(note).toLowerCase().includes(targetName))
+  return (sourcePiece.pairs_well_with || []).some(note => String(note).toLowerCase().includes(targetName)) // ratchet-allow: owner-authored pairing record lookup by exact target piece name
 }
 
 export function hasRejectedReference(sourcePiece, targetPiece) {
   const targetName = String(targetPiece.name || '').toLowerCase()
-  return (sourcePiece.tried_and_rejected || []).some(note => String(note).toLowerCase().includes(targetName))
+  return (sourcePiece.tried_and_rejected || []).some(note => String(note).toLowerCase().includes(targetName)) // ratchet-allow: owner-authored rejected-pair record lookup by exact target piece name
 }
 
 export function collectPieceIdsFromFeedbackPayload(payloadText) {
