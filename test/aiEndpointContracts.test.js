@@ -4803,6 +4803,51 @@ test('suggest_slot_swaps treats descriptive query text as ranking, not an exact 
   assert.equal(toolContext.generatedOutfits[0].debug.swappedIn.id, travelTop)
 })
 
+test('suggest_slot_swaps treats color as an exact structured preference, not a reads_as substring filter', async () => {
+  const taggedRedTop = insertPiece({
+    name: 'scarlet cotton tank', category: 'top', colors: ['red'], occasions: ['city', 'casual'],
+    photo: seeded.photos.top, reads_as: 'simple cotton tank', fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const structuredFalsePositive = insertPiece({
+    name: 'green architectural shell', category: 'top', colors: ['green'], occasions: ['city', 'casual'],
+    photo: seeded.photos.top, reads_as: 'structured textured shell', fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const nonRedAlternative = insertPiece({
+    name: 'navy cotton tank', category: 'top', colors: ['navy'], occasions: ['city', 'casual'],
+    photo: seeded.photos.top, reads_as: 'simple cotton tank', fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const toolContext = {
+    occasion: 'city', season: 'current season',
+    question: 'Give me three different tops for Coast Floral, preferably red.',
+    declaredIntent: { want: 'cards', outfitCount: 3, turnMode: 'followup' }, generatedOutfits: [],
+    currentOutfitSet: [{ index: 1, label: 'Coast Floral', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe]
+  }
+  const result = await executeTool('suggest_slot_swaps', {
+    outfit_label: 'Coast Floral', slot_role: 'primary_top',
+    replacement_ids: [structuredFalsePositive, nonRedAlternative, taggedRedTop], color: 'red', limit: 3,
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 3, 'a color preference must not delete non-matching candidates')
+  assert.equal(toolContext.generatedOutfits[0].debug.swappedIn.id, taggedRedTop, 'the exact structured color match gets the preference bonus')
+  assert.deepEqual(toolContext.generatedOutfits[0].debug.colorPreference, { requested: 'red', matched: true, score: 14 })
+  const falsePositiveCard = toolContext.generatedOutfits.find(outfit => outfit.debug.swappedIn.id === structuredFalsePositive)
+  assert.deepEqual(falsePositiveCard.debug.colorPreference, { requested: 'red', matched: false, score: 0 }, 'structured/texture prose must not count as red')
+  assert.ok(toolContext.generatedOutfits.some(outfit => outfit.debug.swappedIn.id === nonRedAlternative), 'an off-palette but workable alternative remains eligible')
+
+  const lightBlueTop = insertPiece({
+    name: 'powder cotton tank', category: 'top', colors: ['light blue'], occasions: ['city', 'casual'],
+    photo: seeded.photos.top, reads_as: 'simple cotton tank', fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const blueSearch = await executeTool('search_wardrobe', { category: 'top', color: 'blue' }, {})
+  assert.ok(blueSearch.some(piece => Number(piece.id) === lightBlueTop), 'blue search retains compound structured tags such as light blue')
+})
+
 test('suggest_slot_swaps treats singular different-shoes followups as one replacement even if the model asks for three', async () => {
   const blackLoafer = insertPiece({
     name: 'black city loafers',
