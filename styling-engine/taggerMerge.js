@@ -1,4 +1,5 @@
 import { applySoftScoreFloors } from './softScoreFloors.js'
+import { sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
 
 const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
@@ -229,12 +230,14 @@ export function pinManualConfidence(styleProfile = {}, manualOverrides = []) {
 }
 
 export function applyTaggerResult(existingPiece = {}, tags = {}) {
+  tags = sanitizeTaggerColors(tags, { preserveExisting: true }).tags
   const manualOverrides = normalizeManualOverrides(existingPiece.manual_overrides)
   const baseProfile = existingPiece.style_profile_json || {}
   const incomingProfile = tags.style_profile_json || {}
   const incomingConfidence = normalizeConfidenceMap(tags._confidence || incomingProfile._confidence || {})
   const photoProperties = normalizePhotoProperties(tags.photo_properties || incomingProfile.photo_properties || {})
   const patch = { ...tags }
+  delete patch.color_taxonomy_gaps
   if ('fiber_content' in patch) patch.fiber_content = normalizeFiberContent(patch.fiber_content)
   if ('formality' in patch) patch.formality = normalizeFormality(patch.formality)
   if ('heel_height' in patch) patch.heel_height = normalizeHeelHeight(patch.heel_height)

@@ -357,6 +357,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [dirty, setDirty] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [aiUpdateSummary, setAiUpdateSummary] = useState(null)
+  const [colorTaxonomyGaps, setColorTaxonomyGaps] = useState([])
   const dialogRef = useRef(null)
   const stylistControlsRef = useRef(null)
   const garmentCharacterRef = useRef(null)
@@ -445,6 +446,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       }
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
+      const taxonomyGaps = Array.isArray(tags.color_taxonomy_gaps) ? tags.color_taxonomy_gaps : []
+      setColorTaxonomyGaps(taxonomyGaps)
       let changedCount = 0
       setForm(f => {
         const next = { ...f }
@@ -483,9 +486,12 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         return next
       })
       setDirty(true)
-      setAiUpdateSummary(changedCount
+      const gapSummary = taxonomyGaps.length
+        ? ` Unsupported ${taxonomyGaps.length === 1 ? 'shade' : 'shades'} ${taxonomyGaps.join(', ')} ${isEdit && !hangerFile ? 'were added' : 'will be added when you save'} to Retag suggestions and were not applied.`
+        : ''
+      setAiUpdateSummary((changedCount
         ? `AI updated ${changedCount} ${changedCount === 1 ? 'detail' : 'details'}. Review the fields before saving.`
-        : 'AI found no new details to apply. Your protected edits were preserved.')
+        : 'AI found no new details to apply. Your protected edits were preserved.') + gapSummary)
       // Set confidence flags for medium/low fields
       const tagConfidence = tags.style_profile_json?._confidence || tags._confidence
       if (tagConfidence) {
@@ -512,6 +518,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       const res = await fetch(isEdit ? `/api/ai/tag-piece-existing/${piece.id}` : '/api/ai/tag-piece', { method: 'POST', body: fd })
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
+      const taxonomyGaps = Array.isArray(tags.color_taxonomy_gaps) ? tags.color_taxonomy_gaps : []
+      setColorTaxonomyGaps(taxonomyGaps)
       let changedCount = 0
       setForm(f => {
         const next = { ...f }
@@ -525,9 +533,12 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         changedCount = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(f[key])).length
         return next
       })
-      setAiUpdateSummary(changedCount
+      const gapSummary = taxonomyGaps.length
+        ? ` Unsupported ${taxonomyGaps.length === 1 ? 'shade' : 'shades'} ${taxonomyGaps.join(', ')} ${isEdit ? 'were added' : 'will be added when you save'} to Retag suggestions and were not applied.`
+        : ''
+      setAiUpdateSummary((changedCount
         ? `Worn-photo analysis updated ${changedCount} ${changedCount === 1 ? 'detail' : 'details'}. Review them before saving.`
-        : 'Worn-photo analysis did not change any garment details.')
+        : 'Worn-photo analysis did not change any garment details.') + gapSummary)
       const confidence = tags.style_profile_json?._confidence || tags._confidence
       if (confidence) {
         const flags = {}
@@ -553,6 +564,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     })
     fd.append('manual_overrides', JSON.stringify(manualOverrides))
     fd.append('resolved_retag_suggestion_ids', JSON.stringify(retagSuggestions.map(suggestion => suggestion.id)))
+    fd.append('color_taxonomy_gaps', JSON.stringify(colorTaxonomyGaps))
     if (hangerFile)   fd.append('photo', hangerFile)
     else if (clearHanger) fd.append('clear_photo', 'true')
     if (wornFile)     fd.append('worn_photo', wornFile)

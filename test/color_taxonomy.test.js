@@ -10,6 +10,8 @@ import {
   colorTaxonomyEntry,
   colorsArePaletteNeutral,
   unknownColorNames,
+  partitionCanonicalColors,
+  sanitizeTaggerColors,
 } from '../lib/colorTaxonomy.js'
 import { buildPrompts } from '../styling-engine/prompts.js'
 
@@ -34,6 +36,19 @@ test('owner-ratified color classifications are pinned', () => {
   )
   assert.equal(colorTaxonomyEntry('sage').neutrality, 'neutral-adjacent')
   assert.equal(colorTaxonomyEntry('olive').neutrality, 'neutral-adjacent')
+  assert.deepEqual(
+    ['cognac', 'chocolate'].map(name => [colorTaxonomyEntry(name).family, colorTaxonomyEntry(name).neutrality]),
+    [['brown', 'neutral-adjacent'], ['brown', 'neutral-adjacent']],
+  )
+  assert.deepEqual(
+    ['peach', 'terracotta'].map(name => [colorTaxonomyEntry(name).family, colorTaxonomyEntry(name).neutrality]),
+    [['orange', 'accent'], ['orange', 'accent']],
+  )
+  assert.deepEqual(
+    [colorTaxonomyEntry('emerald').family, colorTaxonomyEntry('emerald').neutrality],
+    ['green', 'accent'],
+  )
+  assert.equal(COLOR_NAMES.includes('mint'), false)
   assert.equal(COLOR_NAMES.includes('periwinkle'), false)
   assert.deepEqual(colorFamilies(['black', 'white', 'grey']), ['black', 'white', 'grey'])
   assert.equal(ACCENT_COLOR_NAMES.includes('burgundy'), true)
@@ -49,6 +64,25 @@ test('unknown values are explicit and never earn the palette-neutral classificat
   assert.equal(colorsArePaletteNeutral(['olive', 'sage']), true)
   assert.equal(colorsArePaletteNeutral(['navy', 'chartreuse']), false)
   assert.equal(colorsArePaletteNeutral([]), false)
+})
+
+test('tagger colors are partitioned at the canonical taxonomy boundary', () => {
+  assert.deepEqual(partitionCanonicalColors([' Peach ', 'mint', 'MINT', 'emerald']), {
+    canonical: ['peach', 'emerald'],
+    unknown: ['mint'],
+  })
+})
+
+test('unsupported-only retags preserve existing colors while new-piece tags become empty', () => {
+  assert.deepEqual(sanitizeTaggerColors({ colors: ['mint'] }).tags, {
+    colors: [], color_taxonomy_gaps: ['mint'],
+  })
+  assert.deepEqual(sanitizeTaggerColors({ colors: ['mint'] }, { preserveExisting: true }).tags, {
+    color_taxonomy_gaps: ['mint'],
+  })
+  assert.deepEqual(sanitizeTaggerColors({ colors: ['peach', 'mint'] }, { preserveExisting: true }).tags, {
+    colors: ['peach'], color_taxonomy_gaps: ['mint'],
+  })
 })
 
 test('all tagger prompts derive their color vocabulary from the taxonomy', () => {
@@ -67,8 +101,14 @@ test('mission focal-color scoring derives from taxonomy accents', () => {
   assert.ok(source.includes("import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'"))
   assert.ok(source.includes('const MISSION_FOCAL_COLORS = ACCENT_COLOR_NAMES'))
   assert.equal(source.includes("const MISSION_FOCAL_COLORS = ['"), false)
-  for (const deadColor of ['fuchsia', 'magenta', 'chartreuse', 'violet', 'terracotta', 'ochre', 'emerald', 'cognac']) {
+  for (const deadColor of ['fuchsia', 'magenta', 'chartreuse', 'violet', 'ochre']) {
     assert.equal(ACCENT_COLOR_NAMES.includes(deadColor), false)
+  }
+  for (const canonicalAccent of ['peach', 'terracotta', 'emerald']) {
+    assert.equal(ACCENT_COLOR_NAMES.includes(canonicalAccent), true)
+  }
+  for (const versatileBrown of ['cognac', 'chocolate']) {
+    assert.equal(ACCENT_COLOR_NAMES.includes(versatileBrown), false)
   }
   const attributes = fs.readFileSync('styling-engine/attributes.js', 'utf8')
   assert.ok(attributes.includes('ACCENT_COLOR_NAMES.join'))

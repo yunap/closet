@@ -26,6 +26,7 @@ import {
   subjectThumbnailUrl
 } from '../lib/subjectThumbnails.js'
 import { COLOR_TAXONOMY, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
+import { queueColorTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
 
 const router = express.Router()
 
@@ -219,7 +220,7 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
     fit_on_body, tuck_behavior, waistband_type, needs_base,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
-    tag_state, manual_overrides } = req.body
+    tag_state, manual_overrides, color_taxonomy_gaps } = req.body
   const photo      = req.files?.photo?.[0]?.filename || null
   const worn_photo = req.files?.worn_photo?.[0]?.filename || null
   const finalManualOverrides = normalizeManualOverrides(manual_overrides)
@@ -249,7 +250,12 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null,
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile), tagger_version||null,
     finalTagState, JSON.stringify(finalManualOverrides))
-  res.json(parsePiece(db.prepare('SELECT * FROM pieces WHERE id = ?').get(r.lastInsertRowid)))
+  queueColorTaxonomyReviews(db, {
+    pieceId: r.lastInsertRowid,
+    pieceName: name,
+    colors: safeJsonParse(color_taxonomy_gaps, []),
+  })
+  res.json(withRetagSuggestions(db.prepare('SELECT * FROM pieces WHERE id = ?').get(r.lastInsertRowid)))
 })
 
 router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]), preparePieceThumbnails, (req, res) => {
@@ -262,7 +268,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
     fit_on_body, tuck_behavior, waistband_type, needs_base,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
-    tag_state, manual_overrides, resolved_retag_suggestion_ids } = req.body
+    tag_state, manual_overrides, resolved_retag_suggestion_ids, color_taxonomy_gaps } = req.body
   const photo      = req.files?.photo?.[0]?.filename      || (clear_photo      === 'true' ? null : existing.photo)
   const worn_photo = req.files?.worn_photo?.[0]?.filename  || (clear_worn_photo === 'true' ? null : existing.worn_photo)
   const final_tagger_version = tagger_version === undefined ? existing.tagger_version : tagger_version
@@ -309,6 +315,11 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     db.prepare(`UPDATE todos SET completed = 1 WHERE type = 'retag-suggestion' AND linked_piece_id = ? AND id IN (${placeholders})`)
       .run(Number(req.params.id), ...resolvedSuggestionIds)
   }
+  queueColorTaxonomyReviews(db, {
+    pieceId: req.params.id,
+    pieceName: name,
+    colors: safeJsonParse(color_taxonomy_gaps, []),
+  })
   res.json(withRetagSuggestions(db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)))
 })
 

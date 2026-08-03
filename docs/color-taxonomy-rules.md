@@ -128,15 +128,15 @@ list cannot express and which every fashion source treats as essential.
 | charcoal, dark grey, grey, light grey | `grey` | neutral |
 | white, ivory, cream | `white` | neutral |
 | oatmeal, beige, tan, taupe, *camel*, *khaki*, *greige* | `beige` | neutral |
-| brown | `brown` | neutral-adjacent |
+| brown, cognac, chocolate | `brown` | neutral-adjacent |
 | navy, dark blue | `blue` | neutral |
 | denim | `blue` | neutral-adjacent |
 | blue, light blue | `blue` | accent |
 | teal, turquoise | `cyan` | accent |
 | olive, sage | `green` | neutral-adjacent |
-| green | `green` | accent |
+| green, emerald | `green` | accent |
 | yellow, mustard, amber | `yellow` | accent |
-| orange, rust | `orange` | accent |
+| orange, rust, terracotta, peach | `orange` | accent |
 | red, burgundy | `red` | accent |
 | pink, mauve, *coral* | `pink` | accent |
 | purple, plum, lavender, lilac | `purple` | accent |
@@ -220,6 +220,25 @@ Additional implementation rulings from the same review:
 - The Wardrobe filter, garment Add/Edit, Batch Add, and Lookbook “Link pieces” modal must be
   reviewed as one UI workstream before implementation; see
   [wardrobe-color-controls-spec.md](wardrobe-color-controls-spec.md).
+
+## 6a. Owner rulings — 2026-08-03 vocabulary expansion
+
+The canonical vocabulary remains deliberately smaller than the universe of fashion colour names,
+but the first post-launch tagging evidence showed that it was compressing meaningful apparel
+distinctions. These additions passed the owner's retrieval/styling distinction test:
+
+- **Peach** is an orange-family accent. It is not silently mapped to coral or pink.
+- **Terracotta** is an orange-family accent. It remains distinct from rust and coral.
+- **Cognac** and **chocolate** are brown-family, neutral-adjacent shades. They extend a family that
+  previously had only generic `brown`, without changing the settled neutrality model.
+- **Emerald** is a green-family accent. The owner has several emerald pieces and distinguishes it
+  from generic green for both retrieval and styling.
+- **Mint is not added.** The tagger emitted it for one garment, but the owner rejected that visual
+  reading; an unsupported model suggestion is not evidence for canonical admission by itself.
+
+As before, adding a canonical shade changes the allowed tagger vocabulary and every derived UI and
+engine consumer automatically. It does **not** retag any garment, map unknown stored strings, or
+authorize a wardrobe-wide data pass.
 
 ## 7. Caveats
 
