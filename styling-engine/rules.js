@@ -441,14 +441,21 @@ export function buildVisualWeightText(p) {
   return `VISUAL WEIGHT: ${v.groundingLabel}; structure ${v.structure}; softness ${v.softness}; expressive ${v.expressive ? 'yes' : 'no'}; style lane: ${lane}`
 }
 
+function textContainsWholePhrase(text = '', phrase = '') {
+  const normalizedPhrase = String(phrase || '').toLowerCase().trim()
+  if (!normalizedPhrase) return false
+  const escaped = normalizedPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`).test(String(text || '').toLowerCase())
+}
+
 export function hasPairingReference(sourcePiece, targetPiece) {
   const targetName = String(targetPiece.name || '').toLowerCase()
-  return (sourcePiece.pairs_well_with || []).some(note => String(note).toLowerCase().includes(targetName)) // ratchet-allow: owner-authored pairing record lookup by exact target piece name
+  return (sourcePiece.pairs_well_with || []).some(note => textContainsWholePhrase(note, targetName))
 }
 
 export function hasRejectedReference(sourcePiece, targetPiece) {
   const targetName = String(targetPiece.name || '').toLowerCase()
-  return (sourcePiece.tried_and_rejected || []).some(note => String(note).toLowerCase().includes(targetName)) // ratchet-allow: owner-authored rejected-pair record lookup by exact target piece name
+  return (sourcePiece.tried_and_rejected || []).some(note => textContainsWholePhrase(note, targetName))
 }
 
 export function collectPieceIdsFromFeedbackPayload(payloadText) {

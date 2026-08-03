@@ -472,8 +472,9 @@ const SLOT_SWAP_STATED_COLOR_BONUS = 14
 function pieceHasStructuredColor(piece = {}, requestedColor = '') {
   const color = String(requestedColor || '').toLowerCase().trim()
   if (!color) return false
+  const colorPattern = new RegExp(`(^|[^a-z0-9])${color.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[^a-z0-9])`)
   return (Array.isArray(piece.colors) ? piece.colors : [])
-    .some(value => String(value || '').toLowerCase().trim() === color)
+    .some(value => colorPattern.test(String(value || '').toLowerCase().trim()))
 }
 
 export const STYLIST_TOOLS = [
