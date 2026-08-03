@@ -10,6 +10,7 @@ const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
 const HOT_F = 80
 const COLD_F = 45
+const EXTREME_HEAT_F = 100
 const CACHE_TTL_MS = 3 * 60 * 60 * 1000 // 3 hours — coarse enough to avoid per-piece/per-turn hammering
 const FETCH_TIMEOUT_MS = 4000
 
@@ -91,8 +92,9 @@ function classify(highs, lows, { exclusive = true } = {}) {
   const minLow = Math.min(...lows)
   const isHot = maxHigh >= HOT_F
   const isCold = minLow <= COLD_F
-  if (!exclusive) return { isHot, isCold }
-  return { isHot: isHot && !isCold, isCold: isCold && !isHot }
+  const extreme = maxHigh >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
+  if (!exclusive) return { isHot, isCold, ...extreme }
+  return { isHot: isHot && !isCold, isCold: isCold && !isHot, ...extreme }
 }
 
 async function resolveLive({ startDate, endDate, location, fetchImpl, exclusive }) {

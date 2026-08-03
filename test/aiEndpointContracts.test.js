@@ -865,8 +865,8 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
     assert.ok(!call.messages[0].content.some(part => part.type === 'image' && part.detail === 'low'))
   }
 
-  const firstCallText = visualComposerCalls[0].messages[0].content[0].text
-  const secondCallText = visualComposerCalls[1].messages[0].content[0].text
+  const firstCallText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
+  const secondCallText = visualComposerCalls[1].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
 
   // The first call shouldn't have rotation warning text for 'city' occasion (as it was empty)
   assert.ok(!firstCallText.includes('Recently shown garments'))
@@ -889,7 +889,7 @@ test('visual wardrobe composer endpoint propagates activity parameter to LLM pro
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
   
-  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.ok(contentText.includes('Activity: walking'), 'The visual composer prompt must contain Activity: walking')
   assert.ok(contentText.includes('All-day walking: avoid stilettos, high heels, pumps, delicate sandals, and warm-weather boots'), 'The visual composer prompt must contain walking guidance')
   const returnedNames = json.structuredOutfits.flatMap(o => o.pieces || []).map(p => p.name).join(' ').toLowerCase()
@@ -940,7 +940,7 @@ test('visual wardrobe composer derives hot weather from styling request text bef
 
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
-  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.ok(contentText.includes('Styling request: not too dressy, hot weather'))
   assert.ok(contentText.includes('Off-season pieces have been deprioritized or removed; everything shown is weather-optimized.'))
   assert.doesNotMatch(contentText, /plum wool dress/i, 'hot-weather-invalid wool dress should not be shown to the visual composer')
@@ -963,7 +963,7 @@ test('visual wardrobe composer excludes lightweight linen bottoms for cold reque
 
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
   assert.ok(visualComposerCalls.length >= 1)
-  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.ok(contentText.includes('Styling request: not too dressy, cold weather'))
   assert.doesNotMatch(contentText, /light beige linen wide-leg pants/i, 'lightweight linen pants should not be shown to the visual composer for cold weather')
 })
@@ -1155,7 +1155,7 @@ test('visual wardrobe composer returns model outfits and annotates outdoor socia
   assert.equal(json.debug.finalSelection.modelGateOutfits, 2)
 
   const visualComposerCalls = aiCalls.filter(c => c.system.includes("personal stylist. You are looking at photos"))
-  const contentText = visualComposerCalls[0].messages[0].content[0].text
+  const contentText = visualComposerCalls[0].messages[0].content.filter(p => p.type === 'text').map(p => p.text).join('\n')
   assert.match(contentText, /use sparingly and justify in watchFor:/i)
   assert.match(contentText, /hoodie/i)
   assert.match(contentText, /athletic running shoe/i)
@@ -3620,9 +3620,9 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
     { id: 1, name: 'Floral Print Top', category: 'top', pattern_type: 'floral', status: 'active', colors: ['white', 'blue'], styling_rules_learned: [], occasions: ['casual'], notes: 'floral prints' },
     { id: 2, name: 'Structured Denim Pants', category: 'bottom', status: 'active', fit_on_body: 'structured', notes: 'structured raw denim', colors: ['navy'], styling_rules_learned: [], occasions: ['casual'] },
     { id: 3, name: 'Black Leather Boot', category: 'shoes', status: 'active', notes: 'pointed black leather', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
-    { id: 4, name: 'Silk Cowl Neck Top', category: 'top', status: 'active', notes: 'cowl neck silk drape top', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
-    { id: 5, name: 'Fitted Black Tank', category: 'top', status: 'active', notes: 'fitted knit tank', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
-    { id: 6, name: 'Linen Wide Pants', category: 'bottom', status: 'active', notes: 'relaxed linen wide leg', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 4, name: 'Silk Cowl Neck Top', category: 'top', status: 'active', reads_as: 'cream', notes: 'cowl neck silk drape top', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 5, name: 'Fitted Black Tank', category: 'top', status: 'active', status: 'active', notes: 'fitted knit tank', colors: ['black'], styling_rules_learned: [], occasions: ['casual'] },
+    { id: 6, name: 'Linen Wide Pants', category: 'bottom', status: 'active', reads_as: 'cream', notes: 'relaxed linen wide leg', colors: ['cream'], styling_rules_learned: [], occasions: ['casual'] },
   ]
 
   const candidates = buildWholeWardrobeCandidateOutfits(allPieces, {
@@ -4642,6 +4642,209 @@ test('precompose-seeded turns keep their source flag and inform the declare ack'
   }, toolContext)
   assert.equal(proposed.status, 'success')
   assert.equal(toolContext.source, 'whole_wardrobe', 'propose_outfit must not clobber a precompose-locked source')
+})
+
+test('suggest_slot_swaps creates current-outfit variants without one propose_outfit call per option', async () => {
+  const rustTop = insertPiece({
+    name: 'rust ribbed tank top',
+    category: 'top',
+    colors: ['orange'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'bright rust ribbed tank',
+    silhouette: 'fitted',
+    fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const greenTop = insertPiece({
+    name: 'emerald v-neck top',
+    category: 'top',
+    colors: ['green'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'clean emerald sleeveless shell',
+    silhouette: 'relaxed',
+    fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const toolContext = {
+    occasion: 'city',
+    season: 'current season',
+    question: 'Give me other tops for Coast Floral.',
+    declaredIntent: { want: 'cards', outfitCount: null, turnMode: 'followup' },
+    generatedOutfits: [],
+    currentOutfitSet: [
+      { index: 1, label: 'Coast Floral', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }
+    ],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe]
+  }
+
+  const result = await executeTool('suggest_slot_swaps', {
+    outfit_label: 'Coast Floral',
+    slot_role: 'primary_top',
+    replacement_ids: [rustTop, greenTop],
+    limit: 2,
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 2)
+  assert.equal(toolContext.generatedOutfits[0].source, 'slot_swap')
+  assert.equal(toolContext.generatedOutfits[0].pieceIds.includes(seeded.top), false, 'original top is replaced')
+  assert.ok(toolContext.generatedOutfits[0].pieceIds.includes(seeded.bottom), 'bottom carries forward')
+  assert.ok(toolContext.generatedOutfits[0].pieceIds.includes(seeded.shoe), 'shoes carry forward')
+  assert.deepEqual(
+    toolContext.generatedOutfits.map(outfit => outfit.debug.swappedIn.id).sort((a, b) => a - b),
+    [rustTop, greenTop].sort((a, b) => a - b)
+  )
+  assert.equal(toolContext.freeformDiagnostics.slotSwapCalls, 1)
+  assert.equal(toolContext.freeformDiagnostics.proposeCalls, 0)
+  assert.equal(toolContext.sourceLocked, true)
+  assert.equal(toolContext.slotSwapCompleted, true)
+  assert.deepEqual(stylistToolsForTurn(toolContext), [], 'slot swap completion closes the tool loop for this turn')
+
+  const duplicate = await executeTool('propose_outfit', {
+    label: 'Duplicate swap',
+    pieces: [
+      { id: rustTop, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' },
+    ]
+  }, toolContext)
+  assert.equal(duplicate.status, 'validation_error')
+  assert.match(duplicate.message, /suggest_slot_swaps already composed/)
+  assert.equal(toolContext.generatedOutfits.length, 2, 'blocked duplicate proposal does not append more cards')
+})
+
+test('suggest_slot_swaps returns one best standalone top and excludes needs_base candidates by default', async () => {
+  const dependentTop = insertPiece({
+    name: 'cream open crochet top',
+    category: 'top',
+    colors: ['cream'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'open crochet overlay top',
+    fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const standaloneTop = insertPiece({
+    name: 'emerald standalone shell',
+    category: 'top',
+    colors: ['green'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'clean emerald sleeveless shell',
+    fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  db.prepare('UPDATE pieces SET needs_base = ? WHERE id = ?').run('yes', dependentTop)
+  const toolContext = {
+    occasion: 'city',
+    season: 'current season',
+    question: 'I like Coast Floral. can you give me other options for the top?',
+    declaredIntent: { want: 'cards', outfitCount: 3, turnMode: 'followup' },
+    generatedOutfits: [],
+    currentOutfitSet: [
+      { index: 1, label: 'Coast Floral', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }
+    ],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe]
+  }
+
+  const result = await executeTool('suggest_slot_swaps', {
+    outfit_label: 'Coast Floral',
+    slot_role: 'primary_top',
+    replacement_ids: [dependentTop, standaloneTop],
+    limit: 3,
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.equal(result.options.length, 1)
+  assert.equal(toolContext.generatedOutfits[0].debug.swappedIn.id, standaloneTop)
+  assert.equal(toolContext.generatedOutfits[0].pieceIds.includes(dependentTop), false, 'needs_base top is not used as a standalone top swap')
+  assert.equal(toolContext.declaredIntent.outfitCount, 1)
+})
+
+test('suggest_slot_swaps treats descriptive query text as ranking, not an exact filter', async () => {
+  const travelTop = insertPiece({
+    name: 'cool green stripe tank',
+    category: 'top',
+    colors: ['green'],
+    occasions: ['travel', 'city', 'casual'],
+    photo: seeded.photos.top,
+    reads_as: 'cool grey green stripe tank lightweight travel top',
+    fabric_weight: 'light',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const toolContext = {
+    occasion: 'travel',
+    season: 'hot',
+    question: 'Can you give me another top for travel day?',
+    declaredIntent: { want: 'cards', outfitCount: 1, turnMode: 'followup' },
+    generatedOutfits: [],
+    currentOutfitSet: [
+      { index: 1, label: 'Travel Day', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }
+    ],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe]
+  }
+
+  const result = await executeTool('suggest_slot_swaps', {
+    outfit_index: 1,
+    slot_role: 'primary_top',
+    replacement_ids: [travelTop],
+    occasion: 'travel',
+    activity: 'walking',
+    season: 'hot',
+    query: 'comfortable travel top lightweight',
+    limit: 1,
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.equal(toolContext.generatedOutfits[0].debug.swappedIn.id, travelTop)
+})
+
+test('suggest_slot_swaps treats singular different-shoes followups as one replacement even if the model asks for three', async () => {
+  const blackLoafer = insertPiece({
+    name: 'black city loafers',
+    category: 'shoes',
+    colors: ['black'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.shoe,
+    reads_as: 'quiet black walking loafer',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const navySlip = insertPiece({
+    name: 'navy slip shoes',
+    category: 'shoes',
+    colors: ['navy'],
+    occasions: ['city', 'casual'],
+    photo: seeded.photos.shoe,
+    reads_as: 'quiet navy slip shoe',
+    style_profile_json: { garment_intelligence: { auto_use_trust: 'trusted' } },
+  })
+  const toolContext = {
+    occasion: 'city',
+    season: 'current season',
+    question: 'Same outfit, different shoes?',
+    declaredIntent: { want: 'cards', outfitCount: 3, turnMode: 'followup' },
+    generatedOutfits: [],
+    currentOutfitSet: [
+      { index: 1, label: 'Grounded Graphic Column', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }
+    ],
+    knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe]
+  }
+
+  const result = await executeTool('suggest_slot_swaps', {
+    outfit_index: 1,
+    slot_role: 'shoes',
+    replacement_ids: [blackLoafer, navySlip, seeded.boot],
+    limit: 3,
+  }, toolContext)
+
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.generatedOutfits.length, 1)
+  assert.equal(result.options.length, 1)
+  assert.equal(toolContext.generatedOutfits[0].pieceIds.includes(seeded.shoe), false, 'original shoe is replaced')
 })
 
 test('freeform ask retries the model once when prose cites unverified ids', async () => {

@@ -584,6 +584,7 @@ export function extractToolResultImages(result) {
 
 export function stylistToolsForTurn(toolContext = {}) {
   if (toolContext?.capsuleAtomicCompleted) return []
+  if (toolContext?.slotSwapCompleted) return []
   const allowedNames = Array.isArray(toolContext?.allowedToolNames)
     ? new Set(toolContext.allowedToolNames)
     : null

@@ -75,6 +75,7 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
     .map(match => Number(match[1]))
     .filter(n => Number.isFinite(n))
   const hasHotTemperature = fahrenheitValues.some(n => n >= 80)
+  const hasExtremeHeatTemperature = fahrenheitValues.some(n => n >= 100)
   const hasColdTemperature = fahrenheitValues.some(n => n <= 45)
   const explicitWarmWeather = String(season || '').trim().toLowerCase() === 'warm'
     || /\bwarm(?:\s+(?:weather|climate|day|daytime|trip|season|current-season|current season))\b/.test(text)
@@ -89,6 +90,7 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const hasCoolSignal = /\b(cool|cold|chilly|fog(?:gy)?|marine layer|wind(?:y)?|breez(?:e|y)|overcast|drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const hasRainSignal = /\b(drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const strongHotSignal = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text) || hasHotTemperature
+  const extremeHeatSignal = hasExtremeHeatTemperature || /\b(extreme heat|100s|triple[- ]digit)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const seasonHotSignal = explicitWarmWeather || /\bsummer\b/.test(text)
   const explicitHot = strongHotSignal || (seasonHotSignal && !hasCoolSignal && !seasonIsCalendarOnly)
   const explicitCold = /\b(cold|freezing|frigid|snow|winter|chilly)\b/.test(text)
@@ -101,7 +103,12 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   // silently disabling weather gating entirely. Only fall back to the calendar guess when the user
   // (or context) gave no explicit signal at all.
   if (explicitHot || explicitCold) {
-    return { isHot: explicitHot && !explicitCold, isCold: explicitCold && !explicitHot, isRainy: hasRainSignal }
+    return {
+      isHot: explicitHot && !explicitCold,
+      isCold: explicitCold && !explicitHot,
+      isRainy: hasRainSignal,
+      ...(explicitHot && extremeHeatSignal ? { isExtremeHeat: true } : {})
+    }
   }
 
   const month = currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
