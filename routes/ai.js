@@ -5,7 +5,8 @@ import fs from 'fs'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse, parsePiece } from '../db.js'
-import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
+import { colorTaggerInstruction, sanitizeTaggerColors } from '../lib/colorTaxonomy.js'
+import { queueColorTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
 import { applyTaggerResult, buildAnchorBlock, normalizeConfidenceMap, normalizePhotoProperties, normalizeFiberContent, normalizeFormality, normalizeHeelHeight, normalizeWalkSupport, tagStateForTaggerResult, normalizeManualOverrides } from '../styling-engine/taggerMerge.js'
 
 import {
@@ -928,7 +929,8 @@ router.post('/tag-piece', upload.fields([
   }
 
   try {
-    const tags = await tagPieceWithProvider(photos)
+    const rawTags = await tagPieceWithProvider(photos)
+    const { tags } = sanitizeTaggerColors(rawTags)
     tags.tag_state = tagStateForTaggerResult(tags, { photo: Boolean(photoFile), worn_photo: Boolean(wornPhotoFile) })
     photos.forEach(p => {
       if (fs.existsSync(p.path)) fs.unlinkSync(p.path)
@@ -976,7 +978,13 @@ const tagExistingHandler = async (req, res) => {
 
     if (!photos.length) return res.status(400).json({ error: 'This piece has no photo to tag' })
 
-    const tags = await tagPieceWithProvider(photos, parsePiece(piece))
+    const rawTags = await tagPieceWithProvider(photos, parsePiece(piece))
+    const { tags, gaps: unknown } = sanitizeTaggerColors(rawTags, { preserveExisting: true })
+    queueColorTaxonomyReviews(db, {
+      pieceId: piece.id,
+      pieceName: piece.name,
+      colors: unknown,
+    })
     tags.tag_state = tagStateForTaggerResult(tags, {
       photo: Boolean(photoFile || piece.photo),
       worn_photo: Boolean(wornPhotoFile || piece.worn_photo)
