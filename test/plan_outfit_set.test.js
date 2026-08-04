@@ -22,7 +22,7 @@ const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
-const { parsePiece, weatherProfileFromContext, hasPairingReference, hasRejectedReference } = await import('../styling-engine/rules.js')
+const { parsePiece, weatherProfileFromContext, hasPairingReference, hasRejectedReference, rankedComplementaryWardrobeFor, compatibilityScoreForSelectedItem, locallyGateWholeWardrobeOutfits } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
@@ -978,6 +978,113 @@ test('an owner-rejected garment pairing reaches the composer and cannot pass pla
     visuallySeenPieceIds: new Set([dressId, topId])
   })
   assert.match(result.failures[0].reasons.join(' '), /owner-rejected pairing/)
+})
+
+// The other half of the same rule. Owner ruling 2026-08-03: an owner-rejected
+// pairing is a hard constraint, and it has to be the SAME hard constraint in
+// both composition paths. The plan validator (test above) rejected the look
+// outright while the whole-wardrobe candidate builder only scored it -40, so a
+// pairing Yuna tried and said no to could not ship in a capsule but could still
+// ship from the main generator.
+test('an owner-rejected pairing is excluded from the selected-piece candidate list, not merely penalised', () => {
+  // Selected piece is a BOTTOM: rankedComplementaryWardrobeFor only offers tops
+  // as complements for a bottom/top/outerwear/shoe, never for a dress.
+  const jeans = { id: 1, name: 'dark straight jeans', category: 'bottom', occasions: ['city'], formality: 'everyday' }
+  const rejectedTop = {
+    id: 2,
+    name: 'emerald shell top',
+    category: 'top',
+    occasions: ['city'],
+    formality: 'everyday',
+    tried_and_rejected: ['dark straight jeans — rejected with this top']
+  }
+  const innocentTop = { id: 3, name: 'ivory shell top', category: 'top', occasions: ['city'], formality: 'everyday' }
+  const shoe = { id: 4, name: 'flat sandals', category: 'shoes', occasions: ['city'], formality: 'everyday' }
+
+  const ranked = rankedComplementaryWardrobeFor(jeans, [rejectedTop, innocentTop, shoe], 24, { occasion: 'city' })
+  const ids = ranked.map(entry => Number(entry.piece.id))
+  assert.ok(!ids.includes(2), `the rejected pairing must not be a candidate at all, got ${ids}`)
+  // Scoped, not blanket: everything the owner never rejected still competes.
+  assert.ok(ids.includes(3), 'an unrelated top is unaffected')
+  assert.ok(ids.includes(4), 'an unrelated shoe is unaffected')
+
+  // The exclusion is a fact the caller reads, with its reason, rather than a
+  // magnitude it has to out-guess (principle 5: every adjustment is observable).
+  const scored = compatibilityScoreForSelectedItem(jeans, rejectedTop, { occasion: 'city' })
+  assert.equal(scored.excluded, true)
+  assert.equal(scored.exclusionReason, 'owner-rejected pairing')
+  assert.ok(scored.reasons.includes('owner-rejected pairing'))
+
+  // Symmetric: the note lives on one piece but blocks the pair from either side.
+  assert.equal(compatibilityScoreForSelectedItem(rejectedTop, jeans, { occasion: 'city' }).excluded, true)
+
+  // Strict no-op for the overwhelming majority of pieces, which carry no
+  // tried_and_rejected at all (2 of 242 on the live wardrobe).
+  const clean = compatibilityScoreForSelectedItem(jeans, innocentTop, { occasion: 'city' })
+  assert.equal(clean.excluded, false)
+  assert.equal(clean.exclusionReason, '')
+})
+
+// The gap that mattered most, and it was not the asymmetry originally reported:
+// buildWholeWardrobeCandidateOutfits — the path that composes most outfits —
+// had NO rejected-pair awareness. compatibilityScoreForSelectedItem's -40 was
+// the only other consumer of the signal, and it feeds a prompt word list for
+// the selected-piece flow rather than composition, so nothing downstream could
+// see it. locallyGateWholeWardrobeOutfits is the final gate every whole-wardrobe
+// outfit passes through.
+test('a composed outfit containing an owner-rejected pairing is gated out, in advisor mode too', () => {
+  const dress = { id: 1, name: 'coral maxi dress', category: 'dress', occasions: ['city'], formality: 'everyday' }
+  const top = {
+    id: 2,
+    name: 'emerald green v-neck top',
+    category: 'top',
+    occasions: ['city'],
+    formality: 'everyday',
+    tried_and_rejected: ['coral solid maxi dress — rejected as a layer over this dress']
+  }
+  // Deliberately the real shape of the live data: the note names the OTHER
+  // piece by a name that is not this outfit's dress, so it must NOT fire here.
+  const shoe = { id: 3, name: 'flat sandals', category: 'shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' }
+  const candidatePieces = [dress, top, shoe]
+  const outfit = {
+    label: 'Coral layered',
+    reason: 'a light top over the maxi',
+    pieces: candidatePieces.map(piece => ({ id: piece.id, name: piece.name, category: piece.category }))
+  }
+  const options = { candidatePieces, occasion: 'city', requireShoes: true, repair: false }
+
+  // The name in the note ("coral solid maxi dress") is not this dress's name
+  // ("coral maxi dress"), so whole-phrase matching correctly does not fire.
+  // Asserted on presence, not on an exact count: this gate can emit the same
+  // accepted outfit more than once (diversity backfill), which is pre-existing
+  // and unrelated to what this test is about.
+  const notMatched = locallyGateWholeWardrobeOutfits([outfit], 5, options)
+  assert.ok(notMatched.outfits.length > 0, 'a near-miss name must not be treated as a rejection')
+  assert.ok(
+    !notMatched.rejected.some(entry => /owner-rejected pairing/.test(entry.reason)),
+    'whole-phrase matching must not fire on a name that only resembles the noted one'
+  )
+
+  // Now the note names the piece exactly, as the live rows do.
+  const exactTop = { ...top, tried_and_rejected: ['coral maxi dress — rejected as a layer over this dress'] }
+  const exactCandidates = [dress, exactTop, shoe]
+  const exactOutfit = { ...outfit, pieces: exactCandidates.map(piece => ({ id: piece.id, name: piece.name, category: piece.category })) }
+  for (const mode of ['gate', 'advisor']) {
+    const result = locallyGateWholeWardrobeOutfits([exactOutfit], 5, { ...options, candidatePieces: exactCandidates, mode })
+    assert.equal(result.outfits.length, 0, `${mode} mode must not ship an owner-rejected pairing`)
+    assert.match(result.rejected[0].reason, /owner-rejected pairing: /)
+    assert.match(result.rejected[0].reason, /emerald green v-neck top|coral maxi dress/)
+  }
+
+  // No tried_and_rejected anywhere is a strict no-op.
+  const cleanCandidates = [dress, { ...top, tried_and_rejected: [] }, shoe]
+  const cleanResult = locallyGateWholeWardrobeOutfits(
+    [{ ...outfit, pieces: cleanCandidates.map(p => ({ id: p.id, name: p.name, category: p.category })) }],
+    5,
+    { ...options, candidatePieces: cleanCandidates }
+  )
+  assert.ok(cleanResult.outfits.length > 0)
+  assert.ok(!cleanResult.rejected.some(entry => /owner-rejected pairing/.test(entry.reason)))
 })
 
 test('owner pairing references match whole piece-name phrases, not substrings inside another word', () => {

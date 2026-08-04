@@ -1009,9 +1009,30 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
   if (hasPairingReference(selected, candidate) || hasPairingReference(candidate, selected)) {
     score += 16; reasons.push('confirmed pairing note')
   }
-  if (hasRejectedReference(selected, candidate) || hasRejectedReference(candidate, selected)) {
-    score -= 40; reasons.push('rejected pairing note')
-  }
+  // Owner ruling 2026-08-03: an owner-rejected pairing is a hard constraint,
+  // and it must be the same hard constraint everywhere.
+  //
+  // validateSlotOutfitConstraints (outfitSetPlanner.js) already rejects a
+  // submitted look outright for this, so the plan/capsule path and this one —
+  // the whole-wardrobe candidate builder — disagreed about the same stored
+  // fact: a pairing Yuna tried and said no to could not ship in a capsule but
+  // could still ship from the main generator, where -40 is outweighable.
+  //
+  // "Never express validity as a large penalty" (AGENTS principle 4) is
+  // exactly this shape. It stayed a penalty while the underlying match was a
+  // substring of free text, where a false positive would have silently deleted
+  // valid outfits; #199 replaced that with textContainsWholePhrase, so the
+  // match is now a whole-phrase hit on the target's own name. Measured on the
+  // live wardrobe: 2 of 242 pieces carry tried_and_rejected, they are a
+  // reciprocal pair, and they fire on exactly those 2 pairings and nothing
+  // else.
+  //
+  // Deliberately NOT the #44 owner_rule precedent, which keeps generalised
+  // stored rules as prompt guidance: this is a specific per-pair fact about two
+  // named garments, it cannot generalise to anything else, and the owner
+  // recorded it on both pieces.
+  const rejectedPairing = hasRejectedReference(selected, candidate) || hasRejectedReference(candidate, selected)
+  if (rejectedPairing) reasons.push('owner-rejected pairing')
 
   if (occasion && !pieceMatchesOccasion(candidate, occasion)) {
     score -= 14
@@ -1161,7 +1182,10 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
     reasons.push(...savedBoardInfluence.reasons)
   }
 
-  return { score, reasons }
+  // `excluded` rather than a sentinel score, so the exclusion is a fact the
+  // caller reads rather than a magnitude it has to out-guess, and the reason
+  // string still rides along for the debug payload (principle 5).
+  return { score, reasons, excluded: rejectedPairing, exclusionReason: rejectedPairing ? 'owner-rejected pairing' : '' }
 }
 
 export function rankedComplementaryWardrobeFor(piece, allPieces, limit = 24, options = {}) {
@@ -1196,6 +1220,12 @@ export function rankedComplementaryWardrobeFor(piece, allPieces, limit = 24, opt
         autoUseBlockReasons: trust.reasons
       }
     })
+    // A pairing the owner tried and rejected never becomes a candidate. Removed
+    // from the POOL rather than ranked to the bottom of it: a validity
+    // constraint belongs in the filter that builds the candidate set, not in
+    // the scores that order it. `scored` is spread above, so `excluded` and its
+    // reason are already on the entry — no second scoring pass.
+    .filter(entry => !entry.excluded)
     .sort((a,b) => b.score - a.score || Number(b.piece.favorite) - Number(a.piece.favorite) || String(a.piece.category).localeCompare(String(b.piece.category)))
     .slice(0, limit)
 }
@@ -4654,6 +4684,44 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     }
     if (pieces.some(piece => pieceExcludedForOccasion(piece, occasion))) {
       reject(repaired, `user-excluded for ${occasion}`)
+      continue
+    }
+    // Owner ruling 2026-08-03: a pairing Yuna tried and rejected is a hard
+    // constraint, enforced the same way everywhere.
+    //
+    // validateSlotOutfitConstraints has rejected this for plan/capsule looks
+    // since #198, but the whole-wardrobe generator — the path that composes
+    // most outfits — never checked at all. The only other consumer of the
+    // signal was compatibilityScoreForSelectedItem's -40, and that feeds a
+    // prompt WORD LIST for the selected-piece flow, not composition, so
+    // nothing downstream of buildWholeWardrobeCandidateOutfits could see it.
+    //
+    // Deliberately applies in advisor mode too. Advisor mode softens
+    // TASTE judgments (mood, volume, body-shape language) into flags because
+    // the model composed the look and may have had a reason; "the owner
+    // already tried this exact pair and said no" is not a taste judgment the
+    // model can have outranked. It sits beside pieceExcludedForOccasion, the
+    // other owner-truth exclusion, which is hard in both modes for the same
+    // reason. Sight-required and structural checks above behave this way too.
+    //
+    // Placed after rehydration on purpose: normalizeWholeWardrobeOutfitObject
+    // trims pieces to {id, name, category, photo}, and tried_and_rejected is
+    // not in that set — reading it off the trimmed object would silently never
+    // fire (the spec-29 rehydration lesson, same shape).
+    const rejectedPair = (() => {
+      for (let index = 0; index < pieces.length; index += 1) {
+        for (let other = index + 1; other < pieces.length; other += 1) {
+          const first = pieces[index]
+          const second = pieces[other]
+          if (hasRejectedReference(first, second) || hasRejectedReference(second, first)) {
+            return `${first.name || first.id} + ${second.name || second.id}`
+          }
+        }
+      }
+      return ''
+    })()
+    if (rejectedPair) {
+      reject(repaired, `owner-rejected pairing: ${rejectedPair}`)
       continue
     }
     if (seen.has(key)) {
