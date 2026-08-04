@@ -39,10 +39,17 @@ if (!baselineDir || !dbPath) {
   process.exit(2)
 }
 
+// Forwarded to BOTH checkouts so the two sides never measure different bench
+// widths. An older baseline that predates the flag ignores it and uses its own
+// hardcoded value — which is why the bench line prints `benchSize N` and that
+// line is diffed: a mismatch surfaces as a reported difference instead of
+// quietly invalidating the comparison.
+const benchSize = arg('--bench-size')
+
 function capture(cwd) {
   const result = spawnSync(
     process.execPath,
-    ['scratch/compare_capsule_rosters.js', '--verbose'],
+    ['scratch/compare_capsule_rosters.js', '--verbose', ...(benchSize ? ['--bench-size', benchSize] : [])],
     {
       cwd: path.resolve(cwd),
       env: { ...process.env, WARDROBE_DB_PATH: path.resolve(dbPath) },
@@ -76,31 +83,42 @@ function capturePlanWorkbenches(moduleDir) {
   }))
 }
 
+// Two id lists are printed per scenario now, in the same `  <id> · name`
+// format, so the reader tracks WHICH list it is inside rather than flipping a
+// single boolean. The bench list was previously not captured at all, which
+// meant a bench change of any size — width, category floors, ranking — reported
+// zero differences here. The bench is the model's entire universe at stage 3,
+// so that was the largest blind spot in this harness.
 function parse(output) {
   const scenarios = new Map()
   let scenario = null
-  let roster = false
+  let mode = null
   for (const line of output.split('\n')) {
     const heading = line.match(/^── (.+?) · budget/)
     if (heading) {
-      scenario = { ids: [], summary: [] }
+      scenario = { ids: [], benchIds: [], summary: [], benchSummary: [] }
       scenarios.set(heading[1], scenario)
-      roster = false
+      mode = null
       continue
     }
     if (!scenario) continue
-    if (line.includes('deterministic roster:')) {
-      roster = true
-      continue
-    }
-    const piece = roster && line.match(/^\s+(\d+) ·/)
+    if (line.includes('deterministic roster:')) { mode = 'roster'; continue }
+    if (line.includes('bench roster:')) { mode = 'bench'; continue }
+    const piece = mode && line.match(/^\s+(\d+) ·/)
     if (piece) {
-      scenario.ids.push(Number(piece[1]))
+      if (mode === 'roster') scenario.ids.push(Number(piece[1]))
+      else scenario.benchIds.push(Number(piece[1]))
       continue
     }
-    if (roster && line.trim() === '') roster = false
+    if (mode && line.trim() === '') mode = null
     if (/deterministic\s+\d+ pieces|per-slot capacity:/.test(line)) {
       scenario.summary.push(line.trim())
+    }
+    // Bench width, guaranteed/rank-fill split, shape, and headroom. These are
+    // the free Tier-1 measures: a property no bench piece has is a property no
+    // roster can have, checkable with no model and no money.
+    if (/^\s+bench \d+ of \d+ eligible|^\s+bench shape:|^\s+bench headroom:|^\s+bench unmet targets:/.test(line)) {
+      scenario.benchSummary.push(line.trim())
     }
   }
   return scenarios
@@ -120,14 +138,32 @@ for (const [name, after] of current) {
   const dropped = before.ids.filter(id => !after.ids.includes(id))
   const added = after.ids.filter(id => !before.ids.includes(id))
   const summaryChanged = before.summary.join('\n') !== after.summary.join('\n')
-  if (!dropped.length && !added.length && !summaryChanged) continue
+  if (dropped.length || added.length || summaryChanged) {
+    differences++
+    console.log(`── ${name}`)
+    console.log(`  dropped: ${dropped.join(', ') || 'none'}`)
+    console.log(`  added:   ${added.join(', ') || 'none'}`)
+    console.log('  baseline:', ...before.summary)
+    console.log('  current: ', ...after.summary)
+    console.log('  EXPLAINED BY: document the intentional rule responsible for every roster and capacity change')
+  }
+
+  // Reported separately from the deterministic roster: a bench change and a
+  // roster change have different causes and different blast radius. The
+  // deterministic roster is what ships when stage 3 is off or falls back; the
+  // bench is what the model chooses from when it is on, so a bench-only diff
+  // is invisible in shipped output and still changes every model capsule.
+  const benchDropped = before.benchIds.filter(id => !after.benchIds.includes(id))
+  const benchAdded = after.benchIds.filter(id => !before.benchIds.includes(id))
+  const benchSummaryChanged = before.benchSummary.join('\n') !== after.benchSummary.join('\n')
+  if (!benchDropped.length && !benchAdded.length && !benchSummaryChanged) continue
   differences++
-  console.log(`── ${name}`)
-  console.log(`  dropped: ${dropped.join(', ') || 'none'}`)
-  console.log(`  added:   ${added.join(', ') || 'none'}`)
-  console.log('  baseline:', ...before.summary)
-  console.log('  current: ', ...after.summary)
-  console.log('  EXPLAINED BY: document the intentional rule responsible for every roster and capacity change')
+  console.log(`── bench · ${name}`)
+  console.log(`  dropped: ${benchDropped.join(', ') || 'none'}`)
+  console.log(`  added:   ${benchAdded.join(', ') || 'none'}`)
+  for (const line of before.benchSummary) console.log(`  baseline: ${line}`)
+  for (const line of after.benchSummary) console.log(`  current:  ${line}`)
+  console.log('  EXPLAINED BY: name the intentional rule behind every bench membership and headroom change — a bench diff changes what every model-chosen capsule can contain')
 }
 
 const baselineWorkbenches = capturePlanWorkbenches(baselineDir)
@@ -144,15 +180,30 @@ for (const [name, after] of currentWorkbenches) {
     differences++
     continue
   }
-  if (JSON.stringify(before.ids) === JSON.stringify(after.ids)) continue
+  // The assessments are what the model actually READS — each piece's
+  // extreme-heat / movement / operational-ease tier, score and reason. Comparing
+  // only `ids` meant an advisory could change every tier and reason it emits
+  // and report no difference, so long as the top-40 ordering happened to
+  // survive. Both are compared, and the report says which moved.
+  const orderChanged = JSON.stringify(before.ids) !== JSON.stringify(after.ids)
+  const assessmentsChanged = JSON.stringify(before.assessments || []) !== JSON.stringify(after.assessments || [])
+  if (!orderChanged && !assessmentsChanged) continue
   differences++
   const dropped = before.ids.filter(id => !after.ids.includes(id))
   const added = after.ids.filter(id => !before.ids.includes(id))
   console.log(`── freeform workbench · ${name}`)
+  console.log(`  changed: ${[orderChanged ? 'piece order/membership' : '', assessmentsChanged ? 'piece assessments' : ''].filter(Boolean).join(' + ')}`)
   console.log(`  baseline order: ${before.ids.join(', ')}`)
   console.log(`  current order:  ${after.ids.join(', ')}`)
   console.log(`  dropped: ${dropped.join(', ') || 'none'}`)
   console.log(`  added:   ${added.join(', ') || 'none'}`)
+  if (assessmentsChanged) {
+    const beforeById = new Map((before.assessments || []).map(entry => [entry.id, entry]))
+    const movedIds = (after.assessments || [])
+      .filter(entry => JSON.stringify(beforeById.get(entry.id)) !== JSON.stringify(entry))
+      .map(entry => entry.id)
+    console.log(`  assessments changed for ${movedIds.length} piece(s): ${movedIds.slice(0, 12).join(', ')}${movedIds.length > 12 ? ', …' : ''}`)
+  }
   console.log(`  EXPLAINED BY: ${workbenchExplanations[name] || 'No explanation recorded — treat this as a bug.'}`)
 }
 

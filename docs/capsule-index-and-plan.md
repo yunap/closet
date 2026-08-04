@@ -38,7 +38,7 @@ a comment explaining the reasoning is not one of those.**
 
 | document | what it holds |
 |---|---|
-| [capsule-roster-selection-spec.md](capsule-roster-selection-spec.md) | The three-stage roster-selection design (bench → model chooses → engine validates). Stage 3 is built and behind `WARDROBE_MODEL_CAPSULE_ROSTER`, default off. |
+| [capsule-roster-selection-spec.md](capsule-roster-selection-spec.md) | The three-stage roster-selection design (bench → model chooses → engine validates). Stage 3 is **default ON** since PR #196 (2026-07-31); `WARDROBE_MODEL_CAPSULE_ROSTER=false` turns it off. See §6 below for what that flip did and did not have behind it. |
 | [capsule-step5-evaluation.md](capsule-step5-evaluation.md) | The first corrected live rerun, why it failed despite passing structural validation, the acceptance criteria and enforcement boundary for the smallest V1 correction. |
 | [capsule-bench-implementation-brief.md](capsule-bench-implementation-brief.md) | Operating rules and acceptance commands for spec steps 1–2. Delegation brief. |
 | [stylist-bugfix-spec.md](stylist-bugfix-spec.md) | "Research done 2026-07-25 — what the capsule number should be": the *outfit-count* axis. Solid capacity measurements; its published-practice claim cites no source. |
@@ -211,7 +211,14 @@ This is disclosure, **not a hard filter or a new generation instruction**. The `
 precedent is that hard filters on taste dimensions starve capacity, and the corrected roster has
 not yet been evaluated. Step 5 supplies that evidence before any V2 scoring pressure is considered.
 
-### Step 5 — decide stage 3 *(evaluated 2026-07-30: remains default-off)*
+### Step 5 — decide stage 3 *(evaluated 2026-07-30: default-off; **flipped default-ON 2026-07-31**, see §6)*
+
+> **Status note added 2026-08-03.** Everything in this section below describes the
+> 2026-07-30 decision, when stage 3 remained default-off. It was flipped to
+> default-on in PR #196 the following day. The section is kept as written because
+> it is the record of *why* the answer was no at the time; §6 records the flip and
+> what evidence it actually had. Do not read the "remains default-off" sentences
+> below as current behaviour.
 
 The corrected live rerun is recorded in
 [capsule-step5-evaluation.md](capsule-step5-evaluation.md). Stage 3 fired, used one repair and no
@@ -460,6 +467,7 @@ through `buildPlanSlotWorkbench`). Capsule suite 225/225; full suite same 10 pre
 
 ## 5. Standing constraints
 
+
 - **The code and the ratified docs are the authority — not the spec archive.** 35 historical
   specs in `~/Downloads/spec_*.md` ([index](spec-archive-index.md)) predate several redesigns.
   Worth a look for *why* live code behaves oddly; never a reason on its own not to change
@@ -473,3 +481,67 @@ through `buildPlanSlotWorkbench`). Capsule suite 225/225; full suite same 10 pre
 - Palette is a preference, not a filter.
 - Read `stylist-session-handoff.md` before overturning an owner ruling; several rulings here look
   like bugs and are not.
+
+## 6. Stage 3 default-on, and the bench width — recorded 2026-08-03
+
+Written during an architectural coherence review of the whole capsule arc. Both
+entries exist because the code and this document had drifted apart, and a reader
+arriving at §4 would have concluded the opposite of what ships.
+
+### 6a. Stage 3 is default-on, and §3's evidence checklist was not completed
+
+`modelCapsuleRosterEnabled()` in `routes/ai.js` defaults to `true` (PR #196,
+2026-07-31). Until this section was written, three places in the docs still said
+default-off and nothing recorded the flip.
+
+`capsule-step5-evaluation.md` §6 lists six pieces of evidence required before
+default-on. Items 1–4 (offline proofs: the layer floor holds, the briefs state
+the qualitative jobs, the composition contract asks for functional breadth, the
+deterministic roster and ranking A/B are unchanged) **are satisfied** and have
+permanent tests. Items 5 and 6 — *one explicitly approved rerun, reviewed
+against all nine criteria* — **were not completed as written.** The nearest
+record is the `thread_1785467959899` section above, which reviews criteria 3 and
+7, does not walk all nine, and ends with the owner sharpening a criterion rather
+than accepting the run.
+
+This is recorded as a fact about the process, not as an argument to revert. The
+flip may well be right; what was missing was any note saying it had happened.
+
+### 6b. Bench width 40 → 70 — an open question, not a settled ruling
+
+`capsule-roster-selection-spec.md` §"Too much supply" carries an owner ruling of
+2026-07-28: `ABSOLUTE_CEILING` is 40, *"40 stays the shipped value until measured
+on more than this wardrobe"*, and if 40 proves too narrow the fix is the two-tier
+bench (text for a wide set, thumbnails for a top slice) **rather than raising the
+image count**. Production has run `benchSize = 70` with per-piece thumbnails at
+up to 800px since PR #196. That spec section was not amended and still reads 40.
+
+**The reason for the change, from the owner (2026-08-03):** the capsules produced
+at bench 40 were not good enough, and 70 was the response — compared against the
+Visual Composer, which shows up to 90 pieces at 768px. That is a legitimate
+motivation and it is why this is recorded as an open question rather than a
+regression.
+
+**What the free measurements since then established** (all reproducible with
+`scratch/compare_capsule_rosters.js --bench-size N`, no model calls):
+
+- The bench's *composition* was the larger defect. `capsuleVersatilityScore`
+  ordered the bench globally across categories, and it ranks dresses at median
+  116 of 160 eligible and shoes at 113, against tops at 84 — a fair comparator
+  within a category, close to meaningless across them. Widening 40 → 70 bought
+  15 tops, 8 bottoms and **zero** dresses, and left hero-capable representation
+  at 10 of 46.
+- That is now fixed (per-category targets, filled most-starved-first). At the
+  same width and the same image cost, dresses went 3 → 6 and shoes 9 → 14.
+- Width still buys something real *after* the fix, and it is concentrated in
+  footwear: dressy-capable shoes on the bench are 2 of 18 at benchSize 40 and
+  5 of 18 at 70. Given that "sneakers carried almost every context and the brown
+  wedges were the sole elevated option" is a recorded live failure, this is not
+  a cosmetic difference.
+- Cost, measured on the live wardrobe: roughly 22k image tokens at 40 against
+  38k at 70, per roster call.
+
+**Open.** The next captured capsule run is the evidence that settles it, because
+everything above measures what the model can *see*, not what it *chooses*. Until
+then neither 40 nor 70 should be described as ratified, and the spec's two-tier
+alternative remains untried.

@@ -473,7 +473,7 @@ request and returning a single look is worse than declining the frame and saying
 
 | today | why it is wrong away from a 243-piece wardrobe |
 |---|---|
-| bench `benchSize = 40` | at ~60 eligible pieces the bench is most of the wardrobe (no selection happens, and you pay 40 thumbnails for it). **Ruled 2026-07-28:** 40 is an absolute ceiling, not a target — it scales down with supply and never up. See "Too much supply" below |
+| bench `benchSize = 40` | at ~60 eligible pieces the bench is most of the wardrobe (no selection happens, and you pay 40 thumbnails for it). **Ruled 2026-07-28:** 40 is an absolute ceiling, not a target — it scales down with supply and never up. **Superseded in practice 2026-07-31: production runs 70. Open, not re-ratified — see the amendment at the end of "Too much supply" below.** |
 | default capsule budget `24` | at 45 eligible pieces a 24-piece capsule is half the closet — an inventory, not a capsule |
 | bench category floors `2 top / 2 bottom / 2 shoes` | unsatisfiable below a certain supply; must degrade to a stated gap, not a silent shortfall |
 | `MIN_ENFORCED_CAPSULE_BUDGET = 6` | never revisited against small wardrobes; it decides whether capsule machinery engages at all |
@@ -533,6 +533,38 @@ Consequences to design for, not discover:
   image, so quality and cost are not actually in direct conflict here.
 - BYOK means the user pays their own provider costs, which makes an unbounded request their bill
   rather than the platform's. That is a reason for the ceiling, not a reason to relax it.
+
+#### Amendment, 2026-08-03: production runs 70, and the ceiling above is open
+
+The 2026-07-28 ruling has not held in practice and is recorded here rather than
+quietly left to rot. Since PR #196 (2026-07-31) `benchSize` defaults to **70**, and every
+bench piece carries a thumbnail at up to 800px for hero/printed/textured pieces (448px
+otherwise) — so both the count and the resolution moved, and the ruling above named the
+image count as the thing not to raise.
+
+**Why:** the capsules produced at bench 40 were not good enough. Owner, 2026-08-03:
+going 40 → 70 was the response to that, benchmarked against the Visual Composer, which
+shows up to 90 pieces at 768px. The motivation is real; what was missing was this note.
+
+**What free measurement has since established** (`compare_capsule_rosters.js --bench-size N`,
+no model calls, live 242-piece wardrobe, 4-slot summer capsule at budget 24):
+
+- Bench **composition** was the larger defect, and it was independent of width.
+  `capsuleVersatilityScore` ordered the bench globally across categories while ranking
+  dresses at median 116 of 160 eligible and shoes at 113 against tops at 84. Widening
+  40 → 70 therefore bought 15 tops, 8 bottoms and **zero** dresses. Fixed 2026-08-03 with
+  per-category targets; at unchanged width and cost, dresses went 3 → 6 and shoes 9 → 14.
+- Width still buys something after that fix, concentrated in footwear: dressy-capable
+  shoes on the bench are 2 of 18 at benchSize 40 and 5 of 18 at 70. Against the recorded
+  live failure that "sneakers carried almost every context and the brown wedges were the
+  sole clearly elevated option," that is not cosmetic.
+- Cost: roughly 22k image tokens per roster call at 40, 38k at 70.
+
+**Status: open.** Everything above measures what the model can *see*, not what it
+*chooses*, so the next captured capsule run is what settles it. Until then neither 40 nor
+70 is ratified, and the two-tier bench proposed above — full garment truth as text for a
+wide set, thumbnails for a top slice — remains untried and is still the cheapest way to
+widen what the model knows without widening the image bill.
 
 ### How to read every measured number in this document
 

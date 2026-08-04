@@ -2864,21 +2864,46 @@ For each piece, give one short line naming the job it does in this capsule. Writ
 Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether two pieces belong in one wardrobe.`
 }
 
+// A repair is a correction, not a fresh brief: the structural failures are
+// exact and must be fixed, and the four judgments in the system brief still
+// apply to whatever the fix displaces — otherwise "swap a shoe for a layer" can
+// be satisfied by any layer at all.
+//
+// Its own function because of WHERE it has to sit in the provider payload. The
+// initial call and the repair differ only by this block, so everything before
+// it — season, size, palette, owner rules, slots, and the (long) candidate
+// catalog with one thumbnail per bench piece — is a byte-identical prefix worth
+// caching. Concatenating the repair onto the END of that prefix still breaks
+// it: a prompt cache matches on prefix, so a single differing character in the
+// first content block invalidates every breakpoint after it, and the repair
+// call re-pays for all ~70 images. Kept separate so the provider payload can
+// put the volatile part AFTER both cache breakpoints, which is the same
+// "VOLATILE TAIL SECOND" ordering the whole-wardrobe composer already uses.
+export function capsuleRosterRepairText({ failures = [], previousRosterIds = [] } = {}) {
+  return `YOUR PREVIOUS SELECTION WAS REJECTED. Previous IDs: [${(previousRosterIds || []).join(', ')}]
+Fix exactly these problems, keeping the rest of your selection:
+${(failures || []).map(entry => `- ${entry.message}`).join('\n')}
+
+The replacements you bring in are held to the same standard as the original picks: protagonists, independent wearability, seasonally credible footwear, and a distinct job per piece. Whatever you drop to make room should be the piece with the weakest job, not simply the easiest one to remove.`
+}
+
 // Extracted from the provider call so both the initial and the repair contract
 // are assertable offline, with no provider and no images. The repair block is
 // the only difference between them by construction.
+//
+// Returns the COMPLETE user text including the repair block, which is what the
+// offline contract tests assert against. The provider path deliberately calls
+// the two halves separately (see chooseCapsuleRosterWithProvider) so the cache
+// prefix survives; this function stays whole so "what did the model actually
+// read" remains answerable from one call.
 export function capsuleRosterSelectionUserText({
   bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
   attempt = 1, failures = [], previousRosterIds = [], ownerRules = []
 } = {}) {
   const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
   const slotLines = slots.map(slot => `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}): ${slot.bestFor || slot.label}`)
-  // A repair is a correction, not a fresh brief: the structural failures are
-  // exact and must be fixed, and the four judgments above still apply to
-  // whatever the fix displaces — otherwise "swap a shoe for a layer" can be
-  // satisfied by any layer at all.
   const repairBlock = attempt > 1
-    ? `\n\nYOUR PREVIOUS SELECTION WAS REJECTED. Previous IDs: [${(previousRosterIds || []).join(', ')}]\nFix exactly these problems, keeping the rest of your selection:\n${failures.map(entry => `- ${entry.message}`).join('\n')}\n\nThe replacements you bring in are held to the same standard as the original picks: protagonists, independent wearability, seasonally credible footwear, and a distinct job per piece. Whatever you drop to make room should be the piece with the weakest job, not simply the easiest one to remove.`
+    ? `\n\n${capsuleRosterRepairText({ failures, previousRosterIds })}`
     : ''
   // Previously reached the composer (buildPlanSlotWorkbench's instructions)
   // but never the roster pick itself — a stored rule like "avoid maxi skirts
@@ -2902,17 +2927,54 @@ CANDIDATES:
 ${truthCatalog.join('\n')}${repairBlock}`
 }
 
-async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }, toolContext) {
+// The provider payload, assembled from parts so the cache-prefix invariant is
+// assertable offline with no provider, no image files, and no network. Takes
+// the already-loaded thumbnail parts because loading them is the only step that
+// needs the filesystem.
+//
+// The invariant this shape exists to hold: for a given bench, everything from
+// content[0] through the last cache_control breakpoint is IDENTICAL on attempt
+// 1 and attempt 2, so the repair reads the cache the initial call wrote instead
+// of re-paying for every thumbnail.
+export function capsuleRosterSelectionContent({
+  bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
+  ownerRules = [], attempt = 1, failures = [], previousRosterIds = [], imageParts = []
+} = {}) {
+  // STABLE PREFIX FIRST. Built with attempt:1 unconditionally — passing the
+  // real `attempt` here would append the repair text to this block and
+  // invalidate the prefix, which is the only place in a single run where a
+  // cache hit was ever possible. The caching would then cost the creation
+  // premium twice and return nothing.
   const content = [{
     type: 'text',
-    text: capsuleRosterSelectionUserText({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }),
+    text: capsuleRosterSelectionUserText({
+      bench, slots, budget, palette, isSummer, isWinter, ownerRules,
+      attempt: 1, failures: [], previousRosterIds: []
+    }),
     cache_control: { type: 'ephemeral' }
   }]
+  content.push(...imageParts)
+  if (content.length > 1) {
+    content[content.length - 1] = {
+      ...content[content.length - 1],
+      cache_control: { type: 'ephemeral' }
+    }
+  }
+  // VOLATILE TAIL LAST — after both breakpoints, so it changes nothing the
+  // cache covers. The repair reaches the model with the same wording it always
+  // had; it just no longer sits in front of the thumbnails.
+  if (attempt > 1) {
+    content.push({ type: 'text', text: capsuleRosterRepairText({ failures, previousRosterIds }) })
+  }
+  return content
+}
 
+async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }, toolContext) {
   // Photographs for the candidates, same reasoning as the composer: this stage
   // is more aesthetic than composition, and until now it was the blind one.
   // Hero, printed, and accent pieces use 800px maxPx/auto detail for high visual
   // clarity, while solid neutral basics use 448px low detail to optimize tokens.
+  const imageParts = []
   for (const piece of bench) {
     const photoFile = piece.worn_photo || piece.photo || ''
     if (!photoFile) continue
@@ -2921,19 +2983,17 @@ async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, 
     try {
       const { maxPx, detail } = pieceVisualDetailPolicy(piece)
       const thumb = await prepareWardrobeThumb(filePath, `capsule-roster:${piece.id}:${maxPx}:${photoFile}`, { maxPx })
-      content.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
-      content.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+      imageParts.push({ type: 'text', text: `ID ${piece.id}: ${piece.name}` })
+      imageParts.push({ type: 'image', detail, source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
     } catch (err) {
       console.error(`Error loading capsule roster thumbnail for piece ${piece.id}:`, err)
     }
   }
 
-  if (content.length > 1) {
-    content[content.length - 1] = {
-      ...content[content.length - 1],
-      cache_control: { type: 'ephemeral' }
-    }
-  }
+  const content = capsuleRosterSelectionContent({
+    bench, slots, budget, palette, isSummer, isWinter, ownerRules,
+    attempt, failures, previousRosterIds, imageParts
+  })
 
   const { value, usage } = await askStylistStructuredWithUsage({
     system: capsuleRosterSelectionSystemPrompt(),

@@ -22,8 +22,8 @@ import {
   extractStatedPalette,
   selectCapsuleRosterViaModel
 } from '../styling-engine/outfitSetPlanner.js'
-import { wardrobeCategoryGroup, pieceFormality } from '../styling-engine/attributes.js'
-import { filterWholeWardrobePiecesForGeneration, weatherProfileFromContext } from '../styling-engine/rules.js'
+import { wardrobeCategoryGroup, pieceFormality, formalityRank } from '../styling-engine/attributes.js'
+import { filterWholeWardrobePiecesForGeneration, weatherProfileFromContext, pieceStyleProfile } from '../styling-engine/rules.js'
 
 const WITH_MODEL = process.argv.includes('--with-model')
 const VERBOSE = process.argv.includes('--verbose')
@@ -34,6 +34,16 @@ const VERBOSE = process.argv.includes('--verbose')
 // and comparing against invented slots produced a misleading verdict once.
 const LIVE_ARG_INDEX = process.argv.indexOf('--live')
 const LIVE_PAYLOAD = LIVE_ARG_INDEX > -1 ? process.argv[LIVE_ARG_INDEX + 1] : null
+// --bench-size N: this was hardcoded to 40 while production had already moved
+// to 70 (selectCapsuleRosterViaModel's default), so the harness was measuring a
+// bench nobody ships. Defaults to the production value; pass it explicitly to
+// compare two widths on identical slots, which is the whole 40-vs-70 question.
+// The A/B differ passes the SAME value to both checkouts.
+const PRODUCTION_BENCH_SIZE = 70
+const BENCH_SIZE_ARG_INDEX = process.argv.indexOf('--bench-size')
+const BENCH_SIZE = BENCH_SIZE_ARG_INDEX > -1
+  ? Math.max(1, Number.parseInt(process.argv[BENCH_SIZE_ARG_INDEX + 1], 10) || PRODUCTION_BENCH_SIZE)
+  : PRODUCTION_BENCH_SIZE
 
 const SCENARIOS = [
   {
@@ -168,6 +178,39 @@ function printRoster(label, roster) {
   }
 }
 
+// What a roster drawn from this bench could achieve AT BEST. The bench is the
+// model's entire universe at stage 3, so a property no bench piece has is a
+// property no roster can have — measurable with no model and no money.
+// Reported against eligible supply because the raw counts mean nothing without
+// the denominator: 3 dresses is starvation out of 14 and everything there is
+// out of 3.
+function benchHeadroom(bench, eligible) {
+  const isHero = piece => {
+    const roles = pieceStyleProfile(piece)?.visual_roles || []
+    return piece.pattern_complexity === 'loud' || (Array.isArray(roles) && roles.includes('hero_piece'))
+  }
+  const isElevatedShoe = piece => wardrobeCategoryGroup(piece) === 'shoes' &&
+    (formalityRank(pieceFormality(piece)) ?? -1) >= formalityRank('elevated')
+  const count = (list, group) => list.filter(piece => wardrobeCategoryGroup(piece) === group).length
+  const shape = list => `${count(list, 'top')}T ${count(list, 'bottom')}B ${count(list, 'dress')}D ${count(list, 'outerwear')}O ${count(list, 'shoes')}S`
+  return {
+    shape: shape(bench),
+    eligibleShape: shape(eligible),
+    heroCapable: bench.filter(isHero).length,
+    eligibleHeroCapable: eligible.filter(isHero).length,
+    elevatedShoes: bench.filter(isElevatedShoe).length,
+    eligibleElevatedShoes: eligible.filter(isElevatedShoe).length
+  }
+}
+
+// One line per measure, each a stable `key: value` so the A/B differ can
+// compare them without re-deriving anything. Printed unconditionally (not only
+// under --verbose) so a non-verbose run still shows what the model would see.
+function printBenchHeadroom(head) {
+  console.log(`  bench shape: ${head.shape}  (eligible supply: ${head.eligibleShape})`)
+  console.log(`  bench headroom: hero-capable ${head.heroCapable}/${head.eligibleHeroCapable}  elevated-shoes ${head.elevatedShoes}/${head.eligibleElevatedShoes}`)
+}
+
 console.log(`wardrobe: ${allPieces.length} active pieces · model side: ${WITH_MODEL ? 'ENABLED (billed)' : 'skipped (free run)'}\n`)
 
 const scenarios = LIVE_PAYLOAD ? [liveScenarioFrom(LIVE_PAYLOAD)] : SCENARIOS
@@ -176,12 +219,26 @@ for (const scenario of scenarios) {
   const { name, slots, budget, isSummer, question } = scenario
   const isWinter = !isSummer
   const { colors: palette } = extractStatedPalette(question, allPieces)
-  const { bench, diagnostics } = buildCapsuleBench(allPieces, { budget, slots, isSummer, isWinter, benchSize: 40, palette })
+  const { bench, diagnostics } = buildCapsuleBench(allPieces, { budget, slots, isSummer, isWinter, benchSize: BENCH_SIZE, palette })
+  // The denominator for every headroom number below: everything that passes at
+  // least one slot's gates, i.e. what the bench is sampling FROM. benchSize is
+  // deliberately absurd rather than "unlimited" — buildCapsuleBench never
+  // returns more than the eligible pool, so this is the pool itself.
+  const { bench: eligible } = buildCapsuleBench(allPieces, { budget, slots, isSummer, isWinter, benchSize: Number.MAX_SAFE_INTEGER, palette })
 
   console.log(`── ${name} · budget ${budget} · "${question}"`)
-  console.log(`  bench ${bench.length} (seeded with the deterministic roster, +${bench.length - budget} beyond it)` +
+  // benchSize is stated because it is now a variable, and a comparison run that
+  // silently used a different one on each side would be worse than no run.
+  console.log(`  bench ${bench.length} of ${eligible.length} eligible · benchSize ${BENCH_SIZE} · ${diagnostics.admittedByGuaranteeCount} guaranteed + ${bench.length - diagnostics.admittedByGuaranteeCount} target-fill` +
     `${palette.length ? ` · palette asked for: ${palette.join(', ')}` : ' · no palette stated'}` +
     `${diagnostics.uncoverableSlots.length ? ` · uncoverable: ${diagnostics.uncoverableSlots.join(', ')}` : ''}`)
+  // benchSize is a cost ceiling and wins over the category targets, so a target
+  // the bench could not afford is stated rather than absorbed silently.
+  if (diagnostics.unmetTargets?.length) {
+    console.log(`  bench unmet targets: ${diagnostics.unmetTargets.map(entry => `${entry.group} ${entry.actual}/${entry.target} (of ${entry.eligible} eligible)`).join(', ')}`)
+  }
+  printBenchHeadroom(benchHeadroom(bench, eligible))
+  printRoster('bench', bench)
 
   const deterministic = selectCapsuleRoster(allPieces, {
     budget, isSummer, isWinter, occasions: slots.map(s => s.occasion), slots, palette,

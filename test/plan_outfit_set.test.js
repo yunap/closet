@@ -26,8 +26,8 @@ const { parsePiece, weatherProfileFromContext, hasPairingReference, hasRejectedR
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
-const { describeCapsuleUndemonstratedJobs, describeCapsuleLayerSupplyGap, capsuleConditionMatches } = await import('../styling-engine/outfitSetPlanner.js')
-const { capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsulePlanCompositionSystemPrompt } = await import('../routes/ai.js')
+const { describeCapsuleUndemonstratedJobs, describeCapsuleLayerSupplyGap, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
+const { capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
@@ -3537,6 +3537,100 @@ test('buildCapsuleBench is deterministic across two calls with identical inputs'
   assert.deepEqual(first.bench.map(piece => piece.id), second.bench.map(piece => piece.id))
 })
 
+// --- Bench category targets ------------------------------------------------
+//
+// Written as an acceptance contract before the implementation, and kept as
+// permanent regression tests once it passed (AGENTS: "acceptance criteria
+// become permanent tests, so the next refactor cannot silently regress them").
+//
+// The defect these pin, measured on the live 242-piece wardrobe for a 4-slot
+// summer capsule at budget 24 (scratch/compare_capsule_rosters.js --verbose):
+//
+//     benchSize 40 -> 13T 14B  3D  4O  6S   hero-capable 10/46  elevated-shoes 2/18
+//     benchSize 70 -> 28T 22B  3D  8O  9S   hero-capable 10/46  elevated-shoes 3/18
+//     eligible     -> 67T 31B 14D 16O 32S
+//
+// Widening the bench by 30 places bought 15 tops, 8 bottoms and ZERO dresses,
+// and left hero-capable representation exactly where it was. All 30 went to a
+// global capsuleVersatilityScore fill — a score that is a fair comparator
+// within a category and close to meaningless across them (dresses sit at median
+// rank 116 of 160, shoes at 113, tops at 84). The defect was bench COMPOSITION,
+// not bench width, so the fix is in the per-category targets rather than in
+// benchSize — see buildCapsuleBench.
+//
+// Deliberately property-based: no invented floor constants. A constant that
+// shapes output needs a source, an owner ruling, or a measurement, and none of
+// those exists for "the bench should hold 6 dresses." What IS defensible is
+// that a category the model cannot choose within is not being selected at all.
+test('a category with supply headroom offers the model more than the roster quota', () => {
+  db.prepare('DELETE FROM pieces').run()
+  // Tops score high (neutral, solid, widely tagged) and dominate global rank.
+  for (let i = 0; i < 60; i += 1) {
+    insertPiece({ category: "top", name: `neutral top ${i}`, colors: ['black'], pattern_type: 'solid', occasions: ['casual', 'city', 'smart casual', 'evening'], formality: 'everyday' })
+  }
+  for (let i = 0; i < 12; i += 1) {
+    insertPiece({ category: 'bottom', name: `neutral bottom ${i}`, colors: ['black'], pattern_type: 'solid', occasions: ['casual', 'city', 'smart casual', 'evening'], formality: 'everyday' })
+  }
+  // Dresses score lower (one colour of their own, fewer occasion tags), which
+  // is exactly why rank-fill never reaches them on the real wardrobe.
+  for (let i = 0; i < 12; i += 1) {
+    insertPiece({ category: 'dress', name: `dress ${i}`, colors: ['green'], pattern_type: 'solid', occasions: ['casual'], formality: 'everyday' })
+  }
+  for (let i = 0; i < 12; i += 1) {
+    insertPiece({ category: 'shoes', name: `shoe ${i}`, colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' })
+  }
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 3 }])
+  const { bench } = buildCapsuleBench(pool, { budget: 24, slots, isSummer: true, benchSize: 40 })
+
+  const benchDresses = bench.filter(piece => wardrobeCategoryGroup(piece) === 'dress').length
+  const eligibleDresses = pool.filter(piece => wardrobeCategoryGroup(piece) === 'dress').length
+  const dressQuota = 3 // capsuleQuotas(24).dress
+
+  assert.ok(eligibleDresses > dressQuota, 'precondition: this wardrobe has dress headroom to select within')
+  // A bench that offers exactly the quota is not a choice set — it is a forced
+  // pick. Stage 3 exists so the model SELECTS; in a category where bench count
+  // equals quota it is merely accepting what the engine already decided.
+  assert.ok(
+    benchDresses > dressQuota,
+    `a category with supply headroom must give the model something to choose between: bench holds ${benchDresses} dress(es) against a quota of ${dressQuota} and ${eligibleDresses} eligible`
+  )
+})
+
+test('widening the bench widens every under-represented category, not only the top-ranked ones', () => {
+  db.prepare('DELETE FROM pieces').run()
+  for (let i = 0; i < 60; i += 1) {
+    insertPiece({ category: "top", name: `neutral top ${i}`, colors: ['black'], pattern_type: 'solid', occasions: ['casual', 'city', 'smart casual', 'evening'], formality: 'everyday' })
+  }
+  for (let i = 0; i < 12; i += 1) {
+    insertPiece({ category: 'bottom', name: `neutral bottom ${i}`, colors: ['black'], pattern_type: 'solid', occasions: ['casual', 'city', 'smart casual', 'evening'], formality: 'everyday' })
+  }
+  for (let i = 0; i < 12; i += 1) {
+    insertPiece({ category: 'dress', name: `dress ${i}`, colors: ['green'], pattern_type: 'solid', occasions: ['casual'], formality: 'everyday' })
+  }
+  for (let i = 0; i < 12; i += 1) {
+    insertPiece({ category: 'shoes', name: `shoe ${i}`, colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' })
+  }
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 3 }])
+  const count = (list, group) => list.filter(piece => wardrobeCategoryGroup(piece) === group).length
+
+  const narrow = buildCapsuleBench(pool, { budget: 24, slots, isSummer: true, benchSize: 24 }).bench
+  const wide = buildCapsuleBench(pool, { budget: 24, slots, isSummer: true, benchSize: 48 }).bench
+  assert.ok(wide.length > narrow.length, 'precondition: the wider bench really is wider')
+
+  // Spending 24 more places must not leave a starved category untouched. This
+  // is the exact 40->70 defect: +15 tops, +8 bottoms, +0 dresses.
+  for (const group of ['top', 'bottom', 'dress', 'shoes']) {
+    const eligible = count(pool, group)
+    if (count(narrow, group) >= eligible) continue // already exhausted, nothing to widen
+    assert.ok(
+      count(wide, group) > count(narrow, group),
+      `${group}: bench grew ${narrow.length}->${wide.length} overall but ${group} stayed at ${count(narrow, group)} of ${eligible} eligible — extra places went only to the highest-ranked categories`
+    )
+  }
+})
+
 test('buildCapsuleBench keeps guaranteed pieces even when they push the bench past benchSize', () => {
   db.prepare('DELETE FROM pieces').run()
   for (let i = 0; i < 6; i += 1) insertPiece({ category: 'top', name: `top ${i}`, colors: ['black'], pattern_type: 'solid', occasions: ['casual', 'city'], formality: 'everyday' })
@@ -5381,6 +5475,66 @@ test('the repair call is held to the same brief as the first attempt', () => {
   }
 })
 
+// The roster call attaches one thumbnail per bench piece (up to ~70), and the
+// repair is the ONLY point in a single run where a prompt-cache read is
+// possible. A prompt cache matches on prefix, so the volatile repair text has
+// to sit AFTER the last cache_control breakpoint — appended to the leading
+// text block (as it originally was) it invalidates every breakpoint behind it
+// and the repair re-pays for every image, while still charging the cache
+// creation premium on both attempts.
+test('the repair call reuses the initial call cache prefix instead of re-paying for every thumbnail', () => {
+  const bench = layerTradeWardrobe()
+  const shared = {
+    bench,
+    slots: [{ label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home' }],
+    budget: 24, palette: [], isSummer: true,
+    ownerRules: ['Yuna prefers to travel in pants, not dresses, for airplane travel days.']
+  }
+  // Two parts per piece, exactly as the provider builds them.
+  const imageParts = bench.flatMap(piece => ([
+    { type: 'text', text: `ID ${piece.id}: ${piece.name}` },
+    { type: 'image', detail: 'low', source: { type: 'base64', media_type: 'image/jpeg', data: `fake-${piece.id}` } }
+  ]))
+  const failures = [{ code: 'layer_floor:outerwear', message: 'roster has 1 outerwear(s) — needs 2 layering piece(s)' }]
+
+  const initial = capsuleRosterSelectionContent({ ...shared, imageParts, attempt: 1, failures: [], previousRosterIds: [] })
+  const repair = capsuleRosterSelectionContent({
+    ...shared, imageParts, attempt: 2, failures, previousRosterIds: bench.slice(0, 3).map(p => Number(p.id))
+  })
+
+  const lastBreakpoint = content => content.reduce(
+    (last, part, index) => (part?.cache_control ? index : last), -1
+  )
+  const initialBreak = lastBreakpoint(initial)
+  const repairBreak = lastBreakpoint(repair)
+  assert.ok(initialBreak > 0, 'the initial call sets a breakpoint after the images')
+  assert.equal(initialBreak, repairBreak, 'both attempts break at the same position')
+
+  // The whole cached prefix must be byte-identical, images included.
+  assert.deepEqual(
+    repair.slice(0, repairBreak + 1),
+    initial.slice(0, initialBreak + 1),
+    'the repair must not alter one byte of the cached prefix'
+  )
+  assert.ok(initial.some(part => part.type === 'image'), 'the prefix genuinely carries the thumbnails')
+
+  // The repair still reaches the model — just after the breakpoint, and it is
+  // the ONLY difference between the two payloads.
+  assert.equal(repair.length, initial.length + 1)
+  const tail = repair[repair.length - 1]
+  assert.equal(tail.type, 'text')
+  assert.equal(tail.cache_control, undefined, 'the volatile tail must not carry a breakpoint of its own')
+  assert.match(tail.text, /YOUR PREVIOUS SELECTION WAS REJECTED/)
+  assert.match(tail.text, /needs 2 layering piece\(s\)/, 'the repair round still gets the exact structural reason')
+  assert.match(tail.text, /protagonists, independent wearability, seasonally credible footwear, and a distinct job per piece/)
+
+  // The initial call carries no repair text anywhere.
+  assert.ok(
+    !initial.some(part => /YOUR PREVIOUS SELECTION WAS REJECTED/.test(String(part?.text || ''))),
+    'the initial call is unchanged by this'
+  )
+})
+
 // Criterion 8. The rotation is the capsule's evidence, so it must demonstrate
 // the roster's functions rather than merely touch most of its IDs.
 test('the composition brief asks the rotation to demonstrate functions, not just use pieces', () => {
@@ -5689,6 +5843,59 @@ test('a look submitted without shoes is completed from its own slot roster', asy
   assert.equal(completed.completions[0].group, 'shoes')
   assert.equal(completed.completions[0].addedPieceId, Number(shoesId))
   assert.ok((completed.accepted[0].pieces || []).some(piece => Number(piece.id) === Number(shoesId)))
+
+  // The completion has to be visible to the person, not just to the dev log.
+  const line = describeCapsuleAutoCompletions(completed.completions)
+  assert.match(line, /^\[capsule looks completed: 1 look was submitted without a required piece/)
+  assert.match(line, /"Shoeless" got city loafers/)
+  // Live thread_1785467959899: a card titled "Ankle Boots" carried the navy
+  // canvas slip shoes because the fill happened after the title was written.
+  // Reconciling the prose would need a second paid call; naming the piece list
+  // as authoritative is the honest free half.
+  assert.match(line, /the piece list is what you are actually being shown/)
+})
+
+// A no-op when nothing was completed — the overwhelming majority of runs.
+test('a rotation the engine did not touch discloses no completion', () => {
+  assert.equal(describeCapsuleAutoCompletions([]), '')
+  assert.equal(describeCapsuleAutoCompletions([{ filled: false, title: 'Untouched' }]), '')
+})
+
+// The jobs line states the utilization percentage inside itself on purpose:
+// the failure mode it closes is a high raw number reading as success on its
+// own. Appending the bare count after it put that number back as the last word.
+test('the bare utilization count is withheld when the jobs line already states it', () => {
+  const roster = [
+    { id: 1, name: 'tee', category: 'top', colors: ['black'] },
+    { id: 2, name: 'jeans', category: 'bottom', colors: ['black'] },
+    { id: 3, name: 'sneakers', category: 'shoes', colors: ['white'] },
+    { id: 4, name: 'olive jacket', category: 'outerwear', colors: ['olive'] }
+  ]
+  const cards = [{ pieceIds: [1, 2, 3] }]
+
+  // The layer is unused, so BOTH lines have something to say about piece 4.
+  const jobs = describeCapsuleUndemonstratedJobs(roster, cards)
+  const utilization = describeCapsuleRosterUtilization(roster, cards)
+  assert.match(jobs, /no look uses a layer/)
+  assert.match(jobs, /3 of 4 roster pieces \(75%\)/, 'the jobs line carries the percentage itself')
+  assert.match(utilization, /olive jacket/)
+
+  // Both are non-empty, which is exactly the case that used to print twice.
+  // The caller suppresses the second; assert the qualified line is the one that
+  // survives by checking it alone reports both the count and the reason.
+  assert.ok(jobs.includes('75%') && jobs.includes('layer'))
+
+  // And the case they do NOT overlap on: every job demonstrated, a piece still
+  // unused. Here the utilization line is the only reporter and must stay.
+  const allJobsShown = [
+    { id: 1, name: 'tee', category: 'top', colors: ['black'] },
+    { id: 2, name: 'other tee', category: 'top', colors: ['white'] },
+    { id: 3, name: 'jeans', category: 'bottom', colors: ['black'] },
+    { id: 4, name: 'sneakers', category: 'shoes', colors: ['white'] }
+  ]
+  const usedCards = [{ pieceIds: [1, 3, 4] }]
+  assert.equal(describeCapsuleUndemonstratedJobs(allJobsShown, usedCards), '', 'every category is demonstrated')
+  assert.match(describeCapsuleRosterUtilization(allJobsShown, usedCards), /other tee/, 'the unused piece still gets reported')
 })
 
 // Completion must never invent supply. When the slot roster genuinely has no
