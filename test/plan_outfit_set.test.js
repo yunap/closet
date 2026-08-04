@@ -4177,6 +4177,87 @@ test('the post-condition check repairs a guarantee a later pass undid', () => {
 // either. Presence is a guarantee, not something to bribe the score into
 // producing — and unlike a score nudge, a guarantee can't be traded away by a
 // later pass. Cross-category by nature: the statement can be a top, bottom or dress.
+// The bench's protagonist reserve and the statement-presence guarantee had two
+// different definitions of "can lead a look": the bench read
+// `loud || visual_roles.includes('hero_piece')`, the guarantee read `loud`
+// alone. Live thread_1785883879348 shipped a rotation led by a lace floral midi
+// dress tagged hero_piece (pattern_complexity `medium`) and a blouson top tagged
+// hero_piece (`solid`), and the guarantee counted ONE statement piece. Worse,
+// enforceCapsulePostConditions acts on that count and would swap a piece out to
+// force in a loud print. One predicate now, so they cannot drift again.
+test('a hero-tagged piece counts as a statement piece even when its print is not loud', () => {
+  const heroByTag = {
+    id: 1, name: 'black brown lace floral midi dress', category: 'dress',
+    pattern_complexity: 'medium', colors: ['black', 'brown'],
+    style_profile_json: { visual_roles: ['hero_piece', 'texture_piece'] }
+  }
+  const heroBySolidCut = {
+    id: 2, name: 'black blouson v-neck top', category: 'top',
+    pattern_complexity: 'solid', colors: ['black'],
+    style_profile_json: { visual_roles: ['hero_piece', 'support_piece'] }
+  }
+  const heroByPrint = {
+    id: 3, name: 'black geometric tassel hem crop top', category: 'top',
+    pattern_complexity: 'loud', colors: ['black'],
+    style_profile_json: { visual_roles: ['hero_piece'] }
+  }
+  const quiet = {
+    id: 4, name: 'white scoop neck sleeveless top', category: 'top',
+    pattern_complexity: 'solid', colors: ['white'], style_profile_json: { visual_roles: ['support_piece'] }
+  }
+  const statementCondition = capsuleRosterPostConditions({
+    quotas: { top: 8, bottom: 7, dress: 3, outerwear: 2, shoes: 4 }
+  }).find(condition => condition.code === 'statement_presence')
+  assert.ok(statementCondition, 'a 24-piece capsule declares the statement guarantee')
+
+  // All three read as protagonists; only the loud one did before.
+  for (const piece of [heroByTag, heroBySolidCut, heroByPrint]) {
+    assert.equal(
+      capsuleConditionMatches(piece, statementCondition, [piece]), true,
+      `${piece.name} should satisfy statement_presence`
+    )
+  }
+  assert.equal(capsuleConditionMatches(quiet, statementCondition, [quiet]), false,
+    'a support-tagged quiet basic is still not a statement piece')
+
+  // A shoe tagged hero_piece is expressive, but the guarantee is about a MAIN
+  // garment leading a look — that category restriction is deliberate.
+  const heroShoe = {
+    id: 5, name: 'brown geometric cutout wedge shoes', category: 'shoes',
+    pattern_complexity: 'loud', style_profile_json: { visual_roles: ['hero_piece'] }
+  }
+  assert.equal(capsuleConditionMatches(heroShoe, statementCondition, [heroShoe]), false)
+})
+
+// The bench reserve and the guarantee must agree piece-for-piece on the
+// "is this expressive" half, or the bench can offer protagonists the guarantee
+// refuses to count — which is exactly the state this fixed.
+test('the bench protagonist reserve and the statement guarantee share one definition', () => {
+  db.prepare('DELETE FROM pieces').run()
+  const ids = {
+    loud: insertPiece({ category: 'top', name: 'loud print top', pattern_complexity: 'loud', colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' }),
+    heroTag: insertPiece({ category: 'dress', name: 'hero tagged dress', pattern_complexity: 'medium', colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday', style_profile_json: JSON.stringify({ visual_roles: ['hero_piece'] }) }),
+    quiet: insertPiece({ category: 'top', name: 'quiet basic top', pattern_complexity: 'solid', colors: ['white'], occasions: ['casual', 'city'], formality: 'everyday' })
+  }
+  insertPiece({ category: 'bottom', name: 'plain bottom', colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'plain shoe', colors: ['black'], occasions: ['casual', 'city'], formality: 'everyday' })
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const { bench } = buildCapsuleBench(pool, { budget: 10, slots, benchSize: 40 })
+
+  const condition = capsuleRosterPostConditions({ quotas: { top: 4, bottom: 3, dress: 2, outerwear: 1, shoes: 2 } })
+    .find(c => c.code === 'statement_presence')
+  const benchById = new Map(bench.map(p => [Number(p.id), p]))
+  // Every main-category piece the bench admitted as a protagonist must also
+  // satisfy the guarantee, and vice versa.
+  for (const key of ['loud', 'heroTag']) {
+    const p = benchById.get(Number(ids[key]))
+    assert.ok(p, `${key} should be on the bench`)
+    assert.equal(capsuleConditionMatches(p, condition, bench), true, `${key} must count toward statement_presence`)
+  }
+  assert.equal(capsuleConditionMatches(benchById.get(Number(ids.quiet)), condition, bench), false)
+})
+
 test('a capsule of useful size guarantees a statement piece, swapping within its category', () => {
   const quietTop = { id: 1, name: 'quiet cream tee', category: 'top', formality: 'everyday', pattern_complexity: 'quiet' }
   const quietTopB = { id: 2, name: 'quiet navy tee', category: 'top', formality: 'everyday', pattern_complexity: 'quiet' }

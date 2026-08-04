@@ -145,7 +145,7 @@ for (const [name, after] of current) {
     console.log(`  added:   ${added.join(', ') || 'none'}`)
     console.log('  baseline:', ...before.summary)
     console.log('  current: ', ...after.summary)
-    console.log('  EXPLAINED BY: document the intentional rule responsible for every roster and capacity change')
+    console.log('  EXPLAINED BY: isCapsuleStatementPiece now reads visual_roles.hero_piece as well as pattern_complexity=loud, matching the bench reserve it had drifted from. statement_presence is therefore already satisfied by hero-tagged pieces, so enforceCapsulePostConditions no longer swaps a loud print in to satisfy it — and the loud print each roster previously carried ONLY because of that swap is no longer bought. Protagonist counts stay >=2 everywhere (4->3, 4->4, 3->2); loud-print counts go to 0.')
   }
 
   // Reported separately from the deterministic roster: a bench change and a

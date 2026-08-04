@@ -131,6 +131,22 @@ function gateSlotsFor(roster, slots, { isSummer, isWinter }) {
   })
 }
 
+// Measured locally rather than imported, on purpose: this harness has to run
+// against an OLDER baseline checkout, so it cannot depend on a symbol a newer
+// engine exports. Both lenses are reported — the broad one is what the engine's
+// statement guarantee now uses, the loud-print count is kept beside it because
+// that is what the guarantee used to mean and the two must be readable apart
+// when a roster changes.
+function pieceVisualRoles(piece = {}) {
+  const raw = piece?.style_profile_json
+  const profile = typeof raw === 'string' ? (() => { try { return JSON.parse(raw) } catch { return {} } })() : (raw || {})
+  return Array.isArray(profile?.visual_roles) ? profile.visual_roles : []
+}
+function readsAsProtagonist(piece = {}) {
+  if (!['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) return false
+  return String(piece?.pattern_complexity || '').toLowerCase() === 'loud' || pieceVisualRoles(piece).includes('hero_piece')
+}
+
 function describeRoster(roster, { slots, budget, isSummer, isWinter, palette, bench }) {
   const gated = gateSlotsFor(roster, slots, { isSummer, isWinter })
   const group = g => roster.filter(piece => wardrobeCategoryGroup(piece) === g).length
@@ -152,7 +168,8 @@ function describeRoster(roster, { slots, budget, isSummer, isWinter, palette, be
     categories: `${group('top')}T ${group('bottom')}B ${group('dress')}D ${group('outerwear')}O ${group('shoes')}S`,
     capacity: capsuleOutfitCoreCapacity(roster, gated),
     perSlot: allocation.map(slot => `${slot.label}:${slot.capsuleSlotCapacity}`).join(' '),
-    statementPieces: roster.filter(piece => String(piece.pattern_complexity || '') === 'loud').length,
+    statementPieces: roster.filter(readsAsProtagonist).length,
+    loudPieces: roster.filter(piece => String(piece.pattern_complexity || '') === 'loud').length,
     dependents: roster.filter(piece => String(piece.needs_base || '').toLowerCase() === 'yes').length,
     elevatedShoes: roster.filter(piece => wardrobeCategoryGroup(piece) === 'shoes' && ['elevated', 'dressy'].includes(String(pieceFormality(piece)))).length,
     paletteMatch: palette.length
@@ -165,7 +182,7 @@ function describeRoster(roster, { slots, budget, isSummer, isWinter, palette, be
 }
 
 function printRow(label, d) {
-  console.log(`  ${label.padEnd(22)} ${String(d.size).padStart(2)} pieces  ${d.categories.padEnd(22)} cores ${String(d.capacity).padStart(3)}  statement ${d.statementPieces}  elev-shoes ${d.elevatedShoes}  palette ${d.paletteMatch.padEnd(6)} ${d.valid}`)
+  console.log(`  ${label.padEnd(22)} ${String(d.size).padStart(2)} pieces  ${d.categories.padEnd(22)} cores ${String(d.capacity).padStart(3)}  statement ${d.statementPieces}(loud ${d.loudPieces})  elev-shoes ${d.elevatedShoes}  palette ${d.paletteMatch.padEnd(6)} ${d.valid}`)
   console.log(`  ${''.padEnd(22)} colours: ${d.topColors}`)
   console.log(`  ${''.padEnd(22)} per-slot capacity: ${d.perSlot}${d.gaps !== '—' ? `  | disclosed gaps: ${d.gaps}` : ''}`)
 }
