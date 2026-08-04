@@ -117,7 +117,7 @@ function parse(output) {
     // Bench width, guaranteed/rank-fill split, shape, and headroom. These are
     // the free Tier-1 measures: a property no bench piece has is a property no
     // roster can have, checkable with no model and no money.
-    if (/^\s+bench \d+ of \d+ eligible|^\s+bench shape:|^\s+bench headroom:/.test(line)) {
+    if (/^\s+bench \d+ of \d+ eligible|^\s+bench shape:|^\s+bench headroom:|^\s+bench unmet targets:/.test(line)) {
       scenario.benchSummary.push(line.trim())
     }
   }

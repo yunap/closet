@@ -229,9 +229,14 @@ for (const scenario of scenarios) {
   console.log(`── ${name} · budget ${budget} · "${question}"`)
   // benchSize is stated because it is now a variable, and a comparison run that
   // silently used a different one on each side would be worse than no run.
-  console.log(`  bench ${bench.length} of ${eligible.length} eligible · benchSize ${BENCH_SIZE} · ${diagnostics.admittedByGuaranteeCount} guaranteed + ${bench.length - diagnostics.admittedByGuaranteeCount} rank-fill` +
+  console.log(`  bench ${bench.length} of ${eligible.length} eligible · benchSize ${BENCH_SIZE} · ${diagnostics.admittedByGuaranteeCount} guaranteed + ${bench.length - diagnostics.admittedByGuaranteeCount} target-fill` +
     `${palette.length ? ` · palette asked for: ${palette.join(', ')}` : ' · no palette stated'}` +
     `${diagnostics.uncoverableSlots.length ? ` · uncoverable: ${diagnostics.uncoverableSlots.join(', ')}` : ''}`)
+  // benchSize is a cost ceiling and wins over the category targets, so a target
+  // the bench could not afford is stated rather than absorbed silently.
+  if (diagnostics.unmetTargets?.length) {
+    console.log(`  bench unmet targets: ${diagnostics.unmetTargets.map(entry => `${entry.group} ${entry.actual}/${entry.target} (of ${entry.eligible} eligible)`).join(', ')}`)
+  }
   printBenchHeadroom(benchHeadroom(bench, eligible))
   printRoster('bench', bench)
 

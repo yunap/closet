@@ -2021,17 +2021,40 @@ export function buildCapsuleBench(pool = [], {
   }
   const seedSize = bench.length
 
-  // Per-category minimums: whatever this budget's quota asks for, and never
-  // fewer than 2 tops/bottoms/shoes when the eligible pool actually has them.
-  // Mostly a no-op now that the seed above already carries these guarantees;
-  // kept as a floor for pools too small for the roster itself to reach them.
+  // Per-category targets: what a bench of this size should hold so the model
+  // has a real choice in every category the capsule will actually spend in.
+  //
+  // This replaces a flat `{ top: 2, bottom: 2, dress: 0, outerwear: 0,
+  // shoes: 2 }` floor, under which dress and outerwear had NO floor at all and
+  // were represented by the quota alone. A bench that offers exactly the quota
+  // in a category is not a choice set — it is a forced pick, and stage 3 is
+  // then merely accepting in that category what the deterministic selector
+  // already decided.
+  //
+  // Two terms, both derived rather than picked:
+  //
+  //  - the choice floor, two candidates per place the capsule will spend here.
+  //    "A choice needs at least two options" is the whole justification; the
+  //    quota it multiplies is itself researched (docs/capsule-real-world-rules).
+  //  - the proportional share, this category's share of eligible supply. A
+  //    bench is a SAMPLE of what the person can actually wear for these slots,
+  //    so it should look like that pool.
+  //
+  // Both are clamped by eligible supply, so a wardrobe that simply has no
+  // dresses is never asked to invent one.
   const quotas = capsuleQuotas(budget, { isSummer, isWinter })
-  const categoryFloor = { top: 2, bottom: 2, dress: 0, outerwear: 0, shoes: 2 }
+  const composableGroups = Object.keys(byGroup)
+  const totalEligible = composableGroups.reduce((sum, group) => sum + byGroup[group].length, 0)
   const perCategory = {}
-  for (const group of Object.keys(byGroup)) {
-    const minimum = Math.min(byGroup[group].length, Math.max(quotas[group] || 0, categoryFloor[group] || 0))
-    for (const piece of byGroup[group].slice(0, minimum)) admit(piece, true)
-    perCategory[group] = { eligible: byGroup[group].length, minimum }
+  const targets = {}
+  for (const group of composableGroups) {
+    const eligibleInGroup = byGroup[group].length
+    const choiceFloor = Math.min(eligibleInGroup, 2 * (quotas[group] || 0))
+    const proportional = totalEligible ? Math.round((eligibleInGroup / totalEligible) * benchSize) : 0
+    targets[group] = Math.min(eligibleInGroup, Math.max(choiceFloor, proportional))
+    // Key kept as `minimum` — same meaning ("at least this many"), and existing
+    // callers/tests read it.
+    perCategory[group] = { eligible: eligibleInGroup, minimum: targets[group], choiceFloor, proportional }
   }
 
   // Per-slot minimum: at least enough gate-eligible pieces to form one
@@ -2094,13 +2117,66 @@ export function buildCapsuleBench(pool = [], {
     admit(piece, true)
   }
 
-  // Truncation: fill remaining places by rank until benchSize. Guarantees
-  // already admitted are never dropped, even if that pushes the bench past
-  // benchSize — recorded, not silently exceeded.
+  // Fill toward the per-category targets, most-starved category first.
+  //
+  // This replaced a single global rank-ordered fill, which was the mechanism
+  // starving dresses and shoes. capsuleVersatilityScore rewards neutral colour,
+  // solid pattern, broad occasion tagging and light fabric — properties tops
+  // and bottoms have structurally more of than dresses and shoes do. Measured
+  // on the live 242-piece wardrobe (160 eligible for a 4-slot summer capsule),
+  // as a rank position where 0 is best:
+  //
+  //     group      n   median rank   inside the top 70
+  //     top       67       84            28/67
+  //     bottom    31       44            22/31
+  //     dress     14      116             3/14
+  //     outerwear 16       71             8/16
+  //     shoes     32      113             9/32
+  //
+  // So the score is a sensible comparator WITHIN a category (which top
+  // recombines more freely than which other top) and close to meaningless
+  // ACROSS them: a dress at rank 116 is not thereby a worse bench candidate
+  // than a top at rank 84, it is a different kind of garment being measured on
+  // a scale built for tops. Using it globally turned a within-category
+  // preference into a de facto cross-category exclusion — widening the bench
+  // from 40 to 70 places bought 15 tops, 8 bottoms and zero dresses, and left
+  // hero-capable representation at 10 of 46.
+  //
+  // Relative deficit, not absolute, so a small category is not drowned out by a
+  // large one; `composableGroups` order breaks ties, keeping this deterministic.
+  const benchCountIn = group => bench.filter(piece => wardrobeCategoryGroup(piece) === group).length
+  while (bench.length < benchSize) {
+    let choice = null
+    let worstDeficit = 0
+    for (const group of composableGroups) {
+      const have = benchCountIn(group)
+      if (have >= targets[group]) continue
+      const next = byGroup[group].find(piece => !admittedIds.has(Number(piece.id)))
+      if (!next) continue
+      const deficit = (targets[group] - have) / targets[group]
+      if (deficit > worstDeficit) {
+        worstDeficit = deficit
+        choice = next
+      }
+    }
+    if (!choice) break
+    admit(choice, false)
+  }
+
+  // Every target met and places still spare (a small eligible pool): spend them
+  // by rank, exactly as before.
   for (const piece of ranked) {
     if (bench.length >= benchSize) break
     admit(piece, false)
   }
+
+  // A target the bench could not reach is a real shortfall — benchSize is a
+  // cost ceiling and it wins over the targets, per the roster-selection spec's
+  // "absolute ceiling" ruling. Recorded rather than silently absorbed, matching
+  // this project's no-silent-caps rule.
+  const unmetTargets = composableGroups
+    .filter(group => benchCountIn(group) < targets[group])
+    .map(group => ({ group, target: targets[group], actual: benchCountIn(group), eligible: byGroup[group].length }))
 
   const diagnostics = {
     benchSize: bench.length,
@@ -2110,6 +2186,7 @@ export function buildCapsuleBench(pool = [], {
     perCategory,
     perSlot,
     uncoverableSlots,
+    unmetTargets,
     admittedByGuaranteeIds: [...admittedByGuarantee],
     admittedByGuaranteeCount: admittedByGuarantee.size
   }

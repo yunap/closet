@@ -3529,34 +3529,32 @@ test('buildCapsuleBench is deterministic across two calls with identical inputs'
   assert.deepEqual(first.bench.map(piece => piece.id), second.bench.map(piece => piece.id))
 })
 
-// --- Bench category-floor rebalance: ACCEPTANCE CONTRACT (not yet implemented)
+// --- Bench category targets ------------------------------------------------
 //
-// Marked todo deliberately. These are the criteria the floor rebalance must
-// satisfy, written before the implementation so the change is measured against
-// a contract rather than judged after the fact (AGENTS: "acceptance criteria
-// become permanent tests"). They fail today, which is the finding — remove the
-// todo flag as part of the change that makes them pass.
+// Written as an acceptance contract before the implementation, and kept as
+// permanent regression tests once it passed (AGENTS: "acceptance criteria
+// become permanent tests, so the next refactor cannot silently regress them").
 //
-// Measured motivation, live 242-piece wardrobe, 4-slot summer capsule at
-// budget 24 (scratch/compare_capsule_rosters.js --verbose):
+// The defect these pin, measured on the live 242-piece wardrobe for a 4-slot
+// summer capsule at budget 24 (scratch/compare_capsule_rosters.js --verbose):
 //
 //     benchSize 40 -> 13T 14B  3D  4O  6S   hero-capable 10/46  elevated-shoes 2/18
 //     benchSize 70 -> 28T 22B  3D  8O  9S   hero-capable 10/46  elevated-shoes 3/18
 //     eligible     -> 67T 31B 14D 16O 32S
 //
 // Widening the bench by 30 places bought 15 tops, 8 bottoms and ZERO dresses,
-// and left hero-capable representation exactly where it was. Every one of those
-// 30 places went to global capsuleVersatilityScore rank-fill — the ranking this
-// file's own bench comment says "systematically undervalues exactly the pieces
-// the reserve passes exist to rescue." The defect is bench COMPOSITION, not
-// bench width, so the fix belongs in the per-category floors rather than in
-// benchSize.
+// and left hero-capable representation exactly where it was. All 30 went to a
+// global capsuleVersatilityScore fill — a score that is a fair comparator
+// within a category and close to meaningless across them (dresses sit at median
+// rank 116 of 160, shoes at 113, tops at 84). The defect was bench COMPOSITION,
+// not bench width, so the fix is in the per-category targets rather than in
+// benchSize — see buildCapsuleBench.
 //
 // Deliberately property-based: no invented floor constants. A constant that
 // shapes output needs a source, an owner ruling, or a measurement, and none of
 // those exists for "the bench should hold 6 dresses." What IS defensible is
 // that a category the model cannot choose within is not being selected at all.
-test('ACCEPTANCE (todo): a category with supply headroom offers the model more than the roster quota', { todo: 'bench category-floor rebalance' }, () => {
+test('a category with supply headroom offers the model more than the roster quota', () => {
   db.prepare('DELETE FROM pieces').run()
   // Tops score high (neutral, solid, widely tagged) and dominate global rank.
   for (let i = 0; i < 60; i += 1) {
@@ -3591,7 +3589,7 @@ test('ACCEPTANCE (todo): a category with supply headroom offers the model more t
   )
 })
 
-test('ACCEPTANCE (todo): widening the bench widens every under-represented category, not only the top-ranked ones', { todo: 'bench category-floor rebalance' }, () => {
+test('widening the bench widens every under-represented category, not only the top-ranked ones', () => {
   db.prepare('DELETE FROM pieces').run()
   for (let i = 0; i < 60; i += 1) {
     insertPiece({ category: "top", name: `neutral top ${i}`, colors: ['black'], pattern_type: 'solid', occasions: ['casual', 'city', 'smart casual', 'evening'], formality: 'everyday' })
