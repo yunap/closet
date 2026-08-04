@@ -19,6 +19,7 @@ import {
   reasonRevisesMidSentence,
   describeCapsuleCompositionShortfall,
   describeCapsulePaletteCohesion,
+  describeCapsuleAutoCompletions,
   describeCapsuleRosterUtilization,
   describeCapsuleUndemonstratedJobs,
   completeSubmittedPlanOutfits,
@@ -2071,6 +2072,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             bumpFreeformDiagnostic(toolContext, 'capsuleLooksAutoCompleted')
             console.log('[Atomic Capsule Completion]', `${completion.title || completion.slotId}: added ${completion.group} ${completion.addedPieceName} (${completion.addedPieceId})`)
           }
+          const completionLine = describeCapsuleAutoCompletions(completions)
           const acceptedCounts = new Map()
           for (const outfit of accepted) {
             const slotId = outfit?._slotId || outfit?.slot_id
@@ -2144,8 +2146,21 @@ async function executeToolInternal(name, args, toolContext = {}) {
           if (paletteLine) {
             pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), paletteLine]
           }
-          if (utilizationLine) {
+          // Only when the jobs line did NOT fire. The jobs line already states
+          // the utilization percentage inside itself, deliberately, because the
+          // failure mode being closed is a high raw number reading as success on
+          // its own — and this line was being appended AFTER it, so the bare
+          // count was the last word on the very screen that was supposed to
+          // qualify it. They are not fully redundant, though: a rotation can
+          // demonstrate every job and still leave pieces unused, and that case
+          // has no other reporter, so the line stays for it.
+          if (utilizationLine && !jobsLine) {
             pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), utilizationLine]
+          }
+          // The engine changed a look the model submitted; say so on a surface
+          // the person can actually see.
+          if (completionLine) {
+            pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), completionLine]
           }
           if (shortfallLine) {
             pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), shortfallLine]

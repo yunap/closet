@@ -194,6 +194,14 @@ Do **not** add:
 
 ## 6. Evidence required before default-on
 
+> **Outcome, recorded 2026-08-03.** Stage 3 was flipped to **default-on** in PR #196
+> (2026-07-31); `modelCapsuleRosterEnabled()` now defaults to `true`. Items 1–4 below were
+> satisfied and have permanent tests. Items 5 and 6 — one explicitly approved rerun,
+> reviewed against all nine criteria — were **not** completed as written; the nearest
+> record is the `thread_1785467959899` section in `capsule-index-and-plan.md`, which walks
+> criteria 3 and 7 only. Recorded as a fact about the process, not as an argument to
+> revert. §1's "remains behind `WARDROBE_MODEL_CAPSULE_ROSTER`" is therefore historical.
+
 1. Offline tests prove that a model roster cannot exchange the second layer for a fifth shoe when
    the bench supplies both layers.
 2. Offline fixtures prove the roster and repair briefs state the qualitative jobs without

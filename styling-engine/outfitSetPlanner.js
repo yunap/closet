@@ -376,6 +376,31 @@ export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
   }
 }
 
+// completeSubmittedPlanOutfits adds a garment to a look the model submitted
+// incomplete. That is the right call — the alternative is a broken card the
+// person repairs by hand — but until now it was recorded only in a dev
+// console.log and a diagnostics counter, so on every user-visible surface the
+// engine changed the outfit and said nothing.
+//
+// Two consequences, both observed on live thread_1785467959899. The card's
+// title named "Ankle Boots" while its piece_ids held the navy canvas slip
+// shoes, because the completion filled the missing shoe deterministically and
+// nothing reconciles a title written before the fill. And the person had no way
+// to know any of it happened.
+//
+// Reconciling the prose would mean rewriting the model's words for it, which
+// needs a second paid call and would be inventing rather than reporting. Saying
+// what the engine did is the honest, free half: the title now disagrees with a
+// stated fact instead of disagreeing with nothing.
+export function describeCapsuleAutoCompletions(completions = []) {
+  const filled = (Array.isArray(completions) ? completions : []).filter(entry => entry?.filled)
+  if (!filled.length) return ''
+  const detail = filled
+    .map(entry => `"${entry.title || 'a look'}" got ${entry.addedPieceName || `piece ${entry.addedPieceId}`}`)
+    .join('; ')
+  return `[capsule looks completed: ${filled.length} look${filled.length === 1 ? ' was' : 's were'} submitted without a required piece and the engine filled it from that use case's own roster — ${detail}. Where a look's title or reason names a different garment, the piece list is what you are actually being shown.]`
+}
+
 // Three disclosure lines now count "which roster pieces reached a card", and a
 // card carries its pieces under any of three keys depending on where it came
 // from. One reader, so they can never disagree about what "used" means.

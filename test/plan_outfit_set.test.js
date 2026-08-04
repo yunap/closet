@@ -26,7 +26,7 @@ const { parsePiece, weatherProfileFromContext } = await import('../styling-engin
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
-const { describeCapsuleUndemonstratedJobs, describeCapsuleLayerSupplyGap, capsuleConditionMatches } = await import('../styling-engine/outfitSetPlanner.js')
+const { describeCapsuleUndemonstratedJobs, describeCapsuleLayerSupplyGap, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
 const { capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
@@ -5835,6 +5835,59 @@ test('a look submitted without shoes is completed from its own slot roster', asy
   assert.equal(completed.completions[0].group, 'shoes')
   assert.equal(completed.completions[0].addedPieceId, Number(shoesId))
   assert.ok((completed.accepted[0].pieces || []).some(piece => Number(piece.id) === Number(shoesId)))
+
+  // The completion has to be visible to the person, not just to the dev log.
+  const line = describeCapsuleAutoCompletions(completed.completions)
+  assert.match(line, /^\[capsule looks completed: 1 look was submitted without a required piece/)
+  assert.match(line, /"Shoeless" got city loafers/)
+  // Live thread_1785467959899: a card titled "Ankle Boots" carried the navy
+  // canvas slip shoes because the fill happened after the title was written.
+  // Reconciling the prose would need a second paid call; naming the piece list
+  // as authoritative is the honest free half.
+  assert.match(line, /the piece list is what you are actually being shown/)
+})
+
+// A no-op when nothing was completed — the overwhelming majority of runs.
+test('a rotation the engine did not touch discloses no completion', () => {
+  assert.equal(describeCapsuleAutoCompletions([]), '')
+  assert.equal(describeCapsuleAutoCompletions([{ filled: false, title: 'Untouched' }]), '')
+})
+
+// The jobs line states the utilization percentage inside itself on purpose:
+// the failure mode it closes is a high raw number reading as success on its
+// own. Appending the bare count after it put that number back as the last word.
+test('the bare utilization count is withheld when the jobs line already states it', () => {
+  const roster = [
+    { id: 1, name: 'tee', category: 'top', colors: ['black'] },
+    { id: 2, name: 'jeans', category: 'bottom', colors: ['black'] },
+    { id: 3, name: 'sneakers', category: 'shoes', colors: ['white'] },
+    { id: 4, name: 'olive jacket', category: 'outerwear', colors: ['olive'] }
+  ]
+  const cards = [{ pieceIds: [1, 2, 3] }]
+
+  // The layer is unused, so BOTH lines have something to say about piece 4.
+  const jobs = describeCapsuleUndemonstratedJobs(roster, cards)
+  const utilization = describeCapsuleRosterUtilization(roster, cards)
+  assert.match(jobs, /no look uses a layer/)
+  assert.match(jobs, /3 of 4 roster pieces \(75%\)/, 'the jobs line carries the percentage itself')
+  assert.match(utilization, /olive jacket/)
+
+  // Both are non-empty, which is exactly the case that used to print twice.
+  // The caller suppresses the second; assert the qualified line is the one that
+  // survives by checking it alone reports both the count and the reason.
+  assert.ok(jobs.includes('75%') && jobs.includes('layer'))
+
+  // And the case they do NOT overlap on: every job demonstrated, a piece still
+  // unused. Here the utilization line is the only reporter and must stay.
+  const allJobsShown = [
+    { id: 1, name: 'tee', category: 'top', colors: ['black'] },
+    { id: 2, name: 'other tee', category: 'top', colors: ['white'] },
+    { id: 3, name: 'jeans', category: 'bottom', colors: ['black'] },
+    { id: 4, name: 'sneakers', category: 'shoes', colors: ['white'] }
+  ]
+  const usedCards = [{ pieceIds: [1, 3, 4] }]
+  assert.equal(describeCapsuleUndemonstratedJobs(allJobsShown, usedCards), '', 'every category is demonstrated')
+  assert.match(describeCapsuleRosterUtilization(allJobsShown, usedCards), /other tee/, 'the unused piece still gets reported')
 })
 
 // Completion must never invent supply. When the slot roster genuinely has no
