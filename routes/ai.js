@@ -531,11 +531,11 @@ function persistGenerationRun({ flow, occasion = '', weather = '', rosterDebug =
 // apply to a tool-calling chat turn. Makes "how often does validation fail," "how often are pieces
 // gate-excluded" queryable instead of anecdotal, mirroring how generation_runs already serves that
 // role for the composer. Best-effort: never throws into the request.
-export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {} } = {}) {
+export function persistFreeformGenerationRun({ sessionId = '', occasion = '', diagnostics = {}, turnFailed = false } = {}) {
   try {
     db.prepare(`
-      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO freeform_generation_runs (session_id, occasion, search_calls, gate_excluded_total, propose_calls, propose_validation_fails, outfit_prose_without_tool_count, zero_result_contradiction_blocks, destination_clarification_retries, plan_slot_environment_inferred, plan_slot_activity_inferred, submit_plan_calls, submit_plan_validation_fails, submit_plan_resubmits, submit_plan_partial_accepts, capsule_final_fallbacks, capsule_supply_gaps, capsule_looks_auto_completed, capsule_roster_model_calls, capsule_roster_model_repairs, capsule_roster_model_fallbacks, capsule_roster_failure_codes, turn_failed, provider_iterations, provider_input_tokens, provider_output_tokens, provider_cache_read_input_tokens, provider_cache_creation_input_tokens, weather_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId || '',
       occasion || '',
@@ -561,6 +561,7 @@ export function persistFreeformGenerationRun({ sessionId = '', occasion = '', di
       // Codes only, never the messages: the messages name garments, and this
       // table is a diagnostic, not a second copy of the wardrobe.
       String(diagnostics.capsuleRosterFailureCodes || ''),
+      turnFailed ? 1 : 0,
       Number(diagnostics.providerIterations) || 0,
       Number(diagnostics.providerInputTokens) || 0,
       Number(diagnostics.providerOutputTokens) || 0,
@@ -3462,6 +3463,13 @@ router.post('/repair-capsule-look', async (req, res) => {
 })
 
 router.post('/ask', async (req, res) => {
+  // Hoisted so the catch below can still record what this turn spent and
+  // learned. A turn that throws part-way has usually already made paid provider
+  // calls — thread_1785902365403 completed and paid for a capsule roster call,
+  // then died when the composition call hit an exhausted credit balance, and
+  // the roster's outcome was lost entirely because the only persist ran on the
+  // success path.
+  let diagnosticsContext = null
   try {
     const extractedWeather = req.body.weather || extractWeatherContext([
       req.body.question || '',
@@ -3492,6 +3500,9 @@ router.post('/ask', async (req, res) => {
       // and composing tools consume it instead of keyword-guessing.
       declaredIntent: null
     }
+    // Point the hoisted reference at the live context as soon as it exists, so
+    // anything that throws from here on still gets its diagnostics recorded.
+    diagnosticsContext = toolContext
     // The freeform model still owns intent and slot decomposition. Once it
     // invokes plan_outfit_set with an enforced capsule budget, the tool may
     // use this one-shot structured composer instead of returning a workbench
@@ -3542,7 +3553,8 @@ router.post('/ask', async (req, res) => {
     persistFreeformGenerationRun({
       sessionId: req.body.sessionId || '',
       occasion: toolContext.occasion,
-      diagnostics: freeformDiagnostics || {}
+      diagnostics: freeformDiagnostics || {},
+      turnFailed: false
     })
 
     res.json({
@@ -3562,6 +3574,21 @@ router.post('/ask', async (req, res) => {
     })
   } catch (err) {
     console.error('AI error:', err)
+    // Record before responding. The provider calls this turn already made were
+    // billed whether or not it finished, and their outcome — a capsule roster
+    // call's failure codes above all — is exactly what you need to avoid paying
+    // twice to learn the same thing. Marked turn_failed so a partial run is
+    // never mistaken for a completed one in the same table. Best-effort by
+    // construction: persistFreeformGenerationRun swallows its own errors, so
+    // this cannot turn a provider error into a 500.
+    if (diagnosticsContext) {
+      persistFreeformGenerationRun({
+        sessionId: req.body.sessionId || '',
+        occasion: diagnosticsContext.occasion,
+        diagnostics: diagnosticsContext.freeformDiagnostics || {},
+        turnFailed: true
+      })
+    }
     const { status, message } = describeAiError(err)
     res.status(status).json({ error: message })
   }

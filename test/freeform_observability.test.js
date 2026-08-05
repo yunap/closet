@@ -508,6 +508,52 @@ test('persistFreeformGenerationRun writes a queryable row', () => {
   assert.equal(row.capsule_final_fallbacks, 0)
 })
 
+// thread_1785902365403: a capsule turn completed and PAID FOR its roster call,
+// then died when the composition call hit an exhausted credit balance. The only
+// persist ran on the success path, so the roster's outcome — its failure codes
+// above all — was lost entirely, and the next step was another paid run rather
+// than a query. The row is now written either way, and says which it was.
+test('a failed turn still records what it spent, marked as failed', () => {
+  db.prepare('DELETE FROM freeform_generation_runs').run()
+  persistFreeformGenerationRun({
+    sessionId: 'died-mid-capsule',
+    occasion: 'capsule',
+    diagnostics: {
+      capsuleRosterModelCalls: 1,
+      capsuleRosterModelRepairs: 1,
+      capsuleRosterFailureCodes: 'category_floor',
+      providerInputTokens: 331,
+      providerCacheCreationInputTokens: 124268
+    },
+    turnFailed: true
+  })
+  const row = db.prepare('SELECT * FROM freeform_generation_runs WHERE session_id = ?').get('died-mid-capsule')
+  assert.equal(row.turn_failed, 1, 'the row must say the turn did not finish')
+  // The whole point: the paid roster call and its reason survive the failure.
+  assert.equal(row.capsule_roster_model_calls, 1)
+  assert.equal(row.capsule_roster_model_repairs, 1)
+  assert.equal(row.capsule_roster_failure_codes, 'category_floor')
+  assert.equal(row.provider_cache_creation_input_tokens, 124268)
+})
+
+test('a completed turn is distinguishable from a failed one in the same table', () => {
+  persistFreeformGenerationRun({ sessionId: 'finished-fine', occasion: 'capsule', diagnostics: { capsuleRosterModelCalls: 1 } })
+  const row = db.prepare('SELECT turn_failed FROM freeform_generation_runs WHERE session_id = ?').get('finished-fine')
+  assert.equal(row.turn_failed, 0, 'default is a completed turn, so existing rows keep their meaning')
+})
+
+// The route must actually reach that path. Source-asserted because forcing the
+// provider to throw mid-turn from here would exercise the mock, not the wiring.
+test('the /ask route records diagnostics from its catch block, not only on success', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  // The reference is hoisted above the try and pointed at the live context
+  // before any provider call can throw.
+  assert.match(routeSrc, /let diagnosticsContext = null\s*\n\s*try \{/)
+  assert.match(routeSrc, /diagnosticsContext = toolContext/)
+  // And the catch persists it, flagged.
+  assert.match(routeSrc, /catch \(err\) \{[\s\S]{0,900}persistFreeformGenerationRun\(\{[\s\S]{0,300}turnFailed: true/)
+})
+
 test('persistFreeformGenerationRun stores aggregate provider usage for cost audits', () => {
   persistFreeformGenerationRun({
     sessionId: 'usage-audit',
