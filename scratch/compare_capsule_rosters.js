@@ -11,6 +11,7 @@
 // Do not pass that flag casually — see the cost note this prints.
 
 import fs from 'fs'
+import path from 'path'
 import { db, parsePiece } from '../db.js'
 import {
   selectCapsuleRoster,
@@ -35,6 +36,12 @@ const DRY_RUN = process.argv.includes('--dry-run')
 const SCENARIO_ARG_INDEX = process.argv.indexOf('--scenario')
 const SCENARIO_FILTER = SCENARIO_ARG_INDEX > -1 ? String(process.argv[SCENARIO_ARG_INDEX + 1] || '').toLowerCase() : ''
 const VERBOSE = process.argv.includes('--verbose')
+// Contact sheets are free local artifacts written only after a paid comparison
+// returns. Override the parent directory when a caller wants a stable location.
+const OUTPUT_ARG_INDEX = process.argv.indexOf('--output-dir')
+const OUTPUT_ROOT = OUTPUT_ARG_INDEX > -1
+  ? path.resolve(process.argv[OUTPUT_ARG_INDEX + 1] || '')
+  : path.resolve('scratch/capsule_roster_comparisons')
 // --live <file>: pin the slots from a real plan's saved capsulePlanContext, so
 // both sides are measured on the ground an actual request produced rather than
 // slots invented here. A synthetic "Restaurant Dinner" at occasion `evening`
@@ -185,6 +192,7 @@ function describeRoster(roster, { slots, budget, isSummer, isWinter, palette, be
       : '—',
     topColors: topColors.map(([color, n]) => `${color}×${n}`).join(' '),
     valid: verdict.ok ? 'PASS' : `FAIL(${verdict.failures.map(f => f.code).join(',')})`,
+    failures: verdict.failures,
     gaps: (roster.postConditionGaps || []).join(',') || '—',
   }
 }
@@ -200,6 +208,46 @@ function printRoster(label, roster) {
   console.log(`  ${label} roster:`)
   for (const piece of roster) {
     console.log(`    ${piece.id} · ${piece.name} · ${(piece.colors || []).join('/') || 'no-colour'}`)
+  }
+}
+
+function printAttemptFailures(attempt, description) {
+  const failures = description.failures || []
+  if (!failures.length && !attempt.outsideBenchIds.length && !attempt.duplicateIds.length) {
+    console.log(`  ${''.padEnd(22)} validation: PASS`)
+    return
+  }
+  for (const failure of failures) {
+    console.log(`  ${''.padEnd(22)} ${failure.code}: ${failure.message}`)
+  }
+  if (attempt.outsideBenchIds.length) {
+    console.log(`  ${''.padEnd(22)} piece_outside_bench: ${attempt.outsideBenchIds.join(', ')}`)
+  }
+  if (attempt.duplicateIds.length) {
+    console.log(`  ${''.padEnd(22)} duplicate ids: ${[...new Set(attempt.duplicateIds)].join(', ')}`)
+  }
+}
+
+function printRepairDelta(attempts) {
+  if (attempts.length < 2) return
+  const before = new Set(attempts[0].rosterPieceIds)
+  const after = new Set(attempts[1].rosterPieceIds)
+  const removed = [...before].filter(id => !after.has(id))
+  const added = [...after].filter(id => !before.has(id))
+  console.log(`  ${''.padEnd(22)} repair delta: -[${removed.join(', ') || 'none'}] +[${added.join(', ') || 'none'}]`)
+}
+
+function safeFilePart(value = '') {
+  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'scenario'
+}
+
+function manifestPiece(piece = {}) {
+  return {
+    id: Number(piece.id),
+    name: piece.name,
+    category: wardrobeCategoryGroup(piece),
+    colors: Array.isArray(piece.colors) ? piece.colors : [],
+    photo: piece.worn_photo || piece.photo || ''
   }
 }
 
@@ -281,7 +329,8 @@ for (const scenario of scenarios) {
 
   if (WITH_MODEL) {
     const {
-      chooseCapsuleRosterForComparison, previewCapsuleRosterCall, describePreview, assertPhotosResolve
+      chooseCapsuleRosterForComparison, previewCapsuleRosterCall, describePreview, assertPhotosResolve,
+      comparisonAttempts, resetComparisonAttempts, renderRosterContactSheet
     } = await import('./_capsule_model_chooser.js')
     // Scope and spend, printed before anything is billed. --dry-run stops here
     // (CLI script safety: a preview mode that short-circuits before the first
@@ -293,15 +342,67 @@ for (const scenario of scenarios) {
       console.log('  --dry-run: stopping before the provider call.\n')
       continue
     }
+    resetComparisonAttempts()
     const result = await selectCapsuleRosterViaModel({
       pool: allPieces, budget, slots, isSummer, isWinter,
       occasions: slots.map(s => s.occasion), palette,
       chooseRoster: chooseCapsuleRosterForComparison,
     })
+
+    // Print and render what the model ACTUALLY chose before production replaced
+    // an invalid answer with the deterministic fallback.
+    for (const attempt of comparisonAttempts) {
+      const description = describeRoster(attempt.roster, { slots, budget, isSummer, isWinter, palette, bench })
+      printRow(`model attempt ${attempt.attempt}`, description)
+      printRoster(`model attempt ${attempt.attempt}`, attempt.roster)
+      printAttemptFailures(attempt, description)
+    }
+    printRepairDelta(comparisonAttempts)
+
     printRow(`model (${result.source})`, describeRoster(result.roster, { slots, budget, isSummer, isWinter, palette, bench }))
     printRoster(`model (${result.source})`, result.roster)
     if (result.palette) console.log(`  ${''.padEnd(22)} model's palette: ${result.palette}`)
     for (const job of (result.jobs || []).slice(0, 6)) console.log(`  ${''.padEnd(22)} ${job.piece_id}: ${job.job}`)
+
+    const runDir = path.join(
+      OUTPUT_ROOT,
+      `${new Date().toISOString().replace(/[:.]/g, '-')}-${safeFilePart(name)}`
+    )
+    const engineSheet = path.join(runDir, 'engine-roster.png')
+    await renderRosterContactSheet({ roster: deterministic, label: `Engine roster · ${name}`, outPath: engineSheet })
+    const attemptSheets = []
+    for (const attempt of comparisonAttempts) {
+      const outPath = path.join(runDir, `model-attempt-${attempt.attempt}.png`)
+      const description = describeRoster(attempt.roster, { slots, budget, isSummer, isWinter, palette, bench })
+      const status = description.failures.length ? `INVALID · ${description.failures.map(f => f.code).join(', ')}` : 'VALID'
+      await renderRosterContactSheet({
+        roster: attempt.roster,
+        label: `Model attempt ${attempt.attempt} · ${status} · ${name}`,
+        outPath
+      })
+      attemptSheets.push(outPath)
+    }
+    const manifest = {
+      scenario: { name, budget, question, slots },
+      result: { source: result.source, failureCodes: result.failureCodes || [] },
+      engine: deterministic.map(manifestPiece),
+      attempts: comparisonAttempts.map(attempt => {
+        const description = describeRoster(attempt.roster, { slots, budget, isSummer, isWinter, palette, bench })
+        return {
+          attempt: attempt.attempt,
+          requestedIds: attempt.requestedIds,
+          outsideBenchIds: attempt.outsideBenchIds,
+          duplicateIds: attempt.duplicateIds,
+          palette: attempt.palette,
+          failures: description.failures,
+          roster: attempt.roster.map(manifestPiece)
+        }
+      }),
+      sheets: { engine: engineSheet, modelAttempts: attemptSheets }
+    }
+    fs.mkdirSync(runDir, { recursive: true })
+    fs.writeFileSync(path.join(runDir, 'comparison.json'), JSON.stringify(manifest, null, 2))
+    console.log(`  visual comparison written to: ${runDir}`)
   }
   console.log()
 }
