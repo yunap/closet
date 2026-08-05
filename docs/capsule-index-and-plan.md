@@ -545,3 +545,42 @@ regression.
 everything above measures what the model can *see*, not what it *chooses*. Until
 then neither 40 nor 70 should be described as ratified, and the spec's two-tier
 alternative remains untried.
+
+### 6c. The dress requirement is presence, not register — owner ruling 2026-08-05
+
+The roster validator required **one dress clearing the plan's strictest register
+ceiling**. For a capsule whose most casual slot is `casual`, that means a dress
+wearable on the most casual days. Owner ruling: *"the summer capsule should have
+at least one dress, but no one said that it has to be casual."*
+
+The requirement was two rules fused into one. Presence — a capsule of this size
+holds a dress, because a dress is a complete outfit core and that is capacity
+separates cannot replace — is right and stays, now as `dress_presence`. The
+register half is dropped.
+
+**Where the register half came from.** It rode along on the register reserve,
+which exists for coverage: the measured 2026-07-14 failure was an all-elevated
+roster where *"casual-occasion slots got zero outfits because only shoes cleared
+the ceiling — no top/bottom/dress did."* The `top` and `bottom` reserves are what
+actually fix that — a reserved everyday top plus a reserved everyday bottom forms
+a casual core, and `capsuleSlotCoreKeys` builds cores from top+bottom **or**
+dress. A casual dress was never load-bearing for coverage. Those two reserves are
+untouched.
+
+**What it cost.** Both recorded stage-3 fallbacks
+(`thread_1785711580188`, `thread_1785883879348`) died on this rule —
+*"roster has 0 dress(s) — needs 1 dress(s) clearing the everyday ceiling the
+plan's lowest-register slots need"* — each discarding an otherwise sound
+24-piece model selection for the engine's. That is the single reason those runs
+could not evaluate criteria 5 and 7, and therefore the reason Step 5 has stayed
+open.
+
+**Blast radius, measured.** Ranking A/B: one scenario differs and the roster
+itself is byte-identical — the winter capsule simply stops carrying a disclosed
+`register_reserve:dress` gap it could never satisfy, because its two dresses are
+elevated. Nothing about which pieces get chosen moved.
+
+The roster brief was corrected in the same change: it had been telling the model
+"at least one that is genuinely wearable in the plan's most casual use cases,"
+which overstated the requirement. A brief that overstates a rule is the same
+defect as one that hides it.
