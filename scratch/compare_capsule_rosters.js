@@ -26,6 +26,14 @@ import { wardrobeCategoryGroup, pieceFormality, formalityRank } from '../styling
 import { filterWholeWardrobePiecesForGeneration, weatherProfileFromContext, pieceStyleProfile } from '../styling-engine/rules.js'
 
 const WITH_MODEL = process.argv.includes('--with-model')
+// CLI script safety: --dry-run validates inputs, prints the targeted scope and
+// a cost estimate, and short-circuits before the first paid request.
+const DRY_RUN = process.argv.includes('--dry-run')
+// --scenario <substring>: run one scenario instead of all three. The model side
+// bills per scenario, so this is the difference between ~$0.27 and ~$0.82 for a
+// comparison — worth having when the question only needs one wardrobe shape.
+const SCENARIO_ARG_INDEX = process.argv.indexOf('--scenario')
+const SCENARIO_FILTER = SCENARIO_ARG_INDEX > -1 ? String(process.argv[SCENARIO_ARG_INDEX + 1] || '').toLowerCase() : ''
 const VERBOSE = process.argv.includes('--verbose')
 // --live <file>: pin the slots from a real plan's saved capsulePlanContext, so
 // both sides are measured on the ground an actual request produced rather than
@@ -230,7 +238,15 @@ function printBenchHeadroom(head) {
 
 console.log(`wardrobe: ${allPieces.length} active pieces · model side: ${WITH_MODEL ? 'ENABLED (billed)' : 'skipped (free run)'}\n`)
 
-const scenarios = LIVE_PAYLOAD ? [liveScenarioFrom(LIVE_PAYLOAD)] : SCENARIOS
+const allScenarios = LIVE_PAYLOAD ? [liveScenarioFrom(LIVE_PAYLOAD)] : SCENARIOS
+const scenarios = SCENARIO_FILTER
+  ? allScenarios.filter(entry => entry.name.toLowerCase().includes(SCENARIO_FILTER))
+  : allScenarios
+if (SCENARIO_FILTER && !scenarios.length) {
+  console.error(`No scenario matches "${SCENARIO_FILTER}". Available: ${allScenarios.map(entry => entry.name).join(' | ')}`)
+  process.exit(2)
+}
+if (SCENARIO_FILTER) console.log(`(scenario filter "${SCENARIO_FILTER}": ${scenarios.length} of ${allScenarios.length})\n`)
 
 for (const scenario of scenarios) {
   const { name, slots, budget, isSummer, question } = scenario
@@ -264,7 +280,19 @@ for (const scenario of scenarios) {
   printRoster('deterministic', deterministic)
 
   if (WITH_MODEL) {
-    const { chooseCapsuleRosterForComparison } = await import('./_capsule_model_chooser.js')
+    const {
+      chooseCapsuleRosterForComparison, previewCapsuleRosterCall, describePreview, assertPhotosResolve
+    } = await import('./_capsule_model_chooser.js')
+    // Scope and spend, printed before anything is billed. --dry-run stops here
+    // (CLI script safety: a preview mode that short-circuits before the first
+    // paid request, validating inputs and estimating cost).
+    const preview = previewCapsuleRosterCall({ bench, budget, label: name })
+    console.log(describePreview(preview))
+    assertPhotosResolve(preview)
+    if (DRY_RUN) {
+      console.log('  --dry-run: stopping before the provider call.\n')
+      continue
+    }
     const result = await selectCapsuleRosterViaModel({
       pool: allPieces, budget, slots, isSummer, isWinter,
       occasions: slots.map(s => s.occasion), palette,
@@ -279,7 +307,21 @@ for (const scenario of scenarios) {
 }
 
 if (!WITH_MODEL) {
-  console.log('The model side was not run: it needs one provider call per scenario (bench of 40 with')
-  console.log('thumbnails). Everything above is the free half — the deterministic baseline and the')
-  console.log('exact measures the comparison will use. Re-run with --with-model when that is affordable.')
+  console.log('The model side was not run: it needs one provider call per scenario (a bench of')
+  console.log(`${BENCH_SIZE} with thumbnails). Everything above is the free half — the deterministic`)
+  console.log('baseline and the exact measures the comparison uses.')
+  console.log('')
+  console.log('  node scratch/compare_capsule_rosters.js --with-model --dry-run   # scope + cost, spends nothing')
+  console.log('  node scratch/compare_capsule_rosters.js --with-model             # runs it')
+} else if (!DRY_RUN) {
+  const { comparisonUsage } = await import('./_capsule_model_chooser.js')
+  console.log('what the model side actually spent:')
+  console.log(`  ${comparisonUsage.calls} roster call(s) · in ${comparisonUsage.inputTokens.toLocaleString()} · out ${comparisonUsage.outputTokens.toLocaleString()}` +
+    ` · cache read ${comparisonUsage.cacheReadInputTokens.toLocaleString()} · cache creation ${comparisonUsage.cacheCreationInputTokens.toLocaleString()}`)
+  // A repair attempt reuses the cached prefix (#200), so a second call on the
+  // same bench should read far more than it creates. If it does not, the cache
+  // breakpoint has regressed.
+  if (comparisonUsage.calls > 1 && comparisonUsage.cacheReadInputTokens < comparisonUsage.cacheCreationInputTokens) {
+    console.log('  NOTE: a repair attempt created more cache than it read — the roster-call cache prefix may have regressed.')
+  }
 }

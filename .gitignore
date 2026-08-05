@@ -28,6 +28,10 @@ scratch/*
 !scratch/audit_summer_capsule_roster_utility.js
 !scratch/diagnose_capsule_bench.js
 !scratch/compare_capsule_rosters.js
+# The model side of the comparison above. It was missing from this allowlist,
+# which is why a clean checkout of compare_capsule_rosters.js imported a module
+# that was not in the repo and could not run --with-model.
+!scratch/_capsule_model_chooser.js
 !scratch/build_capsule_disclosure_demo_thread.js
 !scratch/audit_color_taxonomy.js
 !scratch/rankings_ab_diff.js

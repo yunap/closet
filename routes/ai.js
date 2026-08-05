@@ -3011,7 +3011,10 @@ export function capsuleRosterSelectionContent({
   return content
 }
 
-async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }, toolContext) {
+// Exported for scratch/_capsule_model_chooser.js, the model side of the
+// deterministic-vs-model roster revalidation. The harness calls this production
+// function directly so it measures the path that ships.
+export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }, toolContext) {
   // Photographs for the candidates, same reasoning as the composer: this stage
   // is more aesthetic than composition, and until now it was the blind one.
   // Hero, printed, and accent pieces use 800px maxPx/auto detail for high visual
