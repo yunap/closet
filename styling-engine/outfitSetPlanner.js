@@ -1244,7 +1244,20 @@ function capsuleDemandReserve(slots = [], quotas = {}) {
     byGroup: {
       top: Math.min(quotas.top || 0, mainReserve),
       bottom: Math.min(quotas.bottom || 0, mainReserve),
-      dress: Math.min(quotas.dress || 0, 1),
+      // No dress in the REGISTER reserve. Owner ruling 2026-08-05: a summer
+      // capsule should hold at least one dress, but nothing says it has to be
+      // casual. The "at least one" half moved to `dress_presence` in
+      // capsuleRosterPostConditions, without a register predicate.
+      //
+      // This reserve exists for COVERAGE — the 2026-07-14 failure it was
+      // written for was an all-elevated roster where "casual-occasion slots got
+      // zero outfits because only shoes cleared the ceiling — no top/bottom/
+      // dress did." The top and bottom reserves above solve that: a reserved
+      // everyday top plus a reserved everyday bottom forms a casual core, and
+      // capsuleSlotCoreKeys builds cores from top+bottom OR dress. A casual
+      // DRESS was never load-bearing for that fix — it rode along on it, and
+      // demanding the plan's strictest register of the one dress is what has
+      // been rejecting rosters.
       outerwear: Math.min(quotas.outerwear || 0, looks >= 3 ? 1 : 0),
       shoes: Math.min(quotas.shoes || 0, looks <= 1 ? 1 : 2)
     }
@@ -1600,6 +1613,23 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       required: Math.ceil(quotas.top / 2),
       predicate: isCapsuleWinterCoveredBase,
       describe: () => `${Math.ceil(quotas.top / 2)} sleeve-covered winter top(s)`
+    })
+  }
+  // Owner ruling 2026-08-05: a capsule of this size should hold at least one
+  // dress — a dress is a complete outfit core on its own, capacity separates
+  // cannot replace — but nothing says it has to be casual.
+  //
+  // This used to live inside the register reserve, which demanded the one dress
+  // clear the plan's STRICTEST ceiling. That extra half was wrong on its own
+  // terms and expensive: it is what rejected the model's roster in both
+  // recorded fallbacks. Presence is the requirement; register is not.
+  if ((quotas.dress || 0) > 0) {
+    conditions.push({
+      code: 'dress_presence',
+      group: 'dress',
+      required: 1,
+      predicate: () => true,
+      describe: () => 'at least one dress, in any register — a dress is a complete outfit core on its own'
     })
   }
   // Removing the neutral bonus from loud pieces (correct: a black/cream/burgundy

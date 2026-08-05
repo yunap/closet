@@ -2909,8 +2909,13 @@ The replacements you bring in are held to the same standard as the original pick
 // requirement would invent a constraint the engine does not check. The two
 // rules named as hard are the two that have actually rejected a roster —
 // `layer_floor:outerwear`/`category_ceiling:outerwear` (an exact count, floor
-// and ceiling) and the register reserve that wants one dress usable in the
-// plan's most casual slots.
+// and ceiling) and `dress_presence`, which wants one dress in the roster.
+//
+// The dress rule used to demand that the one dress also clear the plan's
+// strictest register, and this text said so. Owner ruling 2026-08-05: a capsule
+// should hold a dress, but nothing says it has to be casual. Both the condition
+// and this sentence dropped the register half — a brief that overstates the
+// requirement is the same defect as one that hides it.
 //
 // This adds no score, gate or quota. The allocation is already deterministic
 // and settled (docs/capsule-real-world-rules.md); the brief was simply not
@@ -2929,7 +2934,7 @@ This is the researched shape of a capsule this size, and it is what the engine c
 
 Two of them are hard, and a roster that misses either is sent back to you:
 - Layers: exactly ${layers}. Not fewer, not more. The allowance is season-invariant — a summer capsule still needs ${layers} for air-conditioned interiors and evenings that cool off — and another category may not absorb the places.
-- Dresses: at least one that is genuinely wearable in the plan's most casual use cases${dresses > 1 ? `, out of the ${dresses} the shape allots` : ''}. A dress is a complete outfit core on its own, which is capacity separates cannot replace.`
+- Dresses: at least one${dresses > 1 ? `, out of the ${dresses} the shape allots` : ''}. Any register — it does not have to be a casual dress. A dress is a complete outfit core on its own, which is capacity separates cannot replace.`
 }
 
 export function capsuleRosterSelectionUserText({

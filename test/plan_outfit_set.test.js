@@ -4258,6 +4258,60 @@ test('the bench protagonist reserve and the statement guarantee share one defini
   assert.equal(capsuleConditionMatches(benchById.get(Number(ids.quiet)), condition, bench), false)
 })
 
+// Owner ruling 2026-08-05: "the summer capsule should have at least one dress,
+// but no one said it has to be casual." The presence half was previously fused
+// to the register reserve, which demanded the dress clear the plan's STRICTEST
+// ceiling — and that half is what rejected the model's roster in both recorded
+// fallbacks (thread_1785711580188, thread_1785883879348).
+test('a model roster whose only dress is elevated is accepted, not sent back', () => {
+  db.prepare('DELETE FROM pieces').run()
+  // The bench holds BOTH an everyday dress and an elevated one, so supply
+  // attribution cannot excuse the old rule — a satisfying piece was available
+  // and went unpicked, which is exactly when the validator blames the roster.
+  for (let i = 0; i < 10; i += 1) insertPiece({ category: 'top', name: `everyday top ${i}`, colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
+  for (let i = 0; i < 9; i += 1) insertPiece({ category: 'bottom', name: `everyday bottom ${i}`, colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
+  for (let i = 0; i < 6; i += 1) insertPiece({ category: 'shoes', name: `everyday shoe ${i}`, colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'], heel_height: 'flat', walk_support: 'high' })
+  for (let i = 0; i < 3; i += 1) insertPiece({ category: 'outerwear', name: `light layer ${i}`, colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'dress', name: 'everyday jersey dress', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
+  insertPiece({ category: 'dress', name: 'elevated lace midi dress', colors: ['black'], formality: 'elevated', occasions: ['city', 'smart casual', 'evening'] })
+
+  const pool = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'At Home', occasion: 'casual', count: 3 },
+    { label: 'City Outings', occasion: 'city', count: 3 }
+  ])
+  // A MODEL roster: a plain array with no postConditionGaps record, so every
+  // condition applies strictly. It takes the elevated dress and leaves the
+  // everyday one — the shape of what the live runs actually did.
+  const byName = name => pool.find(piece => piece.name === name)
+  const modelRoster = [
+    byName('elevated lace midi dress'),
+    ...pool.filter(p => wardrobeCategoryGroup(p) === 'top').slice(0, 8),
+    ...pool.filter(p => wardrobeCategoryGroup(p) === 'bottom').slice(0, 7),
+    ...pool.filter(p => wardrobeCategoryGroup(p) === 'outerwear').slice(0, 2),
+    ...pool.filter(p => wardrobeCategoryGroup(p) === 'shoes').slice(0, 4)
+  ]
+  const verdict = validateCapsuleRoster(modelRoster, { slots, budget: 24, isSummer: true, pool })
+  const dressFailures = verdict.failures.filter(failure => /dress/i.test(failure.message))
+  assert.deepEqual(dressFailures, [],
+    `an elevated dress must satisfy the requirement, got: ${JSON.stringify(dressFailures)}`)
+})
+
+// A roster with no dress at all is still rejected — the ruling narrowed the
+// rule, it did not remove it.
+test('a roster with no dress still fails the presence requirement', () => {
+  const quotas = { top: 8, bottom: 7, dress: 3, outerwear: 2, shoes: 4 }
+  const conditions = capsuleRosterPostConditions({ quotas, roster: [] })
+  const presence = conditions.find(c => c.code === 'dress_presence')
+  const dresslessRoster = [
+    { id: 1, name: 'tee', category: 'top', formality: 'everyday' },
+    { id: 2, name: 'jeans', category: 'bottom', formality: 'everyday' }
+  ]
+  const have = dresslessRoster.filter(p => capsuleConditionMatches(p, presence, dresslessRoster)).length
+  assert.equal(have, 0)
+  assert.ok(have < presence.required, 'zero dresses must still be a failure')
+})
+
 test('a capsule of useful size guarantees a statement piece, swapping within its category', () => {
   const quietTop = { id: 1, name: 'quiet cream tee', category: 'top', formality: 'everyday', pattern_complexity: 'quiet' }
   const quietTopB = { id: 2, name: 'quiet navy tee', category: 'top', formality: 'everyday', pattern_complexity: 'quiet' }
@@ -4265,7 +4319,8 @@ test('a capsule of useful size guarantees a statement piece, swapping within its
   const quietBottom = { id: 4, name: 'black trouser', category: 'bottom', formality: 'everyday', pattern_complexity: 'quiet' }
   const roster = [quietTop, quietTopB, quietBottom]
   const groups = { top: [quietTop, quietTopB, loudTop], bottom: [quietBottom], dress: [], outerwear: [], shoes: [] }
-  const conditions = capsuleRosterPostConditions({ quotas: { top: 5, bottom: 4, dress: 1 } })
+  // dress: 0 keeps this focused on the statement swap; dress_presence has its own tests.
+  const conditions = capsuleRosterPostConditions({ quotas: { top: 5, bottom: 4, dress: 0 } })
 
   const { roster: withStatement, unsatisfied } = enforceCapsulePostConditions(
     roster, groups, conditions, new Map([[quietTop, 40], [quietTopB, 10], [loudTop, 5]]), new Set()
