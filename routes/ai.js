@@ -2843,7 +2843,9 @@ Pick exactly the requested number of pieces from the supplied candidates, using 
 
 A capsule is a set, not a ranked list of good garments. Judge the pieces against each other: what recombines, what earns its place, what is redundant beside something already chosen. A garment that is excellent alone and duplicates another choice is a worse pick than a plainer one that unlocks new outfits.
 
-Cover every requested use case. A roster with a beautiful palette that leaves one use case unwearable is a failed roster — the engine will reject it and you will get one chance to repair it. Make sure each use case can form complete outfits (a top and a bottom, or a dress, plus shoes that suit it).
+Cover every requested use case. A roster with a beautiful palette that leaves one use case unwearable is a failed roster — the engine will reject it and you will get one chance to repair it. Make sure each use case can form complete outfits, with shoes that suit it.
+
+Coverage is not the same as shape. A set of separates can technically dress every use case while still being the wrong capsule: dresses are complete outfit cores that carry their own occasions and cost one place instead of two, so a capsule that drops them has traded away capacity, not just variety. The category shape you are given below is what a capsule this size is actually made of — build to it unless you can say why this wardrobe or these use cases call for something different.
 
 Every place in this capsule is finite, and one piece taking a place is another piece not taken. Before you finalise, check the set against all four of these:
 
@@ -2896,9 +2898,43 @@ The replacements you bring in are held to the same standard as the original pick
 // the two halves separately (see chooseCapsuleRosterWithProvider) so the cache
 // prefix survives; this function stays whole so "what did the model actually
 // read" remains answerable from one call.
+// The researched category allocation, stated to the model because the engine
+// judges against it. Two live runs (thread_1785711580188, thread_1785883879348)
+// exhausted their repair round and fell back to the deterministic roster after
+// selecting ZERO dresses — while this text told them season, size, palette,
+// owner rules, use cases and candidates, and nothing about category shape.
+//
+// Two tiers, kept honestly apart. The allocation itself is a TARGET: the
+// validator does not enforce a tops or bottoms count, so presenting it as a
+// requirement would invent a constraint the engine does not check. The two
+// rules named as hard are the two that have actually rejected a roster —
+// `layer_floor:outerwear`/`category_ceiling:outerwear` (an exact count, floor
+// and ceiling) and the register reserve that wants one dress usable in the
+// plan's most casual slots.
+//
+// This adds no score, gate or quota. The allocation is already deterministic
+// and settled (docs/capsule-real-world-rules.md); the brief was simply not
+// disclosing it.
+function capsuleAllocationBlock(quotas = null, budget = 24) {
+  if (!quotas || typeof quotas !== 'object') return ''
+  const line = ['top', 'bottom', 'dress', 'outerwear', 'shoes']
+    .map(group => `${group === 'outerwear' ? 'layers' : group}: ${Number(quotas[group]) || 0}`)
+    .join(' · ')
+  const layers = Number(quotas.outerwear) || 0
+  const dresses = Number(quotas.dress) || 0
+  return `
+
+CATEGORY SHAPE FOR ${budget} PIECES — ${line}
+This is the researched shape of a capsule this size, and it is what the engine checks your selection against. Treat the counts as targets you should have a reason to depart from, not a formula: if a use case genuinely needs another top more than a third dress, say so in your palette line.
+
+Two of them are hard, and a roster that misses either is sent back to you:
+- Layers: exactly ${layers}. Not fewer, not more. The allowance is season-invariant — a summer capsule still needs ${layers} for air-conditioned interiors and evenings that cool off — and another category may not absorb the places.
+- Dresses: at least one that is genuinely wearable in the plan's most casual use cases${dresses > 1 ? `, out of the ${dresses} the shape allots` : ''}. A dress is a complete outfit core on its own, which is capacity separates cannot replace.`
+}
+
 export function capsuleRosterSelectionUserText({
   bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
-  attempt = 1, failures = [], previousRosterIds = [], ownerRules = []
+  quotas = null, attempt = 1, failures = [], previousRosterIds = [], ownerRules = []
 } = {}) {
   const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
   const slotLines = slots.map(slot => `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}): ${slot.bestFor || slot.label}`)
@@ -2918,7 +2954,7 @@ export function capsuleRosterSelectionUserText({
     : ''
   return `SEASON: ${isWinter ? 'winter' : isSummer ? 'summer' : 'unspecified'}
 CAPSULE SIZE: exactly ${budget} pieces
-${palette.length ? `COLOURS THE PERSON ASKED FOR: ${palette.join(', ')}` : 'The person did not state a palette; choose one that suits these garments.'}${ownerRulesBlock}
+${palette.length ? `COLOURS THE PERSON ASKED FOR: ${palette.join(', ')}` : 'The person did not state a palette; choose one that suits these garments.'}${ownerRulesBlock}${capsuleAllocationBlock(quotas, budget)}
 
 USE CASES THIS CAPSULE MUST COVER:
 ${slotLines.join('\n')}
