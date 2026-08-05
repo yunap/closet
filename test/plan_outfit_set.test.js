@@ -5380,6 +5380,64 @@ test('the roster-selection brief states independent wearability as a settled, ha
 // look while it still spent a roster slot the composer had nothing to do
 // with. Threaded through selectCapsuleRosterViaModel -> chooseRoster ->
 // capsuleRosterSelectionUserText, both the initial call and the repair.
+// Live thread_1785711580188 and thread_1785883879348 both exhausted their
+// repair round and fell back to the deterministic roster on `category_floor`,
+// after selecting ZERO dresses — while the user text told them season, size,
+// palette, owner rules, use cases and candidates, and nothing about category
+// shape. The model was graded against a rubric it was never shown.
+test('the roster-selection user text states the category allocation it will be judged against', () => {
+  const shared = {
+    bench: layerTradeWardrobe().slice(0, 6),
+    slots: [{ label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home' }],
+    budget: 24, palette: [], isSummer: true
+  }
+  const quotas = { top: 8, bottom: 7, dress: 3, outerwear: 2, shoes: 4 }
+  const text = capsuleRosterSelectionUserText({ ...shared, quotas })
+
+  assert.match(text, /CATEGORY SHAPE FOR 24 PIECES/)
+  assert.match(text, /top: 8 · bottom: 7 · dress: 3 · layers: 2 · shoes: 4/)
+  // Placed before the candidate catalog, same reasoning as owner rules.
+  assert.ok(text.indexOf('CATEGORY SHAPE') < text.indexOf('CANDIDATES:'))
+
+  // The two rules named as hard are the two that have actually rejected a
+  // roster. Stating a tops/bottoms count as a requirement would invent a
+  // constraint the validator does not check.
+  assert.match(text, /Layers: exactly 2\./)
+  assert.match(text, /Dresses: at least one/)
+  assert.doesNotMatch(text, /[Tt]ops: exactly|[Bb]ottoms: exactly|[Ss]hoes: exactly/)
+  assert.match(text, /targets you should have a reason to depart from, not a formula/)
+
+  // Strict no-op when the caller passes no allocation.
+  assert.doesNotMatch(capsuleRosterSelectionUserText(shared), /CATEGORY SHAPE/)
+})
+
+// The numbers in the brief and the numbers the validator enforces have to be
+// the same numbers. A brief that states an allocation the engine does not check
+// is the mirror of the bug it fixes.
+test('the allocation stated in the brief matches what the validator actually enforces', () => {
+  const quotas = { top: 8, bottom: 7, dress: 3, outerwear: 2, shoes: 4 }
+  const conditions = capsuleRosterPostConditions({
+    quotas,
+    reserve: { rank: formalityRank('everyday'), looks: 6, byGroup: { top: 2, bottom: 2, dress: 1, outerwear: 1, shoes: 2 } },
+    roster: []
+  })
+  const layerFloor = conditions.find(c => c.code === 'layer_floor:outerwear')
+  const layerCeiling = conditions.find(c => c.code === 'category_ceiling:outerwear')
+  const dressReserve = conditions.find(c => c.code === 'register_reserve:dress')
+
+  // "Layers: exactly 2" is true because floor and ceiling are both the quota.
+  assert.equal(layerFloor.required, quotas.outerwear)
+  assert.equal(layerCeiling.maximum, quotas.outerwear)
+  // "Dresses: at least one" is the register reserve, which is capped at 1.
+  assert.equal(dressReserve.required, 1)
+  // And nothing enforces a tops/bottoms/shoes COUNT, which is why the brief
+  // presents those as targets rather than requirements.
+  for (const group of ['top', 'bottom']) {
+    const floor = conditions.find(c => c.code === `${group}_floor` || (c.group === group && c.required === quotas[group]))
+    assert.equal(floor, undefined, `${group} must not be enforced as an exact count`)
+  }
+})
+
 test('owner rules reach the roster-selection user text, placed before the candidate catalog', () => {
   const withRules = capsuleRosterSelectionUserText({
     bench: layerTradeWardrobe().slice(0, 6),
@@ -5420,6 +5478,34 @@ test('selectCapsuleRosterViaModel passes ownerRules through to both the initial 
   assert.equal(seenOwnerRules.length, 2, 'sanity: this fixture always fails and repairs once')
   assert.deepEqual(seenOwnerRules[0], [rule])
   assert.deepEqual(seenOwnerRules[1], [rule])
+})
+
+// The allocation has to survive the trip from the engine to the prompt, on both
+// attempts. A brief that silently loses it is indistinguishable from the bug
+// this fixed, and the repair round is exactly where the model most needs to
+// know the shape it missed.
+test('selectCapsuleRosterViaModel passes the category allocation to both the initial call and the repair', async () => {
+  const pool = layerTradeWardrobe()
+  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 2 }])
+  const seenQuotas = []
+  await selectCapsuleRosterViaModel({
+    pool, budget: 24, slots, isSummer: true, occasions: ['casual'],
+    chooseRoster: async ({ bench, quotas }) => {
+      seenQuotas.push(quotas)
+      const tops = bench.filter(piece => piece.category === 'top').map(piece => Number(piece.id))
+      return { roster_piece_ids: tops.slice(0, 24), palette: '', piece_jobs: [] }
+    }
+  })
+  assert.equal(seenQuotas.length, 2, 'sanity: this fixture always fails and repairs once')
+  for (const quotas of seenQuotas) {
+    assert.ok(quotas, 'the allocation must reach the chooser')
+    // The same numbers capsuleQuotas produces for this budget, which is what
+    // the validator holds the roster to.
+    assert.equal(quotas.outerwear, 2)
+    assert.equal(quotas.dress, 3)
+    assert.equal(quotas.shoes, 4)
+    assert.equal(quotas.top + quotas.bottom + quotas.dress + quotas.outerwear + quotas.shoes, 24)
+  }
 })
 
 test('buildPlanSlotWorkbench forwards its ownerRules into roster selection, not just composition', async () => {

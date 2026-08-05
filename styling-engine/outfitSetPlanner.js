@@ -3002,7 +3002,17 @@ export async function selectCapsuleRosterViaModel({
   }
 
   bump('capsuleRosterModelCalls')
-  const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, attempt: 1, failures: [], ownerRules }))
+  // The category allocation the validator will hold this roster to. Passed
+  // through rather than re-derived in the route, so the numbers the model is
+  // shown and the numbers it is judged against are the same object.
+  //
+  // Live thread_1785883879348 and thread_1785711580188 both fell back on
+  // `category_floor` after the model selected ZERO dresses. It was never told
+  // the allocation: the user text carried season, size, palette, owner rules,
+  // use cases and candidates, and nothing about category shape. It was being
+  // graded against a rubric it could not see.
+  const quotas = capsuleQuotas(budget, { isSummer, isWinter })
+  const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, quotas, attempt: 1, failures: [], ownerRules }))
   let failures = record([...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)])
   if (!failures.length) {
     return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: supplyGaps(first.roster), failureCodes: seenCodes }
@@ -3012,7 +3022,7 @@ export async function selectCapsuleRosterViaModel({
   // model is asked to fix what failed, keeping the rest.
   bump('capsuleRosterModelRepairs')
   const second = resolve(await chooseRoster({
-    bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter,
+    bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, quotas,
     attempt: 2, failures, previousRosterIds: first.roster.map(piece => Number(piece.id)), ownerRules
   }))
   const secondFailures = record([...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)])
