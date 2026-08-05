@@ -1361,10 +1361,43 @@ function isCapsuleBaseCandidate(piece = {}) {
   return !['sheer', 'semi_sheer', 'open_weave'].includes(opacity)
 }
 
+// One definition of "this garment can lead a look," shared by the bench's
+// protagonist reserve and the statement-presence guarantee.
+//
+// They had diverged. buildCapsuleBench reserved protagonists on
+// `loud || visual_roles.includes('hero_piece')`, while isCapsuleStatementPiece
+// — the post-condition, the validator, and the undemonstrated-jobs disclosure —
+// read `pattern_complexity === 'loud'` alone. On the live wardrobe that is 56
+// main pieces versus 33: twenty-three garments the tagger explicitly calls
+// hero_piece were invisible to the guarantee.
+//
+// The cost was not academic. Live thread_1785883879348 shipped a rotation
+// leading on a black/brown lace floral midi dress (990360, `hero_piece` +
+// `texture_piece`, pattern_complexity `medium`) and a black blouson v-neck top
+// (`hero_piece`, `solid`) — and the guarantee counted one statement piece,
+// because neither is a loud PRINT. A loud print is one way to lead a look;
+// cut, texture and colour weight are others, and `visual_roles` is where the
+// tagger already records that judgment. Reading one column of it was the bug.
+//
+// Worse than under-counting: enforceCapsulePostConditions acts on this. A
+// roster holding three hero pieces and no loud print failed `statement_presence`
+// and the enforcer would SWAP a piece out to force a loud one in — degrading a
+// roster that already had protagonists.
+function pieceReadsAsProtagonist(piece = {}) {
+  if (String(piece?.pattern_complexity || '').toLowerCase() === 'loud') return true
+  const profile = pieceStyleProfile(piece)
+  const roles = Array.isArray(profile?.visual_roles) ? profile.visual_roles : []
+  return roles.includes('hero_piece')
+}
+
+// The statement guarantee is specifically about a MAIN garment leading a look,
+// so it keeps its category restriction; the bench reserve deliberately has no
+// such restriction (an expressive shoe or layer is worth offering too). That
+// difference is intentional — the "does this read as expressive" half is not.
 function isCapsuleStatementPiece(piece = {}) {
   const group = wardrobeCategoryGroup(piece)
   if (!['top', 'bottom', 'dress'].includes(group)) return false
-  return String(piece?.pattern_complexity || '').toLowerCase() === 'loud'
+  return pieceReadsAsProtagonist(piece)
 }
 
 function isCapsuleWinterCoveredBase(piece = {}) {
@@ -2126,12 +2159,9 @@ export function buildCapsuleBench(pool = [], {
   // (pattern_complexity === 'loud' || visual_roles includes 'hero_piece').
   // Prefer standalone statement pieces (needs_base !== 'yes') over dependent ones so the roster model
   // sees a rich choice of standalone hero tops/dresses alongside dependent options.
-  const isProtagonist = piece => {
-    const profile = pieceStyleProfile(piece)
-    const roles = Array.isArray(profile?.visual_roles) ? profile.visual_roles : []
-    return piece.pattern_complexity === 'loud' || roles.includes('hero_piece')
-  }
-  const protagonists = ranked.filter(isProtagonist)
+  // Shared with the statement-presence guarantee — see pieceReadsAsProtagonist.
+  // This copy is what the guarantee had drifted away from.
+  const protagonists = ranked.filter(pieceReadsAsProtagonist)
   protagonists.sort((a, b) => {
     const aNeedsBase = a.needs_base === 'yes' ? 1 : 0
     const bNeedsBase = b.needs_base === 'yes' ? 1 : 0
