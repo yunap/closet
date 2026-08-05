@@ -2813,6 +2813,20 @@ export function capsuleRosterSelectionSchema(budget = 24) {
     properties: {
       roster_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: exact, maxItems: exact },
       palette: { type: 'string' },
+      category_shape_reason: { type: 'string' },
+      repair_changes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            removed_piece_id: { type: 'integer' },
+            added_piece_id: { type: 'integer' },
+            reason: { type: 'string' }
+          },
+          required: ['removed_piece_id', 'added_piece_id', 'reason']
+        }
+      },
       piece_jobs: {
         type: 'array',
         items: {
@@ -2823,7 +2837,7 @@ export function capsuleRosterSelectionSchema(budget = 24) {
         }
       }
     },
-    required: ['roster_piece_ids', 'palette', 'piece_jobs']
+    required: ['roster_piece_ids', 'palette', 'category_shape_reason', 'repair_changes', 'piece_jobs']
   }
 }
 
@@ -2861,6 +2875,10 @@ When you do take a piece that needs a base, its base must be a genuine visual ma
 4. A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this do that nothing else here does?" If your own job line for a piece could be written about another piece you already chose, one of them is the wrong pick.
 
 State the palette you built around in your own words. If the request named colours, respect them as a strong preference, but never at the cost of leaving a use case uncovered — say so in the palette line when you had to reach outside them.
+
+In category_shape_reason, say whether you followed the supplied category shape. If you departed from any target, name the category counts you changed and the concrete wardrobe or use-case reason. Do not use aesthetic preference alone to justify missing a hard requirement.
+
+On an initial selection, return an empty repair_changes array. On a repair, record every one-for-one swap with the removed ID, added ID, and the structural problem that swap fixes. If you cannot fix a stated failure from the candidates, say why in category_shape_reason; never return an unchanged rejected roster without explaining why.
 
 For each piece, give one short line naming the job it does in this capsule. Write it for the wearer, not as engine vocabulary: what it is for and what it goes with. Do not restate the garment's own description.
 
@@ -2980,7 +2998,7 @@ ${truthCatalog.join('\n')}${repairBlock}`
 // of re-paying for every thumbnail.
 export function capsuleRosterSelectionContent({
   bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
-  ownerRules = [], attempt = 1, failures = [], previousRosterIds = [], imageParts = []
+  quotas = null, ownerRules = [], attempt = 1, failures = [], previousRosterIds = [], imageParts = []
 } = {}) {
   // STABLE PREFIX FIRST. Built with attempt:1 unconditionally — passing the
   // real `attempt` here would append the repair text to this block and
@@ -2990,7 +3008,7 @@ export function capsuleRosterSelectionContent({
   const content = [{
     type: 'text',
     text: capsuleRosterSelectionUserText({
-      bench, slots, budget, palette, isSummer, isWinter, ownerRules,
+      bench, slots, budget, palette, isSummer, isWinter, quotas, ownerRules,
       attempt: 1, failures: [], previousRosterIds: []
     }),
     cache_control: { type: 'ephemeral' }
@@ -3014,7 +3032,7 @@ export function capsuleRosterSelectionContent({
 // Exported for scratch/_capsule_model_chooser.js, the model side of the
 // deterministic-vs-model roster revalidation. The harness calls this production
 // function directly so it measures the path that ships.
-export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, attempt, failures, previousRosterIds, ownerRules }, toolContext) {
+export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, palette, isSummer, isWinter, quotas, attempt, failures, previousRosterIds, ownerRules }, toolContext) {
   // Photographs for the candidates, same reasoning as the composer: this stage
   // is more aesthetic than composition, and until now it was the blind one.
   // Hero, printed, and accent pieces use 800px maxPx/auto detail for high visual
@@ -3036,7 +3054,7 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
   }
 
   const content = capsuleRosterSelectionContent({
-    bench, slots, budget, palette, isSummer, isWinter, ownerRules,
+    bench, slots, budget, palette, isSummer, isWinter, quotas, ownerRules,
     attempt, failures, previousRosterIds, imageParts
   })
 
@@ -3046,7 +3064,9 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
     schema: capsuleRosterSelectionSchema(budget),
     name: 'capsule_roster_selection',
     description: 'Choose the garments for this capsule from the supplied candidates.',
-    maxTokens: Math.max(700, 300 + budget * 40)
+    // The live 24-piece responses were already consuming the old 1,260-token
+    // ceiling before category rationale and repair accounting were added.
+    maxTokens: Math.max(800, 300 + budget * 55)
   })
   if (toolContext) recordToolLoopUsage(toolContext, usage)
   return value || {}

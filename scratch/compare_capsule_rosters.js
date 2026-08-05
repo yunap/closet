@@ -228,6 +228,15 @@ function printAttemptFailures(attempt, description) {
   }
 }
 
+function printAttemptReasons(attempt) {
+  if (attempt.categoryShapeReason) {
+    console.log(`  ${''.padEnd(22)} category reasoning: ${attempt.categoryShapeReason}`)
+  }
+  for (const change of attempt.repairChanges || []) {
+    console.log(`  ${''.padEnd(22)} repair reason: -${change.removed_piece_id} +${change.added_piece_id} · ${change.reason}`)
+  }
+}
+
 function printRepairDelta(attempts) {
   if (attempts.length < 2) return
   const before = new Set(attempts[0].rosterPieceIds)
@@ -356,6 +365,7 @@ for (const scenario of scenarios) {
       printRow(`model attempt ${attempt.attempt}`, description)
       printRoster(`model attempt ${attempt.attempt}`, attempt.roster)
       printAttemptFailures(attempt, description)
+      printAttemptReasons(attempt)
     }
     printRepairDelta(comparisonAttempts)
 
@@ -394,6 +404,9 @@ for (const scenario of scenarios) {
           outsideBenchIds: attempt.outsideBenchIds,
           duplicateIds: attempt.duplicateIds,
           palette: attempt.palette,
+          categoryShapeReason: attempt.categoryShapeReason,
+          repairChanges: attempt.repairChanges,
+          pieceJobs: attempt.jobs,
           failures: description.failures,
           roster: attempt.roster.map(manifestPiece)
         }
