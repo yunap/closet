@@ -19,7 +19,7 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
+const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext, hasPairingReference, hasRejectedReference } = await import('../styling-engine/rules.js')
@@ -2988,6 +2988,39 @@ test('sanitizePlanConstraintsForQuestion strips model-invented no_repeat from re
     'Build me a 24-piece summer capsule wardrobe, but do not repeat tops.'
   )
   assert.deepEqual(explicit, { reuse: 'maximize', piece_budget: 24, no_repeat: ['tops'], allow_repeat: ['shoes'] })
+})
+
+// Live thread_1785902365403 sent no_repeat ['tops','dresses'] on a capsule and,
+// crucially, sent NO piece_budget — and the guard's first condition is
+// `pieceBudget > 0`. It still stripped correctly, because the tool applies the
+// 24-piece default and the reuse:maximize default BEFORE calling the guard.
+// That ordering is load-bearing and nothing pinned it, so pin it: reorder those
+// three lines and a capsule silently acquires a no-repeat rule that fights the
+// whole point of a capsule.
+test('a capsule that omits piece_budget still gets model-invented no_repeat stripped', () => {
+  const question = 'I want a summer capsule.'
+  const planKind = resolvePlanKind('seasonal_capsule', question)
+  // Exactly the tool-call shape the live run produced.
+  let constraints = { reuse: 'maximize', no_repeat: ['tops', 'dresses'], allow_repeat: ['shoes', 'outerwear'] }
+  if (planKind === 'seasonal_capsule' && !(Number(constraints.piece_budget) > 0)) {
+    constraints.piece_budget = DEFAULT_SEASONAL_CAPSULE_BUDGET
+  }
+  if (planKind === 'seasonal_capsule' && !String(constraints.reuse || '').trim()) constraints.reuse = 'maximize'
+  constraints = sanitizePlanConstraintsForQuestion(constraints, question)
+
+  assert.equal(constraints.no_repeat, undefined, 'a budget-less capsule must still lose invented no_repeat')
+  assert.equal(constraints.piece_budget, DEFAULT_SEASONAL_CAPSULE_BUDGET)
+  assert.deepEqual(constraints.allow_repeat, ['shoes', 'outerwear'], 'allow_repeat is untouched')
+})
+
+// The model reached for no_repeat on a capsule twice in captured runs. The guard
+// discards it, but the schema never said so — the model was spending reasoning
+// on a field that is silently dropped.
+test('the plan tool tells the model no_repeat is discarded for a capsule', () => {
+  const planTool = STYLIST_TOOLS.find(tool => tool.name === 'plan_outfit_set')
+  const noRepeat = planTool.input_schema.properties.constraints.properties.no_repeat.description
+  assert.match(noRepeat, /Do not set this for a seasonal capsule/)
+  assert.match(noRepeat, /unless the person explicitly asked for no repeats/)
 })
 
 // --- Build step 7: parallel-path diagnostics ---------------------------------

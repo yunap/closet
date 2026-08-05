@@ -230,6 +230,7 @@ function initDb(dbPath) {
       capsule_roster_model_repairs INTEGER DEFAULT 0,
       capsule_roster_model_fallbacks INTEGER DEFAULT 0,
       capsule_roster_failure_codes TEXT DEFAULT '',
+      turn_failed             INTEGER DEFAULT 0,
       provider_iterations    INTEGER DEFAULT 0,
       provider_input_tokens  INTEGER DEFAULT 0,
       provider_output_tokens INTEGER DEFAULT 0,
@@ -365,6 +366,14 @@ function initDb(dbPath) {
     // fell back and the reason was discarded, so the next step was one more
     // paid run rather than a lookup.
     'capsule_roster_failure_codes TEXT DEFAULT ""',
+    // A turn that throws used to record NOTHING. persistFreeformGenerationRun
+    // ran only on the success path, so when the composition call failed
+    // (thread_1785902365403: provider credit exhausted mid-capsule) the roster
+    // call that had already completed — and been paid for — left no trace of
+    // what it chose or whether it passed. The row is now written either way,
+    // and says which it was, so a failed turn is not silently indistinguishable
+    // from a successful one in the same table.
+    'turn_failed INTEGER DEFAULT 0',
     'provider_iterations INTEGER DEFAULT 0',
     'provider_input_tokens INTEGER DEFAULT 0',
     'provider_output_tokens INTEGER DEFAULT 0',
