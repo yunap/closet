@@ -14,9 +14,10 @@
 
 import fs from 'fs'
 import path from 'path'
+import sharp from 'sharp'
 import { chooseCapsuleRosterWithProvider } from '../routes/ai.js'
 import { userUploadsDir } from '../db.js'
-import { pieceVisualDetailPolicy } from '../styling-engine/attributes.js'
+import { pieceVisualDetailPolicy, wardrobeCategoryGroup } from '../styling-engine/attributes.js'
 
 // What the comparison actually spent, so the run reports cost instead of
 // leaving it to be guessed afterwards.
@@ -26,6 +27,125 @@ export const comparisonUsage = {
   outputTokens: 0,
   cacheReadInputTokens: 0,
   cacheCreationInputTokens: 0
+}
+
+// Preserve every paid answer, including answers production later rejects.
+// Without this, a deterministic fallback replaces the attempted model roster
+// and makes visual review impossible after the process exits.
+export const comparisonAttempts = []
+
+export function resetComparisonAttempts() {
+  comparisonAttempts.splice(0, comparisonAttempts.length)
+}
+
+export function captureComparisonAnswer(request = {}, answer = {}) {
+  const attemptNumber = Math.max(1, Number(request.attempt) || 1)
+  const previous = comparisonAttempts[attemptNumber - 2]
+  if (previous && Array.isArray(request.failures)) previous.failures = request.failures
+
+  const bench = Array.isArray(request.bench) ? request.bench : []
+  const benchById = new Map(bench.map(piece => [Number(piece.id), piece]))
+  const requestedIds = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : [])
+    .map(Number)
+    .filter(Boolean)
+  const uniqueIds = [...new Set(requestedIds)]
+  const attempt = {
+    attempt: attemptNumber,
+    requestedIds,
+    rosterPieceIds: uniqueIds.filter(id => benchById.has(id)),
+    outsideBenchIds: uniqueIds.filter(id => !benchById.has(id)),
+    duplicateIds: requestedIds.filter((id, index) => requestedIds.indexOf(id) !== index),
+    roster: uniqueIds.map(id => benchById.get(id)).filter(Boolean),
+    palette: String(answer?.palette || '').trim(),
+    jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [],
+    failures: []
+  }
+  comparisonAttempts[attemptNumber - 1] = attempt
+  return attempt
+}
+
+function escapeXml(value = '') {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;')
+}
+
+function tileLabelLines(piece = {}) {
+  const name = String(piece.name || 'Unnamed piece').trim()
+  const clipped = name.length > 28 ? `${name.slice(0, 27)}…` : name
+  const colors = (Array.isArray(piece.colors) ? piece.colors : []).join('/') || 'no colour tag'
+  return [`#${piece.id} · ${clipped}`, colors]
+}
+
+async function rosterTile(piece, { width, height, imageSize }) {
+  const uploadsDir = userUploadsDir()
+  const photoFile = piece?.worn_photo || piece?.photo || ''
+  const photoPath = photoFile ? path.join(uploadsDir, photoFile) : ''
+  let image
+  if (photoPath && fs.existsSync(photoPath)) {
+    image = await sharp(photoPath)
+      .rotate()
+      .resize({ width: imageSize, height: imageSize, fit: 'contain', background: '#f4f0ea' })
+      .flatten({ background: '#f4f0ea' })
+      .png()
+      .toBuffer()
+  } else {
+    image = await sharp({
+      create: { width: imageSize, height: imageSize, channels: 4, background: '#e8e1d8' }
+    }).png().toBuffer()
+  }
+  const [name, colors] = tileLabelLines(piece)
+  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100%" height="100%" rx="10" fill="#fffdf9" stroke="#d8d0c6"/>
+    <text x="12" y="${imageSize + 30}" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#302820">${escapeXml(name)}</text>
+    <text x="12" y="${imageSize + 51}" font-family="Arial, sans-serif" font-size="12" fill="#6f6256">${escapeXml(colors)}</text>
+  </svg>`
+  return sharp(Buffer.from(svg))
+    .composite([{ input: image, left: Math.round((width - imageSize) / 2), top: 10 }])
+    .png()
+    .toBuffer()
+}
+
+// A neutral evidence surface, not a styled editorial board: identical crop,
+// tile size, typography and category order for the engine and both model picks.
+export async function renderRosterContactSheet({ roster = [], label = '', outPath } = {}) {
+  if (!outPath) throw new Error('renderRosterContactSheet requires outPath')
+  const groupOrder = new Map([['top', 0], ['bottom', 1], ['dress', 2], ['outerwear', 3], ['shoes', 4]])
+  const ordered = [...roster].sort((a, b) => {
+    const aGroup = groupOrder.get(wardrobeCategoryGroup(a)) ?? 9
+    const bGroup = groupOrder.get(wardrobeCategoryGroup(b)) ?? 9
+    return aGroup - bGroup || String(a.name || '').localeCompare(String(b.name || '')) || Number(a.id) - Number(b.id)
+  })
+  const columns = 6
+  const tileWidth = 220
+  const tileHeight = 260
+  const gap = 14
+  const margin = 24
+  const headerHeight = 72
+  const rows = Math.max(1, Math.ceil(ordered.length / columns))
+  const width = margin * 2 + columns * tileWidth + (columns - 1) * gap
+  const height = headerHeight + margin + rows * tileHeight + (rows - 1) * gap + margin
+  const header = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100%" height="100%" fill="#f4f0ea"/>
+    <text x="${margin}" y="34" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#302820">${escapeXml(label)}</text>
+    <text x="${margin}" y="57" font-family="Arial, sans-serif" font-size="14" fill="#6f6256">${ordered.length} garments · identical evidence layout · grouped by category</text>
+  </svg>`
+  const composites = []
+  for (let index = 0; index < ordered.length; index += 1) {
+    const row = Math.floor(index / columns)
+    const column = index % columns
+    composites.push({
+      input: await rosterTile(ordered[index], { width: tileWidth, height: tileHeight, imageSize: 190 }),
+      left: margin + column * (tileWidth + gap),
+      top: headerHeight + row * (tileHeight + gap)
+    })
+  }
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+  await sharp(Buffer.from(header)).composite(composites).png().toFile(outPath)
+  return outPath
 }
 
 // Anthropic bills an image at roughly (w x h) / 750 tokens. Square is the
@@ -105,6 +225,7 @@ export async function chooseCapsuleRosterForComparison(request) {
   // empty context is all recordToolLoopUsage needs.
   const toolContext = {}
   const answer = await chooseCapsuleRosterWithProvider(request, toolContext)
+  captureComparisonAnswer(request, answer)
 
   const usage = toolContext.freeformDiagnostics || {}
   comparisonUsage.calls += 1
