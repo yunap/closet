@@ -57,6 +57,8 @@ export function captureComparisonAnswer(request = {}, answer = {}) {
     duplicateIds: requestedIds.filter((id, index) => requestedIds.indexOf(id) !== index),
     roster: uniqueIds.map(id => benchById.get(id)).filter(Boolean),
     palette: String(answer?.palette || '').trim(),
+    categoryShapeReason: String(answer?.category_shape_reason || '').trim(),
+    repairChanges: Array.isArray(answer?.repair_changes) ? answer.repair_changes : [],
     jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [],
     failures: []
   }

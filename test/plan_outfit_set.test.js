@@ -5580,6 +5580,28 @@ test('the roster-selection user text states the category allocation it will be j
   assert.doesNotMatch(capsuleRosterSelectionUserText(shared), /CATEGORY SHAPE/)
 })
 
+// Regression: the planner passed quotas to chooseRoster, but the production
+// provider adapter used to drop them before capsuleRosterSelectionContent.
+// Testing only capsuleRosterSelectionUserText left that broken final hop green.
+test('the production roster content includes the category allocation', () => {
+  const quotas = { top: 8, bottom: 7, dress: 3, outerwear: 2, shoes: 4 }
+  const content = capsuleRosterSelectionContent({
+    bench: layerTradeWardrobe().slice(0, 6),
+    slots: [{ label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home' }],
+    budget: 24, palette: [], isSummer: true, quotas, imageParts: []
+  })
+  assert.match(content[0].text, /CATEGORY SHAPE FOR 24 PIECES/)
+  assert.match(content[0].text, /top: 8 · bottom: 7 · dress: 3 · layers: 2 · shoes: 4/)
+})
+
+test('the roster brief requires an explicit category rationale and repair accounting', () => {
+  const brief = capsuleRosterSelectionSystemPrompt()
+  assert.match(brief, /category_shape_reason/)
+  assert.match(brief, /empty repair_changes array/)
+  assert.match(brief, /record every one-for-one swap/)
+  assert.match(brief, /never return an unchanged rejected roster without explaining why/)
+})
+
 // The numbers in the brief and the numbers the validator enforces have to be
 // the same numbers. A brief that states an allocation the engine does not check
 // is the mirror of the bug it fixes.
