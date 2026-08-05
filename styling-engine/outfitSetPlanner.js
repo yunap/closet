@@ -1225,6 +1225,12 @@ function capsulePiecesEligibleForAnySlot(pool = [], slots = [], { isSummer = fal
   return pool.filter(piece => eligibleIds.has(Number(piece.id)))
 }
 
+// Register reservation belongs only to categories required to form a separates
+// outfit. A top + bottom + shoes path must clear a low-register slot's gates;
+// dresses are an alternative main path and outerwear is optional. The latter
+// two still keep their independent researched allocation guarantees below.
+const CAPSULE_REGISTER_RESERVE_GROUPS = new Set(['top', 'bottom', 'shoes'])
+
 function capsuleDemandReserve(slots = [], quotas = {}) {
   const demandByRank = new Map()
   for (const slot of Array.isArray(slots) ? slots : []) {
@@ -1258,7 +1264,6 @@ function capsuleDemandReserve(slots = [], quotas = {}) {
       // DRESS was never load-bearing for that fix — it rode along on it, and
       // demanding the plan's strictest register of the one dress is what has
       // been rejecting rosters.
-      outerwear: Math.min(quotas.outerwear || 0, looks >= 3 ? 1 : 0),
       shoes: Math.min(quotas.shoes || 0, looks <= 1 ? 1 : 2)
     }
   }
@@ -1596,6 +1601,7 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
   const conditions = []
   if (reserve) {
     for (const [group, required] of Object.entries(reserve.byGroup || {})) {
+      if (!CAPSULE_REGISTER_RESERVE_GROUPS.has(group)) continue
       if (!(required > 0)) continue
       conditions.push({
         code: `register_reserve:${group}`,
