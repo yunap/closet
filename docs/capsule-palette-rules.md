@@ -64,11 +64,18 @@ nominal ([Closet Cachet](https://closetcachete.com/style-guide/build-a-capsule-w
 Sought and not found. The prints-vs-neutrals guidance is qualitative — pick a print as the colour
 story's origin, or use prints as accents against a neutral base — with no recommended count or
 proportion ([Closet Choreography](https://closetchoreography.com/capsule-wardrobe-colors-how-to-make-a-capsule-wardrobe-with-prints-vs-neutrals/)).
-The engine's `statement_presence` post-condition (at least one `pattern_complexity: loud` piece)
-therefore rests on an owner ruling, not on published practice. That is a legitimate basis — it is
-simply not the same basis as the numbers above, and should not be described as researched.
+The former `statement_presence` post-condition (at least one `pattern_complexity: loud` piece) had
+no published numeric basis. It has since been removed as a universal hard capsule rule. The roster
+model may still choose expressive pieces when they earn a job; code does not manufacture one from
+the season label.
 
 ## What this engine currently does
+
+> **Current implementation note, 2026-08-06.** The table below records the deterministic
+> selector's original per-piece levers and is retained as provenance. Production roster selection
+> now defaults to the visual roster model, whose prompt receives the neutral-foundation and
+> requested-family contract. Deterministic fallback is constrained to the same family boundary.
+> See [capsule-current-behaviour.md](capsule-current-behaviour.md) for the active end-to-end flow.
 
 Every colour lever is **per-piece**. Measured by reading `outfitSetPlanner.js`:
 
