@@ -2814,6 +2814,32 @@ export function capsuleRosterSelectionSchema(budget = 24) {
       roster_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: exact, maxItems: exact },
       palette: { type: 'string' },
       category_shape_reason: { type: 'string' },
+      category_counts: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          top: { type: 'integer' },
+          bottom: { type: 'integer' },
+          dress: { type: 'integer' },
+          outerwear: { type: 'integer' },
+          shoes: { type: 'integer' }
+        },
+        required: ['top', 'bottom', 'dress', 'outerwear', 'shoes']
+      },
+      category_departures: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            category: { type: 'string', enum: ['top', 'bottom', 'dress', 'outerwear', 'shoes'] },
+            target_count: { type: 'integer' },
+            selected_count: { type: 'integer' },
+            reason: { type: 'string' }
+          },
+          required: ['category', 'target_count', 'selected_count', 'reason']
+        }
+      },
       repair_changes: {
         type: 'array',
         items: {
@@ -2837,7 +2863,7 @@ export function capsuleRosterSelectionSchema(budget = 24) {
         }
       }
     },
-    required: ['roster_piece_ids', 'palette', 'category_shape_reason', 'repair_changes', 'piece_jobs']
+    required: ['roster_piece_ids', 'palette', 'category_shape_reason', 'category_counts', 'category_departures', 'repair_changes', 'piece_jobs']
   }
 }
 
@@ -2876,11 +2902,13 @@ When you do take a piece that needs a base, its base must be a genuine visual ma
 
 State the palette you built around in your own words. If the request named colours, respect them as a strong preference, but never at the cost of leaving a use case uncovered — say so in the palette line when you had to reach outside them.
 
-In category_shape_reason, say whether you followed the supplied category shape. If you departed from any target, name the category counts you changed and the concrete wardrobe or use-case reason. Do not use aesthetic preference alone to justify missing a hard requirement.
+Count the selected IDs by their supplied category and return those totals in category_counts. Do not count from memory: reconcile all selected IDs against the candidate records before answering.
+
+In category_shape_reason, say whether you followed the supplied category shape. For every target you departed from, add one category_departures entry with the category, target count, selected count, and the concrete wardrobe or use-case reason. Return an empty category_departures array when every target is met. Do not use aesthetic preference alone to justify missing a hard requirement.
 
 On an initial selection, return an empty repair_changes array. On a repair, record every one-for-one swap with the removed ID, added ID, and the structural problem that swap fixes. If you cannot fix a stated failure from the candidates, say why in category_shape_reason; never return an unchanged rejected roster without explaining why.
 
-For each piece, give one short line naming the job it does in this capsule. Write it for the wearer, not as engine vocabulary: what it is for and what it goes with. Do not restate the garment's own description.
+For every selected ID, give exactly one piece_jobs entry naming the job it does in this capsule. Include no unselected IDs and do not repeat an ID. Write it for the wearer, not as engine vocabulary: what it is for and what it goes with. Do not restate the garment's own description.
 
 Use the supplied structured garment truth and photographs together: the record is authoritative for fabric, formality and rules; the photograph is how you judge how a piece actually reads and whether two pieces belong in one wardrobe.`
 }
@@ -3066,7 +3094,7 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
     description: 'Choose the garments for this capsule from the supplied candidates.',
     // The live 24-piece responses were already consuming the old 1,260-token
     // ceiling before category rationale and repair accounting were added.
-    maxTokens: Math.max(800, 300 + budget * 55)
+    maxTokens: Math.max(900, 300 + budget * 65)
   })
   if (toolContext) recordToolLoopUsage(toolContext, usage)
   return value || {}

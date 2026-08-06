@@ -58,6 +58,8 @@ export function captureComparisonAnswer(request = {}, answer = {}) {
     roster: uniqueIds.map(id => benchById.get(id)).filter(Boolean),
     palette: String(answer?.palette || '').trim(),
     categoryShapeReason: String(answer?.category_shape_reason || '').trim(),
+    categoryCounts: answer?.category_counts || {},
+    categoryDepartures: Array.isArray(answer?.category_departures) ? answer.category_departures : [],
     repairChanges: Array.isArray(answer?.repair_changes) ? answer.repair_changes : [],
     jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [],
     failures: []

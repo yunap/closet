@@ -229,8 +229,15 @@ function printAttemptFailures(attempt, description) {
 }
 
 function printAttemptReasons(attempt) {
+  const counts = attempt.categoryCounts || {}
+  if (Object.keys(counts).length) {
+    console.log(`  ${''.padEnd(22)} model-counted shape: ${counts.top || 0}T ${counts.bottom || 0}B ${counts.dress || 0}D ${counts.outerwear || 0}O ${counts.shoes || 0}S`)
+  }
   if (attempt.categoryShapeReason) {
     console.log(`  ${''.padEnd(22)} category reasoning: ${attempt.categoryShapeReason}`)
+  }
+  for (const departure of attempt.categoryDepartures || []) {
+    console.log(`  ${''.padEnd(22)} category departure: ${departure.category} ${departure.selected_count}/${departure.target_count} · ${departure.reason}`)
   }
   for (const change of attempt.repairChanges || []) {
     console.log(`  ${''.padEnd(22)} repair reason: -${change.removed_piece_id} +${change.added_piece_id} · ${change.reason}`)
@@ -405,6 +412,8 @@ for (const scenario of scenarios) {
           duplicateIds: attempt.duplicateIds,
           palette: attempt.palette,
           categoryShapeReason: attempt.categoryShapeReason,
+          categoryCounts: attempt.categoryCounts,
+          categoryDepartures: attempt.categoryDepartures,
           repairChanges: attempt.repairChanges,
           pieceJobs: attempt.jobs,
           failures: description.failures,

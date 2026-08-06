@@ -4937,6 +4937,64 @@ test('a model roster cannot trade the second layer for a fifth shoe when the ben
   )
 })
 
+test('model roster accounting is checked against selected garment truth before validation', async () => {
+  const pool = layerTradeWardrobe()
+  pool[0].pattern_complexity = 'loud'
+  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 3 }])
+  const seenFailures = []
+  await selectCapsuleRosterViaModel({
+    pool, budget: 24, slots, isSummer: true, occasions: ['casual'],
+    chooseRoster: async ({ bench, failures }) => {
+      seenFailures.push(failures.map(entry => entry.code))
+      const of = group => bench.filter(piece => piece.category === group)
+      const roster = [
+        ...of('top').slice(0, 8), ...of('bottom').slice(0, 6), ...of('dress').slice(0, 3),
+        ...of('outerwear').slice(0, 2), ...of('shoes').slice(0, 5)
+      ]
+      return {
+        roster_piece_ids: roster.map(piece => Number(piece.id)),
+        palette: 'black', category_shape_reason: 'Followed exactly.',
+        // This is the exact live failure: the prose/schema claimed the target
+        // while the IDs actually contained one fewer bottom and one extra shoe.
+        category_counts: { top: 8, bottom: 7, dress: 3, outerwear: 2, shoes: 4 },
+        category_departures: [], repair_changes: [],
+        piece_jobs: roster.slice(0, 23).map(piece => ({ piece_id: Number(piece.id), job: 'distinct job' }))
+      }
+    }
+  })
+  assert.ok(seenFailures[1].includes('category_accounting'))
+  assert.ok(seenFailures[1].includes('category_departure'))
+  assert.ok(seenFailures[1].includes('piece_job_coverage'))
+})
+
+test('an accurately counted and explained target departure remains valid', async () => {
+  const pool = layerTradeWardrobe()
+  pool[0].pattern_complexity = 'loud'
+  const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 3 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 24, slots, isSummer: true, occasions: ['casual'],
+    chooseRoster: async ({ bench }) => {
+      const of = group => bench.filter(piece => piece.category === group)
+      const roster = [
+        ...of('top').slice(0, 8), ...of('bottom').slice(0, 6), ...of('dress').slice(0, 3),
+        ...of('outerwear').slice(0, 2), ...of('shoes').slice(0, 5)
+      ]
+      return {
+        roster_piece_ids: roster.map(piece => Number(piece.id)),
+        palette: 'black', category_shape_reason: 'One bottom slot moved to shoes for the stated use cases.',
+        category_counts: { top: 8, bottom: 6, dress: 3, outerwear: 2, shoes: 5 },
+        category_departures: [
+          { category: 'bottom', target_count: 7, selected_count: 6, reason: 'Six bottoms cover the requested casual rotation.' },
+          { category: 'shoes', target_count: 4, selected_count: 5, reason: 'A fifth pair serves a distinct required activity.' }
+        ],
+        repair_changes: [],
+        piece_jobs: roster.map(piece => ({ piece_id: Number(piece.id), job: `distinct job for ${piece.name}` }))
+      }
+    }
+  })
+  assert.equal(result.source, 'model')
+})
+
 test('the layer floor states the missing count in terms the repair round can act on', () => {
   const pool = layerTradeWardrobe()
   const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 3 }])
