@@ -3,6 +3,13 @@
 Written 2026-07-30. **Start here** for anything capsule-related. This is the map and the sequence;
 the detail lives in the documents linked below.
 
+> **Current contract — corrected 2026-08-06.** Read
+> [capsule-lifestyle-contract-2026-08-06.md](capsule-lifestyle-contract-2026-08-06.md) before using
+> the older category conclusions in this index. Published category formulas are now model starting
+> guidance, not universal validator rules. Hard checks follow the user's elicited lifestyle,
+> climate, owner rules, activity-specific footwear, and actual garment dependencies. Outfit-card
+> counts are presentation scope and do not multiply garment requirements.
+
 ## 1. How we got into this
 
 The capsule feature was built correct-by-construction in its mechanics — global core allocation,
@@ -30,7 +37,8 @@ a comment explaining the reasoning is not one of those.**
 
 | document | what it settles |
 |---|---|
-| [capsule-real-world-rules.md](capsule-real-world-rules.md) | Category counts. Six frameworks compared; layer allowance is season-invariant at 2; dresses 2–3; the tops:bottoms question and **why changing it was reverted**. |
+| [capsule-lifestyle-contract-2026-08-06.md](capsule-lifestyle-contract-2026-08-06.md) | **Current capsule contract.** Session record; real production intake; comparison-harness correction; which requirements are guidance, hard checks, or retired. |
+| [capsule-real-world-rules.md](capsule-real-world-rules.md) | Historical category research across six frameworks, now corrected: the counts describe common starting shapes rather than universal validity rules. |
 | [capsule-palette-rules.md](capsule-palette-rules.md) | Palette. 2–4 neutrals + 1–2 secondary + 1–2 accents; 60–70% neutral; the accent-connectivity rule; the 60/30/10 misattribution. |
 | [color-taxonomy-rules.md](color-taxonomy-rules.md) | The colour model itself. Google's family/display-name split, Baymard on swatches, the dead-entry audit, the proposed family + neutrality model and migration. |
 

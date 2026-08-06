@@ -566,50 +566,6 @@ export function describeCapsuleUndemonstratedJobs(roster = [], cards = []) {
   return `[capsule jobs: ${usedCount} of ${rosterPieces.length} roster pieces (${percent}%) appear in a look, but ${jobs.length} selected job(s) went undemonstrated — ${jobs.join('; ')}]`
 }
 
-// A guarantee worth a correction round, but not worth throwing the model's
-// whole roster away for. Live thread_1785451253837: the layer floor shipped,
-// the model missed it twice, and the fallback discarded a structurally sound
-// 24-piece selection in favour of the engine's — trading a specific defect for
-// a roster chosen by the thing the model path exists to improve on.
-//
-// So a coachable code always fails (the model is told, and always gets its one
-// repair round to fix it), but on its own it never spends the fallback. If the
-// repair still misses it and nothing else is wrong, the model's roster ships
-// with the unmet guarantee stated. Deliberately NOT extended to
-// dependent_base_unavailable: that one means a selected piece cannot form a
-// look in a slot it was offered in, which is a wearability defect rather than
-// an allocation preference.
-const COACHABLE_ROSTER_FAILURE_CODES = new Set(['layer_floor:outerwear'])
-
-// The disclosure that makes the concession honest. Reads the failure the
-// validator already produced, so it cannot drift from what was actually
-// checked, and stays generic so a second coachable code needs no new copy.
-export function describeCapsuleUnmetRosterGuarantees(failures = []) {
-  const coachable = (Array.isArray(failures) ? failures : [])
-    .filter(failure => COACHABLE_ROSTER_FAILURE_CODES.has(failure?.code))
-  if (!coachable.length) return ''
-  const detail = coachable.map(failure => String(failure.message || '').trim()).filter(Boolean).join('; ')
-  return `[capsule roster: the selection did not meet ${coachable.length} of this capsule's structural guarantees after its correction round, and was kept anyway because it is otherwise sound — ${detail}]`
-}
-
-// Criterion 1's graceful half. The layer floor below fails a roster that traded
-// a researched layer slot into another category WHEN the bench could supply the
-// layer; when the wardrobe genuinely cannot, the roster is accepted and the
-// shortfall is said out loud instead of failing forever or pretending the
-// allocation was met.
-export function describeCapsuleLayerSupplyGap({ roster = [], bench = [], budget = 24, isSummer = false, isWinter = false } = {}) {
-  const quotas = capsuleQuotas(budget, { isSummer, isWinter })
-  const wanted = Number(quotas.outerwear) || 0
-  if (!(wanted > 0)) return ''
-  const rosterLayers = (Array.isArray(roster) ? roster : []).filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
-  if (rosterLayers.length >= wanted) return ''
-  const benchLayers = (Array.isArray(bench) ? bench : []).filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
-  // Only a supply story belongs here. If the bench held layers the roster did
-  // not take, that is the validator's failure to report, not a wardrobe gap.
-  if (benchLayers.length > rosterLayers.length) return ''
-  return `[capsule layers: this ${budget}-piece capsule allots ${wanted} layering piece(s), and the wardrobe supplied ${benchLayers.length} that passed a use case's gates — the capsule ships with ${rosterLayers.length}. Adding a light layer to the app would give the rotation its air-conditioned-interiors and cool-evening coverage.]`
-}
-
 export function describeCapsuleCompositionShortfall(shortfalls = [], { plannedTotal = 0, acceptedTotal = 0 } = {}) {
   const missing = (Array.isArray(shortfalls) ? shortfalls : []).filter(entry => Number(entry?.missing) > 0)
   if (!missing.length || !(plannedTotal > 0)) return ''
@@ -1236,25 +1192,21 @@ function capsuleDemandReserve(slots = [], quotas = {}) {
   for (const slot of Array.isArray(slots) ? slots : []) {
     const rank = effectiveSlotRegisterCeilingRank(slot)
     if (rank === null) continue
-    const looks = Math.max(1, Number(slot?.targetOutfits) || 1)
-    demandByRank.set(rank, (demandByRank.get(rank) || 0) + looks)
+    demandByRank.set(rank, (demandByRank.get(rank) || 0) + 1)
   }
   const ranks = [...demandByRank.keys()].sort((a, b) => a - b)
   if (!ranks.length) return null
   const rank = ranks[0]
   const looks = demandByRank.get(rank) || 0
-  const mainReserve = looks <= 1 ? 1 : (looks >= 4 && Math.min(quotas.top || 0, quotas.bottom || 0) >= 4 ? 3 : 2)
   return {
     rank,
     looks,
     byGroup: {
-      top: Math.min(quotas.top || 0, mainReserve),
-      bottom: Math.min(quotas.bottom || 0, mainReserve),
-      // No dress in the REGISTER reserve. Owner ruling 2026-08-05: a summer
-      // capsule should hold at least one dress, but nothing says it has to be
-      // casual. The "at least one" half moved to `dress_presence` in
-      // capsuleRosterPostConditions, without a register predicate.
-      //
+      // One complete separates path covers the lifestyle job. targetOutfits
+      // controls how many representative cards are shown; it is not evidence
+      // that the person needs duplicate garments at this register.
+      top: Math.min(quotas.top || 0, 1),
+      bottom: Math.min(quotas.bottom || 0, 1),
       // This reserve exists for COVERAGE — the 2026-07-14 failure it was
       // written for was an all-elevated roster where "casual-occasion slots got
       // zero outfits because only shoes cleared the ceiling — no top/bottom/
@@ -1264,7 +1216,7 @@ function capsuleDemandReserve(slots = [], quotas = {}) {
       // DRESS was never load-bearing for that fix — it rode along on it, and
       // demanding the plan's strictest register of the one dress is what has
       // been rejecting rosters.
-      shoes: Math.min(quotas.shoes || 0, looks <= 1 ? 1 : 2)
+      shoes: Math.min(quotas.shoes || 0, 1)
     }
   }
 }
@@ -1397,10 +1349,8 @@ function isCapsuleBaseCandidate(piece = {}) {
 // cut, texture and colour weight are others, and `visual_roles` is where the
 // tagger already records that judgment. Reading one column of it was the bug.
 //
-// Worse than under-counting: enforceCapsulePostConditions acts on this. A
-// roster holding three hero pieces and no loud print failed `statement_presence`
-// and the enforcer would SWAP a piece out to force a loud one in — degrading a
-// roster that already had protagonists.
+// This remains useful descriptive evidence for bench diagnostics and model
+// context. It is not a universal statement-piece requirement.
 function pieceReadsAsProtagonist(piece = {}) {
   if (String(piece?.pattern_complexity || '').toLowerCase() === 'loud') return true
   const profile = pieceStyleProfile(piece)
@@ -1612,62 +1562,6 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       })
     }
   }
-  if (isWinter && (quotas.top || 0) > 0) {
-    conditions.push({
-      code: 'winter_covered_bases',
-      group: 'top',
-      required: Math.ceil(quotas.top / 2),
-      predicate: isCapsuleWinterCoveredBase,
-      describe: () => `${Math.ceil(quotas.top / 2)} sleeve-covered winter top(s)`
-    })
-  }
-  // Owner ruling 2026-08-05: a capsule of this size should hold at least one
-  // dress — a dress is a complete outfit core on its own, capacity separates
-  // cannot replace — but nothing says it has to be casual.
-  //
-  // This used to live inside the register reserve, which demanded the one dress
-  // clear the plan's STRICTEST ceiling. That extra half was wrong on its own
-  // terms and expensive: it is what rejected the model's roster in both
-  // recorded fallbacks. Presence is the requirement; register is not.
-  if ((quotas.dress || 0) > 0) {
-    conditions.push({
-      code: 'dress_presence',
-      group: 'dress',
-      required: 1,
-      predicate: () => true,
-      describe: () => 'at least one dress, in any register — a dress is a complete outfit core on its own'
-    })
-  }
-  // Removing the neutral bonus from loud pieces (correct: a black/cream/burgundy
-  // geometric print is not a neutral) pushed every statement piece below the cut
-  // — the live 24-piece summer roster came back with zero. Owner ruling: that is
-  // not a capsule either. Presence is a guarantee, not something to bribe the
-  // score into producing; state it here so a later pass cannot trade it away.
-  if ((quotas.top || 0) + (quotas.bottom || 0) + (quotas.dress || 0) >= CAPSULE_STATEMENT_MIN_MAIN_PIECES) {
-    conditions.push({
-      code: 'statement_presence',
-      group: '*',
-      required: 1,
-      predicate: isCapsuleStatementPiece,
-      describe: () => 'at least one statement piece, so the capsule is not all quiet basics'
-    })
-  }
-  if (isWinter && (quotas.outerwear || 0) >= 2) {
-    conditions.push({
-      code: 'winter_indoor_layer',
-      group: 'outerwear',
-      required: 1,
-      predicate: isCapsuleIndoorKnitLayer,
-      describe: () => 'an indoor cardigan layer'
-    })
-    conditions.push({
-      code: 'winter_transition_layer',
-      group: 'outerwear',
-      required: 1,
-      predicate: isCapsuleColdTransitionLayer,
-      describe: () => 'a cold-transition coat/jacket layer'
-    })
-  }
   // Conditional by nature, which is why it reads the roster rather than the
   // quotas: a dependent garment is only a problem when nothing in the capsule
   // can go under it. Absent any `needs_base` piece the condition is not added
@@ -1682,56 +1576,6 @@ export function capsuleRosterPostConditions({ quotas = {}, reserve = null, isWin
       predicate: isCapsuleBaseCandidate,
       describe: () => `a top that can be worn alone, to go under ${dependentTops[0]?.name || 'the layering piece'}`
     })
-  }
-  // Every condition above is a FLOOR. Until now nothing declared a ceiling, so
-  // a model-chosen roster could overspend a category and no guard noticed: on
-  // live thread_1785380251549 it bought 4 outerwear pieces against a quota of
-  // 2, and 2 of them appeared in none of the ten looks. Overspending a
-  // non-core category is not a neutral preference — it is capacity deleted,
-  // measured at 45 -> 63 outfit cores when those slots went to tops instead.
-  //
-  // Declared only for outerwear, the one category with evidence behind it.
-  // Tops and bottoms are self-correcting (spending there buys cores, it does
-  // not destroy them), and a shoes ceiling could collide with the shoe reserve
-  // demands below. `maximum` is honoured by validateCapsuleRoster;
-  // enforceCapsulePostConditions leaves ceilings alone because the
-  // deterministic selector builds to quota and cannot exceed one.
-  if (Number.isFinite(quotas.outerwear)) {
-    conditions.push({
-      code: 'category_ceiling:outerwear',
-      group: 'outerwear',
-      required: 0,
-      maximum: quotas.outerwear,
-      predicate: () => true,
-      describe: () => `at most ${quotas.outerwear} outerwear piece(s) — this budget's layer quota`
-    })
-    // Step 5 criterion 1 (docs/capsule-step5-evaluation.md): the SAME number is
-    // now a floor. The ceiling above stopped a model roster overspending the
-    // layer allowance; live thread_1785448241452 then underspent it — one layer
-    // instead of the researched two — and because the roster budget is exact,
-    // the freed slot went straight into a fifth pair of shoes that earned no
-    // demonstrated formula. The layer allowance is season-invariant and sourced
-    // (docs/capsule-real-world-rules.md); a settled allocation must not be
-    // tradeable by the path that bypasses the selector which honours it.
-    //
-    // validatorOnly, for the same reason the ceiling is: the deterministic
-    // selector builds to quota and cannot underspend a category the wardrobe
-    // can fill, so enforcing this would change nothing it does RIGHT — but on a
-    // wardrobe with too few layers it would record a new postConditionGaps
-    // entry and alter shipped deterministic disclosure. validateCapsuleRoster's
-    // supply attribution already answers "when the bench can supply it": a
-    // floor is only a roster defect when a satisfying piece sat unused in the
-    // pool. A genuine shortfall is disclosed by describeCapsuleLayerSupplyGap.
-    if (quotas.outerwear > 0) {
-      conditions.push({
-        code: 'layer_floor:outerwear',
-        group: 'outerwear',
-        required: quotas.outerwear,
-        validatorOnly: true,
-        predicate: () => true,
-        describe: () => `${quotas.outerwear} layering piece(s) — this capsule's season-invariant layer allocation, which another category may not absorb`
-      })
-    }
   }
   for (const [index, demand] of (Array.isArray(shoeDemands) ? shoeDemands : []).entries()) {
     if (!(demand?.required > 0) || typeof demand.predicate !== 'function') continue
@@ -2302,36 +2146,30 @@ function shoeReserveDemands(slots = [], quotas = {}) {
   }
   const elevatedRank = formalityRank('elevated')
   const everydayRank = formalityRank('everyday')
-  const everydayShoeLooks = normalizedSlots
+  const hasEverydayShoeJob = normalizedSlots
     .filter(slot => {
       const ceilingRank = effectiveSlotRegisterCeilingRank(slot)
       return ceilingRank !== null && ceilingRank <= everydayRank
     })
-    .reduce((sum, slot) => sum + Math.max(1, Number(slot?.targetOutfits) || 1), 0)
-  const elevatedShoeLooks = normalizedSlots
-    .filter(slot => slotWantsElevatedShoe(slot))
-    .reduce((sum, slot) => sum + Math.max(1, Number(slot?.targetOutfits) || 1), 0)
+    .length > 0
+  const hasElevatedShoeJob = normalizedSlots.some(slotWantsElevatedShoe)
 
   // A mixed-register capsule needs a legal shoe path at both ends. Previously
   // five elevated looks could reserve all three shoe slots, leaving the
   // casual slot with zero shoes after its everyday ceiling was applied.
   // Preserve one everyday shoe in a mixed plan; in an all-casual plan retain
   // the existing rotation reserve of roughly one shoe per two looks.
-  if (everydayShoeLooks > 0) {
+  if (hasEverydayShoeJob) {
     demands.push({
       label: 'an everyday/casual look',
-      required: Math.min(
-        quotas.shoes,
-        elevatedShoeLooks > 0 ? 1 : Math.max(1, Math.ceil(everydayShoeLooks / 2))
-      ),
+      required: Math.min(quotas.shoes, 1),
       predicate: piece => pieceClearsCeilingRank(piece, everydayRank),
     })
   }
-  if (elevatedShoeLooks > 0 && quotas.shoes > 1) {
-    const capacityAfterEveryday = Math.max(1, quotas.shoes - (everydayShoeLooks > 0 ? 1 : 0))
+  if (hasElevatedShoeJob && quotas.shoes > 1) {
     demands.push({
       label: 'a dressy/elevated look',
-      required: Math.min(capacityAfterEveryday, Math.max(1, Math.ceil(elevatedShoeLooks / 2))),
+      required: 1,
       predicate: piece => pieceMeetsFloorRank(piece, elevatedRank),
     })
   }
@@ -2377,6 +2215,7 @@ function ensureCapsuleShoeDemands(roster = [], groups = {}, demands = [], scoreO
       const safeToEvictTargets = selected.filter(piece => {
         const own = demandsSatisfiedBy(piece)
         return own.length > 0 && own.every(ownDemand =>
+          ownDemand.predicate(candidate) ||
           selected.some(other => other !== piece && ownDemand.predicate(other)))
       })
       const swapTarget = [...zeroDemandTargets, ...safeToEvictTargets]
@@ -2557,8 +2396,8 @@ function capsuleSlotCoreKeys(piecesById = new Map(), slot = {}) {
   // + bottom + shoes." A needs_base top cannot produce a wearable core by
   // itself; counting one anyway is exactly how capacity gets overstated —
   // this function is what every capacity number in the feature is built from
-  // (capsuleOutfitCoreCapacity, capacity_below_rotation, the representative
-  // rotation allocator). Gate on a genuine base (isCapsuleBaseCandidate,
+  // (capsuleOutfitCoreCapacity and the representative rotation allocator).
+  // Gate on a genuine base (isCapsuleBaseCandidate,
   // opacity-aware) coexisting in THIS SAME slot's allowed set, mirroring
   // dependent_base_unavailable's own condition.
   //
@@ -2778,21 +2617,10 @@ export function validateCapsuleRoster(roster = [], {
     })
   }
 
-  // capacity_below_rotation — total distinct-core capacity across the WHOLE
-  // plan (union of cores across slots, same de-dup capsuleOutfitCoreCapacity
-  // already does for overlapping slots) must reach the planned card count.
-  if (plannedCards > 0) {
-    const totalCapacity = capsuleOutfitCoreCapacity(
-      normalizedRoster,
-      gateSlots.map(({ slot, gateAllowedIds }) => ({ ...slot, gateAllowedIds }))
-    )
-    if (totalCapacity < plannedCards) {
-      failures.push({
-        code: 'capacity_below_rotation',
-        message: `total distinct-core capacity is ${totalCapacity}, but the rotation plans ${plannedCards} card(s)`
-      })
-    }
-  }
+  // The number of representative cards is a presentation choice, not a
+  // garment requirement. Per-slot coverability above proves the capsule can
+  // serve every lifestyle job; the rotation allocator may show fewer cards
+  // when the chosen set has fewer distinct cores, without rejecting the set.
 
   // Parity with the selector, by construction. Every guarantee selectCapsuleRoster
   // enforces is declared once in capsuleRosterPostConditions; the validator
@@ -2801,14 +2629,10 @@ export function validateCapsuleRoster(roster = [], {
   // only guard, so a guarantee the validator does not know about is a guarantee
   // that silently stops existing.
   //
-  // Legacy codes are preserved where one already existed (category_floor,
-  // winter_layer_role_missing, register_shoe_path_missing) so existing callers
-  // and docs keep working; the three that had no validator equivalent
-  // (winter_covered_bases, statement_presence, base_for_dependent_top) report
-  // under their own condition code.
+  // Legacy codes are preserved where current checks already had one, so
+  // existing callers and diagnostics keep working.
   const LEGACY_FAILURE_CODES = [
     [/^register_reserve:/, 'category_floor'],
-    [/^winter_indoor_layer$|^winter_transition_layer$/, 'winter_layer_role_missing'],
     [/^shoe_reserve:/, 'register_shoe_path_missing'],
   ]
   const quotas = capsuleQuotas(budget, { isSummer, isWinter: isWinterCapsule })
@@ -3105,15 +2929,8 @@ export async function selectCapsuleRosterViaModel({
   }
 
   const check = (roster) => validateCapsuleRoster(roster, {
-    slots, budget, isSummer, isWinterCapsule: isWinter, pool: bench,
-    plannedCards: allocateCapsuleRepresentativeRotation(slots, roster, { cap: capsuleTotalOutfitCap(budget) })
-      .reduce((sum, slot) => sum + Math.max(0, Number(slot.targetOutfits) || 0), 0)
+    slots, budget, isSummer, isWinterCapsule: isWinter, pool: bench
   })
-
-  // An accepted roster can still be short of the researched layer allocation —
-  // the validator excuses a floor the bench could not supply, which is correct
-  // and must not be silent. Every accepted return states it.
-  const supplyGaps = roster => [describeCapsuleLayerSupplyGap({ roster, bench, budget, isSummer, isWinter })].filter(Boolean)
   // Every code seen across both attempts, so a fallback records WHY it happened
   // instead of only that it did.
   const seenCodes = []
@@ -3123,19 +2940,12 @@ export async function selectCapsuleRosterViaModel({
   }
 
   bump('capsuleRosterModelCalls')
-  // The category allocation the validator will hold this roster to. Passed
-  // through rather than re-derived in the route, so the numbers the model is
-  // shown and the numbers it is judged against are the same object.
-  //
-  // Live thread_1785883879348 and thread_1785711580188 both fell back on
-  // `category_floor` after the model selected ZERO dresses. It was never told
-  // the allocation: the user text carried season, size, palette, owner rules,
-  // use cases and candidates, and nothing about category shape. It was being
-  // graded against a rubric it could not see.
+  // Pass the category starting shape through rather than re-deriving it in the
+  // route. It is planning guidance for the model, not a validator formula.
   const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, quotas, attempt: 1, failures: [], ownerRules }))
   let failures = record([...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)])
   if (!failures.length) {
-    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: supplyGaps(first.roster), failureCodes: seenCodes }
+    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: [], failureCodes: seenCodes }
   }
 
   // One repair, given the exact structural reasons. Not a fresh start: the
@@ -3147,25 +2957,7 @@ export async function selectCapsuleRosterViaModel({
   }))
   const secondFailures = record([...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)])
   if (!secondFailures.length) {
-    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: supplyGaps(second.roster), failureCodes: seenCodes }
-  }
-
-  // The model has now had its correction round. If everything still wrong is
-  // coachable, keeping this roster and stating the gap beats discarding a sound
-  // 24-piece selection for the engine's — which is what happened on
-  // thread_1785451253837 and cost the run its whole purpose.
-  const fallbackWorthy = secondFailures.filter(failure => !COACHABLE_ROSTER_FAILURE_CODES.has(failure.code))
-  if (!fallbackWorthy.length) {
-    return {
-      roster: second.roster,
-      source: 'model_repaired_with_gaps',
-      palette: second.palette,
-      jobs: second.jobs,
-      failures: secondFailures,
-      bench,
-      coverageGaps: [...supplyGaps(second.roster), describeCapsuleUnmetRosterGuarantees(secondFailures)].filter(Boolean),
-      failureCodes: seenCodes
-    }
+    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: [], failureCodes: seenCodes }
   }
 
   // Two strikes on something structural: ship the deterministic roster and say
@@ -3178,12 +2970,12 @@ export async function selectCapsuleRosterViaModel({
     source: 'deterministic_fallback',
     palette: '',
     jobs: [],
-    failures: fallbackWorthy,
+    failures: secondFailures,
     bench,
     // The spec required this disclosure at stage 3 and it was never
     // implemented: capsuleRosterSource was written and read by nothing, so a
     // fallback capsule presented exactly like a chosen one.
-    coverageGaps: [`[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${fallbackWorthy.map(failure => failure.message).join('; ')}]`],
+    coverageGaps: [`[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${secondFailures.map(failure => failure.message).join('; ')}]`],
     failureCodes: seenCodes
   }
 }

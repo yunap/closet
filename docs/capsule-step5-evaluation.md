@@ -4,6 +4,15 @@ Written 2026-07-30 from `thread_1785448241452`, the first live rerun after the b
 season-gate, colour-taxonomy and disclosure corrections. This is a design decision, not an
 implementation brief. No generation behaviour changed while writing it.
 
+> **Superseded contract note — 2026-08-06.** This remains a record of that live
+> run, not the current validation specification. Later source review found that
+> published category formulas are examples rather than universal capsule rules.
+> References below to a season-invariant two-layer allocation, fixed dress or
+> statement presence, repeated shoe paths derived from card counts, and fixed
+> winter base ratios must not be used as hard acceptance criteria. Current hard
+> checks follow the user's elicited lifestyle, climate, owner rules, and whether
+> each selected dependent garment has a wearable base.
+
 ## 1. Decision
 
 **Stage 3 does not earn default-on status from this run.**
