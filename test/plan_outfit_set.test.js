@@ -19,7 +19,7 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
+const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext, hasPairingReference, hasRejectedReference } = await import('../styling-engine/rules.js')
@@ -27,7 +27,7 @@ const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('.
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
-const { capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
+const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
@@ -36,6 +36,23 @@ function planOutfitSetSlotSchema() {
   const tool = STYLIST_TOOLS.find(entry => entry.name === 'plan_outfit_set')
   return tool?.input_schema?.properties?.slots?.items || {}
 }
+
+test('capsule planning preserves the original palette through a lifestyle clarification turn', () => {
+  const question = capsulePlanQuestion('Mostly errands, museums, restaurants, and nature walks.', [
+    { role: 'user', content: 'I want a summer capsule in yellow.' },
+    { role: 'assistant', content: 'What does your summer mainly include?' }
+  ])
+  assert.match(question, /summer capsule in yellow/)
+  assert.match(question, /errands, museums, restaurants, and nature walks/)
+
+  assert.equal(
+    capsulePlanQuestion('Make me a winter capsule in pink.', [
+      { role: 'user', content: 'I want a summer capsule in yellow.' }
+    ]),
+    'Make me a winter capsule in pink.',
+    'a new capsule request supersedes the earlier one'
+  )
+})
 
 // Spec 26 Part 4: propose_outfit's season field must teach the indoor
 // escape hatch (mirrors the plan-slot weather:'indoor' mechanism, which
@@ -310,7 +327,7 @@ test('atomic capsule validation details stay in diagnostics instead of productio
   assert.equal(result.status, 'success')
   assert.equal(toolContext.generatedOutfits.length, 1)
   assert.equal(toolContext.freeformDiagnostics.submitPlanValidationFails, 1)
-  assert.doesNotMatch(result.message, /gap|failure|rejected|unfilled/i)
+  assert.doesNotMatch(result.message, /validation (?:gap|failure)|unfilled/i)
   assert.ok(!('validation_failures' in result))
   const publicNotes = toolContext.generatedOutfits[0].tripPlanLines.join(' ')
   assert.doesNotMatch(publicNotes, /\[(?:capsule|coverage) gap:/i)
@@ -2113,10 +2130,10 @@ test('a blind top-over-dress submission is rejected with view_pieces coaching', 
   assert.match(reasons, /call view_pieces/)
 })
 
-test('the same top-over-dress submission is accepted once both pieces have been visually seen', async () => {
+test('an explicit overlay top over a dress is accepted once both pieces have been visually seen', async () => {
   db.prepare('DELETE FROM pieces').run()
   const dressId = insertPiece({ category: 'dress', name: 'abstract midi dress', occasions: ['city'] })
-  const topId = insertPiece({ category: 'top', name: 'abstract print blouse', occasions: ['city'] })
+  const topId = insertPiece({ category: 'top', name: 'abstract print blouse', occasions: ['city'], engine_notes: 'Explicit overlay top; wear over a dress.' })
   const shoesId = insertPiece({ category: 'shoes', name: 'layering shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([{ label: 'Wednesday', occasion: 'city', activity: 'none', count: 1 }])
@@ -2130,6 +2147,45 @@ test('the same top-over-dress submission is accepted once both pieces have been 
 
   assert.equal(result.failures.length, 0, `expected the seen top-over-dress outfit to pass, got ${JSON.stringify(result.failures)}`)
   assert.equal(result.accepted.length, 1)
+})
+
+test('an explicit base layer under a dress remains a valid top-plus-dress relationship', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dressId = insertPiece({ category: 'dress', name: 'pinafore midi dress', occasions: ['city'], engine_notes: 'Designed to wear over a fitted base layer.' })
+  const topId = insertPiece({ category: 'top', name: 'fitted base layer tee', occasions: ['city'], engine_notes: 'Base layer worn under dresses.' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'flat shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Wednesday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(dressId), Number(topId), Number(shoesId)],
+  }], { visuallySeenPieceIds: new Set([Number(dressId), Number(topId)]) })
+
+  assert.equal(result.failures.length, 0, `expected the base-layer relationship to pass, got ${JSON.stringify(result.failures)}`)
+})
+
+test('offline replay rejects the stale white-tank plus lace-dress IDs from thread_1786036700758', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'white scoop neck sleeveless top', reads_as: 'white fitted tank', occasions: ['city'] })
+  const dressId = insertPiece({ category: 'dress', name: 'black brown lace floral midi dress', occasions: ['city'] })
+  const shoesId = insertPiece({ category: 'shoes', name: 'black canvas sneakers', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Museums & City', occasion: 'city', activity: 'walking', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'summer capsule' })
+  const slot = workbench.pendingPlan.slots[0]
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    title: 'White Tank + Black-Brown Lace Floral Dress',
+    piece_ids: [Number(topId), Number(dressId), Number(shoesId)],
+    reason: 'The white tank is not added since the dress is complete. Correcting: the dress is the core.'
+  }], { visuallySeenPieceIds: new Set([Number(topId), Number(dressId)]) })
+
+  assert.equal(result.accepted.length, 0)
+  const reasons = result.failures[0].reasons.join(' ')
+  assert.match(reasons, /reason revises itself mid-sentence/)
+  assert.match(reasons, /no recorded layering relationship/)
 })
 
 test('a plain top+bottom outfit is unaffected by the layering sight check (no dress present)', async () => {
@@ -2257,6 +2313,7 @@ test('a printed scarf accessory alongside one printed top does NOT trigger the p
 test('reasonRevisesMidSentence catches both captured live incidents verbatim', () => {
   assert.equal(reasonRevisesMidSentence('**Actually revising:** emerald v-neck top + oatmeal pants…'), true)
   assert.equal(reasonRevisesMidSentence('**wait, maxi skirt is prohibited per owner rule. Switching:** …mini skirt'), true)
+  assert.equal(reasonRevisesMidSentence('The tank is excluded. Correcting: the dress is the core.'), true)
 })
 
 test('reasonRevisesMidSentence does not false-positive on a clean reason containing "waiting"', () => {
@@ -4063,6 +4120,46 @@ test('an unavailable requested accent stays neutral and is disclosed to the user
   assert.match(result.coverageGaps[0], /stayed in the neutral foundation/i)
 })
 
+test('deterministic fallback keeps the neutral base and requested family without unrelated accents', async () => {
+  const pool = paletteTestWardrobe().map(piece => ({ ...piece, colors: [...piece.colors] }))
+  pool.find(piece => piece.id === 100).colors = ['yellow']
+  pool.find(piece => piece.id === 200).colors = ['mustard']
+  pool.find(piece => piece.id === 300).colors = ['yellow']
+  pool.find(piece => piece.id === 101).colors = ['orange']
+  pool.push(
+    { id: 400, name: 'neutral dress', category: 'dress', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] },
+    { id: 500, name: 'neutral cardigan', category: 'outerwear', colors: ['cream'], formality: 'everyday', occasions: ['casual', 'city'] }
+  )
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'], palette: ['yellow'],
+    chooseRoster: async () => ({ roster_piece_ids: [], palette: '', piece_jobs: [] })
+  })
+
+  assert.equal(result.source, 'deterministic_fallback')
+  assert.equal(result.roster.length, 10)
+  assert.ok(result.roster.some(piece => (piece.colors || []).some(color => ['yellow', 'mustard'].includes(color))))
+  assert.ok(capsuleNeutralBaseCount(result.roster) >= capsuleNeutralBasePlan(10).minimum)
+  assert.ok(capsuleNeutralBaseCount(result.roster) <= capsuleNeutralBasePlan(10).maximum)
+  assert.equal(
+    result.roster.some(piece => (piece.colors || []).includes('orange')),
+    false
+  )
+})
+
+test('deterministic fallback stays neutral and preserves the supply disclosure when a requested family is unavailable', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'], palette: ['yellow'],
+    chooseRoster: async () => ({ roster_piece_ids: [], palette: '', piece_jobs: [] })
+  })
+
+  assert.equal(result.source, 'deterministic_fallback')
+  assert.equal(capsuleNeutralBaseCount(result.roster), result.roster.length)
+  assert.match(result.coverageGaps.join(' '), /yellow.*not available|could not supply.*yellow/i)
+})
+
 test('an invalid model roster gets exactly one repair attempt, then the deterministic roster', async () => {
   const pool = paletteTestWardrobe()
   const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
@@ -5563,6 +5660,13 @@ test('the roster brief requires an explicit category rationale and repair accoun
   assert.match(brief, /never return an unchanged rejected roster without explaining why/)
 })
 
+test('the capsule closing turn treats palette and unused-roster claims as evidence-bound facts', () => {
+  assert.match(CAPSULE_PLAN_EVIDENCE_BOUNDARY, /requested colour may serve any visual role/i)
+  assert.match(CAPSULE_PLAN_EVIDENCE_BOUNDARY, /never has to be a hero piece/i)
+  assert.match(CAPSULE_PLAN_EVIDENCE_BOUNDARY, /not demonstrated.*never rejected, bad, or previously flagged/i)
+  assert.match(CAPSULE_PLAN_EVIDENCE_BOUNDARY, /wardrobe gap only when a plan_line explicitly reports insufficient eligible supply/i)
+})
+
 // The numbers in the brief and the numbers the validator enforces have to be
 // the same numbers. A brief that states an allocation the engine does not check
 // is the mirror of the bug it fixes.
@@ -5800,6 +5904,8 @@ test('the composition brief asks the rotation to demonstrate functions, not just
   assert.match(brief, /a piece that cannot stand alone shown over a base/)
   assert.match(brief, /a specialised shoe in a look that genuinely calls for it/)
   assert.match(brief, /uses almost every ID while never showing a whole function/)
+  assert.match(brief, /A top may be worn over a dress as an overlay, or under a dress as a base layer/)
+  assert.match(brief, /garment truth explicitly supports that direction/)
 })
 
 test('the per-run composition guidance names the functions this roster actually bought', async () => {

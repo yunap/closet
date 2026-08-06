@@ -46,7 +46,10 @@ import {
   pieceBareness,
   pieceCoverage,
   shoeCoverage,
-  sleeveCoverage
+  sleeveCoverage,
+  pieceHasExplicitTopLayerEvidence,
+  pieceHasExplicitBaseLayerEvidence,
+  pieceDressSupportsUnderlayer
 } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
@@ -3066,6 +3069,48 @@ export async function selectCapsuleRosterViaModel({
 
   const paletteSupplyGaps = [describeCapsuleAccentSupplyGap(palette, bench)].filter(Boolean)
 
+  // A failed model call must not make the palette contract disappear. The old
+  // fallback returned the legacy palette-biased engine roster, which could
+  // introduce unrelated accents even when the user had named one family. Keep
+  // neutrals plus the requested family only; if that family is unavailable,
+  // this naturally produces the neutral capsule the user was promised.
+  const paletteSafeDeterministic = () => {
+    const requestedFamilies = capsuleAccentFamilyNames(palette)
+    if (!requestedFamilies.length) return deterministic()
+    const allowedPool = pool.filter(piece =>
+      colorsArePaletteNeutral(piece?.colors) ||
+      requestedFamilies.some(family => pieceMatchesAccentFamily(piece, family))
+    )
+    let roster = selectCapsuleRoster(allowedPool, { budget, isSummer, isWinter, occasions, slots, palette })
+    if (roster.length !== budget) return roster
+
+    const neutralPlan = capsuleNeutralBasePlan(budget)
+    const accentCandidates = allowedPool.filter(piece =>
+      !roster.some(selected => Number(selected.id) === Number(piece.id)) &&
+      !colorsArePaletteNeutral(piece?.colors) &&
+      requestedFamilies.some(family => pieceMatchesAccentFamily(piece, family))
+    )
+    while (capsuleNeutralBaseCount(roster) > neutralPlan.maximum) {
+      let swapped = false
+      for (const replacement of accentCandidates) {
+        const replaceIndex = roster.findIndex(piece =>
+          colorsArePaletteNeutral(piece?.colors) &&
+          wardrobeCategoryGroup(piece) === wardrobeCategoryGroup(replacement)
+        )
+        if (replaceIndex < 0) continue
+        const trial = [...roster]
+        trial[replaceIndex] = replacement
+        if (!validateCapsuleRoster(trial, { slots, budget, isSummer, isWinterCapsule: isWinter, pool: allowedPool }).valid) continue
+        roster = trial
+        accentCandidates.splice(accentCandidates.indexOf(replacement), 1)
+        swapped = true
+        break
+      }
+      if (!swapped) break
+    }
+    return roster
+  }
+
   const check = (roster) => validateCapsuleRoster(roster, {
     slots, budget, isSummer, isWinterCapsule: isWinter, pool: bench
   })
@@ -3104,7 +3149,7 @@ export async function selectCapsuleRosterViaModel({
   // pieces can be worn at all.
   bump('capsuleRosterModelFallbacks')
   return {
-    roster: deterministic(),
+    roster: paletteSafeDeterministic(),
     source: 'deterministic_fallback',
     palette: '',
     jobs: [],
@@ -3113,7 +3158,7 @@ export async function selectCapsuleRosterViaModel({
     // The spec required this disclosure at stage 3 and it was never
     // implemented: capsuleRosterSource was written and read by nothing, so a
     // fallback capsule presented exactly like a chosen one.
-    coverageGaps: [`[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${secondFailures.map(failure => failure.message).join('; ')}]`],
+    coverageGaps: [...paletteSupplyGaps, `[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${secondFailures.map(failure => failure.message).join('; ')}]`],
     failureCodes: seenCodes
   }
 }
@@ -3601,7 +3646,7 @@ export function mergePendingPlanForReplan(priorPendingPlan, newPendingPlan, {
 // both the comma and the following space are non-word characters).
 export function reasonRevisesMidSentence(reasonText = '') {
   const text = String(reasonText || '')
-  return /\bwait\b[,—\- ]|\bactually\b[, ]|\bswitching to\b|\brevising\b|\bscratch that\b|\binstead let'?s\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
+  return /\bwait\b[,—\- ]|\bactually\b[, ]|\bswitching to\b|\brevising\b|\bcorrecting\b|\bscratch that\b|\binstead let'?s\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
 }
 
 export const REASON_REVISION_MESSAGE = 'your reason revises itself mid-sentence — decide the pieces first, update piece_ids to match, and resubmit with a clean reason describing only the pieces you actually included.'
@@ -3878,6 +3923,15 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       const dressPair = outfitCategoryPairs(outfit).find(pair => pair.group === 'dress')
       const topPair = outfitCategoryPairs(outfit).find(pair => pair.group === 'top')
       if (dressPair && topPair) {
+        const dressPiece = planPiecesById.get(dressPair.id)
+        const topPiece = planPiecesById.get(topPair.id)
+        const supportsOverlay = pieceHasExplicitTopLayerEvidence(topPiece)
+        const supportsUnderlayer = pieceHasExplicitBaseLayerEvidence(topPiece) ||
+          pieceDressSupportsUnderlayer(dressPiece) ||
+          (pieceNeedsBase(dressPiece) && isCapsuleBaseCandidate(topPiece))
+        if (!supportsOverlay && !supportsUnderlayer) {
+          reasons.push(`${topPiece?.name || `piece ${topPair.id}`} + ${dressPiece?.name || `piece ${dressPair.id}`} has no recorded layering relationship — use the dress alone, or choose a top/dress whose garment truth explicitly supports an overlay or base layer`)
+        }
         const unseenIds = [dressPair.id, topPair.id].filter(id => !seenPieceIds.has(id))
         if (unseenIds.length) {
           reasons.push(`this outfit layers a top over a dress — call view_pieces on [${unseenIds.join(', ')}] first, then resubmit; layering is a sight-required decision.`)

@@ -2772,6 +2772,15 @@ const CAPSULE_EXPANSION_SCHEMA = {
   required: ['title', 'piece_ids', 'reason']
 }
 
+export function capsulePlanQuestion(currentQuestion = '', history = []) {
+  const current = String(currentQuestion || '').trim()
+  if (/\bcapsule\b/i.test(current)) return current // ratchet-allow: user plan intent, not garment text
+  const priorCapsuleRequest = [...(Array.isArray(history) ? history : [])]
+    .reverse()
+    .find(entry => entry?.role === 'user' && /\bcapsule\b/i.test(String(entry?.content || '')))?.content || '' // ratchet-allow: user plan intent, not garment text
+  return [String(priorCapsuleRequest || '').trim(), current].filter(Boolean).join('\n')
+}
+
 export function capsulePlanCompositionSchema(targetOutfits = 1) {
   const exactCount = Math.max(1, Number(targetOutfits) || 1)
   return {
@@ -2902,6 +2911,8 @@ When you do take a piece that needs a base, its base must be a genuine visual ma
 4. A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this do that nothing else here does?" If your own job line for a piece could be written about another piece you already chose, one of them is the wrong pick.
 
 PALETTE CONTRACT. The neutral foundation is automatic; the person does not have to choose or repeat neutrals. Aim for about 70% neutral or neutral-adjacent pieces, with 60–75% accepted. Colours named by the person are the ACCENT colour families for the remaining places. Neutrals are always allowed. Do not substitute an unrelated accent colour: if an eligible requested family is unavailable, keep that place neutral and say which family was unavailable in the palette line. Coverage may change which neutral garment you choose, but it does not license a random accent.
+
+The requested colour may do ANY visual job: protagonist, support, grounding, print, layer, dress, or shoe. Never require a requested colour to appear in a hero piece.
 
 State the neutral foundation and requested accent colours you built around in your own words.
 
@@ -3108,6 +3119,8 @@ export function capsulePlanCompositionSystemPrompt() {
 The rotation is what proves the capsule works. Every piece in the roster was chosen for a job, so the set of looks you return must demonstrate those jobs — a layer worn somewhere, a piece that cannot stand alone shown over a base, a specialised shoe in a look that genuinely calls for it — and not merely touch most of the pieces. A rotation that uses almost every ID while never showing a whole function has not demonstrated the capsule. Where a piece's job genuinely cannot be shown well, say so plainly in the reason of the look that comes closest rather than passing over it in silence.
 
 Return the complete representative rotation in one structured response. Use only each slot's allowed_piece_ids and submit exactly its target_outfits count. The schema requires the exact total; never return an empty or partial outfits array. Follow every submission_requirement literally. Every look needs a distinct main core: a different top+bottom pair, or a different dress — this is enforced across the ENTIRE rotation you submit, not just within one slot, so a look can repeat another slot's core and still be rejected. Do not add accessories. Keep titles and reasons concise so the complete rotation fits comfortably. Prefer combinations whose visual relationship you can judge confidently from the supplied structured garment truth. Do not rely solely on 'allowed_piece_ids' as proof of occasion fit. Allowed pieces include the whole roster; you must read each piece's explicit formality (\`lounge\`, \`everyday\`, \`elevated\`, \`dressy\`) and explicit occasions (\`home\`, \`casual\`, \`smart-casual\`, \`evening\`) in the piece catalog lines. Never assign a piece tagged \`lounge\` or \`home\` to a \`smart-casual\` or \`elevated\` slot when higher-register options exist in that slot's roster. The slot's best_for text is the lived scenario, not decorative copy: a broad occasion tag only says a piece is eligible, and does not override a garment record that says it is weak for the specific lived context (for example, home versus errands). When a slot combines adjacent contexts, state the narrower context the look genuinely serves instead of claiming it works for all of them. Every requested slot has already passed deterministic capacity checks; choose the strongest valid combinations from its allowed roster. Never reinterpret, rename, split, merge, or add slots.
+
+TOP + DRESS LAYERING: A top may be worn over a dress as an overlay, or under a dress as a base layer, but only when the supplied garment truth explicitly supports that direction. A top merely appearing beside a dress in allowed_piece_ids is not evidence of a layering relationship. Otherwise use the dress without the top.
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -3527,6 +3540,13 @@ router.post('/ask', async (req, res) => {
       req.body.threadContext || '',
       req.body.generatedContext || ''
     ].join('\n'))
+    const currentQuestion = req.body.question || ''
+    // A capsule often spans two turns: the first names the season/palette and
+    // the second answers the stylist's lifestyle clarification. The plan tool
+    // used to receive only turn two, silently dropping "in yellow" before
+    // roster selection. Preserve the most recent user capsule request as plan
+    // context; the current turn still wins when it is itself a capsule request.
+    const planQuestion = capsulePlanQuestion(currentQuestion, req.body.history)
     const toolContext = {
       generatedOutfits: [],
       source: 'whole_wardrobe',
@@ -3536,7 +3556,8 @@ router.post('/ask', async (req, res) => {
       mood: req.body.mood || '',
       mission: req.body.mission || 'mix',
       activity: req.body.activity || '',
-      question: req.body.question || '',
+      question: currentQuestion,
+      planQuestion,
       // 2026-07-10: home location is a pure fallback — an explicitly named place from this turn's
       // question (extracted by the model as search_wardrobe's own `location` arg) or an already-
       // established req.body.location both still take priority over it, per tools.js's merge order.
