@@ -1880,6 +1880,15 @@ export default function StylistChat({
   }
 
   const formatPlanNote = (note = '') => {
+    if (/^\[capsule fallback:/i.test(note)) {
+      return String(note).replace(/^\[capsule fallback:\s*/i, '').replace(/\]$/, '')
+    }
+    if (/^\[capsule (?:roster|palette|jobs):/i.test(note)) {
+      // These are evaluation/debug reports. The capsule roster is now visible
+      // in full, so ID lists, utilization arithmetic, and validator vocabulary
+      // no longer belong in the owner's result.
+      return ''
+    }
     const trim = parsePlanTrimNote(note)
     if (trim) {
       // No "you can ask for the remaining looks" here: whether that is even
@@ -1954,7 +1963,7 @@ export default function StylistChat({
     // test: 11 total lines, the 4 gap/trim lines past index 7 vanished with no signal to the user).
     // Cap the cosmetic lines instead so disclosure lines always survive.
     const CAP = 7
-    if (deduped.length <= CAP) return deduped.map(formatPlanNote)
+    if (deduped.length <= CAP) return deduped.map(formatPlanNote).filter(Boolean)
     const isCritical = (note) => /^\[/.test(note)
     const critical = deduped.filter(isCritical)
     const nonCritical = deduped.filter(note => !isCritical(note))
@@ -1962,10 +1971,12 @@ export default function StylistChat({
     return deduped
       .filter(note => isCritical(note) || keptNonCritical.has(note))
       .map(formatPlanNote)
+      .filter(Boolean)
   }
 
   const getPlanNotesTitle = (outfits = []) => {
     const plannedCards = Array.isArray(outfits) ? outfits.filter(outfit => isPlannedSetSource(outfit?.source)) : []
+    if (plannedCards.some(outfit => outfit?.capsulePlanContext)) return 'Capsule details'
     return plannedCards.some(outfit => outfit?.source === 'plan_outfit_set') ? 'Outfit plan' : 'Trip plan'
   }
 
@@ -2052,6 +2063,7 @@ export default function StylistChat({
       const prompt = getPreviousUserText(messageIndex)
       const destination = derivePlanDestination(prompt)
       const planLength = derivePlanLength(plannedCards)
+      const capsuleContext = plannedCards.find(outfit => outfit?.capsulePlanContext)?.capsulePlanContext || null
       const planOccasions = [...new Set(plannedCards
         .map(outfit => sentenceCaseLabel(outfit?.occasion || ''))
         .filter(Boolean))]
@@ -2064,7 +2076,6 @@ export default function StylistChat({
         // a chip for a summer capsule at all. capsulePlanContext is present
         // only on a real enforced capsule, and carries its own winter flag.
         (() => {
-          const capsuleContext = plannedCards.find(outfit => outfit?.capsulePlanContext)?.capsulePlanContext
           if (capsuleContext) {
             return { id: 'season', label: capsuleContext.is_winter_capsule ? 'Winter capsule' : 'Capsule' }
           }
@@ -2074,7 +2085,9 @@ export default function StylistChat({
         })(),
         message.wholeWardrobe && { id: 'wardrobe', label: 'Wardrobe only' },
       ].filter(Boolean)
-      const title = destination
+      const title = capsuleContext
+        ? 'Wardrobe capsule'
+        : destination
         ? [planLength, destination, 'outfit plan'].filter(Boolean).join(' ')
         : (plannedCards.some(outfit => outfit?.source === 'trip_precompose') ? 'Trip wardrobe plan' : 'Wardrobe outfit plan')
       return {
@@ -2781,6 +2794,27 @@ export default function StylistChat({
     const responseSections = buildResponseSections(outfits, presentation, allOutfits)
     const tripNotes = getTripPlanNotes(outfits)
     const tripOverviewRows = getTripPlanOverviewRows(tripNotes, outfits)
+    const capsuleContext = allOutfits.find(outfit => outfit?.capsulePlanContext)?.capsulePlanContext || null
+    const capsuleRoster = (() => {
+      if (!capsuleContext) return []
+      const supplied = Array.isArray(capsuleContext.roster_pieces) ? capsuleContext.roster_pieces : []
+      const suppliedById = new Map(supplied.map(piece => [Number(piece?.id), piece]))
+      return (Array.isArray(capsuleContext.roster_ids) ? capsuleContext.roster_ids : [])
+        .map(id => hydrateDisplayPiece(suppliedById.get(Number(id)) || { id: Number(id) }))
+        .filter(piece => Number(piece?.id))
+    })()
+    const capsuleGroups = [
+      ['top', 'Tops'],
+      ['bottom', 'Bottoms'],
+      ['dress', 'Dresses'],
+      ['outerwear', 'Layers'],
+      ['shoes', 'Shoes'],
+      ['accessory', 'Accessories'],
+    ].map(([category, label]) => ({
+      category,
+      label,
+      pieces: capsuleRoster.filter(piece => String(piece?.category || '').toLowerCase() === category)
+    })).filter(group => group.pieces.length)
 
     return (
       <div className="stylist-response-shell">
@@ -3035,6 +3069,53 @@ export default function StylistChat({
             </div>
           )
         })()}
+        {capsuleRoster.length > 0 && (
+          <section className="stylist-capsule-roster" aria-labelledby={`capsule-roster-${messageIndex}`}>
+            <div className="stylist-capsule-roster-heading">
+              <div>
+                <h3 id={`capsule-roster-${messageIndex}`}>Your capsule</h3>
+                <p>{capsuleRoster.length} pieces selected from your wardrobe</p>
+              </div>
+            </div>
+            <div className="stylist-capsule-groups">
+              {capsuleGroups.map(group => (
+                <section className="stylist-capsule-group" key={group.category}>
+                  <div className="stylist-capsule-group-heading">
+                    <h4>{group.label}</h4>
+                    <span>{group.pieces.length}</span>
+                  </div>
+                  <div className="stylist-capsule-piece-grid">
+                    {group.pieces.map(piece => {
+                      const photo = piece?.photo || piece?.worn_photo
+                      return (
+                        <div className="stylist-capsule-piece" key={piece.id} title={piece.name || 'Garment'}>
+                          <button
+                            type="button"
+                            className="stylist-capsule-piece-photo"
+                            disabled={!photo}
+                            onClick={event => {
+                              if (!photo) return
+                              previewReturnFocusRef.current = event.currentTarget
+                              setPreviewImage({ src: `/uploads/${photo}`, title: piece.name || 'Garment', meta: group.label, pieceId: piece.id })
+                            }}
+                            aria-label={photo ? `Open ${piece.name || 'garment'} preview` : undefined}
+                          >
+                            {photo ? (
+                              <img src={resolveUploadThumbnailSrc(photo, 'chat-garment')} alt={piece.name || 'Garment'} loading="lazy" decoding="async" />
+                            ) : (
+                              <span>needs photo</span>
+                            )}
+                          </button>
+                          <div className="stylist-capsule-piece-name">{piece.name || 'Garment'}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </section>
+        )}
         {tripNotes.length > 0 && (
           <div className="stylist-overview">
             <div className="stylist-overview-title">{getPlanNotesTitle(outfits)}</div>
@@ -3054,6 +3135,12 @@ export default function StylistChat({
                 {tripNotes.map((note, noteIdx) => <div key={noteIdx}>{note}</div>)}
               </div>
             </details>
+          </div>
+        )}
+        {capsuleRoster.length > 0 && responseSections.length > 0 && (
+          <div className="stylist-example-outfits-heading">
+            <h3>Example outfits</h3>
+            <p>Ways to wear the capsule pieces</p>
           </div>
         )}
         {responseSections.map((section, sectionIndex) => (
