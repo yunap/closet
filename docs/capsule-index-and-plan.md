@@ -3,12 +3,10 @@
 Written 2026-07-30. **Start here** for anything capsule-related. This is the map and the sequence;
 the detail lives in the documents linked below.
 
-> **Current contract — corrected 2026-08-06.** Read
-> [capsule-lifestyle-contract-2026-08-06.md](capsule-lifestyle-contract-2026-08-06.md) before using
-> the older category conclusions in this index. Published category formulas are now model starting
-> guidance, not universal validator rules. Hard checks follow the user's elicited lifestyle,
-> climate, owner rules, activity-specific footwear, and actual garment dependencies. Outfit-card
-> counts are presentation scope and do not multiply garment requirements.
+> **Current behavior — updated through merged PR #213.** Read
+> [capsule-current-behaviour.md](capsule-current-behaviour.md) first. It is the canonical product
+> and engine contract. This index and the linked research documents preserve how the decisions were
+> reached; older hard layer, dress, shoe, statement, and card-derived quotas are historical.
 
 ## 1. How we got into this
 
@@ -37,6 +35,7 @@ a comment explaining the reasoning is not one of those.**
 
 | document | what it settles |
 |---|---|
+| [capsule-current-behaviour.md](capsule-current-behaviour.md) | **Canonical current behavior.** Intake, model/engine selection flow, current hard checks, category guidance, palette contract, top/dress layering, evidence boundaries, and current comparison status. |
 | [capsule-lifestyle-contract-2026-08-06.md](capsule-lifestyle-contract-2026-08-06.md) | **Current capsule contract.** Session record; real production intake; comparison-harness correction; which requirements are guidance, hard checks, or retired. |
 | [capsule-real-world-rules.md](capsule-real-world-rules.md) | Historical category research across six frameworks, now corrected: the counts describe common starting shapes rather than universal validity rules. |
 | [capsule-palette-rules.md](capsule-palette-rules.md) | Palette. 2–4 neutrals + 1–2 secondary + 1–2 accents; 60–70% neutral; the accent-connectivity rule; the 60/30/10 misattribution. |
