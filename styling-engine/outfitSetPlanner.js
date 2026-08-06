@@ -3024,6 +3024,7 @@ export async function selectCapsuleRosterViaModel({
 
   const { bench, diagnostics } = buildCapsuleBench(pool, { budget, slots, isSummer, isWinter, benchSize, palette })
   const benchById = pieceMapForPieces(bench)
+  const quotas = capsuleQuotas(budget, { isSummer, isWinter })
 
   // Resolve a model answer into real pieces. Anything outside the bench, or the
   // wrong count, is a contract failure rather than something to quietly clamp —
@@ -3045,6 +3046,60 @@ export async function selectCapsuleRosterViaModel({
         code: 'roster_size',
         message: `selected ${unique.length} pieces; this capsule must contain exactly ${budget}`
       })
+    }
+    // Provider responses use the accountability fields required by the
+    // production schema. Injected offline choosers written before that schema
+    // intentionally remain usable; when the fields are present, every claim is
+    // checked against garment truth rather than trusted as prose.
+    if (Object.prototype.hasOwnProperty.call(answer || {}, 'category_counts')) {
+      const groups = ['top', 'bottom', 'dress', 'outerwear', 'shoes']
+      const actualCounts = Object.fromEntries(groups.map(group => [
+        group,
+        roster.filter(piece => wardrobeCategoryGroup(piece) === group).length
+      ]))
+      const reportedCounts = answer?.category_counts || {}
+      const miscounted = groups.filter(group => Number(reportedCounts[group]) !== actualCounts[group])
+      if (miscounted.length) {
+        contractFailures.push({
+          code: 'category_accounting',
+          message: `reported category counts do not match the selected IDs: ${miscounted.map(group => `${group} reported ${Number(reportedCounts[group]) || 0}, actual ${actualCounts[group]}`).join('; ')}`
+        })
+      }
+
+      const departures = Array.isArray(answer?.category_departures) ? answer.category_departures : []
+      const departureProblems = []
+      for (const group of groups) {
+        const target = Number(quotas[group]) || 0
+        const actual = actualCounts[group]
+        const matching = departures.filter(entry => String(entry?.category || '') === group)
+        if (actual === target && matching.length) departureProblems.push(`${group} matches its target but declares a departure`)
+        if (actual !== target && matching.length !== 1) departureProblems.push(`${group} is ${actual} against target ${target} but needs exactly one departure reason`)
+        if (actual !== target && matching.length === 1) {
+          const entry = matching[0]
+          if (Number(entry.target_count) !== target || Number(entry.selected_count) !== actual || !String(entry.reason || '').trim()) {
+            departureProblems.push(`${group} departure must state target ${target}, selected ${actual}, and a reason`)
+          }
+        }
+      }
+      if (departureProblems.length) {
+        contractFailures.push({ code: 'category_departure', message: departureProblems.join('; ') })
+      }
+
+      const jobs = Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : []
+      const jobIds = jobs.map(entry => Number(entry?.piece_id)).filter(Boolean)
+      const selectedSet = new Set(roster.map(piece => Number(piece.id)))
+      const missingJobs = [...selectedSet].filter(id => !jobIds.includes(id))
+      const extraJobs = [...new Set(jobIds.filter(id => !selectedSet.has(id)))]
+      const duplicateJobs = [...new Set(jobIds.filter((id, index) => jobIds.indexOf(id) !== index))]
+      const blankJobs = jobs.filter(entry => !String(entry?.job || '').trim()).map(entry => Number(entry?.piece_id)).filter(Boolean)
+      if (missingJobs.length || extraJobs.length || duplicateJobs.length || blankJobs.length) {
+        const details = []
+        if (missingJobs.length) details.push(`missing jobs for IDs ${missingJobs.join(', ')}`)
+        if (extraJobs.length) details.push(`jobs for unselected IDs ${extraJobs.join(', ')}`)
+        if (duplicateJobs.length) details.push(`duplicate jobs for IDs ${duplicateJobs.join(', ')}`)
+        if (blankJobs.length) details.push(`blank jobs for IDs ${blankJobs.join(', ')}`)
+        contractFailures.push({ code: 'piece_job_coverage', message: details.join('; ') })
+      }
     }
     return { roster, contractFailures, palette: String(answer?.palette || '').trim(), jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [] }
   }
@@ -3077,7 +3132,6 @@ export async function selectCapsuleRosterViaModel({
   // the allocation: the user text carried season, size, palette, owner rules,
   // use cases and candidates, and nothing about category shape. It was being
   // graded against a rubric it could not see.
-  const quotas = capsuleQuotas(budget, { isSummer, isWinter })
   const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, quotas, attempt: 1, failures: [], ownerRules }))
   let failures = record([...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)])
   if (!failures.length) {
