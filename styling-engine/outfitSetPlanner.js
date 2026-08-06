@@ -46,7 +46,10 @@ import {
   pieceBareness,
   pieceCoverage,
   shoeCoverage,
-  sleeveCoverage
+  sleeveCoverage,
+  pieceHasExplicitTopLayerEvidence,
+  pieceHasExplicitBaseLayerEvidence,
+  pieceDressSupportsUnderlayer
 } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
@@ -3643,7 +3646,7 @@ export function mergePendingPlanForReplan(priorPendingPlan, newPendingPlan, {
 // both the comma and the following space are non-word characters).
 export function reasonRevisesMidSentence(reasonText = '') {
   const text = String(reasonText || '')
-  return /\bwait\b[,—\- ]|\bactually\b[, ]|\bswitching to\b|\brevising\b|\bscratch that\b|\binstead let'?s\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
+  return /\bwait\b[,—\- ]|\bactually\b[, ]|\bswitching to\b|\brevising\b|\bcorrecting\b|\bscratch that\b|\binstead let'?s\b/i.test(text) // ratchet-allow: model's own reply prose, not garment matching
 }
 
 export const REASON_REVISION_MESSAGE = 'your reason revises itself mid-sentence — decide the pieces first, update piece_ids to match, and resubmit with a clean reason describing only the pieces you actually included.'
@@ -3920,6 +3923,15 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       const dressPair = outfitCategoryPairs(outfit).find(pair => pair.group === 'dress')
       const topPair = outfitCategoryPairs(outfit).find(pair => pair.group === 'top')
       if (dressPair && topPair) {
+        const dressPiece = planPiecesById.get(dressPair.id)
+        const topPiece = planPiecesById.get(topPair.id)
+        const supportsOverlay = pieceHasExplicitTopLayerEvidence(topPiece)
+        const supportsUnderlayer = pieceHasExplicitBaseLayerEvidence(topPiece) ||
+          pieceDressSupportsUnderlayer(dressPiece) ||
+          (pieceNeedsBase(dressPiece) && isCapsuleBaseCandidate(topPiece))
+        if (!supportsOverlay && !supportsUnderlayer) {
+          reasons.push(`${topPiece?.name || `piece ${topPair.id}`} + ${dressPiece?.name || `piece ${dressPair.id}`} has no recorded layering relationship — use the dress alone, or choose a top/dress whose garment truth explicitly supports an overlay or base layer`)
+        }
         const unseenIds = [dressPair.id, topPair.id].filter(id => !seenPieceIds.has(id))
         if (unseenIds.length) {
           reasons.push(`this outfit layers a top over a dress — call view_pieces on [${unseenIds.join(', ')}] first, then resubmit; layering is a sight-required decision.`)

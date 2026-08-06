@@ -157,6 +157,21 @@ restaurant cards does not create a hard requirement for two or three dressy shoe
 The production lifestyle-elicitation reply itself was not changed because inspection showed it was
 already doing the right job.
 
+### 5.1 Composition integrity follow-up
+
+An offline replay of thread `thread_1786036700758` found a separate composition defect in the
+saved card titled “White Tank + Black-Brown Lace Floral Dress.” Its prose corrected itself and
+said the tank was excluded, but the structured `piece_ids` still contained the tank. Because the
+capsule composer previously treated any visually seen top and dress as a permissible pairing, the
+stale IDs survived validation.
+
+The composition validator now rejects a top-plus-dress look unless garment truth supports one of
+the two legitimate directions: the top is an overlay worn over the dress, or the top is a base
+layer worn under a compatible dress. Both pieces must still have been viewed. The self-revision
+detector also recognizes “Correcting:” so prose that contradicts its own submitted IDs is sent
+back for repair. The exact saved-card shape is covered by an offline regression test; explicit
+overlay and explicit base-layer combinations remain valid.
+
 ## 6. Verification and current handoff
 
 On branch `codex/capsule-lifestyle-contract`:

@@ -498,6 +498,44 @@ export function hasSleevelessConstruction(p) {
   return ['none', 'sleeveless', 'strap', 'tank', 'cami', 'camisole', 'halter'].includes(sleeve)
 }
 
+function pieceLayerIntentText(piece = {}) {
+  const styleProfile = piece.style_profile_json && typeof piece.style_profile_json === 'object'
+    ? JSON.stringify(piece.style_profile_json)
+    : piece.style_profile_json
+  return [piece.name, piece.category, piece.reads_as, piece.garment_type, piece.silhouette,
+    piece.notes, piece.engine_notes, styleProfile].filter(Boolean).join(' ').toLowerCase()
+}
+
+// TODO: backfill a structured layering_role field. Until then, keep this
+// fallback centralized here: attributes.js is the only layer allowed to
+// interpret garment text.
+export function pieceHasExplicitTopLayerEvidence(piece = {}) {
+  const text = pieceLayerIntentText(piece)
+  return /\b(cardigan|jacket|overshirt|button[- ]?(up|down)|shirt[- ]?jacket|vest|kimono|wrap|coat|blazer)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+    /\b(layering|layer|top layer|overlayer|overlay|over-piece|over piece)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+    /\b(worn|wear)\s+(open|over)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+    /\b(over|on top of)\s+(a\s+)?(tee|t-shirt|t shirt|tank|camisole|base|dress)\b/.test(text) // ratchet-allow: fallback for missing layering_role
+}
+
+export function pieceHasExplicitBaseLayerEvidence(piece = {}) {
+  const text = pieceLayerIntentText(piece)
+  return /\b(base layer|underlayer|under-layer)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+    /\b(worn|wear)\s+under\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+    /\bunder\s+(a\s+)?(dress|pinafore|jumper dress)\b/.test(text) // ratchet-allow: fallback for missing layering_role
+}
+
+export function pieceDressSupportsUnderlayer(piece = {}) {
+  const text = pieceLayerIntentText(piece)
+  return /\b(pinafore|jumper dress)\b/.test(text) || // ratchet-allow: fallback for missing layering_role
+    /\b(worn|wear)\s+over\s+(a\s+)?(top|tee|t-shirt|t shirt|tank|camisole|base layer)\b/.test(text) // ratchet-allow: fallback for missing layering_role
+}
+
+export function pieceReadsAsStandaloneBaseTop(piece = {}) {
+  const text = pieceLayerIntentText(piece)
+  return /\b(tee|t-shirt|t shirt|crew tee|graphic tee|tank|camisole|cami|shell)\b/.test(text) && // ratchet-allow: fallback for missing layering_role
+    !pieceHasExplicitTopLayerEvidence(piece)
+}
+
 /**
  * Shared, deterministic image detail policy for Anthropic candidate thumbnails.
  * High visual complexity (hero/accent roles, non-solid patterns, textured weaves)

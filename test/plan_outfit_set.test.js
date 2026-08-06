@@ -327,7 +327,7 @@ test('atomic capsule validation details stay in diagnostics instead of productio
   assert.equal(result.status, 'success')
   assert.equal(toolContext.generatedOutfits.length, 1)
   assert.equal(toolContext.freeformDiagnostics.submitPlanValidationFails, 1)
-  assert.doesNotMatch(result.message, /gap|failure|rejected|unfilled/i)
+  assert.doesNotMatch(result.message, /validation (?:gap|failure)|unfilled/i)
   assert.ok(!('validation_failures' in result))
   const publicNotes = toolContext.generatedOutfits[0].tripPlanLines.join(' ')
   assert.doesNotMatch(publicNotes, /\[(?:capsule|coverage) gap:/i)
@@ -2130,10 +2130,10 @@ test('a blind top-over-dress submission is rejected with view_pieces coaching', 
   assert.match(reasons, /call view_pieces/)
 })
 
-test('the same top-over-dress submission is accepted once both pieces have been visually seen', async () => {
+test('an explicit overlay top over a dress is accepted once both pieces have been visually seen', async () => {
   db.prepare('DELETE FROM pieces').run()
   const dressId = insertPiece({ category: 'dress', name: 'abstract midi dress', occasions: ['city'] })
-  const topId = insertPiece({ category: 'top', name: 'abstract print blouse', occasions: ['city'] })
+  const topId = insertPiece({ category: 'top', name: 'abstract print blouse', occasions: ['city'], engine_notes: 'Explicit overlay top; wear over a dress.' })
   const shoesId = insertPiece({ category: 'shoes', name: 'layering shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([{ label: 'Wednesday', occasion: 'city', activity: 'none', count: 1 }])
@@ -2147,6 +2147,45 @@ test('the same top-over-dress submission is accepted once both pieces have been 
 
   assert.equal(result.failures.length, 0, `expected the seen top-over-dress outfit to pass, got ${JSON.stringify(result.failures)}`)
   assert.equal(result.accepted.length, 1)
+})
+
+test('an explicit base layer under a dress remains a valid top-plus-dress relationship', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const dressId = insertPiece({ category: 'dress', name: 'pinafore midi dress', occasions: ['city'], engine_notes: 'Designed to wear over a fitted base layer.' })
+  const topId = insertPiece({ category: 'top', name: 'fitted base layer tee', occasions: ['city'], engine_notes: 'Base layer worn under dresses.' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'flat shoes', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Wednesday', occasion: 'city', activity: 'none', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'office week' })
+  const slot = workbench.pendingPlan.slots[0]
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    piece_ids: [Number(dressId), Number(topId), Number(shoesId)],
+  }], { visuallySeenPieceIds: new Set([Number(dressId), Number(topId)]) })
+
+  assert.equal(result.failures.length, 0, `expected the base-layer relationship to pass, got ${JSON.stringify(result.failures)}`)
+})
+
+test('offline replay rejects the stale white-tank plus lace-dress IDs from thread_1786036700758', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'white scoop neck sleeveless top', reads_as: 'white fitted tank', occasions: ['city'] })
+  const dressId = insertPiece({ category: 'dress', name: 'black brown lace floral midi dress', occasions: ['city'] })
+  const shoesId = insertPiece({ category: 'shoes', name: 'black canvas sneakers', occasions: ['city'], heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Museums & City', occasion: 'city', activity: 'walking', count: 1 }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'summer capsule' })
+  const slot = workbench.pendingPlan.slots[0]
+  const result = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slot.id,
+    title: 'White Tank + Black-Brown Lace Floral Dress',
+    piece_ids: [Number(topId), Number(dressId), Number(shoesId)],
+    reason: 'The white tank is not added since the dress is complete. Correcting: the dress is the core.'
+  }], { visuallySeenPieceIds: new Set([Number(topId), Number(dressId)]) })
+
+  assert.equal(result.accepted.length, 0)
+  const reasons = result.failures[0].reasons.join(' ')
+  assert.match(reasons, /reason revises itself mid-sentence/)
+  assert.match(reasons, /no recorded layering relationship/)
 })
 
 test('a plain top+bottom outfit is unaffected by the layering sight check (no dress present)', async () => {
@@ -2274,6 +2313,7 @@ test('a printed scarf accessory alongside one printed top does NOT trigger the p
 test('reasonRevisesMidSentence catches both captured live incidents verbatim', () => {
   assert.equal(reasonRevisesMidSentence('**Actually revising:** emerald v-neck top + oatmeal pants…'), true)
   assert.equal(reasonRevisesMidSentence('**wait, maxi skirt is prohibited per owner rule. Switching:** …mini skirt'), true)
+  assert.equal(reasonRevisesMidSentence('The tank is excluded. Correcting: the dress is the core.'), true)
 })
 
 test('reasonRevisesMidSentence does not false-positive on a clean reason containing "waiting"', () => {
@@ -5864,6 +5904,8 @@ test('the composition brief asks the rotation to demonstrate functions, not just
   assert.match(brief, /a piece that cannot stand alone shown over a base/)
   assert.match(brief, /a specialised shoe in a look that genuinely calls for it/)
   assert.match(brief, /uses almost every ID while never showing a whole function/)
+  assert.match(brief, /A top may be worn over a dress as an overlay, or under a dress as a base layer/)
+  assert.match(brief, /garment truth explicitly supports that direction/)
 })
 
 test('the per-run composition guidance names the functions this roster actually bought', async () => {

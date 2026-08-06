@@ -28,7 +28,7 @@ import {
   MIN_ENFORCED_CAPSULE_BUDGET
 } from './outfitSetPlanner.js'
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
-import { bottomKind } from './attributes.js'
+import { bottomKind, pieceReadsAsStandaloneBaseTop } from './attributes.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 
 export const CAPSULE_PLAN_EVIDENCE_BOUNDARY = ` Capsule evidence boundary: a requested colour may serve any visual role and never has to be a hero piece. A roster piece absent from the representative cards means only "not demonstrated" — never rejected, bad, or previously flagged. State a requested-colour shortage or wardrobe gap only when a plan_line explicitly reports insufficient eligible supply; absence from the roster or cards is not supply evidence.`
@@ -274,34 +274,9 @@ function freeformOutfitDebugTrace({ resolvedOccasion = '', resolvedActivity = ''
   }
 }
 
-function layerIntentText(piece = {}) {
-  const styleProfile = piece.style_profile_json && typeof piece.style_profile_json === 'object'
-    ? JSON.stringify(piece.style_profile_json)
-    : piece.style_profile_json
-  return [
-    piece.name,
-    piece.category,
-    piece.reads_as,
-    piece.garment_type,
-    piece.silhouette,
-    piece.notes,
-    piece.engine_notes,
-    styleProfile
-  ].filter(Boolean).join(' ').toLowerCase()
-}
-
-function hasExplicitTopLayerEvidence(text) {
-  return /\b(cardigan|jacket|overshirt|button[- ]?(up|down)|shirt[- ]?jacket|vest|kimono|wrap|coat|blazer)\b/.test(text) || // ratchet-allow: role-intent evidence for layer validation, not garment recommendation matching
-    /\b(layering|layer|top layer|overlayer|overlay|over-piece|over piece)\b/.test(text) || // ratchet-allow: role-intent evidence for layer validation, not garment recommendation matching
-    /\b(worn|wear)\s+(open|over)\b/.test(text) || // ratchet-allow: role-intent evidence for layer validation, not garment recommendation matching
-    /\b(over|on top of)\s+(a\s+)?(tee|t-shirt|t shirt|tank|camisole|base)\b/.test(text) // ratchet-allow: role-intent evidence for layer validation, not garment recommendation matching
-}
-
 function isStandaloneBaseTopAsLayer(piece) {
   if (piece.role !== 'layer_top') return false
-  const text = layerIntentText(piece)
-  const readsLikeBaseTop = /\b(tee|t-shirt|t shirt|crew tee|graphic tee|tank|camisole|cami|shell)\b/.test(text) // ratchet-allow: role-structure validation for tops assigned as layers, not garment recommendation matching
-  return readsLikeBaseTop && !hasExplicitTopLayerEvidence(text)
+  return pieceReadsAsStandaloneBaseTop(piece)
 }
 
 function roleCategoryIssue(piece = {}) {
