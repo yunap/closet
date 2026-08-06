@@ -66,10 +66,14 @@ const SCENARIOS = [
     isSummer: true, budget: 24,
     question: 'I want a summer capsule',
     slots: [
-      { id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home', targetOutfits: 3 },
-      { id: 'city', label: 'City Outings', occasion: 'city', activity: 'walking', bestFor: 'walking, museums', targetOutfits: 3 },
-      { id: 'brunch', label: 'Brunch', occasion: 'smart casual', bestFor: 'brunch and galleries', targetOutfits: 2 },
-      { id: 'dinner', label: 'Restaurant Dinner', occasion: 'evening', bestFor: 'restaurant dinner', environment: 'indoor', targetOutfits: 2 },
+      // Exact lived-context answer from the first production "I want a summer
+      // capsule" intake (thread_1785272841293). The old synthetic scenario
+      // silently dropped errands, social events and nature walks, so it was
+      // judging footwear against a life the person never described.
+      { id: 'casual_home_errands', label: 'Casual / Home / Errands', occasion: 'casual', bestFor: 'casual days at home, errands, and weekends out', environment: 'indoor', targetOutfits: 3 },
+      { id: 'nature_walk', label: 'Nature Walk', occasion: 'casual', activity: 'walking', bestFor: 'nature walks with the dog', environment: 'outdoor', targetOutfits: 2 },
+      { id: 'city_outing_museum', label: 'City Outing / Museum', occasion: 'city', activity: 'walking', bestFor: 'museums and city outings', environment: 'outdoor', targetOutfits: 3 },
+      { id: 'restaurant_social', label: 'Restaurant / Social', occasion: 'smart casual', bestFor: 'restaurants and social events', environment: 'indoor', targetOutfits: 3 },
     ],
   },
   {

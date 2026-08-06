@@ -7,6 +7,19 @@
 Researched 2026-07-30. Every citation below is linked; nothing in this document is
 inferred from the engine's own behaviour.
 
+> **Correction — 2026-08-06.** The source table is useful evidence about common
+> capsule shapes, but the original synthesis below overstates what it proves.
+> Project 333 deliberately has no category split, Un-Fancy describes its count
+> as personal and flexible, and the published formulas disagree with one
+> another. Therefore their category counts are starting guidance, not universal
+> validity rules. The app now validates jobs demanded by the user's actual
+> lifestyle and conditions: usable everyday bases, distinct activity footwear,
+> weather needs, elevated coverage when an elevated use case exists, and owner
+> rules. It does not reject a roster merely for lacking a fixed number of
+> dresses, statement pieces, layers, or winter sleeves. The number of example
+> looks requested for a use case is presentation scope, not evidence that the
+> wardrobe needs duplicate garments for that job.
+
 ## Why this document exists
 
 `capsuleQuotas` in `styling-engine/outfitSetPlanner.js` decides how many tops, bottoms,
@@ -48,11 +61,13 @@ document exists to replace.
 | [20-piece](https://theeleganceedit.com/capsule-wardrobe-formula-guide/) | 20 | 5 | 5 | 1 | **4** layers | 3 | Plus 2 "completer" accessories. |
 | [30–40 piece range](https://modernminimalism.com/how-to-build-a-capsule-wardrobe/) | 30–40 | 8–10 | 5–6 | 2–3 | 3–5 sweaters/cardigans | 3–4 | The most commonly cited *range* rather than a fixed number. |
 
-## What the frameworks agree on
+## Patterns in the sampled formulas (guidance, not requirements)
 
-These hold across sources that otherwise disagree about totals.
+These patterns can help a stylist form an initial roster. They do not override
+the wearer's climate, activities, preferences, or the garments actually
+available.
 
-### 1. A summer capsule carries two layers — never zero
+### 1. Two light summer layers are a common published example
 
 > "Even in summer, evenings cool down and over air-conditioned restaurants exist, so two
 > layers are enough."
@@ -61,18 +76,19 @@ These hold across sources that otherwise disagree about totals.
 The canonical pair is a denim jacket plus a lightweight cardigan or knit. The 24-piece
 summer capsule allots exactly 2 layering items.
 
-**No source treats summer as a no-layer season.** The stated reasons are air conditioning
-and evening temperature drop — both of which apply to a capsule that has to cover whole
-days.
+The stated reasons are air conditioning and evening temperature drop. Those are
+real use cases when they apply, but they do not establish a universal two-layer
+minimum for every wearer and climate.
 
-### 2. Outerwear count is season-invariant; the *pieces* change, not the *number*
+### 2. Seasons often change the kind of layer
 
 Un-Fancy applies the same 37-piece framework year round and swaps which outerwear is
 active — a wool coat goes into under-bed storage in summer, a lightweight layer takes its
 place. The allocation stays at 2.
 
-This is the single most important finding for this engine: **season should decide which
-outerwear qualifies, never how many.**
+This supports seasonally appropriate layer selection. It does not prove that the
+count is invariant: climate and the user's activities decide whether and how many
+layers have a real job.
 
 ### 3. Roughly 3 tops per bottom
 

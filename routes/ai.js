@@ -2896,7 +2896,7 @@ Every place in this capsule is finite, and one piece taking a place is another p
 
 When you do take a piece that needs a base, its base must be a genuine visual match, not merely present: check opacity and coverage (an open-weave or sheer base does not conceal what it needs to), neckline and strap or sleeve shape, length, bulk, and colour relationship — whether the base is meant to stay hidden or to show intentionally as part of the look. "A tank exists in the roster" is not sufficient; the tank has to actually sit right under that particular construction. Weigh which kind of dependency this is: a strong one, where the base also works alone, supports another piece, and appears in other looks — a connector with multiple jobs, more likely to justify the second slot — versus a weak one, where the base exists only to make this one piece wearable, is never shown alone, and produces only a look or two. A weak dependency needs unusual visual strength, useful context coverage, or a role nothing else in the set fills to justify itself at all. If you do take more than one piece that needs a base, each one individually has to clear this bar on its own merits — giving them different bases is necessary, but it does not by itself justify either one's two-slot cost.
 
-3. FOOTWEAR THAT SUITS THE SEASON AND THE CONTEXTS. A shoe passing the engine's gates only means it is technically eligible. Ask instead whether you would actually wear it in this season for these use cases, and what job it does that another chosen pair does not. If the requested contexts include anywhere polished, give the set more than one convincing polished option — or, if the candidates genuinely cannot, say so in your palette line rather than padding the count with a pair that has no job.
+3. FOOTWEAR THAT SUITS THE SEASON AND THE CONTEXTS. A shoe passing the engine's gates only means it is technically eligible. Ask instead whether you would actually wear it in this season for these use cases, and what job it does that another chosen pair does not. Cover each materially different footwear job the lifestyle asks for — such as home/casual wear, walking-heavy city days, nature walks, weather, or polished social occasions. One versatile shoe may cover more than one job; do not manufacture duplicates from the number of representative outfits requested.
 
 4. A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this do that nothing else here does?" If your own job line for a piece could be written about another piece you already chose, one of them is the wrong pick.
 
@@ -2945,43 +2945,23 @@ The replacements you bring in are held to the same standard as the original pick
 // the two halves separately (see chooseCapsuleRosterWithProvider) so the cache
 // prefix survives; this function stays whole so "what did the model actually
 // read" remains answerable from one call.
-// The researched category allocation, stated to the model because the engine
-// judges against it. Two live runs (thread_1785711580188, thread_1785883879348)
+// A practitioner-formula starting allocation, stated to the model as guidance.
+// Two live runs (thread_1785711580188, thread_1785883879348)
 // exhausted their repair round and fell back to the deterministic roster after
 // selecting ZERO dresses — while this text told them season, size, palette,
 // owner rules, use cases and candidates, and nothing about category shape.
 //
-// Two tiers, kept honestly apart. The allocation itself is a TARGET: the
-// validator does not enforce a tops or bottoms count, so presenting it as a
-// requirement would invent a constraint the engine does not check. The two
-// rules named as hard are the two that have actually rejected a roster —
-// `layer_floor:outerwear`/`category_ceiling:outerwear` (an exact count, floor
-// and ceiling) and `dress_presence`, which wants one dress in the roster.
-//
-// The dress rule used to demand that the one dress also clear the plan's
-// strictest register, and this text said so. Owner ruling 2026-08-05: a capsule
-// should hold a dress, but nothing says it has to be casual. Both the condition
-// and this sentence dropped the register half — a brief that overstates the
-// requirement is the same defect as one that hides it.
-//
-// This adds no score, gate or quota. The allocation is already deterministic
-// and settled (docs/capsule-real-world-rules.md); the brief was simply not
-// disclosing it.
+// The figures come from example capsule breakdowns, not a universal standard.
+// They must yield to the lived use cases supplied by the conversational intake.
 function capsuleAllocationBlock(quotas = null, budget = 24) {
   if (!quotas || typeof quotas !== 'object') return ''
   const line = ['top', 'bottom', 'dress', 'outerwear', 'shoes']
     .map(group => `${group === 'outerwear' ? 'layers' : group}: ${Number(quotas[group]) || 0}`)
     .join(' · ')
-  const layers = Number(quotas.outerwear) || 0
-  const dresses = Number(quotas.dress) || 0
   return `
 
-CATEGORY SHAPE FOR ${budget} PIECES — ${line}
-This is the researched shape of a capsule this size, and it is what the engine checks your selection against. Treat the counts as targets you should have a reason to depart from, not a formula: if a use case genuinely needs another top more than a third dress, say so in your palette line.
-
-Two of them are hard, and a roster that misses either is sent back to you:
-- Layers: exactly ${layers}. Not fewer, not more. The allowance is season-invariant — a summer capsule still needs ${layers} for air-conditioned interiors and evenings that cool off — and another category may not absorb the places.
-- Dresses: at least one${dresses > 1 ? `, out of the ${dresses} the shape allots` : ''}. Any register — it does not have to be a casual dress. A dress is a complete outfit core on its own, which is capacity separates cannot replace.`
+CATEGORY STARTING SHAPE FOR ${budget} PIECES — ${line}
+This is planning guidance from common capsule examples, not a validity formula. Adapt it to the supplied lifestyle jobs, climate, owner rules and actual candidates. Dresses and layers earn places only when they serve those facts; do not add or remove them merely to hit a category number. Explain every departure in category_departures.`
 }
 
 export function capsuleRosterSelectionUserText({
