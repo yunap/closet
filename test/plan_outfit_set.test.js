@@ -5614,19 +5614,41 @@ test('the allocation stated in the brief matches what the validator actually enf
   })
   const layerFloor = conditions.find(c => c.code === 'layer_floor:outerwear')
   const layerCeiling = conditions.find(c => c.code === 'category_ceiling:outerwear')
-  const dressReserve = conditions.find(c => c.code === 'register_reserve:dress')
+  const dressPresence = conditions.find(c => c.code === 'dress_presence')
 
   // "Layers: exactly 2" is true because floor and ceiling are both the quota.
   assert.equal(layerFloor.required, quotas.outerwear)
   assert.equal(layerCeiling.maximum, quotas.outerwear)
-  // "Dresses: at least one" is the register reserve, which is capped at 1.
-  assert.equal(dressReserve.required, 1)
+  // "Dresses: at least one" is presence-only; it carries no register test.
+  assert.equal(dressPresence.required, 1)
+  assert.equal(conditions.some(c => c.code === 'register_reserve:dress'), false)
   // And nothing enforces a tops/bottoms/shoes COUNT, which is why the brief
   // presents those as targets rather than requirements.
   for (const group of ['top', 'bottom']) {
     const floor = conditions.find(c => c.code === `${group}_floor` || (c.group === group && c.required === quotas[group]))
     assert.equal(floor, undefined, `${group} must not be enforced as an exact count`)
   }
+})
+
+test('optional layers keep their researched count without inheriting the casual register reserve', () => {
+  const quotas = { top: 8, bottom: 7, dress: 3, outerwear: 2, shoes: 4 }
+  const conditions = capsuleRosterPostConditions({
+    quotas,
+    // Deliberately include the legacy outerwear entry: post-conditions must
+    // not revive it even if an older caller constructs this reserve shape.
+    reserve: { rank: formalityRank('everyday'), looks: 3, byGroup: { top: 2, bottom: 2, outerwear: 1, shoes: 2 } },
+    roster: []
+  })
+
+  assert.equal(
+    conditions.some(condition => condition.code === 'register_reserve:outerwear'),
+    false,
+    'outerwear is optional in a complete outfit, so it has no lowest-register reserve'
+  )
+  const layerFloor = conditions.find(condition => condition.code === 'layer_floor:outerwear')
+  const layerCeiling = conditions.find(condition => condition.code === 'category_ceiling:outerwear')
+  assert.equal(layerFloor.required, 2, 'the researched two-layer allocation remains mandatory')
+  assert.equal(layerCeiling.maximum, 2, 'another category still cannot consume a layer slot')
 })
 
 test('owner rules reach the roster-selection user text, placed before the candidate catalog', () => {
