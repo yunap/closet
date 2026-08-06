@@ -4,6 +4,11 @@ Written 2026-08-06. This is the durable record of the engine/model comparison ar
 PR #206, the live comparison runs that followed, and the resulting correction to capsule roster
 requirements.
 
+> **Status:** the corrections described here are merged through PR #213. For the concise canonical
+> description of production behavior, read
+> [capsule-current-behaviour.md](capsule-current-behaviour.md). This document preserves the detailed
+> reasoning and live-run sequence.
+
 ## Decision in one sentence
 
 A capsule is selected for the life the user described. Published category formulas are useful
@@ -172,34 +177,39 @@ detector also recognizes “Correcting:” so prose that contradicts its own sub
 back for repair. The exact saved-card shape is covered by an offline regression test; explicit
 overlay and explicit base-layer combinations remain valid.
 
-## 6. Verification and current handoff
+## 6. Verification and merged status
 
-On branch `codex/capsule-lifestyle-contract`:
+The corrected real-lifestyle comparison resolved all 70 bench photos and the accepted model roster
+passed on its first provider call. It contained 24 pieces, matched the example 8/7/3/2/4 shape, and
+reported stronger measured capacity for all four real use cases than the deterministic roster.
 
-- `node --test test/plan_outfit_set.test.js`: **247/247 passed**;
-- style-constitution check: passed;
-- text-matching ratchet: passed;
-- live-data comparison dry run: resolved all 70 photos, reproduced the four real use cases, and
-  stopped before a provider call;
-- `git diff --check`: passed.
+The later yellow-palette app run exposed two additional defects now included in the merged
+contract: the first-turn palette was lost when the next turn answered lifestyle intake, and the
+closing response inferred shortage and prior rejection without evidence. Palette context is now
+preserved across the clarification turn; fallback obeys the same requested-family boundary; and
+shortage/bad-piece claims require explicit evidence.
 
-The full repository suite also exposed unrelated current-main failures: sandbox-denied server
-binding plus existing PieceSelector, prompt-snapshot, and 11px typography assertions. None is in
-the capsule diff.
+The exact stale “White Tank + Black-Brown Lace Floral Dress” card is now an offline regression.
+The focused composition suite passed **274/274** after adding it, including positive cases for both
+an overlay over a dress and a base layer under a compatible dress. Style-constitution and
+text-matching ratchets also passed. At that checkpoint the repository-wide suite still contained
+11 unrelated existing failures; no capsule composition test failed.
 
-Publishing was paused because the local `gh` token had expired. Re-authenticate with
-`gh auth login -h github.com`, then commit, push, and open the draft PR.
+## 7. Reproducing the comparison
 
-## 7. Next live comparison
+Use a dry run first when the goal is to verify paths, photos, scope, and estimated cost:
 
-After this branch is merged, run the same billed comparison once:
+```bash
+WARDROBE_ALLOW_LIVE_DB=1 node scratch/compare_capsule_rosters.js --with-model --dry-run --scenario "summer · mixed"
+```
+
+Use the billed command only when another visual roster comparison is actually needed:
 
 ```bash
 WARDROBE_ALLOW_LIVE_DB=1 node scratch/compare_capsule_rosters.js --with-model --scenario "summer · mixed"
 ```
 
-Judge the engine and accepted model roster visually, but interpret validation narrowly: a failure
-should now name a real missing lifestyle or wearability job, not a disagreement with a generic
-capsule formula. The comparison answers whether model roster selection is aesthetically better
-enough to justify its added cost; outfit cards remain evidence that the selected garments can do
-their jobs, not the product being optimized.
+The comparison is not required after every documentation or offline-validator change. Run it when
+the question is again whether model selection is aesthetically better than deterministic selection,
+or when a roster-prompt change needs visual evidence. Interpret validation narrowly: a failure
+should name a real lifestyle or wearability defect, not disagreement with a generic formula.
