@@ -41,9 +41,10 @@ import {
   TAG_PIECE_SYSTEM,
   EXTRACT_PIECES_SYSTEM
 } from '../styling-engine/promptRuntime.js'
-import { validateSubmittedPlanOutfits, describeOutfitStructureGap } from '../styling-engine/outfitSetPlanner.js'
+import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from '../styling-engine/occasions.js'
+import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   pieceMatchesMaterial,
   pieceMatchesFootwear,
@@ -2900,7 +2901,9 @@ When you do take a piece that needs a base, its base must be a genuine visual ma
 
 4. A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this do that nothing else here does?" If your own job line for a piece could be written about another piece you already chose, one of them is the wrong pick.
 
-State the palette you built around in your own words. If the request named colours, respect them as a strong preference, but never at the cost of leaving a use case uncovered — say so in the palette line when you had to reach outside them.
+PALETTE CONTRACT. The neutral foundation is automatic; the person does not have to choose or repeat neutrals. Aim for about 70% neutral or neutral-adjacent pieces, with 60–75% accepted. Colours named by the person are the ACCENT colour families for the remaining places. Neutrals are always allowed. Do not substitute an unrelated accent colour: if an eligible requested family is unavailable, keep that place neutral and say which family was unavailable in the palette line. Coverage may change which neutral garment you choose, but it does not license a random accent.
+
+State the neutral foundation and requested accent colours you built around in your own words.
 
 Count the selected IDs by their supplied category and return those totals in category_counts. Do not count from memory: reconcile all selected IDs against the candidate records before answering.
 
@@ -2964,6 +2967,18 @@ CATEGORY STARTING SHAPE FOR ${budget} PIECES — ${line}
 This is planning guidance from common capsule examples, not a validity formula. Adapt it to the supplied lifestyle jobs, climate, owner rules and actual candidates. Dresses and layers earn places only when they serve those facts; do not add or remove them merely to hit a category number. Explain every departure in category_departures.`
 }
 
+function capsulePaletteBlock(palette = [], budget = 24) {
+  const neutral = capsuleNeutralBasePlan(budget)
+  const accents = Array.isArray(palette) ? palette : []
+  const mappings = accents.map(color => `${color} → ${colorFamilyLabel(colorTaxonomyEntry(color).family)}`)
+  return `
+
+PALETTE PLAN FOR ${budget} PIECES — neutral foundation target ${neutral.target}; accepted range ${neutral.minimum}–${neutral.maximum}.
+${accents.length
+    ? `ACCENT COLOURS THE PERSON CHOSE: ${accents.join(', ')}. CANONICAL FAMILY MAPPING: ${mappings.join(' · ')}. These are additions to the automatic neutral foundation, not the whole capsule palette. Use only the mapped non-neutral families; if an eligible family is unavailable, use another neutral and name the unavailable family.`
+    : 'NO ACCENT COLOURS WERE CHOSEN. Build the automatic neutral foundation and choose a restrained, coherent accent story from the eligible garments.'}`
+}
+
 export function capsuleRosterSelectionUserText({
   bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
   quotas = null, attempt = 1, failures = [], previousRosterIds = [], ownerRules = []
@@ -2986,7 +3001,7 @@ export function capsuleRosterSelectionUserText({
     : ''
   return `SEASON: ${isWinter ? 'winter' : isSummer ? 'summer' : 'unspecified'}
 CAPSULE SIZE: exactly ${budget} pieces
-${palette.length ? `COLOURS THE PERSON ASKED FOR: ${palette.join(', ')}` : 'The person did not state a palette; choose one that suits these garments.'}${ownerRulesBlock}${capsuleAllocationBlock(quotas, budget)}
+${capsulePaletteBlock(palette, budget)}${ownerRulesBlock}${capsuleAllocationBlock(quotas, budget)}
 
 USE CASES THIS CAPSULE MUST COVER:
 ${slotLines.join('\n')}

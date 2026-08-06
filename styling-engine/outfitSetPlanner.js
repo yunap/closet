@@ -52,6 +52,8 @@ import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
 import { resolveOccasionProfile } from './occasions.js'
 import {
+  COLOR_REQUEST_NAMES,
+  colorFamilyLabel,
   colorFamilies,
   colorTaxonomyEntry,
   colorsArePaletteNeutral,
@@ -453,8 +455,7 @@ export function describeCapsuleRosterUtilization(roster = [], cards = []) {
 // observational: this rejects, repairs and reorders nothing.
 export function colorFamilyDisplayName(family = '') {
   const key = String(family || '').trim().toLowerCase()
-  if (key === 'cyan') return 'teal & turquoise'
-  return key
+  return colorFamilyLabel(key).toLowerCase()
 }
 
 export function describeCapsulePaletteCohesion(roster = [], cards = []) {
@@ -512,6 +513,28 @@ export function describeCapsulePaletteCohesion(roster = [], cards = []) {
     line += ` · ${unusedAccents.length} of ${accentPieces.length} accent-colour pieces did not make it into a look — ${named}${rest}`
   }
   return `${line}]`
+}
+
+// Owner ruling 2026-08-06: the neutral foundation is automatic. A user who
+// chooses orange, teal and mustard is choosing the colour carried by the
+// remaining pieces, not opting out of the neutral base. "Around 70%" is a
+// target band rather than an exact aesthetic formula: for 24 pieces it means
+// aim for 17, with 15–18 accepted. The band prevents rounding noise from
+// spending a repair call while still catching a materially colour-heavy or
+// all-neutral roster.
+export function capsuleNeutralBasePlan(budget = 24) {
+  const size = Math.max(1, Number(budget) || 1)
+  return {
+    target: Math.round(size * 0.7),
+    minimum: Math.ceil(size * 0.6),
+    maximum: Math.floor(size * 0.75)
+  }
+}
+
+export function capsuleNeutralBaseCount(roster = []) {
+  return (Array.isArray(roster) ? roster : [])
+    .filter(piece => colorsArePaletteNeutral(Array.isArray(piece?.colors) ? piece.colors : []))
+    .length
 }
 
 // Step 5 criterion 4 (docs/capsule-step5-evaluation.md §3): "the result
@@ -964,7 +987,7 @@ function pieceReadsAsNeutral(piece = {}) {
 // request. `optOut` is that off switch.
 export function extractStatedPalette(question = '', pool = []) {
   const text = ` ${String(question || '').toLowerCase().replace(/[^a-z\s-]/g, ' ').replace(/\s+/g, ' ')} ` // ratchet-allow: normalizing user request text, not garment matching
-  if (!text.trim()) return { colors: [], optOut: false }
+  if (!text.trim()) return { colors: [], accentColors: [], accentFamilies: [], optOut: false }
   // Phrased as whole intents rather than keywords: "any colour" and "no colour
   // preference" are opt-outs; "any black" is not.
   const OPT_OUT_PHRASES = [
@@ -977,35 +1000,66 @@ export function extractStatedPalette(question = '', pool = []) {
     "don t limit the colours", "don t limit the colors",
   ]
   if (OPT_OUT_PHRASES.some(phrase => text.includes(` ${phrase} `) || text.includes(`${phrase} `))) { // ratchet-allow: whole-phrase user intent in the request, not garment text
-    return { colors: [], optOut: true }
+    return { colors: [], accentColors: [], accentFamilies: [], optOut: true }
   }
-  const vocabulary = new Set()
+  const wardrobeVocabulary = new Set()
   for (const piece of Array.isArray(pool) ? pool : []) {
     for (const color of Array.isArray(piece?.colors) ? piece.colors : []) {
       const value = String(color || '').toLowerCase().trim()
-      if (value) vocabulary.add(value)
+      if (value) wardrobeVocabulary.add(value)
     }
   }
-  if (!vocabulary.size) return { colors: [], optOut: false }
+  // Parse against the shared taxonomy, not only colours currently owned. An
+  // absent request is still meaningful: it must reach the supply-gap report
+  // instead of vanishing before the bench is built. Aliases canonicalize to
+  // their family representative for matching while preserving the person's
+  // own word for the explanation (fuchsia -> Pink family).
   const stated = new Set()
-  for (const color of vocabulary) {
-    if (text.includes(` ${color} `)) stated.add(color) // ratchet-allow: the wardrobe's own colour vocabulary against the request, not garment names
+  for (const term of COLOR_REQUEST_NAMES) {
+    if (text.includes(` ${term} `)) stated.add(term) // ratchet-allow: canonical colour vocabulary against the user request, not garment names
   }
   // "neutrals" is the one word people reach for that names a set rather than a
   // colour. Expand it against what they actually own, not against a fixed list.
   if (text.includes(' neutral ') || text.includes(' neutrals ')) { // ratchet-allow: one set-naming word in the request, expanded from stored colours
-    for (const color of vocabulary) {
+    for (const color of wardrobeVocabulary) {
       const { neutrality } = colorTaxonomyEntry(color)
       if (neutrality === 'neutral' || neutrality === 'neutral-adjacent') stated.add(color)
     }
   }
-  return { colors: [...stated].sort(), optOut: false }
+  const colors = [...stated].sort()
+  const accentColors = colors.filter(color => colorTaxonomyEntry(color).neutrality === 'accent')
+  return { colors, accentColors, accentFamilies: colorFamilies(accentColors).filter(family => family !== 'unknown'), optOut: false }
 }
 
 function pieceMatchesStatedPalette(piece = {}, palette = []) {
   if (!palette.length) return false
-  const colors = (Array.isArray(piece?.colors) ? piece.colors : []).map(color => String(color).toLowerCase().trim())
-  return colors.some(color => palette.includes(color))
+  const requestedFamilies = new Set(colorFamilies(palette).filter(family => family !== 'unknown'))
+  return colorFamilies(Array.isArray(piece?.colors) ? piece.colors : [])
+    .some(family => requestedFamilies.has(family))
+}
+
+function capsuleAccentFamilyNames(palette = []) {
+  return [...new Set((Array.isArray(palette) ? palette : [])
+    .filter(color => colorTaxonomyEntry(color).neutrality === 'accent')
+    .map(color => colorTaxonomyEntry(color).family)
+    .filter(family => family && family !== 'unknown'))]
+}
+
+function pieceCarriesAccent(piece = {}) {
+  return (Array.isArray(piece?.colors) ? piece.colors : [])
+    .some(color => colorTaxonomyEntry(color).neutrality === 'accent')
+}
+
+function pieceMatchesAccentFamily(piece = {}, family = '') {
+  return colorFamilies(Array.isArray(piece?.colors) ? piece.colors : []).includes(family)
+}
+
+function describeCapsuleAccentSupplyGap(palette = [], bench = []) {
+  const missing = capsuleAccentFamilyNames(palette).filter(family =>
+    !(Array.isArray(bench) ? bench : []).some(piece => pieceMatchesAccentFamily(piece, family))
+  )
+  if (!missing.length) return ''
+  return `[capsule palette: the eligible wardrobe could not supply ${missing.map(colorFamilyDisplayName).join(', ')} for this season and lifestyle, so those places stayed in the neutral foundation rather than substituting unrelated colours]`
 }
 
 function capsuleVersatilityScore(piece = {}, { isSummer = false, palette = [] } = {}) {
@@ -1906,7 +1960,7 @@ export function buildCapsuleBench(pool = [], {
   const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, { isSummer, isWinter })
     .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
   const scoreOf = new Map()
-  for (const piece of eligible) scoreOf.set(piece, capsuleVersatilityScore(piece, { isSummer }))
+  for (const piece of eligible) scoreOf.set(piece, capsuleVersatilityScore(piece, { isSummer, palette }))
   const ranked = [...eligible].sort((a, b) => {
     const diff = (scoreOf.get(b) || 0) - (scoreOf.get(a) || 0)
     return diff !== 0 ? diff : Number(a.id) - Number(b.id)
@@ -2050,6 +2104,44 @@ export function buildCapsuleBench(pool = [], {
   })
   for (const piece of protagonists.slice(0, 8)) {
     admit(piece, true)
+  }
+
+  // Palette supply guarantee. The 70-piece bench is a choice set, not a
+  // 70-piece capsule, so it should not itself mimic the final 70/30 ratio.
+  // It must, however, contain enough eligible supply for the model to obey the
+  // final roster contract: the minimum neutral foundation plus up to the
+  // target accent allowance, distributed across requested families.
+  const neutralPlan = capsuleNeutralBasePlan(budget)
+  const neutralCandidates = ranked.filter(piece => colorsArePaletteNeutral(piece?.colors))
+  for (const piece of neutralCandidates) {
+    if (bench.filter(candidate => colorsArePaletteNeutral(candidate?.colors)).length >= neutralPlan.minimum) break
+    admit(piece, true)
+  }
+  const requestedFamilies = capsuleAccentFamilyNames(palette)
+  const accentPlaces = Math.max(0, budget - neutralPlan.maximum)
+  if (requestedFamilies.length && accentPlaces > 0) {
+    const byRequestedFamily = new Map(requestedFamilies.map(family => [
+      family,
+      ranked.filter(piece => pieceMatchesAccentFamily(piece, family))
+    ]))
+    let admittedAccentChoices = 0
+    let round = 0
+    while (admittedAccentChoices < accentPlaces) {
+      let addedThisRound = false
+      for (const family of requestedFamilies) {
+        const piece = (byRequestedFamily.get(family) || [])[round]
+        if (!piece) continue
+        const before = bench.length
+        admit(piece, true)
+        if (bench.length > before) {
+          admittedAccentChoices += 1
+          addedThisRound = true
+          if (admittedAccentChoices >= accentPlaces) break
+        }
+      }
+      if (!addedThisRound) break
+      round += 1
+    }
   }
 
   // Fill toward the per-category targets, most-starved category first.
@@ -2803,7 +2895,7 @@ function modelPlanPool({ allPieces = [], slots = [], constraints = {}, question 
   const weatherContextText = slots.map(slot => `${slot?.season || ''} ${slot?.weather || ''} ${slot?.slotWeather || ''}`).join(' ')
   const isSummerContext = /\b(summer|warm|hot|80|90|heat)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
   const isWinterContext = /\b(winter|cold|chilly|snow|freezing)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
-  const { colors: statedPalette } = extractStatedPalette(question, allPieces)
+  const { accentColors: statedPalette } = extractStatedPalette(question, allPieces)
   return isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET
     ? selectCapsuleRoster(allPieces, {
         budget: pieceBudget,
@@ -2871,6 +2963,50 @@ export async function selectCapsuleRosterViaModel({
         message: `selected ${unique.length} pieces; this capsule must contain exactly ${budget}`
       })
     }
+    if (roster.length === budget) {
+      const neutralPlan = capsuleNeutralBasePlan(budget)
+      const neutralCount = capsuleNeutralBaseCount(roster)
+      const availableNeutralCount = bench.filter(piece => colorsArePaletteNeutral(piece?.colors)).length
+      const requestedFamilies = capsuleAccentFamilyNames(palette)
+      const eligibleColourCarriers = bench.filter(piece =>
+        pieceCarriesAccent(piece) &&
+        (!requestedFamilies.length || requestedFamilies.some(family => pieceMatchesAccentFamily(piece, family)))
+      ).length
+      if (neutralCount < neutralPlan.minimum && availableNeutralCount >= neutralPlan.minimum) {
+        contractFailures.push({
+          code: 'neutral_base_share',
+          message: `roster has ${neutralCount} neutral foundation piece(s); aim for ${neutralPlan.target} and keep at least ${neutralPlan.minimum} of ${budget}`
+        })
+      }
+      if (neutralCount > neutralPlan.maximum && eligibleColourCarriers >= budget - neutralPlan.maximum) {
+        contractFailures.push({
+          code: 'neutral_base_share',
+          message: `roster has ${neutralCount} neutral foundation piece(s); aim for ${neutralPlan.target} and keep no more than ${neutralPlan.maximum} when the requested colour supply is available`
+        })
+      }
+      if (requestedFamilies.length) {
+        const unrelatedAccents = roster.filter(piece =>
+          pieceCarriesAccent(piece) &&
+          !requestedFamilies.some(family => pieceMatchesAccentFamily(piece, family))
+        )
+        if (unrelatedAccents.length) {
+          contractFailures.push({
+            code: 'accent_palette_outside_requested',
+            message: `non-neutral pieces ${unrelatedAccents.map(piece => piece.id).join(', ')} introduce unrequested colour families; replace them with requested-family pieces or neutrals`
+          })
+        }
+        const omittedAvailable = requestedFamilies.filter(family =>
+          bench.some(piece => pieceMatchesAccentFamily(piece, family)) &&
+          !roster.some(piece => pieceMatchesAccentFamily(piece, family))
+        )
+        if (omittedAvailable.length) {
+          contractFailures.push({
+            code: 'accent_family_missing',
+            message: `requested ${omittedAvailable.map(colorFamilyDisplayName).join(', ')} pieces are available in the eligible candidates but absent from the roster`
+          })
+        }
+      }
+    }
     // Provider responses use the accountability fields required by the
     // production schema. Injected offline choosers written before that schema
     // intentionally remain usable; when the fields are present, every claim is
@@ -2928,6 +3064,8 @@ export async function selectCapsuleRosterViaModel({
     return { roster, contractFailures, palette: String(answer?.palette || '').trim(), jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [] }
   }
 
+  const paletteSupplyGaps = [describeCapsuleAccentSupplyGap(palette, bench)].filter(Boolean)
+
   const check = (roster) => validateCapsuleRoster(roster, {
     slots, budget, isSummer, isWinterCapsule: isWinter, pool: bench
   })
@@ -2945,7 +3083,7 @@ export async function selectCapsuleRosterViaModel({
   const first = resolve(await chooseRoster({ bench, benchDiagnostics: diagnostics, slots, budget, palette, isSummer, isWinter, quotas, attempt: 1, failures: [], ownerRules }))
   let failures = record([...first.contractFailures, ...(first.contractFailures.length ? [] : check(first.roster).failures)])
   if (!failures.length) {
-    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: [], failureCodes: seenCodes }
+    return { roster: first.roster, source: 'model', palette: first.palette, jobs: first.jobs, failures: [], bench, coverageGaps: paletteSupplyGaps, failureCodes: seenCodes }
   }
 
   // One repair, given the exact structural reasons. Not a fresh start: the
@@ -2957,7 +3095,7 @@ export async function selectCapsuleRosterViaModel({
   }))
   const secondFailures = record([...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)])
   if (!secondFailures.length) {
-    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: [], failureCodes: seenCodes }
+    return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: paletteSupplyGaps, failureCodes: seenCodes }
   }
 
   // Two strikes on something structural: ship the deterministic roster and say
@@ -2988,7 +3126,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   const isWinterContext = /\b(winter|cold|chilly|snow|freezing)\b/i.test(`${question} ${mood} ${weatherContextText}`) // ratchet-allow: plan weather context, not garment matching
   const requiresTransitionLayerCoverage =
     /\bouterwear\b[\s\S]{0,80}\btransition|\btransition[\s\S]{0,80}\bouterwear\b/i.test(String(question || '')) // ratchet-allow: user plan directive
-  const { colors: requestPalette, optOut: paletteOptOut } = extractStatedPalette(question, allPieces)
+  const { accentColors: requestPalette, optOut: paletteOptOut } = extractStatedPalette(question, allPieces)
   // Stage 2 (spec §3): when a chooser is injected AND this is an enforced
   // capsule, the model picks the roster and the engine validates it. Otherwise
   // — and on any failure — this is byte-identical to the deterministic path.
@@ -3271,7 +3409,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       constraints: { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget },
       capsuleRoster,
       capsuleCapacity: capsuleOutfitCoreCapacity(capsuleRoster, pendingSlots),
-      statedPalette: statedPaletteResult.colors,
+      statedPalette: statedPaletteResult.accentColors,
       paletteOptOut: statedPaletteResult.optOut,
       capsuleRosterSource: capsuleRosterSelection?.source || 'deterministic',
       capsuleRosterPalette: capsuleRosterSelection?.palette || '',

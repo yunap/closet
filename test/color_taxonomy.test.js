@@ -5,6 +5,7 @@ import {
   ACCENT_COLOR_NAMES,
   COLOR_NAMES,
   COLOR_TAXONOMY,
+  colorFamilyLabel,
   colorFamilies,
   colorTaggerInstruction,
   colorTaxonomyEntry,
@@ -55,6 +56,10 @@ test('owner-ratified color classifications are pinned', () => {
   assert.equal(ACCENT_COLOR_NAMES.includes('olive'), false)
   assert.equal(ACCENT_COLOR_NAMES.includes('sage'), false)
   assert.equal(ACCENT_COLOR_NAMES.includes('silver'), false)
+  assert.equal(colorTaxonomyEntry('fuchsia').family, 'pink')
+  assert.equal(colorTaxonomyEntry('teal').family, 'cyan')
+  assert.equal(colorTaxonomyEntry('mustard').family, 'yellow')
+  assert.equal(colorFamilyLabel('cyan'), 'Teal & turquoise')
 })
 
 test('unknown values are explicit and never earn the palette-neutral classification', () => {

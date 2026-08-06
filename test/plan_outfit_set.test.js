@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
-const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
+const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext, hasPairingReference, hasRejectedReference } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
@@ -3936,16 +3936,31 @@ test('a palette stated in the request is read from the wardrobe\'s own colour vo
     { id: 1, category: 'top', colors: ['black'] },
     { id: 2, category: 'bottom', colors: ['cream'] },
     { id: 3, category: 'shoes', colors: ['olive'] },
-    { id: 4, category: 'top', colors: ['fuchsia'] },
+    { id: 4, category: 'top', colors: ['orange'] },
   ]
-  assert.deepEqual(extractStatedPalette('summer capsule, keep it to black cream and olive', pool).colors, ['black', 'cream', 'olive'])
+  const neutralRequest = extractStatedPalette('summer capsule, keep it to black cream and olive', pool)
+  assert.deepEqual(neutralRequest.colors, ['black', 'cream', 'olive'])
+  assert.deepEqual(neutralRequest.accentColors, [], 'neutral and neutral-adjacent names do not consume the accent allowance')
+  assert.deepEqual(extractStatedPalette('summer capsule with orange', pool).accentColors, ['orange'])
   assert.deepEqual(extractStatedPalette('I want a summer capsule', pool).colors, [], 'saying nothing is not a palette')
   // "neutrals" names a set; expand it against what this person actually owns.
   const neutrals = extractStatedPalette('a summer capsule in neutrals', pool).colors
   assert.ok(neutrals.includes('black') && neutrals.includes('cream'))
-  assert.ok(!neutrals.includes('fuchsia'))
-  // A colour the wardrobe does not have is not invented.
-  assert.deepEqual(extractStatedPalette('a capsule in turquoise', pool).colors, [])
+  assert.ok(!neutrals.includes('orange'))
+  // A canonical colour the wardrobe does not have remains visible so the
+  // capsule can disclose that it was unavailable instead of silently losing
+  // the request.
+  assert.deepEqual(extractStatedPalette('a capsule in turquoise', pool).accentColors, ['turquoise'])
+  assert.deepEqual(extractStatedPalette('a capsule with fuchsia accents', pool).accentColors, ['fuchsia'])
+})
+
+test('the automatic capsule foundation aims for 70% neutral with a 60–75% acceptance band', () => {
+  assert.deepEqual(capsuleNeutralBasePlan(24), { target: 17, minimum: 15, maximum: 18 })
+  assert.equal(capsuleNeutralBaseCount([
+    { colors: ['black'] },
+    { colors: ['cream', 'olive'] },
+    { colors: ['orange'] },
+  ]), 2)
 })
 
 // Owner request 2026-07-29: there must be a way to skip palette choosing.
@@ -3973,13 +3988,14 @@ test('a person can explicitly opt out of palette choosing', () => {
 // The §7 constraint, and this project's own gate history: a hard filter on a
 // taste dimension starves capacity (the `home` gate ruling). A palette biases
 // the ranking; it never excludes, and structural coverage still wins.
-test('a stated palette is a preference, not a filter', () => {
+test('a requested accent never removes structurally necessary neutral footwear', () => {
   const palettePieces = []
   for (let i = 0; i < 4; i += 1) {
     palettePieces.push({ id: 10 + i, name: `black top ${i}`, category: 'top', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
     palettePieces.push({ id: 20 + i, name: `black bottom ${i}`, category: 'bottom', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] })
   }
-  // The only shoes in the wardrobe are outside the requested palette.
+  // The only shoes are rust, but black is a neutral request rather than an
+  // accent-family constraint. Structure must still win.
   const offPalette = [
     { id: 90, name: 'rust sneakers', category: 'shoes', colors: ['rust'], formality: 'everyday', occasions: ['casual', 'city'] },
     { id: 91, name: 'rust boots', category: 'shoes', colors: ['rust'], formality: 'everyday', occasions: ['casual', 'city'] },
@@ -4026,6 +4042,25 @@ test('a model-chosen capsule roster is accepted when it satisfies the guarantees
   assert.equal(result.source, 'model')
   assert.equal(result.roster.length, 10)
   assert.equal(result.palette, 'black')
+})
+
+test('an unavailable requested accent stays neutral and is disclosed to the user', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'], palette: ['teal'],
+    chooseRoster: async ({ bench }) => ({
+      roster_piece_ids: bench.slice(0, 10).map(piece => Number(piece.id)),
+      palette: 'neutral foundation; teal unavailable',
+      piece_jobs: []
+    })
+  })
+
+  assert.equal(result.source, 'model')
+  assert.ok(result.roster.every(piece => capsuleNeutralBaseCount([piece]) === 1), 'no unrelated accent is substituted')
+  assert.equal(result.coverageGaps.length, 1)
+  assert.match(result.coverageGaps[0], /could not supply teal/i)
+  assert.match(result.coverageGaps[0], /stayed in the neutral foundation/i)
 })
 
 test('an invalid model roster gets exactly one repair attempt, then the deterministic roster', async () => {
@@ -5432,7 +5467,7 @@ test('a standalone-only outfit is unaffected by the dependent-base check', async
 // evaluation is explicit that hero balance, seasonal shoe credibility and
 // "does this piece earn a distinct job" are relational visual judgments that
 // belong in the brief, never in a keyword rule or a numeric taste score.
-test('the roster-selection brief asks for the four judgments, without inventing preferences', () => {
+test('the roster-selection brief asks for the four judgments and the ratified palette contract', () => {
   const brief = capsuleRosterSelectionSystemPrompt()
   assert.match(brief, /pieces that lead, pieces that support them, and pieces that ground/)
   assert.match(brief, /more than one visually distinct option that can lead a look/)
@@ -5441,9 +5476,10 @@ test('the roster-selection brief asks for the four judgments, without inventing 
   assert.match(brief, /passing the engine's gates only means it is technically eligible/)
   assert.match(brief, /A DISTINCT JOB PER PIECE/)
 
-  // The evaluation forbids solving any of this with a deterministic score, a
-  // bigger hard quota, or a colour filter — the brief must not smuggle one in.
-  assert.doesNotMatch(brief, /neutral (base )?share|colour famil|color famil/i)
+  assert.match(brief, /neutral foundation is automatic/i)
+  assert.match(brief, /Aim for about 70%/)
+  assert.match(brief, /60–75% accepted/)
+  assert.match(brief, /Do not substitute an unrelated accent colour/)
   assert.doesNotMatch(brief, /at least (two|three|2|3) statement/i)
 })
 

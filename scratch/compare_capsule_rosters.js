@@ -23,6 +23,7 @@ import {
   extractStatedPalette,
   selectCapsuleRosterViaModel
 } from '../styling-engine/outfitSetPlanner.js'
+import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { wardrobeCategoryGroup, pieceFormality, formalityRank } from '../styling-engine/attributes.js'
 import { filterWholeWardrobePiecesForGeneration, weatherProfileFromContext, pieceStyleProfile } from '../styling-engine/rules.js'
 
@@ -35,6 +36,13 @@ const DRY_RUN = process.argv.includes('--dry-run')
 // comparison — worth having when the question only needs one wardrobe shape.
 const SCENARIO_ARG_INDEX = process.argv.indexOf('--scenario')
 const SCENARIO_FILTER = SCENARIO_ARG_INDEX > -1 ? String(process.argv[SCENARIO_ARG_INDEX + 1] || '').toLowerCase() : ''
+// Optional accent colours for the selected scenario. The capsule supplies its
+// neutral foundation automatically; these are the colour families carried by
+// the remaining pieces. Example: --palette "orange, teal, mustard".
+const PALETTE_ARG_INDEX = process.argv.indexOf('--palette')
+const PALETTE_OVERRIDE = PALETTE_ARG_INDEX > -1
+  ? String(process.argv[PALETTE_ARG_INDEX + 1] || '').split(',').map(value => value.trim()).filter(Boolean)
+  : []
 const VERBOSE = process.argv.includes('--verbose')
 // Contact sheets are free local artifacts written only after a paid comparison
 // returns. Override the parent directory when a caller wants a stable location.
@@ -77,13 +85,14 @@ const SCENARIOS = [
     ],
   },
   {
-    name: 'summer · stated palette',
+    name: 'summer · selected accents',
     isSummer: true, budget: 24,
-    question: 'a summer capsule in black, cream and olive',
+    question: 'a summer capsule with orange, teal and mustard accents',
     slots: [
-      { id: 'home', label: 'At Home', occasion: 'casual', bestFor: 'low-key days at home', targetOutfits: 3 },
-      { id: 'city', label: 'City Outings', occasion: 'city', activity: 'walking', bestFor: 'walking, museums', targetOutfits: 3 },
-      { id: 'dinner', label: 'Restaurant Dinner', occasion: 'evening', bestFor: 'restaurant dinner', environment: 'indoor', targetOutfits: 2 },
+      { id: 'casual_home_errands', label: 'Casual / Home / Errands', occasion: 'casual', bestFor: 'casual days at home, errands, and weekends out', environment: 'indoor', targetOutfits: 3 },
+      { id: 'nature_walk', label: 'Nature Walk', occasion: 'casual', activity: 'walking', bestFor: 'nature walks with the dog', environment: 'outdoor', targetOutfits: 2 },
+      { id: 'city_outing_museum', label: 'City Outing / Museum', occasion: 'city', activity: 'walking', bestFor: 'museums and city outings', environment: 'outdoor', targetOutfits: 3 },
+      { id: 'restaurant_social', label: 'Restaurant / Social', occasion: 'smart casual', bestFor: 'restaurants and social events', environment: 'indoor', targetOutfits: 3 },
     ],
   },
   {
@@ -317,9 +326,13 @@ if (SCENARIO_FILTER && !scenarios.length) {
 if (SCENARIO_FILTER) console.log(`(scenario filter "${SCENARIO_FILTER}": ${scenarios.length} of ${allScenarios.length})\n`)
 
 for (const scenario of scenarios) {
-  const { name, slots, budget, isSummer, question } = scenario
+  const { name, slots, budget, isSummer } = scenario
+  const question = PALETTE_OVERRIDE.length
+    ? `${scenario.question}; accent colours: ${PALETTE_OVERRIDE.join(', ')}`
+    : scenario.question
   const isWinter = !isSummer
-  const { colors: palette } = extractStatedPalette(question, allPieces)
+  const { accentColors: palette } = extractStatedPalette(question, allPieces)
+  const paletteMapping = palette.map(color => `${color}→${colorFamilyLabel(colorTaxonomyEntry(color).family)}`)
   const { bench, diagnostics } = buildCapsuleBench(allPieces, { budget, slots, isSummer, isWinter, benchSize: BENCH_SIZE, palette })
   // The denominator for every headroom number below: everything that passes at
   // least one slot's gates, i.e. what the bench is sampling FROM. benchSize is
@@ -331,7 +344,7 @@ for (const scenario of scenarios) {
   // benchSize is stated because it is now a variable, and a comparison run that
   // silently used a different one on each side would be worse than no run.
   console.log(`  bench ${bench.length} of ${eligible.length} eligible · benchSize ${BENCH_SIZE} · ${diagnostics.admittedByGuaranteeCount} guaranteed + ${bench.length - diagnostics.admittedByGuaranteeCount} target-fill` +
-    `${palette.length ? ` · palette asked for: ${palette.join(', ')}` : ' · no palette stated'}` +
+    `${palette.length ? ` · accent colours asked for: ${paletteMapping.join(', ')}` : ' · no accent colours stated'}` +
     `${diagnostics.uncoverableSlots.length ? ` · uncoverable: ${diagnostics.uncoverableSlots.join(', ')}` : ''}`)
   // benchSize is a cost ceiling and wins over the category targets, so a target
   // the bench could not afford is stated rather than absorbed silently.

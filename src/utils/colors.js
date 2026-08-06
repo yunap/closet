@@ -1,5 +1,6 @@
 import {
   COLOR_TAXONOMY,
+  COLOR_FAMILY_LABELS,
   colorTaxonomyEntry,
   normalizeColorName,
 } from '../../lib/colorTaxonomy.js'
@@ -11,23 +12,7 @@ export const COLOR_FAMILY_ORDER = [
   'yellow', 'orange', 'metallic', 'multi',
 ]
 
-export const COLOR_FAMILY_LABELS = Object.freeze({
-  black: 'Black',
-  white: 'White & cream',
-  grey: 'Grey',
-  beige: 'Beige & tan',
-  brown: 'Brown',
-  red: 'Red',
-  pink: 'Pink',
-  purple: 'Purple',
-  blue: 'Blue',
-  cyan: 'Teal & turquoise',
-  green: 'Green',
-  yellow: 'Yellow',
-  orange: 'Orange',
-  metallic: 'Metallic',
-  multi: 'Multi',
-})
+export { COLOR_FAMILY_LABELS }
 
 export const COLOR_HEX_MAP = {
   ...Object.fromEntries(COLOR_OPTIONS.map(color => [color.name, color.hex])),
