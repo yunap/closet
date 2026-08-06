@@ -137,11 +137,18 @@ neutral-adjacent. The list is broader than any source supports at that one entry
 | no set-level palette breadth control | **evaluation disclosure added** — family breadth is reported after composition |
 | no cohesion pressure when no palette is stated | **deferred pending Step 5 evidence** — no generation pressure added yet |
 
-**Owner decision 2026-07-30:** the colour-model blocker is resolved. The first set-level
-implementation is disclosure rather than generation pressure: family breadth, neutral-base share,
-and unused accent-colour pieces are reported after composition. This lets the corrected model roster
-be evaluated without steering the result being judged. Any scoring or prompt change waits for the
-Step 5 rerun and additional captured outputs.
+**Owner decision 2026-07-30 (superseded 2026-08-06):** the first implementation was disclosure
+rather than generation pressure so the corrected model roster could be evaluated without steering
+it. The subsequent live comparisons supplied that evidence and the owner ratified the operational
+contract below.
+
+**Owner decision 2026-08-06:** every capsule has an automatic neutral foundation. Aim for roughly
+70% neutral or neutral-adjacent pieces; accept 60–75% so this remains a practical band rather than an
+exact aesthetic formula. Colours named by the person are accent families for the remaining places,
+not the whole palette, and the person never has to repeat the neutrals. If a requested accent family
+is absent from the season- and lifestyle-eligible candidate bench, use neutrals rather than an
+unrelated accent and tell the person which requested family was unavailable. Availability means
+eligible for this capsule, not merely present somewhere in the owned wardrobe.
 
 ### What the neutral-bonus fix actually changed
 
@@ -179,13 +186,12 @@ with a worse outfit.
   grouping would move the "12 families" figure. The comparison to "5–9 shades" is indicative, not
   exact.
 - **These frameworks assume you are choosing a palette and then acquiring to it.** This engine
-  selects from a closet that already exists, whose palette is whatever it is (60% pure neutral, 21
-  families). A target the frameworks treat as a shopping constraint is, here, at best a preference
-  that must yield to what the wardrobe can supply.
-- **Palette is deliberately a preference, not a filter,** and this research does not overturn that.
-  The project's `home`-gate precedent is that hard filters on taste dimensions starve capacity. Any
-  cohesion term this research motivates should be a scoring pressure or a disclosed post-condition,
-  not a gate.
+  selects from a closet that already exists. The neutral fallback is therefore essential: an absent
+  requested family does not make the capsule impossible and does not authorize a different accent.
+- **The accent-family rule constrains substitutions, not garment eligibility.** A neutral garment
+  may always satisfy a needed structural or lifestyle job. What is forbidden is silently replacing
+  the person's requested orange, for example, with an unrelated pink accent because orange supply
+  was thin.
 
 ## Sources
 
