@@ -19,7 +19,7 @@ process.env.OPENAI_API_KEY = ''
 process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
-const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg } = await import('../styling-engine/tools.js')
+const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
 const { parsePiece, weatherProfileFromContext, hasPairingReference, hasRejectedReference } = await import('../styling-engine/rules.js')
@@ -27,7 +27,7 @@ const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('.
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
 const { describeCapsuleUndemonstratedJobs, capsuleConditionMatches, describeCapsuleAutoCompletions } = await import('../styling-engine/outfitSetPlanner.js')
-const { capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
+const { capsulePlanQuestion, capsulePlanCompositionSchema, capsuleRosterSelectionSystemPrompt, capsuleRosterSelectionUserText, capsuleRosterSelectionContent, capsulePlanCompositionSystemPrompt } = await import("../routes/ai.js")
 
 const topIdsOf = outfits => outfits.flatMap(outfit => (outfit.pieces || []).filter(piece => wardrobeCategoryGroup(piece) === 'top').map(piece => Number(piece.id)))
 const distinctPieceCount = outfits => new Set(outfits.flatMap(outfit => outfit.pieceIds || [])).size
@@ -36,6 +36,23 @@ function planOutfitSetSlotSchema() {
   const tool = STYLIST_TOOLS.find(entry => entry.name === 'plan_outfit_set')
   return tool?.input_schema?.properties?.slots?.items || {}
 }
+
+test('capsule planning preserves the original palette through a lifestyle clarification turn', () => {
+  const question = capsulePlanQuestion('Mostly errands, museums, restaurants, and nature walks.', [
+    { role: 'user', content: 'I want a summer capsule in yellow.' },
+    { role: 'assistant', content: 'What does your summer mainly include?' }
+  ])
+  assert.match(question, /summer capsule in yellow/)
+  assert.match(question, /errands, museums, restaurants, and nature walks/)
+
+  assert.equal(
+    capsulePlanQuestion('Make me a winter capsule in pink.', [
+      { role: 'user', content: 'I want a summer capsule in yellow.' }
+    ]),
+    'Make me a winter capsule in pink.',
+    'a new capsule request supersedes the earlier one'
+  )
+})
 
 // Spec 26 Part 4: propose_outfit's season field must teach the indoor
 // escape hatch (mirrors the plan-slot weather:'indoor' mechanism, which
@@ -4063,6 +4080,46 @@ test('an unavailable requested accent stays neutral and is disclosed to the user
   assert.match(result.coverageGaps[0], /stayed in the neutral foundation/i)
 })
 
+test('deterministic fallback keeps the neutral base and requested family without unrelated accents', async () => {
+  const pool = paletteTestWardrobe().map(piece => ({ ...piece, colors: [...piece.colors] }))
+  pool.find(piece => piece.id === 100).colors = ['yellow']
+  pool.find(piece => piece.id === 200).colors = ['mustard']
+  pool.find(piece => piece.id === 300).colors = ['yellow']
+  pool.find(piece => piece.id === 101).colors = ['orange']
+  pool.push(
+    { id: 400, name: 'neutral dress', category: 'dress', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] },
+    { id: 500, name: 'neutral cardigan', category: 'outerwear', colors: ['cream'], formality: 'everyday', occasions: ['casual', 'city'] }
+  )
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'], palette: ['yellow'],
+    chooseRoster: async () => ({ roster_piece_ids: [], palette: '', piece_jobs: [] })
+  })
+
+  assert.equal(result.source, 'deterministic_fallback')
+  assert.equal(result.roster.length, 10)
+  assert.ok(result.roster.some(piece => (piece.colors || []).some(color => ['yellow', 'mustard'].includes(color))))
+  assert.ok(capsuleNeutralBaseCount(result.roster) >= capsuleNeutralBasePlan(10).minimum)
+  assert.ok(capsuleNeutralBaseCount(result.roster) <= capsuleNeutralBasePlan(10).maximum)
+  assert.equal(
+    result.roster.some(piece => (piece.colors || []).includes('orange')),
+    false
+  )
+})
+
+test('deterministic fallback stays neutral and preserves the supply disclosure when a requested family is unavailable', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'], palette: ['yellow'],
+    chooseRoster: async () => ({ roster_piece_ids: [], palette: '', piece_jobs: [] })
+  })
+
+  assert.equal(result.source, 'deterministic_fallback')
+  assert.equal(capsuleNeutralBaseCount(result.roster), result.roster.length)
+  assert.match(result.coverageGaps.join(' '), /yellow.*not available|could not supply.*yellow/i)
+})
+
 test('an invalid model roster gets exactly one repair attempt, then the deterministic roster', async () => {
   const pool = paletteTestWardrobe()
   const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
@@ -5561,6 +5618,13 @@ test('the roster brief requires an explicit category rationale and repair accoun
   assert.match(brief, /empty repair_changes array/)
   assert.match(brief, /record every one-for-one swap/)
   assert.match(brief, /never return an unchanged rejected roster without explaining why/)
+})
+
+test('the capsule closing turn treats palette and unused-roster claims as evidence-bound facts', () => {
+  assert.match(CAPSULE_PLAN_EVIDENCE_BOUNDARY, /requested colour may serve any visual role/i)
+  assert.match(CAPSULE_PLAN_EVIDENCE_BOUNDARY, /never has to be a hero piece/i)
+  assert.match(CAPSULE_PLAN_EVIDENCE_BOUNDARY, /not demonstrated.*never rejected, bad, or previously flagged/i)
+  assert.match(CAPSULE_PLAN_EVIDENCE_BOUNDARY, /wardrobe gap only when a plan_line explicitly reports insufficient eligible supply/i)
 })
 
 // The numbers in the brief and the numbers the validator enforces have to be

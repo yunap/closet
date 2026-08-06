@@ -3066,6 +3066,48 @@ export async function selectCapsuleRosterViaModel({
 
   const paletteSupplyGaps = [describeCapsuleAccentSupplyGap(palette, bench)].filter(Boolean)
 
+  // A failed model call must not make the palette contract disappear. The old
+  // fallback returned the legacy palette-biased engine roster, which could
+  // introduce unrelated accents even when the user had named one family. Keep
+  // neutrals plus the requested family only; if that family is unavailable,
+  // this naturally produces the neutral capsule the user was promised.
+  const paletteSafeDeterministic = () => {
+    const requestedFamilies = capsuleAccentFamilyNames(palette)
+    if (!requestedFamilies.length) return deterministic()
+    const allowedPool = pool.filter(piece =>
+      colorsArePaletteNeutral(piece?.colors) ||
+      requestedFamilies.some(family => pieceMatchesAccentFamily(piece, family))
+    )
+    let roster = selectCapsuleRoster(allowedPool, { budget, isSummer, isWinter, occasions, slots, palette })
+    if (roster.length !== budget) return roster
+
+    const neutralPlan = capsuleNeutralBasePlan(budget)
+    const accentCandidates = allowedPool.filter(piece =>
+      !roster.some(selected => Number(selected.id) === Number(piece.id)) &&
+      !colorsArePaletteNeutral(piece?.colors) &&
+      requestedFamilies.some(family => pieceMatchesAccentFamily(piece, family))
+    )
+    while (capsuleNeutralBaseCount(roster) > neutralPlan.maximum) {
+      let swapped = false
+      for (const replacement of accentCandidates) {
+        const replaceIndex = roster.findIndex(piece =>
+          colorsArePaletteNeutral(piece?.colors) &&
+          wardrobeCategoryGroup(piece) === wardrobeCategoryGroup(replacement)
+        )
+        if (replaceIndex < 0) continue
+        const trial = [...roster]
+        trial[replaceIndex] = replacement
+        if (!validateCapsuleRoster(trial, { slots, budget, isSummer, isWinterCapsule: isWinter, pool: allowedPool }).valid) continue
+        roster = trial
+        accentCandidates.splice(accentCandidates.indexOf(replacement), 1)
+        swapped = true
+        break
+      }
+      if (!swapped) break
+    }
+    return roster
+  }
+
   const check = (roster) => validateCapsuleRoster(roster, {
     slots, budget, isSummer, isWinterCapsule: isWinter, pool: bench
   })
@@ -3104,7 +3146,7 @@ export async function selectCapsuleRosterViaModel({
   // pieces can be worn at all.
   bump('capsuleRosterModelFallbacks')
   return {
-    roster: deterministic(),
+    roster: paletteSafeDeterministic(),
     source: 'deterministic_fallback',
     palette: '',
     jobs: [],
@@ -3113,7 +3155,7 @@ export async function selectCapsuleRosterViaModel({
     // The spec required this disclosure at stage 3 and it was never
     // implemented: capsuleRosterSource was written and read by nothing, so a
     // fallback capsule presented exactly like a chosen one.
-    coverageGaps: [`[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${secondFailures.map(failure => failure.message).join('; ')}]`],
+    coverageGaps: [...paletteSupplyGaps, `[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${secondFailures.map(failure => failure.message).join('; ')}]`],
     failureCodes: seenCodes
   }
 }

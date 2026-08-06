@@ -31,6 +31,8 @@ import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingInten
 import { bottomKind } from './attributes.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 
+export const CAPSULE_PLAN_EVIDENCE_BOUNDARY = ` Capsule evidence boundary: a requested colour may serve any visual role and never has to be a hero piece. A roster piece absent from the representative cards means only "not demonstrated" — never rejected, bad, or previously flagged. State a requested-colour shortage or wardrobe gap only when a plan_line explicitly reports insufficient eligible supply; absence from the roster or cards is not supply evidence.`
+
 // 2026-07-10: mechanical backstop, not just a prompt fix — confirmed live that the model kept passing
 // the app's hardcoded "Time zone: America/Los_Angeles" context string as search_wardrobe's `location`
 // arg even after STYLIST_SYSTEM was told explicitly not to, and because an explicit tool argument
@@ -1992,7 +1994,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           allPieces: planPieces,
           dateRange: planDateRange,
           mood: toolContext.mood || '',
-          question: toolContext.question || '',
+          question: toolContext.planQuestion || toolContext.question || '',
           location: toolContext.location || '',
           ownerRules,
           planKind,
@@ -2208,7 +2210,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "success",
             bounded_composition: true,
-            message: `${accepted.length} representative capsule outfit${accepted.length === 1 ? '' : 's'} accepted. These cards are already displayed. Present only the accepted rotation naturally and finish; no additional actions are available for this turn.${shortfallLine ? ` ${accepted.length} of ${plannedTotal} planned looks passed validation.${rejectionSummary ? ` The reason each one was held back, which you may state plainly and must NOT guess at or replace with your own theory: ${rejectionSummary}. Those looks are already shown as needs-review cards the user can repair, so do not offer to re-style them yourself.` : ''} Do not describe the shortfall as an engine or card ceiling, and do not supply the missing looks yourself in prose.` : ''}`,
+            message: `${accepted.length} representative capsule outfit${accepted.length === 1 ? '' : 's'} accepted. These cards are already displayed. Present only the accepted rotation naturally and finish; no additional actions are available for this turn.${shortfallLine ? ` ${accepted.length} of ${plannedTotal} planned looks passed validation.${rejectionSummary ? ` The reason each one was held back, which you may state plainly and must NOT guess at or replace with your own theory: ${rejectionSummary}. Those looks are already shown as needs-review cards the user can repair, so do not offer to re-style them yourself.` : ''} Do not describe the shortfall as an engine or card ceiling, and do not supply the missing looks yourself in prose.` : ''}${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
             plan_lines: planLinesForResponse,
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,
@@ -2309,7 +2311,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           return {
             status: "success",
             partial: true,
-            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. To fill the disclosed gaps, call plan_outfit_set again with JUST the unfilled slot(s) — accepted cards carry forward automatically.`,
+            message: `Accepted ${planOutfits.length} valid plan outfit card${planOutfits.length === 1 ? '' : 's'} after repeated validation failures. Present these cards and the plan_lines honestly; do not invent missing cards. Unfilled slots are disclosed in the plan lines. Last failures: ${failureText} These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them. To fill the disclosed gaps, call plan_outfit_set again with JUST the unfilled slot(s) — accepted cards carry forward automatically.${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
             plan_lines: planLinesForResponse,
             outfit_summaries: planOutfits.map(outfit => ({
               slot: outfit.label,
@@ -2334,7 +2336,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
         return {
           status: "success",
-          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.`,
+          message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.${CAPSULE_PLAN_EVIDENCE_BOUNDARY}`,
           plan_lines: planLinesForResponse,
           outfit_summaries: planOutfits.map(outfit => ({
             slot: outfit.label,

@@ -150,6 +150,29 @@ is absent from the season- and lifestyle-eligible candidate bench, use neutrals 
 unrelated accent and tell the person which requested family was unavailable. Availability means
 eligible for this capsule, not merely present somewhere in the owned wardrobe.
 
+The requested colour is not synonymous with a hero garment. It may appear as a protagonist,
+support, grounding piece, print, layer, dress, or shoe. The contract governs the roster's colour
+story; it does not prescribe which aesthetic job must carry the colour.
+
+### Live-run correction, 2026-08-06
+
+Thread `thread_1786036700758` asked for a summer capsule in yellow, then answered the intake
+question with lifestyle contexts. The first-turn request was not passed to `plan_outfit_set`; only
+the second-turn lifestyle answer reached palette extraction. The model therefore selected without
+yellow, the deterministic fallback introduced unrelated accents, and the closing response inferred
+both a “true yellow hero” shortage and a previously “bad” cardigan from its own output. The active
+wardrobe did contain eligible yellow-family pieces, including a mustard top and yellow-containing
+light layers.
+
+The resulting evidence rules are part of the palette contract:
+
+- preserve the most recent capsule request when the next turn is its clarification answer;
+- hold deterministic fallback to the same neutral/requested-family boundary as model selection;
+- a roster piece absent from representative cards means only **not demonstrated**, never rejected,
+  bad, or previously flagged;
+- report a requested-colour shortage or wardrobe gap only from an explicit eligible-supply plan
+  line. Absence from the selected roster or displayed cards is not supply evidence.
+
 ### What the neutral-bonus fix actually changed
 
 The `+12` bonus is paid for "recombines with everything", and the old test — does *any* tagged

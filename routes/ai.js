@@ -2772,6 +2772,15 @@ const CAPSULE_EXPANSION_SCHEMA = {
   required: ['title', 'piece_ids', 'reason']
 }
 
+export function capsulePlanQuestion(currentQuestion = '', history = []) {
+  const current = String(currentQuestion || '').trim()
+  if (/\bcapsule\b/i.test(current)) return current // ratchet-allow: user plan intent, not garment text
+  const priorCapsuleRequest = [...(Array.isArray(history) ? history : [])]
+    .reverse()
+    .find(entry => entry?.role === 'user' && /\bcapsule\b/i.test(String(entry?.content || '')))?.content || '' // ratchet-allow: user plan intent, not garment text
+  return [String(priorCapsuleRequest || '').trim(), current].filter(Boolean).join('\n')
+}
+
 export function capsulePlanCompositionSchema(targetOutfits = 1) {
   const exactCount = Math.max(1, Number(targetOutfits) || 1)
   return {
@@ -2902,6 +2911,8 @@ When you do take a piece that needs a base, its base must be a genuine visual ma
 4. A DISTINCT JOB PER PIECE. Every piece you take should answer "what does this do that nothing else here does?" If your own job line for a piece could be written about another piece you already chose, one of them is the wrong pick.
 
 PALETTE CONTRACT. The neutral foundation is automatic; the person does not have to choose or repeat neutrals. Aim for about 70% neutral or neutral-adjacent pieces, with 60–75% accepted. Colours named by the person are the ACCENT colour families for the remaining places. Neutrals are always allowed. Do not substitute an unrelated accent colour: if an eligible requested family is unavailable, keep that place neutral and say which family was unavailable in the palette line. Coverage may change which neutral garment you choose, but it does not license a random accent.
+
+The requested colour may do ANY visual job: protagonist, support, grounding, print, layer, dress, or shoe. Never require a requested colour to appear in a hero piece.
 
 State the neutral foundation and requested accent colours you built around in your own words.
 
@@ -3527,6 +3538,13 @@ router.post('/ask', async (req, res) => {
       req.body.threadContext || '',
       req.body.generatedContext || ''
     ].join('\n'))
+    const currentQuestion = req.body.question || ''
+    // A capsule often spans two turns: the first names the season/palette and
+    // the second answers the stylist's lifestyle clarification. The plan tool
+    // used to receive only turn two, silently dropping "in yellow" before
+    // roster selection. Preserve the most recent user capsule request as plan
+    // context; the current turn still wins when it is itself a capsule request.
+    const planQuestion = capsulePlanQuestion(currentQuestion, req.body.history)
     const toolContext = {
       generatedOutfits: [],
       source: 'whole_wardrobe',
@@ -3536,7 +3554,8 @@ router.post('/ask', async (req, res) => {
       mood: req.body.mood || '',
       mission: req.body.mission || 'mix',
       activity: req.body.activity || '',
-      question: req.body.question || '',
+      question: currentQuestion,
+      planQuestion,
       // 2026-07-10: home location is a pure fallback — an explicitly named place from this turn's
       // question (extracted by the model as search_wardrobe's own `location` arg) or an already-
       // established req.body.location both still take priority over it, per tools.js's merge order.
