@@ -624,6 +624,17 @@ function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', comp
     piece_budget: pieceBudget,
     capacity: capsuleCapacity,
     roster_ids: capsuleRoster.map(piece => Number(piece?.id)).filter(Boolean),
+    // The capsule is the product the user requested; outfit cards are only
+    // examples. Send the minimal public garment record needed to show the full
+    // roster visually, including pieces that no example outfit happened to use.
+    roster_pieces: capsuleRoster.map(piece => ({
+      id: Number(piece?.id),
+      name: String(piece?.name || 'Garment'),
+      category: String(piece?.category || ''),
+      photo: piece?.photo || null,
+      worn_photo: piece?.worn_photo || null,
+      colors: Array.isArray(piece?.colors) ? piece.colors : []
+    })).filter(piece => piece.id),
     is_winter_capsule: Boolean(isWinterCapsule),
     slots: (Array.isArray(capsuleSlots) ? capsuleSlots : []).map(slot => ({
       id: slot.id,
@@ -3010,60 +3021,10 @@ export async function selectCapsuleRosterViaModel({
         }
       }
     }
-    // Provider responses use the accountability fields required by the
-    // production schema. Injected offline choosers written before that schema
-    // intentionally remain usable; when the fields are present, every claim is
-    // checked against garment truth rather than trusted as prose.
-    if (Object.prototype.hasOwnProperty.call(answer || {}, 'category_counts')) {
-      const groups = ['top', 'bottom', 'dress', 'outerwear', 'shoes']
-      const actualCounts = Object.fromEntries(groups.map(group => [
-        group,
-        roster.filter(piece => wardrobeCategoryGroup(piece) === group).length
-      ]))
-      const reportedCounts = answer?.category_counts || {}
-      const miscounted = groups.filter(group => Number(reportedCounts[group]) !== actualCounts[group])
-      if (miscounted.length) {
-        contractFailures.push({
-          code: 'category_accounting',
-          message: `reported category counts do not match the selected IDs: ${miscounted.map(group => `${group} reported ${Number(reportedCounts[group]) || 0}, actual ${actualCounts[group]}`).join('; ')}`
-        })
-      }
-
-      const departures = Array.isArray(answer?.category_departures) ? answer.category_departures : []
-      const departureProblems = []
-      for (const group of groups) {
-        const target = Number(quotas[group]) || 0
-        const actual = actualCounts[group]
-        const matching = departures.filter(entry => String(entry?.category || '') === group)
-        if (actual === target && matching.length) departureProblems.push(`${group} matches its target but declares a departure`)
-        if (actual !== target && matching.length !== 1) departureProblems.push(`${group} is ${actual} against target ${target} but needs exactly one departure reason`)
-        if (actual !== target && matching.length === 1) {
-          const entry = matching[0]
-          if (Number(entry.target_count) !== target || Number(entry.selected_count) !== actual || !String(entry.reason || '').trim()) {
-            departureProblems.push(`${group} departure must state target ${target}, selected ${actual}, and a reason`)
-          }
-        }
-      }
-      if (departureProblems.length) {
-        contractFailures.push({ code: 'category_departure', message: departureProblems.join('; ') })
-      }
-
-      const jobs = Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : []
-      const jobIds = jobs.map(entry => Number(entry?.piece_id)).filter(Boolean)
-      const selectedSet = new Set(roster.map(piece => Number(piece.id)))
-      const missingJobs = [...selectedSet].filter(id => !jobIds.includes(id))
-      const extraJobs = [...new Set(jobIds.filter(id => !selectedSet.has(id)))]
-      const duplicateJobs = [...new Set(jobIds.filter((id, index) => jobIds.indexOf(id) !== index))]
-      const blankJobs = jobs.filter(entry => !String(entry?.job || '').trim()).map(entry => Number(entry?.piece_id)).filter(Boolean)
-      if (missingJobs.length || extraJobs.length || duplicateJobs.length || blankJobs.length) {
-        const details = []
-        if (missingJobs.length) details.push(`missing jobs for IDs ${missingJobs.join(', ')}`)
-        if (extraJobs.length) details.push(`jobs for unselected IDs ${extraJobs.join(', ')}`)
-        if (duplicateJobs.length) details.push(`duplicate jobs for IDs ${duplicateJobs.join(', ')}`)
-        if (blankJobs.length) details.push(`blank jobs for IDs ${blankJobs.join(', ')}`)
-        contractFailures.push({ code: 'piece_job_coverage', message: details.join('; ') })
-      }
-    }
+    // Category counts, departure prose, and piece jobs explain the choice; they
+    // do not define it. The selected IDs are the roster, and validateCapsuleRoster
+    // derives their real shape and checks the garment set itself. Never discard
+    // a paid, valid selection because its explanatory accounting is incomplete.
     return { roster, contractFailures, palette: String(answer?.palette || '').trim(), jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [] }
   }
 
@@ -3158,7 +3119,9 @@ export async function selectCapsuleRosterViaModel({
     // The spec required this disclosure at stage 3 and it was never
     // implemented: capsuleRosterSource was written and read by nothing, so a
     // fallback capsule presented exactly like a chosen one.
-    coverageGaps: [...paletteSupplyGaps, `[capsule roster: the stylist's own selection could not meet this capsule's structural guarantees, so the engine chose the roster instead — ${secondFailures.map(failure => failure.message).join('; ')}]`],
+    // Keep validator arithmetic in diagnostics. The public result only needs
+    // the decision; IDs, schema mismatches, and repair internals belong in logs.
+    coverageGaps: [...paletteSupplyGaps, '[capsule fallback: I used a backup capsule selection because the first selection could not satisfy the garment-set requirements.]'],
     failureCodes: seenCodes
   }
 }

@@ -2901,6 +2901,14 @@ test('plan and whole-wardrobe responses still render the model\'s own prose answ
   assert.doesNotMatch(src, /hasStructuredIdeas && !isPreviewResponse && !compactIntro/)
   assert.match(src, /<details className="stylist-plan-notes" open>/)
   assert.match(src, /stylist-plan-notes-body/)
+  assert.match(src, /className="stylist-capsule-roster"/)
+  assert.match(src, />Your capsule</)
+  assert.match(src, />Example outfits</)
+  assert.match(src, /\? 'Wardrobe capsule'/)
+  assert.match(src, /return 'Capsule details'/)
+  assert.match(src, /capsuleContext\.roster_pieces/)
+  assert.match(src, /resolveUploadThumbnailSrc\(photo, 'chat-garment'\)/)
+  assert.match(src, /\^\\\[capsule \(\?:roster\|palette\|jobs\):/)
   // The canned "Outfit ideas for X… image generation is optional" line is gone entirely, along
   // with the helper that built it — the model's own answer stands in its place.
   assert.doesNotMatch(src, /getCompactOutfitIntro/)

@@ -1064,6 +1064,11 @@ test('assembled capsule cards persist the bounded roster and slot context needed
     piece_budget: 10,
     capacity: 4,
     roster_ids: [1, 2, 3],
+    roster_pieces: [
+      { id: 1, name: 'top', category: 'top', photo: null, worn_photo: null, colors: [] },
+      { id: 2, name: 'pants', category: 'bottom', photo: null, worn_photo: null, colors: [] },
+      { id: 3, name: 'shoes', category: 'shoes', photo: null, worn_photo: null, colors: [] },
+    ],
     is_winter_capsule: true,
     slots: [{
       id: 'casual_indoor',
@@ -5027,12 +5032,12 @@ test('a model roster may depart from layer and shoe starting counts with real jo
   assert.equal(seenFailures.length, 1, 'category guidance alone must not spend a repair call')
 })
 
-test('model roster accounting is checked against selected garment truth before validation', async () => {
+test('model roster bookkeeping cannot discard an otherwise valid paid selection', async () => {
   const pool = layerTradeWardrobe()
   pool[0].pattern_complexity = 'loud'
   const slots = normalizePlanSlots([{ label: 'At Home', occasion: 'casual', count: 3 }])
   const seenFailures = []
-  await selectCapsuleRosterViaModel({
+  const result = await selectCapsuleRosterViaModel({
     pool, budget: 24, slots, isSummer: true, occasions: ['casual'],
     chooseRoster: async ({ bench, failures }) => {
       seenFailures.push(failures.map(entry => entry.code))
@@ -5052,9 +5057,9 @@ test('model roster accounting is checked against selected garment truth before v
       }
     }
   })
-  assert.ok(seenFailures[1].includes('category_accounting'))
-  assert.ok(seenFailures[1].includes('category_departure'))
-  assert.ok(seenFailures[1].includes('piece_job_coverage'))
+  assert.equal(result.source, 'model')
+  assert.equal(seenFailures.length, 1, 'bookkeeping defects must not spend a repair call')
+  assert.deepEqual(seenFailures[0], [])
 })
 
 test('an accurately counted and explained target departure remains valid', async () => {
@@ -5154,12 +5159,10 @@ test('a structural failure still falls back, and the fallback is no longer silen
 
   assert.equal(result.source, 'deterministic_fallback')
   assert.ok(bumped.includes('capsuleRosterModelFallbacks'))
-  // docs/capsule-roster-selection-spec.md §3 required this line at stage 3 and
-  // it was never implemented: capsuleRosterSource was written and read by
-  // nothing, so a fallback capsule presented exactly like a chosen one.
-  const disclosure = result.coverageGaps.find(line => /the engine chose the roster instead/.test(line))
+  const disclosure = result.coverageGaps.find(line => /^\[capsule fallback:/.test(line))
   assert.ok(disclosure, `the fallback must disclose itself, got ${JSON.stringify(result.coverageGaps)}`)
-  assert.match(disclosure, /could not meet this capsule's structural guarantees/)
+  assert.match(disclosure, /backup capsule selection/)
+  assert.doesNotMatch(disclosure, /IDs?\b|category_|reported|actual/i)
 })
 
 test('the codes behind a rejection are recorded across both attempts', async () => {
