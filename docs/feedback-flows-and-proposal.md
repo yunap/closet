@@ -107,20 +107,26 @@ linked to the garment and the exact field (`length_hits_at`), which you complete
 editor and which then stops firing. **It is the only feedback destination that improves the system
 permanently rather than steering one prompt.**
 
-It currently covers **only** the 6 wrong-length reasons. It should also cover:
+**The unit that routes is the sub-reason, not the feedback type** — corrected 2026-08-08 after owner
+review. A complaint only becomes a retag suggestion when it names **one garment and one field**.
+Outfit-level complaints involve two or more garments and cannot be attributed to any single one's
+tags; that is the relational category this destination explicitly excludes.
 
-| feedback | field it implicates |
-|---|---|
-| `wrong_garment_details` | `reads_as`, `pattern_*`, `neckline`, `sleeve_type` |
-| `wrong_item_read` ("Replace in this outfit") | `occasions`, `formality`, `reads_as` |
-| `bad_occasion` | `occasions` |
-| `fit_issue` | `fit_on_body`, `fit_confidence` |
-| repeated `not_me` on one garment | the garment's tags generally — a review prompt, not a field |
+| feedback | routes? | field it implicates |
+|---|---|---|
+| `wrong_length` sub-reasons (shipped today) | ✅ single garment | `length_hits_at`, `sleeve_type` |
+| `wrong_garment_details` | ✅ single garment | `reads_as`, `pattern_*`, `neckline`, `sleeve_type` |
+| `bad_occasion` | ✅ single garment | `occasions` |
+| `layer_too_long`, `competing_hemlines` | ✅ names one garment's hem | `length_hits_at` |
+| `wrong_item_read` ("Replace in this outfit") | ⚠️ only in aggregate | `occasions`, `formality`, `reads_as` |
+| `fit_issue`, `too_much_volume`, `shape_lost`, `unbalanced_proportions`, `too_columnar` | ❌ **relational** | none — these describe two garments against each other |
 
-The tagger-accuracy case for this is already proven: the taupe suede ankle boots have
-`fabric_category: "other"` despite "suede" being in their name, which is why no material rule could
-ever have caught them. Feedback is the cheapest available signal for finding mistagged garments,
-and today it is thrown away instead.
+`fit_issue` was originally listed here as the strongest candidate. That was wrong: it is
+`target_type = 'whole_wardrobe_outfit'`, i.e. a judgment about how an outfit hangs together, and
+"fit" in that sense is not the garment field `fit_on_body`. It belongs in Destination C, not A.
+
+Feedback is still the cheapest available signal for finding mistagged garments, and today it is
+thrown away instead — but the case has to rest on complaints that actually name one garment.
 
 ### Destination B — "the picture is wrong" → render calibration
 
@@ -204,6 +210,30 @@ and reversible, the scoring half changes deterministic output.
 Collapse the duplicate labels, decide `pairs_well_with`, and make the Style Profile panel show
 which stored rules are actually delivered. Cosmetic relative to the above, but it is what stops
 this drifting again.
+
+## Part 6b — A tagging finding that came out of reviewing this
+
+The tagger prompt already states the rule the owner asked about:
+
+> "Fit-visible photos are authoritative only for: `fit_on_body`, drape, `length_hits_at`,
+> `tuck_behavior`, `waistband_type`, and on-body silhouette."
+
+So fit is *not* designed to be read off a hanger shot, and an earlier claim in this arc that it was
+is withdrawn. But the rule is not holding in the data:
+
+| measure | count of 242 active |
+|---|--:|
+| has a worn photo | 176 |
+| has a photo judged `fit_visible: true` | **60** |
+| has a `fit_on_body` value | 159 |
+| worn photo but no `fit_on_body` | 21 |
+| neither worn photo nor `fit_on_body` | 62 |
+
+**159 garments carry a fit value while only 60 have a fit-visible photo behind one.** Roughly a
+hundred fit values therefore have no authoritative source under the tagger's own rule — manual
+entry, older tagger versions, or the rule not being enforced at generation time. That is a tagger
+question rather than a feedback question, but it is the kind of thing a retag task should be able
+to raise, and it is worth measuring before trusting `fit_on_body` anywhere.
 
 ## Part 7 — Open questions for the owner
 
