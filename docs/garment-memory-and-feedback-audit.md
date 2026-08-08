@@ -25,10 +25,27 @@ summer work"; it is that a personal rule should reach the places that decide, wh
 | B | **Per-garment user memory** | `pieces.styling_rules_learned`, `pairs_well_with`, `tried_and_rejected`, `notes` | Edit modal → "What the stylist should remember" / "Styling notes" |
 | C | **Occasion exclusions** | `pieces.occasion_exclusions` | Stylist chat → "Wrong for" |
 | D | **Model-authored garment intelligence** | `pieces.style_profile_json.garment_intelligence` (`do_not_pair_rules`, `pairing_requirements`, `failure_risks`, `formula_compatibility`, `real_wear_notes`) | the tagger |
-| E | **Conversation feedback** | `stylist_feedback` rows | chat reactions, `store_user_correction` |
+| E | **Standing prose rules** | `stylist_feedback` rows where `target_type='message'` | chat, `store_user_correction` |
+| F | **Outfit and board feedback** | `stylist_feedback` rows, other target types | verdict + reason chips, card actions, piece menu |
 
-"Protected edits" is not a sixth channel — it is `style_profile_json._confidence.<field> = 'manual'`,
+"Protected edits" is not another channel — it is `style_profile_json._confidence.<field> = 'manual'`,
 which makes `trustedFieldText` emit that field as owner-confirmed rather than a tagger guess.
+
+### Channel F in detail — the largest one by volume
+
+This is where almost all the feedback actually is, and it has its own taxonomy in
+[lib/feedbackTaxonomy.js](../lib/feedbackTaxonomy.js):
+
+- **Overall verdict**, 4 values — `signature` / `works` / `almost` / `not_me` ("This feels exactly
+  like me" … "Not for me"). The same 4 back the card-level "More like this" / "Not for me".
+- **Style direction**, 15 reasons — too plain, too polished, feels too delicate, does not feel
+  personal, feels like a costume, looks like a generic store outfit, shoes do not ground the look…
+- **Fit and shape**, 7 reasons — looks too bulky, my shape disappears, top and bottom do not work
+  together, the layer lengths look awkward…
+- **Image fidelity**, 4 reasons plus 6 wrong-length sub-reasons — deliberately separate, because a
+  bad render is not a bad outfit idea. The UI says so explicitly.
+- **Per-piece menu on a card** — "Edit piece details" writes channel A/B, "Replace in this outfit"
+  writes a scoped per-piece negative, "Wrong for `<occasion>`" writes channel C.
 
 ## 2. How much of each is actually used
 
@@ -63,8 +80,28 @@ roster-selection prompt, and the composition prompt.
 | B `pairs_well_with` | ❌ | ✅ | ✅ | **❌** |
 | D `do_not_pair_rules` | ❌ | ✅ | ✅ | **❌** |
 | D `pairing_requirements`, `failure_risks` | ❌ | ✅ | ✅ | **❌** |
-| E owner rules (6 rows) | ❌ | ✅ | ✅ | ✅ |
-| E everything else (~290 rows) | ❌ | ❌ | ❌ | ❌ |
+| E standing prose rules (6 rows) | ❌ | ✅ | ✅ | ✅ |
+| F outfit/board feedback (~290 rows) | ❌ | ❌ | ❌ | ❌ |
+
+### Where channel F does go
+
+It is not dead — it is just absent from the capsule. Every other generation surface reads it:
+
+| reader | consumed by | deterministic? |
+|---|---|:--:|
+| `getStylistFeedbackMemory` (piece-scoped, outfit-scoped, and global) | freeform stylist chat ([core.js:4019-4031](../styling-engine/core.js)), `/evaluate-piece` | no — prompt text |
+| `getWholeWardrobeFeedbackMemory` | whole-wardrobe generator ([routes/ai.js:1510](../routes/ai.js), [core.js:2821](../styling-engine/core.js)) | no — prompt text |
+| `buildGoldStandardFeedbackMemory` | `/evaluate-piece` | no — prompt text |
+| `getSavedBoardRendererMemory` | the renderer ([core.js:57](../styling-engine/core.js)) | no — prompt text |
+| **`getFeedbackInfluenceForPair`** | `compatibilityScoreForSelectedItem` → `rankedComplementaryWardrobeFor` → `selectCandidatesForOutfitGeneration` | **yes — weighted score** |
+
+That last row matters: outfit feedback **does** have mechanical force somewhere in this app.
+`getFeedbackInfluenceForPair` carries a full signed weight table — positives (`good_pieces` +16,
+`good_formula` +14, `almost` +4) and negatives (`bad_reference` −36, `catalog_drift` −34,
+`fit_issue` −34, `not_me` −32, `too_generic` −26, `bad_occasion` −22 …) — and moves deterministic
+candidate ranking for single-piece outfit generation. So "a personal preference cannot be enforced
+deterministically" is not a law of this codebase: a structured, per-user, weighted consumer already
+exists. It was simply never wired to the capsule.
 
 **Both capsule prompts get full garment truth.** There are two piece-text builders, and the
 capsule path deliberately uses the rich one in both places:
@@ -122,32 +159,62 @@ it does not correspond to the "OWNER RULE" / "PREFERENCE REACTION" labels shown.
 cream crochet top rule (id 337, `preference_reaction`/`piece`) reaches nothing, while
 "I don't wear boots in the summer" (id 234, `preference_reaction`/`message`) reaches both prompts.
 
-### 4e. No personal rule can reach the deterministic layer
+### 4e. The capsule is the least feedback-aware surface in the app
 
-Channels B, D and E are prose. `selectCapsuleRoster` and `buildCapsuleBench` take no rules
-argument, so a personal rule constrains a model-chosen roster and cannot constrain an
-engine-chosen one. Only C (`occasion_exclusions`) is both personal and deterministic — and its
-only axis is occasion, so it cannot express season, material, or weather.
+Every other generation path reads channel F. The capsule reads **6 rows** — the standing prose
+rules — and nothing else. Roughly 290 recorded verdicts and reason chips, including every
+"Not for me", every "my shape disappears", and every "shoes do not ground the look", inform the
+freeform chat, the whole-wardrobe generator, the renderer and the deterministic pair scorer, and
+inform neither capsule roster selection nor capsule composition.
 
-This is the structural gap behind the boots observation, and per §0 the fix must be per-user data,
-not a shipped profile.
+Two corollaries worth stating plainly, because they were each assumed wrong once during this audit:
+
+1. **This is not a "prose cannot be enforced" problem.** `getFeedbackInfluenceForPair` already
+   turns per-user feedback into a weighted deterministic score. The mechanism exists, is per-user,
+   and is exactly the shape §0's ruling requires. It was simply never called from the capsule path.
+2. **It is also not only a deterministic problem.** The capsule's *prompts* don't get channel F
+   either, so even the model-chosen roster is composed by a stylist that cannot see what the person
+   has said about ~290 previous outfits.
+
+Separately, `selectCapsuleRoster` and `buildCapsuleBench` take no rules argument at all, so a
+personal rule constrains a model-chosen roster and cannot constrain an engine-chosen one. Only C
+(`occasion_exclusions`) is both personal and deterministic today — and its only axis is occasion,
+so it cannot express season, material, or weather. That is the structural gap behind the boots
+observation, and per §0 the fix must be per-user data, not a shipped profile.
 
 ## 5. Proposed order
 
-Cheapest and least contentious first. None of this is implemented.
+None of this is implemented. Ordered by what it buys, not by what is cheapest — the volume
+finding in 4e changed the ranking.
 
-1. **Close the compact catalog's gap on the non-capsule path.** Extend `planWorkbenchPieceLine`
+1. **Give the capsule channel F.** The two capsule prompts should receive the same outfit-feedback
+   memory the freeform chat already gets, and the capsule roster should consult
+   `getFeedbackInfluenceForPair` — or an equivalent — the way single-piece generation already does.
+   Closes 4e, which is the only item that changes output quality on the surface being actively
+   worked. Do it in that order: prompt first (cheap, reversible, measurable on one run), scoring
+   second (deterministic force, so it needs the #44 caution and a ranking A/B).
+2. **Make the feedback panel show what is delivered.** Either surface the `target_type`
+   distinction, or widen the selector so a piece-targeted correction is delivered too. Closes 4d.
+   A rule the person believes they stored that reaches nothing is the worst failure here.
+3. **Close the compact catalog's gap on the non-capsule path.** Extend `planWorkbenchPieceLine`
    with `notes` and the D fields, or have it call `buildWardrobePieceTruthText` — one builder, no
    drift. Closes 4a. Prompt-only, and the capsule composer's override is the precedent; measure the
    workbench token growth first, since the compact line exists because the ordinary path shows many
    more pieces than a fixed roster.
-2. **Decide `pairs_well_with`'s fate** — populate, merge into `styling_rules_learned`, or remove.
-3. **Make the feedback panel show what is delivered.** Either surface the distinction, or widen
-   the selector so a piece-targeted correction is delivered too. Closes 4d.
-4. **Extend `occasion_exclusions` to a general per-user garment exclusion** with a season/weather
-   axis, or add an optional structured predicate to a stored rule. This is the only item that
-   makes 4e go away, it is the only one that is a design change rather than a repair, and it needs
-   an owner ruling before design.
+4. **Decide `pairs_well_with`'s fate** — populate, merge into `styling_rules_learned`, or remove.
+5. **Extend `occasion_exclusions` to a general per-user garment exclusion** with a season/weather
+   axis, or add an optional structured predicate to a stored rule. The remaining half of 4e: it is
+   what lets a personal rule bind the deterministic selector rather than only the model. A design
+   change rather than a repair; needs an owner ruling before design.
+
+### One question this audit cannot answer
+
+Whether feedback given on a *rendered board* should steer *capsule roster selection* at all. A
+"looks too bulky" on one visualised outfit is evidence about that outfit; treating it as evidence
+about a garment's place in a 24-piece capsule is a bigger inferential step than the existing
+readers make. `getStylistFeedbackMemory` already draws this line — it labels scoped reactions
+"taste signals, not global directives" and severs them from standing rules. Item 1 should respect
+that line rather than flatten it.
 
 ## 6. Standing constraints that apply here
 
