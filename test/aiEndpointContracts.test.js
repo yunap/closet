@@ -2808,7 +2808,7 @@ test('model capsule roster selection is default ON and gated by the bench', () =
   // The model chooses from the bench and nothing else, and the schema pins the
   // roster size rather than letting a short answer through.
   assert.match(routeSrc, /choose ONLY from the candidate list/i)
-  assert.match(routeSrc, /roster_piece_ids: \{ type: 'array', items: \{ type: 'integer' \}, minItems: exact, maxItems: exact \}/)
+  assert.match(routeSrc, /roster_piece_ids: \{ type: 'array', items: \{ type: 'integer' \}, minItems: exact, maxItems: exact, uniqueItems: true \}/)
   assert.match(routeSrc, /prepareWardrobeThumb\(filePath, `capsule-roster:/)
 
   // One call, one repair, then the deterministic roster — never a third attempt.
@@ -2846,6 +2846,12 @@ test('StylistChat suppresses raw gate vocabulary on legacy stored diagnostic car
   assert.match(src, /outfit\.systemFlags\)[\s\S]{0,80}\(!isBrokenCard \|\| STYLIST_DEBUG_ENABLED\)/)
   // the builder's own placeholder must not survive stripping and reach a regular user either
   assert.match(src, /'Model proposal shown for debugging\.'/)
+})
+
+test('StylistChat uses the visual capsule roster instead of repeating its text list', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /\^Piece roster \\\(\\d\+\\\):\/i\.test\(note\)/)
+  assert.match(src, /className="stylist-capsule-piece-grid"/)
 })
 
 test('trip plan repeat label is derived from structured pieceReuse, not a keyword guess', () => {

@@ -4106,6 +4106,31 @@ test('a model-chosen capsule roster is accepted when it satisfies the guarantees
   assert.equal(result.palette, 'black')
 })
 
+test('a duplicate-only repaired model roster keeps its unique choices and fills the empty place locally', async () => {
+  const pool = paletteTestWardrobe()
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  let expectedUniqueIds = []
+  let calls = 0
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'],
+    chooseRoster: async ({ bench }) => {
+      calls += 1
+      const valid = bench.slice(0, 10).map(piece => Number(piece.id))
+      expectedUniqueIds = valid.slice(0, 9)
+      return {
+        roster_piece_ids: [...expectedUniqueIds, expectedUniqueIds[0]],
+        palette: 'neutral base',
+        piece_jobs: []
+      }
+    }
+  })
+
+  assert.equal(calls, 2, 'the model still receives its one explicit repair attempt')
+  assert.equal(result.source, 'model_repaired_locally')
+  assert.equal(result.roster.length, 10)
+  assert.ok(expectedUniqueIds.every(id => result.roster.some(piece => Number(piece.id) === id)), 'the local fill must preserve every unique model choice')
+})
+
 test('an unavailable requested accent stays neutral and is disclosed to the user', async () => {
   const pool = paletteTestWardrobe()
   const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
