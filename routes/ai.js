@@ -2821,7 +2821,7 @@ export function capsuleRosterSelectionSchema(budget = 24) {
     type: 'object',
     additionalProperties: false,
     properties: {
-      roster_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: exact, maxItems: exact },
+      roster_piece_ids: { type: 'array', items: { type: 'integer' }, minItems: exact, maxItems: exact, uniqueItems: true },
       palette: { type: 'string' },
       category_shape_reason: { type: 'string' },
       category_counts: {

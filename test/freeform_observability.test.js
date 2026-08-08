@@ -108,9 +108,27 @@ test('bounded capsule final prose is replaced locally when it invents unvalidate
     toolContext
   )
   assert.equal(result.replaced, true)
-  assert.match(result.answer, /1 validated look/)
+  assert.equal(result.answer, '')
   assert.doesNotMatch(result.answer, /99|Second option/)
   assert.equal(toolContext.freeformDiagnostics.capsuleFinalFallbacks, 1)
+})
+
+test('bounded capsule final prose may discuss selected roster pieces not used by example cards', () => {
+  const toolContext = {
+    capsuleAtomicAttempted: true,
+    capsuleAtomicCompleted: true,
+    generatedOutfits: [{
+      pieces: [{ id: 10 }, { id: 20 }],
+      capsulePlanContext: { roster_ids: [10, 20, 30] }
+    }],
+    freeformDiagnostics: {}
+  }
+  const text = 'The cardigan (ID #30) gives the capsule a light layer even though it is not needed in the examples.'
+  assert.deepEqual(boundedCapsuleFinalAnswer(text, toolContext), {
+    answer: text,
+    replaced: false,
+    reasons: []
+  })
 })
 
 test('bounded capsule final prose passes when it only introduces accepted cards', () => {

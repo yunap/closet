@@ -2962,6 +2962,7 @@ export async function selectCapsuleRosterViaModel({
   const resolve = (answer) => {
     const ids = (Array.isArray(answer?.roster_piece_ids) ? answer.roster_piece_ids : []).map(Number).filter(Boolean)
     const unique = [...new Set(ids)]
+    const duplicateIds = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))]
     const outsideBench = unique.filter(id => !benchById.has(id))
     const roster = unique.map(id => benchById.get(id)).filter(Boolean)
     const contractFailures = []
@@ -3025,7 +3026,7 @@ export async function selectCapsuleRosterViaModel({
     // do not define it. The selected IDs are the roster, and validateCapsuleRoster
     // derives their real shape and checks the garment set itself. Never discard
     // a paid, valid selection because its explanatory accounting is incomplete.
-    return { roster, contractFailures, palette: String(answer?.palette || '').trim(), jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [] }
+    return { roster, contractFailures, requestedIds: ids, duplicateIds, palette: String(answer?.palette || '').trim(), jobs: Array.isArray(answer?.piece_jobs) ? answer.piece_jobs : [] }
   }
 
   const paletteSupplyGaps = [describeCapsuleAccentSupplyGap(palette, bench)].filter(Boolean)
@@ -3102,6 +3103,55 @@ export async function selectCapsuleRosterViaModel({
   const secondFailures = record([...second.contractFailures, ...(second.contractFailures.length ? [] : check(second.roster).failures)])
   if (!secondFailures.length) {
     return { roster: second.roster, source: 'model_repaired', palette: second.palette, jobs: second.jobs, failures: [], bench, coverageGaps: paletteSupplyGaps, failureCodes: seenCodes }
+  }
+
+  // A repeated ID used to satisfy the provider's exact array length while
+  // collapsing to a short set after de-duplication. The schema now prevents
+  // that, but retain a provider-independent backstop: if duplication is the
+  // ONLY remaining defect after the paid repair, keep every unique model pick
+  // and fill the empty place from the validated deterministic ordering. Do not
+  // discard the other 23 aesthetic choices for one malformed array entry.
+  const duplicateOnly = second.requestedIds.length === budget &&
+    second.duplicateIds.length > 0 &&
+    second.contractFailures.length > 0 &&
+    second.contractFailures.every(failure => failure.code === 'roster_size')
+  if (duplicateOnly) {
+    const selectedIds = new Set(second.roster.map(piece => Number(piece.id)))
+    const candidates = [...paletteSafeDeterministic(), ...bench]
+      .filter((piece, index, all) =>
+        !selectedIds.has(Number(piece?.id)) &&
+        all.findIndex(other => Number(other?.id) === Number(piece?.id)) === index
+      )
+    const missing = budget - second.roster.length
+    let attempts = 0
+    const findValidFill = (chosen = [], start = 0) => {
+      if (chosen.length === missing) {
+        attempts += 1
+        const trial = [...second.roster, ...chosen]
+        return check(trial).valid ? trial : null
+      }
+      // A malformed response should normally be short by one. Keep the
+      // defensive search bounded so a pathological answer cannot turn this
+      // local recovery into a combinatorial request-time cost.
+      for (let index = start; index < candidates.length && attempts < 2500; index += 1) {
+        const result = findValidFill([...chosen, candidates[index]], index + 1)
+        if (result) return result
+      }
+      return null
+    }
+    const locallyRepaired = missing > 0 ? findValidFill() : null
+    if (locallyRepaired) {
+      return {
+        roster: locallyRepaired,
+        source: 'model_repaired_locally',
+        palette: second.palette,
+        jobs: second.jobs,
+        failures: [],
+        bench,
+        coverageGaps: paletteSupplyGaps,
+        failureCodes: seenCodes
+      }
+    }
   }
 
   // Two strikes on something structural: ship the deterministic roster and say

@@ -233,6 +233,16 @@ export function boundedCapsuleFinalAnswer(answerText = '', toolContext = {}) {
   const acceptedPieceIds = new Set(outfits.flatMap(outfit =>
     (outfit?.pieces || []).map(piece => Number(piece?.id)).filter(Number.isFinite)
   ))
+  // A capsule response may discuss any selected garment, including pieces the
+  // representative outfit cards did not happen to demonstrate. The previous
+  // guard treated those valid roster IDs as invented outfits and replaced the
+  // whole closing response with stale outfit-only copy.
+  for (const outfit of outfits) {
+    for (const id of outfit?.capsulePlanContext?.roster_ids || []) {
+      const numericId = Number(id)
+      if (Number.isFinite(numericId)) acceptedPieceIds.add(numericId)
+    }
+  }
   const outsideCardIds = extractPieceIdsFromProse(answerText)
     .filter(id => !acceptedPieceIds.has(Number(id)))
   const text = String(answerText || '')
@@ -264,16 +274,14 @@ export function boundedCapsuleFinalAnswer(answerText = '', toolContext = {}) {
   // keeping it is not a decision anyone can review later.
   console.log('[Capsule Final Answer Replaced]', { reasons, original: text })
   toolContext.capsuleFinalFallbackDetail = { reasons, original: text }
-  // Don't assert completeness when the turn knows it fell short — that pairing
-  // (suppressed shortfall + "this is the complete result") is what made the
-  // hole invisible in the first place. Name the shortfall and point at the
-  // notes, which now carry the same number.
+  // The visual capsule and example cards already carry the result. Do not add
+  // a second, layout-dependent paragraph claiming cards are "below" or that
+  // they are the complete capsule. Preserve only a real shortfall disclosure.
   const shortfall = toolContext?.capsuleShortfall
-  const shortfallSentence = Number(shortfall?.missing) > 0
-    ? ` ${shortfall.missing} of the ${shortfall.planned} looks I planned did not pass this capsule's own rules and are not shown — see Stylist's notes.`
-    : " The cards and Stylist's notes are the complete result."
   return {
-    answer: `Here ${outfits.length === 1 ? 'is' : 'are'} ${outfits.length} validated look${outfits.length === 1 ? '' : 's'} from your capsule rotation. I kept this turn to the combinations represented by the outfit cards below.${shortfallSentence}`,
+    answer: Number(shortfall?.missing) > 0
+      ? `${shortfall.missing} of the ${shortfall.planned} planned example looks did not pass this capsule's rules and are not shown; the details are in Stylist's notes.`
+      : '',
     replaced: true,
     reasons
   }

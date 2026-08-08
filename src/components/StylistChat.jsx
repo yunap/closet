@@ -1880,6 +1880,12 @@ export default function StylistChat({
   }
 
   const formatPlanNote = (note = '') => {
+    if (/^Piece roster \(\d+\):/i.test(note)) {
+      // The capsule roster is rendered as photographs. Repeating a truncated
+      // comma-separated name list in Stylist's notes makes the visual result
+      // harder to scan and can never represent all pieces as clearly.
+      return ''
+    }
     if (/^\[capsule fallback:/i.test(note)) {
       return String(note).replace(/^\[capsule fallback:\s*/i, '').replace(/\]$/, '')
     }
