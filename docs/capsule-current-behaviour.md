@@ -20,8 +20,18 @@ itself does not mean hot weather, home-only dressing, dresses, or a fixed number
 1. Production turns the conversation into explicit use-case slots and a finite garment budget. An
    unnumbered seasonal capsule uses 24 pieces.
 2. Deterministic gates form an eligible bench from active owned garments. Weather, occasion,
-   activity, suppression, owner rules, garment dependencies, and register validity remain code
-   constraints.
+   activity, suppression, garment dependencies, and register validity remain code constraints, and
+   they gate the deterministic selector and the model's bench identically — both call
+   `capsulePiecesEligibleForAnySlot`.
+
+   **Free-text owner rules are not among them.** Stored owner rules
+   (`getOwnerRuleNotes`) are prose, so they reach the two model prompts — roster selection and
+   composition — as hard requirements, and nothing else. `selectCapsuleRoster` and
+   `buildCapsuleBench` take no `ownerRules` argument and cannot: there is no deterministic reading
+   of a sentence. An owner rule therefore constrains a model-chosen roster and cannot constrain an
+   engine-chosen one. What *does* bind both paths is the structured layer — occasion and activity
+   profiles, `prohibited_materials`, register ceilings — because that is what the shared gate
+   evaluates. A rule that must hold on every path belongs there, not in a stored note.
 3. The roster model sees the eligible garment photos and chooses the finite roster. This path is on
    by default; `WARDROBE_MODEL_CAPSULE_ROSTER=false` disables it. The bench is capped at **70**
    pieces (ratified 2026-08-06).
@@ -111,6 +121,13 @@ A selected garment absent from the representative cards means only “not demons
 not mean rejected, bad, or previously flagged. The closing response may claim a requested-colour
 or wardrobe shortage only when a plan line explicitly reports insufficient eligible supply; it
 cannot infer shortage from absence in the roster or cards.
+
+When a look is submitted without a required structural piece, the engine completes it from that
+use case's own roster at no provider cost. The fill prefers a candidate the card's **own title or
+reason already names**, falling back to deterministic lowest-ID order when the card names none —
+so a card titled “… + Ankle Boots” gets the ankle boots rather than whichever shoe sorts first.
+The completion is always disclosed; the “the piece list is what you are actually being shown”
+caveat is attached only when the fill is one the card's words do not account for.
 
 ## Current evidence
 

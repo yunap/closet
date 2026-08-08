@@ -6282,6 +6282,68 @@ test('a look submitted without shoes is completed from its own slot roster', asy
   assert.match(line, /the piece list is what you are actually being shown/)
 })
 
+// Live thread_1785467959899, the exact card: the title named "Ankle Boots", the
+// model submitted no shoe at all, and the fill took the lowest-ID candidate —
+// the navy canvas slip shoes — so the finished card named a garment it did not
+// contain. The model had already said which shoe it meant; reading its own
+// title back costs nothing and removes the contradiction at its source.
+test('a completion prefers the shoe the card already names over the lowest ID', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  // Inserted first, so lowest-ID ordering alone would pick these — the live bug.
+  const slipId = insertPiece({ category: 'shoes', name: 'navy canvas slip shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const bootId = insertPiece({ category: 'shoes', name: 'taupe suede ankle boots', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const submission = [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    title: 'City Top + City Pants + Ankle Boots',
+    piece_ids: [Number(topId), Number(bottomId)]
+  }]
+
+  assert.ok(Number(slipId) < Number(bootId), 'the fixture must make lowest-ID pick the wrong shoe')
+
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(completed.accepted.length, 1)
+  assert.equal(
+    completed.completions[0].addedPieceId,
+    Number(bootId),
+    'the card names ankle boots, so the completion must add the ankle boots'
+  )
+  assert.equal(completed.completions[0].matchesCardText, true)
+
+  // A card whose own words account for the added piece needs no "the piece list
+  // is what you are actually being shown" caveat — the two now agree.
+  const line = describeCapsuleAutoCompletions(completed.completions)
+  assert.match(line, /"City Top \+ City Pants \+ Ankle Boots" got taupe suede ankle boots/)
+  assert.doesNotMatch(line, /the piece list is what you are actually being shown/)
+})
+
+// The reason text counts too, and a card that names nothing keeps the old
+// deterministic lowest-ID behaviour rather than picking arbitrarily.
+test('a completion falls back to lowest ID when the card names no candidate', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  const slipId = insertPiece({ category: 'shoes', name: 'navy canvas slip shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'shoes', name: 'taupe suede ankle boots', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    title: 'An Easy Day Out',
+    reason: 'Comfortable and simple for a long afternoon.',
+    piece_ids: [Number(topId), Number(bottomId)]
+  }])
+
+  assert.equal(completed.completions[0].addedPieceId, Number(slipId))
+  assert.equal(completed.completions[0].matchesCardText, false)
+  assert.match(describeCapsuleAutoCompletions(completed.completions), /the piece list is what you are actually being shown/)
+})
+
 // A no-op when nothing was completed — the overwhelming majority of runs.
 test('a rotation the engine did not touch discloses no completion', () => {
   assert.equal(describeCapsuleAutoCompletions([]), '')
