@@ -180,6 +180,21 @@ The resulting evidence rules are part of the palette contract:
 - report a requested-colour shortage or wardrobe gap only from an explicit eligible-supply plan
   line. Absence from the selected roster or displayed cards is not supply evidence.
 
+### Fallback accent swap — shipped inert, fixed 2026-08-07
+
+The deterministic fallback enforces the palette boundary in two halves: `paletteSafeDeterministic`
+filters the pool to neutrals plus the requested families (so an unrelated accent can never appear),
+and then swaps requested-family pieces back in when the resulting roster sits above the neutral
+ceiling. **The second half never ran.** It tested a `.valid` field on `validateCapsuleRoster`, which
+returns `{ ok, failures }`, so the guard was `undefined` on every iteration and the loop skipped
+every candidate.
+
+Effect, measured on a 10-piece fixture: a fallback capsule for a yellow request shipped 8 of 10
+neutral against a ceiling of 7, leaving eligible yellow-family pieces in the pool unused. The
+boundary held — no unrelated accent appeared — but the requested colour was under-represented, a
+quieter form of the same defect the 2026-08-06 live-run correction addressed. Now fixed and pinned
+by a test that fails when the typo is reintroduced.
+
 ### What the neutral-bonus fix actually changed
 
 The `+12` bonus is paid for "recombines with everything", and the old test — does *any* tagged

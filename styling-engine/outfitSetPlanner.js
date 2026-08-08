@@ -3062,7 +3062,7 @@ export async function selectCapsuleRosterViaModel({
         if (replaceIndex < 0) continue
         const trial = [...roster]
         trial[replaceIndex] = replacement
-        if (!validateCapsuleRoster(trial, { slots, budget, isSummer, isWinterCapsule: isWinter, pool: allowedPool }).valid) continue
+        if (!validateCapsuleRoster(trial, { slots, budget, isSummer, isWinterCapsule: isWinter, pool: allowedPool }).ok) continue
         roster = trial
         accentCandidates.splice(accentCandidates.indexOf(replacement), 1)
         swapped = true
@@ -3128,7 +3128,7 @@ export async function selectCapsuleRosterViaModel({
       if (chosen.length === missing) {
         attempts += 1
         const trial = [...second.roster, ...chosen]
-        return check(trial).valid ? trial : null
+        return check(trial).ok ? trial : null
       }
       // A malformed response should normally be short by one. Keep the
       // defensive search bounded so a pathological answer cannot turn this

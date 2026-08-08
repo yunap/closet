@@ -473,7 +473,7 @@ request and returning a single look is worse than declining the frame and saying
 
 | today | why it is wrong away from a 243-piece wardrobe |
 |---|---|
-| bench `benchSize = 40` | at ~60 eligible pieces the bench is most of the wardrobe (no selection happens, and you pay 40 thumbnails for it). **Ruled 2026-07-28:** 40 is an absolute ceiling, not a target — it scales down with supply and never up. **Superseded in practice 2026-07-31: production runs 70. Open, not re-ratified — see the amendment at the end of "Too much supply" below.** |
+| bench `benchSize = 70` | at ~60 eligible pieces the bench is most of the wardrobe (no selection happens, and you pay for the thumbnails anyway). The ceiling is absolute, not a target — it scales down with supply and never up. **Ruled 40 on 2026-07-28; re-ratified at 70 on 2026-08-06** — see the amendments at the end of "Too much supply" below. |
 | default capsule budget `24` | at 45 eligible pieces a 24-piece capsule is half the closet — an inventory, not a capsule |
 | bench category floors `2 top / 2 bottom / 2 shoes` | unsatisfiable below a certain supply; must degrade to a stated gap, not a silent shortfall |
 | `MIN_ENFORCED_CAPSULE_BUDGET = 6` | never revisited against small wardrobes; it decides whether capsule machinery engages at all |
@@ -516,9 +516,10 @@ budget.** Bench size therefore has a hard upper bound regardless of how much eli
 benchSize = min(ABSOLUTE_CEILING, f(eligible supply, piece_budget))
 ```
 
-`ABSOLUTE_CEILING` is 40 today, and 40 stays the shipped value until measured on more than this
-wardrobe. The cost driver is images: every bench piece with a photo carries a 448px thumbnail into
-the roster-selection call, and that is what would scale linearly and painfully with wardrobe size.
+The ceiling was ruled at 40 on 2026-07-28 and **re-ratified at 70 on 2026-08-06** — see the
+amendments below. The principle is unchanged: the ceiling exists, it scales down and never up.
+The cost driver is images: every bench piece with a photo carries a thumbnail into the
+roster-selection call, and that is what would scale linearly and painfully with wardrobe size.
 
 Consequences to design for, not discover:
 
@@ -560,11 +561,26 @@ no model calls, live 242-piece wardrobe, 4-slot summer capsule at budget 24):
   sole clearly elevated option," that is not cosmetic.
 - Cost: roughly 22k image tokens per roster call at 40, 38k at 70.
 
-**Status: open.** Everything above measures what the model can *see*, not what it
-*chooses*, so the next captured capsule run is what settles it. Until then neither 40 nor
-70 is ratified, and the two-tier bench proposed above — full garment truth as text for a
-wide set, thumbnails for a top slice — remains untried and is still the cheapest way to
-widen what the model knows without widening the image bill.
+#### Amendment, 2026-08-06: **70 is ratified**
+
+The captured run the 2026-08-03 amendment was waiting for happened, and it settles the
+question. The corrected real-lifestyle comparison
+(`capsule-lifestyle-contract-2026-08-06.md` §6) ran at bench 70 against the four real
+production use cases, resolved **all 70 bench photos**, and the model roster was accepted
+on its **first** provider call with stronger measured per-slot capacity than the
+deterministic roster for every use case. That is evidence about what the model *chooses*,
+which is the gap the previous amendment named.
+
+**`ABSOLUTE_CEILING` is 70.** It supersedes the 2026-07-28 ruling of 40, which had already
+not held in practice since PR #196. Everything else in that ruling stands: the ceiling is
+absolute, it scales down with supply and never up, and a larger wardrobe does not buy a
+wider bench.
+
+The two-tier bench proposed above — full garment truth as text for a wide set, thumbnails
+for a top slice — remains untried. It is now a **cost optimisation** (roughly 38k image
+tokens per roster call at 70) rather than an outstanding prerequisite. Revisit 70 if
+per-run image cost becomes the binding constraint, or if a wardrobe materially larger than
+this one changes the measurements above.
 
 ### How to read every measured number in this document
 
@@ -595,7 +611,8 @@ The same caution applies to `docs/tagger-cost-spec.md`, which is priced entirely
 ## 9. Open questions for ratification
 
 1. ~~**Bench size `B`**~~ — **ruled 2026-07-28: start at 40**, with the offline width check first
-   (§6).
+   (§6). **Re-ratified 2026-08-06 at 70**, on the accepted live comparison run — see the
+   amendments at the end of "Too much supply".
 2. **Does the roster rationale reach the user?** **Ruled 2026-07-28: build it user-visible and
    judge it on the evidence.** Render the per-piece job lines and the palette statement in the
    result, review how they actually read on a real roster, and only then decide whether to demote

@@ -4177,6 +4177,43 @@ test('deterministic fallback keeps the neutral base and requested family without
   )
 })
 
+// The neutral bonus makes the deterministic selector prefer neutrals, so on a
+// wardrobe with plenty of them the palette-safe fallback lands ABOVE the neutral
+// ceiling and has to swap requested-family pieces back in. That swap loop shipped
+// reading a `.valid` field the validator never returns, so it silently never ran
+// and a fallback capsule could come back fully neutral with the requested family
+// sitting available in the pool. Pin the swap actually happening.
+test('deterministic fallback swaps requested-family pieces in when the neutral base overshoots its ceiling', async () => {
+  const pool = paletteTestWardrobe()
+  pool.push(
+    { id: 400, name: 'neutral dress', category: 'dress', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] },
+    { id: 500, name: 'neutral cardigan', category: 'outerwear', colors: ['cream'], formality: 'everyday', occasions: ['casual', 'city'] }
+  )
+  // Narrower occasion coverage than the neutrals, so the stated-palette bonus
+  // alone does not pull them in and the roster genuinely lands above the ceiling.
+  for (let i = 0; i < 3; i += 1) {
+    pool.push({ id: 110 + i, name: `yellow top ${i}`, category: 'top', colors: ['yellow'], formality: 'everyday', occasions: ['casual'] })
+    pool.push({ id: 210 + i, name: `yellow bottom ${i}`, category: 'bottom', colors: ['mustard'], formality: 'everyday', occasions: ['casual'] })
+  }
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'], palette: ['yellow'],
+    chooseRoster: async () => ({ roster_piece_ids: [], palette: '', piece_jobs: [] })
+  })
+
+  const plan = capsuleNeutralBasePlan(10)
+  assert.equal(result.source, 'deterministic_fallback')
+  assert.equal(result.roster.length, 10)
+  assert.ok(
+    capsuleNeutralBaseCount(result.roster) <= plan.maximum,
+    `the fallback must swap down to the neutral ceiling, got ${capsuleNeutralBaseCount(result.roster)} of ${plan.maximum}`
+  )
+  assert.ok(
+    result.roster.filter(piece => (piece.colors || []).some(color => ['yellow', 'mustard'].includes(color))).length >= 10 - plan.maximum,
+    'the places freed below the ceiling carry the requested family'
+  )
+})
+
 test('deterministic fallback stays neutral and preserves the supply disclosure when a requested family is unavailable', async () => {
   const pool = paletteTestWardrobe()
   const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])

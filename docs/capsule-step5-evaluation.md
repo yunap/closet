@@ -210,6 +210,18 @@ Do **not** add:
 > record is the `thread_1785467959899` section in `capsule-index-and-plan.md`, which walks
 > criteria 3 and 7 only. Recorded as a fact about the process, not as an argument to
 > revert. §1's "remains behind `WARDROBE_MODEL_CAPSULE_ROSTER`" is therefore historical.
+>
+> **Closed 2026-08-06.** Items 5 and 6 are moot rather than outstanding. Criteria 1, 5, 6
+> and 8 in §3 test universal category floors — two layers, statement presence, and shoe
+> paths derived from card counts — which the lifestyle correction retired as hard rules
+> (`capsule-lifestyle-contract-2026-08-06.md` §4.3). A run cannot be graded against nine
+> criteria when four no longer describe anything the engine checks. The acceptance that
+> replaced them is the corrected real-lifestyle comparison in that document's §6: the model
+> roster passed on its **first** provider call, at bench 70, against the four real
+> production use cases. Step 5 is closed; `capsule-index-and-plan.md` §6a records it, and
+> `capsule-current-behaviour.md` is the current contract. **This whole document is
+> provenance from here on — do not use §3's criteria or §5's layer floor as acceptance
+> tests.**
 
 1. Offline tests prove that a model roster cannot exchange the second layer for a fifth shoe when
    the bench supplies both layers.
