@@ -219,21 +219,44 @@ The tagger prompt already states the rule the owner asked about:
 > `tuck_behavior`, `waistband_type`, and on-body silhouette."
 
 So fit is *not* designed to be read off a hanger shot, and an earlier claim in this arc that it was
-is withdrawn. But the rule is not holding in the data:
+is withdrawn.
 
-| measure | count of 242 active |
+**Coverage is good, and an earlier "83 missing" figure here was wrong** — it used all 242 active
+garments as the denominator. `fit_on_body` does not apply to shoes or accessories, and the data
+reflects that correctly (shoes 0 of 33, accessories 1 of 17). Against the categories that do use
+it:
+
+| category | has `fit_on_body` | total |
+|---|--:|--:|
+| top | 66 | 85 |
+| bottom | 54 | 58 |
+| outerwear | 23 | 31 |
+| dress | 15 | 18 |
+| **total** | **158** | **192 (82%)** |
+
+**Owner provenance is recorded, in two places that agree exactly.** `manual_overrides` (a list of
+field names on the piece) and `style_profile_json._confidence.<field> = 'manual'` both report 18
+garments with an owner-set `fit_on_body`, with zero disagreement in either direction.
+`getFieldConfidence` also falls back from one to the other, so a value set before either mechanism
+existed still resolves. 230 of 242 garments carry manual overrides on *some* field.
+
+**The real signal is confidence, not absence.** Of the 159 garments with a fit value:
+
+| confidence | count |
 |---|--:|
-| has a worn photo | 176 |
-| has a photo judged `fit_visible: true` | **60** |
-| has a `fit_on_body` value | 159 |
-| worn photo but no `fit_on_body` | 21 |
-| neither worn photo nor `fit_on_body` | 62 |
+| `low` | **122** |
+| `manual` (owner-set) | 18 |
+| `high` | 13 |
+| `medium` | 6 |
 
-**159 garments carry a fit value while only 60 have a fit-visible photo behind one.** Roughly a
-hundred fit values therefore have no authoritative source under the tagger's own rule — manual
-entry, older tagger versions, or the rule not being enforced at generation time. That is a tagger
-question rather than a feedback question, but it is the kind of thing a retag task should be able
-to raise, and it is worth measuring before trusting `fit_on_body` anywhere.
+And the system already acts on this: `trustedFieldText` renders a low-confidence value to the model
+as `fit: [low confidence - add worn photo] skims`, so the model is told the value is weak *and* the
+remedy is named. That is better than this document originally credited.
+
+The open question is narrower than "is fit trustworthy": **176 garments have a worn photo, but only
+60 have a photo judged `fit_visible: true`.** Worn photos exist and are largely not being counted
+as fit evidence. Whether that is a judging problem, a photo-quality problem, or a tagger-version
+problem is worth one measurement before any fit-related feedback routing is designed.
 
 ## Part 7 — Open questions for the owner
 
