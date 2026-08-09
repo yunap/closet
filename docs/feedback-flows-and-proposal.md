@@ -271,13 +271,49 @@ the tagger already rates high or medium. **That leaves 154.**
 154 were tagged before it existed (`v1.0.0` or no version recorded) and 5 of those carry a judgment
 at all. The photos were never evaluated because the concept did not exist when they were tagged.
 
-**Actionable set: 116 garments** — 47 tops, 45 bottoms, 12 outerwear, 12 dresses — each with a worn
-photo already on file that has never been judged. A further **16** genuinely lack a worn photo and
-need one from the owner before any re-run could help.
+### Retracted — `low` on these garments is a default, not a tagger rating
 
-This is a re-judge of existing photos, not a data-collection exercise, and it is the cheapest route
-to making `fit_on_body` trustworthy. Cost per garment is one tagger vision call and has **not** been
-measured; measure one before committing to a batch.
+**Owner, 2026-08-08: "those values are there bc I put them there… probably just done before the
+user-tagged tag was introduced."** Confirmed from the code, and it reverses the recommendation
+above. `normalizeConfidenceMap` ends with:
+
+```js
+return [field, VALID_CONFIDENCE.has(confidence) ? confidence : 'low']
+```
+
+Any value that is not already a recognised confidence becomes `low`. For a garment tagged before
+the provenance marker existed, `_confidence.fit_on_body` was simply absent, so it normalised to
+`low`. That is a stand-in for *unknown provenance*, not a judgment that the value is weak.
+
+The distribution proves it — a real rating process does not produce only one value:
+
+| era | low | medium | high |
+|---|--:|--:|--:|
+| pre-v2 / no version | **132** | **0** | **0** |
+| v2 era | 21 | 5 | 15 |
+
+**So the "116 actionable garments" recommendation is withdrawn. Re-tagging them would overwrite
+owner-entered values with model guesses** — the opposite of what the exercise was for. No billed
+call was made.
+
+### What the defect actually is
+
+Two live consequences, both from the same mislabel, and both free to fix:
+
+1. `trustedFieldText` renders these to the model as
+   `fit: [low confidence - add worn photo] skims` — telling it to discount owner-entered data, and
+   telling the owner to supply a photo that 138 of the 154 already have.
+2. `manifestValue` appends `?` to the value in the wardrobe manifest, marking the same values
+   uncertain everywhere the manifest is used.
+
+**Proposed fix, no model calls:** introduce a provenance value distinct from `low` — `legacy` or
+`unrated` — meaning "recorded before provenance was tracked; not a tagger judgment." Backfill
+pre-v2 `low` entries to it, and stop the low-confidence warning and the `?` suffix from firing on
+it. Do **not** convert them to `manual`: the owner set many of them, but pre-v2 values cannot be
+proven owner-set from data alone, and claiming authorship the data cannot support is the same class
+of error as the `low` default itself.
+
+The 16 garments with no worn photo at all remain a genuine, separate gap.
 
 ## Part 7 — Open questions for the owner
 
