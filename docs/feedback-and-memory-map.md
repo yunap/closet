@@ -30,6 +30,19 @@ reproduced from a clean checkout.
 moves. A claim of the form "nothing reads X" is only as good as its search, and the search is
 printed so you can widen it.
 
+**Completeness is checkable, not asserted.** Every SQLite table and every `localStorage` key
+resolves to either §1 or the exclusion ledger in §8:
+
+```bash
+for t in $(sqlite3 -readonly wardrobe.db ".tables" | tr -s ' ' '\n' | grep -v '^$'); do
+  grep -q "$t" docs/feedback-and-memory-map.md || echo "MISSING: $t"; done
+grep -rhoE "localStorage\.(get|set|remove)Item\('[^']+'" --include=*.jsx --include=*.js src/ \
+  | sed "s/.*('//;s/'//" | sort -u | while read k; do
+  grep -q "$k" docs/feedback-and-memory-map.md || echo "MISSING: $k"; done
+```
+
+Silence means complete. Run it before trusting any claim about what this map does *not* contain.
+
 **Markers follow the existing maps' convention:** **[by design]** behaviour a code comment or
 ratified doc states is intentional · **[unverified]** read from code but not executed ·
 **[owner check wanted]** a question about intent that the code cannot answer · **[bug]** behaviour
@@ -37,11 +50,36 @@ that contradicts stated intent · **[latent inconsistency]** two things that wil
 
 ---
 
+## 0b. The four persistence media — the audit boundary
+
+*Added after review round 4, 2026-08-09.* Rounds 1–3 of this document each missed stores because
+the search kept starting from "things that look like feedback in SQLite". A complete audit has to
+sweep **four media**, and the third and fourth are invisible to any `grep "FROM <table>"`:
+
+| medium | what lives there | swept by |
+|---|---|---|
+| **1 · SQLite** | every table in §1 | `sqlite3 wardrobe.db ".tables"` then per-table writer/reader search |
+| **2 · Uploaded files** | hanger, worn, outfit, board and calibration images | the DB columns that reference them, plus `uploads/` |
+| **3 · Browser storage** | `localStorage` thread cache and migration sources | `grep -rhoE "localStorage\.(get\|set\|remove)Item\('[^']+'" src/` |
+| **4 · Runtime / prompt caches** | prompts built from persisted user state and cached per user | `promptRuntime.js`, and anything calling `refreshPrompts` |
+
+Medium 4 is the one with no row count and the widest blast radius: `buildForUser`
+(`promptRuntime.js:55`) interpolates the style constitution and the user profile into the **system
+prompts themselves**, caches the result per user, and rebuilds on any constitution or profile write.
+Nothing about it appears in a table scan.
+
+---
+
 ## 1. The stores, by category
 
-Nine stores across the eight categories below. Derived from the schema, not from memory:
-`sqlite3 wardrobe.db ".tables"`, then a column scan for
-`note|rule|feedback|learn|reject|exclus|pair|label|favorite|status|state|payload`.
+**Twelve category entries**, not twelve stores — several aggregate more than one physical table
+(`outfits` + `outfit_pieces`, `saved_boards` + `saved_board_pieces`, `chat_threads` +
+`stylist_conversation_state`) and two split one table by meaning (`stylist_feedback`, categories 5
+and 6). *"Nine stores" in an earlier draft was not a defensible count and has been withdrawn.*
+
+Derived from the schema, not from memory: `sqlite3 wardrobe.db ".tables"`, then a column scan for
+`note|rule|feedback|learn|reject|exclus|pair|label|favorite|status|state|payload|photo`, then the
+three non-SQLite media in §0b.
 
 **Every store carries four facts: what writes it, what user action does that, what reads it, and
 what authority the result has.** Authority is one of — **hard gate** (a garment is removed from
@@ -60,6 +98,9 @@ Counts regenerate via script §1.
 | 7 | Thread-scoped conversation state | `chat_threads.payload`, `stylist_conversation_state.state_json` | **thread-only** |
 | 8 | Short-lived recency / diversity | `whole_wardrobe_sessions` | **score** (suppression) |
 | 9 | Tasks created from feedback | `todos` (`retag-suggestion`, `metadata`) | display → owner action |
+| **10** | **Style constitution and global user context** | `style_constitution`, `app_meta` (`home_location`, `profile_display_name`, `profile_pronouns`) | **system prompt** + structured context |
+| **11** | **Visual evidence** | the uploads filesystem, referenced by `pieces.photo` / `worn_photo`, `outfits.photo`, board and calibration rows | **model evidence** + hard availability gate |
+| **12** | **Intake and provenance** | `import_*`, `piece_import_evidence`, `constitution_history` | staging / provenance; accepted output flows into 1 and 4 |
 
 Categories 7 and 8 are deliberately separated from 1–6: they are **not durable preference memory**.
 Thread state governs one conversation and is replaced on the next turn; recency memory expires on a
@@ -140,8 +181,11 @@ Covered in §2 · F, §3 and §4. **Authority — score and prompt.**
   used on follow-up turns.
 - **Authority** — **thread-only.** Nothing here is durable preference, and it must not be read as
   taste.
-- **[latent inconsistency]** `getStylistConversationState` exists in both `tools.js` and `core.js`,
-  the same duplication as `storeUserCorrection` (§3).
+- **[latent inconsistency]** — *corrected after review round 4.* Both conversation-state functions
+  exist twice, and unlike `storeUserCorrection` (where only the `tools.js` copy runs) **both copies
+  of these are live, for different callers**: `core.js`'s definitions serve `core.js` by lexical
+  shadowing, `tools.js`'s serve the tool loop. Document them function by function; treating the pair
+  as one shared implementation is what produced the wrong attribution in the previous draft.
 
 ### 8 · Short-lived recency / diversity memory
 
@@ -156,6 +200,66 @@ Covered in §2 · F, §3 and §4. **Authority — score and prompt.**
 ### 9 · Tasks created from feedback
 
 `todos`. Covered in §3 → *Into `todos`*. **Authority — display, then owner action.**
+
+### 10 · Style constitution and global user context
+
+**The largest preference store in the app, and the only one that reaches the *system* prompt.**
+
+- **Writes** — `PUT /api/settings/constitution[/:layer]` (`crud.js:1524/1549`), which also appends
+  to `constitution_history` (`crud.js:1551`) and calls `refreshPrompts`; the profile and
+  home-location routes (`crud.js:1459/1609/1620`); Onboarding, which authors layers 1–4.
+- **User action** — completing onboarding, then editing *"How your stylist understands you"* in
+  Style profile.
+- **Reads** — `loadConstitution` (`promptRuntime.js:32`) → `buildForUser` (`:55`), which
+  interpolates the layers **into the system prompts** and caches per user until the next write.
+  `home_location` additionally feeds weather resolution (`routes/ai.js:2692`), and therefore garment
+  eligibility.
+- **Authority** — **system prompt.** Stronger and broader than an owner rule: an owner rule is one
+  line in a user message, a constitution layer is part of the stylist's standing instructions.
+- Seven active layers at time of writing — `aesthetic_gravity`, `body_contract`, `editorial_shoes`,
+  `editorial_subject`, `lane_neutrality`, `proven_formulas`, `working_style`. Five constrain styling
+  judgment; `editorial_subject` and `editorial_shoes` govern rendered subject and footwear. Sizes in
+  script §1b.
+- **[bug]** *(in drafts 1–3 of this document)* This category was absent entirely, while `getOwnerRuleNotes`'
+  seven prose rows were documented in detail. The map measured what looked like feedback rather than
+  what shapes styling.
+- `profile_display_name` and `profile_pronouns` reach every personalised prompt but affect address
+  and grammar rather than garment selection — recorded here as global user context, not preference.
+
+### 11 · Visual evidence
+
+The uploads filesystem is an **input store**, not presentation media.
+
+- **Writes** — the piece editor's photo fields, `POST /calibration-images` (`crud.js:910`), outfit
+  photo upload, board generation, and the importer (`importer.js:713/741`).
+- **User action** — photographing a garment, adding a worn photo, uploading a reference.
+- **Reads** — the tagger (fit/garment truth, gated on `fit_visible`); visual candidate ranking; the
+  renderer's references; saved-outfit evaluation; identity and calibration memory.
+- **Authority** — **model evidence**, plus a **hard availability gate**: a piece with neither a
+  hanger nor a worn photo is deterministically excluded from the Visual Composer roster at
+  `rules.js:2681`, reason `'no photo'`.
+- **[latent inconsistency]** The photo's *existence* is a hard gate, but its *contents* are the
+  authority for fit fields — and whether a photo counts as fit-visible is a per-photo model judgment
+  (`style_profile_json.photo_properties`). See `engine-behaviour-map.md` for that half.
+
+### 12 · Intake and provenance
+
+Not durable preference memory, but the **upstream writer** into categories 1 and 4, and it carries
+human decisions.
+
+- **`import_*`** — staging for bulk import. Review actions override model-generated name and
+  category values before acceptance, then write into `pieces`, `pieces.worn_photo` and
+  `calibration_images` (`importer.js:713/741/781`). **Those are user corrections that become garment
+  truth**, so §3 lists import review as a writer even though the staging tables are not a memory
+  store.
+- **`piece_import_evidence`** — **[bug]** written by `importer.js:712` and read by **nothing** in
+  production; the only other reference is a test asserting insertion
+  (`test/importer_phase3.test.js:141/148`). Copies promoted into `pieces.worn_photo` are consumed;
+  the evidence rows are not. Documented as unconsumed provenance rather than silently omitted.
+- **`constitution_history`** — appended on every constitution write (`crud.js:1551`) and exposed
+  read-only at `crud.js:1568`. It preserves prior user-authored text, feeds no styling prompt, and
+  offers no restore action. **Provenance ledger, not active authority.**
+  **[owner check wanted]** should editing a layer offer a restore from history?
 
 ## 2. The six feedback channels (categories 5–6 in detail)
 
@@ -341,10 +445,29 @@ Distinct from the two functions above, which only *mirror* board feedback into `
 
 | site | function | writes |
 |---|---|---|
-| `tools.js:2457` | `saveStylistConversationState` | `stylist_conversation_state.state_json`; called from `core.js:3929` |
+| `core.js:4163` | `saveStylistConversationState` | `stylist_conversation_state.state_json` — **this is the copy that runs.** `core.js:3929` calls it lexically; `core.js` does not import the `tools.js` copy, so the local definition shadows it |
+| `tools.js:2457` | `saveStylistConversationState` | an identical second copy with **no call site** — dead |
 | `crud.js:1333–1444`, `core.js:4154` | thread routes | `chat_threads.payload` |
 | `rules.js:1499` | whole-wardrobe generation | `whole_wardrobe_sessions`, pruned to the last 10 (`rules.js:1504`) |
 | `routes/ai.js:1333` | `DELETE` reset route | clears `whole_wardrobe_sessions` — user-facing |
+
+### Into the style constitution and global context
+
+| site | function | writes |
+|---|---|---|
+| `crud.js:1524/1549` | `PUT /settings/constitution[/:layer]` | a layer body, appends `constitution_history` (`:1551`), calls `refreshPrompts` |
+| `crud.js:1459/1609/1620` | profile + home-location routes | `app_meta` keys; `home_location` changes weather resolution |
+| Onboarding | `Onboarding.jsx` | authors constitution layers 1–4 |
+
+### Into garment truth from import review (upstream)
+
+Import staging is not a memory store, but review decisions become garment truth.
+
+| site | writes |
+|---|---|
+| `importer.js:713` | `calibration_images`, `piece_import_evidence` |
+| `importer.js:741` | `pieces.worn_photo` |
+| `importer.js:781` | `pieces` — accepted garments, with human-overridden name/category |
 
 ### Into `todos` (retag suggestions)
 
@@ -527,6 +650,37 @@ would leave the button doing nothing again — and the form then syncs to the se
 keeps the `Excluded …` / `Restored …` pair as the audit trail.
 
 ---
+
+---
+
+## 8. Exclusion ledger — examined and deliberately left out
+
+A store absent from §1 should be absent *on the record*. Without this list there is no way to tell
+an audited exclusion from an undiscovered store — which is how four categories went missing through
+three review rounds.
+
+| store / key | medium | why excluded |
+|---|---|---|
+| `app_meta` API keys (BYOK) | SQLite | operational credentials, not user preference |
+| `app_meta.seeded`, `constitution_migrated` | SQLite | migration and workflow markers |
+| import spending and count telemetry | SQLite | operational accounting |
+| `stylist_rail_collapsed`, `stylist_rail_view_mode` | browser | presentation only |
+| `stylist_current_thread_id` | browser | navigation only |
+| `importSessionId` | browser | in-flight workflow handle |
+| `constitution_history` | SQLite | provenance only — **would move into §1 if a restore action were added** |
+| `piece_import_evidence` | SQLite | written, never read in production (§12) |
+| generated thumbnails, board images, derived caches | files | derived artifacts, not user input |
+| `generation_runs` (1,990 rows), `freeform_generation_runs` (83) | SQLite | engine telemetry — flow, cap, token and gate counters. No user-authored content, and **no production reader**: written for offline diagnosis only |
+| `import_clusters`, `import_images`, `import_sessions`, `import_garments` | SQLite | intake staging, covered as category 12; listed individually here so a table-by-table sweep resolves every name |
+
+**Browser storage, in full.** The keys are
+`stylist_chat_threads`, `stylist_chat_messages`, `stylist_chat_history`, `stylist_thread_memory`,
+`stylist_current_thread_id`, `stylist_rail_collapsed`, `stylist_rail_view_mode`, `importSessionId`.
+Of these, `stylist_chat_threads` is a **non-canonical client cache** reconciled against the server,
+and `stylist_chat_messages` / `stylist_chat_history` / `stylist_thread_memory` are **legacy
+migration sources** whose contents can move into `chat_threads`. They are recorded here rather than
+in §1 because none of them is authoritative — but a reader auditing "where could a user's stated
+preference be hiding" needs to know they exist.
 
 ## 7. Open questions the code cannot answer
 

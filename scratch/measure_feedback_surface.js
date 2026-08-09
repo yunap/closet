@@ -53,7 +53,22 @@ table([
   inv('8 recency', 'whole_wardrobe_sessions', 'SELECT COUNT(*) n FROM whole_wardrobe_sessions'),
   inv('9 tasks', 'todos (retag-suggestion)', "SELECT COUNT(*) n FROM todos WHERE type='retag-suggestion'"),
   inv('9 tasks', 'todos (metadata)', "SELECT COUNT(*) n FROM todos WHERE type='metadata'"),
+  inv('10 constitution', 'style_constitution layers', 'SELECT COUNT(*) n FROM style_constitution'),
+  inv('10 constitution', 'app_meta keys', 'SELECT COUNT(*) n FROM app_meta'),
+  inv('11 visual evidence', 'pieces with hanger photo', "SELECT COUNT(*) n FROM pieces WHERE status='active' AND photo IS NOT NULL AND photo != ''"),
+  inv('11 visual evidence', 'pieces with worn photo', "SELECT COUNT(*) n FROM pieces WHERE status='active' AND worn_photo IS NOT NULL AND worn_photo != ''"),
+  inv('11 visual evidence', '  pieces with NEITHER (excluded)', "SELECT COUNT(*) n FROM pieces WHERE status='active' AND COALESCE(photo,'')='' AND COALESCE(worn_photo,'')=''"),
+  inv('11 visual evidence', 'outfits with photo', "SELECT COUNT(*) n FROM outfits WHERE photo IS NOT NULL AND photo != ''"),
+  inv('12 intake/provenance', 'import_sessions', 'SELECT COUNT(*) n FROM import_sessions'),
+  inv('12 intake/provenance', 'import_garments', 'SELECT COUNT(*) n FROM import_garments'),
+  inv('12 intake/provenance', 'piece_import_evidence', 'SELECT COUNT(*) n FROM piece_import_evidence'),
+  inv('12 intake/provenance', 'constitution_history', 'SELECT COUNT(*) n FROM constitution_history'),
 ], ['category', 'store', 'rows'])
+
+h('1b. Style constitution layers (the largest preference store)')
+table(rows('SELECT layer, length(body) AS chars, updated_at FROM style_constitution ORDER BY layer'),
+  ['layer', 'chars', 'updated_at'])
+console.log('  Loaded by loadConstitution (promptRuntime.js:32) and interpolated into system prompts.')
 
 h('2. Per-garment memory fields (active pieces)')
 const active = one("SELECT COUNT(*) n FROM pieces WHERE status='active'").n
