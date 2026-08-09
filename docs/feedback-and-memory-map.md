@@ -6,7 +6,7 @@ plumbing between them: **everything the user tells the app about a garment or an
 is written, and which consumer — if any — reads it back.**
 
 Written 2026-08-08. It describes; it does not propose. Recommendations live in
-[`feedback-flows-and-proposal.md`](feedback-flows-and-proposal.md) and must cite this map rather
+[`feedback-routing-proposal.md`](feedback-routing-proposal.md) and must cite this map rather
 than restate it.
 
 ## 0. How to verify this document

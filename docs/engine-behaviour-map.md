@@ -1577,10 +1577,14 @@ low-confidence.
 > `waistband_type` entirely on these pieces — the value exists and search cannot see it.
 >
 > **Do not "fix" this by re-tagging.** That would overwrite owner-entered values with model guesses.
-> The available options are a provenance value distinct from `low` (see
-> [feedback-flows-and-proposal.md](feedback-flows-and-proposal.md) §6b), or the owner re-confirming
-> the fields by hand, which marks them `manual` correctly — the piece editor already does this on any
-> interaction with the field.
+> Two options: introduce a provenance value distinct from `low` — `legacy` or `unrated`, meaning
+> "recorded before provenance was tracked" — and exempt it from the low-confidence warning, the `?`
+> suffix and the `trustedField` rejection; **or** the owner re-confirms the fields by hand, which
+> marks them `manual` correctly, since the piece editor sets a field manual on any interaction with
+> it. A new value must be added to `VALID_CONFIDENCE` (`taggerMerge.js:5`) or
+> `normalizeConfidenceMap` will convert it straight back to `low`, and to all three
+> `getFieldConfidence` implementations (`wardrobeAiContext.js:27`, `attributes.js:23`,
+> `rules.js:367`) or they will disagree about the same garment.
 
 **[by design]** Low confidence does **not** suppress the value downstream. `trustedFieldText`
 (`wardrobeAiContext.js:36`) prefixes it instead: `length: [low confidence - add worn photo] midi`.
