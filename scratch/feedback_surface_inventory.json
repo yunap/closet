@@ -1,0 +1,191 @@
+{
+  "_comment": [
+    "Machine-readable disposition for every persisted user-input store, across all four media.",
+    "Checked by scratch/audit_feedback_surface_completeness.js, which fails when a store exists",
+    "in the running system but is absent here, or is listed here but no longer exists.",
+    "",
+    "disposition: 'category' = documented in feedback-and-memory-map.md \u00a71 with writer/action/",
+    "reader/authority.  'excluded' = deliberately out of scope, reason recorded in \u00a78.",
+    "A store must be exactly one of the two \u2014 never both."
+  ],
+  "sqlite": {
+    "pieces": {
+      "disposition": "category",
+      "category": 1,
+      "note": "garment truth + favorite + provenance"
+    },
+    "outfits": {
+      "disposition": "category",
+      "category": 2
+    },
+    "outfit_pieces": {
+      "disposition": "category",
+      "category": 2
+    },
+    "saved_boards": {
+      "disposition": "category",
+      "category": 3
+    },
+    "saved_board_pieces": {
+      "disposition": "category",
+      "category": 3,
+      "note": "board->piece link rows"
+    },
+    "calibration_images": {
+      "disposition": "category",
+      "category": 4
+    },
+    "stylist_feedback": {
+      "disposition": "category",
+      "category": "5+6",
+      "note": "split by meaning: owner rules vs reactions"
+    },
+    "chat_threads": {
+      "disposition": "category",
+      "category": 7
+    },
+    "stylist_conversation_state": {
+      "disposition": "category",
+      "category": 7
+    },
+    "whole_wardrobe_sessions": {
+      "disposition": "category",
+      "category": 8
+    },
+    "todos": {
+      "disposition": "category",
+      "category": 9
+    },
+    "style_constitution": {
+      "disposition": "category",
+      "category": 10
+    },
+    "app_meta": {
+      "disposition": "category",
+      "category": 10,
+      "note": "home_location + profile keys are category 10; API keys and markers are excluded per-key in \u00a78"
+    },
+    "import_sessions": {
+      "disposition": "category",
+      "category": 12
+    },
+    "import_clusters": {
+      "disposition": "category",
+      "category": 12
+    },
+    "import_garments": {
+      "disposition": "category",
+      "category": 12
+    },
+    "import_images": {
+      "disposition": "category",
+      "category": 12
+    },
+    "piece_import_evidence": {
+      "disposition": "category",
+      "category": 12,
+      "note": "provenance-only: written, no production reader"
+    },
+    "constitution_history": {
+      "disposition": "category",
+      "category": 12,
+      "note": "provenance-only: displayed, feeds no prompt, no restore action"
+    },
+    "generation_runs": {
+      "disposition": "excluded",
+      "reason": "engine telemetry; no user-authored content, no production reader"
+    },
+    "freeform_generation_runs": {
+      "disposition": "excluded",
+      "reason": "engine telemetry; no user-authored content, no production reader"
+    }
+  },
+  "browser": {
+    "stylist_chat_threads": {
+      "disposition": "excluded",
+      "reason": "non-canonical client cache, reconciled against chat_threads"
+    },
+    "stylist_chat_messages": {
+      "disposition": "excluded",
+      "reason": "legacy migration source into chat_threads"
+    },
+    "stylist_chat_history": {
+      "disposition": "excluded",
+      "reason": "legacy migration source into chat_threads"
+    },
+    "stylist_thread_memory": {
+      "disposition": "excluded",
+      "reason": "legacy migration source into chat_threads"
+    },
+    "stylist_current_thread_id": {
+      "disposition": "excluded",
+      "reason": "navigation only"
+    },
+    "stylist_rail_collapsed": {
+      "disposition": "excluded",
+      "reason": "presentation only"
+    },
+    "stylist_rail_view_mode": {
+      "disposition": "excluded",
+      "reason": "presentation only"
+    },
+    "importSessionId": {
+      "disposition": "excluded",
+      "reason": "in-flight workflow handle"
+    }
+  },
+  "files": {
+    "uploads/<piece photo>": {
+      "disposition": "category",
+      "category": 11,
+      "referenced_by": "pieces.photo"
+    },
+    "uploads/<worn photo>": {
+      "disposition": "category",
+      "category": 11,
+      "referenced_by": "pieces.worn_photo"
+    },
+    "uploads/<outfit photo>": {
+      "disposition": "category",
+      "category": 11,
+      "referenced_by": "outfits.photo"
+    },
+    "uploads/<calibration image>": {
+      "disposition": "category",
+      "category": 11,
+      "referenced_by": "calibration_images.filename"
+    },
+    "uploads/generated-boards/": {
+      "disposition": "excluded",
+      "reason": "derived artifact: model-generated board images, not user input"
+    },
+    "uploads/<import evidence>": {
+      "disposition": "category",
+      "category": 12,
+      "referenced_by": "piece_import_evidence"
+    },
+    "uploads/import/": {
+      "disposition": "category",
+      "category": 12,
+      "referenced_by": "import_* staging, per session directory (importer.js:46)",
+      "note": "user-uploaded source images awaiting review; accepted crops are promoted into pieces"
+    },
+    "uploads/untitled folder/": {
+      "disposition": "excluded",
+      "reason": "empty stray directory, not created by the app \u2014 no writer in the codebase"
+    }
+  },
+  "runtime": {
+    "promptRuntime per-user prompt cache": {
+      "disposition": "category",
+      "category": 10,
+      "built_from": [
+        "style_constitution",
+        "app_meta.profile_display_name",
+        "app_meta.profile_pronouns"
+      ],
+      "invalidated_by": "refreshPrompts on any constitution or profile write",
+      "note": "no row count; medium 4. buildForUser interpolates layers into the SYSTEM prompts."
+    }
+  }
+}
