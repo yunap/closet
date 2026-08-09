@@ -4177,6 +4177,43 @@ test('deterministic fallback keeps the neutral base and requested family without
   )
 })
 
+// The neutral bonus makes the deterministic selector prefer neutrals, so on a
+// wardrobe with plenty of them the palette-safe fallback lands ABOVE the neutral
+// ceiling and has to swap requested-family pieces back in. That swap loop shipped
+// reading a `.valid` field the validator never returns, so it silently never ran
+// and a fallback capsule could come back fully neutral with the requested family
+// sitting available in the pool. Pin the swap actually happening.
+test('deterministic fallback swaps requested-family pieces in when the neutral base overshoots its ceiling', async () => {
+  const pool = paletteTestWardrobe()
+  pool.push(
+    { id: 400, name: 'neutral dress', category: 'dress', colors: ['black'], formality: 'everyday', occasions: ['casual', 'city'] },
+    { id: 500, name: 'neutral cardigan', category: 'outerwear', colors: ['cream'], formality: 'everyday', occasions: ['casual', 'city'] }
+  )
+  // Narrower occasion coverage than the neutrals, so the stated-palette bonus
+  // alone does not pull them in and the roster genuinely lands above the ceiling.
+  for (let i = 0; i < 3; i += 1) {
+    pool.push({ id: 110 + i, name: `yellow top ${i}`, category: 'top', colors: ['yellow'], formality: 'everyday', occasions: ['casual'] })
+    pool.push({ id: 210 + i, name: `yellow bottom ${i}`, category: 'bottom', colors: ['mustard'], formality: 'everyday', occasions: ['casual'] })
+  }
+  const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
+  const result = await selectCapsuleRosterViaModel({
+    pool, budget: 10, slots, isSummer: true, occasions: ['casual'], palette: ['yellow'],
+    chooseRoster: async () => ({ roster_piece_ids: [], palette: '', piece_jobs: [] })
+  })
+
+  const plan = capsuleNeutralBasePlan(10)
+  assert.equal(result.source, 'deterministic_fallback')
+  assert.equal(result.roster.length, 10)
+  assert.ok(
+    capsuleNeutralBaseCount(result.roster) <= plan.maximum,
+    `the fallback must swap down to the neutral ceiling, got ${capsuleNeutralBaseCount(result.roster)} of ${plan.maximum}`
+  )
+  assert.ok(
+    result.roster.filter(piece => (piece.colors || []).some(color => ['yellow', 'mustard'].includes(color))).length >= 10 - plan.maximum,
+    'the places freed below the ceiling carry the requested family'
+  )
+})
+
 test('deterministic fallback stays neutral and preserves the supply disclosure when a requested family is unavailable', async () => {
   const pool = paletteTestWardrobe()
   const slots = normalizePlanSlots([{ label: 'Everyday', occasion: 'casual', count: 2 }])
@@ -6243,6 +6280,68 @@ test('a look submitted without shoes is completed from its own slot roster', asy
   // Reconciling the prose would need a second paid call; naming the piece list
   // as authoritative is the honest free half.
   assert.match(line, /the piece list is what you are actually being shown/)
+})
+
+// Live thread_1785467959899, the exact card: the title named "Ankle Boots", the
+// model submitted no shoe at all, and the fill took the lowest-ID candidate —
+// the navy canvas slip shoes — so the finished card named a garment it did not
+// contain. The model had already said which shoe it meant; reading its own
+// title back costs nothing and removes the contradiction at its source.
+test('a completion prefers the shoe the card already names over the lowest ID', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  // Inserted first, so lowest-ID ordering alone would pick these — the live bug.
+  const slipId = insertPiece({ category: 'shoes', name: 'navy canvas slip shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const bootId = insertPiece({ category: 'shoes', name: 'taupe suede ankle boots', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const submission = [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    title: 'City Top + City Pants + Ankle Boots',
+    piece_ids: [Number(topId), Number(bottomId)]
+  }]
+
+  assert.ok(Number(slipId) < Number(bootId), 'the fixture must make lowest-ID pick the wrong shoe')
+
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, submission)
+  assert.equal(completed.accepted.length, 1)
+  assert.equal(
+    completed.completions[0].addedPieceId,
+    Number(bootId),
+    'the card names ankle boots, so the completion must add the ankle boots'
+  )
+  assert.equal(completed.completions[0].matchesCardText, true)
+
+  // A card whose own words account for the added piece needs no "the piece list
+  // is what you are actually being shown" caveat — the two now agree.
+  const line = describeCapsuleAutoCompletions(completed.completions)
+  assert.match(line, /"City Top \+ City Pants \+ Ankle Boots" got taupe suede ankle boots/)
+  assert.doesNotMatch(line, /the piece list is what you are actually being shown/)
+})
+
+// The reason text counts too, and a card that names nothing keeps the old
+// deterministic lowest-ID behaviour rather than picking arbitrarily.
+test('a completion falls back to lowest ID when the card names no candidate', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const topId = insertPiece({ category: 'top', name: 'city top', occasions: ['city'], formality: 'everyday' })
+  const bottomId = insertPiece({ category: 'bottom', name: 'city pants', occasions: ['city'], formality: 'everyday' })
+  const slipId = insertPiece({ category: 'shoes', name: 'navy canvas slip shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  insertPiece({ category: 'shoes', name: 'taupe suede ankle boots', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' }])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  const completed = completeSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: workbench.pendingPlan.slots[0].id,
+    title: 'An Easy Day Out',
+    reason: 'Comfortable and simple for a long afternoon.',
+    piece_ids: [Number(topId), Number(bottomId)]
+  }])
+
+  assert.equal(completed.completions[0].addedPieceId, Number(slipId))
+  assert.equal(completed.completions[0].matchesCardText, false)
+  assert.match(describeCapsuleAutoCompletions(completed.completions), /the piece list is what you are actually being shown/)
 })
 
 // A no-op when nothing was completed — the overwhelming majority of runs.

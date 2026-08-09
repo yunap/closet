@@ -1533,6 +1533,65 @@ not a malfunction — it is the prompt working as designed. The authority map in
 infer fit, drape, or length from a photo that is not fit_visible"* and to leave such fields
 low-confidence.
 
+> #### Amendment, 2026-08-08 — most of that 85% is not a tagger judgment at all
+>
+> The paragraph above reads every `low` as the tagger hedging. On pre-v2 pieces it is not: it is a
+> **normalization default for an absent value**, and some of those values were typed by the owner.
+>
+> `normalizeConfidenceMap` ([`taggerMerge.js:39`](../styling-engine/taggerMerge.js)) ends with:
+>
+> ```js
+> return [field, VALID_CONFIDENCE.has(confidence) ? confidence : 'low']
+> ```
+>
+> Anything not already `high`/`medium`/`low`/`manual` becomes `low`. A garment tagged before the
+> `_confidence` map existed has no entry, so it normalises to `low` — recording "provenance
+> unknown", not "the tagger was unsure".
+>
+> **The distribution proves it. A rating process does not emit exactly one value.** `fit_on_body`,
+> by tagger era, across 242 active pieces:
+>
+> | era | pieces | low | medium | high | manual |
+> |---|--:|--:|--:|--:|--:|
+> | (unversioned) | 164 | **134** | **0** | **0** | 28 |
+> | `v1.0.0` | 11 | 7 | **0** | **0** | 4 |
+> | `v2.0.0-photo-property-authority` | 67 | 28 | 6 | 25 | 8 |
+>
+> **Zero mediums before v2 on every structural field**, against a genuine spread after it. The
+> claim is about the *shape* of the distribution, not a categorical absence: pre-v2 `length_hits_at`
+> carries a handful of `high` values (`silhouette` and `hem_finish` carry none). **[unverified]**
+> where those came from — an older tagger that emitted confidence, or an import. They are the
+> exception that the wording must survive, not evidence against the reading: a rating process that
+> never once returns `medium` across hundreds of pieces is not rating.
+>
+> Counts here are a 2026-08-08 snapshot and move as fields are re-confirmed; regenerate with
+> `node scratch/measure_feedback_surface.js` §9.
+>
+> **Owner, 2026-08-08:** *"those values are there bc I put them there… probably just done before the
+> user-tagged tag was introduced."* Provenance is recorded from v2 onward — `manual_overrides` and
+> `_confidence.<field> = 'manual'` agree exactly, and `getFieldConfidence` falls back between them —
+> but a value entered before either mechanism existed cannot be distinguished from an absent one.
+>
+> **Consequences, both live.** `trustedFieldText` renders these as
+> `fit: [low confidence - add worn photo] skims` — telling the model to discount owner-entered data,
+> and asking for a photo most of those garments already have (119 of the 132 fit-relevant pieces
+> still at `low` on 2026-08-08; the count falls as the owner re-confirms fields by hand, so re-measure
+> rather than citing it). `manifestValue` appends `?`
+> to the same values throughout the wardrobe manifest. And `trustedField`
+> ([`attributes.js:29`](../styling-engine/attributes.js)) accepts only `manual`/`high`/`medium`, so
+> `attributePieceTextBlob` **drops** `fit_on_body`, `silhouette`, `tuck_behavior` and
+> `waistband_type` entirely on these pieces — the value exists and search cannot see it.
+>
+> **Do not "fix" this by re-tagging.** That would overwrite owner-entered values with model guesses.
+> Two options: introduce a provenance value distinct from `low` — `legacy` or `unrated`, meaning
+> "recorded before provenance was tracked" — and exempt it from the low-confidence warning, the `?`
+> suffix and the `trustedField` rejection; **or** the owner re-confirms the fields by hand, which
+> marks them `manual` correctly, since the piece editor sets a field manual on any interaction with
+> it. A new value must be added to `VALID_CONFIDENCE` (`taggerMerge.js:5`) or
+> `normalizeConfidenceMap` will convert it straight back to `low`, and to all three
+> `getFieldConfidence` implementations (`wardrobeAiContext.js:27`, `attributes.js:23`,
+> `rules.js:367`) or they will disagree about the same garment.
+
 **[by design]** Low confidence does **not** suppress the value downstream. `trustedFieldText`
 (`wardrobeAiContext.js:36`) prefixes it instead: `length: [low confidence - add worn photo] midi`.
 So the image prompts *do* carry the length — annotated with a disclaimer that it is unreliable, on

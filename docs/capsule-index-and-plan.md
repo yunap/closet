@@ -3,10 +3,14 @@
 Written 2026-07-30. **Start here** for anything capsule-related. This is the map and the sequence;
 the detail lives in the documents linked below.
 
-> **Current behavior — updated through merged PR #213.** Read
+> **Current behavior — updated through merged PR #216.** Read
 > [capsule-current-behaviour.md](capsule-current-behaviour.md) first. It is the canonical product
 > and engine contract. This index and the linked research documents preserve how the decisions were
 > reached; older hard layer, dress, shoe, statement, and card-derived quotas are historical.
+>
+> **The sequenced plan in §4 is complete.** Steps 1–5 are all closed — Step 5 on 2026-08-06, along
+> with the bench width, both recorded in §6. Read §4 and §6 as the record of how the feature got
+> here, not as a list of outstanding work.
 
 ## 1. How we got into this
 
@@ -46,7 +50,7 @@ a comment explaining the reasoning is not one of those.**
 | document | what it holds |
 |---|---|
 | [capsule-roster-selection-spec.md](capsule-roster-selection-spec.md) | The three-stage roster-selection design (bench → model chooses → engine validates). Stage 3 is **default ON** since PR #196 (2026-07-31); `WARDROBE_MODEL_CAPSULE_ROSTER=false` turns it off. See §6 below for what that flip did and did not have behind it. |
-| [capsule-step5-evaluation.md](capsule-step5-evaluation.md) | The first corrected live rerun, why it failed despite passing structural validation, the acceptance criteria and enforcement boundary for the smallest V1 correction. |
+| [capsule-step5-evaluation.md](capsule-step5-evaluation.md) | The first corrected live rerun, why it failed despite passing structural validation, the acceptance criteria and enforcement boundary for the smallest V1 correction. **Step 5 closed 2026-08-06 — provenance only; its nine criteria are not current acceptance tests.** |
 | [capsule-bench-implementation-brief.md](capsule-bench-implementation-brief.md) | Operating rules and acceptance commands for spec steps 1–2. Delegation brief. |
 | [stylist-bugfix-spec.md](stylist-bugfix-spec.md) | "Research done 2026-07-25 — what the capsule number should be": the *outfit-count* axis. Solid capacity measurements; its published-practice claim cites no source. |
 | [occasion_profiles_ratification.md](occasion_profiles_ratification.md) | **Authoritative for occasion behaviour.** The register ceilings (ratified 2026-07-05, a month of testing), the occasion profiles, and the amendments since. **Read before changing any ceiling, profile keyword, or slot-occasion guidance.** |
@@ -218,14 +222,17 @@ This is disclosure, **not a hard filter or a new generation instruction**. The `
 precedent is that hard filters on taste dimensions starve capacity, and the corrected roster has
 not yet been evaluated. Step 5 supplies that evidence before any V2 scoring pressure is considered.
 
-### Step 5 — decide stage 3 *(evaluated 2026-07-30: default-off; **flipped default-ON 2026-07-31**, see §6)*
+### Step 5 — decide stage 3 *(**CLOSED 2026-08-06**: stage 3 is default-on and accepted — see §6a)*
 
-> **Status note added 2026-08-03.** Everything in this section below describes the
-> 2026-07-30 decision, when stage 3 remained default-off. It was flipped to
-> default-on in PR #196 the following day. The section is kept as written because
-> it is the record of *why* the answer was no at the time; §6 records the flip and
-> what evidence it actually had. Do not read the "remains default-off" sentences
-> below as current behaviour.
+> **Status note, updated 2026-08-06.** Everything in this section below describes
+> the 2026-07-30 decision, when stage 3 remained default-off. It was flipped to
+> default-on in PR #196 the following day, and Step 5 was closed on 2026-08-06 —
+> partly by acceptance (a live model-path run passed on its first call) and partly
+> by supersession (four of the nine criteria below tested category floors the
+> lifestyle correction retired). §6a records the closure and its evidence. The
+> section is kept as written because it is the record of *why* the answer was no
+> at the time. Do not read the "remains default-off" sentences below, or the nine
+> criteria, as current behaviour.
 
 The corrected live rerun is recorded in
 [capsule-step5-evaluation.md](capsule-step5-evaluation.md). Stage 3 fired, used one repair and no
@@ -497,6 +504,8 @@ arriving at §4 would have concluded the opposite of what ships.
 
 ### 6a. Stage 3 is default-on, and §3's evidence checklist was not completed
 
+> **Closed 2026-08-06 — see the closing note at the end of this subsection.**
+
 `modelCapsuleRosterEnabled()` in `routes/ai.js` defaults to `true` (PR #196,
 2026-07-31). Until this section was written, three places in the docs still said
 default-off and nothing recorded the flip.
@@ -514,7 +523,29 @@ than accepting the run.
 This is recorded as a fact about the process, not as an argument to revert. The
 flip may well be right; what was missing was any note saying it had happened.
 
-### 6b. Bench width 40 → 70 — an open question, not a settled ruling
+**Closing note, 2026-08-06 — items 5 and 6 are moot, and Step 5 is closed.** The
+nine criteria were written against universal category floors: two layers, dress
+presence, a statement piece, and shoe paths derived from the number of
+representative cards. The 2026-08-06 lifestyle correction retired all four as
+hard rules (`capsule-lifestyle-contract-2026-08-06.md` §4.3), so criteria 1, 5,
+6 and 8 no longer describe anything the engine validates. A rerun cannot be
+"reviewed against all nine criteria" when four of them no longer exist.
+
+What replaced them is a live acceptance, not an absence: the corrected
+real-lifestyle comparison in `capsule-lifestyle-contract-2026-08-06.md` §6 ran
+the four production use cases, resolved every bench photo, and the model roster
+**passed on its first provider call** with stronger measured per-slot capacity
+than the deterministic roster. That is a captured, reviewed run on the model
+path — the thing item 5 asked for — judged against the requirements that
+actually ship.
+
+Read `capsule-current-behaviour.md` for what is validated now. Step 5's own
+document is provenance from here on.
+
+### 6b. Bench width 40 → 70 — **ratified at 70, 2026-08-06**
+
+> **Closed.** 70 is the ratified bench width. The reasoning that was open on
+> 2026-08-03 is preserved below, followed by the evidence that settled it.
 
 `capsule-roster-selection-spec.md` §"Too much supply" carries an owner ruling of
 2026-07-28: `ABSOLUTE_CEILING` is 40, *"40 stays the shipped value until measured
@@ -548,10 +579,20 @@ regression.
 - Cost, measured on the live wardrobe: roughly 22k image tokens at 40 against
   38k at 70, per roster call.
 
-**Open.** The next captured capsule run is the evidence that settles it, because
-everything above measures what the model can *see*, not what it *chooses*. Until
-then neither 40 nor 70 should be described as ratified, and the spec's two-tier
-alternative remains untried.
+**Settled 2026-08-06 — 70 is ratified.** The evidence this section was waiting
+for is the corrected real-lifestyle comparison recorded in
+`capsule-lifestyle-contract-2026-08-06.md` §6: run at bench 70 against the four
+real production use cases, **all 70 bench photos resolved**, and the model roster
+accepted on its first provider call with stronger measured per-slot capacity than
+the deterministic roster for every use case. That is what the model *chose*, not
+only what it could see, which is exactly the gap this section named.
+
+`benchSize` therefore defaults to **70** by ruling as well as in code
+(`buildCapsuleBench`, `selectCapsuleRosterViaModel`). The two-tier bench remains
+untried and stays on the table as the way to widen what the model *knows* without
+widening the image bill — it is a cost optimisation now, not an outstanding
+prerequisite. Revisit 70 if per-run image cost becomes the binding constraint, or
+if a wardrobe materially larger than this one changes the measurements.
 
 ### 6c. The dress requirement is presence, not register — owner ruling 2026-08-05
 
@@ -579,8 +620,9 @@ untouched.
 *"roster has 0 dress(s) — needs 1 dress(s) clearing the everyday ceiling the
 plan's lowest-register slots need"* — each discarding an otherwise sound
 24-piece model selection for the engine's. That is the single reason those runs
-could not evaluate criteria 5 and 7, and therefore the reason Step 5 has stayed
-open.
+could not evaluate criteria 5 and 7, and therefore the reason Step 5 had stayed
+open until 2026-08-06. Dropping the register half unblocked the model path; the
+run that closed Step 5 (§6a) is the first one after this correction.
 
 **Blast radius, measured.** Ranking A/B: one scenario differs and the roster
 itself is byte-identical — the winter capsule simply stops carrying a disclosed

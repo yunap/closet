@@ -311,6 +311,52 @@ const CAPSULE_GAP_GROUPS = [
   [/missing top or dress/i, 'top'],
 ]
 
+// A look submitted without a shoe often still NAMES one: on live
+// thread_1785467959899 the card's title read "... + Ankle Boots" while its
+// piece_ids held no shoe at all. The completion then filled the gap by lowest
+// ID and landed on the navy canvas slip shoes, so the finished card's title
+// named a garment it did not contain.
+//
+// The model told us which piece it meant. Reading its own title and reason back
+// is free, deterministic, and honours the card rather than rewriting it — the
+// alternative previously considered was regenerating the prose, which needs a
+// second paid call and invents rather than reports. Candidates the card already
+// names sort first; everything else keeps today's lowest-ID order, so a look
+// that names nothing behaves exactly as before.
+const CAPSULE_TITLE_MATCH_STOPWORDS = new Set([
+  'and', 'the', 'with', 'for', 'her', 'his', 'plus', 'over', 'under', 'look',
+  'outfit', 'piece', 'pieces', 'style', 'wear', 'worn', 'pair', 'paired'
+])
+
+// Both sides are tokenized the same way and compared as word sets. This is
+// deliberately NOT substring matching against a garment blob — that is the debt
+// `scratch/check_text_matching_ratchet.js` exists to hold down, and it is the
+// wrong tool anyway: "slip" inside "slippers" is not a reference to the slip
+// shoes. Nothing here infers a garment property from words; category and
+// eligibility are already settled structurally before a candidate gets this far,
+// and the score only breaks ties between pieces that are all equally valid.
+function capsuleNameTokens(name = '') {
+  return new Set(
+    String(name || '')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(token => token.length >= 3 && !CAPSULE_TITLE_MATCH_STOPWORDS.has(token))
+      // Fold a trailing plural so a title's "boots" matches a name's "boot".
+      .map(token => (token.length > 3 && token.endsWith('s') ? token.slice(0, -1) : token))
+  )
+}
+
+// How much of this garment's name the card's own words already claim. Counted
+// as matched tokens rather than a boolean so "ankle boots" beats a candidate
+// that merely shares the word "boots".
+export function capsuleCardNamesPiece(cardText = '', pieceName = '') {
+  const cardTokens = capsuleNameTokens(cardText)
+  if (!cardTokens.size) return 0
+  let matched = 0
+  for (const token of capsuleNameTokens(pieceName)) if (cardTokens.has(token)) matched += 1
+  return matched
+}
+
 export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [], { visuallySeenPieceIds = new Set() } = {}) {
   const options = { visuallySeenPieceIds }
   let current = (Array.isArray(submissions) ? submissions : []).map(entry => ({ ...entry }))
@@ -346,9 +392,20 @@ export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
 
     // Deterministic candidate order, and only from this slot's own gate-passing
     // roster — a completion can never introduce a piece the slot excludes.
+    // Pieces the card's own title or reason already names come first, so the
+    // finished look matches the words the person reads on it.
+    const cardText = [failure.outfit?.title, failure.outfit?.reason].filter(Boolean).join(' ')
+    const namedScore = new Map()
     const candidates = (slot.allowedPieces || [])
       .filter(piece => wardrobeCategoryGroup(piece) === missingGroup && !presentIds.includes(Number(piece.id)))
-      .sort((a, b) => Number(a.id) - Number(b.id))
+      .map(piece => {
+        namedScore.set(Number(piece.id), capsuleCardNamesPiece(cardText, piece.name))
+        return piece
+      })
+      .sort((a, b) => {
+        const named = (namedScore.get(Number(b.id)) || 0) - (namedScore.get(Number(a.id)) || 0)
+        return named !== 0 ? named : Number(a.id) - Number(b.id)
+      })
 
     let filled = null
     for (const candidate of candidates) {
@@ -369,7 +426,11 @@ export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       filled: Boolean(filled),
       group: missingGroup,
       addedPieceId: filled ? Number(filled.id) : null,
-      addedPieceName: filled?.name || ''
+      addedPieceName: filled?.name || '',
+      // Whether the finished card's own words already name what the engine
+      // added. Drives the disclosure: a card that names its filled piece needs
+      // no "the piece list is what you are actually being shown" caveat.
+      matchesCardText: Boolean(filled) && (namedScore.get(Number(filled.id)) || 0) > 0
     })
   }
 
@@ -397,13 +458,23 @@ export function completeSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
 // needs a second paid call and would be inventing rather than reporting. Saying
 // what the engine did is the honest, free half: the title now disagrees with a
 // stated fact instead of disagreeing with nothing.
+//
+// The completion now also PREFERS a candidate the card already names (see
+// capsuleCardNamesPiece), which removes the contradiction at its source in the
+// case that produced it. The caveat below is therefore conditional: it belongs
+// on a fill the card's own words do not account for, and reads as noise on one
+// they do.
 export function describeCapsuleAutoCompletions(completions = []) {
   const filled = (Array.isArray(completions) ? completions : []).filter(entry => entry?.filled)
   if (!filled.length) return ''
   const detail = filled
     .map(entry => `"${entry.title || 'a look'}" got ${entry.addedPieceName || `piece ${entry.addedPieceId}`}`)
     .join('; ')
-  return `[capsule looks completed: ${filled.length} look${filled.length === 1 ? ' was' : 's were'} submitted without a required piece and the engine filled it from that use case's own roster — ${detail}. Where a look's title or reason names a different garment, the piece list is what you are actually being shown.]`
+  const unnamed = filled.filter(entry => !entry.matchesCardText).length
+  const caveat = unnamed
+    ? ' Where a look\'s title or reason names a different garment, the piece list is what you are actually being shown.'
+    : ''
+  return `[capsule looks completed: ${filled.length} look${filled.length === 1 ? ' was' : 's were'} submitted without a required piece and the engine filled it from that use case's own roster — ${detail}.${caveat}]`
 }
 
 // Three disclosure lines now count "which roster pieces reached a card", and a
@@ -3062,7 +3133,7 @@ export async function selectCapsuleRosterViaModel({
         if (replaceIndex < 0) continue
         const trial = [...roster]
         trial[replaceIndex] = replacement
-        if (!validateCapsuleRoster(trial, { slots, budget, isSummer, isWinterCapsule: isWinter, pool: allowedPool }).valid) continue
+        if (!validateCapsuleRoster(trial, { slots, budget, isSummer, isWinterCapsule: isWinter, pool: allowedPool }).ok) continue
         roster = trial
         accentCandidates.splice(accentCandidates.indexOf(replacement), 1)
         swapped = true
@@ -3128,7 +3199,7 @@ export async function selectCapsuleRosterViaModel({
       if (chosen.length === missing) {
         attempts += 1
         const trial = [...second.roster, ...chosen]
-        return check(trial).valid ? trial : null
+        return check(trial).ok ? trial : null
       }
       // A malformed response should normally be short by one. Keep the
       // defensive search bounded so a pathological answer cannot turn this
