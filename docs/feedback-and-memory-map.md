@@ -21,6 +21,11 @@ Read-only, runs no migrations, safe against a live database. Its section numbers
 document's. If a figure here disagrees with the script, **trust the script** — counts move as the
 owner edits garments, and several moved during the session this was written in.
 
+The script is committed (`scratch/*` is gitignored with an allowlist; it has an entry). Worth
+knowing when checking the other maps: **`engine-behaviour-map.md` cites `scratch/measure_provenance.js`
+and `scratch/measure_plural_gap.js`, and neither is tracked** — those numbers cannot currently be
+reproduced from a clean checkout.
+
 **Every enumeration here states the search that produced it**, so it can be re-run when the code
 moves. A claim of the form "nothing reads X" is only as good as its search, and the search is
 printed so you can widen it.

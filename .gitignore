@@ -35,3 +35,4 @@ scratch/*
 !scratch/build_capsule_disclosure_demo_thread.js
 !scratch/audit_color_taxonomy.js
 !scratch/rankings_ab_diff.js
+!scratch/measure_feedback_surface.js
