@@ -144,7 +144,7 @@ function GeneratedBoardLengthFeedback({ board, baseKey, feedbackSaved, toggleFee
                     aria-pressed={active}
                     onClick={() => onToggleCanonical
                       ? onToggleCanonical(pieceId, piece.name || `Piece ${pieceId}`, issue)
-                      : toggleFeedback({ key, feedbackType: 'wrong_length', targetType: 'generated_visual_board', label, note, payload: { ...payload, length_correction: { piece_id: pieceId, piece_name: piece.name || `Piece ${pieceId}`, issue } }, appendToPiece: false, contextOverride })}
+                      : toggleFeedback({ key, feedbackType: 'wrong_length', targetType: 'generated_visual_board', label, note, payload: { ...payload, length_correction: { piece_id: pieceId, piece_name: piece.name || `Piece ${pieceId}`, issue } }, contextOverride })}
                     className="stylist-feedback-chip"
                   >
                     {active ? '✓ ' : ''}{text}
@@ -3214,7 +3214,6 @@ export default function StylistChat({
                       mood: wardrobeOutfitMood,
                       ...(message?.source === 'visual_composer' ? { source: 'visual_composer' } : {})
                     },
-                    appendToPiece: activeContext?.type === 'piece'
                   })}
                   className="stylist-feedback-chip"
                 >
@@ -3744,7 +3743,6 @@ export default function StylistChat({
                                                 label: `${board.label || outfit.title || label}`,
                                                 note: board.reason || outfit.reason || '',
                                                 payload: { board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx },
-                                                appendToPiece: false,
                                                 contextOverride: (() => {
                                                   if (message?.wholeWardrobe || board?.wholeWardrobe || outfit?.wholeWardrobe) {
                                                     return { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
@@ -3795,7 +3793,6 @@ export default function StylistChat({
                                                   label: `${board.label || outfit.title || label}`,
                                                   note: board.reason || outfit.reason || '',
                                                   payload: { board, outfit, messageIndex, outfitIndex: idx, boardIndex: boardIdx, feedback_reason: reason || null },
-                                                  appendToPiece: false,
                                                   contextOverride: (() => {
                                                     if (message?.wholeWardrobe || board?.wholeWardrobe || outfit?.wholeWardrobe) {
                                                       return { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
@@ -3988,13 +3985,13 @@ export default function StylistChat({
     await patchCanonicalBoard(board, { feedbackLabels: labels.includes('wrong_length') ? labels : [...labels, 'wrong_length'], feedbackDetails: { ...details, wrong_length: next } })
   }
 
-  const saveStylistFeedback = async ({ key, feedbackType, targetType = 'message', label = '', note = '', payload = {}, appendToPiece = false, contextOverride = null }) => {
+  const saveStylistFeedback = async ({ key, feedbackType, targetType = 'message', label = '', note = '', payload = {}, contextOverride = null }) => {
     const context = contextOverride || activeContext || { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
     const feedbackPayload = { ...payload, threadId: payload.threadId || (currentThreadId !== 'new_chat' ? currentThreadId : null) }
     const res = await fetch('/api/stylist-feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ feedbackType, targetType, contextType: context.type, contextId: context.id, contextName: context.name, label, note, payload: feedbackPayload, appendToPiece })
+      body: JSON.stringify({ feedbackType, targetType, contextType: context.type, contextId: context.id, contextName: context.name, label, note, payload: feedbackPayload })
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || 'Could not save feedback')
@@ -6105,7 +6102,7 @@ export default function StylistChat({
                                     const k = `${renderSaveKey}:${type}`
                                     const isSavedFeedback = boardFeedbackActive(board, type) ?? feedbackSaved.has(k)
                                     return (
-                                      <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(board, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'rendered board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: boardIdx, feedbackLabel: type }, appendToPiece: false }, renderSaveKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                      <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(board, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'rendered board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: boardIdx, feedbackLabel: type } }, renderSaveKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                         {isSavedFeedback ? '✓ ' : ''}{label}
                                       </button>
                                     )
@@ -6125,7 +6122,7 @@ export default function StylistChat({
                                       return (
                                         <button key={k} onClick={() => isBoardSavedToCanon
                                           ? (reason ? toggleCanonicalBoardReason(board, type, reason) : toggleCanonicalBoardLabel(board, type))
-                                          : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'rendered board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: boardIdx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                          : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'rendered board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: boardIdx, feedbackLabel: type, feedback_reason: reason || null } })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                           {isSavedFeedback ? '✓ ' : ''}{label}
                                         </button>
                                       )
@@ -6240,7 +6237,7 @@ export default function StylistChat({
                                             const k = `${verdictBaseKey}:${type}`
                                             const isSavedFeedback = boardFeedbackActive(visual, type) ?? feedbackSaved.has(k)
                                             return (
-                                              <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(visual, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: false }, verdictBaseKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                              <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(visual, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type } }, verdictBaseKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                                 {isSavedFeedback ? '✓ ' : ''}{label}
                                               </button>
                                             )
@@ -6267,7 +6264,7 @@ export default function StylistChat({
                                               return (
                                                 <button key={k} onClick={() => isBoardSavedToCanon
                                                   ? (reason ? toggleCanonicalBoardReason(visual, type, reason) : toggleCanonicalBoardLabel(visual, type))
-                                                  : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                                  : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${visual.label || 'visual board'} - ${label}`, note: visual.reason || '', payload: { board: visual, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null } })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                                   {isSavedFeedback ? '✓ ' : ''}{label}
                                                 </button>
                                               )
@@ -6358,7 +6355,7 @@ export default function StylistChat({
                                             const k = `${saveKey}:${type}`
                                             const isSavedFeedback = boardFeedbackActive(board, type) ?? feedbackSaved.has(k)
                                             return (
-                                              <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(board, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'wardrobe board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: idx, feedbackLabel: type }, appendToPiece: false }, saveKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                              <button key={k} onClick={() => isBoardSavedToCanon ? toggleCanonicalBoardVerdict(board, type) : selectGeneratedBoardVerdict({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'wardrobe board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: idx, feedbackLabel: type } }, saveKey)} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                                 {isSavedFeedback ? '✓ ' : ''}{label}
                                               </button>
                                             )
@@ -6378,7 +6375,7 @@ export default function StylistChat({
                                               return (
                                                 <button key={k} onClick={() => isBoardSavedToCanon
                                                   ? (reason ? toggleCanonicalBoardReason(board, type, reason) : toggleCanonicalBoardLabel(board, type))
-                                                  : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'wardrobe board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null }, appendToPiece: false })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
+                                                  : toggleStylistFeedback({ key: k, feedbackType: type, targetType: 'generated_visual_board', label: `${board.label || 'wardrobe board'} - ${label}`, note: board.reason || '', payload: { board, messageIndex: i, boardIndex: idx, feedbackLabel: type, feedback_reason: reason || null } })} type="button" aria-pressed={isSavedFeedback} className="stylist-feedback-chip">
                                                   {isSavedFeedback ? '✓ ' : ''}{label}
                                                 </button>
                                               )

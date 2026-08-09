@@ -767,7 +767,6 @@ router.post('/stylist-feedback', (req, res) => {
       label = '',
       note = '',
       payload = {},
-      appendToPiece = false,
     } = req.body || {}
 
     if (!feedbackType) return res.status(400).json({ error: 'feedbackType is required' })
@@ -791,18 +790,21 @@ router.post('/stylist-feedback', (req, res) => {
     const insertedFeedback = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(result.lastInsertRowid)
     syncSavedBoardFromFeedback(insertedFeedback)
 
-    if (appendToPiece && contextType === 'piece' && contextId) {
-      const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(contextId)
-      if (piece) {
-        const existing = JSON.parse(piece.styling_rules_learned || '[]')
-        const feedbackLabel = label ? ` (${label})` : ''
-        const memory = `[feedback:${feedbackType}]${feedbackLabel} ${note || ''}`.trim()
-        if (memory && !existing.includes(memory)) {
-          db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?')
-            .run(JSON.stringify([...existing, memory]), contextId)
-        }
-      }
-    }
+    // Reactions to a BOARD or an OUTFIT are not garment rules, and this endpoint
+    // only ever records those. It used to copy the reaction's prose into the
+    // reacted-piece's styling_rules_learned as `[feedback:<type>] (label) note`,
+    // which the piece editor labels "AUTHORITATIVE — STYLIST FOLLOWS THESE FIRST"
+    // and buildWardrobePieceTruthText prints as `RULES (authoritative)`. So a
+    // compliment about one outfit — "the fitted black knit top complements the
+    // bold skirt" — became a standing rule about a garment that outfit merely
+    // contained, and a `not_me` rejection became an authoritative rule whose text
+    // praised the look it rejected.
+    //
+    // Owner ruling 2026-08-08: keep the writers that concern the garment (the
+    // occasion-exclusion note, and explicitly saving a chat message while that
+    // piece is open); drop the one that files board and outfit critique onto the
+    // garment card. The reaction itself is unaffected — the stylist_feedback row
+    // above is the canonical record and every reader of it still sees it.
 
     const learningMessages = {
       signature: 'Learning saved: boosting this as a signature direction. The board itself is not saved unless you click Save board.',
