@@ -1533,6 +1533,55 @@ not a malfunction — it is the prompt working as designed. The authority map in
 infer fit, drape, or length from a photo that is not fit_visible"* and to leave such fields
 low-confidence.
 
+> #### Amendment, 2026-08-08 — most of that 85% is not a tagger judgment at all
+>
+> The paragraph above reads every `low` as the tagger hedging. On pre-v2 pieces it is not: it is a
+> **normalization default for an absent value**, and some of those values were typed by the owner.
+>
+> `normalizeConfidenceMap` ([`taggerMerge.js:39`](../styling-engine/taggerMerge.js)) ends with:
+>
+> ```js
+> return [field, VALID_CONFIDENCE.has(confidence) ? confidence : 'low']
+> ```
+>
+> Anything not already `high`/`medium`/`low`/`manual` becomes `low`. A garment tagged before the
+> `_confidence` map existed has no entry, so it normalises to `low` — recording "provenance
+> unknown", not "the tagger was unsure".
+>
+> **The distribution proves it. A rating process does not emit exactly one value.** `fit_on_body`,
+> by tagger era, across 242 active pieces:
+>
+> | era | pieces | low | medium | high | manual |
+> |---|--:|--:|--:|--:|--:|
+> | (unversioned) | 164 | **134** | **0** | **0** | 28 |
+> | `v1.0.0` | 11 | 7 | **0** | **0** | 4 |
+> | `v2.0.0-photo-property-authority` | 67 | 28 | 6 | 25 | 8 |
+>
+> Zero mediums and zero highs before v2; a genuine spread after it. The same holds on every other
+> structural field — pre-v2 `length_hits_at` is 152 low / 0 medium / 4 high, `silhouette` 161 / 0 / 0,
+> `hem_finish` 165 / 0 / 0.
+>
+> **Owner, 2026-08-08:** *"those values are there bc I put them there… probably just done before the
+> user-tagged tag was introduced."* Provenance is recorded from v2 onward — `manual_overrides` and
+> `_confidence.<field> = 'manual'` agree exactly, and `getFieldConfidence` falls back between them —
+> but a value entered before either mechanism existed cannot be distinguished from an absent one.
+>
+> **Consequences, both live.** `trustedFieldText` renders these as
+> `fit: [low confidence - add worn photo] skims` — telling the model to discount owner-entered data,
+> and asking for a photo most of those garments already have (119 of the 132 fit-relevant pieces
+> still at `low` on 2026-08-08; the count falls as the owner re-confirms fields by hand, so re-measure
+> rather than citing it). `manifestValue` appends `?`
+> to the same values throughout the wardrobe manifest. And `trustedField`
+> ([`attributes.js:29`](../styling-engine/attributes.js)) accepts only `manual`/`high`/`medium`, so
+> `attributePieceTextBlob` **drops** `fit_on_body`, `silhouette`, `tuck_behavior` and
+> `waistband_type` entirely on these pieces — the value exists and search cannot see it.
+>
+> **Do not "fix" this by re-tagging.** That would overwrite owner-entered values with model guesses.
+> The available options are a provenance value distinct from `low` (see
+> [feedback-flows-and-proposal.md](feedback-flows-and-proposal.md) §6b), or the owner re-confirming
+> the fields by hand, which marks them `manual` correctly — the piece editor already does this on any
+> interaction with the field.
+
 **[by design]** Low confidence does **not** suppress the value downstream. `trustedFieldText`
 (`wardrobeAiContext.js:36`) prefixes it instead: `length: [low confidence - add worn photo] midi`.
 So the image prompts *do* carry the length — annotated with a disclaimer that it is unreliable, on
