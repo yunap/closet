@@ -30,11 +30,19 @@ the feedback type** — a complaint routes only when it names **one garment and 
 | feedback | routes? | field it implicates |
 |---|---|---|
 | `wrong_length` sub-reasons | ✅ shipped | `length_hits_at`, `sleeve_type` |
-| `wrong_garment_details` | ✅ candidate | `reads_as`, `pattern_*`, `neckline`, `sleeve_type` |
 | `bad_occasion` | ✅ candidate | `occasions` |
 | `layer_too_long`, `competing_hemlines` | ✅ candidate | `length_hits_at` |
 | `wrong_item_read` | ⚠️ aggregate only | `occasions`, `formality`, `reads_as` |
+| `wrong_garment_details` | ❌ **not yet** | ambiguous — see below |
 | `fit_issue`, `too_much_volume`, `shape_lost`, `unbalanced_proportions`, `too_columnar` | ❌ relational | none — these describe two garments against each other |
+
+**`wrong_garment_details` fails this rule on both halves and stays in destination B.** It names one
+garment but implicates several fields at once (`reads_as`, `pattern_*`, `neckline`, `sleeve_type`)
+with no field-level sub-reason to disambiguate — unlike `wrong_length`, which ships six. And it is
+classified as **image fidelity**, so the complaint may be that the *render* drifted rather than that
+the wardrobe metadata is wrong; routing it to a retag task would ask the owner to correct data that
+may be correct. It becomes a candidate only if the UI first collects an explicit field-level
+correction, the way the wrong-length flow already does.
 
 `fit_issue` is `target_type='whole_wardrobe_outfit'`: a judgment about how an outfit hangs together,
 not about the garment field `fit_on_body`. Relational complaints belong in destination C.
@@ -44,14 +52,31 @@ dismissed to-do, never a corrupted tag.
 
 ### B · "The picture is wrong" → render calibration
 
-Already correct and already separated — image-fidelity feedback reaches the image prompt and is kept
-out of styling. Needs two repairs, both in §3.
+**Two things share this destination and only one of them works.**
+
+- **Saved-board image-fidelity feedback** (`wrong_length`, `wrong_garment_details`,
+  `body_proportions_drift`, `identity_drift` on `target_type='generated_visual_board'`, plus
+  `saved_boards.payload.feedback_labels`) — reaches the image prompt via
+  `getSavedBoardRendererMemory`, and is correctly excluded from both pair scorers. This half is
+  **[by design]** and working.
+- **`renderer_calibration` rows** — reach **no renderer at all** (map §4), and because the scorers'
+  exclusion is keyed on `target_type === 'generated_visual_board'`, these rows fall *through* it and
+  score against garment selection. Exactly inverted: the channel named for calibration does not
+  calibrate, and does steer styling.
+
+So this destination needs the 0.1 fix before it can be described as separated, and the 0.4 ruling
+before `renderer_calibration` has a defined purpose at all.
 
 ### C · "This garment is wrong for me" → a score
 
-Already exists, per-user and weighted, in **two** deterministic consumers (map §4). This is the only
-mechanism that makes a personal preference binding *without* a prompt and *without* a global rule —
-which is what the 2026-08-07 owner ruling requires, since occasion profiles ship to every user.
+Already exists, per-user and weighted, in **three** deterministic consumers (map §4). This is the
+only mechanism that makes a personal preference binding *without* a prompt and *without* a global
+rule — which is what the 2026-08-07 owner ruling requires, since occasion profiles ship to every user.
+
+One of the three, `getSavedBoardInfluenceForPair`, scores from `saved_boards` rather than
+`stylist_feedback`, and treats **`favorite = 1` as a positive signal on every garment in the board**.
+That is a feedback channel with no reaction chip and no entry in the Style-profile panel, so any
+consolidation work in phase 2 has to cover two stores, not one.
 
 `buildWholeWardrobeFeedbackInfluence` already computes per-piece, per-combination, per-formula and
 per-occasion influence and has no production caller. It should be revived, not rewritten.
@@ -65,7 +90,10 @@ Only what cannot be a tag correction or a score.
 ## 2. Prompt-size discipline
 
 Where feedback does reach a prompt, three rules. This is what makes it affordable to give the
-capsule its share at all — today's readers concatenate raw rows, which grows without bound and lands
+capsule its share at all. Today's readers **are** capped — 8, 10, 12, 16, 20, 24 rows depending on
+the call site, and several truncate each note. The defect is not unbounded growth; it is that within
+those caps they **concatenate raw rows and never consolidate**, so repeated evidence about one
+garment spends N slots saying the same thing once each, and the budget lands
 in the prompt tail where this codebase has already measured stored rules losing (spec 25/26).
 
 1. **Scope to the pieces in play.** Only feedback touching a garment on the bench or in the outfit.

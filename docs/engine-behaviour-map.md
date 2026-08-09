@@ -1557,9 +1557,15 @@ low-confidence.
 > | `v1.0.0` | 11 | 7 | **0** | **0** | 4 |
 > | `v2.0.0-photo-property-authority` | 67 | 28 | 6 | 25 | 8 |
 >
-> Zero mediums and zero highs before v2; a genuine spread after it. The same holds on every other
-> structural field — pre-v2 `length_hits_at` is 152 low / 0 medium / 4 high, `silhouette` 161 / 0 / 0,
-> `hem_finish` 165 / 0 / 0.
+> **Zero mediums before v2 on every structural field**, against a genuine spread after it. The
+> claim is about the *shape* of the distribution, not a categorical absence: pre-v2 `length_hits_at`
+> carries a handful of `high` values (`silhouette` and `hem_finish` carry none). **[unverified]**
+> where those came from — an older tagger that emitted confidence, or an import. They are the
+> exception that the wording must survive, not evidence against the reading: a rating process that
+> never once returns `medium` across hundreds of pieces is not rating.
+>
+> Counts here are a 2026-08-08 snapshot and move as fields are re-confirmed; regenerate with
+> `node scratch/measure_feedback_surface.js` §9.
 >
 > **Owner, 2026-08-08:** *"those values are there bc I put them there… probably just done before the
 > user-tagged tag was introduced."* Provenance is recorded from v2 onward — `manual_overrides` and

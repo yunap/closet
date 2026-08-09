@@ -52,6 +52,7 @@ Derived from the schema, not from memory — `sqlite3 wardrobe.db ".tables"` the
 | `pieces.engine_notes` | engine-facing note, separate from `notes` |
 | `pieces.style_profile_json._confidence` / `manual_overrides` | per-field provenance ("protected edits") |
 | `saved_boards.payload.feedback_labels` | reactions attached to a saved board |
+| `saved_boards.favorite` | **a feedback signal, not just a gallery flag** — favouriting a board raises every garment in it, deterministically |
 | `outfits.notes` | free-text note on a saved outfit |
 | `todos` (`type='retag-suggestion'`) | the one destination that converts feedback into a task |
 
@@ -164,8 +165,16 @@ a complaint into corrected data rather than into prompt text.
 
 ## 4. Readers
 
-> Search: `grep -rn "FROM stylist_feedback" --include=*.js routes/ styling-engine/` then
-> `grep -rn "<function>(" --include=*.js routes/ styling-engine/ scratch/` for each call site.
+> Search: **both** feedback stores, then the call sites of each reader found:
+> ```bash
+> grep -rn "FROM stylist_feedback\|FROM saved_boards" --include=*.js routes/ styling-engine/ \
+>   | grep -viE "INSERT|UPDATE|DELETE"
+> grep -rn "<function>(" --include=*.js routes/ styling-engine/ scratch/
+> ```
+> **[bug in the first draft of this document, 2026-08-08]** The original search covered
+> `stylist_feedback` only, so it structurally could not find the `saved_boards` readers below, and
+> the map then claimed two deterministic consumers when there are three. Searching one store and
+> concluding about the surface is the failure mode this document exists to prevent.
 
 | reader | consumed by | kind |
 |---|---|---|
@@ -177,10 +186,21 @@ a complaint into corrected data rather than into prompt text.
 | `getLastOutfitEvaluation` (`tools.js:2398`) | the model's tool loop (`tools.js:1857`) | prompt text |
 | **`getFeedbackInfluenceForPair`** (`rules.js:516`) | `compatibilityScoreForSelectedItem` → `rankedComplementaryWardrobeFor` → `selectCandidatesForOutfitGeneration` / `complementaryWardrobeFor` | **deterministic score** |
 | **`buildVisualComposerRoster`** (`rules.js:2378`, feedback block at `:2649`) | Visual Composer roster (`ai.js:617`, `ai.js:1516`) | **deterministic score** |
+| **`getSavedBoardInfluenceForPair`** (`rules.js:660`) | `compatibilityScoreForSelectedItem` (`rules.js:1158`) — same chain as the pair scorer above | **deterministic score** |
+| `getSavedBoardMemory` (`rules.js:694`) | `/evaluate-piece` (`ai.js:1141/1142`), whole-wardrobe generator (`core.js:2823`) | prompt text |
 | `buildWholeWardrobeFeedbackInfluence` (`rules.js:1425`) | **no production caller** — only `scratch/run_agent_styling.js:34` | dead |
 
-**There are two deterministic consumers, not one.** Both convert feedback into signed weights via
+**There are three deterministic consumers.** All convert feedback into signed weights via
 `feedbackWeight()` (`rules.js:~490`); `buildVisualComposerRoster` adds ±18 for `is_gold`.
+
+**`saved_boards` is the second feedback store, and it is easy to miss.**
+`getSavedBoardInfluenceForPair` selects boards that are **either** scoped to the piece **or**
+`favorite = 1`, so favouriting a board is itself a deterministic positive signal on every garment in
+it — a channel with no reaction chip and no entry in the Style-profile panel. `getSavedBoardMemory`
+sends the same favourites and labels into prompts. Script §8 counts both.
+
+`getPieceUsageStats` (`rules.js:636`) also reads `saved_boards`, for usage counts rather than
+feedback; noted so the enumeration is complete.
 
 **[bug]** Both scorers guard image-fidelity feedback with
 `row.target_type === 'generated_visual_board' && IMAGE_FIDELITY_FEEDBACK_TYPES.has(...)`. Rows with
@@ -203,7 +223,7 @@ context filter too.
 | whole-wardrobe generator | A, B, C, D, E, **F** |
 | `/evaluate-piece` | A, B, C, D, E, **F** |
 | image renderer | image-fidelity subset of F |
-| single-piece outfit ranking | A, C + **F as a score** |
+| single-piece outfit ranking | A, C + **F and saved-board favourites/labels, as scores** |
 | Visual Composer roster | A, C + **F as a score** |
 | **capsule roster selection** | A, B, C, D, **E only** |
 | **capsule composition** | A, B, C, D, **E only** |
@@ -240,8 +260,14 @@ The trailing `(` matters: without it the search also matches a prose mention of
 
 **[bug]** `normalizeConfidenceMap` (`taggerMerge.js:39`) turns any unrecognised value into `low`, so
 a field edited before the provenance mechanism existed is indistinguishable from one the tagger
-declined to judge. Script §8 shows the signature: pre-v2 pieces carry **zero** medium or high on
-every structural field. Full analysis in `engine-behaviour-map.md` → *"Amendment, 2026-08-08"*.
+declined to judge.
+
+The signature is in script §9, and it is **"zero medium", not "zero medium or high"** — pre-v2
+pieces carry no `medium` on any structural field, while `length_hits_at` does carry a small number
+of pre-v2 `high` values. Those exceptions are unexplained; **[unverified]** whether they came from an
+older tagger that emitted confidence, or from an import. The claim the evidence supports is narrower
+than a categorical one: *the pre-v2 population does not show a rating distribution*, not *it shows
+no ratings at all*. Full analysis in `engine-behaviour-map.md` → *"Amendment, 2026-08-08"*.
 
 ---
 

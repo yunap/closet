@@ -93,7 +93,18 @@ table(rows(`SELECT feedback_type, context_type, COUNT(*) AS n FROM stylist_feedb
             WHERE COALESCE(archived,0)=0 AND target_type='renderer_calibration' GROUP BY 1,2 ORDER BY n DESC`),
   ['feedback_type', 'context_type', 'n'])
 
-h('8. Field confidence provenance (why "low" is not always a tagger judgment)')
+h('8. saved_boards as a feedback store (favourites are a signal, not just a gallery)')
+table([
+  { measure: 'boards, unarchived', n: one('SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0').n },
+  { measure: '  favourited', n: one('SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0 AND COALESCE(favorite,0)=1').n },
+  { measure: '  carrying feedback_labels', n: one("SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0 AND COALESCE(json_array_length(json_extract(payload,'$.feedback_labels')),0) > 0").n },
+  { measure: '  scoped to a piece', n: one("SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0 AND context_type='piece'").n },
+], ['measure', 'n'])
+console.log('  Read deterministically by getSavedBoardInfluenceForPair (favourite OR piece-scoped),')
+console.log('  and into prompts by getSavedBoardMemory / getSavedBoardRendererMemory.')
+
+h('9. Field confidence provenance (why "low" is not always a tagger judgment)')
+console.log('  Note the signature is "zero medium", not "zero medium or high" — a few pre-v2 highs exist.')
 for (const field of ['fit_on_body', 'length_hits_at', 'silhouette', 'hem_finish']) {
   console.log(`\n  ${field}:`)
   table(rows(`SELECT CASE WHEN tagger_version LIKE 'v2%' THEN 'v2 (photo-authority)'
