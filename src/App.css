@@ -1792,6 +1792,16 @@ img { display: block; max-width: 100%; }
   color: var(--accent);
   border-color: var(--accent);
 }
+/* Clearing a single-select is deliberately quieter than choosing a value —
+   it is the escape hatch, not one of the options. */
+.chip-toggle-clear {
+  background: transparent;
+  border-style: dashed;
+  opacity: 0.7;
+}
+.chip-toggle-clear:hover {
+  opacity: 1;
+}
 
 /* Color dot chips */
 .color-chip {

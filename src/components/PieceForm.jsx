@@ -258,7 +258,25 @@ function PhotoSlot({ label, hint, preview, onChange, onClear, onPreview, pending
 }
 
 // ── Chip row helper ─────────────────────────────────────────────────────────────
-function ChipRow({ options, value, onChange, multi = false, label, labelledBy }) {
+// Re-clicking the selected chip used to CLEAR the field. That is the wrong
+// default here: the common reason to click a value that is already correct is to
+// confirm it — which is what marks the field owner-set — and the old behaviour
+// silently emptied it instead, then pinned the empty value as a manual override.
+// Confirming is now what a re-click does; clearing moved to its own control so
+// it has to be meant. Multi-select is untouched: there, clicking an active chip
+// removing it from the list is the only way to deselect and is unambiguous.
+// `clearable={false}` for required fields whose call site refuses an empty value
+// (category does: `v || form.category`). Rendering a clear control there would
+// offer an action that silently does nothing.
+// `none`/`unknown` are the tagger's "does not apply to this category" sentinels,
+// not values the person chose — same set buildWardrobePieceTruthText refuses to
+// print. There is nothing to clear, so don't offer to.
+const CHIP_UNSET_VALUES = new Set(['none', 'unknown', 'n/a'])
+
+function ChipRow({ options, value, onChange, multi = false, label, labelledBy, clearable = true }) {
+  const hasValue = clearable && !multi &&
+    value !== null && value !== undefined && value !== '' &&
+    !CHIP_UNSET_VALUES.has(String(value).toLowerCase())
   return (
     <div className="chip-grid" role="group" aria-label={label} aria-labelledby={labelledBy}>
       {options.map(opt => {
@@ -273,12 +291,21 @@ function ChipRow({ options, value, onChange, multi = false, label, labelledBy })
             aria-pressed={active}
             onClick={() => multi
               ? onChange(active ? value.filter(v => v !== val) : [...(value||[]), val])
-              : onChange(val === value ? null : val)
+              : onChange(val)
             }
+            title={active ? 'Already selected — click to confirm this value as yours' : undefined}
             style={{ textTransform: 'capitalize' }}
           >{lbl}</button>
         )
       })}
+      {hasValue && (
+        <button
+          type="button"
+          className="chip-toggle chip-toggle-clear"
+          onClick={() => onChange(null)}
+          title="Clear this field"
+        >clear</button>
+      )}
     </div>
   )
 }
@@ -843,7 +870,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
 
           <div className="form-group">
             <div id="piece-form-category-label" className="form-label">Category</div>
-            <ChipRow labelledBy="piece-form-category-label" options={CATEGORIES} value={form.category} onChange={v => set('category', v || form.category)} />
+            <ChipRow labelledBy="piece-form-category-label" options={CATEGORIES} value={form.category} clearable={false} onChange={v => set('category', v || form.category)} />
           </div>
 
           <div className="form-group">
