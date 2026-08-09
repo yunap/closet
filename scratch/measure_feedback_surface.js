@@ -29,15 +29,31 @@ console.log(`# Feedback surface measurements`)
 console.log(`db: ${dbPath}`)
 console.log(`generated: run date not embedded on purpose — cite the date you ran it`)
 
-h('1. Storage inventory')
+h('1. Storage inventory — every store that holds user input, by category')
+const inv = (category, store, sql) => ({ category, store, rows: one(sql).n })
 table([
-  { store: 'stylist_feedback', rows: one('SELECT COUNT(*) n FROM stylist_feedback').n },
-  { store: '  of those, archived', rows: one('SELECT COUNT(*) n FROM stylist_feedback WHERE COALESCE(archived,0)=1').n },
-  { store: 'saved_boards', rows: one('SELECT COUNT(*) n FROM saved_boards').n },
-  { store: '  with feedback_labels', rows: one("SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(json_array_length(json_extract(payload,'$.feedback_labels')),0) > 0").n },
-  { store: 'todos (retag-suggestion)', rows: one("SELECT COUNT(*) n FROM todos WHERE type='retag-suggestion'").n },
-  { store: 'outfits with notes', rows: one("SELECT COUNT(*) n FROM outfits WHERE notes IS NOT NULL AND notes != ''").n },
-], ['store', 'rows'])
+  inv('1 garment truth', 'pieces (active)', "SELECT COUNT(*) n FROM pieces WHERE status='active'"),
+  inv('1 garment truth', '  favourited pieces', "SELECT COUNT(*) n FROM pieces WHERE status='active' AND COALESCE(favorite,0)=1"),
+  inv('2 saved outfits', 'outfits', 'SELECT COUNT(*) n FROM outfits'),
+  inv('2 saved outfits', '  confirmed', "SELECT COUNT(*) n FROM outfits WHERE status='confirmed'"),
+  inv('2 saved outfits', '  favourited', 'SELECT COUNT(*) n FROM outfits WHERE COALESCE(favorite,0)=1'),
+  inv('2 saved outfits', '  with notes', "SELECT COUNT(*) n FROM outfits WHERE notes IS NOT NULL AND notes != ''"),
+  inv('2 saved outfits', 'outfit_pieces links', 'SELECT COUNT(*) n FROM outfit_pieces'),
+  inv('3 boards', 'saved_boards (unarchived)', 'SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0'),
+  inv('3 boards', '  favourited ("Use strongly")', 'SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0 AND COALESCE(favorite,0)=1'),
+  inv('3 boards', '  with feedback_labels', "SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0 AND COALESCE(json_array_length(json_extract(payload,'$.feedback_labels')),0) > 0"),
+  inv('4 calibration', 'calibration_images (unarchived)', 'SELECT COUNT(*) n FROM calibration_images WHERE COALESCE(archived,0)=0'),
+  inv('4 calibration', '  favourited', 'SELECT COUNT(*) n FROM calibration_images WHERE COALESCE(archived,0)=0 AND COALESCE(favorite,0)=1'),
+  inv('4 calibration', '  with labels', "SELECT COUNT(*) n FROM calibration_images WHERE COALESCE(archived,0)=0 AND labels NOT IN ('','[]')"),
+  inv('4 calibration', '  with notes', "SELECT COUNT(*) n FROM calibration_images WHERE COALESCE(archived,0)=0 AND notes IS NOT NULL AND notes != ''"),
+  inv('5/6 feedback', 'stylist_feedback', 'SELECT COUNT(*) n FROM stylist_feedback'),
+  inv('5/6 feedback', '  archived', 'SELECT COUNT(*) n FROM stylist_feedback WHERE COALESCE(archived,0)=1'),
+  inv('7 thread state', 'chat_threads', 'SELECT COUNT(*) n FROM chat_threads'),
+  inv('7 thread state', 'stylist_conversation_state', 'SELECT COUNT(*) n FROM stylist_conversation_state'),
+  inv('8 recency', 'whole_wardrobe_sessions', 'SELECT COUNT(*) n FROM whole_wardrobe_sessions'),
+  inv('9 tasks', 'todos (retag-suggestion)', "SELECT COUNT(*) n FROM todos WHERE type='retag-suggestion'"),
+  inv('9 tasks', 'todos (metadata)', "SELECT COUNT(*) n FROM todos WHERE type='metadata'"),
+], ['category', 'store', 'rows'])
 
 h('2. Per-garment memory fields (active pieces)')
 const active = one("SELECT COUNT(*) n FROM pieces WHERE status='active'").n
