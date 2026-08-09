@@ -87,6 +87,32 @@ Only what cannot be a tag correction or a score.
 
 > **The routing rule: the prompt is the destination of last resort, not the default.**
 
+## 1b. Retire the generic "Save as styling rule" button
+
+*Added after review, 2026-08-08.* Its destination is not the problem — the button says "Save as
+styling rule" and `styling_rules_learned` is what that means. Three product concerns are:
+
+- it makes an **entire assistant message** authoritative, unedited;
+- it **duplicates** the automatic capture that `store_user_correction` already performs;
+- it can freeze **temporary outfit context** as permanent garment guidance — live example in map
+  §2b, a saved reply about one outfit's trousers now standing as a rule on a cardigan.
+
+Proposed direction:
+
+1. Remove the generic button.
+2. Keep garment-level Rules learned as a field, for short authored rules.
+3. **Extend `store_user_correction` to accept a verified `piece_id`** — this is the actual missing
+   capability. Correction capture exists; what it cannot do is scope a correction to a garment,
+   even when the model has just named that garment and its ID in the note it wrote.
+4. Show a piece-scoped correction in **both** Conversation Memory and the garment card, backed by
+   **one** canonical record rather than the two unreconciled stores that exist now.
+5. Where a correction maps cleanly onto an enforceable field — an occasion above all — write the
+   structured exclusion rather than prose.
+
+Point 3 is the highest-value item in this document. It is what would have made
+*"never use the beige tailored linen shorts (ID 242) for home outfits"* binding rather than
+advisory, without a global rule and without a prompt line.
+
 ## 2. Prompt-size discipline
 
 Where feedback does reach a prompt, three rules. This is what makes it affordable to give the
@@ -106,7 +132,9 @@ in the prompt tail where this codebase has already measured stored rules losing 
 
 | # | change | status |
 |---|---|---|
-| 0.1 | Stop `renderer_calibration` scoring against garment selection | **open — and larger than first thought** |
+| 0.1 | Stop `renderer_calibration` scoring against garment selection | **open — confirmed live in Visual Composer, latent in the pair scorer** |
+| 0.5 | Make removing an occasion-exclusion chip either restore the exclusion or be impossible | open |
+| 0.6 | Scope `wrong_item_read` to the flagged piece, not every garment in the outfit | open |
 | 0.2 | Remap `wrong_energy` → `too_subdued` | open |
 | 0.3 | Stop board/outfit critique landing on the garment card | **shipped** (`96c3246`) |
 | 0.4 | Decide `renderer_calibration`'s fate | needs owner ruling |
@@ -115,11 +143,15 @@ in the prompt tail where this codebase has already measured stored rules losing 
 | 3 | Give the capsule its share | open |
 | 4 | Taxonomy cleanup | open |
 
-**0.1** — both scorers guard image-fidelity feedback with
-`target_type === 'generated_visual_board' && IMAGE_FIDELITY_FEEDBACK_TYPES.has(...)`
-(`rules.js:532` and `rules.js:2656`), so `renderer_calibration` rows fall through in *both*. The fix
-is the same one-line widening in two places. Every affected row carries `context_type='piece'`, so
-nothing else filters them out.
+**0.1** — the guard is keyed on `target_type === 'generated_visual_board'`
+(`rules.js:532` and `rules.js:2656`), so `renderer_calibration` rows fall through in both. Same
+one-line widening in two places, but the urgency differs: **confirmed today in Visual Composer**
+(10 weighted rows scoring against garment selection), **latent in the pair scorer**, whose extra
+`touchesCandidate` test no current row satisfies. Map §4 has the evidence for both.
+
+**0.6** — `wrong_item_read`'s payload carries the whole outfit's `pieceIds`, so the −24 reaches
+every garment in it (3.1 per click on live data) rather than the one flagged. Either narrow what the
+scorers collect for this type, or stop writing the sibling IDs into its payload.
 
 **0.2** — `too_subdued` is already one of `wrong_energy`'s own seven sub-reasons
 (`wrongEnergyReasonLabels`, `rules.js:729`), so the target is not invented. Do it as a **one-time
