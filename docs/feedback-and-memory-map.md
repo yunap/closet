@@ -5,9 +5,11 @@ Third map alongside [`app-surface-map.md`](app-surface-map.md) (what the user to
 plumbing between them: **everything the user tells the app about a garment or an outfit, where it
 is written, and which consumer — if any — reads it back.**
 
-Written 2026-08-08. It describes; it does not propose. Recommendations live in
-[`feedback-routing-proposal.md`](feedback-routing-proposal.md) and must cite this map rather
-than restate it.
+**Ratified 2026-08-09** as the baseline description of the current system, after five review
+rounds. It describes; it does not propose. Recommendations live in
+[`feedback-routing-proposal.md`](feedback-routing-proposal.md) and must cite this map rather than
+restate it. Ideas for hardening the verification tooling are out of scope here and live in
+[`feedback-audit-backlog.md`](feedback-audit-backlog.md).
 
 ## 0. How to verify this document
 
@@ -30,30 +32,27 @@ reproduced from a clean checkout.
 moves. A claim of the form "nothing reads X" is only as good as its search, and the search is
 printed so you can widen it.
 
-**Completeness is machine-checked across all four media.** Run:
+**A maintenance check, not a proof.** Run:
 
 ```bash
 node scratch/audit_feedback_surface_completeness.js
 ```
 
 It compares the running system against
-[`scratch/feedback_surface_inventory.json`](../scratch/feedback_surface_inventory.json), which
-assigns every store an explicit **disposition** — `category` (documented in §1 with writer, action,
-reader and authority) or `excluded` (out of scope, reason in §8) — and never both. It exits non-zero
-when the system holds a store the inventory does not classify, **or** the inventory names something
-that no longer exists.
+[`scratch/feedback_surface_inventory.json`](../scratch/feedback_surface_inventory.json), which gives
+every store an explicit **disposition** — `category` (documented in §1 with writer, action, reader
+and authority) or `excluded` (out of scope, reason in §8), never both. It exits non-zero when the
+system holds a store the inventory does not classify, or the inventory names one that no longer
+exists.
 
-**What it proves and what it does not.** It proves *classification*: every SQLite table, every
-`localStorage` key, and every `uploads/` subdirectory resolves to a disposition. It does **not**
-prove the prose about any store is correct, and medium 4 (runtime/prompt caches) has no enumerable
-inventory — the script prints its build/invalidate sites and states plainly that the check there is
-manual.
+**What it is good for:** catching drift when a table, `localStorage` key or `uploads/`
+subdirectory is added and nobody updates this document. It found two unclassified upload
+directories on its first run.
 
-*An earlier draft grepped this document for each table name and claimed "silence means complete".
-That was wrong twice over: it proved only that a name appeared **somewhere** — a command, a citation,
-an open question — rather than that the store was classified; and it could not see media 2, 3 or 4
-at all. The first run of the real audit failed, on two `uploads/` subdirectories no grep over prose
-would ever have surfaced.*
+**What it does not establish:** that this map's prose about any store is correct, or that the
+categories are the right ones. Medium 4 (runtime/prompt caches) has no enumerable inventory at all —
+the script prints its build sites and says the check there is manual. Treat a PASS as "nothing
+obvious has drifted", not as completeness.
 
 **Markers follow the existing maps' convention:** **[by design]** behaviour a code comment or
 ratified doc states is intentional · **[unverified]** read from code but not executed ·
@@ -64,9 +63,8 @@ that contradicts stated intent · **[latent inconsistency]** two things that wil
 
 ## 0b. The four persistence media — the audit boundary
 
-*Added after review round 4, 2026-08-09.* Rounds 1–3 of this document each missed stores because
-the search kept starting from "things that look like feedback in SQLite". A complete audit has to
-sweep **four media**, and the third and fourth are invisible to any `grep "FROM <table>"`:
+User input persists in **four media**. The third and fourth are invisible to any
+`grep "FROM <table>"`, which is why a SQLite-only sweep will always understate this surface:
 
 | medium | what lives there | swept by |
 |---|---|---|
@@ -87,7 +85,7 @@ Nothing about it appears in a table scan.
 **Twelve category entries**, not twelve stores — several aggregate more than one physical table
 (`outfits` + `outfit_pieces`, `saved_boards` + `saved_board_pieces`, `chat_threads` +
 `stylist_conversation_state`) and two split one table by meaning (`stylist_feedback`, categories 5
-and 6). *"Nine stores" in an earlier draft was not a defensible count and has been withdrawn.*
+and 6).
 
 Derived from the schema, not from memory: `sqlite3 wardrobe.db ".tables"`, then a column scan for
 `note|rule|feedback|learn|reject|exclus|pair|label|favorite|status|state|payload|photo`, then the
@@ -159,9 +157,8 @@ a temporary context gets mistaken for a standing instruction.
 - **Reads** — see §4. `getSavedBoardInfluenceForPair` (score), `getSavedBoardMemory` (prompt),
   `getSavedBoardRendererMemory` (render prompt), `getPieceUsageStats` (usage counts).
 - **Authority** — **score.** A favourited board contributes a large fixed **+45** per matching pair
-  (capped at 70 across all boards). *Not* the largest positive weight in the codebase — a gold
-  `signature` row scores 38 + an 18 gold bonus = 56 in `buildVisualComposerRoster` — an earlier
-  superlative here was withdrawn.
+  (capped at 70 across all boards). It is not the largest positive weight in the codebase: a gold
+  `signature` row scores 38 + an 18 gold bonus = 56 in `buildVisualComposerRoster`.
 
 ### 4 · Calibration / reference memory
 
@@ -173,9 +170,8 @@ a temporary context gets mistaken for a standing instruction.
   `core.js:2822`.
 - **Authority** — **prompt**, and the reader treats it as high-authority positive *and negative*
   styling memory.
-- **[bug]** *(in the first draft of this document)* §1 previously declared `calibration_images` out of
-  scope as "the image calibration surface". That was wrong: its labels and notes are styling memory,
-  not only renderer calibration, and under this map's own stated scope it belongs.
+- Its labels and notes are **styling** memory, not only renderer calibration — which is why it is a
+  category here rather than an exclusion.
 
 ### 5 · Global owner rules
 
@@ -198,11 +194,10 @@ Covered in §2 · F, §3 and §4. **Authority — score and prompt.**
   used on follow-up turns.
 - **Authority** — **thread-only.** Nothing here is durable preference, and it must not be read as
   taste.
-- **[latent inconsistency]** — *corrected after review round 4.* Both conversation-state functions
-  exist twice, and unlike `storeUserCorrection` (where only the `tools.js` copy runs) **both copies
-  of these are live, for different callers**: `core.js`'s definitions serve `core.js` by lexical
-  shadowing, `tools.js`'s serve the tool loop. Document them function by function; treating the pair
-  as one shared implementation is what produced the wrong attribution in the previous draft.
+- **[latent inconsistency]** Both conversation-state functions exist twice. Unlike
+  `storeUserCorrection`, where only the `tools.js` copy runs, **both copies here are live for
+  different callers**: `core.js`'s definitions serve `core.js` by lexical shadowing, `tools.js`'s
+  serve the tool loop. They must be read function by function, not as one shared implementation.
 
 ### 8 · Short-lived recency / diversity memory
 
@@ -237,9 +232,6 @@ Covered in §2 · F, §3 and §4. **Authority — score and prompt.**
   `editorial_subject`, `lane_neutrality`, `proven_formulas`, `working_style`. Five constrain styling
   judgment; `editorial_subject` and `editorial_shoes` govern rendered subject and footwear. Sizes in
   script §1b.
-- **[bug]** *(in drafts 1–3 of this document)* This category was absent entirely, while `getOwnerRuleNotes`'
-  seven prose rows were documented in detail. The map measured what looked like feedback rather than
-  what shapes styling.
 - `profile_display_name` and `profile_pronouns` reach every personalised prompt but affect address
   and grammar rather than garment selection — recorded here as global user context, not preference.
 
@@ -337,15 +329,26 @@ problems separately—they do not mean the outfit idea is wrong."*
 The single table a reader needs. Everything in it is derived from §3 and §4; this is the synthesis,
 not a separate source.
 
-| user action | canonical storage | garment-scoped? | effect |
-|---|---|---|---|
-| "Wrong for hiking" (card menu) | `pieces.occasion_exclusions` | **yes, structurally** | hard exclusion in the shared gate |
-| Verbal correction — *"never use these shorts at home"* | `stylist_feedback` `owner_rule` / `message` | **no** — the garment and its ID appear only in prose | global prompt guidance |
-| "Replace in this outfit" | `stylist_feedback` `wrong_item_read` / `whole_wardrobe_outfit` | via payload IDs — but see the bug below | soft scoring, −24 |
-| "Save as styling rule" | `pieces.styling_rules_learned` | yes | the **entire assistant message** becomes authoritative prompt text |
-| Reaction chips on a board/outfit | `stylist_feedback`, various | by payload | soft scoring and/or prompt text |
-| Favouriting a board | `saved_boards.favorite` | every garment in the board | soft scoring, positive |
-| Historical `— rejected by <name> (<date>)` rules | `pieces.styling_rules_learned` | yes | authoritative prompt text; **[unverified]** writer unknown |
+Every current user-facing feedback action, with its writer, destination, reader and behavioural
+effect. Where an action has no reader, that is stated.
+
+| user action | writer | destination | read by | effect |
+|---|---|---|---|---|
+| "Wrong for X" (card menu) | `crud.js:378` | `pieces.occasion_exclusions` **+** a prose receipt in `styling_rules_learned` | `pieceOccasionCompatible` (`rules.js:2216`) | **hard gate**, garment-scoped. The only user action that removes a garment from consideration |
+| Restoring it (chip ✕, or Style profile) | `crud.js:378` | same | same | lifts the gate; the ✕ calls the endpoint rather than editing text |
+| Verbal correction in chat | `store_user_correction` (`tools.js:2422`, called at `:1865`) | `stylist_feedback` `owner_rule`/`message` | `getOwnerRuleNotes` → capsule roster + composition prompts | **prompt**, global. Cannot be piece-scoped even when the note names the garment and its ID |
+| "Replace in this outfit" | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback` `wrong_item_read` | both `stylist_feedback` scorers | **score**, −24 — but lands on **every** garment in the outfit, see conclusion 5 |
+| "Save as styling rule" | `crud.js:494` | `pieces.styling_rules_learned` (piece context) or `outfits.notes` (outfit context) | `buildWardrobePieceTruthText` → both capsule prompts | **prompt**, marked authoritative. Saves the *entire* assistant message |
+| Reaction chips on a board or outfit | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback`, type by chip | `getStylistFeedbackMemory`, `getWholeWardrobeFeedbackMemory`, both scorers | **score and/or prompt**, by type |
+| Marking a board "Use strongly" | `PATCH /saved-boards/:id` (`crud.js:1170`) | `saved_boards.favorite` | `getSavedBoardInfluenceForPair`, `getSavedBoardMemory` | **score**, +45 to every pair in that board |
+| Favouriting a garment | `PATCH /pieces/:id/favorite` (`crud.js:338`) | `pieces.favorite` | `rules.js:1008` / `:1904` / `:1199` | **score**, +4 / +10 / sort tie-break |
+| Confirming or favouriting an outfit | `crud.js:461` (favourite), `crud.js:433` (status via `PUT /outfits/:id`) | `outfits.status`, `outfits.favorite` | `getConfirmedOutfitMemory`, `getOutfitsForPieceMemory` | **prompt**, positive taste record |
+| Labelling or favouriting a calibration image | `PATCH /calibration-images/:id` (`crud.js:953`) | `calibration_images` | `getCalibrationMemoryForStylist` | **prompt**, positive *and* negative styling memory |
+| Editing a constitution layer | `PUT /settings/constitution` (`crud.js:1524`) | `style_constitution` + `constitution_history` | `loadConstitution` → `buildForUser` | **system prompt**, and rebuilds the per-user prompt cache |
+| Reporting a rendering problem | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback`, image-fidelity types | `getSavedBoardRendererMemory`; wrong-length also becomes a retag to-do | **prompt** to the renderer, **+ task** |
+| Rating a variation in Visual Lab | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback` `target_type='renderer_calibration'` | **no current reader** | none intended — and **[bug]**, 10 weighted rows currently score against garment selection in Visual Composer |
+| Completing a retag to-do | `PUT /pieces/:id` (`crud.js:296`) | `pieces` tags, marked `manual` | every consumer of garment truth | **hard gate / score / prompt**, depending on the field |
+| Historical `— rejected by <name> (<date>)` rules | **[unverified]** writer unknown; no current code produces this text | `pieces.styling_rules_learned` | `buildWardrobePieceTruthText` | **prompt**, marked authoritative |
 
 Five conclusions that follow, and that are easy to miss when reading the sections separately:
 
@@ -377,14 +380,8 @@ Five conclusions that follow, and that are easy to miss when reading the section
 >     --include=*.js routes/ styling-engine/ lib/
 > done
 > ```
-> *An earlier draft hard-coded ten table names and called it "every table in §1"; it omitted
-> `style_constitution`, `app_meta`, `constitution_history`, `saved_board_pieces`, every import table
-> and the generation-run tables.*
 > Search per table rather than by route name — two routes here are named for a column they do not
-> write. **[bug]** *(in earlier drafts, 2026-08-08)* this inventory ran over `stylist_feedback` and
-> then `saved_boards`, and so listed neither the canonical board writers nor any writer for
-> categories 1, 2, 4, 7 or 8. Listing a store without its writers is the same scope failure as
-> omitting the store.
+> write. A store listed in §1 without its writers here is an incomplete entry — check both.
 
 ### Into `stylist_feedback`
 
@@ -416,7 +413,7 @@ when its note names a garment and its ID in prose.
 | `crud.js:378` | `POST /pieces/:id/occasion-exclusion` | `occasion_exclusions` **and** an `Excluded from …` note into `styling_rules_learned` |
 | `crud.js:494` | `PATCH /pieces/:id/append-note` | **writes `styling_rules_learned`, not `notes`** |
 
-**[latent inconsistency]** — *downgraded from `[bug]` after review, 2026-08-08.*
+**[latent inconsistency]**
 `PATCH /pieces/:id/append-note` writes to `styling_rules_learned` while its sibling
 `PATCH /outfits/:id/append-note` (`crud.js:504`) writes to `outfits.notes`. For the **piece** case
 this is not a destination defect: the button says *"Save as styling rule"*, and
@@ -455,7 +452,8 @@ Distinct from the two functions above, which only *mirror* board feedback into `
 |---|---|---|
 | `crud.js:422` | `POST /outfits` | the outfit and its `outfit_pieces` links |
 | `crud.js:441/444/457` | `PUT /outfits/:id` | the outfit, then rewrites its links |
-| `crud.js:465/487/490` | favourite / status / delete routes | `favorite`, `status='confirmed'` |
+| `crud.js:461` | `PATCH /outfits/:id/favorite` | `favorite` |
+| `crud.js:433/453` | `PUT` / `DELETE /outfits/:id` | `status`, and the outfit row |
 | `crud.js:504` | `PATCH /outfits/:id/append-note` | `outfits.notes` |
 
 ### Into `calibration_images`
@@ -518,10 +516,8 @@ a complaint into corrected data rather than into prompt text.
 >   | grep -viE "INSERT|UPDATE|DELETE"
 > grep -rn "<function>(" --include=*.js routes/ styling-engine/ scratch/
 > ```
-> **[bug]** *(in the first draft of this document, 2026-08-08)* The original search covered
-> `stylist_feedback` only, so it structurally could not find the `saved_boards` readers below, and
-> the map then claimed two deterministic consumers when there are three. Searching one store and
-> concluding about the surface is the failure mode this document exists to prevent.
+> Search **both** feedback stores. A search over `stylist_feedback` alone cannot find the
+> `saved_boards` readers below, and will undercount the deterministic consumers.
 
 | reader | consumed by | kind |
 |---|---|---|
@@ -543,8 +539,7 @@ a complaint into corrected data rather than into prompt text.
 | `getRecentWholeWardrobeSessionInfluence` (`rules.js:1514`) | whole-wardrobe generation (`ai.js:1501`) | **deterministic suppression** |
 | `buildWholeWardrobeFeedbackInfluence` (`rules.js:1425`) | **no production caller** — only `scratch/run_agent_styling.js:34` | dead |
 
-**There are three deterministic consumers, and they are two different scoring systems** —
-*corrected after review, 2026-08-08.*
+**There are three deterministic consumers, and they are two different scoring systems.**
 
 - **Two read `stylist_feedback`** and convert it via `feedbackWeight()` (`rules.js:~490`):
   `getFeedbackInfluenceForPair` and `buildVisualComposerRoster` (which adds ±18 for `is_gold`).
@@ -568,8 +563,7 @@ feedback; noted so the enumeration is complete.
 `row.target_type === 'generated_visual_board' && IMAGE_FIDELITY_FEEDBACK_TYPES.has(...)`, so
 `renderer_calibration` rows fall through it. They all carry `context_type='piece'`, so they pass the
 context filter too. (`getSavedBoardInfluenceForPair` reads `saved_boards` and filters labels
-directly, so it is not affected — see the three-consumer note above.) **The consequence differs by scorer, and the distinction matters** *(refined
-after review, 2026-08-08)*:
+directly, so it is not affected — see the three-consumer note above.) **The consequence differs by scorer:**
 
 - **[bug]** `buildVisualComposerRoster` — **confirmed, with live data.** It applies the weight directly
   on `context_type='piece' && context_id`, with no further test. Script §7 lists 23
@@ -640,8 +634,7 @@ The trailing `(` matters: without it the search also matches a prose mention of
 `getFieldConfidence` falls back between them. **[by design]** the piece editor marks a field
 `manual` on *any* interaction, and `pinManualConfidence` (`crud.js:228/282`) persists it on save.
 
-**[latent inconsistency]** — *reclassified after review, 2026-08-08; this is a data-history
-limitation, not a defect in the normalizer.* `normalizeConfidenceMap` (`taggerMerge.js:39`)
+**[latent inconsistency]** A data-history limitation, not a defect in the normalizer. `normalizeConfidenceMap` (`taggerMerge.js:39`)
 deliberately and testably maps a missing or malformed confidence to `low`. The consequence is that
 `low` cannot distinguish a genuine tagger judgment from absent legacy provenance — but the cause is
 that provenance was not recorded before v2, not that the fallback is wrong. Any migration is a
@@ -683,13 +676,10 @@ keeps the `Excluded …` / `Restored …` pair as the audit trail.
 
 ## 8. Exclusion ledger — examined and deliberately left out
 
-*Corrected after review round 5: three entries appeared **both** in category 12 and in this ledger.
-A store is exactly one of the two, and the inventory file now enforces that — they are category 12,
-provenance-only, and are struck through below so the earlier contradiction stays visible.*
-
-A store absent from §1 should be absent *on the record*. Without this list there is no way to tell
-an audited exclusion from an undiscovered store — which is how four categories went missing through
-three review rounds.
+A store absent from §1 should be absent *on the record*, so an audited exclusion is distinguishable
+from an undiscovered store. `constitution_history`, `piece_import_evidence` and the `import_*`
+tables are **not** here: they are category 12, provenance-only. Each store is in exactly one place,
+and `feedback_surface_inventory.json` enforces that.
 
 | store / key | medium | why excluded |
 |---|---|---|
@@ -699,11 +689,8 @@ three review rounds.
 | `stylist_rail_collapsed`, `stylist_rail_view_mode` | browser | presentation only |
 | `stylist_current_thread_id` | browser | navigation only |
 | `importSessionId` | browser | in-flight workflow handle |
-| ~~`constitution_history`~~ | — | **not excluded.** Category 12, as a provenance-only entry |
-| ~~`piece_import_evidence`~~ | — | **not excluded.** Category 12, as a provenance-only entry |
 | generated thumbnails, board images, derived caches | files | derived artifacts, not user input |
 | `generation_runs` (1,990 rows), `freeform_generation_runs` (83) | SQLite | engine telemetry — flow, cap, token and gate counters. No user-authored content, and **no production reader**: written for offline diagnosis only |
-| ~~import tables~~ | — | **not excluded.** Category 12 |
 
 **Browser storage, in full.** The keys are
 `stylist_chat_threads`, `stylist_chat_messages`, `stylist_chat_history`, `stylist_thread_memory`,
