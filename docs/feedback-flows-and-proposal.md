@@ -253,10 +253,31 @@ And the system already acts on this: `trustedFieldText` renders a low-confidence
 as `fit: [low confidence - add worn photo] skims`, so the model is told the value is weak *and* the
 remedy is named. That is better than this document originally credited.
 
-The open question is narrower than "is fit trustworthy": **176 garments have a worn photo, but only
-60 have a photo judged `fit_visible: true`.** Worn photos exist and are largely not being counted
-as fit evidence. Whether that is a judging problem, a photo-quality problem, or a tagger-version
-problem is worth one measurement before any fit-related feedback routing is designed.
+### The fit-evidence diagnosis — run 2026-08-08, read-only, no model calls
+
+Scoped to garments that actually need fit evidence: categories that use the field
+(top/bottom/dress/outerwear, 192 garments), minus the 18 the owner has settled manually and the 20
+the tagger already rates high or medium. **That leaves 154.**
+
+| of the 154 | count |
+|---|--:|
+| has a worn photo | **138** |
+| has a photo judged `fit_visible: true` | 21 |
+| `photo_properties` empty — never judged at all | **128** |
+| has a worn photo **and** was never judged | **116** |
+
+**The cause is tagger version, not photo quality.** Every one of the 21 judgments sits on
+`v2.0.0-photo-property-authority`, the version that introduced photo-property authority; 133 of the
+154 were tagged before it existed (`v1.0.0` or no version recorded) and 5 of those carry a judgment
+at all. The photos were never evaluated because the concept did not exist when they were tagged.
+
+**Actionable set: 116 garments** — 47 tops, 45 bottoms, 12 outerwear, 12 dresses — each with a worn
+photo already on file that has never been judged. A further **16** genuinely lack a worn photo and
+need one from the owner before any re-run could help.
+
+This is a re-judge of existing photos, not a data-collection exercise, and it is the cheapest route
+to making `fit_on_body` trustworthy. Cost per garment is one tagger vision call and has **not** been
+measured; measure one before committing to a batch.
 
 ## Part 7 — Open questions for the owner
 
