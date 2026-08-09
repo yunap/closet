@@ -157,7 +157,32 @@ const FABRIC_BY_CATEGORY = {
 }
 
 // ── Rule list (add/remove chips) ──────────────────────────────────────────────
-function RuleList({ rules, onChange, placeholder, color = 'accent' }) {
+// An "Excluded from X by <name> (<date>)" line is written alongside a real
+// occasion exclusion, and it is only the receipt — the enforceable record is
+// pieces.occasion_exclusions, which PUT /pieces/:id cannot write (its column
+// list omits it). So removing this chip and saving used to be guaranteed
+// cosmetic: the note vanished, the garment stayed blocked, and nothing on the
+// screen said so any more. Those chips now call the restore endpoint instead.
+//
+// A chip is treated as live only when the occasion it names is still present in
+// the garment's own exclusion list. Prose alone is not enough: the same text
+// remains after a restore, and matching on it would offer to restore something
+// already restored.
+const EXCLUSION_RULE = /^Excluded from (.+?) by .+\(\d{4}-\d{2}-\d{2}\)\s*$/
+
+function normalizeOccasion(value) {
+  return String(value || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+}
+
+export function liveExclusionOccasion(rule, exclusions = []) {
+  const match = EXCLUSION_RULE.exec(String(rule || ''))
+  if (!match) return null
+  const occasion = match[1].trim()
+  const normalized = normalizeOccasion(occasion)
+  return exclusions.some(entry => normalizeOccasion(entry) === normalized) ? occasion : null
+}
+
+function RuleList({ rules, onChange, placeholder, color = 'accent', exclusions = [], onRestore = null, restoring = '' }) {
   const [input, setInput] = useState('')
 
   const add = () => {
@@ -176,17 +201,34 @@ function RuleList({ rules, onChange, placeholder, color = 'accent' }) {
     <div>
       {rules.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-          {rules.map((rule, i) => (
-            <div key={i} style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '4px 10px 4px 12px', borderRadius: 20,
-              background: bgVar, border: `1px solid ${colorVar}`,
-              fontSize: 12, color: colorVar, maxWidth: '100%',
-            }}>
-              <span style={{ flex: 1, lineHeight: 1.4 }}>{rule}</span>
-              <button onClick={() => remove(i)} style={{ color: colorVar, fontSize: 14, lineHeight: 1, flexShrink: 0, opacity: 0.7 }}>✕</button>
-            </div>
-          ))}
+          {rules.map((rule, i) => {
+            const liveOccasion = onRestore ? liveExclusionOccasion(rule, exclusions) : null
+            const busy = Boolean(liveOccasion) && restoring === liveOccasion
+            return (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 10px 4px 12px', borderRadius: 20,
+                background: bgVar, border: `1px solid ${colorVar}`,
+                fontSize: 12, color: colorVar, maxWidth: '100%',
+              }}>
+                <span style={{ flex: 1, lineHeight: 1.4 }}>{rule}</span>
+                {liveOccasion && (
+                  <span
+                    title="This is a live occasion exclusion, not just a note"
+                    style={{ fontSize: 9, letterSpacing: '0.04em', textTransform: 'uppercase', opacity: 0.75, flexShrink: 0 }}
+                  >rule</span>
+                )}
+                <button
+                  onClick={() => liveOccasion ? onRestore(liveOccasion) : remove(i)}
+                  disabled={busy}
+                  title={liveOccasion
+                    ? `Restore this piece for ${liveOccasion} — removing the note alone would not`
+                    : 'Remove this rule'}
+                  style={{ color: colorVar, fontSize: 14, lineHeight: 1, flexShrink: 0, opacity: busy ? 0.35 : 0.7 }}
+                >{busy ? '…' : '✕'}</button>
+              </div>
+            )
+          })}
         </div>
       )}
       <div style={{ display: 'flex', gap: 8 }}>
@@ -368,6 +410,46 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     Object.entries(initialConfidence).filter(([, conf]) => conf === 'medium' || conf === 'low')
   )) // field -> 'medium'|'low'
   const [manualOverrides, setManualOverrides] = useState(piece?.manual_overrides || [])
+  // The enforceable exclusion list, kept beside the form because PUT /pieces/:id
+  // cannot write it — only POST /pieces/:id/occasion-exclusion can.
+  const [exclusions, setExclusions] = useState(piece?.occasion_exclusions || [])
+  const [restoringOccasion, setRestoringOccasion] = useState('')
+
+  // Restoring is a real, immediate change to the garment, matching how the same
+  // action behaves in the Stylist chat and in Style profile. It deliberately
+  // does not wait for Save: Save cannot perform it, so deferring would leave the
+  // button doing nothing again.
+  const restoreOccasion = async (occasion) => {
+    if (!piece?.id || restoringOccasion) return
+    setRestoringOccasion(occasion)
+    try {
+      const res = await fetch(`/api/pieces/${piece.id}/occasion-exclusion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ occasion, excluded: false }),
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Restore failed')
+      const updated = await res.json()
+      setExclusions(updated.occasion_exclusions || [])
+      // Sync exactly to the server rather than trimming the clicked line. The
+      // endpoint keeps "Excluded from …" and appends "Restored for …" on
+      // purpose — that pair is the audit trail. Editing it here would put the
+      // form out of step with the database and would survive only if the person
+      // then pressed Save, which they have no reason to do after an action that
+      // already took effect.
+      //
+      // The visible feedback is the badge disappearing and the "Restored for …"
+      // chip arriving, not the original line vanishing.
+      setForm(f => ({
+        ...f,
+        styling_rules_learned: Array.isArray(updated.styling_rules_learned) ? updated.styling_rules_learned : f.styling_rules_learned,
+      }))
+    } catch (err) {
+      alert(err.message || 'Could not restore this occasion')
+    } finally {
+      setRestoringOccasion('')
+    }
+  }
 
   const [hangerFile,  setHangerFile]  = useState(null)
   const [hangerPrev,  setHangerPrev]  = useState(piece?.photo      ? `/uploads/${piece.photo}`      : null)
@@ -1286,6 +1368,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             </label>
             <RuleList
               rules={form.styling_rules_learned}
+              exclusions={exclusions}
+              onRestore={isEdit ? restoreOccasion : null}
+              restoring={restoringOccasion}
               onChange={v => set('styling_rules_learned', v)}
               placeholder="e.g. needs flow on bottom, silk — wear over only, always with amber pendant"
             />

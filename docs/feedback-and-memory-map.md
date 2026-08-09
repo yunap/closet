@@ -341,14 +341,20 @@ Marking "Wrong for X" writes **both** `pieces.occasion_exclusions` (structured, 
 actually enforces) **and** a prose line into `styling_rules_learned` — `Excluded from X by <name>
 (<date>)` — from the same handler, `crud.js:378`.
 
-**[bug]** The prose chip is not the enforcement record, and the UI gives no sign of that. Deleting
-it from *Rules learned* in the editor cannot restore the garment: the editor's `PUT /pieces/:id`
-column list (`crud.js:296`) **does not include `occasion_exclusions` at all**, so no editor save can
-change an exclusion. Only `POST /pieces/:id/occasion-exclusion` can, and only the Style-profile
-panel's "Restore for X" button calls it.
+The prose chip is not the enforcement record. The editor's `PUT /pieces/:id` column list
+(`crud.js:296`) **does not include `occasion_exclusions` at all**, so no editor save can change an
+exclusion under any circumstances. Only `POST /pieces/:id/occasion-exclusion` can.
 
-A reader removing the chip would reasonably believe they had undone the rule. Either the chip should
-render as a linked structured exclusion, or removing it should invoke the restore endpoint.
+**[bug] — fixed 2026-08-09.** Removing the chip used to be guaranteed cosmetic: the note vanished on
+save, the garment stayed blocked, and the only remaining sign of the rule was in a different screen.
+`RuleList` now cross-references the garment's live `occasion_exclusions`; a chip whose occasion is
+still excluded is marked `rule` and its ✕ calls the restore endpoint instead of editing text. A chip
+naming an occasion that is no longer excluded stays an ordinary removable note, so an old
+`Excluded from …` line left behind after a restore does not offer to restore it twice.
+
+The restore takes effect immediately rather than on Save — Save cannot perform it, so deferring
+would leave the button doing nothing again — and the form then syncs to the server's own list, which
+keeps the `Excluded …` / `Restored …` pair as the audit trail.
 
 ---
 

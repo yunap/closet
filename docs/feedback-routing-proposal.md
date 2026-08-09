@@ -133,7 +133,7 @@ in the prompt tail where this codebase has already measured stored rules losing 
 | # | change | status |
 |---|---|---|
 | 0.1 | Stop `renderer_calibration` scoring against garment selection | **open — confirmed live in Visual Composer, latent in the pair scorer** |
-| 0.5 | Make removing an occasion-exclusion chip either restore the exclusion or be impossible | open |
+| 0.5 | Make removing an occasion-exclusion chip either restore the exclusion or be impossible | **shipped** |
 | 0.6 | Scope `wrong_item_read` to the flagged piece, not every garment in the outfit | open |
 | 0.2 | Remap `wrong_energy` → `too_subdued` | open |
 | 0.3 | Stop board/outfit critique landing on the garment card | **shipped** (`96c3246`) |
