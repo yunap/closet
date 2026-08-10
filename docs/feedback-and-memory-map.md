@@ -46,8 +46,10 @@ system holds a store the inventory does not classify, or the inventory names one
 exists.
 
 **What it is good for:** catching drift when a table, `localStorage` key or `uploads/`
-subdirectory is added and nobody updates this document. It found two unclassified upload
-directories on its first run.
+subdirectory is added and nobody updates this document. It also compares the registered
+`stylist_feedback` types and scoped-evidence kinds with their semantic dispositions and the live
+values in both feedback-bearing tables. It found two unclassified upload directories on its first
+run.
 
 **What it does not establish:** that this map's prose about any store is correct, or that the
 categories are the right ones. Medium 4 (runtime/prompt caches) has no enumerable inventory at all —
@@ -331,7 +333,7 @@ effect. Where an action has no reader, that is stated.
 | "Wrong for X" (card menu) | `crud.js:378` | `pieces.occasion_exclusions` **+** a prose receipt in `styling_rules_learned` | `pieceOccasionCompatible` (`rules.js:2216`) | **hard gate**, garment-scoped. The only user action that removes a garment from consideration |
 | Restoring it (chip ✕, or Style profile) | `crud.js:378` | same | same | lifts the gate; the ✕ calls the endpoint rather than editing text |
 | Global verbal correction in chat | `store_user_correction` | `stylist_feedback` `owner_rule`/`message` | `getOwnerRuleNotes` → capsule roster + composition prompts | **prompt**, global; used when no `piece_id` is supplied |
-| Verified garment-specific correction in chat | `store_user_correction(piece_id)` | canonical `pieces.styling_rules_learned` + synchronized `piece_rule_receipt` projection | garment-truth prompts; receipt is Conversation Memory display/edit only | **authoritative garment prompt rule**; ID must be retrieved, in the current outfit, or the active garment; failed verification stores nothing |
+| Verified garment-specific correction in chat | `store_user_correction(piece_id)` | canonical `pieces.styling_rules_learned` + synchronized `piece_rule_receipt` projection | garment-truth prompts; receipt is Conversation Memory display/edit only | **authoritative garment prompt guidance**, not a deterministic gate or score unless separately mapped to a structured constraint; ID must be retrieved, in the current outfit, or the active garment; failed verification stores nothing |
 | "Replace in this outfit" | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback` `wrong_item_read` + version-1 `scopedEvidence` | `getScopedWrongItemInfluence` → pre-model candidate/roster ranking | **scoped context score**, −6 per exact occasion/activity match, capped at −12; no global effect and no duplicate prompt authority |
 | Positive whole-outfit reaction | `POST /stylist-feedback` (`crud.js:775`) | original reaction payload + version-1 `outfit_logic` evidence when structured logic exists | consolidated branch of `getStylistFeedbackMemory` | **scoped prompt**, formula/silhouette/direction/mood × context; no garment IDs or literal-pair selection boost |
 | Editing a positive verdict later in Visual Lab | `PATCH /saved-boards/:id` | canonical `saved_boards.payload.scoped_evidence` + one mirrored feedback receipt | `getSavedBoardMemory`; mirrored row deliberately excluded | **scoped prompt**, same transferable outfit-logic schema as chat; removal withdraws authority; image-only legacy boards are not guessed into formulas |
@@ -347,7 +349,7 @@ effect. Where an action has no reader, that is stated.
 | Historical Visual Lab variation rating | retired; `POST /stylist-feedback` now returns 410 for `target_type='renderer_calibration'` | historical rows preserved | no reader | no effect; defensively excluded from both garment scorers |
 | Completing a retag to-do | `PUT /pieces/:id` (`crud.js:296`) | `pieces` tags, marked `manual` | every consumer of garment truth | **hard gate / score / prompt**, depending on the field |
 | Chat-authored `— rejected by <name> (<date>)` garment rules | historical stylist-chat writer; owner verified the two live records on 2026-08-09 | `pieces.styling_rules_learned` | `buildWardrobePieceTruthText` | **prompt**, valid authoritative garment rules |
-| Legacy `wrong_proportions` / `proportion_problem` | retired calibration and identity-edit surfaces | compatibility alias to `body_proportions_drift` | renderer memory only | **renderer**, never styling or selection authority; detached receipts were removed and saved calibration boards relabelled on 2026-08-09 |
+| Legacy `wrong_proportions` / `proportion_problem` | retired calibration and identity-edit surfaces | compatibility alias to `body_proportions_drift` | renderer memory only | **renderer**, never styling or selection authority; owner verified on 2026-08-09 that the affected calibration boards meant inaccurate body rendering. Board 131 was the one stale garment-length exception and its detached receipt was removed |
 | Legacy `catalog_drift` | retired chip name | compatibility alias to `catalog_like` (“Looks generic or store-styled”) | scoped styling memory | **prompt**, same authority as the canonical label rather than a separate feedback meaning |
 
 Five conclusions that follow, and that are easy to miss when reading the sections separately:
@@ -359,21 +361,22 @@ Five conclusions that follow, and that are easy to miss when reading the section
 3. **[fixed for new chat-authored garment rules]** Conversation Memory holds a display/edit
    projection of the canonical garment rule. Editing or retiring it synchronizes
    `pieces.styling_rules_learned`; the receipt has no independent prompt reader. Historical manual
-   rules and global owner rules remain separate stores by design.
+   rules and global owner rules remain separate stores by design. Un-archiving the receipt restores
+   its stored canonical rule without duplicating an identical rule already on the garment.
 4. **An occasion exclusion is stored twice** — once structurally, once as prose. See §4b.
 5. **[bug — fixed 2026-08-09]** *"Replace in this outfit"* previously scored every garment carried
    in the outfit payload. It was first narrowed to the explicit `pieceId`, then removed from
    deterministic scoring entirely after the owner clarified that the reaction can be
    occasion/activity-specific. Sibling and flagged garments now receive no weight.
-6. **[bug fixed, then path retired 2026-08-09]** the pair scorer formerly added a positive `+35`
+6. **[bug fixed, then path removed 2026-08-09]** the pair scorer formerly added a positive `+35`
    for `is_gold` regardless of the base weight, turning a gold `wrong_item_read` from −24 into +11,
    and also allowed garment-name prose matching. The sign and name bugs were corrected before
-   Phase 1, then Phase 1 routed every current feedback type away from the generic `SCORE` readers.
-   The corrected branches are therefore defensive dead code, not current behavior; they cannot
-   produce −59 or any other score today and have no meaningful behavioral regression test.
+   Phase 1. The generic `SCORE` readers and their unreachable branches were then deleted; they
+   cannot produce −59 or any other score today.
 7. **[cleaned up 2026-08-09]** `signature` formerly set `is_gold=1` automatically despite there
    being no distinct Gold action. The flag no longer scores, orders prompt memory, or appears as a
-   UI badge. Historical values remain in the database as inert provenance; new rows write zero.
+   UI badge. The ten historical non-zero flags were cleared on 2026-08-09; the column remains only
+   as inert legacy schema and new rows write zero.
 
 ---
 

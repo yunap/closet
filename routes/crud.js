@@ -27,7 +27,12 @@ import {
 } from '../lib/subjectThumbnails.js'
 import { COLOR_TAXONOMY, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { queueColorTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
-import { buildOutfitLogicEvidence, canonicalFeedbackType } from '../lib/feedbackTaxonomy.js'
+import {
+  buildOutfitLogicEvidence,
+  canonicalFeedbackType,
+  KNOWN_FEEDBACK_TYPES,
+  SCOPED_EVIDENCE_KINDS,
+} from '../lib/feedbackTaxonomy.js'
 
 const router = express.Router()
 
@@ -769,6 +774,9 @@ router.post('/stylist-feedback', (req, res) => {
         error: 'renderer_calibration is retired; use generated-board image-fidelity feedback',
       })
     }
+    if (!KNOWN_FEEDBACK_TYPES.includes(feedbackType)) {
+      return res.status(400).json({ error: `Unknown feedbackType: ${feedbackType}` })
+    }
 
     const storedFeedbackType = canonicalFeedbackType(feedbackType)
     const outfit = payload?.outfit || {}
@@ -777,7 +785,7 @@ router.post('/stylist-feedback', (req, res) => {
       ...(payload || {}),
       scopedEvidence: {
         version: 1,
-        kind: 'garment_context_suitability',
+        kind: SCOPED_EVIDENCE_KINDS.GARMENT_CONTEXT_SUITABILITY,
         subjectPieceId: Number(payload?.pieceId || payload?.piece_id) || null,
         strength: 'weak',
         context: {
@@ -899,6 +907,13 @@ export function syncPieceRuleReceipt(row, { note = row.note, archived = Boolean(
   const rules = safeJsonParse(piece.styling_rules_learned, []) || []
   const previousNote = String(row.note || '').trim()
   const nextNote = String(note || '').trim()
+  const previousRuleExists = rules.some(rule => String(rule).trim() === previousNote)
+  const isReactivating = Boolean(row.archived) && !archived
+  if (!archived && !previousRuleExists && !isReactivating) {
+    const error = new Error('This garment rule was edited or removed on the garment card. Refresh Conversation Memory before editing its receipt.')
+    error.status = 409
+    throw error
+  }
   let nextRules = rules.filter(rule => String(rule).trim() !== previousNote)
   if (!archived && nextNote && !nextRules.some(rule => String(rule).trim() === nextNote)) {
     nextRules.push(nextNote)
@@ -928,7 +943,7 @@ router.patch('/stylist-feedback/:id', (req, res) => {
     res.json({ ...updated, is_gold: Boolean(updated.is_gold), archived: Boolean(updated.archived), payload: safeJsonParse(updated.payload, {}) })
   } catch (err) {
     console.error('Update stylist feedback error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 

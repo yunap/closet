@@ -384,13 +384,22 @@ or selected as the active garment context. The tool verifies both conversational
 database existence; failure stores nothing and never falls back to a global owner rule.
 
 The canonical rule is appended to `pieces.styling_rules_learned`, so it appears on the garment card
-and reaches the garment-truth prompts that already treat this field as authoritative. A
+and reaches the garment-truth prompts that already treat this field as authoritative **prompt
+guidance**. It does not become a deterministic gate or score unless a separate, structured mapping
+exists for that constraint. A
 `piece_rule_receipt` row makes the same correction visible and editable in Conversation Memory but
 is deliberately display-only: it never becomes a second prompt reader. Editing or retiring that
 receipt updates the canonical garment rule in the same database transaction. Global corrections
 without `piece_id` retain the existing `owner_rule` path. Structured mappings such as an explicit
 occasion exclusion remain a later taxonomy/lifecycle concern; this change does not infer a hard
 gate from arbitrary prose.
+
+The receipt is a projection, not a competing writer. If its canonical text was edited or removed
+directly on the garment card, a later receipt edit returns `409 Conflict` and asks the client to
+refresh instead of guessing which rule to replace or appending a duplicate. Retiring that stale
+receipt remains safe and does not remove the independently edited garment rule. Un-archiving a
+receipt deliberately restores its stored rule text, without creating a second copy if the rule is
+already present.
 
 **3** — consolidate stored evidence before it reaches a prompt: relevant scope first, repeated
 observations summarized once, and literal outfit examples included only when they help the current
@@ -407,7 +416,8 @@ distinct observation. Differently worded notes remain separate evidence.
 **Lifecycle cleanup 2026-08-09:** `signature` no longer silently writes `is_gold=1`. The hidden
 flag had no separate user action and no remaining score, but still forced old rows ahead of newer
 feedback in prompt selection and displayed an unexplained “Gold” badge. New reactions write zero,
-prompt/API ordering is now recency-based, and historical values remain as inert provenance.
+prompt/API ordering is now recency-based, and the ten historical non-zero values were cleared on
+2026-08-09. The column remains only as inert legacy schema.
 
 **4** — every scoring change requires a ranking A/B and a diversity check, including whether
 recency suppression still rotates literal garments while preserving the learned formula.
@@ -417,8 +427,10 @@ recency suppression still rotates literal garments while preserving the learned 
 The label taxonomy now keeps three distinct styling meanings: “Too plain,” “Doesn’t feel like me,”
 and “Looks generic or store-styled”; legacy `catalog_drift` is an alias of the last rather than a
 fourth meaning. Legacy `wrong_proportions` and `proportion_problem` are aliases of renderer-only
-`body_proportions_drift`, not outfit advice. Detached calibration receipts and one stale Board 131
-receipt were removed; calibration boards retain the canonical body-proportion label. The unused
+`body_proportions_drift`, not outfit advice. This is an owner ruling, verified against the affected
+calibration boards on 2026-08-09; Board 131 was the one stale garment-length exception. Detached
+calibration receipts and that stale Board 131 receipt were removed; calibration boards retain the
+canonical body-proportion label. The unused
 `pairs_well_with` UI, parser, prompt authority, matcher, and +16 score were removed with zero stored
 values; **Tried and rejected** remains the explicit garment-pair mechanism. The two live
 `— rejected by Yuna` rules were owner-verified as valid garment rules captured through stylist chat,

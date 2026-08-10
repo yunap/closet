@@ -427,6 +427,14 @@ test('legacy proportion labels remain renderer-only body feedback', () => {
   assert.equal(getSavedBoardMemory('piece', selected.id, 10), '')
 })
 
+test('legacy proportion feedback never enters stylist prompt memory', () => {
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, note, payload)
+    VALUES ('proportion_problem', 'message', 'piece', ?, 'Legacy body rendering comment.', '{}')`)
+    .run(selected.id)
+  assert.equal(getStylistFeedbackMemory('piece', selected.id, 10), '')
+})
+
 test('unsaved chat-board corrections reach stylist and renderer memory', () => {
   db.prepare(`
     INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, label, note, payload)

@@ -3591,6 +3591,34 @@ test('wrong-item feedback writes canonical garment and activity context', async 
   }
 })
 
+test('stylist feedback accepts registered types, rejects unknown types, and preserves the retired-target 410', async () => {
+  const before = db.prepare('SELECT COUNT(*) AS count FROM stylist_feedback').get().count
+  const accepted = await fetch(`${baseUrl}/api/stylist-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedbackType: 'works', targetType: 'whole_wardrobe_outfit' }),
+  })
+  assert.equal(accepted.status, 200)
+  const created = await accepted.json()
+
+  const rejected = await fetch(`${baseUrl}/api/stylist-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedbackType: 'new_chip_missing_from_registry', targetType: 'whole_wardrobe_outfit' }),
+  })
+  assert.equal(rejected.status, 400)
+  assert.match((await rejected.json()).error, /Unknown feedbackType/)
+
+  const retired = await fetch(`${baseUrl}/api/stylist-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedbackType: 'new_chip_missing_from_registry', targetType: 'renderer_calibration' }),
+  })
+  assert.equal(retired.status, 410)
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM stylist_feedback').get().count, before + 1)
+  db.prepare('DELETE FROM stylist_feedback WHERE id = ?').run(created.id)
+})
+
 test('positive outfit feedback writes transferable logic without garment ids in the evidence block', async () => {
   const response = await fetch(`${baseUrl}/api/stylist-feedback`, {
     method: 'POST',

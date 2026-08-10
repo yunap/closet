@@ -39,12 +39,16 @@ classified.
 **Value:** medium — this is the medium most likely to hide a store. **Cost:** hard to do without
 false positives; most module-level state is not user memory.
 
-## 4. Semantic inventories within a table
+## 4. Semantic inventories within a table — shipped 2026-08-09
 
-`stylist_feedback` is one table holding two categories, split by `feedback_type` and `target_type`.
-The inventory classifies the table, not the meanings inside it, so a new `feedback_type` with new
-behaviour would pass the audit silently. The same is true of `app_meta`, where some keys are user
-context and others are credentials.
+`stylist_feedback` is one table holding multiple behavioural destinations. The audit now compares
+the code registry of accepted `feedback_type` values and scoped-evidence kinds against explicit
+semantic dispositions in `feedback_surface_inventory.json`, then checks live values from both
+`stylist_feedback` and `saved_boards`. The generic feedback endpoint rejects an unregistered type,
+so adding a meaning requires classifying it rather than silently creating a new destination.
+
+`app_meta` keys are still classified only at the table level; extending semantic enumeration there
+remains a possible follow-up if that store gains more user-facing meanings.
 
 **Value:** high — this is the most likely place for a real gap to hide today. **Cost:** medium;
 needs an enumeration of live type/key values and a rule for what "new" means.
@@ -61,6 +65,7 @@ filesystem, neither of which the app uses today.
 
 ## What would actually change the risk
 
-Items 4 and 1, in that order. The failures that survived five review rounds were all **scope**
-failures — a store, a category or a medium absent from the search — and item 4 is the remaining
-place where that shape of failure can still hide behind a passing check.
+Item 4 is now shipped for the feedback-bearing tables. Item 1 is the highest-value remaining
+hardening work: the failures that survived five review rounds were all **scope** failures — a
+store, a category or a medium absent from the search — and AST analysis would make the writer and
+reader census less dependent on naming conventions.

@@ -5,7 +5,7 @@ import { autoStylingTrustDecision, buildWardrobePieceTruthText, stylingRulesForP
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
-import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
+import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 
 import {
@@ -684,7 +684,7 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
         target_type: 'generated_visual_board',
       }) === FEEDBACK_BEHAVIOURS.STYLING_PROMPT)
       const scopedEvidence = payload.scoped_evidence
-      if (Number(scopedEvidence?.version) === 1 && scopedEvidence?.kind === 'outfit_logic') {
+      if (Number(scopedEvidence?.version) === 1 && scopedEvidence?.kind === SCOPED_EVIDENCE_KINDS.OUTFIT_LOGIC) {
         const logic = scopedEvidence.logic || {}
         const context = scopedEvidence.context || {}
         const logicParts = [
@@ -1295,7 +1295,7 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
       if (behaviour !== FEEDBACK_BEHAVIOURS.STYLING_PROMPT) continue
       const feedbackPayload = safeJsonParse(r.payload, {}) || {}
       const scopedEvidence = feedbackPayload.scopedEvidence
-      if (Number(scopedEvidence?.version) === 1 && scopedEvidence?.kind === 'outfit_logic') {
+      if (Number(scopedEvidence?.version) === 1 && scopedEvidence?.kind === SCOPED_EVIDENCE_KINDS.OUTFIT_LOGIC) {
         const logic = scopedEvidence.logic || {}
         const context = scopedEvidence.context || {}
         const qualifier = scopedEvidence.verdict === 'almost' ? 'qualified' : 'positive'
@@ -1324,14 +1324,6 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
       }
       if (r.feedback_type === 'wrong_silhouette') {
         const line = `- wrong_silhouette on ${target}${label}${note} — scoped to this selected garment/board; do NOT globally avoid this silhouette family.`
-        if (!legacyReactionLines.has(line) && deliveredUnits < deliveryLimit) {
-          legacyReactionLines.set(line, line)
-          deliveredUnits += 1
-        }
-        continue
-      }
-      if (r.feedback_type === 'wrong_proportions' || r.feedback_type === 'proportion_problem') {
-        const line = `- ${r.feedback_type} on ${target}${label}${note} — scoped to this selected garment/board; do NOT treat as a universal proportion rule.`
         if (!legacyReactionLines.has(line) && deliveredUnits < deliveryLimit) {
           legacyReactionLines.set(line, line)
           deliveredUnits += 1

@@ -107,6 +107,40 @@ test('editing and retiring the receipt synchronizes the canonical garment rule',
   assert.deepEqual(JSON.parse(db.prepare('SELECT styling_rules_learned FROM pieces WHERE id = ?').get(pieceId).styling_rules_learned), [])
 })
 
+test('a stale receipt cannot duplicate a garment rule edited on the garment card', () => {
+  const pieceId = Number(db.prepare("INSERT INTO pieces (name, category, styling_rules_learned) VALUES ('Test top', 'top', '[]')").run().lastInsertRowid)
+  const original = 'This top only works untucked.'
+  const cardEdit = 'Wear untucked; the finished hem should remain visible.'
+  storeUserCorrection(original, 'general', null, { pieceId })
+  const receipt = db.prepare("SELECT * FROM stylist_feedback WHERE feedback_type = 'piece_rule_receipt'").get()
+  db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?').run(JSON.stringify([cardEdit]), pieceId)
+
+  assert.throws(
+    () => syncPieceRuleReceipt(receipt, { note: 'A third wording.', archived: false }),
+    error => error?.status === 409 && /edited or removed on the garment card/.test(error.message)
+  )
+  assert.deepEqual(
+    JSON.parse(db.prepare('SELECT styling_rules_learned FROM pieces WHERE id = ?').get(pieceId).styling_rules_learned),
+    [cardEdit]
+  )
+})
+
+test('un-archiving a garment-rule receipt restores its canonical rule without duplication', () => {
+  const pieceId = Number(db.prepare("INSERT INTO pieces (name, category, styling_rules_learned) VALUES ('Test top', 'top', '[]')").run().lastInsertRowid)
+  const note = 'This top only works untucked.'
+  storeUserCorrection(note, 'general', null, { pieceId })
+  const receipt = db.prepare("SELECT * FROM stylist_feedback WHERE feedback_type = 'piece_rule_receipt'").get()
+  syncPieceRuleReceipt(receipt, { archived: true })
+
+  syncPieceRuleReceipt({ ...receipt, archived: 1 }, { archived: false })
+  syncPieceRuleReceipt({ ...receipt, archived: 1 }, { archived: false })
+
+  assert.deepEqual(
+    JSON.parse(db.prepare('SELECT styling_rules_learned FROM pieces WHERE id = ?').get(pieceId).styling_rules_learned),
+    [note]
+  )
+})
+
 test('getStylistFeedbackMemory renders owner-rule rows with the OWNER RULE prefix under their own sub-header, sorted above reactions', () => {
   // Insert the reaction FIRST (lower id) and the rule SECOND (higher id) —
   // the default id-desc ordering would otherwise put the reaction on top;
