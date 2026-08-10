@@ -22,7 +22,8 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { getStylistFeedbackMemory, getOwnerRuleNotes } = await import('../styling-engine/rules.js')
-const { storeUserCorrection } = await import('../styling-engine/tools.js')
+const { storeUserCorrection, executeTool } = await import('../styling-engine/tools.js')
+const { syncPieceRuleReceipt } = await import('../routes/crud.js')
 
 after(() => {
   db.close()
@@ -31,6 +32,7 @@ after(() => {
 
 beforeEach(() => {
   db.prepare('DELETE FROM stylist_feedback').run()
+  db.prepare('DELETE FROM pieces').run()
 })
 
 function insertFeedback(overrides = {}) {
@@ -41,13 +43,12 @@ function insertFeedback(overrides = {}) {
     context_id: null,
     label: null,
     note: '',
-    is_gold: 0,
     archived: 0,
     ...overrides
   }
   const info = db.prepare(`
-    INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, label, note, is_gold, archived)
-    VALUES (@feedback_type, @target_type, @context_type, @context_id, @label, @note, @is_gold, @archived)
+    INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, label, note, archived)
+    VALUES (@feedback_type, @target_type, @context_type, @context_id, @label, @note, @archived)
   `).run(row)
   return info.lastInsertRowid
 }
@@ -67,6 +68,45 @@ test('storeUserCorrection dedupe still holds across the type change', () => {
   assert.equal(rows.length, 1, 'an identical note must not stack')
 })
 
+test('a verified garment correction writes the garment rule and a display-only receipt', async () => {
+  const pieceId = Number(db.prepare("INSERT INTO pieces (name, category, styling_rules_learned) VALUES ('Test top', 'top', '[]')").run().lastInsertRowid)
+  const note = 'This top only works untucked.'
+  const result = await executeTool('store_user_correction', { note, piece_id: pieceId }, {
+    retrievedPieceIds: new Set([pieceId]),
+  })
+  assert.equal(result.status, 'success')
+  assert.equal(result.scope, 'piece')
+  assert.deepEqual(JSON.parse(db.prepare('SELECT styling_rules_learned FROM pieces WHERE id = ?').get(pieceId).styling_rules_learned), [note])
+  const receipt = db.prepare("SELECT * FROM stylist_feedback WHERE feedback_type = 'piece_rule_receipt'").get()
+  assert.equal(Number(receipt.context_id), pieceId)
+  assert.equal(receipt.context_name, 'Test top')
+  assert.equal(getOwnerRuleNotes().includes(note), false, 'the receipt must not become duplicate global prompt authority')
+})
+
+test('an unverified garment id is refused without falling back to global memory', async () => {
+  const pieceId = Number(db.prepare("INSERT INTO pieces (name, category, styling_rules_learned) VALUES ('Test top', 'top', '[]')").run().lastInsertRowid)
+  const result = await executeTool('store_user_correction', {
+    note: 'This garment is too stiff for sitting all day.',
+    piece_id: pieceId,
+  }, { retrievedPieceIds: new Set() })
+  assert.equal(result.status, 'validation_error')
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback').get().n, 0)
+  assert.deepEqual(JSON.parse(db.prepare('SELECT styling_rules_learned FROM pieces WHERE id = ?').get(pieceId).styling_rules_learned), [])
+})
+
+test('editing and retiring the receipt synchronizes the canonical garment rule', async () => {
+  const pieceId = Number(db.prepare("INSERT INTO pieces (name, category, styling_rules_learned) VALUES ('Test top', 'top', '[]')").run().lastInsertRowid)
+  const original = 'This top only works untucked.'
+  const revised = 'Wear this top untucked so the hem remains visible.'
+  storeUserCorrection(original, 'general', null, { pieceId })
+  const receipt = db.prepare("SELECT * FROM stylist_feedback WHERE feedback_type = 'piece_rule_receipt'").get()
+  syncPieceRuleReceipt(receipt, { note: revised, archived: false })
+  db.prepare('UPDATE stylist_feedback SET note = ? WHERE id = ?').run(revised, receipt.id)
+  assert.deepEqual(JSON.parse(db.prepare('SELECT styling_rules_learned FROM pieces WHERE id = ?').get(pieceId).styling_rules_learned), [revised])
+  syncPieceRuleReceipt({ ...receipt, note: revised }, { archived: true })
+  assert.deepEqual(JSON.parse(db.prepare('SELECT styling_rules_learned FROM pieces WHERE id = ?').get(pieceId).styling_rules_learned), [])
+})
+
 test('getStylistFeedbackMemory renders owner-rule rows with the OWNER RULE prefix under their own sub-header, sorted above reactions', () => {
   // Insert the reaction FIRST (lower id) and the rule SECOND (higher id) —
   // the default id-desc ordering would otherwise put the reaction on top;
@@ -80,6 +120,15 @@ test('getStylistFeedbackMemory renders owner-rule rows with the OWNER RULE prefi
   assert.match(text, /Saved reactions \(scoped to the named board\/context they were given on — taste signals, not global directives\):/)
   assert.match(text, /- signature on whole_wardrobe_outfit — Nice Dinner/)
   assert.ok(text.indexOf('Owner rules (standing') < text.indexOf('Saved reactions ('), 'owner rules must render above the scoped-reaction section')
+})
+
+test('global feedback memory can exclude an already-delivered scoped context without dropping owner rules', () => {
+  insertFeedback({ feedback_type: 'works', target_type: 'whole_wardrobe_outfit', context_type: 'piece', context_id: 42, note: 'Scoped reaction already delivered above.' })
+  insertFeedback({ feedback_type: 'owner_rule', target_type: 'message', context_type: 'general', note: 'Always keep an operational shoe option.' })
+
+  const text = getStylistFeedbackMemory(null, null, 24, { excludeContexts: [{ type: 'piece', id: 42 }] })
+  assert.doesNotMatch(text, /Scoped reaction already delivered above/)
+  assert.match(text, /Always keep an operational shoe option/)
 })
 
 test('legacy preference_reaction/message rows are treated as owner rules (no migration needed)', () => {

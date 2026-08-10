@@ -3552,6 +3552,91 @@ test('generated-board feedback stays synchronized with the editable Visual Lab b
   }
 })
 
+test('wrong-item feedback writes canonical garment and activity context', async () => {
+  const response = await fetch(`${baseUrl}/api/stylist-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      feedbackType: 'wrong_item_read',
+      targetType: 'whole_wardrobe_outfit',
+      contextType: 'wardrobe',
+      payload: {
+        pieceId: seeded.shoe,
+        occasion: 'city',
+        activity: 'walking',
+        season: 'current season',
+        mood: 'museum day',
+      },
+    }),
+  })
+  assert.equal(response.status, 200)
+  const created = await response.json()
+  try {
+    const row = db.prepare('SELECT payload FROM stylist_feedback WHERE id = ?').get(created.id)
+    const evidence = JSON.parse(row.payload).scopedEvidence
+    assert.deepEqual(evidence, {
+      version: 1,
+      kind: 'garment_context_suitability',
+      subjectPieceId: seeded.shoe,
+      strength: 'weak',
+      context: {
+        occasion: 'city',
+        activity: 'walking',
+        season: 'current season',
+        mood: 'museum day',
+      },
+    })
+  } finally {
+    db.prepare('DELETE FROM stylist_feedback WHERE id = ?').run(created.id)
+  }
+})
+
+test('positive outfit feedback writes transferable logic without garment ids in the evidence block', async () => {
+  const response = await fetch(`${baseUrl}/api/stylist-feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      feedbackType: 'works',
+      targetType: 'whole_wardrobe_outfit',
+      contextType: 'wardrobe',
+      payload: {
+        pieceIds: [seeded.top, seeded.bottom],
+        formulaFamily: 'compact top + flowing bottom',
+        outfit: {
+          silhouette: 'defined upper half with movement below',
+          dominantDirection: 'graphic relaxed',
+        },
+        occasion: 'city',
+        activity: 'walking',
+        season: 'warm',
+        mood: 'artistic',
+      },
+    }),
+  })
+  assert.equal(response.status, 200)
+  const created = await response.json()
+  try {
+    const payload = JSON.parse(db.prepare('SELECT payload FROM stylist_feedback WHERE id = ?').get(created.id).payload)
+    assert.deepEqual(payload.scopedEvidence, {
+      version: 1,
+      kind: 'outfit_logic',
+      verdict: 'works',
+      logic: {
+        formula: 'compact top + flowing bottom',
+        silhouette: 'defined upper half with movement below',
+        direction: 'graphic relaxed',
+        mood: 'artistic',
+      },
+      context: { occasion: 'city', activity: 'walking', season: 'warm' },
+    })
+    assert.equal('subjectPieceId' in payload.scopedEvidence, false)
+    assert.equal('pieceIds' in payload.scopedEvidence, false)
+    assert.equal('pieces' in payload.scopedEvidence, false)
+  } finally {
+    db.prepare('DELETE FROM stylist_feedback WHERE id = ?').run(created.id)
+  }
+})
+
 test('getCalibrationReferenceImagesForGeneration priority-starred random rotation logic', async () => {
   const { getCalibrationReferenceImagesForGeneration } = await import('../styling-engine/core.js')
 

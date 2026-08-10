@@ -1,11 +1,11 @@
 import { db, safeJsonParse, parsePiece } from '../db.js'
 import { confidenceFromProfile } from './taggerMerge.js'
 export { parsePiece }
-import { autoStylingTrustDecision, buildWardrobePieceTruthText } from '../src/utils/wardrobeAiContext.js'
+import { autoStylingTrustDecision, buildWardrobePieceTruthText, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
-import { FEEDBACK_REASON_LABELS } from '../lib/feedbackTaxonomy.js'
+import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 
 import {
@@ -392,7 +392,7 @@ export function pieceTextBlob(p) {
     trustedField(p, 'waistband_type') ? p.waistband_type : '',
     p.notes,
     ...(p.colors || []), ...(p.occasions || []),
-    ...(p.styling_rules_learned || []), ...(p.pairs_well_with || []), ...(p.tried_and_rejected || [])
+    ...stylingRulesForPrompt(p.styling_rules_learned), ...(p.tried_and_rejected || [])
   ].filter(Boolean).join(' ').toLowerCase()
   if (p && typeof p === 'object') pieceTextBlobCache.set(p, value)
   return value
@@ -448,11 +448,6 @@ function textContainsWholePhrase(text = '', phrase = '') {
   return new RegExp(`(^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`).test(String(text || '').toLowerCase())
 }
 
-export function hasPairingReference(sourcePiece, targetPiece) {
-  const targetName = String(targetPiece.name || '').toLowerCase()
-  return (sourcePiece.pairs_well_with || []).some(note => textContainsWholePhrase(note, targetName))
-}
-
 export function hasRejectedReference(sourcePiece, targetPiece) {
   const targetName = String(targetPiece.name || '').toLowerCase()
   return (sourcePiece.tried_and_rejected || []).some(note => textContainsWholePhrase(note, targetName))
@@ -483,105 +478,63 @@ export function collectPieceIdsFromFeedbackPayload(payloadText) {
   return [...ids]
 }
 
-export function feedbackWeight(feedbackType) {
-  const weights = {
-    signature: 38,
-    works: 22,
-    good_formula: 14,
-    good_pieces: 16,
-    almost: 4,
-    not_me: -32,
-    too_safe: -22,
-    too_soft: -20,
-    too_generic: -26,
-    too_boho: -18,
-    too_polished: -16,
-    weak_structure: -24,
-    weak_contrast: -18,
-    bad_grounding: -20,
-    wrong_silhouette: -8,
-    catalog_drift: -34,
-    bad_reference: -36,
-    proportion_problem: -24,
-    wrong_proportions: -24,
-    wrong_item_read: -24,
-    bad_occasion: -22,
-    fit_issue: -34,
+const POSITIVE_WHOLE_WARDROBE_PROMPT_TYPES = new Set(['signature', 'works', 'good_formula', 'good_pieces', 'almost'])
+const NEGATIVE_WHOLE_WARDROBE_PROMPT_TYPES = new Set([
+  'not_me', 'too_safe', 'too_soft', 'too_generic', 'too_boho', 'too_polished',
+  'weak_structure', 'weak_contrast', 'bad_grounding', 'wrong_silhouette',
+  'catalog_drift', 'bad_reference', 'proportion_problem', 'wrong_proportions',
+  'wrong_item_read', 'bad_occasion', 'fit_issue',
+])
+
+const normalizeFeedbackContext = value => String(value || '').toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
+
+export function scopedWrongItemInfluenceForRows(rows = [], pieceId, options = {}) {
+  const currentOccasion = normalizeFeedbackContext(options.occasion)
+  const currentActivity = normalizeFeedbackContext(options.activity)
+  let matchingCount = 0
+  for (const row of rows) {
+    if (feedbackBehaviour(row) !== FEEDBACK_BEHAVIOURS.CONTEXT_SCORE) continue
+    const payload = safeJsonParse(row.payload, {}) || {}
+    const evidence = payload.scopedEvidence
+    if (!evidence || Number(evidence.version) !== 1 || evidence.kind !== 'garment_context_suitability') continue
+    const subjectPieceId = Number(evidence.subjectPieceId)
+    if (!Number.isFinite(subjectPieceId) || subjectPieceId !== Number(pieceId)) continue
+    const context = evidence.context || {}
+    const recordedOccasion = normalizeFeedbackContext(context.occasion)
+    const recordedActivity = normalizeFeedbackContext(context.activity)
+    const hasOccasion = Boolean(recordedOccasion)
+    const hasActivity = Boolean(recordedActivity && recordedActivity !== 'none')
+    if (!hasOccasion && !hasActivity) continue
+    if (hasOccasion && recordedOccasion !== currentOccasion) continue
+    if (hasActivity && recordedActivity !== currentActivity) continue
+    matchingCount += 1
   }
-  return weights[feedbackType] || 0
+  if (!matchingCount) return null
+  const score = -Math.min(12, matchingCount * 6)
+  return {
+    score,
+    matchingCount,
+    reasons: [`context feedback: previously replaced for ${[currentOccasion, currentActivity && currentActivity !== 'none' ? currentActivity : ''].filter(Boolean).join(' + ')}`],
+  }
 }
 
-const IMAGE_FIDELITY_FEEDBACK_TYPES = new Set(['wrong_length', 'wrong_garment_details', 'body_proportions_drift', 'identity_drift', 'bad_reference'])
-
-export function getFeedbackInfluenceForPair(selectedPiece, candidatePiece) {
-  if (!selectedPiece?.id || !candidatePiece?.id || typeof db === 'undefined') return null
+export function getScopedWrongItemInfluence(pieceId, options = {}) {
   try {
-    const rows = db.prepare(`
-      SELECT * FROM stylist_feedback
-      WHERE COALESCE(archived,0) = 0 AND context_type = 'piece'
-        AND context_id = ?
-      ORDER BY id DESC
-      LIMIT 120
-    `).all(Number(selectedPiece.id))
-
-    let score = 0
-    const reasons = []
-    const candidateName = String(candidatePiece.name || '').toLowerCase()
-
-    for (const row of rows) {
-      if (row.target_type === 'generated_visual_board' && IMAGE_FIDELITY_FEEDBACK_TYPES.has(row.feedback_type)) continue
-      const weight = feedbackWeight(row.feedback_type)
-      if (!weight) continue
-      const ids = collectPieceIdsFromFeedbackPayload(row.payload)
-      const noteBlob = [row.note, row.label, row.context_name].filter(Boolean).join(' ').toLowerCase()
-      const touchesCandidate = ids.includes(Number(candidatePiece.id)) || (candidateName && noteBlob.includes(candidateName))
-      if (!touchesCandidate) continue
-
-      score += weight + (row.is_gold ? 35 : 0)
-      if (row.feedback_type === 'signature') reasons.push('signature feedback')
-      else if (row.feedback_type === 'works') reasons.push('works feedback')
-      else if (row.feedback_type === 'almost') reasons.push('almost feedback')
-      else if (row.feedback_type === 'not_me') reasons.push('not-me feedback')
-      else if (row.feedback_type === 'too_soft') reasons.push('too-soft feedback')
-      else if (row.feedback_type === 'proportion_problem') reasons.push('proportion feedback')
-      else if (row.feedback_type === 'wrong_item_read') reasons.push('wrong-item feedback')
-      else if (row.feedback_type === 'too_generic') reasons.push('too-generic feedback')
-      else if (row.feedback_type === 'too_safe') reasons.push('too-safe feedback')
-      else if (row.feedback_type === 'weak_structure') reasons.push('weak-structure feedback')
-      else if (row.feedback_type === 'weak_contrast') reasons.push('weak-contrast feedback')
-      else if (row.feedback_type === 'bad_grounding') reasons.push('bad-grounding feedback')
-      else if (row.feedback_type === 'wrong_silhouette') reasons.push('wrong-for-this-piece silhouette feedback')
-      else if (row.feedback_type === 'catalog_drift') reasons.push('catalog-drift feedback')
-    }
-
-    if (!score) return null
-    return { score: Math.max(-60, Math.min(60, score)), reasons: [...new Set(reasons)].slice(0, 4) }
+    const rows = activeScopedWrongItemRows()
+    return scopedWrongItemInfluenceForRows(rows, pieceId, options)
   } catch {
     return null
   }
 }
 
-export function buildGoldStandardFeedbackMemory(pieceId, limit = 10) {
-  try {
-    const rows = db.prepare(`
-      SELECT * FROM stylist_feedback
-      WHERE COALESCE(archived,0) = 0 AND context_type = 'piece'
-        AND context_id = ?
-        AND feedback_type IN ('signature','works')
-      ORDER BY COALESCE(is_gold,0) DESC, CASE feedback_type WHEN 'signature' THEN 0 ELSE 1 END, id DESC
-      LIMIT ?
-    `).all(Number(pieceId), Number(limit))
-    if (!rows.length) return ''
-    return rows.map(row => {
-      const ids = collectPieceIdsFromFeedbackPayload(row.payload)
-      const pieces = ids.length ? db.prepare(`SELECT id, name, category FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) : []
-      const pieceText = pieces.length ? ` pieces: ${pieces.map(p => `${p.name} (${p.category})`).join(' + ')}` : ''
-      const note = row.note ? ` — ${String(row.note).slice(0, 220)}` : ''
-      return `- ${row.feedback_type}${row.label ? ` / ${row.label}` : ''}${pieceText}${note}`
-    }).join('\n')
-  } catch {
-    return ''
-  }
+function activeScopedWrongItemRows() {
+  return db.prepare(`
+    SELECT feedback_type, target_type, payload
+    FROM stylist_feedback
+    WHERE COALESCE(archived,0) = 0 AND feedback_type = 'wrong_item_read'
+    ORDER BY id DESC
+    LIMIT 240
+  `).all()
 }
 
 export function collectPieceIdsFromSavedBoardRow(row) {
@@ -657,46 +610,17 @@ export function getPieceUsageStats() {
   return Object.fromEntries(stats)
 }
 
-export function getSavedBoardInfluenceForPair(selectedPiece, candidatePiece) {
-  if (!selectedPiece?.id || !candidatePiece?.id || typeof db === 'undefined') return null
-  try {
-    const rows = db.prepare(`
-      SELECT * FROM saved_boards
-      WHERE COALESCE(archived,0) = 0
-        AND ((context_type = 'piece' AND context_id = ?) OR COALESCE(favorite,0) = 1)
-      ORDER BY COALESCE(favorite,0) DESC, id DESC
-      LIMIT 120
-    `).all(Number(selectedPiece.id))
-    let score = 0
-    const reasons = []
-    for (const row of rows) {
-      const payload = safeJsonParse(row.payload, {}) || {}
-      const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
-      const stylingLabels = labels.filter(label => !IMAGE_FIDELITY_FEEDBACK_TYPES.has(String(label)))
-      const isAlmost = stylingLabels.includes('almost')
-      const isRejected = stylingLabels.includes('not_me')
-      const hasPositiveFeedback = stylingLabels.some(label => /^(signature|works|almost)$/.test(String(label)))
-      const hasCorrection = stylingLabels.some(label => /^(style_direction|shape_balance|too_safe|too_boho|too_polished|too_soft|too_generic|wrong_proportions|wrong_silhouette|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_drift)$/.test(String(label)))
-      if (isRejected || (!isAlmost && hasCorrection) || (!row.favorite && !hasPositiveFeedback)) continue
-      const ids = collectPieceIdsFromSavedBoardRow(row)
-      if (!ids.includes(Number(selectedPiece.id)) || !ids.includes(Number(candidatePiece.id))) continue
-      const boardScore = isAlmost ? 6 : (row.favorite ? 45 : 18)
-      score += boardScore
-      reasons.push(isAlmost ? 'saved board marked Almost right' : (row.favorite ? 'saved board marked Use strongly' : 'saved board has positive feedback'))
-    }
-    if (!score) return null
-    return { score: Math.max(0, Math.min(70, score)), reasons: [...new Set(reasons)].slice(0, 3) }
-  } catch {
-    return null
-  }
-}
-
-export function getSavedBoardMemory(contextType = null, contextId = null, limit = 10) {
+export function getSavedBoardMemory(contextType = null, contextId = null, limit = 10, { excludeContexts = [] } = {}) {
   try {
     const clauses = ['COALESCE(archived,0) = 0']
     const params = []
     if (contextType) { clauses.push('context_type = ?'); params.push(contextType) }
     if (contextId) { clauses.push('context_id = ?'); params.push(Number(contextId)) }
+    for (const context of excludeContexts) {
+      if (!context?.type || !Number.isFinite(Number(context.id))) continue
+      clauses.push('NOT (context_type = ? AND context_id IS ?)')
+      params.push(context.type, Number(context.id))
+    }
     const rows = db.prepare(`
       SELECT * FROM saved_boards
       WHERE ${clauses.join(' AND ')}
@@ -706,7 +630,7 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
     `).all(...params, Number(limit))
     if (!rows.length) return ''
     const positiveLabels = /signature|works|strong|most_like_me|grounded|artistic|modern/i
-    const negativeLabels = /not_me|style_direction|shape_balance|too_safe|too_boho|too_polished|too_soft|too_generic|wrong_proportions|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_drift|ignore|bad|drift/i
+    const negativeLabels = /not_me|style_direction|shape_balance|too_safe|too_boho|too_polished|too_soft|too_generic|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_like|ignore|bad|drift/i
     const positives = []
     const close = []
     const negatives = []
@@ -752,8 +676,33 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
     for (const row of rows) {
       const pieces = safeJsonParse(row.pieces, []).map(p => p?.name).filter(Boolean).join(' + ')
       const payload = safeJsonParse(row.payload, {}) || {}
-      const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
-      const stylingLabels = labels.filter(label => !IMAGE_FIDELITY_FEEDBACK_TYPES.has(String(label)))
+      const labels = Array.isArray(payload.feedback_labels)
+        ? payload.feedback_labels.map(canonicalFeedbackType)
+        : []
+      const stylingLabels = labels.filter(label => feedbackBehaviour({
+        feedback_type: String(label),
+        target_type: 'generated_visual_board',
+      }) === FEEDBACK_BEHAVIOURS.STYLING_PROMPT)
+      const scopedEvidence = payload.scoped_evidence
+      if (Number(scopedEvidence?.version) === 1 && scopedEvidence?.kind === 'outfit_logic') {
+        const logic = scopedEvidence.logic || {}
+        const context = scopedEvidence.context || {}
+        const logicParts = [
+          logic.formula ? `formula: ${logic.formula}` : '',
+          logic.silhouette ? `silhouette: ${logic.silhouette}` : '',
+          logic.direction ? `direction: ${logic.direction}` : '',
+          logic.mood ? `mood: ${logic.mood}` : '',
+        ].filter(Boolean)
+        const contextParts = [
+          context.occasion,
+          context.activity && context.activity !== 'none' ? context.activity : '',
+          context.season,
+        ].filter(Boolean)
+        const line = `- ${scopedEvidence.verdict === 'almost' ? 'qualified' : 'positive'} transferable outfit logic${contextParts.length ? ` for ${contextParts.join(' + ')}` : ''}: ${logicParts.join('; ')}. Reuse this logic with different suitable garments; do not repeat the original combination merely because it received positive feedback.`
+        if (scopedEvidence.verdict === 'almost') close.push(line)
+        else positives.push(line)
+        continue
+      }
       const labelText = stylingLabels.length ? ` [${stylingLabels.join(', ')}]` : ''
       const silhouetteReasons = Array.isArray(payload.feedback_details?.wrong_silhouette)
         ? payload.feedback_details.wrong_silhouette.map(value => silhouetteReasonLabels[value]).filter(Boolean)
@@ -824,7 +773,9 @@ export function getSavedBoardRendererMemory(pieceIds = [], limit = 24) {
 
     for (const row of rows) {
       const payload = safeJsonParse(row.payload, {}) || {}
-      const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+      const labels = Array.isArray(payload.feedback_labels)
+        ? payload.feedback_labels.map(canonicalFeedbackType)
+        : []
       const boardPieceIds = collectPieceIdsFromSavedBoardRow(row)
       const overlaps = requestedIds.size === 0 || boardPieceIds.some(id => requestedIds.has(Number(id)))
       if (labels.includes('body_proportions_drift')) bodyProportionsDrift = true
@@ -856,7 +807,7 @@ export function getSavedBoardRendererMemory(pieceIds = [], limit = 24) {
       SELECT * FROM stylist_feedback
       WHERE COALESCE(archived,0) = 0
         AND target_type = 'generated_visual_board'
-        AND feedback_type IN ('wrong_length','wrong_garment_details','body_proportions_drift','identity_drift')
+        AND feedback_type IN ('wrong_length','wrong_garment_details','body_proportions_drift','identity_drift','wrong_proportions','proportion_problem')
       ORDER BY id DESC
       LIMIT ?
     `).all(Number(limit))
@@ -864,8 +815,9 @@ export function getSavedBoardRendererMemory(pieceIds = [], limit = 24) {
       const feedbackPayload = safeJsonParse(row.payload, {}) || {}
       const ids = collectPieceIdsFromFeedbackPayload(row.payload)
       const overlaps = requestedIds.size === 0 || ids.some(id => requestedIds.has(Number(id)))
-      if (row.feedback_type === 'body_proportions_drift') bodyProportionsDrift = true
-      if (row.feedback_type === 'identity_drift') identityDrift = true
+      const feedbackType = canonicalFeedbackType(row.feedback_type)
+      if (feedbackType === 'body_proportions_drift') bodyProportionsDrift = true
+      if (feedbackType === 'identity_drift') identityDrift = true
       if (!overlaps) continue
       const payloadNames = Array.isArray(feedbackPayload?.board?.pieces)
         ? feedbackPayload.board.pieces
@@ -876,10 +828,10 @@ export function getSavedBoardRendererMemory(pieceIds = [], limit = 24) {
       const names = payloadNames.length
         ? payloadNames
         : (ids.length ? db.prepare(`SELECT name FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(piece => piece.name).filter(Boolean) : [])
-      if (row.feedback_type === 'wrong_garment_details' && names.length) {
+      if (feedbackType === 'wrong_garment_details' && names.length) {
         corrections.add(`Preserve the exact construction, color, print, neckline, sleeves, and other visible details of: ${names.join(', ')}.`)
       }
-      if (row.feedback_type === 'wrong_length' && names.length) {
+      if (feedbackType === 'wrong_length' && names.length) {
         const lengthCorrection = feedbackPayload.length_correction
         const issue = lengthIssueLabels[lengthCorrection?.issue]
         if (issue && Number(lengthCorrection?.piece_id)) {
@@ -1005,10 +957,6 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
     reasons.push(...pairFormalityFit.adjustments.slice(0, 2).map(adjustment => adjustment.reason))
   }
 
-  if (candidate.favorite) { score += 4; reasons.push('favorite') }
-  if (hasPairingReference(selected, candidate) || hasPairingReference(candidate, selected)) {
-    score += 16; reasons.push('confirmed pairing note')
-  }
   if (hasRejectedReference(selected, candidate) || hasRejectedReference(candidate, selected)) {
     score -= 40; reasons.push('rejected pairing note')
   }
@@ -1149,16 +1097,12 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
   // TODO: a register attribute in attributes.js could one day let the penalty fire only on cross-register pairs.
   if (selectedExpressive && candidateExpressive) { score -= 5; reasons.push('expressive competition risk') }
 
-  const feedbackInfluence = getFeedbackInfluenceForPair(selected, candidate)
-  if (feedbackInfluence) {
-    score += feedbackInfluence.score
-    reasons.push(...feedbackInfluence.reasons)
-  }
-
-  const savedBoardInfluence = getSavedBoardInfluenceForPair(selected, candidate)
-  if (savedBoardInfluence) {
-    score += savedBoardInfluence.score
-    reasons.push(...savedBoardInfluence.reasons)
+  const scopedWrongItemInfluence = Array.isArray(options.scopedWrongItemRows)
+    ? scopedWrongItemInfluenceForRows(options.scopedWrongItemRows, candidate.id, options)
+    : getScopedWrongItemInfluence(candidate.id, options)
+  if (scopedWrongItemInfluence) {
+    score += scopedWrongItemInfluence.score
+    reasons.push(...scopedWrongItemInfluence.reasons)
   }
 
   return { score, reasons }
@@ -1176,9 +1120,12 @@ export function rankedComplementaryWardrobeFor(piece, allPieces, limit = 24, opt
     return true
   })
 
+  let scopedWrongItemRows = []
+  try { scopedWrongItemRows = activeScopedWrongItemRows() } catch {}
+  const scoringOptions = { ...options, scopedWrongItemRows }
   return allowed
     .map(p => {
-      const scored = compatibilityScoreForSelectedItem(piece, p, options)
+      const scored = compatibilityScoreForSelectedItem(piece, p, scoringOptions)
       const trust = wholeWardrobePieceTrustDecision(p, {
         occasion: options.occasion || 'casual',
         explorationMode: options.explorationMode || 'moderate',
@@ -1196,7 +1143,7 @@ export function rankedComplementaryWardrobeFor(piece, allPieces, limit = 24, opt
         autoUseBlockReasons: trust.reasons
       }
     })
-    .sort((a,b) => b.score - a.score || Number(b.piece.favorite) - Number(a.piece.favorite) || String(a.piece.category).localeCompare(String(b.piece.category)))
+    .sort((a,b) => b.score - a.score || String(a.piece.category).localeCompare(String(b.piece.category)))
     .slice(0, limit)
 }
 
@@ -1261,7 +1208,7 @@ export function getOutfitsForPieceMemory(pieceId, limit = 6) {
     SELECT o.* FROM outfits o
     JOIN outfit_pieces op ON o.id = op.outfit_id
     WHERE op.piece_id = ?
-    ORDER BY o.favorite DESC, o.date_added DESC
+    ORDER BY o.date_added DESC
     LIMIT ?
   `).all(pieceId, limit)
   return outfits.map(o => buildOutfitText(o, getLinkedPiecesForOutfit(o.id))).join('\n\n')
@@ -1293,8 +1240,10 @@ function isOwnerRuleRow(row = {}) {
     (row.feedback_type === 'preference_reaction' && row.target_type === 'message')
 }
 
-export function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 16) {
+export function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 16, { excludeContexts = [] } = {}) {
   try {
+    const deliveryLimit = Math.max(0, Number(limit) || 0)
+    if (!deliveryLimit) return ''
     const clauses = [`NOT (
       target_type = 'generated_visual_board'
       AND EXISTS (
@@ -1305,13 +1254,22 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
     const params = []
     if (contextType) { clauses.push('context_type = ?'); params.push(contextType) }
     if (contextId) { clauses.push('context_id = ?'); params.push(Number(contextId)) }
+    for (const context of excludeContexts) {
+      if (!context?.type || !Number.isFinite(Number(context.id))) continue
+      clauses.push('NOT (context_type = ? AND context_id IS ?)')
+      params.push(context.type, Number(context.id))
+    }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    // Read beyond the delivery cap so repeated legacy prose cannot consume all
+    // of the slots before it is consolidated below. This remains bounded; it
+    // does not turn prompt construction into an unbounded history scan.
+    const scanLimit = Math.min(Math.max(deliveryLimit * 20, deliveryLimit), 4000)
     const rows = db.prepare(`
       SELECT * FROM stylist_feedback
       ${where ? where + ' AND COALESCE(archived,0) = 0' : 'WHERE COALESCE(archived,0) = 0'}
-      ORDER BY COALESCE(is_gold,0) DESC, id DESC
+      ORDER BY id DESC
       LIMIT ?
-    `).all(...params, Number(limit))
+    `).all(...params, scanLimit)
 
     if (!rows.length) return ''
 
@@ -1323,31 +1281,84 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
     // corpus. Owner rules always sort to the top, under their own
     // sub-header, severed from the scoped-reaction section below.
     const ownerRuleLines = []
-    const reactionLines = []
+    const legacyReactionLines = new Map()
+    const outfitLogicGroups = new Map()
+    let deliveredUnits = 0
     for (const r of rows) {
-      if (isOwnerRuleRow(r)) {
+      const behaviour = feedbackBehaviour(r)
+      if (behaviour === FEEDBACK_BEHAVIOURS.OWNER_PROMPT) {
+        if (deliveredUnits >= deliveryLimit) continue
         ownerRuleLines.push(`- OWNER RULE: ${String(r.note || '').trim().slice(0, 280)}`)
+        deliveredUnits += 1
+        continue
+      }
+      if (behaviour !== FEEDBACK_BEHAVIOURS.STYLING_PROMPT) continue
+      const feedbackPayload = safeJsonParse(r.payload, {}) || {}
+      const scopedEvidence = feedbackPayload.scopedEvidence
+      if (Number(scopedEvidence?.version) === 1 && scopedEvidence?.kind === 'outfit_logic') {
+        const logic = scopedEvidence.logic || {}
+        const context = scopedEvidence.context || {}
+        const qualifier = scopedEvidence.verdict === 'almost' ? 'qualified' : 'positive'
+        const key = JSON.stringify({ qualifier, logic, context })
+        const existing = outfitLogicGroups.get(key)
+        if (existing) {
+          existing.count += 1
+        } else if (deliveredUnits < deliveryLimit) {
+          outfitLogicGroups.set(key, { qualifier, logic, context, count: 1 })
+          deliveredUnits += 1
+        }
         continue
       }
       const target = r.target_type ? `${r.target_type}` : 'item'
       const label = r.label ? ` — ${r.label}` : ''
       const note = r.note ? `: ${String(r.note).slice(0, 280)}` : ''
-      const feedbackPayload = safeJsonParse(r.payload, {}) || {}
       const feedbackReason = FEEDBACK_REASON_LABELS[feedbackPayload.feedback_reason]
       if ((r.feedback_type === 'style_direction' || r.feedback_type === 'shape_balance') && feedbackReason) {
         const category = r.feedback_type === 'style_direction' ? 'style direction' : 'fit and shape'
-        reactionLines.push(`- ${category} issue on ${target}${label}: ${feedbackReason}${note} — scoped to this board; correct this issue without turning it into a universal ban.`)
+        const line = `- ${category} issue on ${target}${label}: ${feedbackReason}${note} — scoped to this board; correct this issue without turning it into a universal ban.`
+        if (!legacyReactionLines.has(line) && deliveredUnits < deliveryLimit) {
+          legacyReactionLines.set(line, line)
+          deliveredUnits += 1
+        }
         continue
       }
       if (r.feedback_type === 'wrong_silhouette') {
-        reactionLines.push(`- wrong_silhouette on ${target}${label}${note} — scoped to this selected garment/board; do NOT globally avoid this silhouette family.`)
+        const line = `- wrong_silhouette on ${target}${label}${note} — scoped to this selected garment/board; do NOT globally avoid this silhouette family.`
+        if (!legacyReactionLines.has(line) && deliveredUnits < deliveryLimit) {
+          legacyReactionLines.set(line, line)
+          deliveredUnits += 1
+        }
         continue
       }
       if (r.feedback_type === 'wrong_proportions' || r.feedback_type === 'proportion_problem') {
-        reactionLines.push(`- ${r.feedback_type} on ${target}${label}${note} — scoped to this selected garment/board; do NOT treat as a universal proportion rule.`)
+        const line = `- ${r.feedback_type} on ${target}${label}${note} — scoped to this selected garment/board; do NOT treat as a universal proportion rule.`
+        if (!legacyReactionLines.has(line) && deliveredUnits < deliveryLimit) {
+          legacyReactionLines.set(line, line)
+          deliveredUnits += 1
+        }
         continue
       }
-      reactionLines.push(`- ${r.feedback_type} on ${target}${label}${note}`)
+      const line = `- ${r.feedback_type} on ${target}${label}${note}`
+      if (!legacyReactionLines.has(line) && deliveredUnits < deliveryLimit) {
+        legacyReactionLines.set(line, line)
+        deliveredUnits += 1
+      }
+    }
+
+    const reactionLines = [...legacyReactionLines.values()]
+    for (const group of outfitLogicGroups.values()) {
+      const logicParts = [
+        group.logic.formula ? `formula: ${group.logic.formula}` : '',
+        group.logic.silhouette ? `silhouette: ${group.logic.silhouette}` : '',
+        group.logic.direction ? `direction: ${group.logic.direction}` : '',
+        group.logic.mood ? `mood: ${group.logic.mood}` : '',
+      ].filter(Boolean)
+      const contextParts = [
+        group.context.occasion,
+        group.context.activity && group.context.activity !== 'none' ? group.context.activity : '',
+        group.context.season,
+      ].filter(Boolean)
+      reactionLines.push(`- ${group.qualifier} transferable outfit logic${group.count > 1 ? ` (${group.count} observations)` : ''}${contextParts.length ? ` for ${contextParts.join(' + ')}` : ''}: ${logicParts.join('; ')}. Reuse this logic with different suitable garments; do not repeat the original combination merely because it received positive feedback.`)
     }
 
     const sections = []
@@ -1391,7 +1402,7 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
       SELECT * FROM stylist_feedback
       WHERE COALESCE(archived,0) = 0
         AND target_type = 'whole_wardrobe_outfit'
-      ORDER BY COALESCE(is_gold,0) DESC, id DESC
+      ORDER BY id DESC
       LIMIT ?
     `).all(Number(limit))
 
@@ -1399,6 +1410,7 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
     const positives = []
     const negatives = []
     for (const row of rows) {
+      if (feedbackBehaviour(row) !== FEEDBACK_BEHAVIOURS.STYLING_PROMPT) continue
       const payload = safeJsonParse(row.payload, {}) || {}
       const outfit = payload.outfit || {}
       const pieces = Array.isArray(payload.pieces) && payload.pieces.length
@@ -1409,8 +1421,8 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
       const occasion = payload.occasion || outfit.bestFor || ''
       const note = row.note ? ` — ${String(row.note).slice(0, 220)}` : ''
       const line = `- ${row.feedback_type}${row.label ? ` / ${row.label}` : ''}${occasion ? ` (${occasion})` : ''}${formula ? ` | formula: ${formula}` : ''}${pieceText ? ` | pieces: ${pieceText}` : ''}${note}`
-      if (feedbackWeight(row.feedback_type) > 0) positives.push(line)
-      if (feedbackWeight(row.feedback_type) < 0) negatives.push(line)
+      if (POSITIVE_WHOLE_WARDROBE_PROMPT_TYPES.has(row.feedback_type)) positives.push(line)
+      if (NEGATIVE_WHOLE_WARDROBE_PROMPT_TYPES.has(row.feedback_type)) negatives.push(line)
     }
 
     const parts = []
@@ -1420,61 +1432,6 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
   } catch {
     return ''
   }
-}
-
-export function buildWholeWardrobeFeedbackInfluence(limit = 120) {
-  const influence = {
-    piece: new Map(),
-    combination: new Map(),
-    formula: new Map(),
-    occasionFormula: new Map(),
-    pieceFormula: new Map(),
-    rowsUsed: 0
-  }
-  const add = (map, key, value) => {
-    if (!key || !value) return
-    map.set(key, (map.get(key) || 0) + value)
-  }
-  try {
-    const rows = db.prepare(`
-      SELECT * FROM stylist_feedback
-      WHERE COALESCE(archived,0) = 0
-        AND target_type = 'whole_wardrobe_outfit'
-      ORDER BY id DESC
-      LIMIT ?
-    `).all(Number(limit))
-    for (const row of rows) {
-      const weight = feedbackWeight(row.feedback_type)
-      if (!weight) continue
-      const payload = safeJsonParse(row.payload, {}) || {}
-      const outfit = payload.outfit || {}
-      const pieceIds = [...new Set((payload.pieceIds || outfit.pieceIds || collectPieceIdsFromFeedbackPayload(row.payload))
-        .map(Number)
-        .filter(Boolean))]
-      const focusedPieceId = Number(payload.pieceId)
-      const formula = payload.formulaFamily || outfit.formulaFamily || ''
-      const occasion = payload.occasion || outfit.bestFor || ''
-      const signedWeight = weight + (row.is_gold ? Math.sign(weight) * 18 : 0)
-
-      if (Number.isFinite(focusedPieceId) && focusedPieceId > 0) {
-        const focusedWeight = row.feedback_type === 'wrong_item_read' || row.feedback_type === 'fit_issue'
-          ? Math.round(signedWeight * 1.35)
-          : Math.round(signedWeight * 0.9)
-        add(influence.piece, focusedPieceId, focusedWeight)
-        if (formula) add(influence.pieceFormula, `${focusedPieceId}||${formula}`, Math.round(focusedWeight * 0.8))
-      } else if (pieceIds.length) {
-        const comboKey = pieceIds.slice().sort((a, b) => a - b).join('|')
-        add(influence.combination, comboKey, Math.round(signedWeight * 1.15))
-        const pieceMultiplier = row.feedback_type === 'good_formula' ? 0.12 : (row.feedback_type === 'good_pieces' ? 0.55 : 0.35)
-        for (const id of pieceIds) add(influence.piece, id, Math.round(signedWeight * pieceMultiplier))
-      }
-      const formulaMultiplier = row.feedback_type === 'good_formula' ? 0.9 : (row.feedback_type === 'good_pieces' ? 0.2 : 0.45)
-      add(influence.formula, formula, Math.round(signedWeight * formulaMultiplier))
-      if (occasion && formula) add(influence.occasionFormula, `${occasion}||${formula}`, Math.round(signedWeight * 0.65))
-      influence.rowsUsed += 1
-    }
-  } catch {}
-  return influence
 }
 
 export function saveWholeWardrobeSession({ occasion = '', outfits = [] } = {}) {
@@ -1550,37 +1507,6 @@ export function getRecentWholeWardrobeSessionInfluence({ occasion = '', daysCuto
   }
 }
 
-export function wholeWardrobeFeedbackInfluenceForCandidate(pieces = [], options = {}) {
-  const influence = options.wholeWardrobeFeedbackInfluence
-  if (!influence) return null
-  const ids = pieces.map(p => Number(p.id)).filter(Boolean)
-  const outfit = { pieces }
-  const comboKey = ids.slice().sort((a, b) => a - b).join('|')
-  const formula = wholeWardrobeFormulaFamily(outfit, pieces, options.occasion)
-  const occasionFormula = `${options.occasion || ''}||${formula}`
-  let score = 0
-  const reasons = []
-  const addScore = (value, reason) => {
-    if (!value) return
-    score += value
-    reasons.push(reason)
-  }
-
-  addScore(influence.combination.get(comboKey), 'whole-wardrobe exact-combination feedback')
-  addScore(influence.formula.get(formula), `whole-wardrobe ${formula} feedback`)
-  addScore(influence.occasionFormula.get(occasionFormula), `whole-wardrobe ${options.occasion || 'occasion'} formula feedback`)
-  const pieceFormulaScore = ids.reduce((sum, id) => sum + (influence.pieceFormula.get(`${id}||${formula}`) || 0), 0)
-  addScore(Math.max(-55, Math.min(35, pieceFormulaScore)), 'whole-wardrobe piece/formula feedback')
-  const pieceScore = ids.reduce((sum, id) => sum + (influence.piece.get(id) || 0), 0)
-  addScore(Math.max(-45, Math.min(30, Math.round(pieceScore / Math.max(1, ids.length)))), 'whole-wardrobe piece feedback')
-
-  if (!score) return null
-  return {
-    score: Math.max(-80, Math.min(80, score)),
-    reasons: [...new Set(reasons)].slice(0, 4)
-  }
-}
-
 export function buildPieceText(p) {
   return buildWardrobePieceTruthText(p)
 }
@@ -1637,7 +1563,7 @@ export function inferWholeWardrobePieceRoles(piece = {}) {
     trustedField(piece, 'fit_on_body') ? piece.fit_on_body : '',
     piece.notes,
     ...(piece.colors || []),
-    ...(piece.styling_rules_learned || [])
+    ...stylingRulesForPrompt(piece.styling_rules_learned)
   ].filter(Boolean).join(' ').toLowerCase()
   const roles = new Set(profileRoles)
   if (group === 'dress') roles.add('one_piece_column')
@@ -1901,7 +1827,7 @@ export function piecePriorityForMission(piece, missionId, colorFamily = '', foca
   const name = pieceNameBlob(piece)
   const group = wardrobeCategoryGroup(piece)
   
-  let score = piece.favorite ? 10 : 0
+  let score = 0
   
   if (missionId === 'controlled_print') {
     const hasPattern = /\b(floral|print|pattern|stripe|striped|abstract|tapestry|paisley|botanical|graphic|plaid)\b/.test(name) ||
@@ -2633,41 +2559,28 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   const confirmedCounts = new Map()
   try {
     const rows = db.prepare(`
-      SELECT op.piece_id, COUNT(*) as cnt, SUM(CASE WHEN o.favorite = 1 THEN 1 ELSE 0 END) as fav_cnt
+      SELECT op.piece_id, COUNT(*) as cnt
       FROM outfit_pieces op
       JOIN outfits o ON op.outfit_id = o.id
       GROUP BY op.piece_id
     `).all()
     for (const r of rows) {
-      confirmedCounts.set(Number(r.piece_id), { count: r.cnt, favoriteCount: r.fav_cnt })
+      confirmedCounts.set(Number(r.piece_id), { count: r.cnt })
     }
   } catch (err) {
     console.warn('Failed to query confirmed outfits count:', err.message)
   }
 
-  const feedbackScores = new Map()
+  const scopedContextScores = new Map()
   try {
     const feedbackRows = db.prepare(`
-      SELECT id, feedback_type, target_type, context_type, context_id, payload, is_gold
+      SELECT id, feedback_type, target_type, context_type, context_id, payload
       FROM stylist_feedback
       WHERE COALESCE(archived,0) = 0
     `).all()
-    for (const row of feedbackRows) {
-      if (row.target_type === 'generated_visual_board' && IMAGE_FIDELITY_FEEDBACK_TYPES.has(row.feedback_type)) continue
-      const weight = feedbackWeight(row.feedback_type)
-      if (!weight) continue
-      const signedWeight = weight + (row.is_gold ? Math.sign(weight) * 18 : 0)
-      
-      if (row.context_type === 'piece' && row.context_id) {
-        const pId = Number(row.context_id)
-        feedbackScores.set(pId, (feedbackScores.get(pId) || 0) + signedWeight)
-      }
-      
-      const ids = collectPieceIdsFromFeedbackPayload(row.payload)
-      for (const id of ids) {
-        const pId = Number(id)
-        feedbackScores.set(pId, (feedbackScores.get(pId) || 0) + signedWeight)
-      }
+    for (const piece of allowedPieces) {
+      const influence = scopedWrongItemInfluenceForRows(feedbackRows, piece.id, { occasion, activity })
+      if (influence) scopedContextScores.set(Number(piece.id), influence)
     }
   } catch (err) {
     console.warn('Failed to query stylist feedback memory:', err.message)
@@ -2879,14 +2792,17 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     const cacheKey = Number(p.id)
     if (scoreCache.has(cacheKey)) return scoreCache.get(cacheKey)
     const occasionScore = pieceOccasionScore(p, occasion)
-    const conf = confirmedCounts.get(Number(p.id)) || { count: 0, favoriteCount: 0 }
-    let historyBonus = conf.count * 8 + conf.favoriteCount * 12
+    const conf = confirmedCounts.get(Number(p.id)) || { count: 0 }
+    let historyBonus = conf.count * 8
     if (historyBonus > 24) {
       historyBonus = 24
       pushAdjustmentReason(p.id, 'history bonus capped')
     }
-    const fbScore = feedbackScores.get(Number(p.id)) || 0
-    const feedbackBonus = fbScore > 0 ? fbScore : 0
+    const scopedContextInfluence = scopedContextScores.get(Number(p.id))
+    const scopedContextPenalty = scopedContextInfluence?.score || 0
+    if (scopedContextInfluence) {
+      for (const reason of scopedContextInfluence.reasons) pushAdjustmentReason(p.id, `${reason} (${scopedContextPenalty})`)
+    }
     const recencyPenalty = sessionInfluence && sessionInfluence.pieceRecency
       ? (sessionInfluence.pieceRecency.get(Number(p.id)) || 0)
       : 0
@@ -3007,7 +2923,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       pushAdjustmentReason(p.id, `${adjustment.reason} (${sign}${adjustment.score})`)
     }
 
-    const score = occasionScore + historyBonus + feedbackBonus - recencyPenalty + weatherBonus + occasionProfileBonus + formalityFit.score
+    const score = occasionScore + historyBonus + scopedContextPenalty - recencyPenalty + weatherBonus + occasionProfileBonus + formalityFit.score
     scoreCache.set(cacheKey, score)
     return score
   }
@@ -3370,7 +3286,6 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
   if (groups.includes('top') && groups.includes('bottom')) add(14, 'complete separates')
   if (groups.includes('dress')) add(12, 'complete dress base')
   if (groups.includes('shoes')) add(10, 'grounded with shoes')
-  if (pieces.some(p => p.favorite)) add(5, 'favorite piece')
   if (/\b(black|charcoal|espresso|chocolate|deep navy|navy|olive|plum|cognac|rust|mustard)\b/.test(text)) add(7, 'deep/warm palette')
   if (/\b(artistic|graphic|architectural|structured|utility|textured|corduroy|linen|denim)\b/.test(text)) add(8, 'artistic texture/structure')
   if (/\b(pointed|loafer|boot|mule|oxford|cognac|black)\b/.test(text) && groups.includes('shoes')) add(6, 'strong shoe grounding')
@@ -3534,12 +3449,6 @@ export function scoreWholeWardrobeCandidate(pieces = [], options = {}) {
     if (isSneaker && isFormalDress) {
       add(-40, `clashing shoe formality: pairing casual sneakers with formal/maxi dress`)
     }
-  }
-
-  const feedbackInfluence = wholeWardrobeFeedbackInfluenceForCandidate(pieces, options)
-  if (feedbackInfluence) {
-    add(feedbackInfluence.score, 'whole-wardrobe feedback memory')
-    reasons.push(...feedbackInfluence.reasons)
   }
 
   const sessionInfluence = options.sessionInfluence

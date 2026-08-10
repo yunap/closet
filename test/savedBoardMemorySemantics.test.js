@@ -11,12 +11,14 @@ process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db } = await import('../db.js')
 const {
-  getSavedBoardInfluenceForPair,
   getSavedBoardMemory,
   getSavedBoardRendererMemory,
   getStylistFeedbackMemory,
+  getScopedWrongItemInfluence,
+  compatibilityScoreForSelectedItem,
 } = await import('../styling-engine/rules.js')
-const { syncStructuredReasonsFromSavedBoard } = await import('../routes/crud.js')
+const { syncStructuredReasonsFromSavedBoard, syncFeedbackFromSavedBoard } = await import('../routes/crud.js')
+const { buildOutfitLogicEvidence } = await import('../lib/feedbackTaxonomy.js')
 
 after(() => {
   db.close()
@@ -48,16 +50,238 @@ function insertBoard({ imageUrl, labels = [], details = {}, favorite = false }) 
 
 test('saving an unlabeled board is neutral for prompt memory and local pair ranking', () => {
   insertBoard({ imageUrl: '/uploads/neutral-board.png' })
-  assert.equal(getSavedBoardInfluenceForPair(selected, candidate), null)
   assert.equal(getSavedBoardMemory('piece', selected.id, 10), '')
 })
 
-test('explicit positive board feedback enables positive prompt and pair influence', () => {
+test('explicit positive board feedback is preserved as memory without promoting literal pairs', () => {
   insertBoard({ imageUrl: '/uploads/works-board.png', labels: ['works'] })
-  const influence = getSavedBoardInfluenceForPair(selected, candidate)
-  assert.equal(influence.score, 18)
-  assert.match(influence.reasons.join(' '), /positive feedback/)
   assert.match(getSavedBoardMemory('piece', selected.id, 10), /works-board\.png.*\[works\]/)
+})
+
+test('global board memory can exclude a scoped board already delivered above', () => {
+  insertBoard({ imageUrl: '/uploads/scoped-board.png', labels: ['works'] })
+  const memory = getSavedBoardMemory(null, null, 10, { excludeContexts: [{ type: 'piece', id: selected.id }] })
+  assert.doesNotMatch(memory, /scoped-board\.png/)
+})
+
+test('signature feedback does not create a second hidden gold authority', () => {
+  const boardId = insertBoard({ imageUrl: '/uploads/signature-board.png' })
+  const board = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(boardId)
+  syncFeedbackFromSavedBoard(board, [], ['signature'])
+  const feedback = db.prepare("SELECT * FROM stylist_feedback WHERE feedback_type = 'signature'").get()
+  assert.equal(feedback.is_gold, 0)
+})
+
+test('saved-board verdict uses the same transferable logic evidence without exposing garments', () => {
+  const imageUrl = '/uploads/structured-works-board.png'
+  const outfit = {
+    formulaFamily: 'soft_piece_structured_anchor',
+    silhouette: 'fitted top + relaxed bottom',
+    dominantDirection: 'polished classic',
+    mood: 'quiet confidence',
+    occasion: 'city',
+    activity: 'walking',
+    season: 'warm',
+    pieces: [{ id: selected.id, name: 'Literal selected top' }, { id: candidate.id, name: 'Literal candidate trousers' }],
+  }
+  const id = db.prepare(`
+    INSERT INTO saved_boards (board_type, context_type, context_id, context_name, title, image_url, pieces, payload)
+    VALUES ('whole_wardrobe_board', 'piece', ?, 'Selected top', 'Structured board', ?, ?, ?)
+  `).run(selected.id, imageUrl, pieces, JSON.stringify({
+    board: { imageUrl, pieces: outfit.pieces },
+    outfit,
+    feedback_labels: ['works'],
+    scoped_evidence: buildOutfitLogicEvidence('works', { outfit }),
+  })).lastInsertRowid
+  const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(id)
+  syncFeedbackFromSavedBoard(row, [], ['works'])
+
+  const memory = getSavedBoardMemory('piece', selected.id, 10)
+  assert.match(memory, /positive transferable outfit logic for city \+ walking \+ warm/)
+  assert.match(memory, /formula: soft_piece_structured_anchor/)
+  assert.match(memory, /silhouette: fitted top \+ relaxed bottom/)
+  assert.match(memory, /Reuse this logic with different suitable garments/)
+  assert.doesNotMatch(memory, /Literal selected top|Literal candidate trousers|9001|9002/)
+
+  const mirrored = db.prepare("SELECT * FROM stylist_feedback WHERE feedback_type = 'works'").get()
+  assert.deepEqual(JSON.parse(mirrored.payload).scopedEvidence, buildOutfitLogicEvidence('works', { outfit }))
+  assert.equal(getStylistFeedbackMemory('piece', selected.id, 20), '')
+})
+
+test('removing a saved-board verdict removes transferable authority', () => {
+  const imageUrl = '/uploads/removable-board.png'
+  const outfit = { formulaFamily: 'column_with_grounding', occasion: 'museum', activity: 'walking' }
+  const id = db.prepare(`
+    INSERT INTO saved_boards (board_type, context_type, context_id, context_name, title, image_url, pieces, payload)
+    VALUES ('whole_wardrobe_board', 'piece', ?, 'Selected top', 'Removable board', ?, ?, ?)
+  `).run(selected.id, imageUrl, pieces, JSON.stringify({ board: { imageUrl }, outfit })).lastInsertRowid
+  const row = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(id)
+  syncFeedbackFromSavedBoard(row, [], ['works'])
+  syncFeedbackFromSavedBoard(row, ['works'], [])
+  assert.equal(db.prepare("SELECT archived FROM stylist_feedback WHERE feedback_type = 'works'").get().archived, 1)
+})
+
+test('saved-board re-sync preserves renderer correction payload fields', () => {
+  const imageUrl = '/uploads/length-correction-board.png'
+  const correction = { piece_id: selected.id, piece_name: selected.name, issue: 'upper_hem_too_long' }
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, payload)
+    VALUES ('wrong_length', 'generated_visual_board', 'piece', ?, ?)`)
+    .run(selected.id, JSON.stringify({
+      board: { imageUrl, pieces: [selected, candidate] },
+      pieceIds: [selected.id, candidate.id],
+      length_correction: correction,
+      feedback_reason: 'owner selected a garment length issue',
+    }))
+  const boardId = insertBoard({ imageUrl, labels: ['wrong_length'] })
+  const board = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(boardId)
+  syncFeedbackFromSavedBoard(board, ['wrong_length'], ['wrong_length'])
+
+  const payload = JSON.parse(db.prepare("SELECT payload FROM stylist_feedback WHERE feedback_type = 'wrong_length'").get().payload)
+  assert.deepEqual(payload.length_correction, correction)
+  assert.deepEqual(payload.pieceIds, [selected.id, candidate.id])
+  assert.equal(payload.feedback_reason, 'owner selected a garment length issue')
+})
+
+test('wrong-item feedback remains scoped prompt evidence without scoring the garment', () => {
+  const flagged = { id: 9003, name: 'Flagged shoes', category: 'shoes' }
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, payload)
+    VALUES ('wrong_item_read', 'whole_wardrobe_outfit', 'piece', ?, ?)`)
+    .run(selected.id, JSON.stringify({ pieceId: flagged.id, pieceIds: [selected.id, candidate.id, flagged.id] }))
+  assert.match(getStylistFeedbackMemory('piece', selected.id, 20), /wrong_item_read/)
+})
+
+test('scoped wrong-item evidence mildly affects only a matching occasion and activity', () => {
+  const heels = { id: 9003, name: 'High heels', category: 'shoes' }
+  const payload = JSON.stringify({
+    pieceId: heels.id,
+    scopedEvidence: {
+      version: 1,
+      kind: 'garment_context_suitability',
+      subjectPieceId: heels.id,
+      strength: 'weak',
+      context: { occasion: 'city', activity: 'walking', season: 'current season', mood: '' },
+    },
+  })
+  const insert = db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, payload)
+    VALUES ('wrong_item_read', 'whole_wardrobe_outfit', 'wardrobe', NULL, ?)`)
+  insert.run(payload)
+
+  assert.equal(getScopedWrongItemInfluence(heels.id, { occasion: 'city', activity: 'walking' })?.score, -6)
+  assert.equal(getStylistFeedbackMemory('wardrobe', null, 20), '')
+  assert.equal(getScopedWrongItemInfluence(heels.id, { occasion: 'evening', activity: 'none' }), null)
+  assert.equal(getScopedWrongItemInfluence(heels.id, { occasion: 'city', activity: 'none' }), null)
+
+  insert.run(payload)
+  insert.run(payload)
+  assert.equal(getScopedWrongItemInfluence(heels.id, { occasion: 'city', activity: 'walking' })?.score, -12)
+})
+
+test('historical wrong-item rows without canonical context remain prompt-only evidence', () => {
+  const heels = { id: 9003, name: 'High heels', category: 'shoes' }
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, payload)
+    VALUES ('wrong_item_read', 'whole_wardrobe_outfit', 'wardrobe', NULL, ?)`)
+    .run(JSON.stringify({ pieceId: heels.id, occasion: 'city', activity: 'walking' }))
+
+  assert.equal(getScopedWrongItemInfluence(heels.id, { occasion: 'city', activity: 'walking' }), null)
+})
+
+test('matching contextual evidence reaches pre-model candidate ranking with an observable reason', () => {
+  const anchor = { id: 9010, name: 'Museum dress', category: 'dress', colors: [] }
+  const heels = { id: 9011, name: 'High heels', category: 'shoes', colors: [] }
+  const baseline = compatibilityScoreForSelectedItem(anchor, heels, { occasion: 'city', activity: 'walking' })
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, payload)
+    VALUES ('wrong_item_read', 'whole_wardrobe_outfit', 'wardrobe', ?)`)
+    .run(JSON.stringify({ scopedEvidence: {
+      version: 1,
+      kind: 'garment_context_suitability',
+      subjectPieceId: heels.id,
+      strength: 'weak',
+      context: { occasion: 'city', activity: 'walking' },
+    } }))
+
+  const matching = compatibilityScoreForSelectedItem(anchor, heels, { occasion: 'city', activity: 'walking' })
+  assert.equal(matching.score, baseline.score - 6)
+  assert.match(matching.reasons.join(' '), /context feedback: previously replaced for city \+ walking/)
+
+  const dinnerBefore = compatibilityScoreForSelectedItem(anchor, heels, { occasion: 'evening', activity: 'none' })
+  assert.equal(dinnerBefore.reasons.some(reason => reason.includes('context feedback')), false)
+})
+
+test('relational stylist feedback reaches prompt memory', () => {
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, label, note, payload)
+    VALUES ('works', 'whole_wardrobe_outfit', 'piece', ?, 'A good outfit', 'Keep the formula, not the literal pieces.', ?)`)
+    .run(selected.id, JSON.stringify({ pieceIds: [selected.id, candidate.id] }))
+
+  assert.match(getStylistFeedbackMemory('piece', selected.id, 20), /Keep the formula, not the literal pieces/)
+})
+
+test('identical legacy prompt lines are delivered once and do not crowd out distinct evidence', () => {
+  const insert = db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, note)
+    VALUES ('works', 'whole_wardrobe_outfit', 'piece', ?, ?)`)
+  insert.run(selected.id, 'An older distinct observation.')
+  insert.run(selected.id, 'Repeated legacy observation.')
+  insert.run(selected.id, 'Repeated legacy observation.')
+  insert.run(selected.id, 'Repeated legacy observation.')
+
+  const memory = getStylistFeedbackMemory('piece', selected.id, 2)
+  assert.equal(memory.match(/Repeated legacy observation\./g)?.length, 1)
+  assert.match(memory, /An older distinct observation\./)
+})
+
+test('positive outfit-logic evidence consolidates without exposing literal garments', () => {
+  const payload = JSON.stringify({
+    pieceIds: [selected.id, candidate.id],
+    pieces: [{ id: selected.id, name: 'Literal selected top' }, { id: candidate.id, name: 'Literal candidate trousers' }],
+    scopedEvidence: {
+      version: 1,
+      kind: 'outfit_logic',
+      verdict: 'works',
+      logic: {
+        formula: 'compact top + flowing bottom',
+        silhouette: 'defined upper half with movement below',
+        direction: 'graphic relaxed',
+        mood: 'artistic',
+      },
+      context: { occasion: 'city', activity: 'walking', season: 'warm' },
+    },
+  })
+  const insert = db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, payload)
+    VALUES ('works', 'whole_wardrobe_outfit', 'piece', ?, ?)`)
+  insert.run(selected.id, payload)
+  insert.run(selected.id, payload)
+
+  const memory = getStylistFeedbackMemory('piece', selected.id, 20)
+  assert.match(memory, /positive transferable outfit logic \(2 observations\)/)
+  assert.match(memory, /city \+ walking \+ warm/)
+  assert.match(memory, /formula: compact top \+ flowing bottom/)
+  assert.match(memory, /silhouette: defined upper half with movement below/)
+  assert.match(memory, /Reuse this logic with different suitable garments/)
+  assert.doesNotMatch(memory, /Literal selected top|Literal candidate trousers|9001|9002/)
+})
+
+test('almost outfit-logic evidence remains qualified rather than becoming a positive rule', () => {
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, payload)
+    VALUES ('almost', 'whole_wardrobe_outfit', 'piece', ?, ?)`)
+    .run(selected.id, JSON.stringify({ scopedEvidence: {
+      version: 1,
+      kind: 'outfit_logic',
+      verdict: 'almost',
+      logic: { formula: 'column dress + grounded shoe', silhouette: '', direction: '', mood: '' },
+      context: { occasion: 'city', activity: 'none', season: 'warm' },
+    } }))
+
+  const memory = getStylistFeedbackMemory('piece', selected.id, 20)
+  assert.match(memory, /qualified transferable outfit logic/)
+  assert.doesNotMatch(memory, /positive transferable outfit logic/)
 })
 
 test('negative feedback blocks local boosts and remains negative prompt evidence', () => {
@@ -67,7 +291,6 @@ test('negative feedback blocks local boosts and remains negative prompt evidence
     details: { shape_balance: ['too_much_volume', 'shape_lost'] },
     favorite: true,
   })
-  assert.equal(getSavedBoardInfluenceForPair(selected, candidate), null)
   const memory = getSavedBoardMemory('piece', selected.id, 10)
   assert.match(memory, /negative memory/)
   assert.match(memory, /shape_balance/)
@@ -162,9 +385,6 @@ test('Almost right preserves a qualified positive formula instead of becoming av
     labels: ['almost', 'shape_balance'],
     details: { shape_balance: ['layer_too_long'] },
   })
-  const influence = getSavedBoardInfluenceForPair(selected, candidate)
-  assert.equal(influence.score, 6)
-  assert.match(influence.reasons.join(' '), /Almost right/)
   const memory = getSavedBoardMemory('piece', selected.id, 10)
   assert.match(memory, /close-but-not-finished memory/)
   assert.match(memory, /Preserve the core outfit formula/)
@@ -172,17 +392,13 @@ test('Almost right preserves a qualified positive formula instead of becoming av
   assert.doesNotMatch(memory, /negative memory/)
 })
 
-test('Use strongly remains explicit positive influence when no negative label exists', () => {
+test('Use strongly remains prompt evidence', () => {
   insertBoard({ imageUrl: '/uploads/strong-board.png', favorite: true })
-  const influence = getSavedBoardInfluenceForPair(selected, candidate)
-  assert.equal(influence.score, 45)
   assert.match(getSavedBoardMemory('piece', selected.id, 10), /positive memory/)
 })
 
 test('image-fidelity feedback does not penalize a working outfit formula', () => {
   insertBoard({ imageUrl: '/uploads/fidelity-board.png', labels: ['works', 'wrong_length', 'wrong_garment_details', 'body_proportions_drift', 'identity_drift'] })
-  const influence = getSavedBoardInfluenceForPair(selected, candidate)
-  assert.equal(influence.score, 18)
   const memory = getSavedBoardMemory('piece', selected.id, 10)
   assert.match(memory, /\[works\]/)
   assert.doesNotMatch(memory, /wrong_length|wrong_garment_details|body_proportions_drift|identity_drift/)
@@ -202,6 +418,12 @@ test('image-fidelity feedback reaches renderer memory without entering styling m
   assert.match(rendererMemory, /Preserve the exact construction.*Selected top/)
   assert.match(rendererMemory, /body proportions consistent/)
   assert.match(rendererMemory, /facial identity and resemblance/)
+  assert.equal(getSavedBoardMemory('piece', selected.id, 10), '')
+})
+
+test('legacy proportion labels remain renderer-only body feedback', () => {
+  insertBoard({ imageUrl: '/uploads/legacy-proportions-board.png', labels: ['wrong_proportions'] })
+  assert.match(getSavedBoardRendererMemory([selected.id], 10), /body proportions consistent/)
   assert.equal(getSavedBoardMemory('piece', selected.id, 10), '')
 })
 

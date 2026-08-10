@@ -36,7 +36,6 @@ export function attributePieceTextBlob(p) {
   const colors = Array.isArray(p.colors) ? p.colors : []
   const occasions = Array.isArray(p.occasions) ? p.occasions : []
   const rules = Array.isArray(p.styling_rules_learned) ? p.styling_rules_learned : []
-  const pairs = Array.isArray(p.pairs_well_with) ? p.pairs_well_with : []
   return [
     p.name || '',
     p.category || '',
@@ -57,8 +56,7 @@ export function attributePieceTextBlob(p) {
     trustedField(p, 'waistband_type') ? p.waistband_type || '' : '',
     p.notes || '',
     p.engine_notes || '',
-    rules.join(' '),
-    pairs.join(' ')
+    rules.join(' ')
   ].filter(Boolean).join(' ').toLowerCase()
 }
 

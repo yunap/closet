@@ -397,7 +397,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     waistband_type:     piece?.waistband_type     || null,
     // Learned wisdom
     styling_rules_learned: piece?.styling_rules_learned || [],
-    pairs_well_with:       piece?.pairs_well_with       || [],
     tried_and_rejected:    piece?.tried_and_rejected    || [],
     style_profile_json:    piece?.style_profile_json    || {},
     // Color
@@ -1373,16 +1372,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               restoring={restoringOccasion}
               onChange={v => set('styling_rules_learned', v)}
               placeholder="e.g. needs flow on bottom, silk — wear over only, always with amber pendant"
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Pairs well with</label>
-            <RuleList
-              rules={form.pairs_well_with}
-              onChange={v => set('pairs_well_with', v)}
-              placeholder="e.g. cream wide-leg pants, dark jeans"
-              color="donate"
             />
           </div>
 

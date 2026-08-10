@@ -196,6 +196,12 @@ export function autoStylingTrustDecision(piece = {}, { occasion = 'casual', expl
   }
 }
 
+const GENERATED_OCCASION_RECEIPT = /^(?:Excluded from|Restored for) .+ by .+ \(\d{4}-\d{2}-\d{2}\)\s*$/
+
+export function stylingRulesForPrompt(rules) {
+  return (Array.isArray(rules) ? rules : []).filter(rule => !GENERATED_OCCASION_RECEIPT.test(String(rule || '')))
+}
+
 export function buildWardrobePieceTruthText(piece = {}) {
   const parts = []
   const colors = Array.isArray(piece.colors) ? piece.colors : []
@@ -276,16 +282,13 @@ export function buildWardrobePieceTruthText(piece = {}) {
   if (piece.notes) parts.push(`note: ${piece.notes}`)
 
   let text = `• ${piece.name} (${piece.category} | ${parts.join(' | ')})`
-  if (Array.isArray(piece.styling_rules_learned) && piece.styling_rules_learned.length) {
-    text += `\n  RULES (authoritative): ${piece.styling_rules_learned.join(' | ')}`
+  const promptRules = stylingRulesForPrompt(piece.styling_rules_learned)
+  if (promptRules.length) {
+    text += `\n  RULES (authoritative): ${promptRules.join(' | ')}`
   }
   if (Array.isArray(piece.tried_and_rejected) && piece.tried_and_rejected.length) {
     text += `\n  REJECTED: ${piece.tried_and_rejected.join(' | ')}`
   }
-  if (Array.isArray(piece.pairs_well_with) && piece.pairs_well_with.length) {
-    text += `\n  PAIRS WITH: ${piece.pairs_well_with.join(', ')}`
-  }
-
   return text
 }
 

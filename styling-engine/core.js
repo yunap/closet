@@ -4,8 +4,11 @@ import crypto from 'crypto'
 import sharp from 'sharp'
 import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
-import { buildWardrobeManifest, STRUCTURAL_FIELD_UNSET } from '../src/utils/wardrobeAiContext.js'
+import { buildWardrobeManifest, STRUCTURAL_FIELD_UNSET, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { resolveOpenAiKey, hasOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
+import { getStylistConversationState, saveStylistConversationState } from './conversationState.js'
+
+export { getStylistConversationState, saveStylistConversationState }
 
 import {
   prompts,
@@ -188,7 +191,7 @@ export function buildOutfitText(outfit, linkedPieces = []) {
 
 export function buildOutfitAuthorityNote(outfit, linkedPieces = [], likelyPieces = []) {
   const status = String(outfit.status || '').toLowerCase()
-  const isConfirmed = status === 'confirmed' || Boolean(outfit.favorite)
+  const isConfirmed = status === 'confirmed'
   const lines = []
 
   if (linkedPieces.length) {
@@ -198,7 +201,7 @@ export function buildOutfitAuthorityNote(outfit, linkedPieces = [], likelyPieces
   }
 
   if (isConfirmed) {
-    lines.push(`STATUS NOTE: This outfit is marked confirmed/favorite. Start from the assumption that the core outfit has worked for ${prompts.PROFILE_NAME}. Explain WHY it works first. Suggest only minor refinements unless the user asks for alternatives.`)
+    lines.push(`STATUS NOTE: This outfit is marked confirmed. Start from the assumption that the core outfit has worked for ${prompts.PROFILE_NAME}. Explain WHY it works first. Suggest only minor refinements unless the user asks for alternatives.`)
   } else if (status === 'rejected') {
     lines.push('STATUS NOTE: This outfit is marked rejected. Diagnose what likely failed, but keep the critique garment-focused and practical.')
   } else {
@@ -213,13 +216,18 @@ export function buildOutfitAuthorityNote(outfit, linkedPieces = [], likelyPieces
   return lines.join('\n')
 }
 
-export function getConfirmedOutfitMemory(limit = 8, { allowedPieceIds = null } = {}) {
+export function getConfirmedOutfitMemory(limit = 8, { allowedPieceIds = null, excludePieceId = null } = {}) {
+  const excludedId = Number(excludePieceId)
+  const excludeClause = Number.isFinite(excludedId) && excludedId > 0
+    ? 'AND NOT EXISTS (SELECT 1 FROM outfit_pieces excluded_op WHERE excluded_op.outfit_id = outfits.id AND excluded_op.piece_id = ?)'
+    : ''
   const outfits = db.prepare(`
     SELECT * FROM outfits
-    WHERE status = 'confirmed' OR favorite = 1
-    ORDER BY favorite DESC, date_added DESC
+    WHERE status = 'confirmed'
+      ${excludeClause}
+    ORDER BY date_added DESC
     LIMIT ?
-  `).all(limit)
+  `).all(...(excludeClause ? [excludedId, limit] : [limit]))
 
   const allowedSet = Array.isArray(allowedPieceIds)
     ? new Set(allowedPieceIds.map(Number).filter(Number.isFinite))
@@ -234,18 +242,17 @@ export function getConfirmedOutfitMemory(limit = 8, { allowedPieceIds = null } =
 
 export function findLikelyPiecesForOutfit(outfit, limit = 12) {
   const text = `${outfit.name || ''} ${outfit.notes || ''}`.toLowerCase()
-  const pieces = db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY favorite DESC, date_added DESC").all().map(parsePiece)
+  const pieces = db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY date_added DESC").all().map(parsePiece)
   const stop = new Set(['the','and','with','plus','outfit','look','top','pants','jeans','skirt','dress','shoes','boots','shirt','blouse','sweater','knit','sleeve','sleeves','casual','year','round'])
   const tokens = text.split(/[^a-z0-9]+/).filter(t => t.length > 2 && !stop.has(t))
 
   const scored = pieces.map(piece => {
     const hay = [
       piece.name, piece.category, piece.colors?.join(' '), piece.reads_as, piece.fabric_category,
-      piece.silhouette, piece.notes, piece.pairs_well_with?.join(' '), piece.styling_rules_learned?.join(' ')
+      piece.silhouette, piece.notes, stylingRulesForPrompt(piece.styling_rules_learned).join(' ')
     ].filter(Boolean).join(' ').toLowerCase()
     let score = 0
     for (const t of tokens) if (hay.includes(t)) score += 3
-    if (piece.favorite) score += 2
     if (text.includes('jeans') && /jean|denim/.test(hay)) score += 5
     if (text.includes('hoodie') && /hoodie|sweatshirt/.test(hay)) score += 5
     if (text.includes('knit') && /knit|sweater|crochet/.test(hay)) score += 3
@@ -326,7 +333,7 @@ export function getCalibrationMemoryForStylist(limit = 32) {
 
   const normalized = rows.map(normalizeCalibrationRow)
   const positiveLabels = /most_like_me|signature|works|good|strong|real|use_strongly|relaxed_structure|grounded|modern|minimal|artistic/i
-  const negativeLabels = /style_direction|shape_balance|too_safe|too_boho|wrong_proportions|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|catalog_drift|not_me|ignore|bad|drift|too_polished|too_generic|too_soft/i
+  const negativeLabels = /style_direction|shape_balance|too_safe|too_boho|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|catalog_like|not_me|ignore|bad|drift|too_polished|too_generic|too_soft/i
 
   const positives = []
   const negatives = []
@@ -3980,7 +3987,7 @@ export async function buildStylistConversationPayload(body) {
       '- PAIRING/SLOT QUESTIONS ("what goes under X", "which shoes with Y"): answer in prose citing verified IDs. If you also propose a card, the card must be a COMPLETE outfit — shoes plus top+bottom or a dress — so finish the look around the pairing.',
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
-      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "prefer dark jeans"), you MUST proactively call `store_user_correction` immediately. But NEVER store situational facts — trip weather, a destination, what this request needs — those live in THREAD STATE; storing them would wrongly bias every future conversation.'
+      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` when it concerns one exact garment; omit it only for genuinely wardrobe-wide rules. NEVER store situational facts — trip weather, a destination, what this request needs — those live in THREAD STATE.'
     ].join('\n')
     : [
       'The full wardrobe list is omitted from the prompt to save context tokens.',
@@ -3991,7 +3998,7 @@ export async function buildStylistConversationPayload(body) {
       '- Use `get_current_image_inventory` to inspect attached images.',
       '- Use `store_user_correction` to save user corrections/preferences.',
       'Never guess or assume a piece exists without querying the database via tools first.',
-      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction (e.g. "I do not wear boots in summer", "no flats for me", "prefer dark jeans"), you MUST proactively call `store_user_correction` immediately. But NEVER store situational facts — trip weather, a destination, what this request needs — those live in THREAD STATE; storing them would wrongly bias every future conversation.'
+      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` when it concerns one exact garment; omit it only for genuinely wardrobe-wide rules. NEVER store situational facts — trip weather, a destination, what this request needs — those live in THREAD STATE.'
     ].join('\n')
 
   let modeDirectiveText = ''
@@ -4015,10 +4022,12 @@ export async function buildStylistConversationPayload(body) {
   }
 
   const feedbackMemoryParts = []
+  const deliveredFeedbackContexts = []
   if (activeOutfit && activeOutfit.id) {
     const outfitFeedbackText = getStylistFeedbackMemory('outfit', activeOutfit.id, 16)
     if (outfitFeedbackText) {
       feedbackMemoryParts.push(`Saved feedback/preferences for this outfit under discussion:\n${outfitFeedbackText}`)
+      deliveredFeedbackContexts.push({ type: 'outfit', id: activeOutfit.id })
     }
   }
   const activePieceId = activeContext?.type === 'piece' ? activeContext.id : (body.pieceId || body.piece?.id || null)
@@ -4026,9 +4035,10 @@ export async function buildStylistConversationPayload(body) {
     const pieceFeedbackText = getStylistFeedbackMemory('piece', activePieceId, 16)
     if (pieceFeedbackText) {
       feedbackMemoryParts.push(`Saved feedback/preferences for this active garment:\n${pieceFeedbackText}`)
+      deliveredFeedbackContexts.push({ type: 'piece', id: activePieceId })
     }
   }
-  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
+  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24, { excludeContexts: deliveredFeedbackContexts })
   if (globalFeedbackText) {
     feedbackMemoryParts.push(`Global saved stylist feedback/preferences:\n${globalFeedbackText}`)
   }
@@ -4145,56 +4155,5 @@ export async function buildStylistConversationPayload(body) {
     maxTokens: 1500,
     automaticallySavedCorrection,
     threadState
-  }
-}
-
-// ── State Recovery / Storage proxy helpers (mirrored from tools.js) ──────────
-export function getStylistConversationState(sessionId = 'default') {
-  try {
-    const row = db.prepare('SELECT state_json FROM stylist_conversation_state WHERE session_id = ?').get(sessionId)
-    if (!row) return {}
-    return JSON.parse(row.state_json || '{}')
-  } catch (err) {
-    console.error('getStylistConversationState error:', err)
-    return {}
-  }
-}
-
-export function saveStylistConversationState(state, sessionId = 'default') {
-  try {
-    const stateJson = JSON.stringify(state || {})
-    db.prepare(`
-      INSERT INTO stylist_conversation_state (session_id, state_json, updated_at)
-      VALUES (?, ?, datetime('now'))
-      ON CONFLICT(session_id) DO UPDATE SET
-        state_json = excluded.state_json,
-        updated_at = datetime('now')
-    `).run(sessionId, stateJson)
-  } catch (err) {
-    console.error('saveStylistConversationState error:', err)
-  }
-}
-
-export function storeUserCorrection(note, contextType = 'general', contextId = null) {
-  try {
-    const trimmed = String(note || '').trim()
-    if (!trimmed) return
-    // Dedupe: an identical live note must not stack — repeated turns were
-    // multiplying the same text into the high-authority memory section.
-    const existing = db.prepare(`
-      SELECT id FROM stylist_feedback
-      WHERE note = ? AND COALESCE(archived, 0) = 0
-      LIMIT 1
-    `).get(trimmed)
-    if (existing) return
-    // Spec 25 Part 2: 'owner_rule' going forward (previously
-    // 'preference_reaction'/'message') — legacy rows keep matching via
-    // isOwnerRuleRow's OR clause, no migration needed.
-    db.prepare(`
-      INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note)
-      VALUES ('owner_rule', 'message', ?, ?, ?)
-    `).run(contextType, contextId, trimmed)
-  } catch (err) {
-    console.error('storeUserCorrection error:', err)
   }
 }

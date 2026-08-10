@@ -7,7 +7,7 @@
     "styling-engine/outfitSetPlanner.js": 0,
     "styling-engine/prompts.js": 0,
     "styling-engine/provider.js": 0,
-    "styling-engine/rules.js": 119,
+    "styling-engine/rules.js": 118,
     "styling-engine/softScoreFloors.js": 0,
     "styling-engine/stylingIntent.js": 0,
     "styling-engine/taggerMerge.js": 0,
@@ -16,5 +16,5 @@
     "routes/ai.js": 0,
     "routes/crud.js": 0
   },
-  "total": 231
+  "total": 230
 }

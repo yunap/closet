@@ -3,20 +3,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { feedbackWeight } from '../styling-engine/rules.js'
+import { compatibilityScoreForSelectedItem, piecePriorityForMission, scoreWholeWardrobeCandidate } from '../styling-engine/rules.js'
+import { buildWardrobePieceTruthText, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const stylistChatPath = path.join(__dirname, '../src/components/StylistChat.jsx')
-
-test('rules.js feedbackWeight preserves historical scoring keys', () => {
-  assert.equal(feedbackWeight('good_formula'), 14)
-  assert.equal(feedbackWeight('good_pieces'), 16)
-  assert.equal(feedbackWeight('fit_issue'), -34)
-  assert.equal(feedbackWeight('bad_occasion'), -22)
-  assert.equal(feedbackWeight('works'), 22)
-  assert.equal(feedbackWeight('not_me'), -32)
-  assert.equal(feedbackWeight('wrong_item_read'), -24)
-})
+const rulesPath = path.join(__dirname, '../styling-engine/rules.js')
+const corePath = path.join(__dirname, '../styling-engine/core.js')
+const crudPath = path.join(__dirname, '../routes/crud.js')
 
 test('StylistChat.jsx defines correct outfit feedback labels', () => {
   const content = fs.readFileSync(stylistChatPath, 'utf8')
@@ -56,4 +50,41 @@ test('StylistChat.jsx renames piece issue to Replace in this outfit', () => {
   assert.ok(content.includes('Replace in this outfit'), 'Should include Replace in this outfit')
   assert.ok(content.includes('✓ Replaced in this outfit'), 'Should include ✓ Replaced in this outfit')
   assert.ok(!content.includes("'piece issue'") && !content.includes('"piece issue"'), 'Should not contain old name')
+  assert.ok(content.includes('contextual feedback rather than avoiding the garment everywhere'))
+})
+
+test('generated occasion receipts remain display history but not prompt authority', () => {
+  const rules = ['Excluded from Home by Yuna (2026-08-09)', 'Needs a fluid bottom', 'Restored for Home by Yuna (2026-08-10)']
+  assert.deepEqual(stylingRulesForPrompt(rules), ['Needs a fluid bottom'])
+  const text = buildWardrobePieceTruthText({ name: 'Test shorts', category: 'bottom', styling_rules_learned: rules })
+  assert.match(text, /Needs a fluid bottom/)
+  assert.doesNotMatch(text, /Excluded from|Restored for/)
+})
+
+test('garment favorites are organizational metadata, not ranking authority', () => {
+  const selected = { name: 'Plain top', category: 'top', colors: [], occasions: [] }
+  const candidate = { name: 'Plain trousers', category: 'bottom', colors: [], occasions: [] }
+  assert.equal(
+    compatibilityScoreForSelectedItem(selected, { ...candidate, favorite: false }).score,
+    compatibilityScoreForSelectedItem(selected, { ...candidate, favorite: true }).score,
+  )
+  assert.equal(piecePriorityForMission({ ...candidate, favorite: false }, 'mix'), piecePriorityForMission({ ...candidate, favorite: true }, 'mix'))
+  assert.equal(scoreWholeWardrobeCandidate([{ ...selected, favorite: false }, candidate]).score, scoreWholeWardrobeCandidate([{ ...selected, favorite: true }, candidate]).score)
+})
+
+test('outfit favorites do not add literal-piece history authority', () => {
+  const rules = fs.readFileSync(rulesPath, 'utf8')
+  const core = fs.readFileSync(corePath, 'utf8')
+  assert.doesNotMatch(rules, /favoriteCount|fav_cnt|conf\.favorite/)
+  assert.doesNotMatch(core, /status === 'confirmed' \|\| Boolean\(outfit\.favorite\)/)
+  assert.doesNotMatch(core, /WHERE status = 'confirmed' OR favorite = 1/)
+})
+
+test('retired renderer_calibration has no UI writer and the API refuses legacy writes', () => {
+  const chat = fs.readFileSync(stylistChatPath, 'utf8')
+  const crud = fs.readFileSync(crudPath, 'utf8')
+  assert.doesNotMatch(chat, /renderer_calibration/)
+  assert.match(crud, /targetType === 'renderer_calibration'/)
+  assert.match(crud, /status\(410\)/)
+  assert.match(crud, /renderer_calibration is retired/)
 })

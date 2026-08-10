@@ -110,29 +110,27 @@ table(rows(`WITH r AS (SELECT p.id, j.value AS rule FROM pieces p, json_each(p.s
   COUNT(*) AS n FROM r GROUP BY 1 ORDER BY n DESC`),
   ['origin', 'n'])
 
-h('6. Feedback types with no scoring weight (inert in both deterministic scorers)')
-console.log('  weights live in feedbackWeight() — styling-engine/rules.js. Cross-check by hand if it moved.')
-const WEIGHTED = new Set(['signature','works','good_formula','good_pieces','almost','not_me','too_safe','too_soft',
-  'too_generic','too_boho','too_polished','weak_structure','weak_contrast','bad_grounding','wrong_silhouette',
-  'catalog_drift','bad_reference','proportion_problem','wrong_proportions','wrong_item_read','bad_occasion','fit_issue'])
-table(rows(`SELECT feedback_type, COUNT(*) AS n FROM stylist_feedback WHERE COALESCE(archived,0)=0 GROUP BY 1`)
-  .filter(r => !WEIGHTED.has(r.feedback_type)).sort((a, b) => b.n - a.n),
-  ['feedback_type', 'n'])
+h('6. Active feedback types (routing authority lives in lib/feedbackTaxonomy.js)')
+console.log('  There is no generic feedback-weight table or generic deterministic scorer.')
+console.log('  Only canonical garment_context_suitability evidence can affect ranking, at -6 per exact context match capped at -12.')
+table(rows(`SELECT feedback_type, target_type, COUNT(*) AS n FROM stylist_feedback
+            WHERE COALESCE(archived,0)=0 GROUP BY 1,2 ORDER BY n DESC`),
+  ['feedback_type', 'target_type', 'n'])
 
 h('7. renderer_calibration rows (target type with no reader)')
 table(rows(`SELECT feedback_type, context_type, COUNT(*) AS n FROM stylist_feedback
             WHERE COALESCE(archived,0)=0 AND target_type='renderer_calibration' GROUP BY 1,2 ORDER BY n DESC`),
   ['feedback_type', 'context_type', 'n'])
 
-h('8. saved_boards as a feedback store (favourites are a signal, not just a gallery)')
+h('8. saved_boards as a feedback and display store')
 table([
   { measure: 'boards, unarchived', n: one('SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0').n },
   { measure: '  favourited', n: one('SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0 AND COALESCE(favorite,0)=1').n },
   { measure: '  carrying feedback_labels', n: one("SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0 AND COALESCE(json_array_length(json_extract(payload,'$.feedback_labels')),0) > 0").n },
   { measure: '  scoped to a piece', n: one("SELECT COUNT(*) n FROM saved_boards WHERE COALESCE(archived,0)=0 AND context_type='piece'").n },
 ], ['measure', 'n'])
-console.log('  Read deterministically by getSavedBoardInfluenceForPair (favourite OR piece-scoped),')
-console.log('  and into prompts by getSavedBoardMemory / getSavedBoardRendererMemory.')
+console.log('  Read into prompts by getSavedBoardMemory / getSavedBoardRendererMemory.')
+console.log('  Board reactions do not mechanically promote their literal garment pairs.')
 
 h('9. Field confidence provenance (why "low" is not always a tagger judgment)')
 console.log('  Note the signature is "zero medium", not "zero medium or high" — a few pre-v2 highs exist.')
