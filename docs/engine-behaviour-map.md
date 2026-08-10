@@ -298,16 +298,10 @@ it only *discriminates* if its condition is sometimes false.
 | `compatibilityScoreForSelectedItem` | ranking of partners for one selected garment | unbounded sum of clamped terms |
 | `getRelevanceScore` (visual composer roster) | which pieces get an image slot | unbounded sum |
 | `scoreWholeWardrobeCandidate` | ranking of whole-wardrobe outfit candidates | unbounded sum |
-| `getFeedbackInfluenceForPair` | how past feedback shifts a pair | clamped ±60 |
-| `getSavedBoardInfluenceForPair` | how saved boards shift a pair | clamped 0…+70 |
-| `wholeWardrobeFeedbackInfluenceForCandidate` | how past feedback shifts a whole outfit | clamped ±80 |
+| `scopedWrongItemInfluenceForRows` | how a prior garment replacement shifts that garment in the same occasion/activity | −6 per exact context match, capped at −12 |
 
-The clamps are the important part of that last group: **feedback can never dominate.** Every
-feedback path is bounded — ±60 per pair, ±80 per outfit, and inside the outfit one the per-piece
-sub-terms are separately clamped (piece/formula to −55…+35, piece to −45…+30). No amount of
-repeated feedback on one garment can outweigh, say, the −60 occasion-incompatibility term in
-`scoreWholeWardrobeCandidate`. **[by design]** — the clamps are explicit `Math.max/Math.min` pairs,
-not accidents.
+The remaining feedback score is deliberately mild and context-bound. Relational outfit feedback
+is prompt guidance; it does not mechanically reinforce literal garments or combinations.
 
 ### `planWorkbenchPieceScore` — measured
 
@@ -391,24 +385,13 @@ structured tags (season, formality, occasion), not against material or name word
 can trigger a penalty attributed to the whole outfit. The `-60` occasion-incompatibility term and
 the `-18` support-only term are the structured exceptions.
 
-### Feedback weights
+### Feedback authority
 
-`feedbackWeight` (`rules.js:452`) is the single table behind every feedback path:
-`signature +38`, `good_pieces +16`, `good_formula +14`, `works +22`, `almost +4`; and negatively
-`bad_reference -36`, `catalog_drift -34`, `fit_issue -34`, `not_me -32`, `too_generic -26`,
-`weak_structure -24`, `proportion_problem` / `wrong_proportions` / `wrong_item_read -24`,
-`bad_occasion -22`, `too_safe -22`, `too_soft -20`, `bad_grounding -20`, `too_boho -18`,
-`weak_contrast -18`, `too_polished -16`, `wrong_silhouette -8`. A row marked `is_gold` adds `+35`
-on top.
-
-**[by design]** Negatives outweigh positives roughly 1.5:1 at the extremes — the strongest rejection
-(`-36`) is worth about the same as the strongest endorsement plus nothing else. Note `almost` is
-`+4`: nearly neutral, which matches the saved-board path where `almost` is worth `6` against a
-favorite's `45`.
-
-**[by design]** Image-fidelity feedback is excluded from styling influence: `wrong_length`,
-`wrong_garment_details`, `body_proportions_drift`, `identity_drift`, `bad_reference` are dropped
-when they came from a generated visual board, because they judge the *render*, not the outfit.
+The former generic `feedbackWeight` table and its pair, board, roster and whole-outfit consumers
+have been removed. Outfit reactions are classified for prompt memory as positive, qualified, or
+negative evidence; they do not become literal garment weights. Image-fidelity feedback reaches
+renderer memory only. Canonical `garment_context_suitability` evidence is the exception: it applies
+−6 to the named garment for an exact occasion/activity match, capped at −12 across repeated rows.
 
 ### The two sub-scorers, measured
 
@@ -438,43 +421,17 @@ user intent rather than garment text, and correctly `ratchet-allow`ed as such.
 
 ### `compatibilityScoreForSelectedItem` — measured
 
-Sampling the six pieces that carry the most feedback (choosing an arbitrary selected piece measures
-nothing but its emptiness), against the whole wardrobe — 1410 pairs:
+The historical feedback-pair sampling below is retired with the generic scorer. The live personal
+pair terms are explicit garment metadata plus the typed contextual reaction:
 
 | term | fires |
 |---|---|
 | `+16` confirmed pairing note | **0** |
 | `−40` rejected pairing note | **0** |
-| `±60` `getFeedbackInfluenceForPair` returns a score | 13 (0.9%) |
-| `0…+70` `getSavedBoardInfluenceForPair` returns a score | 1 (0.1%) |
+| `−6…−12` exact-context garment reaction | depends on canonical scoped evidence and current context |
 
-Total score range −85…+82, median −4. So the pair-history terms — the ones that make this scorer
-*personal* rather than generic — are effectively silent even for the wardrobe's most-annotated
-garments. What ranks candidates in practice is the weather, formality and occasion terms, which
-fire on nearly everything.
-
-### The dead terms — features built, never used
-
-Four scoring terms are keyed on two columns that are empty across the entire database:
-
-- **`pieces.favorite` = 0 of 236.** Feeds `+4` in `compatibilityScoreForSelectedItem` and `+5`
-  ("favorite piece") in `scoreWholeWardrobeCandidate`.
-- **`saved_boards.favorite` = 0 of 237.** Feeds the `+45` branch of
-  `getSavedBoardInfluenceForPair` — the single largest positive signal in the board path, against
-  `18` for an ordinary positive board and `6` for *Almost*.
-
-**Neither is a missing feature.** The piece heart is on every card (`PieceCard.jsx:93`), with
-`PATCH /api/pieces/:id/favorite`, a `favorites=true` filter and `ORDER BY favorite DESC` behind it.
-The board equivalent is the **"Use strongly"** control in the Visual Lab board sheet
-(`VisualLab.jsx:967`), which writes `saved_boards.favorite` and drives the prompt line at
-`routes/ai.js:1116` that announces *"Use strongly boards are high-authority outfit memory"*.
-
-Both are built, wired end to end, and have never been used once. The consequence is that the
-engine's strongest positive signals are inert, and the `favorite = 1` clauses in
-`getSavedBoardMemory`'s and `getSavedBoardInfluenceForPair`'s SQL currently select nothing — those
-queries reduce to their feedback-label branches. This is an adoption fact, not a code defect: every
-one of these terms would come alive the moment a single piece or board is marked. Worth knowing
-before anyone concludes the memory system is weak — a large part of it has never been switched on.
+Saved-board and garment favourites remain organization/display metadata and prompt evidence where
+explicitly described; they do not mechanically promote literal pieces or pairs.
 
 ### Recency, again — as a score
 

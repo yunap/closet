@@ -739,7 +739,6 @@ export default function StylistChat({
   const [homeLocationInput, setHomeLocationInput] = useState('')
   const [homeLocationOpen, setHomeLocationOpen] = useState(false)
   const [homeLocationSaving, setHomeLocationSaving] = useState(false)
-  const [savedIndices, setSavedIndices] = useState(new Set())
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
   const [feedbackIdsByKey, setFeedbackIdsByKey] = useState({})
   const [boardFeedbackLabels, setBoardFeedbackLabels] = useState({})
@@ -819,7 +818,6 @@ export default function StylistChat({
       evaluationResultsByKey: updatedFields.evaluationResultsByKey ?? evaluationResultsByKey,
       savedBoardKeys: Array.from(updatedFields.savedBoardKeys ?? savedBoardKeys),
       feedbackSaved: Array.from(updatedFields.feedbackSaved ?? feedbackSaved),
-      savedIndices: Array.from(updatedFields.savedIndices ?? savedIndices),
       feedbackIdsByKey: updatedFields.feedbackIdsByKey ?? feedbackIdsByKey,
       boardFeedbackLabels: updatedFields.boardFeedbackLabels ?? boardFeedbackLabels
     }
@@ -931,7 +929,6 @@ export default function StylistChat({
         evaluationResultsByKey,
         savedBoardKeys,
         feedbackSaved,
-        savedIndices,
         feedbackIdsByKey,
         boardFeedbackLabels
       })
@@ -961,7 +958,6 @@ export default function StylistChat({
       setEvaluationResultsByKey({})
       setSavedBoardKeys(new Set())
       setFeedbackSaved(new Set())
-      setSavedIndices(new Set())
       setFeedbackIdsByKey({})
       setBoardFeedbackLabels({})
       setVisibleMessageStart(0)
@@ -995,7 +991,6 @@ export default function StylistChat({
       setEvaluationResultsByKey(thread.payload.evaluationResultsByKey || {})
       setSavedBoardKeys(new Set(thread.payload.savedBoardKeys || []))
       setFeedbackSaved(new Set(thread.payload.feedbackSaved || []))
-      setSavedIndices(new Set(thread.payload.savedIndices || []))
       setFeedbackIdsByKey(thread.payload.feedbackIdsByKey || {})
       setBoardFeedbackLabels(thread.payload.boardFeedbackLabels || {})
       
@@ -1331,7 +1326,6 @@ export default function StylistChat({
             evaluationResultsByKey: t.evaluationResultsByKey || {},
             savedBoardKeys: t.savedBoardKeys || [],
             feedbackSaved: t.feedbackSaved || [],
-            savedIndices: t.savedIndices || [],
             feedbackIdsByKey: t.feedbackIdsByKey || {},
             boardFeedbackLabels: t.boardFeedbackLabels || {}
           }
@@ -1451,7 +1445,6 @@ export default function StylistChat({
         evaluationResultsByKey,
         savedBoardKeys,
         feedbackSaved,
-        savedIndices,
         feedbackIdsByKey,
         boardFeedbackLabels
       })
@@ -1474,7 +1467,6 @@ export default function StylistChat({
     evaluationResultsByKey,
     savedBoardKeys,
     feedbackSaved,
-    savedIndices,
     feedbackIdsByKey,
     boardFeedbackLabels
   ])
@@ -1722,14 +1714,6 @@ export default function StylistChat({
     background: tone === 'strong' ? 'var(--surface)' : 'var(--surface-2)',
     color: tone === 'strong' ? 'var(--accent)' : 'var(--text-muted)',
   })
-
-  const saveMessageToNotes = async (messageIndex, text) => {
-    if (!activeContext) return
-    const url = activeContext.type === 'piece' ? `/api/pieces/${activeContext.id}/append-note` : `/api/outfits/${activeContext.id}/append-note`
-    await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-    setSavedIndices(prev => new Set([...prev, messageIndex]))
-  }
-
 
   const isMultiOutfitResponse = (message) => {
     if (!message || message.role !== 'assistant') return false
@@ -3210,6 +3194,7 @@ export default function StylistChat({
                       formulaFamily: outfit.formulaFamily || '',
                       archetypeId: outfit.archetypeId || '',
                       occasion: wardrobeOutfitOccasion,
+                      activity: outfit?.activity || wardrobeOutfitActivity || 'none',
                       season: wardrobeOutfitSeason,
                       mood: wardrobeOutfitMood,
                       ...(message?.source === 'visual_composer' ? { source: 'visual_composer' } : {})
@@ -3421,6 +3406,7 @@ export default function StylistChat({
                                           formulaFamily: outfit.formulaFamily || '',
                                           archetypeId: outfit.archetypeId || '',
                                           occasion: wardrobeOutfitOccasion,
+                                          activity: outfit?.activity || wardrobeOutfitActivity || 'none',
                                           season: wardrobeOutfitSeason,
                                           mood: wardrobeOutfitMood,
                                         },
@@ -3432,7 +3418,7 @@ export default function StylistChat({
                                     <PieceActionSwapIcon />
                                     <span className="piece-action-menu-item-body">
                                       <span className="piece-action-menu-item-label">{isSwapped ? '✓ Replaced in this outfit' : 'Replace in this outfit'}</span>
-                                      <span className="piece-action-menu-item-hint">Flags this piece as wrong for this look and steers your stylist away from choosing it as often. Everything else here stays the same.</span>
+                                      <span className="piece-action-menu-item-hint">Records that this piece was wrong for this look. Your stylist keeps it as contextual feedback rather than avoiding the garment everywhere.</span>
                                     </span>
                                   </button>
                                   <div className="piece-action-menu-divider" />
@@ -3687,6 +3673,7 @@ export default function StylistChat({
                                     onClick={() => saveGeneratedBoard({
                                       key: saveKey,
                                       board,
+                                      outfit,
                                       boardType: message?.wholeWardrobe ? 'whole_wardrobe_board' : 'editorial_direction',
                                       messageIndex,
                                       boardIndex: idx,
@@ -3870,15 +3857,15 @@ export default function StylistChat({
 
   const feedbackBucketKey = (targetType, payload = {}) => {
     if (!payload || !Number.isInteger(payload.messageIndex) || !Number.isInteger(payload.boardIndex)) return null
-    if (['generated_visual_board', 'board', 'renderer_calibration'].includes(targetType)) return `${targetType}:${payload.messageIndex}:${payload.boardIndex}`
+    if (['generated_visual_board', 'board'].includes(targetType)) return `${targetType}:${payload.messageIndex}:${payload.boardIndex}`
     return null
   }
 
   const feedbackLearningCopy = (feedbackType) => {
     const copy = {
-      signature: 'Learning saved: boosting this as a signature direction.',
-      works: 'Learning saved: boosting similar outfit logic.',
-      good_formula: 'Learning saved: boosting this formula without overcommitting to every exact piece.',
+      signature: 'Learning saved as a signature direction, without promoting the literal garments.',
+      works: 'Learning saved as transferable outfit logic, without promoting the literal garments.',
+      good_formula: 'Learning saved about this formula without promoting every exact piece.',
       good_pieces: 'Learning saved: these pieces look promising together.',
       almost: 'Learning saved: treating this as close but not fully solved.',
       not_me: 'Learning saved: reducing this direction for future suggestions.',
@@ -3888,9 +3875,7 @@ export default function StylistChat({
       too_boho: 'Learning saved: reducing costume/festival stereotype drift, not bohemian or folk-artisan style itself.',
       too_generic: 'Learning saved: reducing generic outfit logic.',
       too_soft: 'Learning saved: reducing excessive softness.',
-      wrong_proportions: 'Learning saved: avoiding this proportion behavior.',
       wrong_silhouette: 'Learning saved: avoiding this silhouette behavior.',
-      catalog_drift: 'Learning saved: reducing catalog/mature-casual drift.',
       weak_structure: 'Learning saved: requiring stronger structure next time.',
       weak_contrast: 'Learning saved: requiring clearer contrast/tension next time.',
       bad_grounding: 'Learning saved: improving shoe/grounding logic next time.',
@@ -4080,13 +4065,13 @@ export default function StylistChat({
     }
   }
 
-  const saveGeneratedBoard = async ({ key, board, boardType = 'wardrobe', messageIndex = null, boardIndex = null, contextOverride = null }) => {
+  const saveGeneratedBoard = async ({ key, board, outfit = null, boardType = 'wardrobe', messageIndex = null, boardIndex = null, contextOverride = null }) => {
     const context = contextOverride || activeContext || { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
     if (!board || !board.imageUrl) return
     const res = await fetch('/api/saved-boards', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boardType, contextType: context.type, contextId: context.id, contextName: context.name, title: board.label || board.title || 'Saved board', imageUrl: board.imageUrl, pieces: board.pieces || [], missingPieces: board.missingPieces || [], reason: board.reason || '', watchFor: board.watchFor || '', payload: { board, messageIndex, boardIndex, threadId: currentThreadId } })
+      body: JSON.stringify({ boardType, contextType: context.type, contextId: context.id, contextName: context.name, title: board.label || board.title || 'Saved board', imageUrl: board.imageUrl, pieces: board.pieces || [], missingPieces: board.missingPieces || [], reason: board.reason || '', watchFor: board.watchFor || '', payload: { board, ...(outfit ? { outfit } : {}), messageIndex, boardIndex, threadId: currentThreadId } })
     })
     if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Could not save board') }
     setSavedBoardKeys(prev => new Set([...prev, key]))
@@ -5138,7 +5123,9 @@ export default function StylistChat({
         replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
-          triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
+          triggerToast(lastCorrection.scope === 'piece'
+            ? `Saved for ${lastCorrection.piece_name}: "${lastCorrection.note}"`
+            : `Saved styling preference: "${lastCorrection.note}"`)
         }
         if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
           const source = data.structuredOutfitsSource || 'whole_wardrobe'
@@ -5213,7 +5200,9 @@ export default function StylistChat({
         replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
-          triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
+          triggerToast(lastCorrection.scope === 'piece'
+            ? `Saved for ${lastCorrection.piece_name}: "${lastCorrection.note}"`
+            : `Saved styling preference: "${lastCorrection.note}"`)
         }
         if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
           const source = data.structuredOutfitsSource || 'whole_wardrobe'
@@ -5286,7 +5275,9 @@ export default function StylistChat({
         }
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
-          triggerToast(`Saved styling preference: "${lastCorrection.note}"`)
+          triggerToast(lastCorrection.scope === 'piece'
+            ? `Saved for ${lastCorrection.piece_name}: "${lastCorrection.note}"`
+            : `Saved styling preference: "${lastCorrection.note}"`)
         }
         if (Array.isArray(replyStructuredOutfits) && replyStructuredOutfits.length) {
           const source = data.structuredOutfitsSource || 'whole_wardrobe'
@@ -6157,13 +6148,6 @@ export default function StylistChat({
               {m.role === 'assistant' && !m.isError && i > 0 && activeContext && i === latestAssistantIndex && (
                 <div style={{ marginTop: 4, marginBottom: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
-                    {(!boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text)) && (savedIndices.has(i) ? (
-                      <span style={{ fontSize: 11, color: 'var(--donate)', display: 'flex', alignItems: 'center', gap: 4, padding: '3px 10px' }}>Saved to {activeContext.name}</span>
-                    ) : (
-                      <button onClick={() => saveMessageToNotes(i, m.text)} style={{ fontSize: 11, color: 'var(--text-muted)', padding: '3px 10px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                        Save as styling rule for {activeContext.name}
-                      </button>
-                    ))}
                     {activeContext.type === 'piece' && !isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && (
                       <button onClick={() => generateVisualBoards(i, m.text, null, null, i)} disabled={boardLoadingIndex === i} style={{ fontSize: 11, color: 'var(--accent)', padding: '3px 10px', borderRadius: 12, border: '1px solid var(--accent)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 4, cursor: boardLoadingIndex === i ? 'default' : 'pointer', opacity: boardLoadingIndex === i ? 0.65 : 1 }}>
                         {boardLoadingIndex === i ? 'Generating boards...' : (boardResults[i]?.length ? 'Regenerate boards' : 'Generate visual boards')}

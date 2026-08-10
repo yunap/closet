@@ -30,6 +30,7 @@ import {
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingIntent, normalizeActivity, normalizeOccasion } from './stylingIntent.js'
 import { bottomKind, pieceReadsAsStandaloneBaseTop } from './attributes.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
+import { getStylistConversationState } from './conversationState.js'
 
 export const CAPSULE_PLAN_EVIDENCE_BOUNDARY = ` Capsule evidence boundary: a requested colour may serve any visual role and never has to be a hero piece. A roster piece absent from the representative cards means only "not demonstrated" — never rejected, bad, or previously flagged. State a requested-colour shortage or wardrobe gap only when a plan_line explicitly reports insufficient eligible supply; absence from the roster or cards is not supply evidence.`
 
@@ -585,13 +586,14 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "store_user_correction",
-    description: "Store a DURABLE taste preference or correction the user themselves stated (e.g., 'I do not wear flats'). NEVER store situational or trip facts (this week's weather, a destination, what today's request needs) — those live in THREAD STATE and would wrongly bias every future conversation. If the user didn't say it as a lasting preference, don't store it.",
+    description: "Store a DURABLE taste preference or correction the user themselves stated. Use piece_id when the statement is about one exact garment; it is verified against garments established in this conversation and saved to that garment rather than globally. Omit piece_id for genuinely wardrobe-wide rules such as 'I do not wear flats'. NEVER store situational or trip facts (this week's weather, a destination, what today's request needs) — those live in THREAD STATE.",
     input_schema: {
       type: "object",
       properties: {
         note: { type: "string", description: "The user preference or correction text." },
         context_type: { type: "string", description: "Context type: 'outfit' or 'general'" },
-        context_id: { type: "integer", description: "Optional outfit ID if context is outfit" }
+        context_id: { type: "integer", description: "Optional outfit ID if context is outfit" },
+        piece_id: { type: "integer", description: "Exact garment ID when this correction applies only to one garment. Use only an ID retrieved or established in the current conversation." }
       },
       required: ["note"]
     }
@@ -1861,9 +1863,22 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return getCurrentImageInventory(state)
       }
       case 'store_user_correction': {
-        const { note, context_type, context_id } = args
-        storeUserCorrection(note, context_type || 'general', context_id)
-        return { status: "success", message: "Correction stored successfully." }
+        const { note, context_type, context_id, piece_id } = args
+        if (piece_id !== undefined && piece_id !== null) {
+          const pieceId = Number(piece_id)
+          const { retrieved, known } = verifiedPieceIdSets(toolContext)
+          const activePieceId = toolContext?.activeContext?.type === 'piece'
+            ? Number(toolContext.activeContext.id)
+            : null
+          const verified = retrieved.has(pieceId) || known.has(pieceId) || activePieceId === pieceId
+          if (!verified) {
+            return {
+              status: 'validation_error',
+              message: `Piece ${pieceId} is not verified in the current conversation. Retrieve or establish the exact garment before saving a garment-specific correction. Nothing was stored.`,
+            }
+          }
+        }
+        return storeUserCorrection(note, context_type || 'general', context_id, { pieceId: piece_id })
       }
       case 'plan_outfit_set': {
         // Same declared-intent contract as the other composing tools (step 4).
@@ -2419,18 +2434,38 @@ export function getCurrentImageInventory(state) {
   return state.visible_image_inventory
 }
 
-export function storeUserCorrection(note, contextType = 'general', contextId = null) {
+export function storeUserCorrection(note, contextType = 'general', contextId = null, { pieceId = null } = {}) {
   try {
     const trimmed = String(note || '').trim()
-    if (!trimmed) return
+    if (!trimmed) return { status: 'validation_error', message: 'Correction text is required. Nothing was stored.' }
+    const scopedPieceId = Number(pieceId) || null
+    if (scopedPieceId) {
+      const piece = db.prepare('SELECT id, name, styling_rules_learned FROM pieces WHERE id = ?').get(scopedPieceId)
+      if (!piece) return { status: 'validation_error', message: `Piece ${scopedPieceId} does not exist. Nothing was stored.` }
+      const rules = safeJsonParse(piece.styling_rules_learned, []) || []
+      if (rules.some(rule => String(rule).trim() === trimmed)) {
+        return { status: 'success', scope: 'piece', piece_id: scopedPieceId, piece_name: piece.name, message: 'This garment rule was already stored.' }
+      }
+      const savePieceRule = db.transaction(() => {
+        db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?')
+          .run(JSON.stringify([...rules, trimmed]), scopedPieceId)
+        db.prepare(`
+          INSERT INTO stylist_feedback
+          (feedback_type, target_type, context_type, context_id, context_name, note, payload)
+          VALUES ('piece_rule_receipt', 'piece', 'piece', ?, ?, ?, ?)
+        `).run(scopedPieceId, piece.name, trimmed, JSON.stringify({ pieceId: scopedPieceId, canonicalStore: 'pieces.styling_rules_learned' }))
+      })
+      savePieceRule()
+      return { status: 'success', scope: 'piece', piece_id: scopedPieceId, piece_name: piece.name, message: `Correction stored for ${piece.name}.` }
+    }
     // Dedupe: an identical live note must not stack — repeated turns were
     // multiplying the same text into the high-authority memory section.
     const existing = db.prepare(`
       SELECT id FROM stylist_feedback
-      WHERE note = ? AND COALESCE(archived, 0) = 0
+      WHERE note = ? AND feedback_type = 'owner_rule' AND COALESCE(archived, 0) = 0
       LIMIT 1
     `).get(trimmed)
-    if (existing) return
+    if (existing) return { status: 'success', scope: 'global', message: 'This global correction was already stored.' }
     // Spec 25 Part 2: 'owner_rule' going forward (previously
     // 'preference_reaction'/'message') — legacy rows keep matching via
     // isOwnerRuleRow's OR clause, no migration needed.
@@ -2438,33 +2473,9 @@ export function storeUserCorrection(note, contextType = 'general', contextId = n
       INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note)
       VALUES ('owner_rule', 'message', ?, ?, ?)
     `).run(contextType, contextId, trimmed)
+    return { status: 'success', scope: 'global', message: 'Global correction stored successfully.' }
   } catch (err) {
     console.error('storeUserCorrection error:', err)
-  }
-}
-
-export function getStylistConversationState(sessionId = 'default') {
-  try {
-    const row = db.prepare('SELECT state_json FROM stylist_conversation_state WHERE session_id = ?').get(sessionId)
-    if (!row) return {}
-    return JSON.parse(row.state_json || '{}')
-  } catch (err) {
-    console.error('getStylistConversationState error:', err)
-    return {}
-  }
-}
-
-export function saveStylistConversationState(state, sessionId = 'default') {
-  try {
-    const stateJson = JSON.stringify(state || {})
-    db.prepare(`
-      INSERT INTO stylist_conversation_state (session_id, state_json, updated_at)
-      VALUES (?, ?, datetime('now'))
-      ON CONFLICT(session_id) DO UPDATE SET
-        state_json = excluded.state_json,
-        updated_at = datetime('now')
-    `).run(sessionId, stateJson)
-  } catch (err) {
-    console.error('saveStylistConversationState error:', err)
+    return { status: 'error', message: 'Correction could not be stored.' }
   }
 }

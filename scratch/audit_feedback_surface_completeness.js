@@ -13,6 +13,7 @@ import Database from 'better-sqlite3'
 import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
+import { KNOWN_FEEDBACK_TYPES, SCOPED_EVIDENCE_KINDS } from '../lib/feedbackTaxonomy.js'
 
 const root = process.cwd()
 const dbPath = process.argv[2] || path.join(root, 'wardrobe.db')
@@ -36,6 +37,60 @@ for (const t of Object.keys(inv.sqlite)) {
   if (!tables.includes(t)) fail('sqlite', `inventory lists "${t}" but no such table exists`)
 }
 if (!problems) ok(`${tables.length} tables, all classified`)
+
+// ── Medium 1b: semantic types inside stylist_feedback ───────────────────────
+head('Medium 1b · Feedback semantics')
+const semanticInventory = inv.feedback_semantics || {}
+const destinationGroups = semanticInventory.types_by_destination || {}
+const aliases = semanticInventory.legacy_aliases || {}
+const inventoriedTypes = new Set([
+  ...Object.values(destinationGroups).flat(),
+  ...Object.keys(aliases),
+])
+const knownTypes = new Set(KNOWN_FEEDBACK_TYPES)
+for (const type of knownTypes) {
+  if (!inventoriedTypes.has(type)) fail('feedback type', `code accepts "${type}" but it has no semantic disposition`)
+}
+for (const type of inventoriedTypes) {
+  if (!knownTypes.has(type)) fail('feedback type', `semantic inventory lists stale type "${type}"`)
+}
+for (const [alias, canonical] of Object.entries(aliases)) {
+  if (!knownTypes.has(canonical)) fail('feedback alias', `"${alias}" maps to unknown canonical type "${canonical}"`)
+}
+const liveFeedbackTypes = db.prepare('SELECT DISTINCT feedback_type FROM stylist_feedback ORDER BY feedback_type')
+  .all().map(row => row.feedback_type).filter(Boolean)
+for (const type of liveFeedbackTypes) {
+  if (!inventoriedTypes.has(type)) fail('feedback type', `database contains unclassified type "${type}"`)
+}
+const liveBoardFeedbackTypes = db.prepare(`
+  SELECT DISTINCT labels.value AS feedback_type
+  FROM saved_boards, json_each(saved_boards.payload, '$.feedback_labels') AS labels
+  WHERE labels.value IS NOT NULL AND labels.value != ''
+  ORDER BY labels.value
+`).all().map(row => row.feedback_type)
+for (const type of liveBoardFeedbackTypes) {
+  if (!inventoriedTypes.has(type)) fail('feedback type', `saved board contains unclassified type "${type}"`)
+}
+
+const inventoriedKinds = new Set(Object.keys(semanticInventory.scoped_evidence_kinds || {}))
+const knownKinds = new Set(Object.values(SCOPED_EVIDENCE_KINDS))
+for (const kind of knownKinds) {
+  if (!inventoriedKinds.has(kind)) fail('evidence kind', `code defines "${kind}" but it has no semantic disposition`)
+}
+for (const kind of inventoriedKinds) {
+  if (!knownKinds.has(kind)) fail('evidence kind', `semantic inventory lists stale kind "${kind}"`)
+}
+const liveEvidenceKinds = db.prepare(`
+  SELECT DISTINCT kind FROM (
+    SELECT json_extract(payload, '$.scopedEvidence.kind') AS kind FROM stylist_feedback
+    UNION
+    SELECT json_extract(payload, '$.scoped_evidence.kind') AS kind FROM saved_boards
+  ) WHERE kind IS NOT NULL AND kind != ''
+`).all().map(row => row.kind)
+for (const kind of liveEvidenceKinds) {
+  if (!inventoriedKinds.has(kind)) fail('evidence kind', `database contains unclassified scoped evidence kind "${kind}"`)
+}
+if (!problems) ok(`${inventoriedTypes.size} feedback types and ${inventoriedKinds.size} scoped-evidence kinds classified`)
 
 // ── Medium 2: uploaded files ─────────────────────────────────────────────────
 head('Medium 2 · Uploaded files')

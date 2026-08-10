@@ -27,6 +27,12 @@ import {
 } from '../lib/subjectThumbnails.js'
 import { COLOR_TAXONOMY, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { queueColorTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
+import {
+  buildOutfitLogicEvidence,
+  canonicalFeedbackType,
+  KNOWN_FEEDBACK_TYPES,
+  SCOPED_EVIDENCE_KINDS,
+} from '../lib/feedbackTaxonomy.js'
 
 const router = express.Router()
 
@@ -491,27 +497,6 @@ router.put('/outfits/:id/pieces', (req, res) => {
   res.json({ success: true, main_piece_id: mainId })
 })
 
-router.patch('/pieces/:id/append-note', (req, res) => {
-  const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(req.params.id)
-  if (!piece) return res.status(404).json({ error: 'Not found' })
-  const { text } = req.body
-  const existing = JSON.parse(piece.styling_rules_learned || '[]')
-  const updated  = [...existing, text.trim()]
-  db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?').run(JSON.stringify(updated), req.params.id)
-  res.json({ styling_rules_learned: updated })
-})
-
-router.patch('/outfits/:id/append-note', (req, res) => {
-  const outfit = db.prepare('SELECT * FROM outfits WHERE id = ?').get(req.params.id)
-  if (!outfit) return res.status(404).json({ error: 'Not found' })
-  const { text } = req.body
-  const existing = outfit.notes || ''
-  const separator = existing.trim() ? '\n\n' : ''
-  const updated = existing + separator + '— Stylist: ' + text.trim()
-  db.prepare('UPDATE outfits SET notes = ? WHERE id = ?').run(updated, req.params.id)
-  res.json({ notes: updated })
-})
-
 // ── Stylist feedback / learning API ───────────────────────────────────────────
 function feedbackBoardImage(rowOrPayload) {
   const payload = typeof rowOrPayload?.payload === 'string'
@@ -579,7 +564,7 @@ function clearThreadBoardFeedbackSnapshot(row) {
     const threadId = payload.threadId
     if (!threadId) return
     if (!Number.isInteger(payload.messageIndex) || !Number.isInteger(payload.boardIndex)) return
-    if (!['generated_visual_board', 'board', 'renderer_calibration'].includes(row.target_type)) return
+    if (!['generated_visual_board', 'board'].includes(row.target_type)) return
     const bucket = `${row.target_type}:${payload.messageIndex}:${payload.boardIndex}`
     const thread = db.prepare('SELECT * FROM chat_threads WHERE id = ?').get(threadId)
     if (!thread) return
@@ -646,7 +631,7 @@ export function syncStructuredReasonsFromSavedBoard(row, previousDetails, nextDe
   }
 }
 
-function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
+export function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
   // style_direction/shape_balance are handled at the specific-reason level by
   // syncStructuredReasonsFromSavedBoard above; skip them here so this generic,
   // group-label-only sync doesn't insert a reason-less duplicate row alongside it.
@@ -654,7 +639,7 @@ function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
   const next = new Set(nextLabels.filter(label => !STRUCTURED_FEEDBACK_CATEGORIES.includes(label)))
   const imageUrl = row.image_url
   const boardPayload = safeJsonParse(row.payload, {}) || {}
-  const feedbackPayload = { board: boardPayload.board || { imageUrl, label: row.title, pieces: safeJsonParse(row.pieces, []) } }
+  const boardInfo = boardPayload.board || { imageUrl, label: row.title, pieces: safeJsonParse(row.pieces, []) }
   const findRows = db.prepare(`
     SELECT * FROM stylist_feedback
     WHERE feedback_type = ? AND target_type = 'generated_visual_board'
@@ -665,9 +650,23 @@ function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
   for (const label of new Set([...previous, ...next])) {
     const matches = findRows.all(label, imageUrl)
     if (next.has(label)) {
+      const scopedEvidence = buildOutfitLogicEvidence(label, boardPayload)
+      const feedbackPayload = {
+        board: boardInfo,
+        ...(boardPayload.outfit ? { outfit: boardPayload.outfit } : {}),
+        ...(scopedEvidence ? { scopedEvidence } : {}),
+      }
       const existing = matches[0]
       if (existing) {
-        if (existing.archived) db.prepare('UPDATE stylist_feedback SET archived = 0 WHERE id = ?').run(existing.id)
+        const existingPayload = safeJsonParse(existing.payload, {}) || {}
+        const mergedPayload = {
+          ...existingPayload,
+          board: boardInfo,
+          ...(boardPayload.outfit ? { outfit: boardPayload.outfit } : {}),
+          ...(scopedEvidence ? { scopedEvidence } : {}),
+        }
+        db.prepare('UPDATE stylist_feedback SET archived = 0, payload = ? WHERE id = ?')
+          .run(JSON.stringify(mergedPayload), existing.id)
       } else {
         db.prepare(`
           INSERT INTO stylist_feedback
@@ -681,7 +680,7 @@ function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
           row.title || '',
           row.reason || '',
           JSON.stringify(feedbackPayload),
-          label === 'signature' ? 1 : 0
+          0
         )
       }
     } else if (previous.has(label)) {
@@ -770,21 +769,51 @@ router.post('/stylist-feedback', (req, res) => {
     } = req.body || {}
 
     if (!feedbackType) return res.status(400).json({ error: 'feedbackType is required' })
+    if (targetType === 'renderer_calibration') {
+      return res.status(410).json({
+        error: 'renderer_calibration is retired; use generated-board image-fidelity feedback',
+      })
+    }
+    if (!KNOWN_FEEDBACK_TYPES.includes(feedbackType)) {
+      return res.status(400).json({ error: `Unknown feedbackType: ${feedbackType}` })
+    }
+
+    const storedFeedbackType = canonicalFeedbackType(feedbackType)
+    const outfit = payload?.outfit || {}
+    const outfitLogicEvidence = buildOutfitLogicEvidence(storedFeedbackType, payload)
+    const storedPayload = storedFeedbackType === 'wrong_item_read' ? {
+      ...(payload || {}),
+      scopedEvidence: {
+        version: 1,
+        kind: SCOPED_EVIDENCE_KINDS.GARMENT_CONTEXT_SUITABILITY,
+        subjectPieceId: Number(payload?.pieceId || payload?.piece_id) || null,
+        strength: 'weak',
+        context: {
+          occasion: String(payload?.occasion || outfit?.occasion || outfit?.bestFor || '').trim(),
+          activity: String(payload?.activity || outfit?.activity || 'none').trim(),
+          season: String(payload?.season || outfit?.season || '').trim(),
+          mood: String(payload?.mood || outfit?.mood || '').trim(),
+        },
+      },
+    } : (outfitLogicEvidence ? {
+      ...(payload || {}),
+      scopedEvidence: outfitLogicEvidence,
+    } : (payload || {}))
 
     const result = db.prepare(`
       INSERT INTO stylist_feedback
       (feedback_type, target_type, context_type, context_id, context_name, label, note, payload, is_gold)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      feedbackType,
+      storedFeedbackType,
       targetType,
       contextType,
       contextId ? Number(contextId) : null,
       contextName || '',
       label || '',
       note || '',
-      JSON.stringify(payload || {}),
-      feedbackType === 'signature' ? 1 : 0
+      JSON.stringify(storedPayload),
+      0
     )
 
     const insertedFeedback = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(result.lastInsertRowid)
@@ -807,24 +836,23 @@ router.post('/stylist-feedback', (req, res) => {
     // above is the canonical record and every reader of it still sees it.
 
     const learningMessages = {
-      signature: 'Learning saved: boosting this as a signature direction. The board itself is not saved unless you click Save board.',
-      works: 'Learning saved: boosting similar outfit logic. The board itself is not saved unless you click Save board.',
-      good_formula: 'Learning saved: boosting this formula without overcommitting to every exact piece.',
+      signature: 'Learning saved as a signature direction. The board itself is not saved unless you click Save board.',
+      works: 'Learning saved as scoped outfit feedback. The board itself is not saved unless you click Save board.',
+      good_formula: 'Learning saved about this formula without promoting every exact piece.',
       good_pieces: 'Learning saved: these pieces look promising together.',
       almost: 'Learning saved: treating this as close but not fully solved.',
-      not_me: 'Learning saved: reducing this direction for future suggestions.',
-      bad_occasion: 'Learning saved: reducing this formula for this occasion.',
+      not_me: 'Learning saved as scoped feedback about this direction.',
+      bad_occasion: 'Learning saved for this formula and occasion.',
       fit_issue: 'Learning saved: treating this as a fit-risk combination.',
-      too_safe: 'Learning saved: reducing safe/over-balanced styling.',
-      too_boho: 'Learning saved: reducing costume/festival stereotype drift, not bohemian or folk-artisan style itself.',
-      too_generic: 'Learning saved: reducing generic outfit logic.',
-      too_soft: 'Learning saved: reducing excessive softness.',
-      wrong_proportions: 'Learning saved: avoiding this proportion behavior.',
+      too_safe: 'Learning saved: this outfit felt too safe or over-balanced.',
+      too_boho: 'Learning saved: this outfit drifted toward a costume/festival stereotype, not away from bohemian or folk-artisan style itself.',
+      too_generic: 'Learning saved: this outfit felt generic.',
+      too_soft: 'Learning saved: this outfit felt excessively soft.',
       wrong_silhouette: 'Learning saved: this silhouette is wrong for this selected piece/board, not a global silhouette ban.',
-      catalog_drift: 'Learning saved: reducing catalog/mature-casual drift.',
       weak_structure: 'Learning saved: requiring stronger structure next time.',
       weak_contrast: 'Learning saved: requiring clearer contrast/tension next time.',
       bad_grounding: 'Learning saved: improving shoe/grounding logic next time.',
+      wrong_item_read: 'Learning saved for this garment in this outfit context; it is not a global garment rejection.',
       bad_reference: 'Learning saved: using this as a negative reference.',
       style_direction: 'Learning saved: correcting this part of the outfit’s overall feel.',
       shape_balance: 'Learning saved: correcting this fit or shape issue.',
@@ -834,7 +862,7 @@ router.post('/stylist-feedback', (req, res) => {
       wrong_length: 'Rendering correction saved: preserve garment length.'
     }
 
-    res.json({ success: true, id: result.lastInsertRowid, learningMessage: learningMessages[feedbackType] || 'Learning saved.' })
+    res.json({ success: true, id: result.lastInsertRowid, learningMessage: learningMessages[storedFeedbackType] || 'Learning saved.' })
   } catch (err) {
     console.error('Stylist feedback error:', err)
     res.status(500).json({ error: err.message })
@@ -852,7 +880,7 @@ router.get('/stylist-feedback', (req, res) => {
   const rows = db.prepare(`
     SELECT * FROM stylist_feedback
     ${where}
-    ORDER BY COALESCE(is_gold,0) DESC, id DESC
+    ORDER BY id DESC
     LIMIT ?
   `).all(...params, Number(limit))
   const boardIdsByImage = new Map(db.prepare('SELECT id, image_url FROM saved_boards WHERE image_url IS NOT NULL AND image_url != ?').all('').map(row => [row.image_url, row.id]))
@@ -866,34 +894,67 @@ router.get('/stylist-feedback', (req, res) => {
       referenced_board_id: boardIdsByImage.get(feedbackBoardImage(payload)) || null,
       referenced_thread_id: referencedThreadForFeedback(r, payload),
     }
-  }))
+}))
 })
+
+export function syncPieceRuleReceipt(row, { note = row.note, archived = Boolean(row.archived) } = {}) {
+  if (row.feedback_type !== 'piece_rule_receipt') return
+  const payload = safeJsonParse(row.payload, {}) || {}
+  const pieceId = Number(payload.pieceId || row.context_id)
+  if (!pieceId) throw new Error('Piece-scoped correction is missing its canonical piece ID')
+  const piece = db.prepare('SELECT styling_rules_learned FROM pieces WHERE id = ?').get(pieceId)
+  if (!piece) throw new Error(`Piece ${pieceId} no longer exists`)
+  const rules = safeJsonParse(piece.styling_rules_learned, []) || []
+  const previousNote = String(row.note || '').trim()
+  const nextNote = String(note || '').trim()
+  const previousRuleExists = rules.some(rule => String(rule).trim() === previousNote)
+  const isReactivating = Boolean(row.archived) && !archived
+  if (!archived && !previousRuleExists && !isReactivating) {
+    const error = new Error('This garment rule was edited or removed on the garment card. Refresh Conversation Memory before editing its receipt.')
+    error.status = 409
+    throw error
+  }
+  let nextRules = rules.filter(rule => String(rule).trim() !== previousNote)
+  if (!archived && nextNote && !nextRules.some(rule => String(rule).trim() === nextNote)) {
+    nextRules.push(nextNote)
+  }
+  db.prepare('UPDATE pieces SET styling_rules_learned = ? WHERE id = ?')
+    .run(JSON.stringify(nextRules), pieceId)
+}
 
 router.patch('/stylist-feedback/:id', (req, res) => {
   try {
     const row = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
     if (!row) return res.status(404).json({ error: 'Feedback not found' })
-    const { isGold, archived, note, label } = req.body || {}
+    const { archived, note, label } = req.body || {}
     const next = {
-      is_gold: typeof isGold === 'boolean' ? (isGold ? 1 : 0) : row.is_gold || 0,
       archived: typeof archived === 'boolean' ? (archived ? 1 : 0) : row.archived || 0,
       note: typeof note === 'string' ? note : row.note,
       label: typeof label === 'string' ? label : row.label,
     }
-    db.prepare('UPDATE stylist_feedback SET is_gold = ?, archived = ?, note = ?, label = ? WHERE id = ?')
-      .run(next.is_gold, next.archived, next.note, next.label, req.params.id)
+    const updateFeedback = db.transaction(() => {
+      syncPieceRuleReceipt(row, { note: next.note, archived: Boolean(next.archived) })
+      db.prepare('UPDATE stylist_feedback SET archived = ?, note = ?, label = ? WHERE id = ?')
+        .run(next.archived, next.note, next.label, req.params.id)
+    })
+    updateFeedback()
     const updated = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
     syncSavedBoardFromFeedback(updated)
     res.json({ ...updated, is_gold: Boolean(updated.is_gold), archived: Boolean(updated.archived), payload: safeJsonParse(updated.payload, {}) })
   } catch (err) {
     console.error('Update stylist feedback error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
 router.delete('/stylist-feedback/:id', (req, res) => {
   try {
-    db.prepare('UPDATE stylist_feedback SET archived = 1 WHERE id = ?').run(req.params.id)
+    const row = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
+    const archiveFeedback = db.transaction(() => {
+      if (row) syncPieceRuleReceipt(row, { archived: true })
+      db.prepare('UPDATE stylist_feedback SET archived = 1 WHERE id = ?').run(req.params.id)
+    })
+    archiveFeedback()
     const updated = db.prepare('SELECT * FROM stylist_feedback WHERE id = ?').get(req.params.id)
     if (updated) {
       syncSavedBoardFromFeedback(updated)
@@ -1044,10 +1105,14 @@ router.post('/saved-boards', async (req, res) => {
       .filter(row => row.feedback_type === 'wrong_length')
       .map(row => safeJsonParse(row.payload, {})?.length_correction)
       .filter(correction => Number(correction?.piece_id) && correction?.issue)
+    const syncedFeedbackLabels = [...new Set([...suppliedFeedbackLabels, ...existingFeedbackLabels])]
+    const activeLogicVerdict = ['signature', 'works', 'almost'].find(label => syncedFeedbackLabels.includes(label))
+    const scopedEvidence = activeLogicVerdict ? buildOutfitLogicEvidence(activeLogicVerdict, payload) : null
     const syncedPayload = {
       ...(payload || {}),
-      feedback_labels: [...new Set([...suppliedFeedbackLabels, ...existingFeedbackLabels])],
+      feedback_labels: syncedFeedbackLabels,
       feedback_details: syncedFeedbackDetails,
+      ...(scopedEvidence ? { scoped_evidence: scopedEvidence } : {}),
     }
 
     const result = db.prepare(`
@@ -1185,7 +1250,11 @@ router.patch('/saved-boards/:id', (req, res) => {
     const nextFeedbackDetails = feedbackDetails && typeof feedbackDetails === 'object' && !Array.isArray(feedbackDetails)
       ? feedbackDetails
       : (payload.feedback_details || {})
+    const activeLogicVerdict = ['signature', 'works', 'almost'].find(label => nextFeedbackLabels.includes(label))
+    const scopedEvidence = activeLogicVerdict ? buildOutfitLogicEvidence(activeLogicVerdict, payload) : null
     const nextPayload = { ...payload, feedback_labels: nextFeedbackLabels, feedback_details: nextFeedbackDetails }
+    if (scopedEvidence) nextPayload.scoped_evidence = scopedEvidence
+    else delete nextPayload.scoped_evidence
     const next = {
       favorite: typeof favorite === 'boolean' ? (favorite ? 1 : 0) : row.favorite || 0,
       archived: typeof archived === 'boolean' ? (archived ? 1 : 0) : row.archived || 0,

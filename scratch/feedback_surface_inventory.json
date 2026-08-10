@@ -100,6 +100,48 @@
       "reason": "engine telemetry; no user-authored content, no production reader"
     }
   },
+  "feedback_semantics": {
+    "_comment": "Every accepted stylist_feedback type and scopedEvidence kind must have an explicit destination. Conditional types are named separately rather than forced into one destination.",
+    "types_by_destination": {
+      "owner_prompt": [
+        "owner_rule"
+      ],
+      "owner_or_styling_prompt_by_target": [
+        "preference_reaction"
+      ],
+      "styling_prompt": [
+        "signature", "works", "almost", "not_me",
+        "too_safe", "too_polished", "too_soft", "too_generic", "too_formal", "too_casual",
+        "too_severe", "too_youthful", "too_sporty", "too_subdued", "costume_like", "catalog_like",
+        "weak_structure", "weak_contrast", "bad_grounding",
+        "too_much_volume", "shape_lost", "unbalanced_proportions", "layer_too_long",
+        "competing_hemlines", "too_columnar", "too_fitted",
+        "style_direction", "shape_balance", "good_formula", "good_pieces", "bad_occasion",
+        "fit_issue", "too_boho", "wrong_silhouette", "wrong_energy", "strong_direction", "close_but_off"
+      ],
+      "context_score_or_styling_prompt_by_evidence": [
+        "wrong_item_read"
+      ],
+      "renderer": [
+        "wrong_length", "wrong_garment_details", "body_proportions_drift", "identity_drift", "bad_reference"
+      ],
+      "display_only": [
+        "piece_rule_receipt"
+      ]
+    },
+    "legacy_aliases": {
+      "catalog_drift": "catalog_like",
+      "wrong_proportions": "body_proportions_drift",
+      "proportion_problem": "body_proportions_drift"
+    },
+    "retired_target_types": {
+      "renderer_calibration": "retired before any feedback-type routing"
+    },
+    "scoped_evidence_kinds": {
+      "outfit_logic": "styling_prompt",
+      "garment_context_suitability": "context_score"
+    }
+  },
   "browser": {
     "stylist_chat_threads": {
       "disposition": "excluded",

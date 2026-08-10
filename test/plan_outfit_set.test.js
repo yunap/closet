@@ -22,7 +22,7 @@ const { db } = await import('../db.js')
 const { STYLIST_TOOLS, executeTool, sanitizePlanConstraintsForQuestion, resolvePlanKind, DEFAULT_SEASONAL_CAPSULE_BUDGET, coercePlanOutfitSetSlotsArg, coerceSubmitPlanOutfitsArg, CAPSULE_PLAN_EVIDENCE_BOUNDARY } = await import('../styling-engine/tools.js')
 const { normalizePlanSlots, normalizePlanConstraints, selectCapsuleRoster, buildCapsuleBench, validateCapsuleRoster, capsuleOutfitCoreCapacity, allocateCapsuleRepresentativeRotation, describeCapsuleCompositionShortfall, describeCapsulePaletteCohesion, describeCapsuleRosterUtilization, buildRejectedCapsuleCards, describeCapsuleSupplyGap, extractStatedPalette, selectCapsuleRosterViaModel, capsuleNeutralBasePlan, capsuleNeutralBaseCount, capsuleRosterPostConditions, enforceCapsulePostConditions, buildPlanSlotWorkbench, validateSubmittedPlanOutfits, completeSubmittedPlanOutfits, assembleSubmittedPlanOutfits, describeOutfitStructureGap, mergePendingPlanForReplan, PLAN_TOTAL_OUTFIT_CAP, planTotalOutfitCapForBudget, capsuleTotalOutfitCap, reasonRevisesMidSentence, slotRequiresActiveMovement, slotRequiresOperationalEase, extremeHeatPieceAdvisory, activeMovementPieceAdvisory, operationalEasePieceAdvisory } = await import('../styling-engine/outfitSetPlanner.js')
 const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
-const { parsePiece, weatherProfileFromContext, hasPairingReference, hasRejectedReference } = await import('../styling-engine/rules.js')
+const { parsePiece, weatherProfileFromContext, hasRejectedReference } = await import('../styling-engine/rules.js')
 const { wardrobeCategoryGroup, pieceFormality, formalityRank } = await import('../styling-engine/attributes.js')
 const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
 const { replayStylistToolScript, stylistToolsForTurn } = await import('../styling-engine/provider.js')
@@ -997,12 +997,10 @@ test('an owner-rejected garment pairing reaches the composer and cannot pass pla
   assert.match(result.failures[0].reasons.join(' '), /owner-rejected pairing/)
 })
 
-test('owner pairing references match whole piece-name phrases, not substrings inside another word', () => {
+test('owner-rejected pairing references match whole piece-name phrases, not substrings inside another word', () => {
   const redTop = { name: 'red top' }
   assert.equal(hasRejectedReference({ tried_and_rejected: ['textured top — rejected pairing'] }, redTop), false)
-  assert.equal(hasPairingReference({ pairs_well_with: ['textured top — confirmed pairing'] }, redTop), false)
   assert.equal(hasRejectedReference({ tried_and_rejected: ['red top — rejected pairing'] }, redTop), true)
-  assert.equal(hasPairingReference({ pairs_well_with: ['works with red top'] }, redTop), true)
 })
 
 test('model-composed plan titles survive assembly instead of being replaced by the slot label', () => {

@@ -29,7 +29,7 @@ const INTERVIEW_STEPS = { body_contract: 'comfort', aesthetic_gravity: 'aestheti
 // The durable learned classes: rules the stylist stored from conversations
 // (store_user_correction → owner_rule; persisted preference reactions). Card-level
 // taste feedback stays in the chat's context-scoped Learning panel.
-const LEARNING_TYPES = new Set(['owner_rule', 'preference_reaction', 'correction'])
+const LEARNING_TYPES = new Set(['owner_rule', 'preference_reaction', 'correction', 'piece_rule_receipt'])
 // Raw feedback_type values read fine as filter option text but not as the label on a card the
 // owner is scanning — 'wrong_item_read' in particular is engine vocabulary for what the chat
 // menu calls "Replace in this outfit". Keep both readable, in the chat's own words.
@@ -540,7 +540,11 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       {learnings.map(row => (
         <div key={row.id} className="style-memory-row style-memory-row--editable">
           <div className="style-memory-row-heading">
-            <span className="style-memory-kind">{row.feedback_type.replace('_', ' ')}</span>
+            <span className="style-memory-kind">
+              {row.feedback_type === 'piece_rule_receipt'
+                ? `garment rule · ${row.context_name || `Piece ${row.context_id}`}`
+                : row.feedback_type.replace('_', ' ')}
+            </span>
             <span className="style-memory-date">{row.created_at}</span>
           </div>
           {editingLearningId === row.id ? (
@@ -711,7 +715,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
               <div className="style-memory-context-layout">
                 <div className="style-memory-copy">
                   <div className="style-memory-kind">
-                    {feedbackTypeDisplayLabel(row.feedback_type)}{row.is_gold ? ' · Gold' : ''}
+                    {feedbackTypeDisplayLabel(row.feedback_type)}
                   </div>
                   <div className="style-memory-context-title">{contextLabel}</div>
                   {row.label && row.label !== contextLabel && <div className="style-memory-label">{row.label}</div>}

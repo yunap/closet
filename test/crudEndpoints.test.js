@@ -464,7 +464,6 @@ test('Payload fields round-trip survival test for /api/chat-threads', async () =
     evaluationResultsByKey: { 'key1': { score: 90 } },
     savedBoardKeys: ['board_123', 'board_456'],
     feedbackSaved: ['feed_1', 'feed_2'],
-    savedIndices: [1, 2],
     feedbackIdsByKey: { 'feed_1': 999 },
     boardFeedbackLabels: { 'board_123': ['great'] }
   }
@@ -499,7 +498,6 @@ test('Payload fields round-trip survival test for /api/chat-threads', async () =
   assert.deepEqual(detail.payload.evaluationResultsByKey, payload.evaluationResultsByKey)
   assert.deepEqual(detail.payload.savedBoardKeys, payload.savedBoardKeys)
   assert.deepEqual(detail.payload.feedbackSaved, payload.feedbackSaved)
-  assert.deepEqual(detail.payload.savedIndices, payload.savedIndices)
   assert.deepEqual(detail.payload.feedbackIdsByKey, payload.feedbackIdsByKey)
   assert.deepEqual(detail.payload.boardFeedbackLabels, payload.boardFeedbackLabels)
 

@@ -979,8 +979,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           const name = tc.function.name
           const args = JSON.parse(tc.function.arguments || '{}')
           const result = await executeTool(name, args, toolContext)
-          if (name === 'store_user_correction') {
-            savedCorrections.push(args)
+          if (name === 'store_user_correction' && result?.status === 'success') {
+            savedCorrections.push({ ...args, ...result })
           }
           
           const extracted = extractToolResultImages(result)
@@ -1063,8 +1063,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           const name = tu.name
           const args = tu.input
           const result = await executeTool(name, args, toolContext)
-          if (name === 'store_user_correction') {
-            savedCorrections.push(args)
+          if (name === 'store_user_correction' && result?.status === 'success') {
+            savedCorrections.push({ ...args, ...result })
           }
           
           const extracted = extractToolResultImages(result)

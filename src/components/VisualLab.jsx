@@ -32,10 +32,8 @@ const DRIFT_REFERENCE_LABELS = [
   ['too_polished', 'Too polished'],
   ['too_corporate', 'Too corporate'],
   ['too_conservative', 'Too conservative'],
-  ['catalog_drift', 'Catalog drift'],
   ['generic_ai_woman', 'Generic AI woman drift'],
   ['mature_luxury_drift', 'Mature luxury drift'],
-  ['wrong_proportions', 'Wrong proportions'],
   ['wrong_silhouette', 'Wrong silhouette'],
 ]
 
@@ -45,7 +43,6 @@ const REAL_PHOTO_LABELS = [
   ['strong_silhouette', 'Silhouette works'],
   ['right_proportions', 'Proportions work'],
   ['close_but_off', 'Close but off'],
-  ['wrong_proportions', 'Proportions feel off'],
   ['wrong_silhouette', 'Silhouette feels off'],
 ]
 
@@ -275,7 +272,7 @@ export default function VisualLab({ onGoToThread } = {}) {
       'not_me', 'style_direction', 'shape_balance',
       ...STYLE_DIRECTION_REASONS.map(([value]) => value),
       ...SHAPE_BALANCE_REASONS.map(([value]) => value),
-      'wrong_energy', 'wrong_silhouette', 'wrong_proportions', 'catalog_drift',
+      'wrong_energy', 'wrong_silhouette',
     ])
     const query = savedBoardSearch.trim().toLowerCase()
     return savedBoards.filter(board => {

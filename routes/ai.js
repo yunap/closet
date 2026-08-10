@@ -65,7 +65,6 @@ import {
   categoryConstraintForSelectedPiece,
   idealAdditionAnchorConstraint,
   filterWholeWardrobePiecesForGeneration,
-  buildWholeWardrobeFeedbackInfluence,
   getRecentWholeWardrobeSessionInfluence,
   buildWholeWardrobeCandidateOutfits,
   wholeWardrobeCandidateFormulaCounts,
@@ -75,7 +74,6 @@ import {
   selectCandidatesForOutfitGeneration,
   getOutfitsForPieceMemory,
   getStylistFeedbackMemory,
-  buildGoldStandardFeedbackMemory,
   getSavedBoardMemory,
   getWholeWardrobeFeedbackMemory,
   collectPieceIdsFromSavedBoardRow,
@@ -157,7 +155,6 @@ import {
   buildStylistConversationDirective,
   getStylistConversationState,
   saveStylistConversationState,
-  storeUserCorrection,
   buildStylistConversationPayload,
   normalizeCalibrationRow,
   withTimeout,
@@ -1134,22 +1131,20 @@ export async function generateOutfitsForPieceInternal({
   const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood, request: question, activity })
   let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
-  const confirmedOutfitsText = getConfirmedOutfitMemory()
+  const confirmedOutfitsText = getConfirmedOutfitMemory(8, { excludePieceId: parsedPiece.id })
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
   const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16)
-  const goldFeedbackText = buildGoldStandardFeedbackMemory(parsedPiece.id, 10)
   const selectedSavedBoardText = getSavedBoardMemory('piece', parsedPiece.id, 10)
-  const globalSavedBoardText = getSavedBoardMemory(null, null, 12)
-  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24)
+  const globalSavedBoardText = getSavedBoardMemory(null, null, 12, { excludeContexts: [{ type: 'piece', id: parsedPiece.id }] })
+  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24, { excludeContexts: [{ type: 'piece', id: parsedPiece.id }] })
   const calibrationMemoryText = getCalibrationMemoryForStylist(32)
 
   const memoryText = [
     selectedPieceOutfitsText ? `Saved outfits already using this selected garment:\n${selectedPieceOutfitsText}` : `Saved outfits using this selected garment: none yet`,
-    goldFeedbackText ? `High-authority signature/works feedback for this garment. Reinforce similar formulas:\n${goldFeedbackText}` : '',
-    selectedSavedBoardText ? `Saved visual boards for this garment. Use strongly boards are high-authority outfit memory:\n${selectedSavedBoardText}` : '',
+    selectedSavedBoardText ? `Saved visual-board evidence for this garment. Reuse transferable formula/context lessons; do not repeat literal combinations merely because a board was marked positively:\n${selectedSavedBoardText}` : '',
     selectedFeedbackText ? `Recent feedback for this garment. Signature/Works should be reinforced; Not me/Too soft/Proportion problem should suppress similar ideas:\n${selectedFeedbackText}` : '',
-    confirmedOutfitsText ? `Confirmed/favorite outfit memory for ${prompts.PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
-    globalSavedBoardText ? `Global saved board memory. Use strongly boards should bias ranking when relevant:\n${globalSavedBoardText}` : '',
+    confirmedOutfitsText ? `Other confirmed outfit memory for ${prompts.PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
+    globalSavedBoardText ? `Other saved visual-board evidence. Apply transferable formula/context lessons without repeating literal garment combinations:\n${globalSavedBoardText}` : '',
     calibrationMemoryText ? `Calibration Library memory. This is higher authority than broad style theory for taste boundaries and identity-preservation:\n${calibrationMemoryText}` : '',
     globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : ''
   ].filter(Boolean).join('\n\n')
@@ -3568,6 +3563,7 @@ router.post('/ask', async (req, res) => {
       // citation check in applyFreeformOutputChecks.
       retrievedPieceIds: new Set(),
       visuallySeenPieceIds: new Set(),
+      activeContext: req.body.activeContext || null,
       // Step 4 (model-declared intent): set by the declare_intent tool; guards
       // and composing tools consume it instead of keyword-guessing.
       declaredIntent: null
@@ -3595,7 +3591,10 @@ router.post('/ask', async (req, res) => {
     // count as verified for citation purposes.
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
     toolContext.knownOutfitPieceIds = [...new Set(
-      (payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : [])
+      [
+        ...(Array.isArray(req.body.pieceIds) ? req.body.pieceIds : []),
+        ...(payload.threadState?.current_outfit_set || []).flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : []),
+      ]
         .map(Number).filter(Boolean)
     )]
     const { answer, savedCorrections } = await askStylistWithTools({

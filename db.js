@@ -644,7 +644,6 @@ export const parsePiece = p => p ? ({
   occasion_permissions:   JSON.parse(p.occasion_permissions  || '[]'),
   occasion_exclusions:    JSON.parse(p.occasion_exclusions   || '[]'),
   styling_rules_learned: JSON.parse(p.styling_rules_learned || '[]'),
-  pairs_well_with:       JSON.parse(p.pairs_well_with       || '[]'),
   tried_and_rejected:    JSON.parse(p.tried_and_rejected    || '[]'),
   style_profile_json:    safeJsonParse(p.style_profile_json, {}) || {},
   fiber_content:         safeJsonParse(p.fiber_content, [])      || [],

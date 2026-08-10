@@ -54,6 +54,7 @@ import {
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { normalizeOccasion, normalizeActivity } from './stylingIntent.js'
 import { resolveOccasionProfile } from './occasions.js'
+import { stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import {
   COLOR_REQUEST_NAMES,
   colorFamilyLabel,
@@ -2444,8 +2445,8 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
     piece.reads_as ? `reads:${String(piece.reads_as).slice(0, 80)}` : '',
-    Array.isArray(piece.styling_rules_learned) && piece.styling_rules_learned.length
-      ? `RULES (authoritative):${piece.styling_rules_learned.join(' / ')}`
+    stylingRulesForPrompt(piece.styling_rules_learned).length
+      ? `RULES (authoritative):${stylingRulesForPrompt(piece.styling_rules_learned).join(' / ')}`
       : '',
     Array.isArray(piece.tried_and_rejected) && piece.tried_and_rejected.length
       ? `REJECTED PAIRINGS:${piece.tried_and_rejected.join(' / ')}`
