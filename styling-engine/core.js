@@ -1837,22 +1837,43 @@ export async function createOutfitBoardImage({ board, pieces, index }) {
   return `/uploads/${filename}`
 }
 
-export async function garmentReferenceImage(piece) {
-  const photo = piece?.photo || piece?.worn_photo
-  if (!photo) return null
-  const filePath = path.join(userUploadsDir(), photo)
-  if (!fs.existsSync(filePath)) return null
-  const buffer = await sharp(filePath)
-    .rotate()
-    .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 84 })
-    .toBuffer()
-  return {
-    base64: buffer.toString('base64'),
-    mime: 'image/jpeg',
-    label: `${piece.name} (${wardrobeCategoryGroup(piece)})`,
-    piece
+export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  const name = piece.name || 'garment'
+  const candidates = [
+    piece.worn_photo ? {
+      kind: 'worn',
+      filename: piece.worn_photo,
+      label: `${name} (${group}) — worn photo: authoritative for fit, drape, body placement, and real hem position`,
+    } : null,
+    piece.photo ? {
+      kind: 'hanger',
+      filename: piece.photo,
+      label: `${name} (${group}) — hanger photo: authoritative for construction, color, print scale, texture, and garment shape${piece.worn_photo ? '' : '; no worn photo is available, so body fit and drape are unconfirmed and must be inferred conservatively from structured garment data'}`,
+    } : null,
+  ].filter(Boolean)
+  return candidates.slice(0, Math.max(0, Number(maxPhotos) || 0))
+}
+
+export async function garmentReferenceImages(piece, options = {}) {
+  const refs = []
+  for (const planned of garmentReferencePlan(piece, options)) {
+    const filePath = path.join(userUploadsDir(), planned.filename)
+    if (!fs.existsSync(filePath)) continue
+    const buffer = await sharp(filePath)
+      .rotate()
+      .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 84 })
+      .toBuffer()
+    refs.push({
+      base64: buffer.toString('base64'),
+      mime: 'image/jpeg',
+      label: planned.label,
+      kind: planned.kind,
+      piece,
+    })
   }
+  return refs
 }
 
 export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season' }) {
@@ -2072,11 +2093,11 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
     }
 
     const garmentStartedAt = Date.now()
-    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
+    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImages(piece)))).flat()
     timings.garmentReferenceMs = Date.now() - garmentStartedAt
     for (const ref of garmentRefs) {
-      contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
       contentParts.push({ type: 'input_text', text: `Linked garment reference: ${ref.label}` })
+      contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
     }
 
     const calibrationStartedAt = Date.now()
@@ -2152,7 +2173,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
     const garmentStartedAt = Date.now()
-    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
+    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImages(piece)))).flat()
     timings.garmentReferenceMs = Date.now() - garmentStartedAt
 
     if (garmentRefs.length) {
@@ -2260,11 +2281,13 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
       text: 'WARDROBE GARMENT REFERENCES — these are the saved pieces available for the outfit panels. Use each piece only in the panel where it is listed in the final prompt.'
     }]
     const garmentStartedAt = Date.now()
-    const garmentRefs = (await Promise.all(uniquePieces.slice(0, 18).map(piece => garmentReferenceImage(piece)))).filter(Boolean)
+    // Comparison sheets can contain 18 garments. Keep this preview to one reference per garment
+    // (prefer worn evidence) rather than doubling the request to as many as 36 input images.
+    const garmentRefs = (await Promise.all(uniquePieces.slice(0, 18).map(piece => garmentReferenceImages(piece, { maxPhotos: 1 })))).flat()
     timings.garmentReferenceMs = Date.now() - garmentStartedAt
     for (const ref of garmentRefs) {
-      contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
       contentParts.push({ type: 'input_text', text: `Garment reference: ${ref.piece.id} — ${ref.label}` })
+      contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
     }
 
     const calibrationStartedAt = Date.now()
@@ -2378,8 +2401,7 @@ export async function createIdealAdditionsComparisonSheetImage({
   const outPath = path.join(userUploadsDir(), filename)
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
 
-  // Single reference photo: the selected garment
-  const garmentRef = await garmentReferenceImage(selectedPiece)
+  const garmentRefs = await garmentReferenceImages(selectedPiece)
 
   const directionLines = directions.map((d, i) => [
     `FIGURE ${i + 1} — "${d.label}"`,
@@ -2429,12 +2451,12 @@ export async function createIdealAdditionsComparisonSheetImage({
     }
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
-    if (garmentRef) {
+    for (const garmentRef of garmentRefs) {
+      contentParts.push({ type: 'input_text', text: `Reference photo: ${garmentRef.label}. This exact garment appears on every figure.` })
       contentParts.push({
         type: 'input_image',
         image_url: `data:${garmentRef.mime};base64,${garmentRef.base64}`
       })
-      contentParts.push({ type: 'input_text', text: `Reference photo: ${garmentRef.label}. This exact garment appears on every figure.` })
     }
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     for (const img of calibrationRefs) {
