@@ -1,0 +1,157 @@
+{
+  "packetVersion": 1,
+  "reviewMode": "Mode B — constrained direction review",
+  "reviewQuestion": "What information architecture and interaction model should let an owner understand, review, correct, and undo the settled feedback authorities without turning Style Profile into a database browser?",
+  "currentPositiveFeedbackBoundary": "Today, Works, Signature, and Almost preserve the reaction as visible and organizational provenance, but they do not teach the stylist or enter synthesis while a non-reinforcing destination remains unresolved.",
+  "surfaceInventory": [
+    {
+      "surface": "Originating outfit card and per-piece menu",
+      "status": "included as capture context",
+      "reason": "Shows the difference between one-outfit feedback and a durable occasion exclusion. It is not being visually redesigned in this review."
+    },
+    {
+      "surface": "Visual Lab saved board feedback",
+      "status": "included as capture context",
+      "reason": "Shows the canonical saved-board writer and optional reason field."
+    },
+    {
+      "surface": "Lookbook generated outfit feedback",
+      "status": "included as capture context",
+      "reason": "Uses the same canonical saved-board feedback path and must not appear to be a separate memory authority."
+    },
+    {
+      "surface": "Style Profile — memory legend",
+      "status": "included current UI",
+      "reason": "Current page-level explanation of authority levels."
+    },
+    {
+      "surface": "Style Profile — Learned rules & preferences",
+      "status": "included current UI",
+      "reason": "Global prompt guidance and verified garment-rule receipts."
+    },
+    {
+      "surface": "Style Profile — Occasion exclusions",
+      "status": "included current UI",
+      "reason": "Existing structured piece-by-occasion hard gates and their restore action."
+    },
+    {
+      "surface": "Style Profile — Outfit & styling feedback",
+      "status": "included current UI",
+      "reason": "Provisional evidence, paid synthesis authorization, draft review, accepted lessons, and provenance records currently share this section."
+    },
+    {
+      "surface": "Wardrobe Tasks — renderer/metadata review",
+      "status": "included as existing item-11 precedent",
+      "reason": "Wrong-length feedback already demonstrates review before garment truth changes."
+    },
+    {
+      "surface": "Product-quality findings",
+      "status": "backend-only; direction review required",
+      "reason": "The durable queue and evidence snapshots exist, but no owner-facing review surface exists yet. Reviewers must recommend a home and workflow, not critique nonexistent styling."
+    },
+    {
+      "surface": "Structured owner constraints",
+      "status": "backend-only; direction review required",
+      "reason": "The hard-gate store, suppression reasons, and retirement endpoint exist, but no proposal/review surface exists yet."
+    },
+    {
+      "surface": "Calibration boards",
+      "status": "excluded from redesign; included in system context",
+      "reason": "Working renderer/taste reference rotation is a separate established system. Reviewers may identify navigation confusion but must not redesign calibration semantics."
+    },
+    {
+      "surface": "Thread state and recency memory",
+      "status": "excluded",
+      "reason": "They are runtime context and diversity mechanisms, not owner-feedback records managed on Style Profile."
+    }
+  ],
+  "authorityTrace": [
+    {
+      "example": "Global owner rule",
+      "userAction": "States a durable correction in Stylist chat without selecting a garment",
+      "canonicalStore": "stylist_feedback: owner_rule/message",
+      "reader": "getOwnerRuleNotes",
+      "effect": "Standing prompt guidance on styling requests; not a deterministic gate",
+      "scope": "Global until retired",
+      "undo": "Edit or Retire in Learned rules & preferences",
+      "proofFiles": ["styling-engine/rules.js", "src/views/StylistSettings.jsx"],
+      "behaviorTests": ["test/owner_rules.test.js", "test/activeMemoryProjection.test.js"]
+    },
+    {
+      "example": "Garment occasion exclusion",
+      "userAction": "Chooses Wrong for <occasion> from a garment menu",
+      "canonicalStore": "pieces.occasion_exclusions",
+      "reader": "wholeWardrobePieceTrustDecision",
+      "effect": "Hard eligibility gate before roster/composition for the matching occasion or plan slot",
+      "scope": "One garment × one occasion",
+      "undo": "Restore for <occasion> in Occasion exclusions",
+      "proofFiles": ["styling-engine/rules.js", "src/views/StylistSettings.jsx"],
+      "behaviorTests": ["test/occasion_exclusion.test.js"]
+    },
+    {
+      "example": "Wrong choice for this outfit",
+      "userAction": "Marks one garment wrong for the displayed outfit and may add a verbatim reason",
+      "canonicalStore": "stylist_feedback with version-2 feedbackEvidence",
+      "reader": "getProvisionalWrongChoiceMemory and exact-context delivery",
+      "effect": "Provisional bounded context inside an already-requested styling call; no score or standing dislike",
+      "scope": "Named garment plus recorded outfit/context",
+      "undo": "Remove reaction; optionally authorize synthesis separately",
+      "proofFiles": ["lib/feedbackEvidence.js", "styling-engine/rules.js", "src/views/StylistSettings.jsx"],
+      "behaviorTests": ["test/activeMemoryProjection.test.js", "test/savedBoardMemorySemantics.test.js"]
+    },
+    {
+      "example": "Accepted personal/contextual lesson",
+      "userAction": "Authorizes synthesis, reviews scope, and accepts a proposal",
+      "canonicalStore": "feedback_synthesis_drafts",
+      "reader": "getAcceptedFeedbackSynthesisMemory",
+      "effect": "Bounded prompt guidance only when structured applicability matches",
+      "scope": "Owner-reviewed piece/context selector",
+      "undo": "Edit applicability/text or retire lesson",
+      "proofFiles": ["lib/feedbackSynthesis.js", "styling-engine/rules.js", "src/views/StylistSettings.jsx"],
+      "behaviorTests": ["test/feedbackSynthesis.test.js", "test/savedBoardMemorySemantics.test.js"]
+    },
+    {
+      "example": "Generated-image problem report",
+      "userAction": "Reports an inaccurate generated depiction such as wrong garment length",
+      "canonicalStore": "stylist_feedback image-fidelity report; optional retag-suggestion todo",
+      "reader": "getSavedBoardRendererMemory and Tasks review",
+      "effect": "Piece-scoped textual fidelity reminder when that garment is rendered again; the rejected generated image is never reused; metadata changes remain reviewable and are not silently applied",
+      "scope": "Generated imagery for the identified garment; never styling selection",
+      "undo": "Clear the report in the originating image-feedback controls; resolve any linked metadata-review task separately",
+      "proofFiles": ["styling-engine/rules.js", "routes/crud.js"],
+      "behaviorTests": ["test/activeMemoryProjection.test.js", "test/savedBoardMemorySemantics.test.js"]
+    },
+    {
+      "example": "General product-quality finding",
+      "userAction": "Accepts a general-failure synthesis result or explicitly confirms a no-cost report",
+      "canonicalStore": "product_quality_findings with evidence_snapshot",
+      "reader": "Product review queue only",
+      "effect": "No styling prompt, score, gate, or metadata change until explicitly resolved to a product destination",
+      "scope": "Product issue with durable source evidence",
+      "undo": "Dismiss, or resolve with shared_rule/model_instruction/garment_metadata/renderer/no_change",
+      "proofFiles": ["lib/productQualityFindings.js", "routes/feedback.js"],
+      "behaviorTests": ["test/productQualityFindings.test.js"]
+    },
+    {
+      "example": "Structured owner constraint",
+      "userAction": "Explicitly confirms a structured prohibition derived from an owner rule",
+      "canonicalStore": "owner_constraints; linked prose rule archived",
+      "reader": "wholeWardrobePieceTrustDecision",
+      "effect": "Hard pre-roster and per-slot gate with an observable suppression reason",
+      "scope": "Piece/category/material × occasion/activity/season/weather",
+      "undo": "Retire constraint",
+      "proofFiles": ["lib/ownerConstraints.js", "styling-engine/rules.js", "routes/feedback.js"],
+      "behaviorTests": ["test/ownerConstraints.test.js"]
+    }
+  ],
+  "reviewPropositions": [
+    "Style Profile should separate active styling authority, product repair work, and historical provenance instead of presenting them as one chronological kind of memory.",
+    "Every managed record should lead with what it changes, where it applies, and how to undo it; storage labels and raw provenance belong behind disclosure.",
+    "A hard owner constraint should be understandable through per-context eligibility, not only through prose that asks the model to remember it.",
+    "General styling/model failures belong in a product-quality work queue with inspectable evidence and an explicit resolution destination, never in personal style memory.",
+    "Provisional outfit reactions should remain visible on Style Profile only while they support a real owner action such as synthesis, inspection, or removal; processed provenance should be collapsed.",
+    "Managing, correcting, retiring, and resolving feedback must remain free; only the already-explicit synthesis action may authorize a paid model call.",
+    "The UI should project canonical meaning across chat, Visual Lab, Lookbook, garment records, and Tasks without presenting mirrored receipts as separate learned rules.",
+    "Backend stores and engine terminology should not determine the page hierarchy; the hierarchy should follow the owner's decisions: teach, constrain, repair, inspect, and undo."
+  ]
+}
