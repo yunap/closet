@@ -948,10 +948,10 @@ imported and in scope there. Deleting the `rules.js` duplicate would remove the 
 
 | function | renders | AI inputs |
 |---|---|---|
-| `createWholeWardrobeOutfitImage` | one outfit | ≤5 garment refs + 2 calibration refs + prompt |
-| `createSavedOutfitImage` | saved-outfit variants | source photo + refs |
-| `createWholeWardrobeComparisonSheetImage` | up to 5 outfits on one sheet | unique pieces across the 5 |
-| `createIdealAdditionsComparisonSheetImage` | directions sheet | **one** garment ref |
+| `createWholeWardrobeOutfitImage` | one outfit | ≤5 garments, with worn + hanger refs when both exist, + 2 calibration refs + prompt |
+| `createSavedOutfitImage` | saved-outfit variants | source photo + worn + hanger refs when both exist |
+| `createWholeWardrobeComparisonSheetImage` | up to 5 outfits on one sheet | one ref per unique piece across the 5, preferring worn evidence to cap cost |
+| `createIdealAdditionsComparisonSheetImage` | directions sheet | worn + hanger refs for the selected garment when both exist |
 | `createEditorialConceptImage` | ideal-addition concept | refs + anchor garment |
 | `createOutfitBoardImage` | 2-3 candidate boards from the ad hoc "Generate visual boards" button (`POST /generate-outfit-boards`) | selected piece + owned/missing board pieces | **found 2026-07-27 — missing from this table since it was first written**; see `scratch/derive_board_producer_fanout.js`. |
 
@@ -966,14 +966,29 @@ through `runOpenAIImageGeneration`, which has exactly one live caller: the edito
 
 ### What actually gets sent — measured
 
-Garment references are resized to 768px, JPEG q84, base64'd. Across a 24-piece spread of the real
-wardrobe (235 of 236 pieces have a usable photo): **min 50 KB, median 88 KB, max 152 KB, mean
-95 KB**. A five-garment outfit therefore ships roughly **475 KB of base64 garment reference**, plus
-two calibration images, plus the prompt.
+Garment references are resized to 768px, JPEG q84, base64'd. Final single-outfit renders now send
+both a worn and hanger photo when both exist: the worn image is labelled as authority for fit,
+drape, body placement and real hem position; the hanger image is authority for construction,
+colour, print scale, texture and garment shape. With no worn photo, the hanger caption explicitly
+marks body fit and drape unconfirmed and tells the renderer to infer them conservatively from
+structured garment data. Comparison sheets remain capped at one reference per garment, preferring
+the worn photo, because they may contain 18 unique garments.
 
-At OpenAI's ~750 tokens for a 768px image, seven images is **~5,250 input tokens of imagery alone**
-— about **$0.013** of gpt-4o input, before any prompt text. The generated image is billed
-separately and dominates.
+This improves the renderer's evidence but does not replace the wrong-length metadata-review path.
+Some image complaints have correctly exposed mislabeled `length_hits_at` or `sleeve_type` values;
+the field-specific task remains the way to correct those facts. Better photo delivery and metadata
+review address different causes of the same visible symptom.
+
+Across a 24-piece spread of the real
+wardrobe (235 of 236 pieces have a usable photo): **min 50 KB, median 88 KB, max 152 KB, mean
+95 KB** per photo. A five-garment final outfit can now send up to ten garment photos rather than
+five, plus two calibration images and the prompt. This deliberately spends more input budget on
+the final render; the many-garment comparison preview does not double its photo count.
+
+At OpenAI's ~750 tokens for a 768px image, a three-garment final outfit with both photos for every
+piece plus two calibration images is roughly **6,000 input tokens of imagery alone**, before prompt
+text. The generated image is billed separately and dominates. Garments with only one photo retain
+the prior cost shape.
 
 Calibration references come from `getCalibrationReferenceImagesForGeneration`, which pulls a pool of
 `max(limit × 4, 15)` rows, splits starred from unstarred, shuffles each, and takes starred first.

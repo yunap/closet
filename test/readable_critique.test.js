@@ -10,7 +10,7 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
-const { formatSharedOutfitEvaluation, CRITIQUE_DETAILS_DELIMITER, wholeWardrobeImagePrompt } = await import('../styling-engine/core.js')
+const { formatSharedOutfitEvaluation, CRITIQUE_DETAILS_DELIMITER, wholeWardrobeImagePrompt, garmentReferencePlan } = await import('../styling-engine/core.js')
 const { buildPrompts } = await import('../styling-engine/prompts.js')
 const { db } = await import('../db.js')
 const WHOLE_WARDROBE_EVALUATOR_SYSTEM = buildPrompts().WHOLE_WARDROBE_EVALUATOR_SYSTEM
@@ -19,6 +19,39 @@ const OUTFIT_EVALUATION_FOLLOWUP_SYSTEM = buildPrompts().OUTFIT_EVALUATION_FOLLO
 after(() => {
   db.close()
   fs.rmSync(tmpRoot, { recursive: true, force: true })
+})
+
+test('final renders use worn and hanger evidence with distinct authority', () => {
+  const refs = garmentReferencePlan({
+    name: 'silk cardigan',
+    category: 'top',
+    photo: 'cardigan-hanger.jpg',
+    worn_photo: 'cardigan-worn.jpg',
+  })
+  assert.deepEqual(refs.map(ref => ref.kind), ['worn', 'hanger'])
+  assert.match(refs[0].label, /fit, drape, body placement, and real hem position/)
+  assert.match(refs[1].label, /construction, color, print scale, texture, and garment shape/)
+})
+
+test('hanger-only evidence discloses that fit and drape are unconfirmed', () => {
+  const refs = garmentReferencePlan({
+    name: 'silk cardigan',
+    category: 'top',
+    photo: 'cardigan-hanger.jpg',
+  })
+  assert.deepEqual(refs.map(ref => ref.kind), ['hanger'])
+  assert.match(refs[0].label, /no worn photo is available/)
+  assert.match(refs[0].label, /inferred conservatively from structured garment data/)
+})
+
+test('comparison previews cap references and prefer worn evidence', () => {
+  const refs = garmentReferencePlan({
+    name: 'silk cardigan',
+    category: 'top',
+    photo: 'cardigan-hanger.jpg',
+    worn_photo: 'cardigan-worn.jpg',
+  }, { maxPhotos: 1 })
+  assert.deepEqual(refs.map(ref => ref.kind), ['worn'])
 })
 
 const diagnosticRead = {
