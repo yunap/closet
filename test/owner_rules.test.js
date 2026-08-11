@@ -141,19 +141,15 @@ test('un-archiving a garment-rule receipt restores its canonical rule without du
   )
 })
 
-test('getStylistFeedbackMemory renders owner-rule rows with the OWNER RULE prefix under their own sub-header, sorted above reactions', () => {
-  // Insert the reaction FIRST (lower id) and the rule SECOND (higher id) —
-  // the default id-desc ordering would otherwise put the reaction on top;
-  // owner rules must sort above reactions regardless of recency.
+test('getStylistFeedbackMemory renders owner-rule rows and withholds positive board reactions from broad prompt memory', () => {
   insertFeedback({ feedback_type: 'signature', target_type: 'whole_wardrobe_outfit', label: 'Nice Dinner', note: 'geometric maxi skirt + ruffled plum top... perfect for an upscale dinner' })
   insertFeedback({ feedback_type: 'owner_rule', target_type: 'message', note: 'For office and client days: structured silhouettes only — no maxi skirts, no shawls at work.' })
 
   const text = getStylistFeedbackMemory(null, null, 24)
   assert.match(text, /Owner rules \(standing, apply them\):/)
   assert.match(text, /- OWNER RULE: For office and client days: structured silhouettes only/)
-  assert.match(text, /Saved reactions \(scoped to the named board\/context they were given on — taste signals, not global directives\):/)
-  assert.match(text, /- signature on whole_wardrobe_outfit — Nice Dinner/)
-  assert.ok(text.indexOf('Owner rules (standing') < text.indexOf('Saved reactions ('), 'owner rules must render above the scoped-reaction section')
+  assert.doesNotMatch(text, /Saved reactions \(/)
+  assert.doesNotMatch(text, /Nice Dinner/)
 })
 
 test('global feedback memory can exclude an already-delivered scoped context without dropping owner rules', () => {
@@ -173,11 +169,10 @@ test('legacy preference_reaction/message rows are treated as owner rules (no mig
   assert.doesNotMatch(text, /Saved reactions \(/, 'no reaction rows exist, so that section must not render')
 })
 
-test('getStylistFeedbackMemory renders only the scoped-reaction section when no owner rules exist', () => {
+test('getStylistFeedbackMemory returns empty when only a positive board reaction exists', () => {
   insertFeedback({ feedback_type: 'works', target_type: 'whole_wardrobe_outfit', label: 'Weekend Board', note: 'the linen set worked well' })
   const text = getStylistFeedbackMemory(null, null, 24)
-  assert.doesNotMatch(text, /Owner rules \(standing/)
-  assert.match(text, /Saved reactions \(scoped to the named board\/context/)
+  assert.equal(text, '')
 })
 
 test('getStylistFeedbackMemory returns empty string when the table is empty', () => {

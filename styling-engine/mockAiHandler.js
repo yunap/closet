@@ -108,6 +108,42 @@ export function installMockAiHandler(db) {
       return { shouldCompose: false, reason: 'Mock sandbox: conversational follow-up does not require new structured cards.', slots: [] }
     }
 
+    if (systemPrompt.includes('constrained feedback-memory editor')) {
+      let evidence = []
+      try { evidence = JSON.parse(latestText || '{}').evidence || [] } catch { evidence = [] }
+      return {
+        results: evidence.map(item => {
+          const positive = item.evidenceKind === 'positive_outfit_logic'
+          const positiveEnough = positive && ['signature', 'works'].includes(item.verdict)
+          const context = item.context || {}
+          const logic = item.logic || {}
+          const logicText = [logic.formula, logic.silhouette, logic.direction, logic.mood].filter(Boolean).join('; ')
+          return {
+            source_feedback_ids: [Number(item.evidenceId)],
+            disposition: positiveEnough ? 'personal_contextual_lesson' : (item.ownerReason ? 'general_styling_failure' : 'insufficient_evidence'),
+            title: positiveEnough ? 'Mock transferable outfit lesson' : (item.ownerReason ? 'Mock reviewed styling issue' : 'No safe lesson proposed'),
+            proposed_text: positiveEnough
+              ? `Reuse this styling logic with different garments: ${logicText}`
+              : (item.ownerReason ? `Review the stated issue: ${String(item.ownerReason).slice(0, 240)}` : ''),
+            boundary: positiveEnough ? 'Mock sandbox context boundary.' : (item.ownerReason
+              ? 'Mock sandbox classification only; this is not an owner preference.'
+              : 'No sufficient evidence was supplied.'),
+            rationale: 'Canned sandbox synthesis — no billed AI call was made.',
+            confidence: positiveEnough ? 'bounded_context' : (item.ownerReason ? 'explicit_owner' : 'insufficient'),
+            related_draft_id: 0,
+            applicability: {
+              scope: 'context',
+              piece_ids: [],
+              occasions: context.occasion ? [context.occasion] : [],
+              activities: context.activity && context.activity !== 'none' ? [context.activity] : [],
+              seasons: context.season ? [context.season] : [],
+              weather_terms: [],
+            },
+          }
+        }),
+      }
+    }
+
     if (
       systemPrompt.includes('Outfit Composer') ||
       systemPrompt.includes('Outfit Gate') ||

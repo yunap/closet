@@ -15,6 +15,7 @@ import {
   STYLE_DIRECTION_REASONS,
   SHAPE_BALANCE_REASONS,
   IMAGE_FIDELITY_FEEDBACK_LABELS,
+  WRONG_PIECE_FOR_OUTFIT_FEEDBACK,
   wrongLengthReasonsForCategory,
 } from '../../lib/feedbackTaxonomy.js'
 
@@ -741,6 +742,10 @@ export default function StylistChat({
   const [homeLocationSaving, setHomeLocationSaving] = useState(false)
   const [feedbackSaved, setFeedbackSaved] = useState(new Set())
   const [feedbackIdsByKey, setFeedbackIdsByKey] = useState({})
+  const [pendingWrongChoice, setPendingWrongChoice] = useState(null)
+  const [wrongChoiceReason, setWrongChoiceReason] = useState('')
+  const [pendingBoardVerdict, setPendingBoardVerdict] = useState(null)
+  const [boardVerdictComment, setBoardVerdictComment] = useState('')
   const [boardFeedbackLabels, setBoardFeedbackLabels] = useState({})
   const [boardLearningStatus, setBoardLearningStatus] = useState({})
   const [savedBoardKeys, setSavedBoardKeys] = useState(new Set())
@@ -3357,7 +3362,7 @@ export default function StylistChat({
                         </button>
                         <div className="stylist-outfit-piece-name">{piece?.name || 'Garment'}</div>
                         {piece?.id && !piece?.unresolved && (message?.wholeWardrobe || Array.isArray(outfit.pieces)) && (() => {
-                            const swapKey = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:wrong_item_read`
+                            const swapKey = `whole-wardrobe-piece:${messageIndex}:${idx}:${piece?.id || pieceIdx}:${WRONG_PIECE_FOR_OUTFIT_FEEDBACK}`
                             const isSwapped = feedbackSaved.has(swapKey)
                             const msgOccasion = outfit.occasion || outfit.bestFor || message.queryOptions?.occasion || wardrobeOutfitOccasion || 'casual'
                             const normMsgOccasion = String(msgOccasion || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
@@ -3367,6 +3372,37 @@ export default function StylistChat({
                               ? (outfit.label || outfit.title || outfit.bestFor || msgOccasion)
                               : msgOccasion
                             const displayOccasionName = String(exclusionDisplaySource || '').replace(/[-_]+/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                            const weatherContext = String(
+                              outfit?.weatherContext || outfit?.occasionContext ||
+                              (typeof outfit?.weather === 'string' ? outfit.weather : '') ||
+                              message?.queryOptions?.weatherContext ||
+                              (typeof message?.queryOptions?.weather === 'string' ? message.queryOptions.weather : '') || ''
+                            ).trim()
+                            const wrongChoiceArgs = {
+                              key: swapKey,
+                              feedbackType: WRONG_PIECE_FOR_OUTFIT_FEEDBACK,
+                              targetType: 'whole_wardrobe_outfit',
+                              label: `Wrong choice: ${piece?.name || 'Garment'}`,
+                              note: `${piece?.name || 'This piece'} was the wrong choice for ${outfit.label || `outfit ${idx + 1}`}.`,
+                              payload: {
+                                outfit,
+                                messageIndex,
+                                outfitIndex: idx,
+                                pieceId: piece?.id || null,
+                                pieceName: piece?.name || '',
+                                pieceCategory: piece?.category || '',
+                                pieceIds: outfit.pieceIds || [],
+                                pieces: outfit.pieces || [],
+                                formulaFamily: outfit.formulaFamily || '',
+                                archetypeId: outfit.archetypeId || '',
+                                occasion: outfit?.occasion || wardrobeOutfitOccasion,
+                                activity: outfit?.activity || wardrobeOutfitActivity || 'none',
+                                season: outfit?.season || wardrobeOutfitSeason,
+                                mood: outfit?.mood || wardrobeOutfitMood,
+                                weatherContext,
+                              },
+                              contextOverride: activeContext?.type === 'piece' ? activeContext : { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
+                            }
                             return (
                               <PieceActionMenu label={`Actions for ${piece?.name || 'this piece'}`}>
                                 {({ close }) => (<>
@@ -3388,36 +3424,17 @@ export default function StylistChat({
                                     type="button"
                                     onClick={() => {
                                       close()
-                                      toggleStylistFeedback({
-                                        key: swapKey,
-                                        feedbackType: 'wrong_item_read',
-                                        targetType: 'whole_wardrobe_outfit',
-                                        label: `Bad piece: ${piece?.name || 'Garment'}`,
-                                        note: `${piece?.name || 'This piece'} was the bad piece choice in ${outfit.label || `outfit ${idx + 1}`}.`,
-                                        payload: {
-                                          outfit,
-                                          messageIndex,
-                                          outfitIndex: idx,
-                                          pieceId: piece?.id || null,
-                                          pieceName: piece?.name || '',
-                                          pieceCategory: piece?.category || '',
-                                          pieceIds: outfit.pieceIds || [],
-                                          pieces: outfit.pieces || [],
-                                          formulaFamily: outfit.formulaFamily || '',
-                                          archetypeId: outfit.archetypeId || '',
-                                          occasion: wardrobeOutfitOccasion,
-                                          activity: outfit?.activity || wardrobeOutfitActivity || 'none',
-                                          season: wardrobeOutfitSeason,
-                                          mood: wardrobeOutfitMood,
-                                        },
-                                        contextOverride: activeContext?.type === 'piece' ? activeContext : { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
-                                      })
+                                      if (isSwapped) toggleStylistFeedback(wrongChoiceArgs)
+                                      else {
+                                        setWrongChoiceReason('')
+                                        setPendingWrongChoice({ outfitKey: `${messageIndex}:${idx}`, pieceName: piece?.name || 'this garment', args: wrongChoiceArgs })
+                                      }
                                     }}
                                     className={isSwapped ? 'piece-action-menu-item piece-action-menu-item-quiet-active' : 'piece-action-menu-item'}
                                   >
                                     <PieceActionSwapIcon />
                                     <span className="piece-action-menu-item-body">
-                                      <span className="piece-action-menu-item-label">{isSwapped ? '✓ Replaced in this outfit' : 'Replace in this outfit'}</span>
+                                      <span className="piece-action-menu-item-label">{isSwapped ? '✓ Wrong choice for this outfit' : 'Wrong choice for this outfit'}</span>
                                       <span className="piece-action-menu-item-hint">Records that this piece was wrong for this look. Your stylist keeps it as contextual feedback rather than avoiding the garment everywhere.</span>
                                     </span>
                                   </button>
@@ -3442,6 +3459,31 @@ export default function StylistChat({
                     )
                   })}
                 </div>
+              )}
+              {pendingWrongChoice?.outfitKey === `${messageIndex}:${idx}` && (
+                <form
+                  className="stylist-wrong-choice-reason"
+                  onSubmit={event => {
+                    event.preventDefault()
+                    commitPendingWrongChoice(wrongChoiceReason)
+                  }}
+                >
+                  <label htmlFor={`wrong-choice-reason-${messageIndex}-${idx}`}>
+                    What made {pendingWrongChoice.pieceName} wrong for this outfit? <span>Optional</span>
+                  </label>
+                  <input
+                    id={`wrong-choice-reason-${messageIndex}-${idx}`}
+                    value={wrongChoiceReason}
+                    onChange={event => setWrongChoiceReason(event.target.value)}
+                    placeholder="For example: canvas is a poor choice in wet, foggy weather"
+                    autoFocus
+                  />
+                  <div className="stylist-wrong-choice-reason-actions">
+                    <button type="submit" className="btn-primary">Save feedback</button>
+                    <button type="button" className="btn-secondary" onClick={() => commitPendingWrongChoice('')}>Skip reason</button>
+                    <button type="button" className="btn-link" onClick={() => { setPendingWrongChoice(null); setWrongChoiceReason('') }}>Cancel</button>
+                  </div>
+                </form>
               )}
               {outfit.reason && !isTripCard && (
                 <details className="stylist-outfit-reason">
@@ -3751,6 +3793,8 @@ export default function StylistChat({
                                           )
                                         })}
 
+                                        {renderCanonicalVerdictReasonAction(board)}
+
                                         <button
                                           type="button"
                                           onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)}
@@ -3931,14 +3975,44 @@ export default function StylistChat({
     }
   }
 
-  const toggleCanonicalBoardVerdict = async (board, type) => {
+  const renderCanonicalVerdictReasonAction = (board) => {
+    const canonical = canonicalBoardFor(board)
+    if (!canonical) return null
+    const labels = Array.isArray(canonical.payload?.feedback_labels) ? canonical.payload.feedback_labels : []
+    const activeVerdict = ['almost', 'not_me'].find(type => labels.includes(type))
+    if (!activeVerdict) return null
+    const existingComment = String(canonical.payload?.feedback_details?.owner_comment || '').trim()
+    return (
+      <button
+        type="button"
+        className="stylist-feedback-chip is-quiet"
+        onClick={() => {
+          setPendingBoardVerdict({ kind: 'canonical', board, type: activeVerdict })
+          setBoardVerdictComment(existingComment)
+        }}
+      >
+        {existingComment ? 'Edit reason' : 'Add reason'}
+      </button>
+    )
+  }
+
+  const toggleCanonicalBoardVerdict = async (board, type, { ownerComment = null, skipCommentPrompt = false } = {}) => {
     const canonical = canonicalBoardFor(board)
     const current = Array.isArray(canonical.payload?.feedback_labels) ? canonical.payload.feedback_labels : []
     const verdictValues = new Set(OVERALL_VERDICT_LABELS.map(([value]) => value))
     const isActive = current.includes(type)
+    if (!isActive && !skipCommentPrompt && ['almost', 'not_me'].includes(type)) {
+      setPendingBoardVerdict({ kind: 'canonical', board, type })
+      setBoardVerdictComment(String(canonical.payload?.feedback_details?.owner_comment || ''))
+      return
+    }
     const next = current.filter(value => !verdictValues.has(value))
     if (!isActive) next.push(type)
-    await patchCanonicalBoard(board, { feedbackLabels: next })
+    const details = canonical.payload?.feedback_details || {}
+    const nextDetails = ownerComment === null
+      ? details
+      : { ...details, owner_comment: String(ownerComment || '').trim() }
+    await patchCanonicalBoard(board, { feedbackLabels: next, feedbackDetails: nextDetails })
   }
 
   const toggleCanonicalBoardLabel = async (board, label) => {
@@ -3972,7 +4046,11 @@ export default function StylistChat({
 
   const saveStylistFeedback = async ({ key, feedbackType, targetType = 'message', label = '', note = '', payload = {}, contextOverride = null }) => {
     const context = contextOverride || activeContext || { type: 'wardrobe', id: null, name: 'Whole wardrobe' }
-    const feedbackPayload = { ...payload, threadId: payload.threadId || (currentThreadId !== 'new_chat' ? currentThreadId : null) }
+    const feedbackPayload = {
+      ...payload,
+      sourceSurface: 'stylist_chat',
+      threadId: payload.threadId || (currentThreadId !== 'new_chat' ? currentThreadId : null),
+    }
     const res = await fetch('/api/stylist-feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4021,9 +4099,25 @@ export default function StylistChat({
     await saveStylistFeedback(args)
   }
 
-  const selectGeneratedBoardVerdict = async (args, baseKey) => {
+  const commitPendingWrongChoice = async (reason) => {
+    if (!pendingWrongChoice) return
+    const explicitReason = String(reason || '').trim()
+    await toggleStylistFeedback({
+      ...pendingWrongChoice.args,
+      payload: { ...pendingWrongChoice.args.payload, explicitReason },
+    })
+    setPendingWrongChoice(null)
+    setWrongChoiceReason('')
+  }
+
+  const selectGeneratedBoardVerdict = async (args, baseKey, { skipCommentPrompt = false } = {}) => {
     const verdictKeys = OVERALL_VERDICT_LABELS.map(([type]) => `${baseKey}:${type}`)
     const wasSelected = feedbackSaved.has(args.key)
+    if (!wasSelected && !skipCommentPrompt && ['almost', 'not_me'].includes(args.feedbackType)) {
+      setPendingBoardVerdict({ kind: 'generated', args, baseKey })
+      setBoardVerdictComment('')
+      return
+    }
     await Promise.all(verdictKeys.map(async key => {
       const id = feedbackIdsByKey[key]
       if (id) await fetch(`/api/stylist-feedback/${id}`, { method: 'DELETE' })
@@ -4039,6 +4133,25 @@ export default function StylistChat({
       return next
     })
     if (!wasSelected) await saveStylistFeedback(args)
+  }
+
+  const commitPendingBoardVerdict = async (comment = '') => {
+    if (!pendingBoardVerdict) return
+    const ownerComment = String(comment || '').trim()
+    if (pendingBoardVerdict.kind === 'canonical') {
+      await toggleCanonicalBoardVerdict(pendingBoardVerdict.board, pendingBoardVerdict.type, {
+        ownerComment,
+        skipCommentPrompt: true,
+      })
+    } else {
+      const args = pendingBoardVerdict.args
+      await selectGeneratedBoardVerdict({
+        ...args,
+        payload: { ...args.payload, ownerComment },
+      }, pendingBoardVerdict.baseKey, { skipCommentPrompt: true })
+    }
+    setPendingBoardVerdict(null)
+    setBoardVerdictComment('')
   }
 
   const toggleOccasionExclusion = async (pieceId, occasion, currentlyExcluded) => {
@@ -6098,6 +6211,7 @@ export default function StylistChat({
                                       </button>
                                     )
                                   })}
+                                  {renderCanonicalVerdictReasonAction(board)}
                                   <button type="button" onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)} aria-expanded={isExpanded} className="stylist-feedback-chip is-quiet">
                                     {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
                                   </button>
@@ -6227,6 +6341,8 @@ export default function StylistChat({
                                             )
                                           })}
 
+                                          {renderCanonicalVerdictReasonAction(visual)}
+
                                           <button
                                             type="button"
                                             onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)}
@@ -6344,6 +6460,7 @@ export default function StylistChat({
                                               </button>
                                             )
                                           })}
+                                          {renderCanonicalVerdictReasonAction(board)}
                                           <button type="button" onClick={() => toggleFeedbackCardExpansion(cardKey, isExpanded)} aria-expanded={isExpanded} className="stylist-feedback-chip is-quiet">
                                             {isExpanded ? 'Less feedback ▴' : 'More feedback ▾'}
                                           </button>
@@ -6707,6 +6824,35 @@ export default function StylistChat({
       })()}
 
       {messages.length > 1 && renderComposerDock()}
+      {pendingBoardVerdict && (
+        <div className="stylist-feedback-dialog-backdrop" role="presentation">
+          <form
+            className="stylist-feedback-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="board-verdict-comment-title"
+            onSubmit={event => {
+              event.preventDefault()
+              commitPendingBoardVerdict(boardVerdictComment)
+            }}
+          >
+            <h3 id="board-verdict-comment-title">What feels off? <span>Optional</span></h3>
+            <p>Describe it however you can. Uncertainty is useful too—this stays attached to this exact outfit.</p>
+            <textarea
+              value={boardVerdictComment}
+              onChange={event => setBoardVerdictComment(event.target.value)}
+              placeholder="For example: the proportions feel strange, but I’m not sure why"
+              autoFocus
+              maxLength={500}
+            />
+            <div className="stylist-wrong-choice-reason-actions">
+              <button type="submit" className="btn-primary">Save feedback</button>
+              <button type="button" className="btn-secondary" onClick={() => commitPendingBoardVerdict('')}>Skip comment</button>
+              <button type="button" className="btn-link" onClick={() => { setPendingBoardVerdict(null); setBoardVerdictComment('') }}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
       {previewImage && (
         <div
           role="dialog"

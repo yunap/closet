@@ -74,6 +74,9 @@ import {
   selectCandidatesForOutfitGeneration,
   getOutfitsForPieceMemory,
   getStylistFeedbackMemory,
+  getProvisionalWrongChoiceMemory,
+  getExactOutfitReactionMemory,
+  getAcceptedFeedbackSynthesisMemory,
   getSavedBoardMemory,
   getWholeWardrobeFeedbackMemory,
   collectPieceIdsFromSavedBoardRow,
@@ -141,7 +144,6 @@ import {
   dedupeAndDifferentiateEditorialDirections,
   makeGeneratedOutfitReferenceSheet,
   buildSavedOutfitEvaluationContext,
-  getConfirmedOutfitMemory,
   criticPassForSelectedItem,
   getLinkedPiecesForOutfit,
   findLikelyPiecesForOutfit,
@@ -1028,7 +1030,6 @@ router.post('/evaluate-piece', async (req, res) => {
       ? complementaryWardrobeFor(parsedPiece, allPieces)
       : allPieces.filter(p => p.id !== piece.id)
     const wardrobeText = relatedWardrobe.map(buildPieceText).join('\n')
-    const confirmedOutfitsText = getConfirmedOutfitMemory()
     const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id)
 
     const content = []
@@ -1050,8 +1051,6 @@ router.post('/evaluate-piece', async (req, res) => {
         buildPieceText(parsedPiece),
         '',
         selectedPieceOutfitsText ? `Saved outfits that already use this selected item:\n${selectedPieceOutfitsText}` : `Saved outfits using this selected item: none yet`,
-        '',
-        confirmedOutfitsText ? `General confirmed/favorite outfit memory for ${prompts.PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
         '',
         wardrobeText ? `Available wardrobe pieces that may be used as supporting items. Do not replace the selected item with these:\n${wardrobeText}` : '',
         '',
@@ -1078,8 +1077,6 @@ router.post('/evaluate-piece', async (req, res) => {
       `Mode: evaluate_piece`,
       `Piece being evaluated — use these corrected records as truth:`,
       buildPieceText(parsedPiece),
-      '',
-      confirmedOutfitsText ? `Confirmed outfit memory:\n${confirmedOutfitsText}` : '',
       '',
       `Rest of active wardrobe for pairings:\n${wardrobeText}`,
       '',
@@ -1131,22 +1128,37 @@ export async function generateOutfitsForPieceInternal({
   const comfortConstraint = resolveComfortFootwearConstraint({ occasion, mood, request: question, activity })
   let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
-  const confirmedOutfitsText = getConfirmedOutfitMemory(8, { excludePieceId: parsedPiece.id })
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
   const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16)
-  const selectedSavedBoardText = getSavedBoardMemory('piece', parsedPiece.id, 10)
-  const globalSavedBoardText = getSavedBoardMemory(null, null, 12, { excludeContexts: [{ type: 'piece', id: parsedPiece.id }] })
   const globalFeedbackText = getStylistFeedbackMemory(null, null, 24, { excludeContexts: [{ type: 'piece', id: parsedPiece.id }] })
+  const selectedPieceRosterIds = [parsedPiece.id, ...rankedCandidates.map(candidate => candidate?.piece?.id)].filter(Boolean)
+  const exactOutfitReactionText = getExactOutfitReactionMemory(selectedPieceRosterIds, {
+    occasion,
+    activity,
+    season,
+    limit: 3,
+  })
+  const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(
+    selectedPieceRosterIds,
+    3
+  )
+  const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
+    pieceIds: selectedPieceRosterIds,
+    occasion,
+    activity,
+    season,
+    weather: [mood, question].filter(Boolean).join(' '),
+  })
   const calibrationMemoryText = getCalibrationMemoryForStylist(32)
 
   const memoryText = [
     selectedPieceOutfitsText ? `Saved outfits already using this selected garment:\n${selectedPieceOutfitsText}` : `Saved outfits using this selected garment: none yet`,
-    selectedSavedBoardText ? `Saved visual-board evidence for this garment. Reuse transferable formula/context lessons; do not repeat literal combinations merely because a board was marked positively:\n${selectedSavedBoardText}` : '',
     selectedFeedbackText ? `Recent feedback for this garment. Signature/Works should be reinforced; Not me/Too soft/Proportion problem should suppress similar ideas:\n${selectedFeedbackText}` : '',
-    confirmedOutfitsText ? `Other confirmed outfit memory for ${prompts.PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
-    globalSavedBoardText ? `Other saved visual-board evidence. Apply transferable formula/context lessons without repeating literal garment combinations:\n${globalSavedBoardText}` : '',
+    exactOutfitReactionText ? `EXACT PRIOR OUTFIT REACTIONS — narrow combination-level evidence only:\n${exactOutfitReactionText}` : '',
     calibrationMemoryText ? `Calibration Library memory. This is higher authority than broad style theory for taste boundaries and identity-preservation:\n${calibrationMemoryText}` : '',
-    globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : ''
+    globalFeedbackText ? `General saved stylist feedback memory:\n${globalFeedbackText}` : '',
+    provisionalCorrectionsText ? `PROVISIONAL OWNER CORRECTIONS FOR GARMENTS UNDER CONSIDERATION:\n${provisionalCorrectionsText}` : '',
+    acceptedSynthesisText ? `OWNER-ACCEPTED PERSONAL OR CONTEXTUAL LESSONS:\n${acceptedSynthesisText}` : ''
   ].filter(Boolean).join('\n\n')
 
   let visualCriticDebug = null
@@ -1477,7 +1489,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     // Reuse existing suppression filter (hard filter here — suppressed pieces are simply not shown)
     let { allowedPieces, suppressedPieces } =
-      filterWholeWardrobePiecesForGeneration(allPieces, { occasion, explorationMode, weatherProfile, mood, activity })
+      filterWholeWardrobePiecesForGeneration(allPieces, { occasion, season, explorationMode, weatherProfile, mood, activity })
     const savedMainSuppression = savedMainPiece
       ? suppressedPieces.find(piece => Number(piece.id) === savedMainPieceId)
       : null
@@ -1503,10 +1515,6 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     // Memory context (reuse existing builders, keep it lean)
     const wholeWardrobeFeedbackText = getWholeWardrobeFeedbackMemory(20)
-    const confirmedOutfitsText = getConfirmedOutfitMemory(8, {
-      allowedPieceIds: allowedPieces.map(piece => Number(piece.id))
-    })
-
     // Compute weather profile and filter the visual composer roster
     let { roster, excluded, debug: rosterDebug } = buildVisualComposerRoster(allowedPieces, {
       occasion,
@@ -1529,6 +1537,20 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         roster = [allowedMain, ...roster.filter(piece => Number(piece.id) !== savedMainPieceId)].slice(0, 90)
       }
     }
+    const provisionalCorrectionsText = getProvisionalWrongChoiceMemory(roster.map(piece => piece.id), 3)
+    const exactOutfitReactionText = getExactOutfitReactionMemory(roster.map(piece => piece.id), {
+      occasion,
+      activity,
+      season,
+      limit: 3,
+    })
+    const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
+      pieceIds: roster.map(piece => piece.id),
+      occasion,
+      activity,
+      season,
+      weather: [mood, stylingRequest].filter(Boolean).join(' '),
+    })
 
     console.log(`\n[Visual Composer Roster] Filtering active pieces for mood: "${mood}", season: "${season}"`)
     console.log(`  - Weather profile:`, weatherProfile)
@@ -1611,7 +1633,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       savedVariantGuidance,
       rotationWarningsText,
       wholeWardrobeFeedbackText ? `Feedback memory (rejected pairings are settled — do not repeat them):\n${wholeWardrobeFeedbackText}` : '',
-      confirmedOutfitsText ? `Confirmed favorite outfits:\n${confirmedOutfitsText}` : ''
+      provisionalCorrectionsText ? `PROVISIONAL OWNER CORRECTIONS FOR GARMENTS SHOWN ABOVE:\n${provisionalCorrectionsText}` : '',
+      exactOutfitReactionText ? `EXACT PRIOR OUTFIT REACTIONS — narrow combination-level evidence only:\n${exactOutfitReactionText}` : '',
+      acceptedSynthesisText ? `OWNER-ACCEPTED PERSONAL OR CONTEXTUAL LESSONS:\n${acceptedSynthesisText}` : ''
     ].filter(Boolean).join('\n') })
 
     const savedOutfitPhotoPath = savedOutfitSeed?.photo
@@ -2462,8 +2486,6 @@ router.post('/outfit-feedback', upload.single('photo'), async (req, res) => {
   try {
     const { question, outfitName, outfitNotes } = req.body
     const activeWardrobeText = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece).map(buildPieceText).join('\n')
-    const confirmedOutfitsText = getConfirmedOutfitMemory()
-
     const result = await evaluateOutfitThroughSharedPipeline({
       outfit: { label: outfitName || 'Uploaded outfit photo', notes: outfitNotes || '' },
       question: question || 'What do you think of this outfit? Does it work well together?',
@@ -2473,7 +2495,6 @@ router.post('/outfit-feedback', upload.single('photo'), async (req, res) => {
       extraContextText: [
         outfitName ? `Outfit: "${outfitName}"` : '',
         outfitNotes ? `User notes / corrected truth: ${outfitNotes}` : '',
-        confirmedOutfitsText ? `Confirmed outfit memory:\n${confirmedOutfitsText}` : '',
         activeWardrobeText ? `Active wardrobe truth, for identifying likely saved garments and avoiding wrong guesses:\n${activeWardrobeText}` : ''
       ].filter(Boolean).join('\n\n')
     })
@@ -2643,8 +2664,6 @@ router.post('/compare-outfits', async (req, res) => {
     const linkedB = getLinkedPiecesForOutfit(outfitB.id)
     const likelyA = linkedA.length ? [] : findLikelyPiecesForOutfit(outfitA)
     const likelyB = linkedB.length ? [] : findLikelyPiecesForOutfit(outfitB)
-    const confirmedOutfitsText = getConfirmedOutfitMemory()
-
     content.push({ type: 'text', text: [
       `Mode: compare_outfits`,
       `Question: ${question || `Which outfit works better for ${prompts.PROFILE_NAME}?`}`,
@@ -2658,8 +2677,6 @@ router.post('/compare-outfits', async (req, res) => {
       buildOutfitAuthorityNote(outfitB, linkedB, likelyB),
       buildOutfitText(outfitB, linkedB),
       likelyB.length ? `Likely saved garment truth for Outfit B — hints only unless linked:\n${likelyB.map(buildPieceText).join('\n')}` : '',
-      '',
-      confirmedOutfitsText ? `Other confirmed outfit memory for ${prompts.PROFILE_NAME}'s taste filter:\n${confirmedOutfitsText}` : '',
       '',
       `Comparison instruction: make a call if one outfit is clearly stronger. If both work, explain the different use cases. If neither works, identify the shared issue. Do not give a vague "both are nice" answer.`
     ].filter(Boolean).join('\n') })
@@ -2987,7 +3004,7 @@ ${accents.length
 
 export function capsuleRosterSelectionUserText({
   bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
-  quotas = null, attempt = 1, failures = [], previousRosterIds = [], ownerRules = []
+  quotas = null, attempt = 1, failures = [], previousRosterIds = [], ownerRules = [], acceptedLessons = ''
 } = {}) {
   const truthCatalog = bench.map(piece => `ID ${piece.id}: ${buildPieceText(piece)}`)
   const slotLines = slots.map(slot => `- ${slot.label} (${slot.occasion || 'general'}${slot.activity && slot.activity !== 'none' ? `, ${slot.activity}` : ''}${slot.environment ? `, ${slot.environment}` : ''}): ${slot.bestFor || slot.label}`)
@@ -3005,9 +3022,12 @@ export function capsuleRosterSelectionUserText({
   const ownerRulesBlock = Array.isArray(ownerRules) && ownerRules.length
     ? `\n\nOWNER RULES — hard requirements, not suggestions. Do not construct exceptions or conditional workarounds. If a rule makes a genuinely usable roster impossible, say so in your palette line rather than bending the rule. Apply to every piece you select: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
     : ''
+  const acceptedLessonsBlock = String(acceptedLessons || '').trim()
+    ? `\n\nOWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for the candidates and use cases below; respect each stated boundary:\n${acceptedLessons}`
+    : ''
   return `SEASON: ${isWinter ? 'winter' : isSummer ? 'summer' : 'unspecified'}
 CAPSULE SIZE: exactly ${budget} pieces
-${capsulePaletteBlock(palette, budget)}${ownerRulesBlock}${capsuleAllocationBlock(quotas, budget)}
+${capsulePaletteBlock(palette, budget)}${ownerRulesBlock}${acceptedLessonsBlock}${capsuleAllocationBlock(quotas, budget)}
 
 USE CASES THIS CAPSULE MUST COVER:
 ${slotLines.join('\n')}
@@ -3027,7 +3047,7 @@ ${truthCatalog.join('\n')}${repairBlock}`
 // of re-paying for every thumbnail.
 export function capsuleRosterSelectionContent({
   bench = [], slots = [], budget = 24, palette = [], isSummer = false, isWinter = false,
-  quotas = null, ownerRules = [], attempt = 1, failures = [], previousRosterIds = [], imageParts = []
+  quotas = null, ownerRules = [], acceptedLessons = '', attempt = 1, failures = [], previousRosterIds = [], imageParts = []
 } = {}) {
   // STABLE PREFIX FIRST. Built with attempt:1 unconditionally — passing the
   // real `attempt` here would append the repair text to this block and
@@ -3037,7 +3057,7 @@ export function capsuleRosterSelectionContent({
   const content = [{
     type: 'text',
     text: capsuleRosterSelectionUserText({
-      bench, slots, budget, palette, isSummer, isWinter, quotas, ownerRules,
+      bench, slots, budget, palette, isSummer, isWinter, quotas, ownerRules, acceptedLessons,
       attempt: 1, failures: [], previousRosterIds: []
     }),
     cache_control: { type: 'ephemeral' }
@@ -3082,8 +3102,18 @@ export async function chooseCapsuleRosterWithProvider({ bench, slots, budget, pa
     }
   }
 
+  const capsuleSeason = isSummer ? 'summer' : (isWinter ? 'winter' : '')
+  const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
+    pieceIds: bench.map(piece => piece.id),
+    contexts: slots.map(slot => ({
+      occasion: slot?.occasion || '',
+      activity: slot?.activity || '',
+      season: slot?.season || capsuleSeason,
+      weather: [slot?.weather, slot?.environment, slot?.bestFor].filter(Boolean).join(' '),
+    })),
+  })
   const content = capsuleRosterSelectionContent({
-    bench, slots, budget, palette, isSummer, isWinter, quotas, ownerRules,
+    bench, slots, budget, palette, isSummer, isWinter, quotas, ownerRules, acceptedLessons,
     attempt, failures, previousRosterIds, imageParts
   })
 

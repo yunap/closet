@@ -298,7 +298,7 @@ it only *discriminates* if its condition is sometimes false.
 | `compatibilityScoreForSelectedItem` | ranking of partners for one selected garment | unbounded sum of clamped terms |
 | `getRelevanceScore` (visual composer roster) | which pieces get an image slot | unbounded sum |
 | `scoreWholeWardrobeCandidate` | ranking of whole-wardrobe outfit candidates | unbounded sum |
-| `scopedWrongItemInfluenceForRows` | how a prior garment replacement shifts that garment in the same occasion/activity | −6 per exact context match, capped at −12 |
+| ~~`scopedWrongItemInfluenceForRows`~~ | retired 2026-08-10: occasion/activity scoring discarded the actual correction reason | no current score |
 
 The remaining feedback score is deliberately mild and context-bound. Relational outfit feedback
 is prompt guidance; it does not mechanically reinforce literal garments or combinations.
@@ -390,8 +390,22 @@ the `-18` support-only term are the structured exceptions.
 The former generic `feedbackWeight` table and its pair, board, roster and whole-outfit consumers
 have been removed. Outfit reactions are classified for prompt memory as positive, qualified, or
 negative evidence; they do not become literal garment weights. Image-fidelity feedback reaches
-renderer memory only. Canonical `garment_context_suitability` evidence is the exception: it applies
-−6 to the named garment for an exact occasion/activity match, capped at −12 across repeated rows.
+renderer memory only. Version-2 wrong-choice evidence is provisional: it may be delivered verbatim
+and in bounded form inside an already-requested styling call when its subject garment is considered,
+but it does not alter candidate or roster scores.
+
+Reasonless evidence carries only the exact-outfit reminder and is not synthesis-eligible. Older
+unstructured rows sharing the `wrong_item_read` storage value are display-only because their UI
+meaning cannot be recovered safely. The 28 live legacy rows were removed on 2026-08-10 after owner
+confirmation; display-only routing remains as stale-import protection. Broader interpretation happens only through an owner-authorized
+synthesis call. The call creates reviewable `feedback_synthesis_drafts`, not prompt authority. The
+free preview's output estimate is the enforced output-token cap, and paid failures retain any
+provider usage returned before parsing failed. `getAcceptedFeedbackSynthesisMemory`
+reads at most eight owner-accepted `personal_contextual_lesson` drafts into styling prompts, with
+per-line length caps. These accepted personal lessons remain visible, editable, and retireable;
+retirement removes them from prompt memory. Accepted `general_styling_failure` and
+`garment_fact_correction` drafts remain visible review/provenance records: they neither become owner
+preferences nor silently edit garment truth.
 
 ### The two sub-scorers, measured
 
@@ -422,13 +436,13 @@ user intent rather than garment text, and correctly `ratchet-allow`ed as such.
 ### `compatibilityScoreForSelectedItem` — measured
 
 The historical feedback-pair sampling below is retired with the generic scorer. The live personal
-pair terms are explicit garment metadata plus the typed contextual reaction:
+pair terms are explicit garment metadata only:
 
 | term | fires |
 |---|---|
 | `+16` confirmed pairing note | **0** |
 | `−40` rejected pairing note | **0** |
-| `−6…−12` exact-context garment reaction | depends on canonical scoped evidence and current context |
+| contextual garment reaction | no deterministic score; bounded provisional prompt evidence only |
 
 Saved-board and garment favourites remain organization/display metadata and prompt evidence where
 explicitly described; they do not mechanically promote literal pieces or pairs.
@@ -577,6 +591,10 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    owner's own per-piece veto and is the intended route for personal rules — `occasions.js` is
    frozen (`FROZEN, Yuna 2026-06-12: no new profiles`) precisely so that new rules land here
    instead.
+   Plan slots retain their public broad occasion, but an unambiguous home-only label/use case now
+   supplies `home` specifically to the owner-exclusion lookup. Other occasion gates still receive
+   the public occasion, so an AI-generated `home: low` confidence remains advisory. Mixed
+   **home + errands** slots deliberately remain broad because one veto cannot safely describe both uses.
 3. **Auto-use trust** (`autoStylingTrustDecision`, `src/utils/wardrobeAiContext.js:146`), with a
    dead escape hatch — see *Exploration mode* below.
    `recommendation_status` of `avoid` / `do_not_recommend` / `needs_fit_review` / `experimental`,
@@ -587,6 +605,9 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    `explorationMode: 'aggressive'`.
 4. **Weather physics.** Hot: insulating fiber, or heavy weight, or (medium+ weight *and* insulating
    coverage / warm neckline / long sleeves). Cold: shorts, lightweight linen bottoms, high bareness.
+   Credible wet exposure excludes footwear whose structured material is canvas or suede. Explicit
+   rain, drizzle, wet ground, puddles or mud qualifies; a foggy coastal outdoor walk also qualifies
+   from the combined environment and activity. Fog alone and dry beach walking do not.
    The exemptions here are all scar tissue and are commented as such — open-front layers
    (cardigans, kimonos) are exempt from the sleeve/coverage clauses (ratified 2026-07-12 after
    summer layering requests kept dying); shoes and accessories are never "insulating"; the
@@ -1041,11 +1062,15 @@ genuine:
 > saved garment reference length."* · *"black cream botanical tiered midi skirt: prior render had
 > … rendered too long…"*
 
-This is also the **only** consumer of the image-fidelity feedback types. Recall that
+This is also the **only behavioural** consumer of the image-fidelity feedback types. It supplies
+text only when the identified garment is being rendered; the rejected generated board is retained
+as evidence and is **never** attached as a future visual reference. Recall that
 `wrong_length`, `wrong_garment_details`, `body_proportions_drift`, `identity_drift` and
 `bad_reference` are deliberately excluded from styling influence (*Scoring → feedback weights*).
 The split is clean and worth stating: **image feedback steers the renderer, styling feedback steers
-the composer, and neither leaks into the other.** Note one asymmetry — `bodyProportionsDrift` and
+the composer, and neither leaks into the other.** A field-specific wrong-length reason can also
+create a separate metadata-review task, but never changes garment truth automatically. Note one
+asymmetry — `bodyProportionsDrift` and
 `identityDrift` are latched *before* the piece-overlap check, so those two corrections fire from
 any board's feedback, not just boards involving the requested pieces. They are properties of the
 person, not the garment, so that reads as intended.

@@ -50,6 +50,8 @@ import {
   optionalLayerCoherenceIssue,
   buildOutfitGenerationCandidateText,
   getStylistFeedbackMemory,
+  getProvisionalWrongChoiceMemory,
+  getAcceptedFeedbackSynthesisMemory,
   outfitStylisticStrengthScore,
   sortByStylisticStrength,
   weatherProfileFromContext
@@ -216,30 +218,6 @@ export function buildOutfitAuthorityNote(outfit, linkedPieces = [], likelyPieces
   return lines.join('\n')
 }
 
-export function getConfirmedOutfitMemory(limit = 8, { allowedPieceIds = null, excludePieceId = null } = {}) {
-  const excludedId = Number(excludePieceId)
-  const excludeClause = Number.isFinite(excludedId) && excludedId > 0
-    ? 'AND NOT EXISTS (SELECT 1 FROM outfit_pieces excluded_op WHERE excluded_op.outfit_id = outfits.id AND excluded_op.piece_id = ?)'
-    : ''
-  const outfits = db.prepare(`
-    SELECT * FROM outfits
-    WHERE status = 'confirmed'
-      ${excludeClause}
-    ORDER BY date_added DESC
-    LIMIT ?
-  `).all(...(excludeClause ? [excludedId, limit] : [limit]))
-
-  const allowedSet = Array.isArray(allowedPieceIds)
-    ? new Set(allowedPieceIds.map(Number).filter(Number.isFinite))
-    : null
-
-  return outfits.map(o => {
-    const linkedPieces = getLinkedPiecesForOutfit(o.id)
-    if (allowedSet && linkedPieces.some(piece => !allowedSet.has(Number(piece.id)))) return ''
-    return buildOutfitText(o, linkedPieces)
-  }).filter(Boolean).join('\n\n')
-}
-
 export function findLikelyPiecesForOutfit(outfit, limit = 12) {
   const text = `${outfit.name || ''} ${outfit.notes || ''}`.toLowerCase()
   const pieces = db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY date_added DESC").all().map(parsePiece)
@@ -271,8 +249,7 @@ export function buildSavedOutfitEvaluationContext(outfit) {
   const extraContextText = [
     buildOutfitAuthorityNote(outfit, linkedPieces, likelyPieces),
     buildOutfitText(outfit, linkedPieces),
-    likelyPieces.length ? `Likely saved garment truth for Outfit A — hints only unless linked:\n${likelyPieces.map(buildPieceText).join('\n')}` : '',
-    getConfirmedOutfitMemory() ? `Other confirmed outfit memory for comparison. Use this to understand ${prompts.PROFILE_NAME}'s taste, not as a rigid checklist:\n${getConfirmedOutfitMemory()}` : ''
+    likelyPieces.length ? `Likely saved garment truth for Outfit A — hints only unless linked:\n${likelyPieces.map(buildPieceText).join('\n')}` : ''
   ].filter(Boolean).join('\n\n')
   return { linkedPieces, likelyPieces, extraContextText }
 }
@@ -3744,6 +3721,7 @@ export async function buildStylistConversationPayload(body) {
 
   let activeOutfit = outfit
   let activePieceIds = pieceIds
+  let resolvedActiveOutfitPieceIds = []
 
   // Structured thread state: on follow-up turns, restore established context and
   // the current outfit set from the server-side session state so the thread
@@ -3766,7 +3744,6 @@ export async function buildStylistConversationPayload(body) {
   const effectiveMission = mission || restoredEstablished.mission || ''
   const effectiveLocation = body.location || restoredEstablished.location || ''
 
-  const confirmedOutfitsText = getConfirmedOutfitMemory()
   const generatedOutfitContextText = String(generatedContext || '').trim()
   const threadContextText = String(threadContext || '').trim()
   // Weather precedence: explicit body value, then this turn's text, then the
@@ -3813,6 +3790,7 @@ export async function buildStylistConversationPayload(body) {
 
   if (activeOutfit) {
     const { pieces: outfitPieces } = resolveOutfitEvaluationPieces({ outfit: activeOutfit, pieceIds: activePieceIds })
+    resolvedActiveOutfitPieceIds = outfitPieces.map(piece => Number(piece?.id)).filter(Boolean)
     const outfitPhoto = activeOutfit.photo || activeOutfit.imageUrl || ''
     const savedPhotoPath = uploadedOrSavedOutfitPhotoPath(outfitPhoto)
     const contentImages = []
@@ -4037,10 +4015,28 @@ export async function buildStylistConversationPayload(body) {
       feedbackMemoryParts.push(`Saved feedback/preferences for this active garment:\n${pieceFeedbackText}`)
       deliveredFeedbackContexts.push({ type: 'piece', id: activePieceId })
     }
+    const provisionalPieceText = getProvisionalWrongChoiceMemory([activePieceId], 2)
+    if (provisionalPieceText) {
+      feedbackMemoryParts.push(`Provisional owner corrections for this active garment:\n${provisionalPieceText}`)
+    }
   }
   const globalFeedbackText = getStylistFeedbackMemory(null, null, 24, { excludeContexts: deliveredFeedbackContexts })
   if (globalFeedbackText) {
     feedbackMemoryParts.push(`Global saved stylist feedback/preferences:\n${globalFeedbackText}`)
+  }
+  const acceptedLessonPieceIds = [...new Set([
+    Number(activePieceId),
+    ...resolvedActiveOutfitPieceIds,
+  ].filter(Boolean))]
+  const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
+    pieceIds: acceptedLessonPieceIds,
+    occasion: effectiveOccasion,
+    activity: effectiveActivity,
+    season: effectiveSeason,
+    weather: extractedWeather,
+  })
+  if (acceptedSynthesisText) {
+    feedbackMemoryParts.push(`Owner-accepted personal or contextual lessons:\n${acceptedSynthesisText}`)
   }
 
   const savedFeedbackSection = feedbackMemoryParts.length
@@ -4102,7 +4098,6 @@ export async function buildStylistConversationPayload(body) {
       : '',
     savedFeedbackSection,
     '',
-    confirmedOutfitsText ? `CONFIRMED / FAVORITE OUTFIT MEMORY:\n${confirmedOutfitsText}` : '',
     generatedOutfitContextText ? [
       'CURRENT GENERATED OUTFIT CARD CONTEXT:',
       generatedOutfitContextText,

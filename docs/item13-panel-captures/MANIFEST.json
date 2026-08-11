@@ -1,0 +1,22 @@
+{
+  "origin": "http://127.0.0.1:5177",
+  "viewportsCaptured": [
+    1440,
+    1024,
+    768
+  ],
+  "deviceScaleFactor": 2,
+  "stylistDebug": false,
+  "captures": [
+    "01-style-profile-populated-1440.png",
+    "02-provisional-reaction-actions-1440.png",
+    "03-accepted-lesson-expanded-1440.png",
+    "03-accepted-lesson-expanded-1024.png",
+    "03-accepted-lesson-expanded-768.png",
+    "04-constitution-layers-768.png",
+    "05-source-chat-populated-1440.png",
+    "06-renderer-control-active-1440.png",
+    "07-wardrobe-tasks-retag-1440.png",
+    "08-empty-synthesis-state-1440.png"
+  ]
+}

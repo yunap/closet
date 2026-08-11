@@ -106,7 +106,7 @@ Counts regenerate via script §1.
 | 3 | Board feedback and favourites | `saved_boards` (+ `payload.feedback_labels`, `favorite`) | prompt + display; no literal-pair score |
 | 4 | Calibration / reference memory | `calibration_images` (`labels`, `notes`, `kind`, `favorite`) | prompt |
 | 5 | Global owner rules | `stylist_feedback` where `owner_rule` / `preference_reaction`+`message` | prompt |
-| 6 | Board and outfit reactions | all other `stylist_feedback` | one routed authority: scoped styling prompt, scoped context score, renderer, retired, or display-only |
+| 6 | Board and outfit reactions | all other `stylist_feedback`; `feedback_synthesis_batches`; `feedback_synthesis_drafts`; `product_quality_findings` | routed prompt, provisional context, renderer, product-review queue, retired, or display-only; only accepted personal/contextual synthesis drafts enter styling prompts |
 | 7 | Thread-scoped conversation state | `chat_threads.payload`, `stylist_conversation_state.state_json` | **thread-only** |
 | 8 | Short-lived recency / diversity | `whole_wardrobe_sessions` | **score** (suppression) |
 | 9 | Tasks created from feedback | `todos` (`retag-suggestion`, `metadata`) | display → owner action |
@@ -135,14 +135,14 @@ a temporary context gets mistaken for a standing instruction.
 - **Writes** — `POST /outfits` and `PUT /outfits/:id` (`crud.js:422/441`), which also rewrite
   `outfit_pieces` (`crud.js:444/457`); and the favourite toggle.
 - **User action** — saving an outfit, confirming it, or favouriting it.
-- **Reads** — `getConfirmedOutfitMemory` (`core.js:216`) → `routes/ai.js:1034/1137`, `core.js:268`,
-  `core.js:3762`; `getOutfitsForPieceMemory` (`rules.js:1259`) → `ai.js:1035/1138`, ordered by
-  recency rather than favourite status.
-- **Authority** — **prompt**. `core.js:268` is explicit that it is taste context, *"not a rigid
-  checklist"*.
-- **[by design]** `status='confirmed'` makes an outfit prompt evidence, and `outfit_pieces`
-  preserves the combination. `favorite=1` is organizational only and neither makes an unconfirmed
-  outfit authoritative nor adds a bonus to its garments.
+- **Reads** — `getOutfitsForPieceMemory` → selected-piece evaluation/generation, ordered by recency
+  rather than favourite status. Direct saved-outfit evaluation reads the exact outfit and its
+  linked pieces. The former global `getConfirmedOutfitMemory` reader was removed on 2026-08-10.
+- **Authority** — **relevant-context prompt only**. A saved combination is available while its
+  outfit or one of its garments is under discussion; unrelated confirmed combinations are not
+  broadcast as general taste memory.
+- **[by design]** `outfit_pieces` preserves the combination for direct retrieval. Confirmation and
+  `favorite=1` remain organizational/status metadata and add no selection bonus to their garments.
 
 ### 3 · Board feedback and favourites
 
@@ -154,7 +154,9 @@ a temporary context gets mistaken for a standing instruction.
 - **User action** — saving a board, reacting to it, marking it "Use strongly", archiving it.
 - **Reads** — see §4. `getSavedBoardMemory` (prompt), `getSavedBoardRendererMemory` (render prompt),
   `getPieceUsageStats` (usage counts).
-- **Authority** — **prompt and display.** Positive, *Almost*, and *Use strongly* reactions remain
+- **Authority** — **prompt and display.** Image-fidelity reports contribute only a textual reminder
+  when the identified garment is rendered again; the rejected generated image is never reused as
+  a reference and these reports never influence styling selection. Positive, *Almost*, and *Use strongly* reactions remain
   stored evidence, but no longer promote the literal garment pairs in the board. The former
   `+6` / `+18` / `+45` pair scorer was neutralized on 2026-08-09 to prevent repetition loops.
 
@@ -164,10 +166,15 @@ a temporary context gets mistaken for a standing instruction.
   (`crud.js:953`, sets `kind`, `labels`, `notes`, `favorite`, `archived`),
   `DELETE` (`crud.js:971`), plus the importer (`importer.js:713`).
 - **User action** — uploading a reference image and labelling or favouriting it in Visual Lab.
-- **Reads** — `getCalibrationMemoryForStylist` (`core.js:313`) → `routes/ai.js:1144` and
-  `core.js:2822`.
-- **Authority** — **prompt**, and the reader treats it as high-authority positive *and negative*
-  styling memory.
+- **Reads** — `getCalibrationMemoryForStylist` (`core.js:313`) → styling prompt memory; and
+  `getCalibrationReferenceImagesForGeneration` → generated-outfit image calls. The image reader
+  rotates references from a larger eligible pool, taking starred rows before unstarred rows.
+  `real_photo` rows are sent as identity/proportion references; `good_reference` rows are sent as
+  taste/aesthetic references. Exact garment hanger/worn photos remain separate garment anchors.
+- **Authority** — **prompt and renderer evidence.** Within the renderer, `favorite` means priority
+  reference within the row's existing `kind`; it does not replace garment truth or affect garment
+  selection. The prompt reader also treats labels and notes as high-authority positive *and
+  negative* styling memory.
 - Its labels and notes are **styling** memory, not only renderer calibration — which is why it is a
   category here rather than an exclusion.
 
@@ -179,6 +186,41 @@ Covered in §2 · E and §3. **Authority — prompt.** Never garment-scoped; see
 
 Covered in §2 · F, §3 and §4. **Authority — one primary behavioural reader per reaction**, enforced
 by `feedbackBehaviour` in `lib/feedbackTaxonomy.js`.
+
+Authorized synthesis adds two stores without changing that rule. `feedback_synthesis_batches`
+records the exact compact input, hash, selected provider/model, estimate, actual usage and outcome
+of an explicitly authorized call. `feedback_synthesis_drafts` holds the model's review proposals.
+Drafts have no authority. After owner acceptance, only disposition
+`personal_contextual_lesson` is read by `getAcceptedFeedbackSynthesisMemory`. Structured
+applicability is matched against the active garment and request occasion/activity/season/weather
+before the newest-eight cap; missing applicability matches nothing. The editable boundary remains
+display/explanation rather than executable text. Active garment sets include selected-piece
+candidates, whole-wardrobe visual rosters, capsule roster benches and bounded plan composition
+pools, but never the complete wardrobe manifest merely because it lists the garment;
+piece-and-context applicability requires both an active garment match and a context match;
+accepted `garment_fact_correction` rows remain review/provenance. Accepted
+`general_styling_failure` rows additionally create a product-quality work item, but neither class
+enters styling prompts or silently edits garment truth.
+
+The product-quality work item is one `product_quality_findings` row linked to the synthesis draft
+and its source feedback IDs. Findings have `open`, `resolved`, and `dismissed` states and require an
+explicit resolution destination (`shared_rule`, `model_instruction`, `garment_metadata`,
+`renderer`, or `no_change`) before resolution. They never enter a styling prompt. This is the
+backend/provenance portion of item 11. A confirmed report can also enter the same lifecycle directly
+from an existing feedback row without a model call: the system records a zero-call batch, an accepted
+general-failure draft and the linked finding. Its evidence snapshot preserves the source thread,
+board image, garment IDs/photos and structured attributes even if the original reaction is later
+removed. The dedicated review UI remains deferred to the UI/UX panel.
+
+`owner_constraints` is the structured hard-authority destination for an owner-confirmed standing
+constraint that cannot be represented by one garment's `occasion_exclusions`. Its selectors are
+limited to verified piece IDs, wardrobe category or structured material; its context is one of
+occasion, activity, season or weather. The writer requires explicit confirmation and archives a
+linked prose owner rule so the same instruction is not also prompt authority. The whole-wardrobe
+trust gate reads active rows before roster assembly, slot replacement, complementary ranking and
+each capsule-plan slot; missing context is a no-op. A matched row hard-blocks the garment and emits
+its constraint ID/dimension in suppression reasons. Retiring the row is the undo. Item 12's review
+surface is deferred, but its bounded storage, routing and undo contract is executable.
 
 ### 7 · Thread-scoped conversation state
 
@@ -334,18 +376,22 @@ effect. Where an action has no reader, that is stated.
 | Restoring it (chip ✕, or Style profile) | `crud.js:378` | same | same | lifts the gate; the ✕ calls the endpoint rather than editing text |
 | Global verbal correction in chat | `store_user_correction` | `stylist_feedback` `owner_rule`/`message` | `getOwnerRuleNotes` → capsule roster + composition prompts | **prompt**, global; used when no `piece_id` is supplied |
 | Verified garment-specific correction in chat | `store_user_correction(piece_id)` | canonical `pieces.styling_rules_learned` + synchronized `piece_rule_receipt` projection | garment-truth prompts; receipt is Conversation Memory display/edit only | **authoritative garment prompt guidance**, not a deterministic gate or score unless separately mapped to a structured constraint; ID must be retrieved, in the current outfit, or the active garment; failed verification stores nothing |
-| "Replace in this outfit" | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback` `wrong_item_read` + version-1 `scopedEvidence` | `getScopedWrongItemInfluence` → pre-model candidate/roster ranking | **scoped context score**, −6 per exact occasion/activity match, capped at −12; no global effect and no duplicate prompt authority |
-| Positive whole-outfit reaction | `POST /stylist-feedback` (`crud.js:775`) | original reaction payload + version-1 `outfit_logic` evidence when structured logic exists | consolidated branch of `getStylistFeedbackMemory` | **scoped prompt**, formula/silhouette/direction/mood × context; no garment IDs or literal-pair selection boost |
-| Editing a positive verdict later in Visual Lab | `PATCH /saved-boards/:id` | canonical `saved_boards.payload.scoped_evidence` + one mirrored feedback receipt | `getSavedBoardMemory`; mirrored row deliberately excluded | **scoped prompt**, same transferable outfit-logic schema as chat; removal withdraws authority; image-only legacy boards are not guessed into formulas |
+| "Wrong choice for this outfit" | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback` historical storage value `wrong_item_read` + version-2 `feedbackEvidence` | provisional garment-context reader (bounded delivery inside an already-requested styling call) | **provisional evidence**, no score or standing preference; records available weather and an optional verbatim owner reason without app-inferred diagnosis. Without a reason it is only an exact-outfit reminder and is excluded from synthesis |
+| Positive whole-outfit reaction | `POST /stylist-feedback` (`crud.js:775`) | original reaction payload + version-1 `outfit_logic`; if unavailable, classified `legacy_outfit_snapshot` | consolidated branch of `getStylistFeedbackMemory`; snapshot is synthesis-only evidence | **scoped prompt** for structured formula/silhouette/direction/mood × context; legacy snapshot adds no invented direct logic; no literal-pair selection boost |
+| Selecting positive / Almost reactions for synthesis | `GET /feedback-synthesis/preview` then authorized `POST /feedback-synthesis/batches` | compact verdict + structured logic, or bounded generated description + current anonymous garment attributes for legacy evidence → review drafts | accepted-personal reader only after owner acceptance | **draft then bounded prompt**; no source garment IDs/names/photos; exact context phrases from legacy description may bound review but remain generated lower-confidence clues; `Whole wardrobe`/garment context labels are not occasions; lone `almost` cannot become positive proof; acceptance suppresses source direct authority until retirement |
+| Editing a positive verdict later in Visual Lab or a canonical Lookbook board | `PATCH /saved-boards/:id` | canonical `saved_boards.payload.scoped_evidence` + one mirrored feedback receipt | `getSavedBoardMemory`; mirrored row deliberately excluded | exact source-chat piece-set match recovers structured logic when unique; otherwise stores a synthesis-only legacy snapshot; removal withdraws authority |
 | Exact garment-pair failure | garment editor | existing `tried_and_rejected` relationship | garment truth / rejected-pair reader | explicit owner-authored negative pair knowledge; no new Phase 1 writer or inferred pair penalty |
 | "Save as styling rule" | retired 2026-08-09; inert state and append-note routes removed | no current writer | legacy records remain in their canonical stores and retain their normal readers | none |
-| Reaction chips on a board or outfit | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback`, type by chip | routed by `feedbackBehaviour` | relational styling reactions: **scoped prompt**; version-1 wrong item: **scoped context score**; image fidelity: **renderer** |
+| Reaction chips on a board or outfit | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback`, type by chip | routed by `feedbackBehaviour` | relational styling reactions: **scoped prompt**; wrong choice: **provisional context with no score**; image fidelity: **renderer** |
+| Previewing selected provisional reactions | `GET /feedback-synthesis/preview` | no write | local compactor and pricing table | **display only**, zero provider calls |
+| Authorizing one synthesis call | `POST /feedback-synthesis/batches` | `feedback_synthesis_batches` + `feedback_synthesis_drafts` | Style Profile review; accepted-personal reader below | one paid call creates **drafts**, never immediate authority |
+| Accepting, editing, or retiring a synthesis draft | `PATCH /feedback-synthesis/drafts/:id` | draft status, owner-edited text/boundary, and owner-reviewable source-validated structured applicability | `getAcceptedFeedbackSynthesisMemory` only for accepted applicable `personal_contextual_lesson` | accepted personal/contextual drafts are visible, editable, relevance-filtered capped **prompt** memory; garment/context scope is executable while boundary prose is explanatory; retirement removes prompt authority; missing applicability matches nothing; general failures and garment corrections remain visible review records |
 | Marking a board "Use strongly" | `PATCH /saved-boards/:id` (`crud.js:1170`) | `saved_boards.favorite` | `getSavedBoardMemory` | **prompt/display evidence**, no literal-pair boost |
 | Favouriting a garment | `PATCH /pieces/:id/favorite` (`crud.js:338`) | `pieces.favorite` | inventory filters and display | **organizational only** |
-| Confirming or favouriting an outfit | `crud.js:461` (favourite), `crud.js:433` (status via `PUT /outfits/:id`) | `outfits.status`, `outfits.favorite` | confirmed status feeds outfit memory; favourite feeds lookbook organization | confirmation is prompt evidence; favourite adds no literal-piece authority |
+| Confirming or favouriting an outfit | `crud.js:461` (favourite), `crud.js:433` (status via `PUT /outfits/:id`) | `outfits.status`, `outfits.favorite` | outfit history and lookbook organization | organizational/status metadata; the exact outfit remains retrievable, but neither flag broadcasts its pieces or adds selection authority |
 | Labelling or favouriting a calibration image | `PATCH /calibration-images/:id` (`crud.js:953`) | `calibration_images` | `getCalibrationMemoryForStylist` | **prompt**, positive *and* negative styling memory |
 | Editing a constitution layer | `PUT /settings/constitution` (`crud.js:1524`) | `style_constitution` + `constitution_history` | `loadConstitution` → `buildForUser` | **system prompt**, and rebuilds the per-user prompt cache |
-| Reporting a rendering problem | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback`, image-fidelity types | `getSavedBoardRendererMemory`; wrong-length also becomes a retag to-do | **prompt** to the renderer, **+ task** |
+| Reporting a generated-image problem | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback`, image-fidelity types | `getSavedBoardRendererMemory`; field-specific wrong-length also becomes a retag to-do | **piece-scoped text** to the image renderer when the identified garment recurs, **+ task**; the rejected generated image is evidence only and is never reused |
 | Historical Visual Lab variation rating | retired; `POST /stylist-feedback` now returns 410 for `target_type='renderer_calibration'` | historical rows preserved | no reader | no effect; defensively excluded from both garment scorers |
 | Completing a retag to-do | `PUT /pieces/:id` (`crud.js:296`) | `pieces` tags, marked `manual` | every consumer of garment truth | **hard gate / score / prompt**, depending on the field |
 | Chat-authored `— rejected by <name> (<date>)` garment rules | historical stylist-chat writer; owner verified the two live records on 2026-08-09 | `pieces.styling_rules_learned` | `buildWardrobePieceTruthText` | **prompt**, valid authoritative garment rules |
@@ -364,7 +410,7 @@ Five conclusions that follow, and that are easy to miss when reading the section
    rules and global owner rules remain separate stores by design. Un-archiving the receipt restores
    its stored canonical rule without duplicating an identical rule already on the garment.
 4. **An occasion exclusion is stored twice** — once structurally, once as prose. See §4b.
-5. **[bug — fixed 2026-08-09]** *"Replace in this outfit"* previously scored every garment carried
+5. **[bug — fixed 2026-08-09]** *"Wrong choice for this outfit"* previously scored every garment carried
    in the outfit payload. It was first narrowed to the explicit `pieceId`, then removed from
    deterministic scoring entirely after the owner clarified that the reaction can be
    occasion/activity-specific. Sibling and flagged garments now receive no weight.
@@ -521,12 +567,12 @@ a complaint into corrected data rather than into prompt text.
 |---|---|---|
 | `getStylistFeedbackMemory` (`rules.js:1296`) | freeform stylist chat (`core.js:4019/4026/4031`), `/evaluate-piece` (`ai.js:1139/1143`) | prompt text |
 | `getWholeWardrobeFeedbackMemory` (`rules.js:1388`) | whole-wardrobe generator (`ai.js:1510`, `core.js:2821`) | prompt text |
-| `getSavedBoardRendererMemory` (`rules.js:803`) | the image renderer, via `withSavedBoardRendererMemory` (`core.js:57`) — 5 render call sites | prompt text |
+| `getSavedBoardRendererMemory` (`rules.js:948`) | the image renderer, via `withSavedBoardRendererMemory` (`core.js:60`) — 5 render call sites; identified garments receive text only, never the rejected generated image | piece-scoped prompt text |
 | `getOwnerRuleNotes` (`rules.js:1373`) | capsule roster selection **and** capsule composition (`tools.js:1966`) | prompt text |
+| `getAcceptedFeedbackSynthesisMemory` (`rules.js`) | freeform chat, selected-piece and whole-wardrobe styling prompts | capped prompt text; accepted personal/contextual drafts only |
 | `getLastOutfitEvaluation` (`tools.js:2398`) | the model's tool loop (`tools.js:1857`) | prompt text |
-| **`scopedWrongItemInfluenceForRows`** | selected-item compatibility and Visual Composer roster | **deterministic context score: −6 per exact occasion/activity match, capped at −12** |
+| ~~`scopedWrongItemInfluenceForRows`~~ | retired 2026-08-10 | old −6/−12 occasion/activity score discarded weather, construction relationships and the owner's reason |
 | `getSavedBoardMemory` (`rules.js:694`) | `/evaluate-piece` (`ai.js:1141/1142`), whole-wardrobe generator (`core.js:2823`) | prompt text |
-| `getConfirmedOutfitMemory` (`core.js:216`) | freeform chat, `/evaluate-piece`, critique (`ai.js:1034/1137`, `core.js:268/3762`) | prompt text |
 | `getOutfitsForPieceMemory` (`rules.js:1259`) | `/evaluate-piece` (`ai.js:1035/1138`) | prompt text |
 | `getCalibrationMemoryForStylist` (`core.js:313`) | `/evaluate-piece` (`ai.js:1144`), whole-wardrobe (`core.js:2822`) | prompt text |
 | `getStylistConversationState` (`conversationState.js`) | tool loop and freeform conversation pipeline | **thread-only** |
@@ -534,14 +580,12 @@ a complaint into corrected data rather than into prompt text.
 
 **The generic deterministic feedback scorer has been removed.** There is no `SCORE` routing
 destination, feedback-weight table, literal-pair board scorer, or whole-outfit feedback scorer.
-Relational board/outfit judgments reach prompt and display memory without becoming garment
-weights. The sole feedback-derived ranking adjustment is typed `garment_context_suitability`
-evidence, applied only when its recorded occasion/activity exactly matches the current request.
+Relational board/outfit judgments reach prompt, provisional, and display memory without becoming
+garment weights. There is no feedback-derived candidate or roster score.
 
-**Scoped-evidence key convention.** `stylist_feedback.payload` uses camelCase `scopedEvidence`;
-`saved_boards.payload` uses snake_case `scoped_evidence`. Each reader deliberately follows its
-store's existing convention. Do not normalize one side without migrating its writer and reader
-together.
+**Evidence key convention.** New wrong-choice rows use camelCase `feedbackEvidence` version 2.
+Historical `stylist_feedback.payload.scopedEvidence` is read only as legacy evidence;
+`saved_boards.payload` still uses snake_case `scoped_evidence` for transferable outfit logic.
 
 **`saved_boards` is the second feedback store, and it is easy to miss.**
 `getSavedBoardMemory` sends favourites and labels into scoped prompt memory. The former exact-pair
@@ -587,15 +631,15 @@ calibration continues through saved-board image-fidelity feedback and uploaded r
 | whole-wardrobe generator | A, B, C, D, E, **F** |
 | `/evaluate-piece` | A, B, C, D, E, **F** |
 | image renderer | image-fidelity subset of F |
-| single-piece outfit ranking | A, C + version-1 garment × occasion/activity context score from F |
-| Visual Composer roster | A, C + version-1 garment × occasion/activity context score from F |
+| single-piece outfit ranking | A, C; no feedback-derived garment score |
+| Visual Composer roster | A, C; provisional evidence may enter the existing model call only for roster garments |
 | **capsule roster selection** | A, B, C, D, **E only** |
 | **capsule composition** | A, B, C, D, **E only** |
 
 The capsule path reads `getOwnerRuleNotes` and no other feedback reader. Verify with:
 
 ```bash
-grep -nE "(getStylistFeedbackMemory|getWholeWardrobeFeedbackMemory|scopedWrongItemInfluenceForRows|getSavedBoardRendererMemory)\(" \
+grep -nE "(getStylistFeedbackMemory|getWholeWardrobeFeedbackMemory|getSavedBoardRendererMemory)\(" \
   styling-engine/tools.js styling-engine/outfitSetPlanner.js
 ```
 
@@ -642,6 +686,12 @@ no ratings at all*. Full analysis in `engine-behaviour-map.md` → *"Amendment, 
 Marking "Wrong for X" writes **both** `pieces.occasion_exclusions` (structured, and what the gate
 actually enforces) **and** a prose line into `styling_rules_learned` — `Excluded from X by <name>
 (<date>)` — from the same handler, `crud.js:378`.
+
+The owner-confirmed piece-242/home correction now follows this canonical route: `home` is stored in
+the garment's `occasion_exclusions`, and its former global `owner_rule` row is archived. An
+unambiguous home plan slot supplies `home` specifically to the owner-exclusion lookup before
+composition. Other occasion checks still receive the public `casual` context; AI-generated
+`occasion_confidence.home` therefore remains advisory.
 
 The prose chip is not the enforcement record. The editor's `PUT /pieces/:id` column list
 (`crud.js:296`) **does not include `occasion_exclusions` at all**, so no editor save can change an

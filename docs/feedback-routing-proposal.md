@@ -7,18 +7,63 @@ disagree, the map is right.
 
 Written 2026-08-08, after mapping the surface.
 
+## Current project status — read this before the implementation table
+
+**The user-feedback project is not complete.** The cleanup and routing foundation are complete,
+and one owner-authorized synthesis pilot is working. The broader capability for learning from
+outfit feedback is still in development.
+
+| capability | status | boundary |
+|---|---|---|
+| Remove duplicate, dead and misrouted feedback authority | **complete** | Phases 0–2 cleanup |
+| Record versioned provisional evidence for **Wrong choice for this outfit** | **complete** | one negative reaction only |
+| Owner-authorized synthesis and review lifecycle | **pilot working** | consumes only reasoned **Wrong choice for this outfit** evidence |
+| Route accepted lessons only to applicable styling requests | **pilot complete** | source-validated structured applicability is owner-reviewable/editable and matched before the eight-line cap; boundary prose remains explanation only |
+| Learn formula, silhouette, mood or context lessons from positive / `Almost` reactions | **pilot paused** | removing literal garment reinforcement did not remove formula reinforcement; positive reactions remain provenance while a non-reinforcing destination is evaluated |
+| Apply approved garment-fact corrections through an appropriate garment-truth workflow | **backend complete for the bounded routes** | field-specific generated-image reports can propose reviewable metadata changes; physical compatibility failures are routed to product quality instead of garment truth |
+| Product workflow for general styling/model mistakes | **backend complete; review UI deferred** | accepted findings and explicitly confirmed no-cost reports enter a durable evidence queue, never personal memory |
+| Route explicit learned constraints before unsuitable garments consume roster capacity | **backend complete; review UI deferred** | confirmed piece/category/material × occasion/activity/season/weather constraints gate per request or capsule slot and can be retired |
+| UI/UX panel and presentation refinement | **deferred** | begins after routing behaviour is settled |
+
+In this document, **shipped** means that the named bounded mechanism exists; it does not mean the
+entire feedback-learning product is finished. **Pilot working** means the owner can exercise the
+flow end to end, but its coverage or downstream routing is intentionally incomplete.
+
 ## The problem in one sentence
 
 Feedback is collected in six channels and treated as if it answered one question, so most of it
 either lands in a prompt or lands nowhere, and several reactions carry authority in two places at
 once. Prompt text is also the destination with the worst cost-to-value ratio of the five available.
 
+## Purpose and guardrails
+
+The project is not an attempt to redesign styling, replace working calibration/weather/owner-rule
+systems, or teach the application a comprehensive fashion ontology. Its purpose is to make each
+explicit user action mean what the user reasonably intended and reach one appropriate behavioural
+authority:
+
+- factual corrections improve garment truth;
+- image corrections guide rendering;
+- explicit prohibitions reach an existing hard or standing-rule path;
+- one-outfit reactions remain bounded evidence;
+- durable personal principles become owner-reviewed memory.
+
+Receipts and provenance may be visible in more than one place, but they do not acquire duplicate
+authority. Generic styling mistakes are product-quality evidence, not personal preferences. No
+paid synthesis happens automatically, and no historical record is assigned a broader meaning by
+guessing.
+
+Before changing any mechanism, the current-system map and engine map must be reconciled with the
+proposal. An item marked open is not evidence that the capability is absent. Working mechanisms are
+preserved unless the map, code and user workflow establish a specific failure.
+
 ## Product direction: learn the logic, diversify the closet
 
 The purpose of positive outfit feedback is **not** to consolidate existing combinations or keep
 putting the same garments together. The app exists to help a person rediscover their closet.
 
-When a look works, the future capability must extract its transferable styling logic:
+When a look works and structured logic is available, feedback should preserve its transferable
+styling logic:
 
 - **formula** — the roles and relationships among the garments;
 - **silhouette** — the proportion and shape relationship that worked;
@@ -60,10 +105,10 @@ the feedback type** — a complaint routes only when it names **one garment and 
 | feedback | routes? | field it implicates |
 |---|---|---|
 | `wrong_length` sub-reasons | ✅ shipped | `length_hits_at`, `sleeve_type` |
-| `bad_occasion` | ✅ candidate | `occasions` |
-| `layer_too_long`, `competing_hemlines` | ✅ candidate | `length_hits_at` |
-| `wrong_item_read` | ⚠️ aggregate only | `occasions`, `formality`, `reads_as` |
-| `wrong_garment_details` | ❌ **not yet** | ambiguous — see below |
+| `bad_occasion` | ❌ contextual outfit judgment | none without an explicit metadata correction |
+| `layer_too_long`, `competing_hemlines` | ❌ relational | none — the stored garment length may be correct |
+| “Wrong choice for this outfit” (historical storage value `wrong_item_read`) | ❌ provisional contextual evidence | none without synthesis and owner acceptance |
+| `wrong_garment_details` | ❌ generated-image problem report | none without an explicit field-level metadata correction |
 | `fit_issue`, `too_much_volume`, `shape_lost`, `unbalanced_proportions`, `too_columnar` | ❌ relational | none — these describe two garments against each other |
 
 **`wrong_garment_details` fails this rule on both halves and stays in destination B.** It names one
@@ -72,7 +117,13 @@ with no field-level sub-reason to disambiguate — unlike `wrong_length`, which 
 classified as **image fidelity**, so the complaint may be that the *render* drifted rather than that
 the wardrobe metadata is wrong; routing it to a retag task would ask the owner to correct data that
 may be correct. It becomes a candidate only if the UI first collects an explicit field-level
-correction, the way the wrong-length flow already does.
+correction, the way the wrong-length flow already does. No such metadata-correction control is
+planned here; without it, the reaction remains renderer feedback.
+
+`bad_occasion`, `layer_too_long`, and `competing_hemlines` are also not retag candidates. They
+describe whether a garment worked in one outfit/context, not whether its stored occasion or length
+is factually wrong. Routing them to metadata review would turn a relational styling judgment into a
+garment-fact claim. Only an explicit owner correction naming the field may cross that boundary.
 
 `fit_issue` is `target_type='whole_wardrobe_outfit'`: a judgment about how an outfit hangs together,
 not about the garment field `fit_on_body`. Relational complaints belong in destination C.
@@ -80,21 +131,26 @@ not about the garment field `fit_on_body`. Relational complaints belong in desti
 The safety property that makes imperfect routing acceptable here: a wrong suggestion costs one
 dismissed to-do, never a corrupted tag.
 
-### B · "The picture is wrong" → render calibration
+### B · "The picture is wrong" → piece-scoped image-fidelity instruction
 
 **Two things share this destination and only one of them works.**
 
 - **Saved-board image-fidelity feedback** (`wrong_length`, `wrong_garment_details`,
   `body_proportions_drift`, `identity_drift` on `target_type='generated_visual_board'`, plus
   `saved_boards.payload.feedback_labels`) — reaches the image prompt via
-  `getSavedBoardRendererMemory`, and is correctly excluded from both pair scorers. This half is
-  **[by design]** and working.
+  `getSavedBoardRendererMemory`, and is correctly excluded from both pair scorers. The reader sends
+  a short textual reminder only when the identified garment is in the new render. The rejected
+  generated image is retained as evidence and is **never** supplied as a future visual reference.
+  This half is **[by design]** and working.
 - **`renderer_calibration` rows** — the retired experimental path. It reached no renderer and
   formerly leaked into garment selection. New writes now receive HTTP 410; historical rows remain
   untouched and defensively excluded from both scorers.
 
-The active calibration capability is the saved-board image-fidelity path above plus uploaded
-calibration/reference images. Retiring the dead target does not remove either working mechanism.
+The active fidelity capability is the piece-scoped text path above plus the normal garment and
+approved calibration/reference images. It does not treat an inaccurate generated image as
+calibration. A field-specific wrong-length report may also create a reviewable retag task, because
+the app cannot assume whether the render or stored garment data was wrong; no metadata changes
+automatically.
 
 ### C1 · "This garment is prohibited in this context" → a scoped constraint
 
@@ -102,9 +158,13 @@ calibration/reference images. Retiring the dead target does not remove either wo
 personal and deterministic (map category 1). *"Never use these shorts for hiking"* belongs here, and
 the answer is binary — the garment is removed from consideration for that context.
 
-Its one axis is occasion. Extending it to other axes (season, weather) is the change that would let
-a personal rule bind the deterministic layer without becoming a global rule — the requirement the
-2026-08-07 ruling created.
+Its one structured per-garment owner-feedback axis is occasion. Weather and season are covered
+through deterministic wearability gates based on structured garment data and request/forecast
+context, plus standing personal rules such as “I do not wear boots in summer.” General material
+physics must remain in the shared gate rather than becoming per-garment owner memory. The first
+item-11 correction now treats canvas and suede footwear as ineligible for credible wet exposure
+(explicit rain/wet/mud, or a foggy coastal outdoor walk) while leaving ordinary fog and dry walking
+alone. Do not infer either a personal ban or a new per-piece weather exclusion from an outfit reaction.
 
 ### C2 · "Did this garment or pairing work *here*?" → scoped evidence
 
@@ -187,11 +247,16 @@ provenance, with no exact-pair boost.
 
 ## 1d. Saved outfits are prompt memory too
 
-24 confirmed and 3 favourited outfits reach the prompt through `getConfirmedOutfitMemory` and
-`getOutfitsForPieceMemory`. The discipline in §2 was written for feedback rows and applies here
-equally: summarise them into **formula evidence** — the relationship that worked — and include
-literal examples only when relevant to the garment in play. A list of past outfits invites literal
-reuse, which is the same failure as an evergreen preference.
+At audit time, 24 confirmed and 3 favourited outfits reached broad prompts through
+`getConfirmedOutfitMemory`, while `getOutfitsForPieceMemory` supplied garment-relevant history.
+The broad reader has now been removed. Literal examples remain available when the user is
+inspecting that outfit or a garment it contains, but are no longer broadcast as general preference
+memory into unrelated generation, where a list of past outfits invited literal reuse.
+
+Do not manufacture formula evidence from an outfit name, note or piece list. When structured
+formula/silhouette/direction/context evidence already exists, use it. When it does not, narrowing
+delivery is safer than automatic inference or a paid migration. The remaining work in item 3 is
+prompt scoping, not style-lesson generation.
 
 ## 1e. Structured constraints must be canonical
 
@@ -200,18 +265,66 @@ An occasion exclusion is currently both a structured hard gate and a generated p
 the same instruction in a prompt. Keep the structured exclusion as the sole behavioural authority;
 show its provenance in the UI without delivering the generated receipt as a second rule.
 
-## 1f. Calibration approval must say what was approved
+### Remaining work — constraint-shaped learned rules
 
-`calibration_images.favorite` does not distinguish approval of likeness, garment depiction,
-silhouette, styling, or rendering quality. Those meanings cannot safely share styling authority.
-Replace the undifferentiated signal with purpose-specific labels; only an explicit styling label
-may enter styling memory.
+Conversation Memory also contains free-text owner rules whose meaning is stronger than ordinary
+taste guidance, for example “never use these shorts for home outfits.” Today these remain prompt
+guidance. They must not be converted automatically into gates: free text can be ambiguous, and a
+model-authored or mis-scoped sentence must not silently remove garments from consideration.
+
+The intended workflow is owner-confirmed and structured:
+
+1. identify a constraint-shaped learned rule as a **proposal**, preserving its original receipt;
+2. show the owner the parsed garment, prohibited context and intended strength;
+3. only after confirmation, write one canonical structured constraint;
+4. use the prose receipt for source and undo, not as duplicate prompt authority.
+
+Enforcement must respect the shape of the styling request. For a single-outfit request, an
+ineligible garment is removed before candidate capping and before the model receives the roster.
+For a capsule or plan containing several occasion slots, build slot-aware eligibility: retain a
+garment when it is valid for at least one requested slot, exclude it only from prohibited slots,
+and remove it from the overall roster only when it is valid for none. Each composed outfit is then
+validated against the same structured constraint. This prevents an instruction such as “not for
+home” from either wasting a home-outfit slot or incorrectly removing the garment from a mixed
+summer capsule where it remains suitable elsewhere.
+
+**First bounded route shipped 2026-08-10.** The confirmed “beige tailored linen shorts are not for
+home” instruction was moved out of global owner-rule prose and into the garment's existing
+`occasion_exclusions` (`home` alongside `hiking`); the duplicate global row was archived. A casual
+plan slot that is unambiguously home-specific (for example, **Home & Backyard**) now keeps its
+public `casual` label while supplying `home` only to the owner-exclusion lookup before the model
+sees the roster. The other occasion checks still evaluate the public `casual` context, so advisory
+AI Style Read data does not become a hard gate. Ambiguous combined slots such as **At Home / Errands** remain broad rather than
+incorrectly suppressing garments that are valid for errands. Explicit owner occasion exclusions
+also appear in the plan garment catalog as a secondary safeguard. AI-generated
+`occasion_confidence` remains advisory and was not promoted into owner authority.
+
+This work also requires relevance selection for the remaining free-text owner memories. The
+current newest-eight prompt slice is not a substitute for structured enforcement and can omit an
+older rule that is directly relevant to the active garment or context.
+
+This mechanism is not a repair for incorrect base classification. In particular, broad `casual`
+eligibility must not be treated as proof of `home` eligibility; if the engine collapses those
+contexts, that is a separate context-routing defect to diagnose and fix rather than a reason to
+manufacture an owner rule.
+
+## 1f. Calibration reference priority is already qualified by reference kind
+
+**Closed without a behavior change.** `calibration_images.favorite` means “prioritize this image
+within its existing reference kind,” not generic garment or outfit approval. The image-generation
+reader rotates starred references first, while `kind` supplies the purpose: `real_photo` is captioned
+for identity/proportion reference and `good_reference` for taste/aesthetic calibration. These are
+sent alongside, not instead of, available exact-garment hanger/worn-photo anchors. The flag has no
+garment-selection or outfit-ranking authority. More specific UI wording may be considered during
+the later UI/UX review, but the working calibration path should not be retired or neutralized.
 
 ## 1g. Positive feedback must not defeat diversity
 
-Prompt size and selection diversity are separate concerns; compact feedback can still dominate if
-its weight is high enough. There is already a mechanism pulling the other way — the 6-day recency
-suppression in `whole_wardrobe_sessions` (map category 8) — and nothing reconciles the two.
+Prompt size and selection diversity are separate concerns; compact feedback could still dominate
+if it acquired candidate weight. The former exact-pair positive scorer was removed, while the
+6-day recency suppression in `whole_wardrobe_sessions` remains. Structured positive evidence now
+describes transferable logic and explicitly asks for different suitable garments, so the two
+mechanisms no longer directly compete over literal piece selection.
 
 > **Principle.** Positive feedback may raise confidence in a *transferable formula*. It must not
 > defeat recency suppression, and it must not create an evergreen preference for the same garments.
@@ -228,8 +341,10 @@ outfit-logic observations. The remaining risk is raw legacy evidence within thos
 repeated observations about one garment can still spend N slots saying similar things and land in
 the prompt tail where this codebase has already measured stored rules losing (spec 25/26).
 
-1. **Scope to the pieces in play.** Only feedback touching a garment on the bench or in the outfit.
-   `getSavedBoardRendererMemory` already does this correctly — copy its overlap check.
+1. **Scope contextual evidence to the decision in play.** Outfit/board evidence should reach a
+   call only when its garment or context is relevant; `getSavedBoardRendererMemory` demonstrates
+   the overlap pattern. Standing global owner rules are intentionally different and continue to
+   reach every styling request.
 2. **Consolidate, don't concatenate.** *"Marked too plain on 4 outfits containing this jacket"* is
    one line and stronger evidence than four lines.
 3. **Cap per destination, not globally.** A garment with 20 reactions contributes a summary.
@@ -252,14 +367,56 @@ that needs a model of evidence first. Phases 1+ depend on decisions that phase 0
 | ~~0.9~~ | Stop board/outfit critique landing on the garment card | **shipped** (`96c3246`) |
 | ~~0.10~~ | Stop positive board feedback giving every contained pair a permanent `+18`; retain it as scoped outfit evidence | **shipped** (§1c) |
 | ~~0.11~~ | Make structured occasion exclusions the sole behavioural authority; keep prose as display-only provenance | **shipped** (§1e) |
-| ~~1~~ | Define the canonical **scoped** evidence model — garment × occasion, garment × garment, formula × context | **shipped — garment × occasion/activity and outfit-logic × context implemented; garment × garment resolved to existing “Tried and rejected”** |
+| ~~1~~ | Establish the first canonical **scoped evidence contracts** | **foundation shipped — versioned wrong-choice evidence and preservation of pre-existing structured outfit logic; not a complete outfit-feedback learning model** |
 | ~~2~~ | Verified piece-scoped chat corrections (`store_user_correction` takes a `piece_id`) | **shipped — exact ID is mechanically verified; garment rule is canonical; Conversation Memory receipt is display-only** |
-| 3 | Consolidate and summarise prompt memory, including saved outfits (§1d) | open |
-| 4 | Evaluate any scoring change against ranking **and diversity** tests (§1g) | open |
-| 5 | Expose all active memory with source, scope, effect and undo | open |
-| 6 | Taxonomy and lifecycle cleanup: every feedback control and mechanism is kept, replaced, migrated or removed; none ends with no reader | open |
-| 7 | Replace ambiguous calibration-image favourites with purpose-specific labels (§1f) | open |
-| 8 | Extract formula, silhouette, mood and context from positively received looks, then use them to discover different closet combinations | open — product direction; no exact-piece reinforcement |
+| ~~3~~ | Consolidate and scope existing prompt memory, including saved outfits (§1d) | **bounded cleanup shipped — unrelated literal confirmed-outfit delivery removed** |
+| 4 | Evaluate any scoring change against ranking **and diversity** tests (§1g) | **ongoing verification rule — no Phase 1 feedback score was introduced** |
+| ~~5~~ | Expose all active memory with source, scope, effect and undo | **shipped — visual refinement deferred to the UI/UX panel** |
+| ~~6~~ | Taxonomy and lifecycle cleanup: every feedback control and mechanism is kept, replaced, migrated or removed; none ends with no reader | **shipped — semantic completeness audit remains an ongoing guard** |
+| ~~7~~ | Verify calibration-image favourite semantics and preserve the working reference rotation (§1f) | **closed — priority is qualified by `kind`; no behavior change** |
+| 8 | **Wrong choice for this outfit** synthesis pilot: derive owner-reviewed advisory conclusions from explicit, versioned reactions | **pilot working — narrow reaction coverage; non-personal destinations remain incomplete** |
+| 9 | Select accepted personal/contextual lessons by applicable garment, occasion/activity, season/weather and declared boundary | **shipped for the pilot — routing and owner-facing structured applicability control complete** |
+| 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **pilot paused — positive evidence is not currently eligible for paid synthesis** |
+| 11 | Complete approved destination workflows for garment facts and general product-quality findings | **backend complete for the approved scope — wrong-length renderer/retag review is preserved; accepted synthesis findings and explicitly confirmed no-cost reports enter a provenance-linked queue with durable evidence, resolution destination and undo; review UI is deferred to item 13** |
+| 12 | Route owner-confirmed constraint-shaped learned rules into structured, slot-aware eligibility and composition enforcement | **backend complete for structured selectors — existing piece × occasion exclusions remain canonical; confirmed piece/category/material × occasion/activity/season/weather constraints gate before roster or per capsule slot, archive duplicate prose, expose reasons and can be retired; proposal/review UI is deferred to item 13** |
+| 13 | Convene the UI/UX panel and refine the memory/review surfaces | **deferred until items 9–12 have settled behaviour to show** |
+
+`Almost right` remains a deliberate follow-up under item 10. Its combination of “preserve
+something” plus a specific diagnostic reason may be more useful than undifferentiated praise, but
+no active formula-preservation route should be restored until that meaning and its non-reinforcing
+destination are specified.
+
+**Bounded first step shipped:** `Almost right` and `Not for me` can accompany a later styling call
+the owner already requested, without triggering critique, regeneration or synthesis. A reasonless
+verdict is delivered only when every garment from that exact prior outfit is present in the current
+composer roster and any recorded occasion/activity/season also matches. The prompt identifies only
+the exact piece-ID set and says not to reproduce that combination unchanged; it explicitly forbids
+inferring dislike of the formula, silhouette, colors or individual garments. A preset diagnostic
+reason may accompany the reminder as an owner-selected issue. Generated board titles, formula
+labels, rationales and garment names are not used as the subject of the verdict. Delivery is capped
+at three recent relevant reactions and consumes no additional model call.
+
+Selecting `Almost right` or `Not for me` now offers an optional, free owner-comment field. It
+explicitly accepts uncertain ordinary language and stores the comment verbatim with the exact
+outfit reaction (`feedback_details.owner_comment` on canonical saved boards; `ownerComment` on an
+unsaved generated-board receipt). This applies both where a board appears in Stylist chat and in
+the saved-board detail in Visual Lab. An already-selected canonical reaction exposes **Add optional
+reason** / **Edit reason**, so reactions created before this field existed do not need to be removed
+and recreated. Skipping the comment still saves the verdict. The comment may
+accompany the same bounded later styling call described above, but it is labeled as potentially
+uncertain and never becomes a formula, garment fact or personal rule.
+
+Applicability normalizes placeholder context (`none`, `unspecified`, and empty values) as absent.
+Compound occasion, activity, or season strings are compared as individual normalized terms, so a
+reaction stored for `outdoor daytime social, wine festival` can match either bounded request while
+remaining silent for an unrelated occasion. All source garments must still be present in the
+styling roster before the reaction can be delivered.
+
+The bounded reader is used by both whole-wardrobe and selected-piece composition. Selected-piece
+composition no longer receives raw selected/global saved-board styling prose: a rejected board may
+not turn one garment from that board into a global rejection merely because the garment is visible
+to the composer. Relevant canonical board feedback reaches this flow only through exact
+piece-set/context matching, or through a separately accepted applicability-scoped lesson.
 
 **On ordering.** 0.2 is placed high because both weighted favourite flags have **zero rows today**,
 so the decision is free now and gets more expensive with every heart. 0.1 and 0.3 are ahead of it
@@ -295,7 +452,8 @@ scores or stylist prompt memory. The primary destinations are:
 |---|---|
 | explicit owner rules, including legacy `preference_reaction/message` | owner-memory prompt |
 | outfit/board verdicts and relational critiques (`works`, `almost`, `not_me`, formula, style direction, shape and context) | scoped styling prompt |
-| explicitly selected `wrong_item_read` garment | scoped styling prompt; no score until Phase 1 can preserve occasion/activity |
+| version-2 `wrong_item_read` with a verified subject garment | provisional contextual prompt; no score or standing preference |
+| older unstructured `wrong_item_read` rows | defensively display/provenance only; the 28 live legacy rows were removed 2026-08-10 after owner confirmation because the old storage value represented more than one UI meaning |
 | image-fidelity corrections (`wrong_length`, garment detail, body/identity drift, bad reference) | renderer |
 | historical `renderer_calibration` | retired; display/provenance only |
 | unknown legacy types | display/provenance only until deliberately classified |
@@ -305,39 +463,63 @@ soft” into permanent weights on every garment the outfit happened to contain. 
 correction may still create a visible retag task, and every reaction may retain an audit receipt;
 those are follow-up/display effects, not another styling reader. Positive saved-board evidence
 continues to reach the scoped styling prompt without literal-pair scoring. Prompt consolidation
-within that one destination remains phase 3.
+for the existing stores is shipped; applicability-based retrieval for accepted synthesized lessons
+is item 9.
 
-`wrong_item_read` was initially retained as a −24 garment score during Phase 0, then removed after
+“Wrong choice for this outfit” (stored historically as `wrong_item_read`) was initially retained as
+a −24 garment score during Phase 0, then removed after
 the owner clarified the control's meaning: “replace in this outfit” may mean the garment is wrong
 for this occasion or activity (for example, high heels for a long museum walk), not that the garment
-should be selected less often everywhere. The receipt remains scoped prompt evidence. Phase 1 must
-model garment × occasion/activity before any contextual selection adjustment is reintroduced.
+should be selected less often everywhere. A version-2 receipt becomes provisional prompt evidence.
+Older rows without that envelope route display-only because the historical storage value represented
+more than one UI meaning and cannot be reconstructed safely. The 28 live legacy rows were removed on
+2026-08-10 after the owner confirmed they were ambiguous test history not worth retaining; the route
+remains defensive for stale imports. No contextual selection adjustment may be reintroduced without
+a complete, explicit evidence contract and the item 4 ranking/diversity verification.
 
-### Phase 1 pilot — garment × occasion/activity
+### Phase 1 — provisional garment × outfit evidence
 
-New `wrong_item_read` writes carry `payload.scopedEvidence` version 1:
+New “Wrong choice for this outfit” writes carry a version-2 `feedbackEvidence` envelope while
+preserving the historical database value `wrong_item_read` for compatibility. This is the forward storage
+contract: explicit subject garment, outfit/context including available weather, source thread and
+card position, user action, optional verbatim owner reason, scope and authority. It does not infer
+formula, silhouette, garment role or cause. The existing
+version-1 `scopedEvidence` writer and its −6/−12 scorer are retired. Historical rows are retained
+only as provenance/display; none is backfilled by inference.
 
-- kind: `garment_context_suitability`;
-- the structured subject garment ID;
-- weak strength;
-- occasion, activity, season and mood captured at the reaction;
-- the original outfit remains in the surrounding payload as provenance.
+This is also the boundary for the plan item 8 pilot. The application validates identity, provenance,
+lifecycle, prompt budget and diversity safeguards. The styling model may derive an advisory lesson
+from the evidence, with links back to its sources and an undo/refinement path. No deterministic
+fashion ontology is added to the application.
 
-The behavioural reader matches only structured version-1 evidence. Every populated meaningful
-dimension among occasion and activity must match the current request. One matching observation is
-−6 and repeated matches cap at −12. This is a soft pre-model candidate/roster adjustment: one click
-is a tie-breaker, repetition can approach an ordinary suitability penalty, and neither becomes a
-hard exclusion. The debug reason states the matched context. New version-1 rows do not also enter
-stylist prompt memory. Historical rows have no canonical context and remain prompt-only; none is
-backfilled by inference. Season and mood are recorded for future evidence-model work but do not
-participate in this first match rule.
+**Owner ruling 2026-08-10 — synthesis is user-authorized, not automatic.** Reactions accumulate as
+provisional evidence over days or weeks. They may supply a bounded verbatim reminder inside an
+already-requested styling call when the affected garment is actually under consideration, but they
+do not become transferable memory on their own. Style Profile will preview the exact compact batch,
+model and estimated cost before the owner authorizes one synthesis call. This preview and draft
+review flow is shipped behind `/api/feedback-synthesis/*`. Results are reviewable
+drafts. General model failures are product defects rather than personal preferences; garment facts
+remain proposed corrections until approved. The user never pays an automatic call to explain the
+model's own mistake.
 
-`feedbackBehaviour` is the single classifier for this reader, including the requirement for a
-valid positive `subjectPieceId`; malformed rows remain visible prompt evidence instead of being
-routed into a scorer that cannot apply them. Candidate ranking loads active evidence once per
-ranking operation and reuses it for every candidate rather than querying per garment.
+A missing optional reason does not erase the click: it remains a narrow instruction not to repeat
+that garment blindly in the exact recorded outfit. It is excluded from paid synthesis because the
+application has no owner-supplied basis for a broader lesson. Preview is free. The displayed input
+figure is a conservative local upper bound over the complete request (instructions, evidence,
+structured schema, tool metadata and provider-framing allowance), rather than an estimate based
+only on evidence text. The displayed output maximum is the enforced token cap for the authorized call, and provider usage is retained even
+when a paid response fails structured parsing. Accepted personal lessons remain visible with their
+source reactions and may be owner-edited or retired; retirement removes them from prompt memory.
+Accepted non-personal dispositions remain visible provenance without prompt authority. The sandbox
+provider returns a canned structured response for this route, so the lifecycle can be exercised
+without a paid call.
 
-### Phase 1 pilot — transferable outfit logic × context
+The review lifecycle is per-card: both lesson text and scope boundary are editable, unchanged
+accepted cards have no active save action, and confirmation appears on the card that was saved.
+Once evidence has any synthesis result it remains visible as provenance but cannot be selected for
+a duplicate paid synthesis call. Empty draft sections are suppressed.
+
+### Existing positive evidence preservation
 
 New positive whole-outfit reactions (`signature`, `works`, `almost`) create version-1
 `outfit_logic` evidence when the generated outfit already carries at least one structured logic
@@ -353,17 +535,66 @@ The styling-memory reader consolidates identical evidence into one counted obser
 the model to reproduce the transferable logic with different suitable garments and explicitly not
 to repeat the original combination merely because it received praise. Literal pieces remain in the
 surrounding feedback payload only as provenance/display and are never copied into this memory line.
-No model call is used to invent missing logic: outfits without structured formula, silhouette,
-direction or mood keep their existing reaction record but do not gain an `outfit_logic` block.
+No automatic model call is used to invent missing logic. An older reaction first attempts an exact
+piece-set match against structured outfits retained in its source chat. A unique match regains
+`outfit_logic`; otherwise it receives a `legacy_outfit_snapshot` containing the original generated
+description, context and anonymous garment attributes. That snapshot has no direct transferable
+logic authority and is interpreted only inside an explicitly authorized synthesis call.
 
-The chat writer and saved-board/Visual Lab writer use the same evidence builder. Saved boards retain
+The chat writer and saved-board/Visual Lab writer use the same evidence builder. Lookbook Generated
+Outfits use those same canonical `saved_boards` records and therefore follow this path too. Saved boards retain
 the evidence on their canonical payload, and their mirrored `stylist_feedback` receipt is excluded
 from the reader so the same reaction cannot acquire duplicate prompt authority. Changing a verdict
 updates the evidence; removing it removes the board's transferable authority and archives the
-mirrored receipt. Older image-only boards remain legacy reaction memory because their formula
-cannot be reconstructed safely from a title, prose rationale or list of garment names.
+mirrored receipt. Older image-only boards are never silently assigned a formula from their title or
+garment list; they retain a lower-confidence synthesis snapshot instead.
 Re-synchronizing an existing receipt merges into its payload, preserving renderer fields such as
 `length_correction`, piece references and specific reason provenance.
+
+This direct reader still preserves structured logic without a paid call. The synthesis extension
+described below is a separate, owner-authorized path that may turn selected observations into an
+editable lesson; accepting a synthesis result does not promote the original garments.
+
+### Positive / Almost owner-authorized synthesis pilot — shipped with legacy recovery
+
+`signature`, `works`, and `almost` rows with version-1 `outfit_logic` or a classified
+`legacy_outfit_snapshot` can be selected in the
+same preview → cost disclosure → explicit authorization → draft review flow as reasoned wrong-choice
+evidence. Structured input contains verdict, formula, silhouette, direction, mood and context.
+Legacy input contains the verdict, bounded generated description, context and anonymous garment
+attributes enriched from current garment metadata when the old board retained piece IDs. Exact
+occasion/activity/season/weather phrases in the generated description may bound a reviewable legacy
+draft; they remain generated lower-confidence evidence and never become owner-authored rationale.
+Neither input contains garment IDs, names, photos or a literal-combination reward. Storage context
+labels such as `Whole wardrobe` and anchor-garment names are not treated as occasions.
+
+A positive verdict confirms that the outfit worked; it does not automatically prove a durable
+owner preference. Synthesis may propose personal memory only when the selected evidence reveals an
+owner-specific, non-obvious choice that would materially change a future styling decision and that
+a competent stylist could not safely assume without the reaction. A paraphrase of ordinary outfit
+competence—such as “a relaxed top with a structured bottom looks cohesive”—returns **insufficient
+evidence**, not a lesson. This deliberately favors an empty result over paid accumulation of banal
+memory.
+
+The verdict is the owner's signal; the structured logic remains a generated description the owner
+reacted to rather than owner-authored prose. `signature` and `works` may support a bounded
+personal/contextual draft. A lone `almost` reaction remains qualified and cannot become a positive
+rule without an explicit owner reason saying what worked; it may refine a lesson supported by other
+selected positive evidence. Positive synthesis results are mechanically forced to context scope
+with empty piece IDs. Accepted lessons therefore guide a matching styling context without boosting
+or repeating the source garments.
+
+Acceptance also transfers prompt authority rather than duplicating it: while an accepted personal
+lesson is active, its source `outfit_logic` reaction (and matching canonical saved-board logic, when
+applicable) remains visible provenance but is omitted from direct prompt memory. Retiring the lesson
+restores the source reaction's original contextual reader.
+
+The 2026-08-10 recovery pass classified all 36 active positive Lookbook boards: one already carried
+structured logic, three recovered it from a unique exact source-chat outfit, and 32 received legacy
+snapshots. It also classified 135 active positive generated-outfit receipts outside that canonical
+board set: 75 recovered structured evidence and 60 received legacy snapshots. Zero were skipped.
+The backfill is deterministic and makes no model or network call; any interpretation of a legacy
+snapshot still requires the owner's normal preview and paid-call authorization.
 
 ### Phase 1 disposition — garment × garment
 
@@ -413,6 +644,27 @@ without a migration or fuzzy inference: identical rendered prompt lines are deli
 deduplication happens before the delivery cap so repeated historical rows cannot crowd out a
 distinct observation. Differently worded notes remain separate evidence.
 
+**9 — shipped for the wrong-choice pilot.** Synthesis now returns a structured applicability object
+alongside the owner-facing boundary: affected piece IDs plus explicit occasion, activity, season and
+weather terms. IDs must occur in the compact source evidence, and every context term must occur as a
+complete phrase in the recorded context or owner reason; unsupported model output is discarded.
+Boundary prose remains explanation and owner review, never application logic.
+
+The accepted-memory reader filters before applying its newest-eight cap. Piece-only lessons require
+an active matching garment. Contextual lessons require every populated dimension to match. A
+piece-and-context lesson requires both: its named garment must be actively in play and its context
+must match (for example, fall shoes present in a bounded summer roster). This keeps unavailable
+garments out of the prompt and prevents a contextual lesson from becoming an unconditional garment
+rule. Missing or legacy applicability grants no prompt authority rather than silently becoming global.
+
+“Actively in play” now covers the selected garment, garments in the exact outfit under discussion,
+the selected-piece support bench, the whole-wardrobe visual-composer roster, the capsule roster
+candidate bench, and the bounded plan/capsule composition pool. It deliberately does not mean every
+garment merely present in the complete wardrobe manifest. Capsule and multi-use-case readers match
+against any supplied slot context and still return one deduplicated newest-eight block. The two
+accepted owner-pilot lessons were backfilled from their already-approved boundaries: piece 260 only
+for the elevated-register lesson, and piece 195 in summer for the olive-shoes lesson.
+
 **Lifecycle cleanup 2026-08-09:** `signature` no longer silently writes `is_gold=1`. The hidden
 flag had no separate user action and no remaining score, but still forced old rows ahead of newer
 feedback in prompt selection and displayed an unexplained “Gold” badge. New reactions write zero,
@@ -436,16 +688,44 @@ values; **Tried and rejected** remains the explicit garment-pair mechanism. The 
 `— rejected by Yuna` rules were owner-verified as valid garment rules captured through stylist chat,
 so they remain authoritative rather than being treated as unexplained historical debris.
 
-## 4. Decisions needed before building
+### Definition of done for this project
+
+The overall user-feedback project may be called complete only when all of the following are true:
+
+1. Every current feedback action has one documented meaning, canonical store, primary behavioural
+   reader and visible undo or retirement path.
+2. Provisional **Wrong choice for this outfit** evidence remains narrow, and accepted lessons reach
+   only styling requests that match their declared applicability.
+3. Positive and `Almost` feedback can produce owner-reviewed transferable lessons about formula,
+   silhouette, mood and context without giving the original garments or pairing selection weight.
+4. Garment-fact conclusions have an explicit owner-approved route into garment truth, while general
+   model mistakes are visibly kept out of personal memory and handed off—or deliberately retained
+   as provenance—without pretending they influence styling.
+5. Prompt-size and closet-diversity checks demonstrate that the resulting memory remains bounded
+   and does not consolidate the same garments or combinations.
+6. The UI/UX panel reviews the settled workflows, and the owner reviews its recommendations before
+   any visual direction is described as ratified.
+
+Passing the feedback-surface completeness audit proves store/type classification only. Completing
+the wrong-choice synthesis lifecycle proves one pilot only. Neither condition, by itself, satisfies
+this definition of done.
+
+## 4. Resolved boundaries and deferred decisions
 
 Decisions about the plan. Questions about *what exists* live in the map's `[owner check wanted]`
 markers.
 
-1. **Should board reactions influence capsule selection at all?** A reaction to one rendered outfit
-   is evidence about that outfit; treating it as evidence about a garment's place in a 24-piece
-   capsule is a larger inferential step. `getStylistFeedbackMemory` already separates scoped
-   reactions ("taste signals, not global directives") from standing rules.
-2. **Retag threshold** — one complaint, or two?
-3. **Where does an explicit global rejection get stated?** The evidence model in phase 1 defaults
-   everything to scoped. Something has to let the person say *"never, anywhere"* — and it should be
-   an explicit act rather than an inference from repetition.
+1. **Positive board learning is deliberately paused.** Today, **Works**, **Signature** and
+   **Almost** preserve visible and organizational provenance, but they do not enter broad styling
+   prompts, scores or synthesis. A future route may teach owner-reviewed transferable outfit logic
+   through scoped formula/silhouette/direction/context evidence, but only after it demonstrates
+   that it will not reinforce the original garments or pairing. It must never promote original
+   garment IDs, pairs, or a garment's general eligibility for a capsule.
+2. **No automatic retag threshold is planned for relational feedback.** Repetition does not turn
+   an outfit judgment into a garment fact. Existing field-specific wrong-length corrections remain
+   the only automatic retag-suggestion path.
+3. **Explicit global prohibitions already belong in owner rules.** Standing global rules cover
+   instructions such as “no boots in summer” and are supplied to the stylist as hard prompt
+   requirements. Garment Rules learned provide piece-scoped prompt guidance, while occasion
+   exclusions provide a structured pre-model hard gate. No new “never anywhere” feedback control
+   is proposed, and repeated scoped evidence must not be promoted into any of these authorities.

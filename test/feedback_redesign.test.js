@@ -44,13 +44,81 @@ test('StylistChat.jsx does not use disabled={isSaved} on outfit-level feedback b
   assert.ok(!buttonContent.includes('disabled={isSaved}'), 'Outfit-level buttons must not be disabled when saved')
 })
 
-test('StylistChat.jsx renames piece issue to Replace in this outfit', () => {
+test('StylistChat.jsx describes the garment as a wrong choice for this outfit', () => {
   const content = fs.readFileSync(stylistChatPath, 'utf8')
 
-  assert.ok(content.includes('Replace in this outfit'), 'Should include Replace in this outfit')
-  assert.ok(content.includes('✓ Replaced in this outfit'), 'Should include ✓ Replaced in this outfit')
+  assert.ok(content.includes('Wrong choice for this outfit'), 'Should include the contextual outfit-choice wording')
+  assert.ok(content.includes('✓ Wrong choice for this outfit'), 'Should include the selected state')
   assert.ok(!content.includes("'piece issue'") && !content.includes('"piece issue"'), 'Should not contain old name')
   assert.ok(content.includes('contextual feedback rather than avoiding the garment everywhere'))
+})
+
+test('Style profile distinguishes reaction sources from related records', () => {
+  const content = fs.readFileSync(path.join(__dirname, '../src/views/StylistSettings.jsx'), 'utf8')
+  assert.ok(content.includes('Open source chat'))
+  assert.ok(content.includes('Open source board'))
+  assert.ok(content.includes('Open related board'))
+  assert.ok(content.includes('Open related garment'))
+  assert.ok(content.includes("const sourceSurface = row?.payload?.feedbackEvidence?.source?.surface"))
+  assert.ok(content.includes('const canOpenSourceBoard = hasImageBoardMatch && boardIsSource'))
+  assert.ok(content.includes("boardIsSource ? 'Source board' : 'Related board'"))
+  assert.match(content, /onGoToThread\(row\.referenced_thread_id\)/,
+    'The source-chat action must open the source thread directly instead of following a board fallback')
+})
+
+test('Style profile requires a free preview before explicitly authorizing synthesis', () => {
+  const content = fs.readFileSync(path.join(__dirname, '../src/views/StylistSettings.jsx'), 'utf8')
+  assert.ok(content.includes('Preview synthesis cost'))
+  assert.ok(content.includes('Preview calls: {synthesisPreview.providerCalls}'))
+  assert.ok(content.includes('Authorize one model call'))
+  assert.match(content, /authorize:\s*true/)
+  assert.ok(content.includes('Nothing was accepted automatically.'))
+})
+
+test('synthesis review always shows the proposed lesson when no owner edit exists yet', () => {
+  const content = fs.readFileSync(path.join(__dirname, '../src/views/StylistSettings.jsx'), 'utf8')
+  assert.ok(content.includes('synthesisEdits[draft.id] ?? effectiveSynthesisText(draft)'))
+  assert.doesNotMatch(content, /draft\.edited_text \?\? draft\.proposed_text/)
+})
+
+test('synthesis review exposes per-card dirty state, editable boundaries, and processed evidence', () => {
+  const content = fs.readFileSync(path.join(__dirname, '../src/views/StylistSettings.jsx'), 'utf8')
+  assert.ok(content.includes('disabled={!draftDirty || !applicabilityIsUsable(editedApplicability)}'))
+  assert.ok(content.includes('Changes saved.'))
+  assert.ok(content.includes('synthesisBoundaryEdits[draft.id] ?? effectiveSynthesisBoundary(draft)'))
+  assert.ok(content.includes('pendingSynthesisDrafts.length > 0'))
+  assert.ok(content.includes('actionableContextualFeedback'))
+  assert.ok(content.includes('row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id)'))
+  assert.ok(content.includes('feedback-synthesis-draft--accepted'))
+  assert.ok(content.includes('actionableContextualFeedback.length > 0 && <div className="style-memory-toolbar">'))
+  assert.ok(content.includes('No provisional outfit reactions are currently available for lesson synthesis.'))
+})
+
+test('only accepted personal synthesis drafts are eligible for prompt authority', () => {
+  const rules = fs.readFileSync(rulesPath, 'utf8')
+  assert.match(rules, /status = 'accepted' AND disposition = 'personal_contextual_lesson'/)
+  assert.doesNotMatch(rules, /status = 'accepted' AND disposition IN/)
+})
+
+test('Wrong-choice feedback asks for an optional verbatim reason and carries explicit weather context', () => {
+  const content = fs.readFileSync(stylistChatPath, 'utf8')
+  assert.ok(content.includes('What made {pendingWrongChoice.pieceName} wrong for this outfit?'))
+  assert.ok(content.includes('Skip reason'))
+  assert.ok(content.includes('explicitReason'))
+  assert.ok(content.includes('weatherContext'))
+})
+
+test('Almost right and Not for me offer a free optional exact-outfit comment', () => {
+  const content = fs.readFileSync(stylistChatPath, 'utf8')
+  const visualLab = fs.readFileSync(path.join(__dirname, '../src/components/VisualLab.jsx'), 'utf8')
+  assert.ok(content.includes("['almost', 'not_me'].includes(type)"))
+  assert.ok(content.includes('What feels off? <span>Optional</span>'))
+  assert.ok(content.includes('Describe it however you can. Uncertainty is useful too—this stays attached to this exact outfit.'))
+  assert.ok(content.includes("payload: { ...args.payload, ownerComment }"))
+  assert.ok(content.includes("owner_comment: String(ownerComment || '').trim()"))
+  assert.ok(visualLab.includes("['almost', 'not_me'].includes(label)"))
+  assert.ok(visualLab.includes('Add optional reason'))
+  assert.ok(visualLab.includes('commitVerdictComment(verdictComment)'))
 })
 
 test('generated occasion receipts remain display history but not prompt authority', () => {

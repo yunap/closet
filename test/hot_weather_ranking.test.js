@@ -386,6 +386,49 @@ test('filterWholeWardrobePiecesForGeneration and wholeWardrobePieceTrustDecision
   assert.ok(suppressedShorts.reasons.includes('cold weather: shorts'), 'Should have cold weather reason')
 })
 
+test('wet-exposure footwear gate uses structured material plus weather, environment, and activity', () => {
+  const canvasSneakers = {
+    id: 9010,
+    name: 'ordinary casual sneakers',
+    category: 'shoes',
+    fabric_category: 'canvas',
+    fiber_content: ['cotton'],
+    heel_height: 'flat',
+    walk_support: 'high',
+  }
+  const leatherSneakers = {
+    ...canvasSneakers,
+    id: 9011,
+    name: 'weather-ready casual sneakers',
+    fabric_category: 'leather',
+    fiber_content: ['leather'],
+  }
+
+  const pointReyes = weatherProfileFromContext({
+    mood: 'Point Reyes foggy beach walk',
+    season: 'cool coastal summer',
+  })
+  assert.equal(pointReyes.isWetExposure, true)
+  assert.equal(wholeWardrobePieceTrustDecision(canvasSneakers, {
+    occasion: 'casual', activity: 'walking', weatherProfile: pointReyes,
+  }).allowed, false)
+  assert.equal(wholeWardrobePieceTrustDecision(leatherSneakers, {
+    occasion: 'casual', activity: 'walking', weatherProfile: pointReyes,
+  }).allowed, true)
+
+  const ordinaryFog = weatherProfileFromContext({ mood: 'foggy city museum visit', season: 'cool' })
+  assert.equal(ordinaryFog.isWetExposure, false, 'fog without coastal outdoor exposure is not a wet-footwear gate')
+  assert.equal(wholeWardrobePieceTrustDecision(canvasSneakers, {
+    occasion: 'city', weatherProfile: ordinaryFog,
+  }).allowed, true)
+
+  const dryWalk = weatherProfileFromContext({ mood: 'dry sunny beach walk', season: 'mild' })
+  assert.equal(dryWalk.isWetExposure, false)
+  assert.equal(wholeWardrobePieceTrustDecision(canvasSneakers, {
+    occasion: 'casual', activity: 'walking', weatherProfile: dryWalk,
+  }).allowed, true)
+})
+
 test('hot weather does not block normal medium-weight summer pants (composer parity)', () => {
   const hot = { occasion: 'casual', weatherProfile: { isHot: true, isCold: false } }
 

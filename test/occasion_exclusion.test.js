@@ -90,7 +90,7 @@ test('Part 1 & 5 — wholeWardrobePieceTrustDecision suppression & casing normal
   // 1. Matches "Outdoor Active"
   const res1 = wholeWardrobePieceTrustDecision(piece, { occasion: 'Outdoor Active' })
   assert.equal(res1.allowed, false, 'Should be suppressed for "Outdoor Active"')
-  assert.equal(res1.reasons[0], 'user-excluded for Outdoor Active', 'Should report exclusion reason')
+  assert.equal(res1.reasons[0], 'user-excluded for outdoor active', 'Should report the canonical normalized exclusion reason')
 
   // 2. Matches "outdoor-active"
   const res2 = wholeWardrobePieceTrustDecision(piece, { occasion: 'outdoor-active' })
