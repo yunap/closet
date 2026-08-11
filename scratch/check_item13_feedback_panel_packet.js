@@ -67,7 +67,7 @@ if (manifest.surfaceInventory.filter(item => item.status.includes('backend-only'
   failures.push('Expected exactly two backend-only surfaces (product findings and owner constraints).')
 }
 if (!packet.startsWith('# Item 13 panel packet')) failures.push('Packet title/status is missing.')
-if (!packet.includes('READY FOR PANEL DISPATCH')) failures.push('Packet must record completed owner preflight and evidence capture.')
+if (!packet.includes('PANEL COMPLETE')) failures.push('Packet must record completed owner preflight, evidence capture and panel review.')
 
 if (failures.length) {
   console.error('ITEM 13 PACKET PREFLIGHT FAILED')

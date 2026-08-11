@@ -1,6 +1,7 @@
 # Item 13 panel findings — owner review required
 
-**Status:** panel complete; recommendations are not ratified until Yuna reviews them.
+**Status:** panel complete. The navigation home and product-issues home are owner-ratified; the
+generated-image-report follow-up is clarified below. The replacement UI remains unimplemented.
 
 The Mode B panel reviewed the complete packet and all ten fresh fixture captures through the three
 required lenses: fashion-product competence, human↔model interaction design, and cost/product

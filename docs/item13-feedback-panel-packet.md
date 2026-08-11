@@ -1,6 +1,6 @@
 # Item 13 panel packet — feedback memory and review direction
 
-**Status: READY FOR PANEL DISPATCH. Owner preflight and the reproducible evidence set are complete. The visual direction remains unratified until Yuna reviews the panel recommendation.**
+**Status: PANEL COMPLETE. Owner preflight, reproducible evidence and the Mode B review are complete. Owner rulings are recorded in `item13-panel-findings.md`; the replacement UI remains unimplemented.**
 
 Generated from the machine-readable manifest and the ratified panel sources. The generator copies the shared app context, evidence rules, failure warnings, output contract, and settled-ground exclusion lists verbatim. Re-run `node scratch/build_item13_feedback_panel_packet.js` after changing a source.
 
