@@ -819,10 +819,17 @@ export async function askStylistStructuredWithUsage({
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
-    const value = typeof testResponse === 'string'
-      ? parseModelJson(testResponse, { context: name, maxTokens })
-      : testResponse
-    return { value, usage: normalizeAiUsage(testResponse?.usage || null) }
+    const usage = normalizeAiUsage(testResponse?.usage || null)
+    try {
+      const rawTestText = typeof testResponse?.__rawText === 'string' ? testResponse.__rawText : null
+      const value = typeof testResponse === 'string' || rawTestText !== null
+        ? parseModelJson(rawTestText ?? testResponse, { context: name, maxTokens })
+        : testResponse
+      return { value, usage }
+    } catch (err) {
+      err.usage = usage
+      throw err
+    }
   }
 
   assertProviderKey()
@@ -842,9 +849,12 @@ export async function askStylistStructuredWithUsage({
       }
     })
     const text = response.choices?.[0]?.message?.content || ''
-    return {
-      value: parseModelJson(text, { context: name, maxTokens }),
-      usage: normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+    const usage = normalizeAiUsage(response.usage, { provider: 'openai', model: OPENAI_MODEL })
+    try {
+      return { value: parseModelJson(text, { context: name, maxTokens }), usage }
+    } catch (err) {
+      err.usage = usage
+      throw err
     }
   }
 
@@ -863,7 +873,9 @@ export async function askStylistStructuredWithUsage({
   })
   const toolUse = response.content?.find(block => block?.type === 'tool_use' && block?.name === name)
   if (!toolUse?.input || typeof toolUse.input !== 'object') {
-    throw new Error(`Model did not return the required ${name} structured response.`)
+    const err = new Error(`Model did not return the required ${name} structured response.`)
+    err.usage = normalizeAiUsage(response.usage, { provider: 'anthropic', model: resolvedModel })
+    throw err
   }
   return {
     value: toolUse.input,

@@ -183,6 +183,27 @@ test('1. Intent detection resolves comfort constraint on walking/feet keywords',
   }
 })
 
+test('1b. Negated free-text activity does not activate walking or hiking constraints', () => {
+  assert.equal(resolveComfortFootwearConstraint({
+    request: 'Style this for warm weather. No special walking requirement.'
+  }), null)
+  assert.equal(resolveComfortFootwearConstraint({
+    request: 'This does not need much walking.'
+  }), null)
+  assert.equal(resolveComfortFootwearConstraint({
+    request: 'Dinner, not hiking.'
+  }), null)
+
+  assert.equal(
+    resolveComfortFootwearConstraint({ request: 'No museum; lots of walking downtown.' })?.reason,
+    'all-day walking comfort'
+  )
+  assert.equal(
+    resolveComfortFootwearConstraint({ activity: 'walking', request: 'No special walking requirement.' })?.reason,
+    'all-day walking comfort'
+  )
+})
+
 test('2. applyComfortFootwearRepair swaps stiletto heels but keeps block heels & sneakers', () => {
   const constraint = resolveComfortFootwearConstraint({ request: 'lots of walking' })
   assert.ok(constraint)

@@ -110,6 +110,8 @@ export default function VisualLab({ onGoToThread } = {}) {
   const [savedBoardPending, setSavedBoardPending]           = useState(false)
   const [savedBoardNotice, setSavedBoardNotice]             = useState('')
   const [specificFeedbackOpen, setSpecificFeedbackOpen]     = useState(false)
+  const [pendingVerdictComment, setPendingVerdictComment]   = useState(null)
+  const [verdictComment, setVerdictComment]                 = useState('')
   const boardDialogRef = useRef(null)
   const boardCloseRef = useRef(null)
   const previewDialogRef = useRef(null)
@@ -467,20 +469,41 @@ export default function VisualLab({ onGoToThread } = {}) {
     await patchSavedBoard(row, patch)
   }
 
-  const selectOverallVerdict = async (row, label) => {
+  const selectOverallVerdict = async (row, label, { skipCommentPrompt = false, ownerComment = null } = {}) => {
     const payload = row?.payload && typeof row.payload === 'object' ? row.payload : {}
     const current = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
     const verdictValues = new Set(OVERALL_VERDICT_LABELS.map(([value]) => value))
     const isActive = current.includes(label)
+    if (!isActive && !skipCommentPrompt && ['almost', 'not_me'].includes(label)) {
+      setPendingVerdictComment({ row, label })
+      setVerdictComment(String(payload.feedback_details?.owner_comment || ''))
+      return
+    }
     const wasSignature = current.includes('signature')
     const nextLabels = current.filter(value => !verdictValues.has(value))
     if (!isActive) nextLabels.push(label)
+    const details = payload.feedback_details && typeof payload.feedback_details === 'object'
+      ? payload.feedback_details
+      : {}
     await patchSavedBoard(row, {
       feedbackLabels: nextLabels,
+      ...(ownerComment === null ? {} : {
+        feedbackDetails: { ...details, owner_comment: String(ownerComment || '').trim() },
+      }),
       favorite: label === 'signature' && !isActive
         ? true
         : ((wasSignature || ['almost', 'not_me'].includes(label)) && !isActive ? false : undefined),
     })
+  }
+
+  const commitVerdictComment = async (comment = '') => {
+    if (!pendingVerdictComment) return
+    await selectOverallVerdict(pendingVerdictComment.row, pendingVerdictComment.label, {
+      skipCommentPrompt: true,
+      ownerComment: comment,
+    })
+    setPendingVerdictComment(null)
+    setVerdictComment('')
   }
 
   const toggleStructuredFeedbackReason = async (row, label, reason) => {
@@ -896,6 +919,25 @@ export default function VisualLab({ onGoToThread } = {}) {
                     return <button key={label} type="button" className={active ? 'active' : ''} aria-pressed={active} disabled={savedBoardPending} onClick={() => selectOverallVerdict(selectedBoard, label)}>{text}</button>
                   })}
                 </div>
+                {(() => {
+                  const labels = Array.isArray(selectedBoard?.payload?.feedback_labels) ? selectedBoard.payload.feedback_labels : []
+                  const activeVerdict = ['almost', 'not_me'].find(label => labels.includes(label))
+                  if (!activeVerdict) return null
+                  const existingComment = String(selectedBoard?.payload?.feedback_details?.owner_comment || '').trim()
+                  return (
+                    <button
+                      type="button"
+                      className="btn-link"
+                      disabled={savedBoardPending}
+                      onClick={() => {
+                        setPendingVerdictComment({ row: selectedBoard, label: activeVerdict })
+                        setVerdictComment(existingComment)
+                      }}
+                    >
+                      {existingComment ? 'Edit reason' : 'Add optional reason'}
+                    </button>
+                  )
+                })()}
                 </div>
 
                 <details className="calibration-board-specific-feedback" open={specificFeedbackOpen} onToggle={event => setSpecificFeedbackOpen(event.currentTarget.open)}>
@@ -975,6 +1017,36 @@ export default function VisualLab({ onGoToThread } = {}) {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {pendingVerdictComment && (
+        <div className="stylist-feedback-dialog-backdrop" role="presentation" style={{ zIndex: 1200 }}>
+          <form
+            className="stylist-feedback-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="visual-lab-verdict-comment-title"
+            onSubmit={event => {
+              event.preventDefault()
+              commitVerdictComment(verdictComment)
+            }}
+          >
+            <h3 id="visual-lab-verdict-comment-title">What feels off? <span>Optional</span></h3>
+            <p>Describe it however you can. Uncertainty is useful too—this stays attached to this exact outfit.</p>
+            <textarea
+              value={verdictComment}
+              onChange={event => setVerdictComment(event.target.value)}
+              placeholder="For example: the proportions feel strange, but I’m not sure why"
+              autoFocus
+              maxLength={500}
+            />
+            <div className="stylist-wrong-choice-reason-actions">
+              <button type="submit" className="btn-primary">Save feedback</button>
+              <button type="button" className="btn-secondary" onClick={() => commitVerdictComment('')}>Skip comment</button>
+              <button type="button" className="btn-link" onClick={() => { setPendingVerdictComment(null); setVerdictComment('') }}>Cancel</button>
+            </div>
+          </form>
         </div>
       )}
 

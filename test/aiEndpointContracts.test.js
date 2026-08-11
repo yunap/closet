@@ -54,6 +54,8 @@ afterEach(() => {
 
 function resetTables() {
   for (const table of [
+    'feedback_synthesis_drafts',
+    'feedback_synthesis_batches',
     'outfit_pieces',
     'outfits',
     'pieces',
@@ -584,6 +586,65 @@ test('selected-piece generator returns structured outfit cards', async () => {
     ['high', 'auto'].includes(content[index + 1]?.detail)
   ))
   assert.ok(!content.some(part => part.type === 'image' && part.detail === 'low'))
+})
+
+test('selected-piece styling receives only exact applicable board reactions, not global rejected-board prose', async () => {
+  db.prepare(`INSERT INTO saved_boards
+    (board_type, context_type, context_name, title, image_url, pieces, reason, payload)
+    VALUES ('wardrobe', 'wardrobe', 'Whole wardrobe', ?, ?, ?, ?, ?)`)
+    .run(
+      'Unrelated rejected outfit',
+      '/uploads/unrelated-rejected.png',
+      JSON.stringify([
+        { id: seeded.top, name: 'black button detail top', category: 'top' },
+        { id: seeded.dress, name: 'plum midi dress', category: 'dress' },
+        { id: seeded.boot, name: 'brown ankle boots', category: 'shoes' },
+      ]),
+      'UNRELATED GLOBAL BOARD REASON MUST NOT REACH THE SELECTED-PIECE PROMPT',
+      JSON.stringify({ feedback_labels: ['not_me'] }),
+    )
+
+  db.prepare(`INSERT INTO saved_boards
+    (board_type, context_type, context_name, title, image_url, pieces, reason, payload)
+    VALUES ('wardrobe', 'wardrobe', 'Whole wardrobe', ?, ?, ?, ?, ?)`)
+    .run(
+      'Exact almost outfit',
+      '/uploads/exact-almost.png',
+      JSON.stringify([
+        { id: seeded.bottom, name: 'light beige linen wide-leg pants', category: 'bottom' },
+        { id: seeded.top, name: 'black button detail top', category: 'top' },
+        { id: seeded.shoe, name: 'cream slip-on shoes', category: 'shoes' },
+      ]),
+      'Generated rationale is provenance only.',
+      JSON.stringify({
+        feedback_labels: ['almost'],
+        feedback_details: { owner_comment: 'The upper proportion feels uncertain.' },
+        scoped_evidence: {
+          version: 1,
+          kind: 'outfit_logic',
+          verdict: 'almost',
+          logic: {},
+          context: { occasion: 'city', activity: 'none', season: '' },
+        },
+      }),
+    )
+
+  await postJson('/api/ai/generate-outfits-for-piece', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+  })
+
+  const composerCall = aiCalls.find(call => call.system.includes('SELECTED-ANCHOR CONTRACT'))
+  assert.ok(composerCall)
+  const promptText = composerCall.messages[0].content
+    .filter(part => part.type === 'text')
+    .map(part => part.text)
+    .join('\n')
+  assert.match(promptText, /EXACT PRIOR OUTFIT REACTIONS/)
+  assert.match(promptText, /The upper proportion feels uncertain/)
+  assert.doesNotMatch(promptText, /UNRELATED GLOBAL BOARD REASON MUST NOT REACH/)
+  assert.doesNotMatch(promptText, /Unrelated rejected outfit/)
 })
 
 test('generation_runs is not written on selected-piece error path', async () => {
@@ -3525,7 +3586,11 @@ test('generated-board feedback stays synchronized with the editable Visual Lab b
     assert.deepEqual(JSON.parse(saved.payload).feedback_labels, ['wrong_silhouette'])
 
     const listing = await fetch(`${baseUrl}/api/stylist-feedback?limit=1000`).then(response => response.json())
-    assert.equal(listing.find(row => Number(row.id) === Number(created.id))?.referenced_board_id, Number(boardResult.lastInsertRowid))
+    const listedFeedback = listing.find(row => Number(row.id) === Number(created.id))
+    assert.equal(listedFeedback?.referenced_board_id, Number(boardResult.lastInsertRowid))
+    assert.equal(listedFeedback?.memory?.destination, 'styling_prompt')
+    assert.equal(listedFeedback?.memory?.source, 'Saved-board feedback')
+    assert.match(listedFeedback?.memory?.effect || '', /without becoming a global garment preference/)
 
     const directBoardResponse = await fetch(`${baseUrl}/api/saved-boards/${boardResult.lastInsertRowid}`)
     assert.equal(directBoardResponse.status, 200)
@@ -3560,12 +3625,23 @@ test('wrong-item feedback writes canonical garment and activity context', async 
       feedbackType: 'wrong_item_read',
       targetType: 'whole_wardrobe_outfit',
       contextType: 'wardrobe',
+      contextId: 77,
+      contextName: 'Whole wardrobe',
       payload: {
+        sourceSurface: 'stylist_chat',
         pieceId: seeded.shoe,
+        pieceName: 'Test walking shoe',
+        pieceCategory: 'shoes',
         occasion: 'city',
         activity: 'walking',
         season: 'current season',
         mood: 'museum day',
+        weatherContext: 'Steady rain and wet pavement',
+        explicitReason: 'The canvas upper will absorb water.',
+        threadId: 'thread_evidence_test',
+        messageIndex: 4,
+        outfitIndex: 1,
+        outfit: { label: 'Museum afternoon' },
       },
     }),
   })
@@ -3573,18 +3649,25 @@ test('wrong-item feedback writes canonical garment and activity context', async 
   const created = await response.json()
   try {
     const row = db.prepare('SELECT payload FROM stylist_feedback WHERE id = ?').get(created.id)
-    const evidence = JSON.parse(row.payload).scopedEvidence
-    assert.deepEqual(evidence, {
-      version: 1,
-      kind: 'garment_context_suitability',
-      subjectPieceId: seeded.shoe,
-      strength: 'weak',
+    const payload = JSON.parse(row.payload)
+    assert.equal('scopedEvidence' in payload, false)
+    assert.deepEqual(payload.feedbackEvidence, {
+      version: 2,
+      action: 'wrong_piece_for_outfit',
+      verdict: 'negative',
+      subject: { type: 'garment', pieceId: seeded.shoe, name: 'Test walking shoe', category: 'shoes' },
       context: {
-        occasion: 'city',
-        activity: 'walking',
-        season: 'current season',
-        mood: 'museum day',
+        type: 'outfit', outfitLabel: 'Museum afternoon', occasion: 'city', activity: 'walking',
+        season: 'current season', mood: 'museum day', weather: 'Steady rain and wet pavement',
       },
+      source: {
+        surface: 'stylist_chat', threadId: 'thread_evidence_test', messageIndex: 4,
+        outfitIndex: 1, targetType: 'whole_wardrobe_outfit',
+      },
+      storageContext: { type: 'wardrobe', id: 77, name: 'Whole wardrobe' },
+      explicitReason: 'The canvas upper will absorb water.',
+      scope: 'outfit_context',
+      authority: 'weak_contextual',
     })
   } finally {
     db.prepare('DELETE FROM stylist_feedback WHERE id = ?').run(created.id)
@@ -3617,6 +3700,183 @@ test('stylist feedback accepts registered types, rejects unknown types, and pres
   assert.equal(retired.status, 410)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM stylist_feedback').get().count, before + 1)
   db.prepare('DELETE FROM stylist_feedback WHERE id = ?').run(created.id)
+})
+
+test('feedback synthesis preview is free and the authorized route enforces hash, coverage, and lifecycle', async () => {
+  const insert = db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, note, payload)
+    VALUES ('wrong_item_read', 'whole_wardrobe_outfit', 'wardrobe', ?, ?)`)
+  const evidencePayload = (pieceId, reason) => JSON.stringify({
+    feedbackEvidence: {
+      version: 2,
+      action: 'wrong_piece_for_outfit',
+      subject: { pieceId, name: `Piece ${pieceId}`, category: 'shoes' },
+      context: { outfitLabel: 'Rain walk', occasion: 'casual', activity: 'walking', weather: 'wet' },
+      explicitReason: reason,
+    },
+    outfit: { pieces: [{ id: pieceId, name: `Piece ${pieceId}`, category: 'shoes' }] },
+  })
+  const firstId = Number(insert.run('First reason', evidencePayload(seeded.shoe, 'Canvas absorbs water.')).lastInsertRowid)
+  const secondId = Number(insert.run('Second reason', evidencePayload(seeded.boot, 'The heel is tiring for a long walk.')).lastInsertRowid)
+  let synthesisCalls = 0
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    synthesisCalls += 1
+    return { results: [{
+      source_feedback_ids: [firstId],
+      disposition: 'personal_contextual_lesson',
+      title: 'Wet-walk footwear preference',
+      proposed_text: 'For wet walks, prefer footwear that does not absorb water.',
+      boundary: 'Wet walking contexts only.',
+      rationale: 'The owner explicitly supplied the practical reason.',
+      confidence: 'explicit_owner',
+      related_draft_id: 0,
+      applicability: {
+        scope: 'piece_context',
+        piece_ids: [seeded.shoe],
+        occasions: [],
+        activities: ['walking'],
+        seasons: [],
+        weather_terms: ['wet'],
+      },
+    }] }
+  }
+
+  const previewResponse = await fetch(`${baseUrl}/api/feedback-synthesis/preview?ids=${firstId},${secondId}`)
+  assert.equal(previewResponse.status, 200)
+  const preview = await previewResponse.json()
+  assert.equal(preview.providerCalls, 0)
+  assert.equal(synthesisCalls, 0)
+  assert.equal(preview.outputTokenCap, preview.estimatedOutputTokens)
+
+  const unauthorized = await fetch(`${baseUrl}/api/feedback-synthesis/batches`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedbackIds: [firstId, secondId], inputHash: preview.inputHash }),
+  })
+  assert.equal(unauthorized.status, 400)
+  assert.equal(synthesisCalls, 0)
+
+  const stale = await fetch(`${baseUrl}/api/feedback-synthesis/batches`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedbackIds: [firstId, secondId], inputHash: 'stale', authorize: true }),
+  })
+  assert.equal(stale.status, 409)
+  assert.equal(synthesisCalls, 0)
+
+  const authorized = await fetch(`${baseUrl}/api/feedback-synthesis/batches`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedbackIds: [firstId, secondId], inputHash: preview.inputHash, authorize: true }),
+  })
+  assert.equal(authorized.status, 200)
+  const result = await authorized.json()
+  assert.equal(synthesisCalls, 1)
+  assert.equal(result.drafts.length, 2)
+  assert.ok(result.drafts.some(draft => draft.disposition === 'insufficient_evidence' && JSON.parse(draft.source_feedback_ids).includes(secondId)))
+
+  const personal = result.drafts.find(draft => draft.disposition === 'personal_contextual_lesson')
+  const invalidPatch = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${personal.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'acceptd' }),
+  })
+  assert.equal(invalidPatch.status, 400)
+  assert.equal(db.prepare('SELECT status FROM feedback_synthesis_drafts WHERE id = ?').get(personal.id).status, 'draft')
+
+  const acceptPatch = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${personal.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'accepted',
+      editedText: 'Owner-edited wet-walk preference.',
+      boundary: 'Owner-edited wet-weather boundary.',
+    }),
+  })
+  assert.equal(acceptPatch.status, 200)
+  const acceptedDraft = await acceptPatch.json()
+  assert.equal(acceptedDraft.boundary, 'Owner-edited wet-weather boundary.')
+  const retirePatch = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${personal.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'retired' }),
+  })
+  assert.equal(retirePatch.status, 200)
+  assert.equal(db.prepare('SELECT status FROM feedback_synthesis_drafts WHERE id = ?').get(personal.id).status, 'retired')
+})
+
+test('feedback synthesis records provider usage when paid structured output cannot be parsed', async () => {
+  const payload = JSON.stringify({
+    feedbackEvidence: {
+      version: 2,
+      action: 'wrong_piece_for_outfit',
+      subject: { pieceId: seeded.shoe, name: 'cream slip-on shoes', category: 'shoes' },
+      context: { outfitLabel: 'Rain walk', activity: 'walking', weather: 'wet' },
+      explicitReason: 'Canvas absorbs water.',
+    },
+  })
+  const feedbackId = Number(db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, note, payload)
+    VALUES ('wrong_item_read', 'whole_wardrobe_outfit', 'wardrobe', ?, ?)`)
+    .run('Canvas absorbs water.', payload).lastInsertRowid)
+  const preview = await (await fetch(`${baseUrl}/api/feedback-synthesis/preview?ids=${feedbackId}`)).json()
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => ({
+    __rawText: 'not valid structured json',
+    usage: { input_tokens: 123, output_tokens: 45 },
+  })
+
+  const response = await fetch(`${baseUrl}/api/feedback-synthesis/batches`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedbackIds: [feedbackId], inputHash: preview.inputHash, authorize: true }),
+  })
+  assert.equal(response.status, 502)
+  const failure = await response.json()
+  const batch = db.prepare('SELECT status, actual_usage FROM feedback_synthesis_batches WHERE id = ?').get(failure.batchId)
+  assert.equal(batch.status, 'failed')
+  const usage = JSON.parse(batch.actual_usage)
+  assert.equal(usage.inputTokens, 123)
+  assert.equal(usage.outputTokens, 45)
+})
+
+test('reviewed general styling failures enter a provenance-linked product-quality lifecycle', async () => {
+  const batchId = Number(db.prepare(`
+    INSERT INTO feedback_synthesis_batches
+      (status, feedback_ids, compact_input, input_hash, provider, model)
+    VALUES ('completed', '[]', '', ?, 'test', 'test')
+  `).run(`product-finding-${Date.now()}`).lastInsertRowid)
+  const draftId = Number(db.prepare(`
+    INSERT INTO feedback_synthesis_drafts
+      (batch_id, disposition, title, proposed_text, source_feedback_ids, status)
+    VALUES (?, 'general_styling_failure', ?, ?, '[404]', 'draft')
+  `).run(
+    batchId,
+    'Canvas footwear selected for wet coastal walking',
+    'Absorbent footwear should not be selected for credible wet exposure.',
+  ).lastInsertRowid)
+
+  const reviewed = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${draftId}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'accepted' }),
+  })
+  assert.equal(reviewed.status, 200)
+  const finding = db.prepare('SELECT * FROM product_quality_findings WHERE synthesis_draft_id = ?').get(draftId)
+  assert.equal(finding.status, 'open')
+  assert.deepEqual(JSON.parse(finding.source_feedback_ids), [404])
+
+  const cannotResolveWithoutDestination = await fetch(`${baseUrl}/api/product-quality-findings/${finding.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'resolved' }),
+  })
+  assert.equal(cannotResolveWithoutDestination.status, 400)
+
+  const resolved = await fetch(`${baseUrl}/api/product-quality-findings/${finding.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'resolved',
+      resolutionType: 'shared_rule',
+      resolutionNote: 'Added structured wet-exposure footwear validation.',
+    }),
+  })
+  assert.equal(resolved.status, 200)
+  assert.equal((await resolved.json()).status, 'resolved')
+
+  const listed = await fetch(`${baseUrl}/api/product-quality-findings`)
+  assert.equal(listed.status, 200)
+  assert.ok((await listed.json()).some(row => Number(row.id) === Number(finding.id)))
 })
 
 test('positive outfit feedback writes transferable logic without garment ids in the evidence block', async () => {

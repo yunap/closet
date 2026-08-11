@@ -5,8 +5,9 @@ import { autoStylingTrustDecision, buildWardrobePieceTruthText, stylingRulesForP
 import { WHOLE_WARDROBE_OUTFIT_ARCHETYPES, OUTFIT_MISSIONS } from './prompts.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js'
-import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
+import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRONG_PIECE_FOR_OUTFIT_FEEDBACK, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
+import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
 
 import {
   fabricWeight,
@@ -15,6 +16,7 @@ import {
   pieceBareness,
   pieceCoverage,
   pieceHasInsulatingFiber,
+  pieceHasWetSensitiveFootwearMaterial,
   pieceFormality,
   formalityRank,
   pieceHeelHeight,
@@ -89,6 +91,11 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   // "hot days, cool evenings" fixture below, which must stay hot.
   const hasCoolSignal = /\b(cool|cold|chilly|fog(?:gy)?|marine layer|wind(?:y)?|breez(?:e|y)|overcast|drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const hasRainSignal = /\b(drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
+  const hasDirectWetExposure = /\b(wet|mud|muddy|puddles?|drizzl(?:e|ing)?|rain(?:y|ing)?)\b/.test(text) // ratchet-allow: weather-context parsing, not garment matching
+  const hasCoastalExposure = /\b(beach|coast|coastal|seashore|shoreline|marine layer)\b/.test(text) // ratchet-allow: environment-context parsing, not garment matching
+  const hasFogSignal = /\b(fog|foggy|marine layer)\b/.test(text) // ratchet-allow: weather-context parsing, not garment matching
+  const hasOutdoorFootExposure = /\b(walk|walking|stroll|strolling|hike|hiking|trail|outdoor|outside)\b/.test(text) // ratchet-allow: activity-context parsing, not garment matching
+  const isWetExposure = hasDirectWetExposure || (hasCoastalExposure && hasFogSignal && hasOutdoorFootExposure)
   const strongHotSignal = /\b(hot|heat|heatwave|sweltering|scorching|humid|80s|90s|100 degrees)\b/.test(text) || hasHotTemperature
   const extremeHeatSignal = hasExtremeHeatTemperature || /\b(extreme heat|100s|triple[- ]digit)\b/.test(text) // ratchet-allow: weather-text parsing, not garment matching
   const seasonHotSignal = explicitWarmWeather || /\bsummer\b/.test(text)
@@ -107,6 +114,7 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
       isHot: explicitHot && !explicitCold,
       isCold: explicitCold && !explicitHot,
       isRainy: hasRainSignal,
+      isWetExposure,
       ...(explicitHot && extremeHeatSignal ? { isExtremeHeat: true } : {})
     }
   }
@@ -117,7 +125,7 @@ export function weatherProfileFromContext({ mood = '', season = '', currentDate 
   const currentSeasonRequested = /\b(current season|current weather|right now|today|this month)\b/.test(text) // ratchet-allow: date-context parsing, not garment text matching
   const currentSeasonHot = currentSeasonRequested && month !== null && month >= 5 && month <= 7
   const currentSeasonCold = currentSeasonRequested && month !== null && (month === 11 || month <= 1)
-  return { isHot: currentSeasonHot, isCold: currentSeasonCold, isRainy: hasRainSignal }
+  return { isHot: currentSeasonHot, isCold: currentSeasonCold, isRainy: hasRainSignal, isWetExposure }
 }
 
 export { pieceFabricWeight, pieceBareness, pieceCoverage } from './attributes.js'
@@ -483,58 +491,27 @@ const NEGATIVE_WHOLE_WARDROBE_PROMPT_TYPES = new Set([
   'not_me', 'too_safe', 'too_soft', 'too_generic', 'too_boho', 'too_polished',
   'weak_structure', 'weak_contrast', 'bad_grounding', 'wrong_silhouette',
   'catalog_drift', 'bad_reference', 'proportion_problem', 'wrong_proportions',
-  'wrong_item_read', 'bad_occasion', 'fit_issue',
+  WRONG_PIECE_FOR_OUTFIT_FEEDBACK, 'bad_occasion', 'fit_issue',
 ])
 
-const normalizeFeedbackContext = value => String(value || '').toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
-
-export function scopedWrongItemInfluenceForRows(rows = [], pieceId, options = {}) {
-  const currentOccasion = normalizeFeedbackContext(options.occasion)
-  const currentActivity = normalizeFeedbackContext(options.activity)
-  let matchingCount = 0
-  for (const row of rows) {
-    if (feedbackBehaviour(row) !== FEEDBACK_BEHAVIOURS.CONTEXT_SCORE) continue
-    const payload = safeJsonParse(row.payload, {}) || {}
-    const evidence = payload.scopedEvidence
-    if (!evidence || Number(evidence.version) !== 1 || evidence.kind !== 'garment_context_suitability') continue
-    const subjectPieceId = Number(evidence.subjectPieceId)
-    if (!Number.isFinite(subjectPieceId) || subjectPieceId !== Number(pieceId)) continue
-    const context = evidence.context || {}
-    const recordedOccasion = normalizeFeedbackContext(context.occasion)
-    const recordedActivity = normalizeFeedbackContext(context.activity)
-    const hasOccasion = Boolean(recordedOccasion)
-    const hasActivity = Boolean(recordedActivity && recordedActivity !== 'none')
-    if (!hasOccasion && !hasActivity) continue
-    if (hasOccasion && recordedOccasion !== currentOccasion) continue
-    if (hasActivity && recordedActivity !== currentActivity) continue
-    matchingCount += 1
-  }
-  if (!matchingCount) return null
-  const score = -Math.min(12, matchingCount * 6)
-  return {
-    score,
-    matchingCount,
-    reasons: [`context feedback: previously replaced for ${[currentOccasion, currentActivity && currentActivity !== 'none' ? currentActivity : ''].filter(Boolean).join(' + ')}`],
-  }
-}
-
-export function getScopedWrongItemInfluence(pieceId, options = {}) {
+function acceptedPersonalSynthesisSources() {
+  const feedbackIds = new Set()
+  const boardIds = new Set()
   try {
-    const rows = activeScopedWrongItemRows()
-    return scopedWrongItemInfluenceForRows(rows, pieceId, options)
-  } catch {
-    return null
-  }
-}
-
-function activeScopedWrongItemRows() {
-  return db.prepare(`
-    SELECT feedback_type, target_type, payload
-    FROM stylist_feedback
-    WHERE COALESCE(archived,0) = 0 AND feedback_type = 'wrong_item_read'
-    ORDER BY id DESC
-    LIMIT 240
-  `).all()
+    const rows = db.prepare(`
+      SELECT CAST(source.value AS INTEGER) AS feedback_id, sb.id AS board_id
+      FROM feedback_synthesis_drafts draft
+      JOIN json_each(draft.source_feedback_ids) source
+      LEFT JOIN stylist_feedback sf ON sf.id = CAST(source.value AS INTEGER)
+      LEFT JOIN saved_boards sb ON sb.image_url = json_extract(sf.payload, '$.board.imageUrl')
+      WHERE draft.status = 'accepted' AND draft.disposition = 'personal_contextual_lesson'
+    `).all()
+    for (const row of rows) {
+      if (Number.isInteger(Number(row.feedback_id)) && Number(row.feedback_id) > 0) feedbackIds.add(Number(row.feedback_id))
+      if (Number.isInteger(Number(row.board_id)) && Number(row.board_id) > 0) boardIds.add(Number(row.board_id))
+    }
+  } catch {}
+  return { feedbackIds, boardIds }
 }
 
 export function collectPieceIdsFromSavedBoardRow(row) {
@@ -559,6 +536,246 @@ export function collectPieceIdsFromSavedBoardRow(row) {
   visit(safeJsonParse(row?.pieces, []))
   visit(safeJsonParse(row?.payload, {}))
   return [...ids]
+}
+
+// Reasonless negative/qualified verdicts have one safe meaning: the exact proposal was not a
+// confirmed success. They may prevent an existing styling call from reproducing that same piece
+// set, but they cannot describe a disliked formula, silhouette, garment, or general preference.
+const EMPTY_FEEDBACK_CONTEXT_VALUES = new Set(['', 'none', 'n/a', 'na', 'unspecified', 'unknown'])
+
+function feedbackContextTerms(value) {
+  const values = Array.isArray(value) ? value : [value]
+  return [...new Set(values
+    .flatMap(entry => String(entry || '').split(/[,;|]/))
+    .map(entry => entry.trim().toLowerCase().replaceAll('_', ' ').replace(/\s+/g, ' '))
+    .filter(entry => !EMPTY_FEEDBACK_CONTEXT_VALUES.has(entry)))]
+}
+
+function feedbackContextMatches(storedValue, requestedValue) {
+  const storedTerms = feedbackContextTerms(storedValue)
+  if (!storedTerms.length) return true
+  const requestedTerms = new Set(feedbackContextTerms(requestedValue))
+  if (!requestedTerms.size) return false
+  return storedTerms.some(term => requestedTerms.has(term))
+}
+
+export function getExactOutfitReactionMemory(pieceIds = [], {
+  occasion = '', activity = '', season = '', limit = 3,
+} = {}) {
+  const availableIds = new Set((Array.isArray(pieceIds) ? pieceIds : [pieceIds])
+    .map(Number).filter(id => Number.isInteger(id) && id > 0))
+  if (availableIds.size < 2 || limit <= 0) return ''
+  const normalizedContext = {
+    occasion: String(occasion || '').trim().toLowerCase(),
+    activity: String(activity || '').trim().toLowerCase(),
+    season: String(season || '').trim().toLowerCase(),
+  }
+  try {
+    const rows = db.prepare(`
+      SELECT * FROM saved_boards
+      WHERE COALESCE(archived,0) = 0
+        AND (
+          EXISTS (SELECT 1 FROM json_each(json_extract(payload, '$.feedback_labels')) WHERE value = 'almost')
+          OR EXISTS (SELECT 1 FROM json_each(json_extract(payload, '$.feedback_labels')) WHERE value = 'not_me')
+        )
+      ORDER BY id DESC
+      LIMIT 240
+    `).all()
+    const lines = []
+    for (const row of rows) {
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+      const verdict = labels.includes('not_me') ? 'Not for me' : (labels.includes('almost') ? 'Almost right' : '')
+      if (!verdict) continue
+      const sourceIds = [...new Set(collectPieceIdsFromSavedBoardRow(row))].sort((a, b) => a - b)
+      if (sourceIds.length < 2 || !sourceIds.every(id => availableIds.has(id))) continue
+      const evidenceContext = payload.scoped_evidence?.context || payload.outfit?.context || {}
+      const storedContext = {
+        occasion: String(evidenceContext.occasion || payload.outfit?.occasion || '').trim().toLowerCase(),
+        activity: String(evidenceContext.activity || payload.outfit?.activity || '').trim().toLowerCase(),
+        season: String(evidenceContext.season || payload.outfit?.season || '').trim().toLowerCase(),
+      }
+      const contextMismatch = Object.keys(storedContext).some(key =>
+        !feedbackContextMatches(storedContext[key], normalizedContext[key]))
+      if (contextMismatch) continue
+      const selectedReasons = Object.values(payload.feedback_details || {})
+        .flatMap(value => Array.isArray(value) ? value : [])
+        .map(value => typeof value === 'string' ? value : value?.issue)
+        .map(value => FEEDBACK_REASON_LABELS[value] || '')
+        .filter(Boolean)
+      const ownerComment = String(payload.feedback_details?.owner_comment || payload.ownerComment || '')
+        .replace(/\s+/g, ' ').trim().slice(0, 500)
+      const issueText = selectedReasons.length
+        ? ` Confirmed user-selected issue${selectedReasons.length > 1 ? 's' : ''}: ${[...new Set(selectedReasons)].join('; ')}.`
+        : (ownerComment ? ' No structured cause was confirmed.' : ' No cause was confirmed.')
+      const commentText = ownerComment
+        ? ` Owner comment (verbatim, may express uncertainty): ${JSON.stringify(ownerComment)}.`
+        : ''
+      lines.push(`- Exact prior outfit piece IDs [${sourceIds.join(', ')}] was marked ${verdict}.${issueText}${commentText} Do not reproduce this exact combination unchanged. Do not infer dislike of its formula, silhouette, colors, or individual garments.`)
+      if (lines.length >= Number(limit)) break
+    }
+    if (lines.length < Number(limit)) {
+      const unsavedRows = db.prepare(`
+        SELECT * FROM stylist_feedback
+        WHERE COALESCE(archived,0) = 0
+          AND feedback_type IN ('almost','not_me')
+          AND target_type = 'generated_visual_board'
+          AND NOT EXISTS (
+            SELECT 1 FROM saved_boards
+            WHERE saved_boards.image_url = json_extract(stylist_feedback.payload, '$.board.imageUrl')
+          )
+        ORDER BY id DESC
+        LIMIT 120
+      `).all()
+      for (const row of unsavedRows) {
+        const payload = safeJsonParse(row.payload, {}) || {}
+        const sourceIds = [...new Set(collectPieceIdsFromFeedbackPayload(row.payload))].sort((a, b) => a - b)
+        if (sourceIds.length < 2 || !sourceIds.every(id => availableIds.has(id))) continue
+        const evidenceContext = payload.scopedEvidence?.context || payload.outfit?.context || {}
+        const storedContext = {
+          occasion: String(evidenceContext.occasion || payload.outfit?.occasion || '').trim().toLowerCase(),
+          activity: String(evidenceContext.activity || payload.outfit?.activity || '').trim().toLowerCase(),
+          season: String(evidenceContext.season || payload.outfit?.season || '').trim().toLowerCase(),
+        }
+        const contextMismatch = Object.keys(storedContext).some(key =>
+          !feedbackContextMatches(storedContext[key], normalizedContext[key]))
+        if (contextMismatch) continue
+        const ownerComment = String(payload.ownerComment || '').replace(/\s+/g, ' ').trim().slice(0, 500)
+        const verdict = row.feedback_type === 'not_me' ? 'Not for me' : 'Almost right'
+        const commentText = ownerComment
+          ? ` Owner comment (verbatim, may express uncertainty): ${JSON.stringify(ownerComment)}.`
+          : ' No cause was confirmed.'
+        lines.push(`- Exact prior outfit piece IDs [${sourceIds.join(', ')}] was marked ${verdict}.${commentText} Do not reproduce this exact combination unchanged. Do not infer dislike of its formula, silhouette, colors, or individual garments.`)
+        if (lines.length >= Number(limit)) break
+      }
+    }
+    return lines.join('\n')
+  } catch {
+    return ''
+  }
+}
+
+// Provisional owner evidence is delivered only when its exact subject garment is already in the
+// model's candidate/retrieval set. It is a compact verbatim reminder inside an existing styling
+// call, never a score, standing preference, or reason invented by application code.
+export function getProvisionalWrongChoiceMemory(pieceIds = [], limit = 3) {
+  const allowedIds = new Set((Array.isArray(pieceIds) ? pieceIds : [pieceIds])
+    .map(Number).filter(id => Number.isInteger(id) && id > 0))
+  if (!allowedIds.size || limit <= 0) return ''
+  try {
+    const acceptedSources = acceptedPersonalSynthesisSources().feedbackIds
+    const rows = db.prepare(`
+      SELECT id, payload
+      FROM stylist_feedback
+      WHERE COALESCE(archived,0) = 0 AND feedback_type = ?
+      ORDER BY id DESC
+      LIMIT 240
+    `).all(WRONG_PIECE_FOR_OUTFIT_FEEDBACK)
+    const seen = new Set()
+    const lines = []
+    for (const row of rows) {
+      if (acceptedSources.has(Number(row.id))) continue
+      const payload = safeJsonParse(row.payload, {}) || {}
+      const evidence = payload.feedbackEvidence
+      if (Number(evidence?.version) !== 2 || evidence?.action !== 'wrong_piece_for_outfit') continue
+      const pieceId = Number(evidence?.subject?.pieceId)
+      if (!allowedIds.has(pieceId)) continue
+      const reason = String(evidence?.explicitReason || '').trim()
+      const subjectName = String(evidence?.subject?.name || `Piece ${pieceId}`).trim()
+      const context = evidence?.context || {}
+      const contextParts = [
+        context.outfitLabel ? `outfit: ${context.outfitLabel}` : '',
+        context.occasion ? `occasion: ${context.occasion}` : '',
+        context.activity && context.activity !== 'none' ? `activity: ${context.activity}` : '',
+        context.weather ? `weather: ${context.weather}` : '',
+      ].filter(Boolean)
+      const dedupeKey = `${pieceId}:${String(context.outfitLabel || '').toLowerCase()}:${reason.toLowerCase()}`
+      if (seen.has(dedupeKey)) continue
+      seen.add(dedupeKey)
+      lines.push(reason
+        ? `- ${subjectName} (ID ${pieceId}) was rejected${contextParts.length ? ` [${contextParts.join('; ')}]` : ''}. Owner reason: "${reason.slice(0, 360)}" Do not treat this as a global garment rejection or infer a broader preference.`
+        : `- ${subjectName} (ID ${pieceId}) was rejected for this exact outfit${contextParts.length ? ` [${contextParts.join('; ')}]` : ''}. No reason was supplied: do not repeat the exact combination blindly, and do not infer any broader garment or owner preference.`)
+      if (lines.length >= Math.min(6, Number(limit) || 3)) break
+    }
+    return lines.join('\n')
+  } catch {
+    return ''
+  }
+}
+
+const normalizedApplicabilityText = value => String(value || '').trim().toLowerCase()
+
+const applicabilityTermMatches = (requestValue, term) => {
+  const haystack = normalizedApplicabilityText(requestValue)
+  const needle = normalizedApplicabilityText(term)
+  if (!haystack || !needle) return false
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(haystack) // ratchet-allow: exact owner-approved applicability term matched against request context, not garment classification
+}
+
+const applicabilityDimensionMatches = (requestValue, terms) => {
+  const meaningful = (Array.isArray(terms) ? terms : []).map(normalizedApplicabilityText).filter(Boolean)
+  return !meaningful.length || meaningful.some(term => applicabilityTermMatches(requestValue, term))
+}
+
+export function acceptedSynthesisApplicabilityMatches(applicability = {}, requestContext = {}) {
+  if (Number(applicability?.version) !== 1) return false
+  const pieceIds = [...new Set((Array.isArray(applicability?.piece_ids) ? applicability.piece_ids : [])
+    .map(Number).filter(id => Number.isInteger(id) && id > 0))]
+  const requestPieceIds = new Set((Array.isArray(requestContext?.pieceIds) ? requestContext.pieceIds : [])
+    .map(Number).filter(id => Number.isInteger(id) && id > 0))
+  const hasContextConditions = [
+    applicability?.occasions,
+    applicability?.activities,
+    applicability?.seasons,
+    applicability?.weather_terms,
+  ].some(values => Array.isArray(values) && values.some(value => normalizedApplicabilityText(value)))
+  const contextMatches = hasContextConditions &&
+    applicabilityDimensionMatches(requestContext?.occasion, applicability?.occasions) &&
+    applicabilityDimensionMatches(requestContext?.activity, applicability?.activities) &&
+    applicabilityDimensionMatches(requestContext?.season, applicability?.seasons) &&
+    applicabilityDimensionMatches(requestContext?.weather, applicability?.weather_terms)
+  const pieceMatches = pieceIds.some(id => requestPieceIds.has(id))
+
+  if (applicability.scope === 'piece') return pieceMatches
+  if (applicability.scope === 'context') return contextMatches
+  if (applicability.scope === 'piece_context') {
+    // The lesson is relevant only when the constrained garment is in the bounded roster (or exact
+    // outfit) and the request matches its context. Do not spend prompt space on unavailable pieces,
+    // and do not broaden a contextual lesson into an unconditional garment rule.
+    return pieceMatches && contextMatches
+  }
+  return false
+}
+
+// Only owner-accepted personal/contextual synthesis drafts become styling prompt memory.
+// Garment corrections and general styling failures remain visible review records, not owner taste.
+// Applicability is structured and mechanically matched; boundary prose is display/explanation only.
+export function getAcceptedFeedbackSynthesisMemory(limit = 8, requestContext = {}) {
+  if (limit <= 0) return ''
+  try {
+    const rows = db.prepare(`
+      SELECT id, proposed_text, edited_text, boundary, payload
+      FROM feedback_synthesis_drafts
+      WHERE status = 'accepted' AND disposition = 'personal_contextual_lesson'
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 64
+    `).all()
+    const contexts = Array.isArray(requestContext?.contexts) && requestContext.contexts.length
+      ? requestContext.contexts.map(context => ({ ...context, pieceIds: requestContext.pieceIds || context?.pieceIds || [] }))
+      : [requestContext]
+    return rows.filter(row => {
+      const payload = safeJsonParse(row.payload, {}) || {}
+      return contexts.some(context => acceptedSynthesisApplicabilityMatches(payload.applicability, context))
+    }).slice(0, Math.min(16, Number(limit) || 8)).map(row => {
+      const lesson = String(row.edited_text || row.proposed_text || '').trim().slice(0, 600)
+      const boundary = String(row.boundary || '').trim().slice(0, 300)
+      if (!lesson) return ''
+      return `- ${lesson}${boundary ? ` Boundary: ${boundary}` : ''}`
+    }).filter(Boolean).join('\n')
+  } catch {
+    return ''
+  }
 }
 
 // Chat threads have no per-message table — the whole conversation lives in
@@ -614,6 +831,11 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
   try {
     const clauses = ['COALESCE(archived,0) = 0']
     const params = []
+    const acceptedBoardIds = [...acceptedPersonalSynthesisSources().boardIds]
+    if (acceptedBoardIds.length) {
+      clauses.push(`id NOT IN (${acceptedBoardIds.map(() => '?').join(',')})`)
+      params.push(...acceptedBoardIds)
+    }
     if (contextType) { clauses.push('context_type = ?'); params.push(contextType) }
     if (contextId) { clauses.push('context_id = ?'); params.push(Number(contextId)) }
     for (const context of excludeContexts) {
@@ -629,10 +851,7 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
       LIMIT ?
     `).all(...params, Number(limit))
     if (!rows.length) return ''
-    const positiveLabels = /signature|works|strong|most_like_me|grounded|artistic|modern/i
     const negativeLabels = /not_me|style_direction|shape_balance|too_safe|too_boho|too_polished|too_soft|too_generic|body_proportions_drift|wrong_silhouette|wrong_length|wrong_energy|weak_structure|weak_contrast|bad_grounding|catalog_like|ignore|bad|drift/i
-    const positives = []
-    const close = []
     const negatives = []
     const silhouetteReasonLabels = {
       too_much_volume: 'too much overall volume',
@@ -685,22 +904,8 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
       }) === FEEDBACK_BEHAVIOURS.STYLING_PROMPT)
       const scopedEvidence = payload.scoped_evidence
       if (Number(scopedEvidence?.version) === 1 && scopedEvidence?.kind === SCOPED_EVIDENCE_KINDS.OUTFIT_LOGIC) {
-        const logic = scopedEvidence.logic || {}
-        const context = scopedEvidence.context || {}
-        const logicParts = [
-          logic.formula ? `formula: ${logic.formula}` : '',
-          logic.silhouette ? `silhouette: ${logic.silhouette}` : '',
-          logic.direction ? `direction: ${logic.direction}` : '',
-          logic.mood ? `mood: ${logic.mood}` : '',
-        ].filter(Boolean)
-        const contextParts = [
-          context.occasion,
-          context.activity && context.activity !== 'none' ? context.activity : '',
-          context.season,
-        ].filter(Boolean)
-        const line = `- ${scopedEvidence.verdict === 'almost' ? 'qualified' : 'positive'} transferable outfit logic${contextParts.length ? ` for ${contextParts.join(' + ')}` : ''}: ${logicParts.join('; ')}. Reuse this logic with different suitable garments; do not repeat the original combination merely because it received positive feedback.`
-        if (scopedEvidence.verdict === 'almost') close.push(line)
-        else positives.push(line)
+        // Positive outfit logic is retained as provenance only. Delivering it here—even without
+        // literal garment IDs—reinforces the same formula and works against closet discovery.
         continue
       }
       const labelText = stylingLabels.length ? ` [${stylingLabels.join(', ')}]` : ''
@@ -730,18 +935,9 @@ export function getSavedBoardMemory(contextType = null, contextId = null, limit 
       const reason = row.reason ? ` — ${String(row.reason).slice(0, 240)}` : ''
       const line = `- ${row.title || 'Untitled board'}${labelText}${pieces ? ` | pieces: ${pieces}` : ''}${detailText}${reason}`
       const hasNegativeFeedback = stylingLabels.some(label => negativeLabels.test(String(label)))
-      const hasPositiveFeedback = stylingLabels.some(label => positiveLabels.test(String(label)))
-      const isAlmost = stylingLabels.includes('almost')
-      if (isAlmost) {
-        close.push(line)
-        continue
-      }
-      if (!hasNegativeFeedback && (row.favorite || hasPositiveFeedback)) positives.push(line)
       if (hasNegativeFeedback) negatives.push(line)
     }
     const parts = []
-    if (positives.length) parts.push(`Saved visual board positive memory. Bias future outfit suggestions toward these successful formulas:\n${positives.slice(0, 10).join('\n')}`)
-    if (close.length) parts.push(`Saved visual board close-but-not-finished memory. Preserve the core outfit formula because it was marked Almost right, then correct the listed issues rather than avoiding the outfit entirely:\n${close.slice(0, 10).join('\n')}`)
     if (negatives.length) parts.push(`Saved visual board negative memory. Avoid repeating these drift/problem patterns:\n${negatives.slice(0, 10).join('\n')}`)
     return parts.join('\n\n')
   } catch {
@@ -1097,14 +1293,6 @@ export function compatibilityScoreForSelectedItem(selected, candidate, options =
   // TODO: a register attribute in attributes.js could one day let the penalty fire only on cross-register pairs.
   if (selectedExpressive && candidateExpressive) { score -= 5; reasons.push('expressive competition risk') }
 
-  const scopedWrongItemInfluence = Array.isArray(options.scopedWrongItemRows)
-    ? scopedWrongItemInfluenceForRows(options.scopedWrongItemRows, candidate.id, options)
-    : getScopedWrongItemInfluence(candidate.id, options)
-  if (scopedWrongItemInfluence) {
-    score += scopedWrongItemInfluence.score
-    reasons.push(...scopedWrongItemInfluence.reasons)
-  }
-
   return { score, reasons }
 }
 
@@ -1120,14 +1308,16 @@ export function rankedComplementaryWardrobeFor(piece, allPieces, limit = 24, opt
     return true
   })
 
-  let scopedWrongItemRows = []
-  try { scopedWrongItemRows = activeScopedWrongItemRows() } catch {}
-  const scoringOptions = { ...options, scopedWrongItemRows }
   return allowed
     .map(p => {
-      const scored = compatibilityScoreForSelectedItem(piece, p, scoringOptions)
+      const scored = compatibilityScoreForSelectedItem(piece, p, options)
       const trust = wholeWardrobePieceTrustDecision(p, {
         occasion: options.occasion || 'casual',
+        season: options.season,
+        activity: options.activity,
+        mood: options.mood,
+        request: options.request,
+        question: options.question,
         explorationMode: options.explorationMode || 'moderate',
         weatherProfile: options.weatherProfile
       })
@@ -1282,9 +1472,10 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
     // sub-header, severed from the scoped-reaction section below.
     const ownerRuleLines = []
     const legacyReactionLines = new Map()
-    const outfitLogicGroups = new Map()
+    const acceptedSources = acceptedPersonalSynthesisSources().feedbackIds
     let deliveredUnits = 0
     for (const r of rows) {
+      if (acceptedSources.has(Number(r.id))) continue
       const behaviour = feedbackBehaviour(r)
       if (behaviour === FEEDBACK_BEHAVIOURS.OWNER_PROMPT) {
         if (deliveredUnits >= deliveryLimit) continue
@@ -1296,19 +1487,10 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
       const feedbackPayload = safeJsonParse(r.payload, {}) || {}
       const scopedEvidence = feedbackPayload.scopedEvidence
       if (Number(scopedEvidence?.version) === 1 && scopedEvidence?.kind === SCOPED_EVIDENCE_KINDS.OUTFIT_LOGIC) {
-        const logic = scopedEvidence.logic || {}
-        const context = scopedEvidence.context || {}
-        const qualifier = scopedEvidence.verdict === 'almost' ? 'qualified' : 'positive'
-        const key = JSON.stringify({ qualifier, logic, context })
-        const existing = outfitLogicGroups.get(key)
-        if (existing) {
-          existing.count += 1
-        } else if (deliveredUnits < deliveryLimit) {
-          outfitLogicGroups.set(key, { qualifier, logic, context, count: 1 })
-          deliveredUnits += 1
-        }
+        // Stored positive logic remains inspectable provenance, not styling authority.
         continue
       }
+      if (POSITIVE_WHOLE_WARDROBE_PROMPT_TYPES.has(r.feedback_type)) continue
       const target = r.target_type ? `${r.target_type}` : 'item'
       const label = r.label ? ` — ${r.label}` : ''
       const note = r.note ? `: ${String(r.note).slice(0, 280)}` : ''
@@ -1338,21 +1520,6 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
     }
 
     const reactionLines = [...legacyReactionLines.values()]
-    for (const group of outfitLogicGroups.values()) {
-      const logicParts = [
-        group.logic.formula ? `formula: ${group.logic.formula}` : '',
-        group.logic.silhouette ? `silhouette: ${group.logic.silhouette}` : '',
-        group.logic.direction ? `direction: ${group.logic.direction}` : '',
-        group.logic.mood ? `mood: ${group.logic.mood}` : '',
-      ].filter(Boolean)
-      const contextParts = [
-        group.context.occasion,
-        group.context.activity && group.context.activity !== 'none' ? group.context.activity : '',
-        group.context.season,
-      ].filter(Boolean)
-      reactionLines.push(`- ${group.qualifier} transferable outfit logic${group.count > 1 ? ` (${group.count} observations)` : ''}${contextParts.length ? ` for ${contextParts.join(' + ')}` : ''}: ${logicParts.join('; ')}. Reuse this logic with different suitable garments; do not repeat the original combination merely because it received positive feedback.`)
-    }
-
     const sections = []
     if (ownerRuleLines.length) {
       sections.push(`Owner rules (standing, apply them):\n${ownerRuleLines.join('\n')}`)
@@ -1399,7 +1566,6 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
     `).all(Number(limit))
 
     if (!rows.length) return ''
-    const positives = []
     const negatives = []
     for (const row of rows) {
       if (feedbackBehaviour(row) !== FEEDBACK_BEHAVIOURS.STYLING_PROMPT) continue
@@ -1413,12 +1579,10 @@ export function getWholeWardrobeFeedbackMemory(limit = 24) {
       const occasion = payload.occasion || outfit.bestFor || ''
       const note = row.note ? ` — ${String(row.note).slice(0, 220)}` : ''
       const line = `- ${row.feedback_type}${row.label ? ` / ${row.label}` : ''}${occasion ? ` (${occasion})` : ''}${formula ? ` | formula: ${formula}` : ''}${pieceText ? ` | pieces: ${pieceText}` : ''}${note}`
-      if (POSITIVE_WHOLE_WARDROBE_PROMPT_TYPES.has(row.feedback_type)) positives.push(line)
       if (NEGATIVE_WHOLE_WARDROBE_PROMPT_TYPES.has(row.feedback_type)) negatives.push(line)
     }
 
     const parts = []
-    if (positives.length) parts.push(`Whole-wardrobe outfit feedback to reinforce. Prefer similar garment relationships and formulas when pieces/occasion fit:\n${positives.slice(0, 10).join('\n')}`)
     if (negatives.length) parts.push(`Whole-wardrobe outfit feedback to suppress. Avoid repeating these exact combinations, piece roles, formulas, or occasion mismatches:\n${negatives.slice(0, 12).join('\n')}`)
     return parts.join('\n\n')
   } catch {
@@ -2132,14 +2296,46 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     }
   }
   const exclusions = (piece.occasion_exclusions || []).map(o => String(o || '').toLowerCase().replace(/[-_]+/g, ' ').trim())
-  if (exclusions.includes(reqOccasion)) {
+  const ownerExclusionOccasion = String(options.ownerExclusionOccasion || reqOccasion).toLowerCase().replace(/[-_]+/g, ' ').trim()
+  if (exclusions.includes(ownerExclusionOccasion)) {
     const role = String(piece.role_permission || 'auto')
     const intelligence = pieceGarmentIntelligence(piece)
     const profileTrust = String(intelligence.autoUseTrust || '').toLowerCase()
     return {
       allowed: false,
       supportOnly: role === 'support_only' || profileTrust === 'support_only',
-      reasons: [`user-excluded for ${occasion}`]
+      reasons: [`user-excluded for ${ownerExclusionOccasion}`]
+    }
+  }
+
+  let ownerConstraints = options.ownerConstraints
+  if (!Array.isArray(ownerConstraints)) {
+    try {
+      ownerConstraints = db.prepare("SELECT * FROM owner_constraints WHERE status = 'active' ORDER BY id").all().map(parseOwnerConstraintRow)
+    } catch { ownerConstraints = [] }
+  }
+  const structuredMaterials = [piece.fabric_category, ...(Array.isArray(piece.fiber_content) ? piece.fiber_content : [])]
+    .map(value => String(value || '').toLowerCase().trim()).filter(Boolean)
+  const ownerConstraint = ownerConstraints.find(row => ownerConstraintApplies(row, {
+    id: piece.id,
+    category: wardrobeCategoryGroup(piece),
+    materials: structuredMaterials,
+  }, {
+    occasion: ownerExclusionOccasion,
+    season: options.season,
+    activity: options.activity,
+    weather: {
+      hot: Boolean(weatherProfile.isHot),
+      cold: Boolean(weatherProfile.isCold),
+      rainy: Boolean(weatherProfile.isRainy),
+      wet_exposure: Boolean(weatherProfile.isWetExposure),
+    },
+  }))
+  if (ownerConstraint) {
+    return {
+      allowed: false,
+      supportOnly: false,
+      reasons: [`owner constraint ${ownerConstraint.id}: prohibited for ${ownerConstraint.context_dimension} ${ownerConstraint.context_values.join(', ')}`],
     }
   }
 
@@ -2211,6 +2407,10 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     }
   }
 
+  if (weatherProfile.isWetExposure && pieceHasWetSensitiveFootwearMaterial(piece)) {
+    reasons.push('wet exposure: absorbent footwear material')
+  }
+
   // Spec 8: register-ceiling and footwear-enum awareness are unconditional here, matching the two
   // other fully-gated composition paths (search_wardrobe, buildVisualComposerRoster) that already
   // call the same underlying verdict helpers. Previously this was opt-in per caller (spec 5's
@@ -2245,8 +2445,13 @@ export function filterWholeWardrobePiecesForGeneration(allPieces = [], options =
   const allowedPieces = []
   const suppressedPieces = []
 
+  let ownerConstraints = options.ownerConstraints
+  if (!Array.isArray(ownerConstraints)) {
+    try { ownerConstraints = db.prepare("SELECT * FROM owner_constraints WHERE status = 'active' ORDER BY id").all().map(parseOwnerConstraintRow) } catch { ownerConstraints = [] }
+  }
+  const decisionOptions = { ...options, ownerConstraints }
   for (const piece of allPieces) {
-    const decision = wholeWardrobePieceTrustDecision(piece, options)
+    const decision = wholeWardrobePieceTrustDecision(piece, decisionOptions)
     if (decision.allowed) {
       allowedPieces.push(piece)
     } else {
@@ -2563,21 +2768,6 @@ export function buildVisualComposerRoster(allowedPieces = [], {
     console.warn('Failed to query confirmed outfits count:', err.message)
   }
 
-  const scopedContextScores = new Map()
-  try {
-    const feedbackRows = db.prepare(`
-      SELECT id, feedback_type, target_type, context_type, context_id, payload
-      FROM stylist_feedback
-      WHERE COALESCE(archived,0) = 0
-    `).all()
-    for (const piece of allowedPieces) {
-      const influence = scopedWrongItemInfluenceForRows(feedbackRows, piece.id, { occasion, activity })
-      if (influence) scopedContextScores.set(Number(piece.id), influence)
-    }
-  } catch (err) {
-    console.warn('Failed to query stylist feedback memory:', err.message)
-  }
-
   // Step 1 — No photo
   const afterStep1 = []
   for (const p of allowedPieces) {
@@ -2790,11 +2980,6 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       historyBonus = 24
       pushAdjustmentReason(p.id, 'history bonus capped')
     }
-    const scopedContextInfluence = scopedContextScores.get(Number(p.id))
-    const scopedContextPenalty = scopedContextInfluence?.score || 0
-    if (scopedContextInfluence) {
-      for (const reason of scopedContextInfluence.reasons) pushAdjustmentReason(p.id, `${reason} (${scopedContextPenalty})`)
-    }
     const recencyPenalty = sessionInfluence && sessionInfluence.pieceRecency
       ? (sessionInfluence.pieceRecency.get(Number(p.id)) || 0)
       : 0
@@ -2915,7 +3100,7 @@ export function buildVisualComposerRoster(allowedPieces = [], {
       pushAdjustmentReason(p.id, `${adjustment.reason} (${sign}${adjustment.score})`)
     }
 
-    const score = occasionScore + historyBonus + scopedContextPenalty - recencyPenalty + weatherBonus + occasionProfileBonus + formalityFit.score
+    const score = occasionScore + historyBonus - recencyPenalty + weatherBonus + occasionProfileBonus + formalityFit.score
     scoreCache.set(cacheKey, score)
     return score
   }
@@ -4132,7 +4317,7 @@ export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occ
       const isTrailRated = requiredFootwear.some(fw => pieceMatchesFootwear(currentShoe, fw))
       if (!isTrailRated) {
         const weatherProfile = options.weatherProfile || weatherProfileFromContext({ mood, season: options.season })
-        const { allowedPieces } = filterWholeWardrobePiecesForGeneration(candidatePieces, { occasion, weatherProfile, mood, activity: options.activity })
+        const { allowedPieces } = filterWholeWardrobePiecesForGeneration(candidatePieces, { occasion, season: options.season, weatherProfile, mood, activity: options.activity })
         
         const getShoeRelevance = (shoe) => {
           let score = pieceOccasionScore(shoe, occasion)

@@ -92,6 +92,8 @@ after(() => {
 })
 
 beforeEach(() => {
+  db.prepare('DELETE FROM feedback_synthesis_drafts').run()
+  db.prepare('DELETE FROM feedback_synthesis_batches').run()
   db.prepare('DELETE FROM pieces').run()
   seedWardrobe()
 })
@@ -495,6 +497,26 @@ test('casual indoor comfort wording cannot lower the structured casual ceiling t
   assert.ok(allowed.has(topId))
   assert.ok(allowed.has(bottomId))
   assert.ok(allowed.has(shoesId))
+})
+
+test('a home-specific plan slot enforces the garment owner exclusion before model composition', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'home top', occasions: ['casual'], formality: 'everyday' })
+  const excludedBottom = insertPiece({ category: 'bottom', name: 'tailored shorts', occasions: ['casual'], formality: 'everyday' })
+  const allowedBottom = insertPiece({ category: 'bottom', name: 'home pants', occasions: ['casual', 'home'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'home shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  db.prepare('UPDATE pieces SET occasion_exclusions = ? WHERE id = ?').run(JSON.stringify(['home']), excludedBottom)
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{
+    label: 'Home & Backyard', occasion: 'casual', activity: 'none', count: 1,
+    best_for: 'home time and backyard play'
+  }])
+
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'a home capsule' })
+  assert.equal(workbench.slots[0].occasion, 'casual')
+  assert.equal(workbench.slots[0].eligibility_context, 'home')
+  assert.ok(!workbench.slots[0].allowed_piece_ids.includes(excludedBottom))
+  assert.ok(workbench.slots[0].allowed_piece_ids.includes(allowedBottom))
 })
 
 // --- Mode default flip (spec 19 Part 4) ----------------------------------------
@@ -2794,6 +2816,16 @@ test('normalizePlanSlots corrects contradictory casual dinner slots to evening',
   assert.equal(slots[0].occasion, 'evening')
   assert.equal(slots[1].occasion, 'evening')
   assert.equal(slots[2].occasion, 'casual')
+})
+
+test('normalizePlanSlots preserves an unambiguous home use case for eligibility without conflating home plus errands', () => {
+  const [home, mixed] = normalizePlanSlots([
+    { label: 'Home & Backyard', occasion: 'casual', activity: 'none', best_for: 'home time and backyard play' },
+    { label: 'At Home / Errands', occasion: 'casual', activity: 'none', best_for: 'home days and quick errands' },
+  ])
+  assert.equal(home.occasion, 'casual')
+  assert.equal(home.eligibilityOccasion, 'home')
+  assert.equal(mixed.eligibilityOccasion, 'casual')
 })
 
 test('normalizePlanSlots corrects beach slots misclassified as outdoor daytime social', () => {
@@ -5797,6 +5829,40 @@ test('owner rules reach the roster-selection user text, placed before the candid
     budget: 24, palette: [], isSummer: true
   })
   assert.doesNotMatch(withoutRules, /OWNER RULES/)
+})
+
+test('applicable accepted lessons reach roster-selection text before the candidate catalog', () => {
+  const text = capsuleRosterSelectionUserText({
+    bench: layerTradeWardrobe().slice(0, 6),
+    slots: [{ label: 'Summer city', occasion: 'city', bestFor: 'hot city walking' }],
+    budget: 24,
+    isSummer: true,
+    acceptedLessons: '- Do not use the named fall shoes in summer. Boundary: summer only.',
+  })
+  assert.match(text, /OWNER-ACCEPTED APPLICABLE LESSONS/)
+  assert.match(text, /fall shoes in summer/)
+  assert.ok(text.indexOf('OWNER-ACCEPTED APPLICABLE LESSONS') < text.indexOf('CANDIDATES:'))
+  assert.doesNotMatch(capsuleRosterSelectionUserText({ bench: [], slots: [] }), /OWNER-ACCEPTED APPLICABLE LESSONS/)
+})
+
+test('bounded plan workbench includes accepted piece lessons only when their garment enters its pool', async () => {
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const activeId = Number(allPieces[0].id)
+  const batchId = db.prepare(`INSERT INTO feedback_synthesis_batches
+    (status, feedback_ids, compact_input, input_hash) VALUES ('completed', '[]', '{}', 'plan-applicability')`).run().lastInsertRowid
+  db.prepare(`INSERT INTO feedback_synthesis_drafts
+    (batch_id, disposition, title, proposed_text, boundary, status, payload)
+    VALUES (?, 'personal_contextual_lesson', 'Candidate lesson', 'Keep this candidate lesson bounded.', 'Only for the named garment.', 'accepted', ?)`)
+    .run(batchId, JSON.stringify({ applicability: {
+      version: 1, scope: 'piece', piece_ids: [activeId], occasions: [], activities: [], seasons: [], weather_terms: [],
+    } }))
+  const slots = normalizePlanSlots([{ label: 'City day', occasion: 'city', activity: 'walking', count: 1 }])
+  const withPiece = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
+  assert.match(withPiece.instructions, /OWNER-ACCEPTED APPLICABLE LESSONS/)
+  assert.match(withPiece.instructions, /Keep this candidate lesson bounded/)
+
+  const withoutPiece = await buildPlanSlotWorkbench(slots, { allPieces: allPieces.filter(piece => Number(piece.id) !== activeId), question: 'city day' })
+  assert.doesNotMatch(withoutPiece.instructions, /Keep this candidate lesson bounded/)
 })
 
 test('selectCapsuleRosterViaModel passes ownerRules through to both the initial call and the repair', async () => {

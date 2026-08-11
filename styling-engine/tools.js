@@ -1,7 +1,7 @@
 import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
-import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes } from './rules.js'
+import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
@@ -1341,6 +1341,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           if (requestIssues.length) return [`${piece.name}: ${requestIssues.join(', ')}`]
           const decision = wholeWardrobePieceTrustDecision(piece, {
             occasion: resolvedOccasion,
+            season: resolvedSeason,
             mood: toolContext.mood || occasion_context || '',
             activity: resolvedActivity,
             request: toolContext.request || toolContext.question || occasion_context || '',
@@ -1595,6 +1596,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           .map(piece => {
             const trust = wholeWardrobePieceTrustDecision(piece, {
               occasion: resolvedOccasion,
+              season: resolvedSeason,
               mood: toolContext.mood || '',
               activity: resolvedActivity,
               request: requestText,
@@ -1636,6 +1638,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             if (Number(piece.id) !== Number(replacement.id)) return []
             const decision = wholeWardrobePieceTrustDecision(piece, {
               occasion: resolvedOccasion,
+              season: resolvedSeason,
               mood: toolContext.mood || '',
               activity: resolvedActivity,
               request: requestText,
@@ -1829,6 +1832,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             continue
           }
           const parsed = parsePiece(p)
+          const provisionalCorrection = getProvisionalWrongChoiceMemory([parsed.id], 2)
           
           let imageData = null
           const photoFile = parsed.worn_photo || parsed.photo || ''
@@ -1846,7 +1850,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           details.push({
             id: parsed.id,
             name: parsed.name,
-            text: buildPieceText(parsed),
+            text: [buildPieceText(parsed), provisionalCorrection ? `PROVISIONAL OWNER CORRECTION:\n${provisionalCorrection}` : ''].filter(Boolean).join('\n'),
             image: imageData
           })
         }

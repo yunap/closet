@@ -40,6 +40,26 @@
       "category": "5+6",
       "note": "split by meaning: owner rules vs reactions"
     },
+    "feedback_synthesis_batches": {
+      "disposition": "category",
+      "category": 6,
+      "note": "explicitly authorized paid synthesis run; cost estimate, input snapshot, usage and failure state"
+    },
+    "feedback_synthesis_drafts": {
+      "disposition": "category",
+      "category": 6,
+      "note": "reviewable model proposals; no prompt authority until owner acceptance"
+    },
+    "product_quality_findings": {
+      "disposition": "category",
+      "category": 6,
+      "note": "provenance-linked review queue for general product/styling failures; never prompt authority"
+    },
+    "owner_constraints": {
+      "disposition": "category",
+      "category": 6,
+      "note": "owner-confirmed structured hard constraints; source prose is archived to avoid duplicate prompt authority"
+    },
     "chat_threads": {
       "disposition": "category",
       "category": 7
@@ -119,7 +139,7 @@
         "style_direction", "shape_balance", "good_formula", "good_pieces", "bad_occasion",
         "fit_issue", "too_boho", "wrong_silhouette", "wrong_energy", "strong_direction", "close_but_off"
       ],
-      "context_score_or_styling_prompt_by_evidence": [
+      "provisional_context_or_display_by_evidence": [
         "wrong_item_read"
       ],
       "renderer": [
@@ -139,7 +159,18 @@
     },
     "scoped_evidence_kinds": {
       "outfit_logic": "styling_prompt",
-      "garment_context_suitability": "context_score"
+      "legacy_outfit_snapshot": "lower-confidence provenance; synthesis eligible only after owner preview and paid-call authorization",
+      "garment_context_suitability": "legacy context-score evidence; no current writer or reader"
+    },
+    "feedback_evidence_actions": {
+      "wrong_piece_for_outfit": "explicit contextual reaction evidence; weak contextual authority"
+    },
+    "synthesis_dispositions": {
+      "personal_contextual_lesson": "draft; prompt authority only after owner acceptance",
+      "garment_fact_correction": "review record; never silently edits garment truth",
+      "general_styling_failure": "review record; never becomes owner preference",
+      "duplicate_or_refinement": "review/reconciliation record",
+      "insufficient_evidence": "review record; provisional source remains unchanged"
     }
   },
   "browser": {

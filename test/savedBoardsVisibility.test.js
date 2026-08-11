@@ -150,7 +150,7 @@ test('DELETE /api/saved-boards/:id performs a true deletion of the row', async (
   assert.equal(checkAfter, undefined)
 })
 
-test('Hidden but favorite board continues to inform calibration/memory', async () => {
+test('Hidden favorite board remains stored but does not become positive prompt memory', async () => {
   // Create a hidden, favorite board
   db.prepare(`
     INSERT INTO saved_boards (title, image_url, favorite, hidden_from_lookbook, reason)
@@ -158,8 +158,10 @@ test('Hidden but favorite board continues to inform calibration/memory', async (
   `).run('Calibration Board', 'calib.jpg', 1, 1, 'Specific calibration details')
 
   const memory = getSavedBoardMemory()
-  assert.ok(memory.includes('Calibration Board'), 'Calibration/memory should still include hidden boards')
-  assert.ok(memory.includes('Specific calibration details'))
+  assert.ok(!memory.includes('Calibration Board'), 'Favorite status must not create styling authority')
+  assert.ok(!memory.includes('Specific calibration details'))
+  const stored = db.prepare('SELECT favorite, hidden_from_lookbook, reason FROM saved_boards WHERE title = ?').get('Calibration Board')
+  assert.deepEqual(stored, { favorite: 1, hidden_from_lookbook: 1, reason: 'Specific calibration details' })
 })
 
 test('Lookbook board removal (PATCH hidden_from_lookbook = true) hides it from Lookbook query but retains it in Visual Lab', async () => {
@@ -257,6 +259,5 @@ test('GET /api/saved-boards lazy backfills threadId from chat_threads using imag
   const dbPayload = JSON.parse(checkDb.payload)
   assert.equal(dbPayload.threadId, mockThreadId)
 })
-
 
 

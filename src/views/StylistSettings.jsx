@@ -4,6 +4,7 @@
 // ruling-archaeology log); the interviewable layers link back into the wizard for a re-run.
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { WRONG_PIECE_FOR_OUTFIT_FEEDBACK } from '../../lib/feedbackTaxonomy.js'
 
 const LAYER_TITLES = {
   body_contract: 'Layer 1 — Body & Comfort Contract',
@@ -29,20 +30,136 @@ const INTERVIEW_STEPS = { body_contract: 'comfort', aesthetic_gravity: 'aestheti
 // The durable learned classes: rules the stylist stored from conversations
 // (store_user_correction → owner_rule; persisted preference reactions). Card-level
 // taste feedback stays in the chat's context-scoped Learning panel.
-const LEARNING_TYPES = new Set(['owner_rule', 'preference_reaction', 'correction', 'piece_rule_receipt'])
-// Raw feedback_type values read fine as filter option text but not as the label on a card the
-// owner is scanning — 'wrong_item_read' in particular is engine vocabulary for what the chat
-// menu calls "Replace in this outfit". Keep both readable, in the chat's own words.
+const isStandingLearning = row => row.feedback_type === 'owner_rule' ||
+  row.feedback_type === 'piece_rule_receipt' ||
+  (row.feedback_type === 'preference_reaction' && row.target_type === 'message')
+// Raw feedback_type values are adequate filter text but not user-facing card labels.
 const FEEDBACK_TYPE_DISPLAY_LABELS = {
-  wrong_item_read: 'Replaced in this outfit',
+  [WRONG_PIECE_FOR_OUTFIT_FEEDBACK]: 'Wrong choice for this outfit',
 }
-const feedbackTypeDisplayLabel = (type) => FEEDBACK_TYPE_DISPLAY_LABELS[type] || String(type || '').replaceAll('_', ' ')
+const feedbackTypeDisplayLabel = (rowOrType) => {
+  const type = typeof rowOrType === 'object' ? rowOrType?.feedback_type : rowOrType
+  return FEEDBACK_TYPE_DISPLAY_LABELS[type] || String(type || '').replaceAll('_', ' ')
+}
 const CONTEXT_FILTERS = [
   ['all', 'All'],
   ['outfit', 'Outfits'],
   ['board', 'Generated boards'],
 ]
 const FEEDBACK_PAGE_SIZE = 40
+const SYNTHESIS_DISPOSITION_LABELS = {
+  personal_contextual_lesson: 'Personal or contextual lesson',
+  garment_fact_correction: 'Garment fact correction',
+  general_styling_failure: 'General styling issue',
+  duplicate_or_refinement: 'Duplicate or refinement',
+  insufficient_evidence: 'Not enough evidence',
+}
+const parsedIdList = value => {
+  if (Array.isArray(value)) return value.map(Number).filter(Boolean)
+  try { return JSON.parse(value || '[]').map(Number).filter(Boolean) } catch { return [] }
+}
+const effectiveSynthesisText = draft => String(draft?.edited_text || draft?.proposed_text || '')
+const effectiveSynthesisBoundary = draft => String(draft?.boundary || '')
+const parsedDraftPayload = draft => {
+  if (draft?.payload && typeof draft.payload === 'object') return draft.payload
+  try { return JSON.parse(draft?.payload || '{}') || {} } catch { return {} }
+}
+const synthesisApplicability = draft => {
+  const value = parsedDraftPayload(draft)?.applicability || {}
+  return {
+    version: 1,
+    scope: ['piece', 'context', 'piece_context'].includes(value.scope) ? value.scope : 'piece_context',
+    piece_ids: parsedIdList(value.piece_ids),
+    occasions: Array.isArray(value.occasions) ? value.occasions : [],
+    activities: Array.isArray(value.activities) ? value.activities : [],
+    seasons: Array.isArray(value.seasons) ? value.seasons : [],
+    weather_terms: Array.isArray(value.weather_terms) ? value.weather_terms : [],
+  }
+}
+const normalizedApplicability = value => ({
+  ...value,
+  version: 1,
+  piece_ids: parsedIdList(value?.piece_ids),
+  occasions: (value?.occasions || []).map(String).map(item => item.trim()).filter(Boolean),
+  activities: (value?.activities || []).map(String).map(item => item.trim()).filter(Boolean),
+  seasons: (value?.seasons || []).map(String).map(item => item.trim()).filter(Boolean),
+  weather_terms: (value?.weather_terms || []).map(String).map(item => item.trim()).filter(Boolean),
+})
+const applicabilityEqual = (left, right) => JSON.stringify(normalizedApplicability(left)) === JSON.stringify(normalizedApplicability(right))
+const applicabilityIsUsable = value => {
+  const normalized = normalizedApplicability(value)
+  const hasPiece = normalized.piece_ids.length > 0
+  const hasContext = Boolean(normalized.occasions.length || normalized.activities.length || normalized.seasons.length || normalized.weather_terms.length)
+  if (normalized.scope === 'piece') return hasPiece
+  if (normalized.scope === 'context') return hasContext
+  return normalized.scope === 'piece_context' && hasPiece && hasContext
+}
+const commaList = value => String(value || '').split(',').map(item => item.trim()).filter(Boolean)
+
+function SynthesisApplicabilityEditor({ sources, value, onChange }) {
+  const sourcePieces = new Map()
+  for (const source of sources) {
+    let sourcePayload = source?.payload || {}
+    if (typeof sourcePayload === 'string') {
+      try { sourcePayload = JSON.parse(sourcePayload) || {} } catch { sourcePayload = {} }
+    }
+    const evidence = sourcePayload.feedbackEvidence || {}
+    const subject = evidence?.subject
+    if (Number(subject?.pieceId)) sourcePieces.set(Number(subject.pieceId), subject.pieceName || source.context_name || `Piece #${subject.pieceId}`)
+    const outfitPieces = Array.isArray(sourcePayload?.outfit?.pieces)
+      ? sourcePayload.outfit.pieces
+      : Array.isArray(sourcePayload?.pieces) ? sourcePayload.pieces : []
+    for (const piece of outfitPieces) if (Number(piece?.id)) sourcePieces.set(Number(piece.id), piece.name || `Piece #${piece.id}`)
+  }
+  const updateList = (field, text) => onChange({ ...value, [field]: commaList(text) })
+  const needsPiece = value.scope === 'piece' || value.scope === 'piece_context'
+  const needsContext = value.scope === 'context' || value.scope === 'piece_context'
+  return (
+    <fieldset className="feedback-synthesis-applicability">
+      <legend>When this lesson applies</legend>
+      <p>This routing controls when the stylist receives the lesson. The boundary above is explanatory text only.</p>
+      <label>
+        <span>Scope</span>
+        <select value={value.scope} onChange={event => onChange({ ...value, scope: event.target.value })}>
+          <option value="piece">When a selected garment is available</option>
+          <option value="context">Whenever the request context matches</option>
+          <option value="piece_context">Only when both garment and context match</option>
+        </select>
+      </label>
+      {needsPiece && (
+        <div className="feedback-synthesis-piece-options">
+          <span>Garments</span>
+          {[...sourcePieces.entries()].map(([id, name]) => (
+            <label key={id}>
+              <input
+                type="checkbox"
+                checked={value.piece_ids.includes(id)}
+                onChange={event => onChange({
+                  ...value,
+                  piece_ids: event.target.checked
+                    ? [...new Set([...value.piece_ids, id])]
+                    : value.piece_ids.filter(pieceId => pieceId !== id),
+                })}
+              />
+              {name} <span>(#{id})</span>
+            </label>
+          ))}
+          {!sourcePieces.size && <p>No source garments are available for this lesson.</p>}
+        </div>
+      )}
+      {needsContext && (
+        <div className="feedback-synthesis-context-fields">
+          <label><span>Occasions</span><input type="text" value={value.occasions.join(', ')} onChange={event => updateList('occasions', event.target.value)} placeholder="e.g. city" /></label>
+          <label><span>Activities</span><input type="text" value={value.activities.join(', ')} onChange={event => updateList('activities', event.target.value)} placeholder="e.g. walking" /></label>
+          <label><span>Seasons</span><input type="text" value={value.seasons.join(', ')} onChange={event => updateList('seasons', event.target.value)} placeholder="e.g. summer" /></label>
+          <label><span>Weather</span><input type="text" value={value.weather_terms.join(', ')} onChange={event => updateList('weather_terms', event.target.value)} placeholder="e.g. wet, foggy" /></label>
+          <p>Use comma-separated terms found in the original reaction. Unsupported additions are not stored.</p>
+        </div>
+      )}
+      {!applicabilityIsUsable(value) && <p role="alert">Choose the garment and/or context required by this scope before saving.</p>}
+    </fieldset>
+  )
+}
 
 function feedbackContextKind(row) {
   if (row?.target_type === 'generated_visual_board' || row?.referenced_board_id || row?.payload?.board?.imageUrl || row?.payload?.board?.image_url) return 'board'
@@ -118,6 +235,14 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const [feedbackContextFilter, setFeedbackContextFilter] = useState('all')
   const [feedbackTypeFilter, setFeedbackTypeFilter] = useState('all')
   const [feedbackVisibleCount, setFeedbackVisibleCount] = useState(FEEDBACK_PAGE_SIZE)
+  const [selectedSynthesisFeedback, setSelectedSynthesisFeedback] = useState(new Set())
+  const [synthesisPreview, setSynthesisPreview] = useState(null)
+  const [synthesisDrafts, setSynthesisDrafts] = useState([])
+  const [synthesisEdits, setSynthesisEdits] = useState({})
+  const [synthesisBoundaryEdits, setSynthesisBoundaryEdits] = useState({})
+  const [synthesisApplicabilityEdits, setSynthesisApplicabilityEdits] = useState({})
+  const [synthesisSavedId, setSynthesisSavedId] = useState(null)
+  const [synthesisBusy, setSynthesisBusy] = useState(false)
   const [demo, setDemo] = useState(null)
   const [learningDrafts, setLearningDrafts] = useState({})
   const [editingLearningId, setEditingLearningId] = useState(null)
@@ -143,14 +268,17 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       fetch('/api/pieces/occasion-exclusions').then(r => r.json()).then(rows => {
         setOccasionExclusions(Array.isArray(rows) ? rows : [])
       }).catch(() => setOccasionExclusions([])).finally(() => setOccasionExclusionsLoading(false))
-      const [feedback, savedBoards] = await Promise.all([
+      const [feedback, savedBoards, synthesisRows] = await Promise.all([
         fetch('/api/stylist-feedback?limit=1000').then(r => r.json()).catch(() => []),
         fetch('/api/saved-boards?limit=500').then(r => r.json()).catch(() => []),
+        fetch('/api/feedback-synthesis/drafts').then(r => r.json()).catch(() => []),
       ])
       const feedbackRows = Array.isArray(feedback) ? feedback : []
-      setLearnings(feedbackRows.filter(row => LEARNING_TYPES.has(row.feedback_type)))
-      setContextualFeedback(feedbackRows.filter(row => !LEARNING_TYPES.has(row.feedback_type)))
+      const activeFeedbackRows = feedbackRows.filter(row => row.memory?.strength !== 'none')
+      setLearnings(activeFeedbackRows.filter(isStandingLearning))
+      setContextualFeedback(activeFeedbackRows.filter(row => !isStandingLearning(row)))
       setFeedbackBoards(Array.isArray(savedBoards) ? savedBoards : [])
+      setSynthesisDrafts(Array.isArray(synthesisRows) ? synthesisRows : [])
       setDemo(await fetch('/api/settings/demo-wardrobe').then(r => r.json()).catch(() => null))
       const sessionData = await fetch('/api/auth/sessions').then(r => r.json()).catch(() => null)
       setSessions(sessionData?.sessions || [])
@@ -254,7 +382,11 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const currentSession = sessions.find(session => session.isCurrent)
   const otherSessions = sessions.filter(session => !session.isCurrent)
   const normalizedFeedbackSearch = feedbackSearch.trim().toLowerCase()
-  const matchingContextualFeedback = contextualFeedback.filter(row => {
+  const processedSynthesisFeedbackIds = new Set(synthesisDrafts.flatMap(draft => parsedIdList(draft.source_feedback_ids)))
+  const actionableContextualFeedback = contextualFeedback.filter(row =>
+    row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id)
+  )
+  const matchingContextualFeedback = actionableContextualFeedback.filter(row => {
     if (feedbackContextFilter !== 'all' && feedbackContextKind(row) !== feedbackContextFilter) return false
     if (feedbackTypeFilter !== 'all' && row.feedback_type !== feedbackTypeFilter) return false
     if (!normalizedFeedbackSearch) return true
@@ -262,14 +394,15 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       .some(value => String(value || '').toLowerCase().includes(normalizedFeedbackSearch))
   })
   const visibleContextualFeedback = matchingContextualFeedback.slice(0, feedbackVisibleCount)
-  const contextualFeedbackTypes = [...new Set(contextualFeedback.map(row => row.feedback_type).filter(Boolean))].sort()
+  const contextualFeedbackTypes = [...new Set(actionableContextualFeedback.map(row => row.feedback_type).filter(Boolean))].sort()
+  const pendingSynthesisDrafts = synthesisDrafts.filter(draft => ['draft', 'deferred'].includes(draft.status))
 
   const feedbackBoardImage = row => row?.payload?.board?.imageUrl || row?.payload?.board?.image_url || ''
   const matchedFeedbackBoard = row => {
     const imageUrl = feedbackBoardImage(row)
     return imageUrl ? feedbackBoards.find(board => board.image_url === imageUrl) : null
   }
-  // Whole-wardrobe-outfit feedback (wrong_item_read, bad_occasion, too_safe, ...) carries no
+  // Whole-wardrobe-outfit feedback (wrong choice for outfit, bad_occasion, too_safe, ...) carries no
   // board image — it's feedback on the outfit card, not a rendered board — and older rows
   // predate thread-linking entirely, so neither of the above lookups can find anything for them.
   // A saved board's piece set is still a reliable fingerprint of "this exact look" — reuse it as
@@ -299,6 +432,88 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     } else {
       flash('Failed to remove this entry')
     }
+  }
+
+  const toggleSynthesisFeedback = (id) => {
+    setSelectedSynthesisFeedback(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    setSynthesisPreview(null)
+  }
+
+  const previewSynthesis = async () => {
+    if (!selectedSynthesisFeedback.size) return
+    setSynthesisBusy(true)
+    try {
+      const ids = [...selectedSynthesisFeedback].join(',')
+      const response = await fetch(`/api/feedback-synthesis/preview?ids=${encodeURIComponent(ids)}`)
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Could not prepare the synthesis preview.')
+      setSynthesisPreview(result)
+    } catch (err) {
+      flash(err.message)
+    } finally {
+      setSynthesisBusy(false)
+    }
+  }
+
+  const authorizeSynthesis = async () => {
+    if (!synthesisPreview?.inputHash) return
+    setSynthesisBusy(true)
+    try {
+      const response = await fetch('/api/feedback-synthesis/batches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          feedbackIds: synthesisPreview.feedbackIds,
+          inputHash: synthesisPreview.inputHash,
+          authorize: true,
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Synthesis failed.')
+      setSynthesisDrafts(previous => [...(result.drafts || []), ...previous])
+      setSelectedSynthesisFeedback(new Set())
+      setSynthesisPreview(null)
+      flash('Draft lessons are ready for review. Nothing was accepted automatically.')
+    } catch (err) {
+      flash(err.message)
+    } finally {
+      setSynthesisBusy(false)
+    }
+  }
+
+  const updateSynthesisDraft = async (draft, nextStatus) => {
+    const hasTextEdit = Object.hasOwn(synthesisEdits, draft.id)
+    const hasBoundaryEdit = Object.hasOwn(synthesisBoundaryEdits, draft.id)
+    const hasApplicabilityEdit = Object.hasOwn(synthesisApplicabilityEdits, draft.id)
+    const body = { status: nextStatus }
+    if (hasTextEdit) body.editedText = synthesisEdits[draft.id]
+    if (hasBoundaryEdit) body.boundary = synthesisBoundaryEdits[draft.id]
+    if (hasApplicabilityEdit) body.applicability = synthesisApplicabilityEdits[draft.id]
+    const response = await fetch(`/api/feedback-synthesis/drafts/${draft.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const result = await response.json()
+    if (!response.ok) return flash(result.error || 'Could not update this draft.')
+    setSynthesisDrafts(previous => previous.map(row => row.id === draft.id ? result : row))
+    setSynthesisEdits(previous => { const next = { ...previous }; delete next[draft.id]; return next })
+    setSynthesisBoundaryEdits(previous => { const next = { ...previous }; delete next[draft.id]; return next })
+    setSynthesisApplicabilityEdits(previous => { const next = { ...previous }; delete next[draft.id]; return next })
+    setSynthesisSavedId(draft.id)
+    setTimeout(() => setSynthesisSavedId(current => current === draft.id ? null : current), 2500)
+    flash(nextStatus === 'accepted'
+      ? 'Lesson accepted.'
+      : nextStatus === 'retired'
+        ? 'Lesson retired — it no longer guides styling.'
+        : nextStatus === 'rejected'
+          ? 'Draft rejected.'
+          : 'Draft saved for later.')
   }
 
   const openFeedbackContext = async (row) => {
@@ -337,7 +552,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       return
     }
     // Thread wins over the garment page when both are reachable — matches the button label
-    // logic below (canOpenThread / canOpenGarment): a "Replaced in this outfit" row's garment
+    // logic below (canOpenThread / canOpenGarment): a "Wrong choice for this outfit" row's garment
     // page shows the piece in isolation, no outfit, no "why", so the thread that produced the
     // correction is the more useful jump whenever it still exists.
     if (row.referenced_thread_id && onGoToThread) {
@@ -350,7 +565,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       return
     }
     const referencedPieceId = row?.payload?.pieceId || row?.payload?.piece?.id
-    if (row.feedback_type === 'wrong_item_read' && referencedPieceId) {
+    if (row.feedback_type === WRONG_PIECE_FOR_OUTFIT_FEEDBACK && referencedPieceId) {
       navigate(`/wardrobe?pieceId=${referencedPieceId}`)
       return
     }
@@ -524,6 +739,16 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       )}
 
       {mode === 'style' && <>
+      <details className="style-memory-legend">
+        <summary>How the stylist uses this memory</summary>
+        <div className="style-memory-legend-grid">
+          <div><strong>Standing guidance</strong><span>Included in styling prompts until you retire it.</span></div>
+          <div><strong>Hard exclusion</strong><span>The garment is never offered for that occasion until restored.</span></div>
+          <div><strong>Contextual guidance</strong><span>Applied to similar outfit contexts, not as a global garment preference.</span></div>
+          <div><strong>Provisional feedback</strong><span>Kept with its garment and outfit context; it is not a score or standing preference.</span></div>
+          <div><strong>Image correction</strong><span>Guides generated images only; it does not change outfit selection.</span></div>
+        </div>
+      </details>
       <section className="style-profile-section style-profile-learnings">
       <div className="style-profile-section-heading">
         <div>
@@ -639,7 +864,175 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           </div>
           <p>Feedback tied to a particular outfit, styling result, or generated board. It does not become a global style rule.</p>
         </div>
-        <div className="style-memory-toolbar">
+        <div className="feedback-synthesis-panel">
+          <div>
+            <strong>Turn selected reactions into draft lessons</strong>
+            <p>Select provisional reactions below, then preview the exact model and estimated cost. No model call happens until you authorize it.</p>
+          </div>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={!selectedSynthesisFeedback.size || synthesisBusy}
+            onClick={previewSynthesis}
+          >
+            Preview synthesis cost ({selectedSynthesisFeedback.size})
+          </button>
+          {synthesisPreview && (
+            <div className="feedback-synthesis-preview" role="status">
+              <div>
+                <strong>{synthesisPreview.feedbackIds.length} reactions · {synthesisPreview.provider} / {synthesisPreview.model}</strong>
+                <span>
+                  Conservative maximum {synthesisPreview.estimatedInputTokens.toLocaleString()} input + {synthesisPreview.outputTokenCap.toLocaleString()} output tokens
+                  {synthesisPreview.estimatedCost?.pricingAvailable
+                    ? ` · about $${Number(synthesisPreview.estimatedCost.estimatedUsd).toFixed(4)}`
+                    : ' · local price estimate unavailable'}
+                </span>
+                <span>Preview calls: {synthesisPreview.providerCalls}. The next button authorizes one paid model call.</span>
+              </div>
+              <button type="button" className="btn-primary" disabled={synthesisBusy} onClick={authorizeSynthesis}>
+                {synthesisBusy ? 'Synthesizing…' : 'Authorize one model call'}
+              </button>
+            </div>
+          )}
+        </div>
+        {pendingSynthesisDrafts.length > 0 && (
+          <div className="feedback-synthesis-drafts">
+            <h3>Draft lessons awaiting your decision</h3>
+            <p>These remain drafts until you accept them. General styling issues and garment corrections never become personal preferences.</p>
+            {pendingSynthesisDrafts.map(draft => {
+              const sourceIds = parsedIdList(draft.source_feedback_ids)
+              const sources = sourceIds.map(id => contextualFeedback.find(row => Number(row.id) === id)).filter(Boolean)
+              const storedApplicability = synthesisApplicability(draft)
+              const editedApplicability = synthesisApplicabilityEdits[draft.id] ?? storedApplicability
+              const textDirty = Object.hasOwn(synthesisEdits, draft.id) && synthesisEdits[draft.id].trim() !== effectiveSynthesisText(draft).trim()
+              const boundaryDirty = Object.hasOwn(synthesisBoundaryEdits, draft.id) && synthesisBoundaryEdits[draft.id].trim() !== effectiveSynthesisBoundary(draft).trim()
+              const applicabilityDirty = !applicabilityEqual(editedApplicability, storedApplicability)
+              const draftDirty = textDirty || boundaryDirty || applicabilityDirty
+              return (
+              <div key={draft.id} className="feedback-synthesis-draft">
+                <div className="style-memory-kind">{SYNTHESIS_DISPOSITION_LABELS[draft.disposition] || draft.disposition}</div>
+                <strong>{draft.title || 'Untitled draft'}</strong>
+                <textarea
+                  className="style-memory-editor"
+                  value={synthesisEdits[draft.id] ?? effectiveSynthesisText(draft)}
+                  onChange={event => setSynthesisEdits(previous => ({ ...previous, [draft.id]: event.target.value }))}
+                  aria-label={`Edit ${draft.title || 'draft lesson'}`}
+                />
+                <label className="feedback-synthesis-boundary">
+                  <strong>Boundary</strong>
+                  <textarea
+                    className="style-memory-editor"
+                    value={synthesisBoundaryEdits[draft.id] ?? effectiveSynthesisBoundary(draft)}
+                    onChange={event => setSynthesisBoundaryEdits(previous => ({ ...previous, [draft.id]: event.target.value }))}
+                    aria-label={`Edit boundary for ${draft.title || 'draft lesson'}`}
+                  />
+                </label>
+                {draft.disposition === 'personal_contextual_lesson' && (
+                  <SynthesisApplicabilityEditor
+                    sources={sources}
+                    value={editedApplicability}
+                    onChange={value => setSynthesisApplicabilityEdits(previous => ({ ...previous, [draft.id]: normalizedApplicability(value) }))}
+                  />
+                )}
+                {draft.rationale && <p><strong>Why it was routed here:</strong> {draft.rationale}</p>}
+                <div className="feedback-synthesis-draft-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={draft.disposition === 'personal_contextual_lesson' && !applicabilityIsUsable(editedApplicability)}
+                    onClick={() => updateSynthesisDraft(draft, 'accepted')}
+                  >
+                    {draft.disposition === 'personal_contextual_lesson'
+                      ? (draftDirty ? 'Accept edited lesson' : 'Accept proposed lesson')
+                      : 'Mark reviewed'}
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={() => updateSynthesisDraft(draft, 'deferred')}>Keep for later</button>
+                  <button type="button" className="style-memory-retire" onClick={() => updateSynthesisDraft(draft, 'rejected')}>Reject</button>
+                </div>
+              </div>
+              )
+            })}
+          </div>
+        )}
+        {synthesisDrafts.some(draft => draft.status === 'accepted' && draft.disposition === 'personal_contextual_lesson') && (
+          <div className="feedback-synthesis-drafts">
+            <h3>Accepted personal lessons</h3>
+            <p>These are the only synthesized lessons that currently guide styling. You can revise or retire them at any time.</p>
+            {synthesisDrafts.filter(draft => draft.status === 'accepted' && draft.disposition === 'personal_contextual_lesson').map(draft => {
+              const sourceIds = parsedIdList(draft.source_feedback_ids)
+              const sources = sourceIds.map(id => contextualFeedback.find(row => Number(row.id) === id)).filter(Boolean)
+              const storedApplicability = synthesisApplicability(draft)
+              const editedApplicability = synthesisApplicabilityEdits[draft.id] ?? storedApplicability
+              const textDirty = Object.hasOwn(synthesisEdits, draft.id) && synthesisEdits[draft.id].trim() !== effectiveSynthesisText(draft).trim()
+              const boundaryDirty = Object.hasOwn(synthesisBoundaryEdits, draft.id) && synthesisBoundaryEdits[draft.id].trim() !== effectiveSynthesisBoundary(draft).trim()
+              const applicabilityDirty = !applicabilityEqual(editedApplicability, storedApplicability)
+              const draftDirty = textDirty || boundaryDirty || applicabilityDirty
+              return (
+                <details key={draft.id} className="feedback-synthesis-draft feedback-synthesis-draft--accepted">
+                  <summary className="feedback-synthesis-accepted-summary">
+                    <span className="style-memory-kind">accepted personal or contextual lesson</span>
+                    <strong>{draft.title || 'Accepted lesson'}</strong>
+                  </summary>
+                  <div className="feedback-synthesis-accepted-details">
+                  <textarea
+                    className="style-memory-editor"
+                    value={synthesisEdits[draft.id] ?? effectiveSynthesisText(draft)}
+                    onChange={event => setSynthesisEdits(previous => ({ ...previous, [draft.id]: event.target.value }))}
+                    aria-label={`Edit accepted lesson ${draft.title || draft.id}`}
+                  />
+                  <label className="feedback-synthesis-boundary">
+                    <strong>Boundary</strong>
+                    <textarea
+                      className="style-memory-editor"
+                      value={synthesisBoundaryEdits[draft.id] ?? effectiveSynthesisBoundary(draft)}
+                      onChange={event => setSynthesisBoundaryEdits(previous => ({ ...previous, [draft.id]: event.target.value }))}
+                      aria-label={`Edit boundary for accepted lesson ${draft.title || draft.id}`}
+                    />
+                  </label>
+                  <SynthesisApplicabilityEditor
+                    sources={sources}
+                    value={editedApplicability}
+                    onChange={value => setSynthesisApplicabilityEdits(previous => ({ ...previous, [draft.id]: normalizedApplicability(value) }))}
+                  />
+                  <details className="style-memory-technical">
+                    <summary>Source reactions ({sourceIds.length})</summary>
+                    {sources.length > 0 ? (
+                      <ul>
+                        {sources.map(source => (
+                          <li key={source.id}>#{source.id} · {source.memory?.display?.title || source.context_name || source.label}: {source.memory?.display?.summary || readableFeedbackNote(source.note)}</li>
+                        ))}
+                      </ul>
+                    ) : <p>{sourceIds.length ? sourceIds.map(id => `#${id}`).join(', ') : 'No source IDs recorded.'}</p>}
+                  </details>
+                  <div className="feedback-synthesis-draft-actions">
+                    <button type="button" className="btn-primary" disabled={!draftDirty || !applicabilityIsUsable(editedApplicability)} onClick={() => updateSynthesisDraft(draft, 'accepted')}>Save changes</button>
+                    <button type="button" className="style-memory-retire" onClick={() => updateSynthesisDraft(draft, 'retired')}>Retire lesson</button>
+                    {synthesisSavedId === draft.id && <span className="style-memory-save-confirmation" role="status">Changes saved.</span>}
+                  </div>
+                  </div>
+                </details>
+              )
+            })}
+          </div>
+        )}
+        {synthesisDrafts.some(draft => draft.status === 'accepted' && draft.disposition !== 'personal_contextual_lesson') && (
+          <div className="feedback-synthesis-drafts">
+            <h3>Reviewed synthesis conclusions</h3>
+            <p>These are retained for review and provenance only. They do not guide styling or alter garment data.</p>
+            {synthesisDrafts.filter(draft => draft.status === 'accepted' && draft.disposition !== 'personal_contextual_lesson').map(draft => (
+              <div key={draft.id} className="feedback-synthesis-draft">
+                <div className="style-memory-kind">{SYNTHESIS_DISPOSITION_LABELS[draft.disposition] || draft.disposition}</div>
+                <strong>{draft.title || 'Reviewed conclusion'}</strong>
+                {Boolean(draft.edited_text || draft.proposed_text) && <p>{draft.edited_text || draft.proposed_text}</p>}
+                {draft.boundary && <p><strong>Boundary:</strong> {draft.boundary}</p>}
+                <div className="feedback-synthesis-draft-actions">
+                  <button type="button" className="style-memory-retire" onClick={() => updateSynthesisDraft(draft, 'retired')}>Retire record</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {actionableContextualFeedback.length > 0 && <div className="style-memory-toolbar">
           <input
             type="search"
             className="style-memory-search"
@@ -680,7 +1073,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
               ))}
             </select>
           </div>
-        </div>
+        </div>}
         {matchingContextualFeedback.length > visibleContextualFeedback.length && (
           <div className="style-memory-results-note">
             Showing {visibleContextualFeedback.length} of {matchingContextualFeedback.length} matches.
@@ -691,34 +1084,55 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
         )}
         {!feedbackLoading && visibleContextualFeedback.length === 0 && (
           <div className="style-profile-empty">
-            {feedbackSearch.trim() ? 'No contextual feedback matches this search.' : 'No outfit feedback saved yet.'}
+            {actionableContextualFeedback.length === 0
+              ? 'No provisional outfit reactions are currently available for lesson synthesis.'
+              : (feedbackSearch.trim() ? 'No actionable feedback matches this search.' : 'No feedback matches these filters.')}
           </div>
         )}
         <div className="style-memory-list">
         {visibleContextualFeedback.map(row => {
-          const contextLabel = row.context_name || (row.context_type === 'wardrobe' ? 'Whole wardrobe' : '') || row.label || 'Saved styling result'
-          const readableNote = readableFeedbackNote(row.note) || 'No note saved.'
+          const memoryDisplay = row.memory?.display
+          const contextLabel = memoryDisplay?.title || row.context_name || (row.context_type === 'wardrobe' ? 'Whole wardrobe' : '') || row.label || 'Saved styling result'
+          const readableNote = memoryDisplay?.summary || readableFeedbackNote(row.note) || 'No note saved.'
+          const displayLabel = memoryDisplay?.context || (row.label && row.label !== contextLabel ? row.label : '')
           const hasTechnicalDetails = readableNote !== String(row.note || '').trim()
             || Boolean(row.target_type || row.context_id || row.referenced_board_id || row.referenced_thread_id)
           const canOpenContext = ['outfit', 'piece'].includes(row.context_type) && row.context_id
           const hasImageBoardMatch = Boolean(row.referenced_board_id || matchedFeedbackBoard(row) || (row.target_type === 'generated_visual_board' && feedbackBoardImage(row)))
-          // A "Replaced in this outfit" row's garment page shows the piece in isolation — no
+          // A "Wrong choice for this outfit" row's garment page shows the piece in isolation — no
           // outfit, no "why" — so once the thread that produced the correction is reachable,
           // that's the more useful jump. If no thread survives either, try the saved board with
           // the same piece set (see matchedBoardByPieceSet) before landing on bare garment.
-          const canOpenThread = !hasImageBoardMatch && Boolean(row.referenced_thread_id && onGoToThread)
-          const pieceMatchedBoard = (!hasImageBoardMatch && !canOpenThread) ? matchedBoardByPieceSet(row) : null
-          const canOpenBoard = hasImageBoardMatch || Boolean(pieceMatchedBoard)
-          const canOpenGarment = row.feedback_type === 'wrong_item_read' && !canOpenThread && !pieceMatchedBoard && Boolean(row?.payload?.pieceId || row?.payload?.piece?.id)
+          const canOpenThread = Boolean(row.referenced_thread_id && onGoToThread)
+          const pieceMatchedBoard = hasImageBoardMatch ? null : matchedBoardByPieceSet(row)
+          const sourceSurface = row?.payload?.feedbackEvidence?.source?.surface || row?.payload?.sourceSurface || ''
+          const boardIsSource = ['visual_lab', 'lookbook', 'saved_board'].includes(sourceSurface)
+            || (!sourceSurface && row.target_type === 'generated_visual_board')
+          const relatedBoardId = !boardIsSource
+            ? (row.referenced_board_id || matchedFeedbackBoard(row)?.id || pieceMatchedBoard?.id)
+            : null
+          const canOpenSourceBoard = hasImageBoardMatch && boardIsSource
+          const canOpenRelatedBoard = Boolean(relatedBoardId)
+          const canOpenRelatedGarment = row.feedback_type === WRONG_PIECE_FOR_OUTFIT_FEEDBACK && Boolean(row?.payload?.pieceId || row?.payload?.piece?.id)
           return (
-            <div key={row.id} className="style-memory-row style-memory-row--context">
+            <div key={row.id} id={`feedback-row-${row.id}`} className="style-memory-row style-memory-row--context">
               <div className="style-memory-context-layout">
                 <div className="style-memory-copy">
+                  {row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id) && (
+                    <label className="feedback-synthesis-select">
+                      <input
+                        type="checkbox"
+                        checked={selectedSynthesisFeedback.has(row.id)}
+                        onChange={() => toggleSynthesisFeedback(row.id)}
+                      />
+                      Select for lesson synthesis
+                    </label>
+                  )}
                   <div className="style-memory-kind">
-                    {feedbackTypeDisplayLabel(row.feedback_type)}
+                    {feedbackTypeDisplayLabel(row)}
                   </div>
                   <div className="style-memory-context-title">{contextLabel}</div>
-                  {row.label && row.label !== contextLabel && <div className="style-memory-label">{row.label}</div>}
+                  {displayLabel && <div className="style-memory-label">{displayLabel}</div>}
                   <div className="style-memory-note">{readableNote}</div>
                   {hasTechnicalDetails && (
                     <details className="style-memory-technical">
@@ -726,7 +1140,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
                       <dl>
                         {row.target_type && <><dt>Target</dt><dd>{row.target_type}</dd></>}
                         {row.context_type && <><dt>Context</dt><dd>{row.context_type}{row.context_id ? ` · ${row.context_id}` : ''}</dd></>}
-                        {row.referenced_board_id && <><dt>Board</dt><dd>{row.referenced_board_id}</dd></>}
+                        {row.referenced_board_id && <><dt>{boardIsSource ? 'Source board' : 'Related board'}</dt><dd>{row.referenced_board_id}</dd></>}
                         {row.referenced_thread_id && <><dt>Source chat</dt><dd>{row.referenced_thread_id}</dd></>}
                         {readableNote !== String(row.note || '').trim() && <><dt>Raw note</dt><dd>{row.note}</dd></>}
                       </dl>
@@ -735,21 +1149,24 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
                 </div>
                 <div className="style-memory-context-actions">
                   <span className="style-memory-date">{row.created_at}</span>
-                  {canOpenContext && !canOpenBoard && !canOpenGarment && !canOpenThread && (
+                  {canOpenContext && !canOpenSourceBoard && !canOpenRelatedBoard && !canOpenRelatedGarment && !canOpenThread && (
                     <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>
                       Open {row.context_type === 'outfit' ? 'outfit' : 'garment'}
                     </button>
                   )}
-                  {canOpenBoard && (
+                  {canOpenSourceBoard && (
                     <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>
-                      Open board
+                      Open source board
                     </button>
                   )}
-                  {canOpenGarment && (
-                    <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>Open garment</button>
-                  )}
                   {canOpenThread && (
-                    <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>Open source chat</button>
+                    <button className="btn-secondary" onClick={() => onGoToThread(row.referenced_thread_id)}>Open source chat</button>
+                  )}
+                  {canOpenRelatedBoard && (
+                    <button className="btn-secondary" onClick={() => navigate(`/visual-lab?section=profile&boardId=${relatedBoardId}`)}>Open related board</button>
+                  )}
+                  {canOpenRelatedGarment && (
+                    <button className="btn-secondary" onClick={() => navigate(`/wardrobe?pieceId=${row?.payload?.pieceId || row?.payload?.piece?.id}`)}>Open related garment</button>
                   )}
                   <button className="style-memory-retire" onClick={() => removeContextualFeedback(row)}>Remove</button>
                 </div>

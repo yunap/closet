@@ -138,6 +138,69 @@ function initDb(dbPath) {
       created_at      TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS feedback_synthesis_batches (
+      id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+      status                   TEXT NOT NULL DEFAULT 'authorized',
+      feedback_ids             TEXT NOT NULL DEFAULT '[]',
+      compact_input            TEXT NOT NULL DEFAULT '',
+      input_hash               TEXT NOT NULL,
+      provider                 TEXT DEFAULT '',
+      model                    TEXT DEFAULT '',
+      estimated_input_tokens   INTEGER DEFAULT 0,
+      estimated_output_tokens  INTEGER DEFAULT 0,
+      estimated_cost_usd       REAL,
+      actual_usage             TEXT DEFAULT '{}',
+      error                    TEXT DEFAULT '',
+      created_at               TEXT DEFAULT (datetime('now')),
+      completed_at             TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS feedback_synthesis_drafts (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id            INTEGER NOT NULL REFERENCES feedback_synthesis_batches(id) ON DELETE CASCADE,
+      disposition         TEXT NOT NULL,
+      title               TEXT DEFAULT '',
+      proposed_text       TEXT DEFAULT '',
+      boundary            TEXT DEFAULT '',
+      rationale           TEXT DEFAULT '',
+      confidence          TEXT DEFAULT '',
+      source_feedback_ids TEXT NOT NULL DEFAULT '[]',
+      related_draft_id    INTEGER,
+      status              TEXT NOT NULL DEFAULT 'draft',
+      edited_text         TEXT DEFAULT '',
+      payload             TEXT DEFAULT '{}',
+      created_at          TEXT DEFAULT (datetime('now')),
+      updated_at          TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS product_quality_findings (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      synthesis_draft_id  INTEGER NOT NULL UNIQUE REFERENCES feedback_synthesis_drafts(id) ON DELETE CASCADE,
+      finding_type        TEXT NOT NULL DEFAULT 'general_styling_failure',
+      status              TEXT NOT NULL DEFAULT 'open',
+      title               TEXT DEFAULT '',
+      description         TEXT DEFAULT '',
+      source_feedback_ids TEXT NOT NULL DEFAULT '[]',
+      evidence_snapshot   TEXT NOT NULL DEFAULT '[]',
+      resolution_type     TEXT DEFAULT '',
+      resolution_note     TEXT DEFAULT '',
+      created_at          TEXT DEFAULT (datetime('now')),
+      updated_at          TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS owner_constraints (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_feedback_id  INTEGER REFERENCES stylist_feedback(id) ON DELETE SET NULL,
+      status              TEXT NOT NULL DEFAULT 'active',
+      selector_type       TEXT NOT NULL,
+      selector_values     TEXT NOT NULL DEFAULT '[]',
+      context_dimension   TEXT NOT NULL,
+      context_values      TEXT NOT NULL DEFAULT '[]',
+      reason              TEXT DEFAULT '',
+      created_at          TEXT DEFAULT (datetime('now')),
+      updated_at          TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS saved_boards (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       board_type      TEXT DEFAULT 'wardrobe',
@@ -324,6 +387,12 @@ function initDb(dbPath) {
     'archived INTEGER DEFAULT 0'
   ].forEach(col => {
     try { db.exec(`ALTER TABLE stylist_feedback ADD COLUMN ${col}`) } catch {}
+  })
+
+  ;[
+    "evidence_snapshot TEXT NOT NULL DEFAULT '[]'"
+  ].forEach(col => {
+    try { db.exec(`ALTER TABLE product_quality_findings ADD COLUMN ${col}`) } catch {}
   })
 
   ;[

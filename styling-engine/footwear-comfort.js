@@ -61,6 +61,21 @@ export const ACTIVITY_PROFILES = [
   }
 ]
 
+function hasAffirmedActivityKeyword(text, keyword) {
+  const escaped = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+  const regex = new RegExp(`\\b${escaped}\\b`, 'ig')
+  let match
+  while ((match = regex.exec(text)) !== null) {
+    const prefix = text.slice(Math.max(0, match.index - 64), match.index)
+    const localClause = prefix.split(/[.!?;,]|\bbut\b|\bhowever\b/i).pop() || ''
+    const negated = /\b(?:no|not|without)\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+      || /\b(?:do|does|did|will|would|should|is|are|was|were|have|has)\s+not\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+      || /\b(?:don't|doesn't|didn't|won't|wouldn't|shouldn't|isn't|aren't|wasn't|weren't|haven't|hasn't)\b(?:\s+[a-z'-]+){0,3}\s*$/i.test(localClause)
+    if (!negated) return true
+  }
+  return false
+}
+
 export function resolveActivityProfile({ activity = '', occasion = '', mood = '', request = '' } = {}) {
   const normActivity = String(activity || '').toLowerCase().trim()
   if (normActivity === 'walking') {
@@ -76,20 +91,16 @@ export function resolveActivityProfile({ activity = '', occasion = '', mood = ''
     // Hiking matches first (more restrictive than walking)
     const hikeProfile = ACTIVITY_PROFILES.find(p => p.id === 'hiking')
     const hikeKeywords = hikeProfile.keywords || []
-    const matchedHike = hikeKeywords.some(keyword => {
-      const escaped = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
-      const regex = new RegExp(`\\b${escaped}\\b`, 'i')
-      return regex.test(haystack) // ratchet-allow: intent parsing, not garment text matching
-    })
+    const matchedHike = hikeKeywords.some(keyword =>
+      hasAffirmedActivityKeyword(haystack, keyword) // ratchet-allow: intent parsing, not garment text matching
+    )
     if (matchedHike) return hikeProfile
 
     const walkProfile = ACTIVITY_PROFILES.find(p => p.id === 'walking')
     const walkKeywords = walkProfile.keywords || []
-    const matchedWalk = walkKeywords.some(keyword => {
-      const escaped = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
-      const regex = new RegExp(`\\b${escaped}\\b`, 'i')
-      return regex.test(haystack) // ratchet-allow: intent parsing, not garment text matching
-    })
+    const matchedWalk = walkKeywords.some(keyword =>
+      hasAffirmedActivityKeyword(haystack, keyword) // ratchet-allow: intent parsing, not garment text matching
+    )
     if (matchedWalk) return walkProfile
   }
 

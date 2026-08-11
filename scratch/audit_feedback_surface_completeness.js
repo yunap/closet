@@ -14,6 +14,8 @@ import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
 import { KNOWN_FEEDBACK_TYPES, SCOPED_EVIDENCE_KINDS } from '../lib/feedbackTaxonomy.js'
+import { FEEDBACK_EVIDENCE_ACTIONS } from '../lib/feedbackEvidence.js'
+import { FEEDBACK_SYNTHESIS_DISPOSITIONS } from '../lib/feedbackSynthesis.js'
 
 const root = process.cwd()
 const dbPath = process.argv[2] || path.join(root, 'wardrobe.db')
@@ -90,7 +92,37 @@ const liveEvidenceKinds = db.prepare(`
 for (const kind of liveEvidenceKinds) {
   if (!inventoriedKinds.has(kind)) fail('evidence kind', `database contains unclassified scoped evidence kind "${kind}"`)
 }
-if (!problems) ok(`${inventoriedTypes.size} feedback types and ${inventoriedKinds.size} scoped-evidence kinds classified`)
+const inventoriedActions = new Set(Object.keys(semanticInventory.feedback_evidence_actions || {}))
+const knownActions = new Set(Object.values(FEEDBACK_EVIDENCE_ACTIONS))
+for (const action of knownActions) {
+  if (!inventoriedActions.has(action)) fail('evidence action', `code defines "${action}" but it has no semantic disposition`)
+}
+for (const action of inventoriedActions) {
+  if (!knownActions.has(action)) fail('evidence action', `semantic inventory lists stale action "${action}"`)
+}
+const liveEvidenceActions = db.prepare(`
+  SELECT DISTINCT json_extract(payload, '$.feedbackEvidence.action') AS action
+  FROM stylist_feedback
+  WHERE action IS NOT NULL AND action != ''
+`).all().map(row => row.action)
+for (const action of liveEvidenceActions) {
+  if (!inventoriedActions.has(action)) fail('evidence action', `database contains unclassified feedback evidence action "${action}"`)
+}
+const inventoriedSynthesisDispositions = new Set(Object.keys(semanticInventory.synthesis_dispositions || {}))
+const knownSynthesisDispositions = new Set(FEEDBACK_SYNTHESIS_DISPOSITIONS)
+for (const disposition of knownSynthesisDispositions) {
+  if (!inventoriedSynthesisDispositions.has(disposition)) fail('synthesis disposition', `code defines "${disposition}" but it has no semantic disposition`)
+}
+for (const disposition of inventoriedSynthesisDispositions) {
+  if (!knownSynthesisDispositions.has(disposition)) fail('synthesis disposition', `semantic inventory lists stale disposition "${disposition}"`)
+}
+const liveSynthesisDispositions = tables.includes('feedback_synthesis_drafts')
+  ? db.prepare('SELECT DISTINCT disposition FROM feedback_synthesis_drafts ORDER BY disposition').all().map(row => row.disposition).filter(Boolean)
+  : []
+for (const disposition of liveSynthesisDispositions) {
+  if (!inventoriedSynthesisDispositions.has(disposition)) fail('synthesis disposition', `database contains unclassified synthesis disposition "${disposition}"`)
+}
+if (!problems) ok(`${inventoriedTypes.size} feedback types, ${inventoriedKinds.size} scoped-evidence kinds, ${inventoriedActions.size} evidence actions, and ${inventoriedSynthesisDispositions.size} synthesis dispositions classified`)
 
 // ── Medium 2: uploaded files ─────────────────────────────────────────────────
 head('Medium 2 · Uploaded files')

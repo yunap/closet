@@ -16,6 +16,7 @@ import crudRouter from './routes/crud.js'
 import importerRouter from './routes/importer.js'
 import aiRouter from './routes/ai.js'
 import adminRouter from './routes/admin.js'
+import feedbackRouter from './routes/feedback.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -97,6 +98,7 @@ app.use('/api/admin', (req, res, next) => {
 
 // Mount API Routers
 app.use('/api', crudRouter)
+app.use('/api', feedbackRouter)
 app.use('/api/import', importerRouter)
 app.use('/api/ai', aiRouter)
 app.use('/api/admin', adminRouter)

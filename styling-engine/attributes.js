@@ -151,6 +151,19 @@ export function pieceHasInsulatingFiber(p) {
   return fibers.some(f => INSULATING_FIBERS.has(String(f).toLowerCase().trim()))
 }
 
+// Wet-exposure suitability is physical garment truth, not taste. Keep this reader
+// strictly on structured material fields so a name or note cannot silently create
+// a hard gate. Pieces whose visible name says canvas but whose material metadata
+// says cotton must be retagged rather than inferred here.
+export function pieceHasWetSensitiveFootwearMaterial(p = {}) {
+  if (wardrobeCategoryGroup(p) !== 'shoes') return false
+  const materials = new Set([
+    String(p.fabric_category || '').toLowerCase().trim(),
+    ...(Array.isArray(p.fiber_content) ? p.fiber_content : []).map(value => String(value || '').toLowerCase().trim()),
+  ].filter(Boolean))
+  return materials.has('canvas') || materials.has('suede')
+}
+
 export function shoeCoverage(p) {
   if (wardrobeCategoryGroup(p) !== 'shoes') return null
   const structured = String(p?.shoe_coverage || p?.style_profile_json?.shoe_coverage || '').toLowerCase().trim()

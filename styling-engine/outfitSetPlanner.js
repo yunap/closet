@@ -33,7 +33,8 @@ import {
   wardrobeCategoryGroup,
   footwearComfortVerdict,
   pieceStyleProfile,
-  hasRejectedReference
+  hasRejectedReference,
+  getAcceptedFeedbackSynthesisMemory,
 } from './rules.js'
 import {
   bottomKind,
@@ -810,6 +811,13 @@ function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '',
   return occasion
 }
 
+function planSlotEligibilityOccasion(occasion = '', { label = '', bestFor = '', coverage = '', planNote = '' } = {}) {
+  const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
+  const namesHome = /\b(?:at home|home days?|home time|backyard)\b/i.test(text) // ratchet-allow: plan-use-case classifier, not garment matching
+  const alsoNamesAwayUse = /\b(?:errands?|weekends? out|city|shopping|outings?)\b/i.test(text) // ratchet-allow: plan-use-case classifier, not garment matching
+  return occasion === 'casual' && namesHome && !alsoNamesAwayUse ? 'home' : occasion
+}
+
 function slotWantsElevatedShoe(slot = {}) {
   const text = [slot?.label, slot?.bestFor, slot?.coverage, slot?.planNote, slot?.occasion].filter(Boolean).join(' ')
   const occasion = normalizeOccasion(slot?.occasion)
@@ -1300,6 +1308,7 @@ function slotGateEligiblePieces(pool = [], slot = {}, { isSummer = false, isWint
   const registerCeiling = registerRankName(ceilingRank) || null
   const { allowedPieces } = filterWholeWardrobePiecesForGeneration(pool, {
     occasion: slot.occasion,
+    season,
     explorationMode: 'moderate',
     weatherProfile: slotWeatherProfile,
     mood: slotRequestText,
@@ -1618,6 +1627,7 @@ function elevatedCapsuleDemands(slots = [], pool = [], { isSummer = false } = {}
       : null
     const { allowedPieces } = filterWholeWardrobePiecesForGeneration(pool, {
       occasion: slot.occasion,
+      season,
       explorationMode: 'moderate',
       weatherProfile: slotWeatherProfile,
       mood: slotRequestText,
@@ -2445,6 +2455,9 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
     piece.reads_as ? `reads:${String(piece.reads_as).slice(0, 80)}` : '',
+    Array.isArray(piece.occasion_exclusions) && piece.occasion_exclusions.length
+      ? `OWNER-EXCLUDED OCCASIONS:${piece.occasion_exclusions.join(',')}`
+      : '',
     stylingRulesForPrompt(piece.styling_rules_learned).length
       ? `RULES (authoritative):${stylingRulesForPrompt(piece.styling_rules_learned).join(' / ')}`
       : '',
@@ -3280,6 +3293,15 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   const composePool = capsuleRosterSelection
     ? capsuleRosterSelection.roster
     : modelPlanPool({ allPieces, slots, constraints, question, mood, planKind })
+  const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
+    pieceIds: composePool.map(piece => piece.id),
+    contexts: slots.map(slot => ({
+      occasion: slot?.occasion || '',
+      activity: slot?.activity || '',
+      season: slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+      weather: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
+    })),
+  })
   const piecesById = pieceMapForPieces(composePool)
   const catalogById = new Map()
   const slotWeather = []
@@ -3306,6 +3328,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const registerCeilingOverride = registerRankName(ceilingRank) || null
     const gateResult = filterWholeWardrobePiecesForGeneration(composePool, {
       occasion: slot.occasion,
+      season: slot.statedWeather || slot.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+      ownerExclusionOccasion: slot.eligibilityOccasion || slot.occasion,
       explorationMode: 'moderate',
       weatherProfile,
       mood: mood || slotRequestText,
@@ -3327,6 +3351,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       id: slot.id,
       label: slot.label,
       occasion: slot.occasion,
+      eligibility_context: slot.eligibilityOccasion !== slot.occasion ? slot.eligibilityOccasion : '',
       activity: slot.activity,
       environment: slot.environment || '',
       register: slot.register || '',
@@ -3434,6 +3459,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // forbid that exact move.
     Array.isArray(ownerRules) && ownerRules.length
       ? `OWNER RULES — hard requirements, not suggestions. Do not construct exceptions or conditional workarounds (no "in case the AC runs cold"). If a rule makes a slot impossible, disclose the conflict instead of bending the rule. Apply to every outfit you compose: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
+      : '',
+    acceptedSynthesisText
+      ? `OWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for this roster and these use cases; respect each stated boundary: ${acceptedSynthesisText}`
       : '',
     // Part 6 (spec 26): the spec-25 professional-context competence bullet
     // is live in STYLIST_SYSTEM but demonstrably weak from tail position (the
@@ -4412,6 +4440,7 @@ export function normalizePlanSlots(rawSlots = [], {
       const environment = declaredEnvironment || inferredEnvironment
       if (!declaredEnvironment && inferredEnvironment && typeof onDiagnostic === 'function') onDiagnostic('planSlotEnvironmentInferred')
       const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote, environment })
+      const eligibilityOccasion = planSlotEligibilityOccasion(occasion, { label, bestFor, coverage, planNote })
       // statedWeather is ONLY the model's explicit per-slot weather — it wins
       // over the live forecast. The trip-level fallbackWeather is not "stated"
       // for this purpose: it feeds season/heuristic but must let a slot's own
@@ -4432,6 +4461,7 @@ export function normalizePlanSlots(rawSlots = [], {
         id: label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `slot_${index + 1}`,
         label,
         occasion,
+        eligibilityOccasion,
         activity,
         season: String(statedWeather || slot?.season || fallbackWeather || 'current season').trim(),
         statedWeather,

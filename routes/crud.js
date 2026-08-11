@@ -27,11 +27,15 @@ import {
 } from '../lib/subjectThumbnails.js'
 import { COLOR_TAXONOMY, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import { queueColorTaxonomyReviews } from '../lib/colorTaxonomyReview.js'
+import { activeMemoryMetadata } from '../lib/activeMemory.js'
+import { buildFeedbackEvidence } from '../lib/feedbackEvidence.js'
 import {
+  buildLegacyOutfitSnapshotEvidence,
   buildOutfitLogicEvidence,
   canonicalFeedbackType,
   KNOWN_FEEDBACK_TYPES,
-  SCOPED_EVIDENCE_KINDS,
+  POSITIVE_OUTFIT_LOGIC_TYPES,
+  WRONG_PIECE_FOR_OUTFIT_FEEDBACK,
 } from '../lib/feedbackTaxonomy.js'
 
 const router = express.Router()
@@ -505,6 +509,64 @@ function feedbackBoardImage(rowOrPayload) {
   return payload?.board?.imageUrl || payload?.board?.image_url || ''
 }
 
+const sortedBoardPieceIds = value => {
+  const pieces = Array.isArray(value?.pieceIds) ? value.pieceIds : (Array.isArray(value?.pieces) ? value.pieces : [])
+  return [...new Set(pieces.map(piece => Number(typeof piece === 'object' ? (piece?.id || piece?.pieceId) : piece))
+    .filter(id => Number.isInteger(id) && id > 0))].sort((a, b) => a - b)
+}
+
+function exactSourceOutfitLogic(row, boardPayload) {
+  const board = boardPayload?.board || {}
+  const targetIds = sortedBoardPieceIds(board).length
+    ? sortedBoardPieceIds(board)
+    : sortedBoardPieceIds({ pieces: safeJsonParse(row?.pieces, []) })
+  if (!targetIds.length) return null
+  let threadId = boardPayload?.threadId
+  if (!threadId && row?.image_url) {
+    threadId = db.prepare('SELECT id FROM chat_threads WHERE payload LIKE ? LIMIT 1').get(`%${row.image_url}%`)?.id
+  }
+  if (!threadId) return null
+  const thread = db.prepare('SELECT payload FROM chat_threads WHERE id = ?').get(threadId)
+  if (!thread) return null
+  const threadPayload = safeJsonParse(thread.payload, {}) || {}
+  const candidates = []
+  for (const message of Array.isArray(threadPayload.messages) ? threadPayload.messages : []) {
+    for (const outfit of Array.isArray(message?.structuredOutfits) ? message.structuredOutfits : []) {
+      const ids = sortedBoardPieceIds(outfit)
+      if (ids.length !== targetIds.length || ids.some((id, index) => id !== targetIds[index])) continue
+      const evidence = buildOutfitLogicEvidence('works', { outfit })
+      if (evidence) candidates.push(evidence)
+    }
+  }
+  const unique = [...new Map(candidates.map(evidence => [JSON.stringify(evidence), evidence])).values()]
+  return unique.length === 1 ? unique[0] : null
+}
+
+function positiveEvidenceForSavedBoard(feedbackType, row, boardPayload) {
+  if (!POSITIVE_OUTFIT_LOGIC_TYPES.has(feedbackType)) return null
+  const direct = buildOutfitLogicEvidence(feedbackType, boardPayload)
+  if (direct) return direct
+  const recovered = exactSourceOutfitLogic(row, boardPayload)
+  if (recovered) return { ...recovered, verdict: feedbackType, sourceConfidence: 'exact_source_recovery' }
+  const board = boardPayload?.board || {}
+  const storedPieces = Array.isArray(row?.pieces) ? row.pieces : safeJsonParse(row?.pieces, [])
+  const sourcePieces = Array.isArray(board?.pieces) && board.pieces.length ? board.pieces : storedPieces
+  const ids = [...new Set(sourcePieces.map(piece => Number(typeof piece === 'object' ? (piece?.id || piece?.pieceId) : piece))
+    .filter(id => Number.isInteger(id) && id > 0))]
+  let enrichedPieces = storedPieces
+  if (ids.length) {
+    const placeholders = ids.map(() => '?').join(',')
+    const byId = new Map(db.prepare(`SELECT * FROM pieces WHERE id IN (${placeholders})`).all(...ids)
+      .map(piece => [Number(piece.id), parsePiece(piece)]))
+    const hydrated = ids.map(id => byId.get(id)).filter(Boolean)
+    if (hydrated.length) enrichedPieces = hydrated
+  }
+  return buildLegacyOutfitSnapshotEvidence(feedbackType, boardPayload, {
+    ...row,
+    pieces: enrichedPieces,
+  })
+}
+
 function setSavedBoardFeedbackLabel(imageUrl, feedbackType, enabled) {
   if (!imageUrl || !feedbackType) return
   const boards = db.prepare('SELECT id, payload FROM saved_boards WHERE image_url = ?').all(imageUrl)
@@ -650,7 +712,10 @@ export function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
   for (const label of new Set([...previous, ...next])) {
     const matches = findRows.all(label, imageUrl)
     if (next.has(label)) {
-      const scopedEvidence = buildOutfitLogicEvidence(label, boardPayload)
+      const scopedEvidence = boardPayload.scoped_evidence?.verdict === label &&
+        boardPayload.scoped_evidence?.kind === 'outfit_logic'
+        ? boardPayload.scoped_evidence
+        : positiveEvidenceForSavedBoard(label, row, boardPayload)
       const feedbackPayload = {
         board: boardInfo,
         ...(boardPayload.outfit ? { outfit: boardPayload.outfit } : {}),
@@ -687,6 +752,99 @@ export function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
       matches.forEach(match => db.prepare('UPDATE stylist_feedback SET archived = 1 WHERE id = ?').run(match.id))
     }
   }
+}
+
+export function backfillPositiveSavedBoardEvidence({ apply = false } = {}) {
+  const rows = db.prepare(`
+    SELECT * FROM saved_boards
+    WHERE COALESCE(archived, 0) = 0
+      AND COALESCE(json_array_length(json_extract(payload, '$.feedback_labels')), 0) > 0
+    ORDER BY id
+  `).all()
+  const result = {
+    scanned: 0, alreadyStructured: 0, exactSourceRecovered: 0, legacySnapshots: 0,
+    skipped: 0, updated: 0, receiptScanned: 0, receiptStructuredRecovered: 0,
+    receiptLegacySnapshots: 0, receiptSkipped: 0, receiptUpdated: 0,
+  }
+  const updates = []
+  for (const row of rows) {
+    const payload = safeJsonParse(row.payload, {}) || {}
+    const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+    const verdict = ['signature', 'works', 'almost'].find(label => labels.includes(label))
+    if (!verdict) continue
+    result.scanned += 1
+    const existing = payload.scoped_evidence
+    const evidence = existing?.verdict === verdict && existing?.kind === 'outfit_logic'
+      ? existing
+      : positiveEvidenceForSavedBoard(verdict, row, payload)
+    if (!evidence) {
+      result.skipped += 1
+      continue
+    }
+    if (evidence.kind === 'outfit_logic' && evidence.sourceConfidence === 'exact_source_recovery') result.exactSourceRecovered += 1
+    else if (evidence.kind === 'outfit_logic') result.alreadyStructured += 1
+    else if (evidence.kind === 'legacy_outfit_snapshot') result.legacySnapshots += 1
+    if (existing && JSON.stringify(existing) === JSON.stringify(evidence)) continue
+    updates.push({ row, payload: { ...payload, scoped_evidence: evidence }, labels })
+  }
+  if (apply && updates.length) {
+    db.transaction(() => {
+      for (const update of updates) {
+        db.prepare('UPDATE saved_boards SET payload = ? WHERE id = ?').run(JSON.stringify(update.payload), update.row.id)
+        const refreshed = db.prepare('SELECT * FROM saved_boards WHERE id = ?').get(update.row.id)
+        syncFeedbackFromSavedBoard(refreshed, update.labels, update.labels)
+      }
+    })()
+    result.updated = updates.length
+  }
+  result.pendingUpdates = updates.length
+  const receiptUpdates = []
+  const receipts = db.prepare(`
+    SELECT * FROM stylist_feedback
+    WHERE COALESCE(archived, 0) = 0
+      AND feedback_type IN ('signature', 'works', 'almost')
+      AND (json_extract(payload, '$.scopedEvidence.kind') IS NULL
+        OR json_extract(payload, '$.scopedEvidence.kind') = 'legacy_outfit_snapshot')
+      AND target_type != 'message'
+    ORDER BY id
+  `).all()
+  for (const receipt of receipts) {
+    result.receiptScanned += 1
+    const payload = safeJsonParse(receipt.payload, {}) || {}
+    const board = payload.board || payload.visual || {}
+    const imageUrl = board.imageUrl || board.image_url || ''
+    const canonical = imageUrl
+      ? db.prepare('SELECT payload FROM saved_boards WHERE image_url = ? AND COALESCE(archived, 0) = 0 ORDER BY id DESC LIMIT 1').get(imageUrl)
+      : null
+    const canonicalEvidence = safeJsonParse(canonical?.payload, {})?.scoped_evidence
+    const normalizedPayload = payload.board ? payload : { ...payload, board }
+    const evidence = canonicalEvidence?.verdict === receipt.feedback_type
+      ? canonicalEvidence
+      : positiveEvidenceForSavedBoard(receipt.feedback_type, {
+          title: receipt.label,
+          reason: receipt.note,
+          context_name: receipt.context_name,
+          image_url: imageUrl,
+          pieces: board.pieces || payload.pieces || payload.outfit?.pieces || [],
+        }, normalizedPayload)
+    if (!evidence) {
+      result.receiptSkipped += 1
+      continue
+    }
+    if (evidence.kind === 'legacy_outfit_snapshot') result.receiptLegacySnapshots += 1
+    else result.receiptStructuredRecovered += 1
+    const nextPayload = { ...payload, scopedEvidence: evidence }
+    if (JSON.stringify(payload) !== JSON.stringify(nextPayload)) receiptUpdates.push({ id: receipt.id, payload: nextPayload })
+  }
+  if (apply && receiptUpdates.length) {
+    db.transaction(() => {
+      const update = db.prepare('UPDATE stylist_feedback SET payload = ? WHERE id = ?')
+      receiptUpdates.forEach(item => update.run(JSON.stringify(item.payload), item.id))
+    })()
+    result.receiptUpdated = receiptUpdates.length
+  }
+  result.receiptPendingUpdates = receiptUpdates.length
+  return result
 }
 
 const RETAG_ISSUE_LABELS = {
@@ -780,21 +938,25 @@ router.post('/stylist-feedback', (req, res) => {
 
     const storedFeedbackType = canonicalFeedbackType(feedbackType)
     const outfit = payload?.outfit || {}
-    const outfitLogicEvidence = buildOutfitLogicEvidence(storedFeedbackType, payload)
-    const storedPayload = storedFeedbackType === 'wrong_item_read' ? {
+    const outfitLogicEvidence = positiveEvidenceForSavedBoard(storedFeedbackType, {
+      title: label,
+      reason: note,
+      context_name: contextName,
+      image_url: payload?.board?.imageUrl || payload?.board?.image_url || '',
+      pieces: payload?.board?.pieces || [],
+    }, payload)
+    const feedbackEvidence = buildFeedbackEvidence({
+      feedbackType: storedFeedbackType,
+      targetType,
+      contextType,
+      contextId,
+      contextName,
+      sourceSurface: payload?.sourceSurface,
+      payload,
+    })
+    const storedPayload = storedFeedbackType === WRONG_PIECE_FOR_OUTFIT_FEEDBACK ? {
       ...(payload || {}),
-      scopedEvidence: {
-        version: 1,
-        kind: SCOPED_EVIDENCE_KINDS.GARMENT_CONTEXT_SUITABILITY,
-        subjectPieceId: Number(payload?.pieceId || payload?.piece_id) || null,
-        strength: 'weak',
-        context: {
-          occasion: String(payload?.occasion || outfit?.occasion || outfit?.bestFor || '').trim(),
-          activity: String(payload?.activity || outfit?.activity || 'none').trim(),
-          season: String(payload?.season || outfit?.season || '').trim(),
-          mood: String(payload?.mood || outfit?.mood || '').trim(),
-        },
-      },
+      ...(feedbackEvidence ? { feedbackEvidence } : {}),
     } : (outfitLogicEvidence ? {
       ...(payload || {}),
       scopedEvidence: outfitLogicEvidence,
@@ -852,7 +1014,7 @@ router.post('/stylist-feedback', (req, res) => {
       weak_structure: 'Learning saved: requiring stronger structure next time.',
       weak_contrast: 'Learning saved: requiring clearer contrast/tension next time.',
       bad_grounding: 'Learning saved: improving shoe/grounding logic next time.',
-      wrong_item_read: 'Learning saved for this garment in this outfit context; it is not a global garment rejection.',
+      [WRONG_PIECE_FOR_OUTFIT_FEEDBACK]: 'Learning saved for this garment in this outfit context; it is not a global garment rejection.',
       bad_reference: 'Learning saved: using this as a negative reference.',
       style_direction: 'Learning saved: correcting this part of the outfit’s overall feel.',
       shape_balance: 'Learning saved: correcting this fit or shape issue.',
@@ -886,7 +1048,7 @@ router.get('/stylist-feedback', (req, res) => {
   const boardIdsByImage = new Map(db.prepare('SELECT id, image_url FROM saved_boards WHERE image_url IS NOT NULL AND image_url != ?').all('').map(row => [row.image_url, row.id]))
   res.json(rows.map(r => {
     const payload = safeJsonParse(r.payload, {})
-    return {
+    const projected = {
       ...r,
       is_gold: Boolean(r.is_gold),
       archived: Boolean(r.archived),
@@ -894,6 +1056,7 @@ router.get('/stylist-feedback', (req, res) => {
       referenced_board_id: boardIdsByImage.get(feedbackBoardImage(payload)) || null,
       referenced_thread_id: referencedThreadForFeedback(r, payload),
     }
+    return { ...projected, memory: activeMemoryMetadata(projected) }
 }))
 })
 
@@ -1107,7 +1270,10 @@ router.post('/saved-boards', async (req, res) => {
       .filter(correction => Number(correction?.piece_id) && correction?.issue)
     const syncedFeedbackLabels = [...new Set([...suppliedFeedbackLabels, ...existingFeedbackLabels])]
     const activeLogicVerdict = ['signature', 'works', 'almost'].find(label => syncedFeedbackLabels.includes(label))
-    const scopedEvidence = activeLogicVerdict ? buildOutfitLogicEvidence(activeLogicVerdict, payload) : null
+    const provisionalRow = { title, reason, context_name: contextName, image_url: imageUrl, pieces }
+    const scopedEvidence = activeLogicVerdict
+      ? positiveEvidenceForSavedBoard(activeLogicVerdict, provisionalRow, payload)
+      : null
     const syncedPayload = {
       ...(payload || {}),
       feedback_labels: syncedFeedbackLabels,
@@ -1251,7 +1417,9 @@ router.patch('/saved-boards/:id', (req, res) => {
       ? feedbackDetails
       : (payload.feedback_details || {})
     const activeLogicVerdict = ['signature', 'works', 'almost'].find(label => nextFeedbackLabels.includes(label))
-    const scopedEvidence = activeLogicVerdict ? buildOutfitLogicEvidence(activeLogicVerdict, payload) : null
+    const scopedEvidence = activeLogicVerdict
+      ? positiveEvidenceForSavedBoard(activeLogicVerdict, row, payload)
+      : null
     const nextPayload = { ...payload, feedback_labels: nextFeedbackLabels, feedback_details: nextFeedbackDetails }
     if (scopedEvidence) nextPayload.scoped_evidence = scopedEvidence
     else delete nextPayload.scoped_evidence
