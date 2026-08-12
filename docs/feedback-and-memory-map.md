@@ -6,7 +6,9 @@ plumbing between them: **everything the user tells the app about a garment or an
 is written, and which consumer — if any — reads it back.**
 
 **Ratified 2026-08-09** as the baseline description of the current system, after five review
-rounds. It describes; it does not propose. Recommendations live in
+rounds; **amended 2026-08-12** for the owner-guidance work (footwear constraint selectors, shared
+season resolution, the `reported` synthesis status and its delete route, exclusion `changedAt`, and
+guidance becoming read-only). Amendments are marked inline with their date. It describes; it does not propose. Recommendations live in
 [`feedback-routing-proposal.md`](feedback-routing-proposal.md) and must cite this map rather than
 restate it. Ideas for hardening the verification tooling are out of scope here and live in
 [`feedback-audit-backlog.md`](feedback-audit-backlog.md).
@@ -185,7 +187,9 @@ Covered in §2 · E and §3. **Authority — relevance-selected prompt.** New ro
 context, garment+context, or unresolved reach. The server deterministically recovers narrow
 supported terms when the model omits them; unresolved new rows are retained for review but are not
 sent. `ownerGuidanceApplies` is the executable matcher used by direct guidance and, through a shape
-adapter, accepted personal/contextual lessons. Filtering happens before prompt caps. Rows created
+adapter, accepted personal/contextual lessons. Filtering happens before prompt caps. Style Profile presents this guidance read-only as of 2026-08-12, so `PATCH /stylist-feedback/:id`
+does not re-derive the envelope from a changed note; a stored envelope only ever changes when the
+owner says something new in chat, through `store_user_correction`. Rows created
 before the envelope remain broadly delivered for compatibility and are labelled as legacy scope in
 Style Profile; that is an explicit migration boundary, not a claim that they are universal.
 Populated garment dimensions are conjunctive: `materials:[canvas]` plus `footwear:[sneakers]`
@@ -203,7 +207,14 @@ by `feedbackBehaviour` in `lib/feedbackTaxonomy.js`.
 Authorized synthesis adds two stores without changing that rule. `feedback_synthesis_batches`
 records the exact compact input, hash, selected provider/model, estimate, actual usage and outcome
 of an explicitly authorized call. `feedback_synthesis_drafts` holds the model's review proposals.
-Drafts have no authority. After owner acceptance, only disposition
+Drafts have no authority. A draft whose disposition is `insufficient_evidence` is the model
+reporting that it could **not** learn anything from the selected reactions; it is written with the
+terminal status `reported` and never enters the owner's decision queue. (Before 2026-08-12 it was
+written as `draft`, so the only way to clear a non-result was **Reject**, which then recorded it as
+a suggestion the owner had declined — the source of the five `insufficient_evidence`/`rejected` rows
+in the development wardrobe.) `DELETE /feedback-synthesis/drafts/:id` removes such a row outright
+and refuses every other disposition, so it cannot erase an accepted lesson or a recorded decision;
+the paid batch and the source reactions are separate records and survive. After owner acceptance, only disposition
 `personal_contextual_lesson` is read by `getAcceptedFeedbackSynthesisMemory`. Structured
 applicability is matched against the active garment and request occasion/activity/season/weather
 before the newest-eight cap; missing applicability matches nothing. The editable boundary remains
@@ -227,12 +238,17 @@ removed. The dedicated review UI remains deferred to the UI/UX panel.
 
 `owner_constraints` is the structured hard-authority destination for an owner-confirmed standing
 constraint that cannot be represented by one garment's `occasion_exclusions`. Its selectors are
-limited to verified piece IDs, wardrobe category or structured material; its context is one of
+limited to verified piece IDs, wardrobe category, structured material or footwear type; its context is one of
 occasion, activity, season or weather. The writer requires explicit confirmation and archives a
 linked prose owner rule so the same instruction is not also prompt authority. The whole-wardrobe
 trust gate reads active rows before roster assembly, slot replacement, complementary ranking and
 each capsule-plan slot; missing context is a no-op. A matched row hard-blocks the garment and emits
-its constraint ID/dimension in suppression reasons. Retiring the row is the undo. Item 12's review
+its constraint ID/dimension in suppression reasons. Retiring the row is the undo. Season matching
+normalizes through `resolveSeasonTerm` (`lib/ownerConstraints.js`), so the request selector values
+`warm`, `autumn` and the unresolved default `current season` are resolved to a real season before
+comparison — `current season` against `requestContext.currentDate` rather than always "now". The
+same helper resolves the season recorded on synthesis evidence, so a reaction stored with the
+literal placeholder no longer surfaces `current season` as if it were a season. Item 12's review
 surface is deferred, but its bounded storage, routing and undo contract is executable.
 
 ### 7 · Thread-scoped conversation state
@@ -705,6 +721,15 @@ the garment's `occasion_exclusions`, and its former global `owner_rule` row is a
 unambiguous home plan slot supplies `home` specifically to the owner-exclusion lookup before
 composition. Other occasion checks still receive the public `casual` context; AI-generated
 `occasion_confidence.home` therefore remains advisory.
+
+**[2026-08-12] The receipt is now also the only source of "when".** `pieces` holds no
+per-exclusion timestamp — its single date column, `date_added`, records when the *garment* was
+added — and `GET /pieces/occasion-exclusions` returned rows alphabetically. To order exclusions by
+recency, that route now parses the newest matching `Excluded from <occasion> by <name> (YYYY-MM-DD)`
+line per piece/occasion and returns it as `changedAt`, newest first. Day precision only; an
+exclusion written by migration rather than the endpoint has no receipt and returns `null`, sorting
+last. This does not change authority: `occasion_exclusions` is still the enforcement record and the
+prose remains display-only provenance.
 
 The prose chip is not the enforcement record. The editor's `PUT /pieces/:id` column list
 (`crud.js:296`) **does not include `occasion_exclusions` at all**, so no editor save can change an

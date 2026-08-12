@@ -1,6 +1,7 @@
 # Engine behaviour map
 
-**Status:** twelfth pass, 2026-07-26. Companion to `docs/app-surface-map.md`.
+**Status:** twelfth pass, 2026-07-26; **amended 2026-08-12** to add the owner-constraint gate, which
+shipped with item 12 and had never been recorded here. Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
 Pass 2 added scoring, caches, CI ratchets and the import pipeline's model calls. Pass 3 added the
@@ -595,7 +596,20 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    supplies `home` specifically to the owner-exclusion lookup. Other occasion gates still receive
    the public occasion, so an AI-generated `home: low` confidence remains advisory. Mixed
    **home + errands** slots deliberately remain broad because one veto cannot safely describe both uses.
-3. **Auto-use trust** (`autoStylingTrustDecision`, `src/utils/wardrobeAiContext.js:146`), with a
+3. **Owner constraints** (`ownerConstraintApplies`, `lib/ownerConstraints.js`), read by
+   `wholeWardrobePieceTrustDecision` before roster assembly, slot replacement, complementary
+   ranking and each capsule-plan slot. **[added 2026-08-12 — this layer was missing from every
+   earlier pass of this document; it shipped with item 12 and was never recorded here.]** A row is
+   an owner-confirmed standing prohibition that one garment's `occasion_exclusions` cannot express:
+   a selector of verified piece IDs, wardrobe category, structured material or **footwear type**,
+   crossed with one context dimension (occasion, activity, season or weather). Missing context is a
+   no-op — the gate never fires on an unspecified dimension. A match hard-blocks the garment and
+   emits the constraint ID and dimension in the suppression reason; retiring the row is the undo.
+   Season comparison runs through `resolveSeasonTerm`, so `warm` → summer, `autumn` → fall, and the
+   composer's unresolved default `current season` resolves against `requestContext.currentDate`
+   rather than always "now". **[unverified]** no exclusion counts have been measured for this layer;
+   the counts elsewhere in this section predate it.
+4. **Auto-use trust** (`autoStylingTrustDecision`, `src/utils/wardrobeAiContext.js:146`), with a
    dead escape hatch — see *Exploration mode* below.
    `recommendation_status` of `avoid` / `do_not_recommend` / `needs_fit_review` / `experimental`,
    `role_permission` of `never_auto` / `only_when_requested`, `fit_confidence: low`, the AI
@@ -603,7 +617,7 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    `occasion_permissions` list that omits the request, and a phrase scan of notes for
    *"too small"*, *"do not auto"*, *"testing only"* and similar. Most of these relax under
    `explorationMode: 'aggressive'`.
-4. **Weather physics.** Hot: insulating fiber, or heavy weight, or (medium+ weight *and* insulating
+5. **Weather physics.** Hot: insulating fiber, or heavy weight, or (medium+ weight *and* insulating
    coverage / warm neckline / long sleeves). Cold: shorts, lightweight linen bottoms, high bareness.
    Credible wet exposure excludes footwear whose structured material is canvas or suede. Explicit
    rain, drizzle, wet ground, puddles or mud qualifies; a foggy coastal outdoor walk also qualifies
@@ -612,12 +626,12 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    (cardigans, kimonos) are exempt from the sleeve/coverage clauses (ratified 2026-07-12 after
    summer layering requests kept dying); shoes and accessories are never "insulating"; the
    weight qualifier exists because a light silk maxi was flagged purely for being full-length.
-5. **Profile rules and the register ceiling** (`profileRuleFit`, `rules.js:2039`). Prohibited
+6. **Profile rules and the register ceiling** (`profileRuleFit`, `rules.js:2039`). Prohibited
    materials → footwear-comfort enums → **register ceiling** → prohibited footwear → prohibited
    pieces → `unknown` → discouraged. **This function returns on the FIRST prohibition it finds**,
    so a piece has exactly one profile reason no matter how many it violates.
 
-**Consequence:** layers 1–4 *push* reasons onto a list, layer 5 returns one. A blocked piece can
+**Consequence:** layers 1–5 *push* reasons onto a list, layer 6 returns one. A blocked piece can
 therefore carry several reasons, and the counts below sum to more than the blocked total. It also
 means reason counts are **order-dependent** — under a walking activity, twelve shoes exit at the
 footwear-comfort check and never reach the register check, so the register count drops by ten
