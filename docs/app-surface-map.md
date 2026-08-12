@@ -407,6 +407,23 @@ Day precision only, and an exclusion written without a receipt (e.g. the piece-2
 created by the 2026-08-10 migration rather than the UI) returns `changedAt: null` and sorts last —
 confirmed against the real wardrobe, where 7 of 8 exclusions carry a parseable date.
 
+**[bug] `bad_reference` feedback has no reader.** `feedbackTaxonomy.js` lists it in
+`RENDERER_FEEDBACK_TYPES`, so `activeMemory` labels its destination `renderer` — but
+`getSavedBoardRendererMemory` never reads that type, and the `bad_reference` matches in `core.js`
+are `calibration_images.kind`, a different store entirely. One live row exists. It is excluded from
+**Fixes your stylist applies when drawing pictures** so the surface does not claim an effect that
+does not exist, which leaves the control with no destination at all — the phase-6 rule says every
+control is kept, replaced, migrated or removed, so this needs a ruling either way.
+
+**[fixed 2026-08-12] Renderer reports say what was wrong and what changed.** The rows read
+*"Reported as drawn at the wrong length"* — which named no garment (the title was the storage label
+*"Whole wardrobe"*), never said what looked wrong although the structured `issue` was available, and
+never said what the stylist now does, which is the section's entire purpose. Each row now reads
+*"<garment> — It was drawn too short. Your stylist now matches the length in your saved photo."*
+Titles prefer the garment the correction names, then the outfit label, and global corrections
+(body-proportion and identity drift apply to every render, not one garment) are titled
+**Every picture** rather than pinned to whichever garment was on screen.
+
 **[fixed 2026-08-12] Renderer reports are their own section, and are grouped.** *"Things your
 stylist got wrong"* rendered two unrelated things under one heading that promised *"a product
 decision"*: open `product_quality_findings` (a genuine work queue) and every image-fidelity

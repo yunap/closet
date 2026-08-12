@@ -702,26 +702,52 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     },
   ]
   const rendererCorrections = contextualFeedback.filter(row => row.memory?.destination === 'renderer')
-  // Reporting the same garment's length six times is six rows in the database but one fact about
-  // the picture, and the renderer already de-duplicates before sending (getSavedBoardRendererMemory
-  // collects into a Set). Showing the raw rows made a handful of reports look like a wall of
-  // identical problems.
-  const groupedRendererCorrections = [...rendererCorrections.reduce((groups, row) => {
-    const title = row.memory?.display?.title || row.context_name || 'Generated image report'
-    const kind = feedbackTypeDisplayLabel(row)
-    const key = `${title}::${kind}`
-    const group = groups.get(key) || { key, title, kind, count: 0 }
+  // What the renderer is actually told, in her words. Three things the old copy got wrong:
+  // it never said WHAT looked wrong (the structured `issue` was on hand), it used the context
+  // label — often the meaningless "Whole wardrobe" — instead of the garment the correction names,
+  // and it never said what the stylist now does, which is the whole point of the section.
+  const RENDERER_ISSUE_TEXT = {
+    sleeves_too_long: 'Sleeves were drawn too long',
+    sleeves_too_short: 'Sleeves were drawn too short',
+    upper_hem_too_long: 'The hem was drawn too long',
+    upper_hem_too_short: 'The hem was drawn too short',
+    lower_hem_too_long: 'It was drawn too long',
+    lower_hem_too_short: 'It was drawn too short',
+  }
+  // Only the types getSavedBoardRendererMemory actually reads. 'bad_reference' is deliberately
+  // absent: it is classified as a renderer type but no renderer path consumes it, so listing it
+  // here would claim an effect that does not exist.
+  const RENDERER_EFFECT_TEXT = {
+    wrong_length: { global: false, fallback: 'It was drawn at the wrong length', effect: 'Your stylist now matches the length in your saved photo.' },
+    wrong_garment_details: { global: false, fallback: 'Its print, neckline or sleeves were drawn wrong', effect: 'Your stylist now copies those details from your saved photo.' },
+    body_proportions_drift: { global: true, fallback: 'Your body proportions looked wrong', effect: 'Your stylist keeps your proportions matched to your real photos.' },
+    identity_drift: { global: true, fallback: 'The face did not look like you', effect: 'Your stylist keeps your face matched to your real photos.' },
+    wrong_proportions: { global: true, fallback: 'Your body proportions looked wrong', effect: 'Your stylist keeps your proportions matched to your real photos.' },
+    proportion_problem: { global: true, fallback: 'Your body proportions looked wrong', effect: 'Your stylist keeps your proportions matched to your real photos.' },
+  }
+  const GENERIC_CONTEXT_TITLES = new Set(['whole wardrobe', 'wardrobe', ''])
+
+  const rendererReportGroups = [...rendererCorrections.reduce((groups, row) => {
+    const spec = RENDERER_EFFECT_TEXT[canonicalFeedbackType(row.feedback_type)]
+    if (!spec) return groups
+    let payload = row.payload || {}
+    if (typeof payload === 'string') { try { payload = JSON.parse(payload) || {} } catch { payload = {} } }
+    const correction = payload.length_correction || {}
+    // The correction names the garment; context_name is where the reaction happened.
+    // Prefer the garment the correction names; fall back to the outfit it was reported on, since
+    // context_name is often the meaningless storage label "Whole wardrobe".
+    const named = correction.piece_name
+      || (GENERIC_CONTEXT_TITLES.has(String(row.context_name || '').toLowerCase()) ? '' : row.context_name)
+      || (payload.board?.label ? `A garment in “${payload.board.label}”` : '')
+    const title = spec.global ? 'Every picture' : (named || 'A garment in a saved outfit')
+    const problem = RENDERER_ISSUE_TEXT[correction.issue] || spec.fallback
+    const key = `${title}::${problem}`
+    const group = groups.get(key) || { key, title, problem, effect: spec.effect, global: spec.global, count: 0 }
     group.count += 1
     groups.set(key, group)
     return groups
   }, new Map()).values()]
-    .map(group => ({
-      ...group,
-      summary: group.kind === 'wrong length'
-        ? 'Reported as drawn at the wrong length.'
-        : `Reported as: ${group.kind}.`,
-    }))
-    .sort((left, right) => right.count - left.count)
+    .sort((left, right) => (Number(left.global) - Number(right.global)) || (right.count - left.count))
 
   const feedbackBoardImage = row => row?.payload?.board?.imageUrl || row?.payload?.board?.image_url || ''
   const matchedFeedbackBoard = row => {
@@ -1767,23 +1793,23 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       {/* Its own section. These are not product decisions: nothing here is queued for a human to
           resolve, and each one is already acting on the image renderer. Grouping them under
           "things your stylist got wrong" implied a decision that does not exist. */}
-      {groupedRendererCorrections.length > 0 && (
+      {rendererReportGroups.length > 0 && (
         <section className="style-profile-section style-profile-learnings">
           <div className="style-profile-section-heading">
             <div>
               <span>Already in effect</span>
               <h2>Fixes your stylist applies when drawing pictures</h2>
             </div>
-            <p>You reported these images looked wrong. Your stylist reminds itself when it draws the same garment again — nothing here needs a decision from you.</p>
+            <p>You reported these looked wrong, so your stylist corrects for them the next time it draws. Nothing here needs a decision from you.</p>
           </div>
           <div className="limit-rows">
-            {groupedRendererCorrections.map(group => (
+            {rendererReportGroups.map(group => (
               <div key={group.key} className="limit-row">
                 <div className="limit-row-body">
                   <strong>{group.title}</strong>
-                  <span>{group.summary}</span>
+                  <span>{group.problem}. {group.effect}</span>
                 </div>
-                {group.count > 1 && <span className="history-row-date">{group.count} reports</span>}
+                {group.count > 1 && <span className="history-row-date">{group.count}×</span>}
               </div>
             ))}
           </div>
