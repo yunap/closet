@@ -74,7 +74,7 @@ board, keyed off that surface's own save key (`render-preview:${i}:${boardIdx}` 
   and never re-checked, so editing a board's feedback in Visual Lab was invisible to any chat
   thread showing that board. Full writeup and fix in `docs/board-feedback-desync-spec.md`. Chat
   now indexes saved boards by `imageUrl` on mount and on every thread load/save
-  (`refreshSavedBoards`, `StylistChat.jsx:1389`), and once a board is saved, both reads and writes
+  (`refreshSavedBoards`, `StylistChat.jsx`), and once a board is saved, both reads and writes
   for its chips branch through the canonical `saved_boards` record via `PATCH /api/saved-boards/:id`
   — the same mechanism Visual Lab itself uses — instead of the old `stylist_feedback`/thread-
   snapshot path. Unsaved boards keep using that old path, since there's no canonical record yet.
@@ -82,7 +82,7 @@ board, keyed off that surface's own save key (`render-preview:${i}:${boardIdx}` 
   with no chat-side click, and un-toggling it in chat deletes it from `saved_boards.payload` too,
   not just the local snapshot.
 - **[fixed 2026-07-27]** The wrong-length correction widget (`GeneratedBoardLengthFeedback`,
-  `StylistChat.jsx:27`) used to make you pick a garment first, then pick what was wrong with it —
+  `StylistChat.jsx`) used to make you pick a garment first, then pick what was wrong with it —
   a single shared pointer that silently reset to the first piece every time and never indicated
   which piece actually had a saved correction, so a correctly-stored correction on a second or
   third garment looked missing unless you happened to click through to it. Now every piece on the
@@ -113,12 +113,12 @@ board, keyed off that surface's own save key (`render-preview:${i}:${boardIdx}` 
 > the latter. For a board already in `saved_boards` (post 2026-07-27 fix): reads/writes
 > `saved_boards.payload.feedback_labels` / `.feedback_details` directly via
 > `PATCH /api/saved-boards/:id`, mirroring Visual Lab's own write path.
-> `StylistChat.jsx:3460` (unsaved-board path), `refreshSavedBoards`/`canonicalBoardFor`/
+> `StylistChat.jsx` (unsaved-board path), `refreshSavedBoards`/`canonicalBoardFor`/
 > `toggleCanonicalBoard*` helpers around `:3467-3546` (canonical path).
 >
-> **Delivery to the model.** `getSavedBoardMemory` (`styling-engine/rules.js:660`) reads
+> **Delivery to the model.** `getSavedBoardMemory` (`styling-engine/rules.js`) reads
 > `saved_boards.payload` and renders verdicts plus specific reasons into plain language. Spliced at
-> `styling-engine/core.js:2683` → used at `:2737`, and `routes/ai.js:1108-1109` → used at `:1116`
+> `styling-engine/core.js` → used at `:2737`, and `routes/ai.js` → used at `:1116`
 > (per-garment, "high-authority outfit memory") and `:1119` (global, "should bias ranking").
 
 ---
@@ -312,7 +312,7 @@ against this already-shipped mechanism (rather than a new proposal) is what surf
 > **Stores.** *Edit item card* → `pieces` via the editor. *Swap this out* → `stylist_feedback`
 > (`feedback_type: 'wrong_item_read'`, scoped to the piece and outfit). *Wrong for X* →
 > `POST /api/pieces/:id/occasion-exclusion` → `pieces.occasion_exclusions`.
-> `StylistChat.jsx:2962`, `:2994`, `:2998`, `:3515`.
+> `StylistChat.jsx`, `:2994`, `:2998`, `:3515`.
 
 ---
 
@@ -487,7 +487,7 @@ honestly offered as a deterministic rule.
   `STYLIST_SYSTEM` (freeform chat), `STYLE_SELECTED_ITEM_SYSTEM`, `GENERATE_OUTFIT_IDEAS_SYSTEM`,
   `OUTFIT_COMPOSER_SYSTEM`, `OUTFIT_BOARD_PLANNER_SYSTEM`, `EDITORIAL_NEW_PIECES_SYSTEM`, and
   `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` (twice) — plus the editorial image prompt at
-  `core.js:3035`. So editing a layer changes outfit *composition*, not only how images are drawn.
+  `core.js`. So editing a layer changes outfit *composition*, not only how images are drawn.
   Layers are loaded per user and cached, invalidated on any write (`promptRuntime.js`), so an edit
   takes effect on the next request.
 - **[by design] "This is a confirmed formula" is the model's phrasing, not a quotation.** Neither
@@ -506,8 +506,8 @@ honestly offered as a deterministic rule.
 > **Stores.** Reads `GET /api/settings/constitution`; writes `PUT /api/settings/constitution/:layer`
 > with history at `GET /api/settings/constitution/:layer/history`. Layer text is exported to prompts
 > as `BODY_CONTRACT`, `PROVEN_FORMULAS`, `AESTHETIC_GRAVITY`, `LANE_NEUTRALITY`
-> (`styling-engine/prompts.js:1237`, defaults in `constitutionSeed.js`).
-> `routes/crud.js:1437/1455/1477`, `VisualLab.jsx:557`.
+> (`styling-engine/prompts.js`, defaults in `constitutionSeed.js`).
+> `routes/crud.js/1455/1477`, `VisualLab.jsx`.
 
 ---
 
@@ -535,7 +535,7 @@ keep the chooser visible because those flows do not yet have an equivalent proce
 presentation. On the selected-piece chooser, **Create outfits from my wardrobe** dismisses after
 submit; **Suggest new pieces** remains visible. This is not a global “all submits dismiss” rule.
 
-> **Stores.** `App.jsx:134/139/144` hand the context to `AskClaude` → `StylistChat`. Persisted in
+> **Stores.** `App.jsx/139/144` hand the context to `AskClaude` → `StylistChat`. Persisted in
 > `chat_threads.payload.activeContext`.
 
 ---
@@ -568,7 +568,7 @@ behind **Why this outfit**, and an action row.
   synthetic-image provenance flag.
 
 > **Stores.** Rendered boards land in `saved_boards`; evaluation results in the thread payload
-> (`evaluationResultsByKey`, `evaluatedKeys`). `StylistChat.jsx:3098/3105/3129/3143/3154`, `:2619`.
+> (`evaluationResultsByKey`, `evaluatedKeys`). `StylistChat.jsx/3105/3129/3143/3154`, `:2619`.
 
 ---
 
@@ -674,7 +674,7 @@ title.
   outfit. The piece count beside it is the whole wardrobe, not what the stylist can currently see;
   the recency memory can be skipping a large share of it (see the composer footer entry).
 
-> **Stores.** `message.queryOptions`; `getResponseChips` (`StylistChat.jsx:1726`); subtitle at
+> **Stores.** `message.queryOptions`; `getResponseChips` (`StylistChat.jsx`); subtitle at
 > `:5078`.
 
 ---
@@ -704,10 +704,10 @@ separate mode.
   pointed to, from a completely independent mount-time effect (`initAndMigrate`) that never checked
   whether a specific thread had already been requested. Survived a hard reload, since both effects
   re-ran fresh in the same order every time. Fixed by making that effect's guard also skip when a
-  thread was requested via the URL (`StylistChat.jsx:1259`, `isLaunchingAction`).
+  thread was requested via the URL (`StylistChat.jsx`, `isLaunchingAction`).
 
 > **Stores.** Reads `chat_threads` rows and `payload.threadMemory.latestOutfits`. Titles/subtitles
-> computed at render — nothing is persisted. `ThreadRail.jsx:502/511/645`.
+> computed at render — nothing is persisted. `ThreadRail.jsx/511/645`.
 
 ---
 
@@ -729,7 +729,7 @@ line, rather than collapsing to the empty "Ask anything" hero. The clicked actio
 its own state and offers a reset.** It reads *"Skipping N recently used pieces · **Include them
 again**"*. Whole-wardrobe generation keeps a **session recency memory** so repeated asks do not
 return the same garments; that memory both **penalises** recently used pieces in scoring and
-**reorders** the roster (`sessionInfluence.pieceRecency`, `styling-engine/rules.js:2836`, `:2967`).
+**reorders** the roster (`sessionInfluence.pieceRecency`, `styling-engine/rules.js`, `:2967`).
 
 This matters for two reasons:
 
@@ -744,10 +744,10 @@ This matters for two reasons:
 > **Stores.** `whole_wardrobe_sessions`. `GET /api/ai/whole-wardrobe-session-memory` returns the
 > summary (`itemCount`, `formulaCount`, `recentSessionCount`); `DELETE` clears the table and is what
 > *Include them again* calls. Refreshed after each whole-wardrobe generation.
-> `StylistChat.jsx:4799`, `:1369`, `:3989`; `routes/ai.js:1291-1300`.
+> `StylistChat.jsx`, `:1369`, `:3989`; `routes/ai.js`.
 
 > **Stores.** Panel state is component-level; the resulting brief becomes the first user message
-> and `queryOptions` on the reply. `StylistChat.jsx:578-597`.
+> and `queryOptions` on the reply. `StylistChat.jsx`.
 
 ---
 
@@ -803,7 +803,7 @@ city is set, the forecast comes from here.
 **[by design]** A resolved forecast is marked `(live forecast, City)`; a heuristic guess is marked
 `(estimated)`. The distinction is visible in the plan lines.
 
-> **Stores.** Saved to the user profile via the header control (`StylistChat.jsx:5103-5130`). Used
+> **Stores.** Saved to the user profile via the header control (`StylistChat.jsx`). Used
 > by `resolveSlotWeather` (`styling-engine/outfitSetPlanner.js`).
 
 ---
@@ -836,7 +836,7 @@ city is set, the forecast comes from here.
   unanswered product question, not a code question. No proposal exists yet; flagging so it isn't
   rediscovered as "missing chips" again before anyone has thought about what the right shape is.
 
-> **Stores.** Sheets land in `saved_boards` like any other render. `StylistChat.jsx:2492/2501/2589`.
+> **Stores.** Sheets land in `saved_boards` like any other render. `StylistChat.jsx/2501/2589`.
 
 ---
 
@@ -860,7 +860,7 @@ city is set, the forecast comes from here.
   mostly for small wardrobes.
 
 > **Stores.** Built server-side by `buildBrokenModelCard` / `buildBrokenDiagnosticCard`
-> (`routes/ai.js`); deduped in `styling-engine/tools.js`. `StylistChat.jsx:2812/2831`.
+> (`routes/ai.js`); deduped in `styling-engine/tools.js`. `StylistChat.jsx/2831`.
 
 ---
 
@@ -878,7 +878,7 @@ text description cannot be judged as precisely as an image, so feedback captured
 reliable data. Chips remain on anything attached to an actual visual. Do not re-add them.
 
 > **Stores.** Rules → `stylist_feedback` (`owner_rule`); boards → `saved_boards`.
-> `StylistChat.jsx:5403/5408`.
+> `StylistChat.jsx/5408`.
 
 ---
 
@@ -904,7 +904,7 @@ calibration references; do not substitute a generic model"* and the equivalent f
 proportions. Without real photos those corrections have nothing to anchor to.
 
 > **Stores.** Reference rows carry a `kind` of `good_reference` / `bad_reference` / `real_photo`.
-> Correction text built in `styling-engine/rules.js:859-860`. `VisualLab.jsx:596-602`.
+> Correction text built in `styling-engine/rules.js`. `VisualLab.jsx`.
 
 ---
 
@@ -955,7 +955,7 @@ not a gallery.
 
 > **Stores.** `saved_boards.payload.feedback_labels` / `.feedback_details` via
 > `PATCH /api/saved-boards/:id`; `favorite` carries *Use strongly*. Read to the model by
-> `getSavedBoardMemory`. `VisualLab.jsx:662-666`, `:781-784`.
+> `getSavedBoardMemory`. `VisualLab.jsx`, `:781-784`.
 
 ---
 
@@ -997,7 +997,7 @@ controls disable while a write is in flight.
 
 > **Stores.** `saved_boards` via `PATCH /api/saved-boards/:id` — `favorite`,
 > `hidden_from_lookbook`, `archived`, `feedback_labels`, `feedback_details`. Memory queries filter
-> `COALESCE(archived,0) = 0` (`styling-engine/rules.js:611`). `VisualLab.jsx:909-929`, `:967-978`.
+> `COALESCE(archived,0) = 0` (`styling-engine/rules.js`). `VisualLab.jsx`, `:967-978`.
 
 ---
 
@@ -1012,7 +1012,7 @@ inbox for judging generated looks; Style profile is the editable prompt text. Fe
 Outfit feedback follows the destination-specific routes documented in the feedback map; stored
 reactions do not all carry prompt authority.
 
-> **Stores.** `VALID_SECTIONS = ['references','saved','profile','upload']`, `VisualLab.jsx:130`.
+> **Stores.** `VALID_SECTIONS = ['references','saved','profile','upload']`, `VisualLab.jsx`.
 
 ---
 
@@ -1070,7 +1070,7 @@ Worth protecting — a future "Most worn" label would be a lie the codebase curr
 spread. It was flagged for reconsideration only if usability testing showed the meaning unclear.
 
 > **Stores.** `usageStats` derived from outfit and board links, not from any wear log.
-> `PieceInventory.jsx:40-46`, `:205-228`.
+> `PieceInventory.jsx`, `:205-228`.
 
 ---
 
@@ -1158,7 +1158,7 @@ being linkable.
 
 > **Stores.** `todos` (`type`, `description`, `linked_piece_id`, `field`, `source_type`,
 > `source_id`, `payload`). Endpoints `GET/POST /api/todos`, `POST /api/todos/clear-orphaned`,
-> `PATCH /api/todos/:id/toggle`, `DELETE /api/todos/:id` (`routes/crud.js:1152-1211`). Badge count
+> `PATCH /api/todos/:id/toggle`, `DELETE /api/todos/:id` (`routes/crud.js`). Badge count
 > via `usePendingWardrobeTaskCount`, shared across mounts so it stays in sync.
 
 ---
@@ -1219,7 +1219,7 @@ would need an explicit owner action and probably a real photo; it must never be 
   and filters…"*.
 
 > **Stores.** `outfits` / `saved_boards`, filtered client-side; state in `searchParams`
-> (`OutfitLookbook.jsx:1512-1514`). `SORT_OPTIONS` at `:32`.
+> (`OutfitLookbook.jsx`). `SORT_OPTIONS` at `:32`.
 
 ---
 
@@ -1243,9 +1243,9 @@ is where most people look for "what does my stylist know about me" — and it is
 
 > **Stores.** `style_constitution` via `GET/PUT /api/settings/constitution[/:layer]`, history at
 > `/:layer/history`. Learned rules read `stylist_feedback` filtered to
-> `LEARNING_TYPES = ['owner_rule','preference_reaction','correction']` (`StylistSettings.jsx:32`);
+> `LEARNING_TYPES = ['owner_rule','preference_reaction','correction']` (`StylistSettings.jsx`);
 > **Retire** sets an archived flag rather than deleting. Mode is set by the caller —
-> `App.jsx:168` (account) and `VisualLab.jsx:647` (style, embedded).
+> `App.jsx` (account) and `VisualLab.jsx` (style, embedded).
 
 ---
 
@@ -1270,7 +1270,7 @@ Two rules baked into the flow and worth not breaking:
 - **[by design]** The aesthetic step records colours **exactly as stated** and never synthesises a
   favourite, signature or "best" colour. That prohibition is repeated inside Layer 3's own text.
 
-> **Stores.** Writes `style_constitution` layers and the profile row. `Onboarding.jsx:14`.
+> **Stores.** Writes `style_constitution` layers and the profile row. `Onboarding.jsx`.
 
 ---
 
@@ -1318,7 +1318,7 @@ video-origin sessions is measurable from past imports** — no new video, no mod
 is low, sampling tuning cannot save it, because the problem is the evidence quality rather than the
 frame count.
 
-> **Stores.** `import_images`, `import_sessions`. `routes/importer.js:100-130` (sampling),
+> **Stores.** `import_images`, `import_sessions`. `routes/importer.js` (sampling),
 > `:180-212` (classification, `CLASSIFY_BATCH_SIZE = 10`).
 
 > **Stores.** `pieces` plus the upload pipeline. `WardrobeImport.jsx`, `routes/importer.js`
