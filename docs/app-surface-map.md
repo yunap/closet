@@ -424,11 +424,27 @@ through `PATCH /feedback-synthesis/drafts/:id` creates the finding correctly (ve
 in the sandbox). Nothing in `styling-engine/` reads `product_quality_findings`, so a finding still
 reaches no prompt.
 
-**[bug] Historical wrong-length reports name impossible fields.** Five live corrections record
+**[fixed 2026-08-12] Historical wrong-length reports named impossible fields.** Corrections recorded
 *sleeve* issues against shoes and an accessory — a necklace with "sleeves rendered too long", loafers
-and sandals likewise. They predate the 2026-07-27 fix that filters wrong-length reasons by
-`piece.category`, and `getSavedBoardRendererMemory` still renders them into the image prompt
-verbatim. Reproduce with the query in `feedback-and-memory-map.md` §4; no cleanup has been run.
+and sandals likewise — and `getSavedBoardRendererMemory` rendered them into the image prompt
+verbatim. They predate the 2026-07-27 fix that filters wrong-length reasons by `piece.category`.
+
+Cleaned by `scratch/clean_impossible_length_reports.js` (preview by default, `--apply` to write),
+which decides validity with the app's own `wrongLengthReasonsForCategory` rather than a pattern of
+its own, so the cleanup and the capture UI cannot disagree. **Two payload shapes carry these and the
+reader consumes both** — a first pass that handled only the first left one correction still reaching
+the model:
+
+| shape | treatment | removed |
+|---|---|---|
+| `saved_boards.payload.feedback_details.wrong_length` (array) | invalid entries filtered out, valid ones kept | 7 across 2 boards |
+| `stylist_feedback.payload.length_correction` (single object) | the **row is archived** — this table archives rather than deletes, and the reader already skips archived rows | 3 rows (1 live, 2 already archived) |
+
+Editing the second shape's payload instead would leave a `wrong_length` report with no correction,
+which makes the reader emit a vague *"match the saved reference lengths"* line rather than nothing.
+The count was initially reported as five; the app's own rule found **ten**, because an accessory
+also had `upper_hem` and `lower_hem` entries that a sleeve-pattern search missed.
+Pre-cleanup database at `backups/wardrobe/wardrobe-before-impossible-length-cleanup-2026-08-12.db`.
 
 **[by design, owner-ruled 2026-08-12] Two primary tabs, not three.** Style Profile is now
 **Active guidance | Review feedback** — what the stylist uses now, and what still needs attention.
