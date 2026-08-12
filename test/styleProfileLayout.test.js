@@ -164,3 +164,15 @@ test('an unusable synthesis result is reported, not queued as a decision', () =>
   assert.match(source, /label: 'Remove', run: \(\) => removeSynthesisNonResult\(row\)/)
   assert.match(source, /title: "Couldn't be turned into a lesson"/)
 })
+
+test('forgetting guidance is recoverable: it lists in Past decisions with Start using again', () => {
+  // "Forget this" archives rather than deletes, but nothing surfaced archived guidance, so the
+  // action looked permanent and the recovery archive was missing its most likely entry.
+  assert.match(source, /includeArchived=true/)
+  assert.match(source, /setForgottenLearnings\(feedbackRows\.filter\(row => row\.archived && isStandingLearning\(row\)\)\)/)
+  assert.match(source, /label: 'Start using again', run: \(\) => restoreLearning\(row\)/)
+  assert.match(source, /body: JSON\.stringify\(\{ archived: false \}\)/)
+  // The active lists must now exclude archived explicitly, since the response no longer does.
+  assert.match(source, /const liveFeedbackRows = feedbackRows\.filter\(row => !row\.archived\)/)
+  assert.match(source, /const activeFeedbackRows = liveFeedbackRows/)
+})

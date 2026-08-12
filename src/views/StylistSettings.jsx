@@ -330,6 +330,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const [convertingLearningId, setConvertingLearningId] = useState(null)
   const [showAllLearnings, setShowAllLearnings] = useState(false)
   const [foundationOpen, setFoundationOpen] = useState(false)
+  const [forgottenLearnings, setForgottenLearnings] = useState([])
   const [openFoundationLayer, setOpenFoundationLayer] = useState(null)
   const [editingFoundationLayer, setEditingFoundationLayer] = useState(null)
   const [sessions, setSessions] = useState([])
@@ -355,16 +356,20 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
         setOccasionExclusions(Array.isArray(rows) ? rows : [])
       }).catch(() => setOccasionExclusions([])).finally(() => setOccasionExclusionsLoading(false))
       const [feedback, savedBoards, synthesisRows, constraints, findings] = await Promise.all([
-        fetch('/api/stylist-feedback?limit=1000').then(r => r.json()).catch(() => []),
+        fetch('/api/stylist-feedback?limit=1000&includeArchived=true').then(r => r.json()).catch(() => []),
         fetch('/api/saved-boards?limit=500').then(r => r.json()).catch(() => []),
         fetch('/api/feedback-synthesis/drafts').then(r => r.json()).catch(() => []),
         fetch('/api/owner-constraints').then(r => r.json()).catch(() => []),
         fetch('/api/product-quality-findings').then(r => r.json()).catch(() => []),
       ])
       const feedbackRows = Array.isArray(feedback) ? feedback : []
-      const activeFeedbackRows = feedbackRows.filter(row => row.memory?.strength !== 'none')
+      const liveFeedbackRows = feedbackRows.filter(row => !row.archived)
+      const activeFeedbackRows = liveFeedbackRows.filter(row => row.memory?.strength !== 'none')
       setLearnings(activeFeedbackRows.filter(isStandingLearning))
       setContextualFeedback(activeFeedbackRows.filter(row => !isStandingLearning(row)))
+      // Forgetting guidance archives the row rather than deleting it, so it stays recoverable —
+      // but nothing surfaced it, which made "Forget this" look permanent. Past decisions lists it.
+      setForgottenLearnings(feedbackRows.filter(row => row.archived && isStandingLearning(row)))
       setFeedbackBoards(Array.isArray(savedBoards) ? savedBoards : [])
       setSynthesisDrafts(Array.isArray(synthesisRows) ? synthesisRows : [])
       setOwnerConstraints(Array.isArray(constraints) ? constraints : [])
@@ -500,6 +505,15 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     else flash('Could not start using this rule again.')
   }
 
+  const restoreLearning = async (row) => {
+    const res = await fetch(`/api/stylist-feedback/${row.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: false }),
+    })
+    if (res.ok) { flash('Your stylist is using this again.'); load() }
+    else flash('Could not start using this again.')
+  }
+
   const removeSynthesisNonResult = async (draft) => {
     const res = await fetch(`/api/feedback-synthesis/drafts/${draft.id}`, { method: 'DELETE' })
     if (res.ok) { flash('Removed.'); load() }
@@ -617,6 +631,13 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           detail: 'Firm rule you stopped using.',
           date: row.updated_at || row.created_at,
           action: { label: 'Start using again', run: () => restoreOwnerConstraint(row) },
+        })),
+        ...forgottenLearnings.map(row => ({
+          key: `forgotten-${row.id}`,
+          title: row.note,
+          detail: ownerGuidanceUsedWhen(row) ? `Was used for ${ownerGuidanceUsedWhen(row)}.` : 'Guidance you stopped using.',
+          date: row.updated_at || row.created_at,
+          action: { label: 'Start using again', run: () => restoreLearning(row) },
         })),
         ...synthesisDrafts.filter(row => row.status === 'retired' && row.disposition !== 'insufficient_evidence').map(row => ({
           key: `retired-${row.id}`,

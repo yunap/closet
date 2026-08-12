@@ -416,6 +416,12 @@ block contained no button or handler), so nothing could be done from it.
 - **Past decisions** is now a recovery archive reached by a quiet `View past decisions` link at the
   bottom of Active guidance, opening as a sub-view at `?section=profile&past=1` — the same pattern
   as *Review all limits*.
+- **Forgetting guidance is recoverable.** *Forget this* archives the row rather than deleting it,
+  but until 2026-08-12 nothing surfaced archived guidance, so the action looked permanent and the
+  recovery archive was missing the entry an owner is most likely to want back. Forgotten told-you
+  rules now list under **No longer used** with **Start using again**, showing the scope they had
+  (*"Was used for canvas sneakers and rainy weather"*). Restoring preserves the stored applicability
+  envelope — verified round-trip.
 - **Every row has a recovery action**, which is the archive's only justification: **Start using
   again** (retired firm rules and retired lessons), **Reconsider** (declined suggestions and
   reviewed conclusions, which return to Review feedback to be re-decided rather than switched
