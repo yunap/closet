@@ -26,7 +26,9 @@ test('active guidance leads with the memory itself and keeps compact canonical s
   assert.match(source, /Other things you&rsquo;ve told your stylist/)
   assert.match(source, /className="memory-card"/)
   assert.match(source, /className="memory-told-row"/)
-  assert.match(source, /className="style-memory-row style-memory-row--context"/)
+  // Raw feedback rows use the same memory-card shell as an accepted lesson — photo, one headline
+  // sentence (her own words, not the system's), one scope line — not a bespoke database-row layout.
+  assert.match(source, /className="memory-card memory-card-feedback"/)
   assert.match(css, /\.style-memory-list\s*\{[\s\S]*border-top:\s*1px solid var\(--border\)/)
   assert.match(css, /\.style-memory-row\s*\{[\s\S]*border-bottom:\s*1px solid var\(--border-light\)/)
 })

@@ -1708,41 +1708,57 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           const canOpenSourceBoard = hasImageBoardMatch && boardIsSource
           const canOpenRelatedBoard = Boolean(relatedBoardId)
           const canOpenRelatedGarment = row.feedback_type === WRONG_PIECE_FOR_OUTFIT_FEEDBACK && Boolean(row?.payload?.pieceId || row?.payload?.piece?.id)
+          // The garment named in the reaction, when the payload snapshot carries its photo — same
+          // idea as lessonPhoto/draftLessonPhotos, but sourced from a raw feedback row instead of a
+          // synthesized draft. Falls back to the board it was recorded on; never fabricated.
+          const wrongPieceId = Number(row?.payload?.pieceId || row?.payload?.piece?.id) || null
+          const wrongPiecePhoto = wrongPieceId
+            ? (row?.payload?.outfit?.pieces || row?.payload?.pieces || []).find(piece => Number(piece?.id) === wrongPieceId)?.photo
+            : null
+          const boardImage = feedbackBoardImage(row)
+          const thumbSrc = wrongPiecePhoto
+            ? uploadThumbnailSrc(`/uploads/${wrongPiecePhoto}`, 'garment-display')
+            : (boardImage ? uploadThumbnailSrc(boardImage, 'lookbook-display') : null)
+          // "black white trim open cardigan — Wrong choice for Soft Structure Contrast: standard
+          // wear" reads as one clause instead of a stacked eyebrow + bold title + subtitle.
+          const scopeLine = displayLabel ? `${contextLabel} — ${displayLabel}` : `${feedbackTypeDisplayLabel(row)} — ${contextLabel}`
+          const canUseForLesson = row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id)
           return (
-            <div key={row.id} id={`feedback-row-${row.id}`} className="style-memory-row style-memory-row--context">
-              <div className="style-memory-context-layout">
-                <div className="style-memory-copy">
-                  {row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id) && (
-                    <label className="feedback-synthesis-select">
-                      <input
-                        type="checkbox"
-                        checked={selectedSynthesisFeedback.has(row.id)}
-                        onChange={() => toggleSynthesisFeedback(row.id)}
-                      />
-                      Use this feedback
-                    </label>
-                  )}
-                  <div className="style-memory-kind">
-                    {feedbackTypeDisplayLabel(row)}
-                  </div>
-                  <div className="style-memory-context-title">{contextLabel}</div>
-                  {displayLabel && <div className="style-memory-label">{displayLabel}</div>}
-                  <div className="style-memory-note">{readableNote}</div>
-                  {hasTechnicalDetails && (
-                    <details className="style-memory-technical">
-                      <summary>Technical details</summary>
-                      <dl>
-                        {row.target_type && <><dt>Target</dt><dd>{row.target_type}</dd></>}
-                        {row.context_type && <><dt>Context</dt><dd>{row.context_type}{row.context_id ? ` · ${row.context_id}` : ''}</dd></>}
-                        {row.referenced_board_id && <><dt>{boardIsSource ? 'Source board' : 'Related board'}</dt><dd>{row.referenced_board_id}</dd></>}
-                        {row.referenced_thread_id && <><dt>Source chat</dt><dd>{row.referenced_thread_id}</dd></>}
-                        {readableNote !== String(row.note || '').trim() && <><dt>Raw note</dt><dd>{row.note}</dd></>}
-                      </dl>
-                    </details>
-                  )}
-                </div>
+            <article key={row.id} id={`feedback-row-${row.id}`} className="memory-card memory-card-feedback">
+              <div className="memory-card-thumb">
+                {thumbSrc
+                  ? <img src={thumbSrc} alt="" loading="lazy" decoding="async" />
+                  : <span className="memory-card-thumb-empty" aria-hidden="true" />}
+              </div>
+              <div className="memory-card-body">
+                <h3>{sentenceCase(readableNote)}</h3>
+                <p className="memory-card-scope">{scopeLine}</p>
+                <p className="memory-card-source">{row.created_at}</p>
+                {hasTechnicalDetails && (
+                  <details className="memory-card-more">
+                    <summary>Technical details</summary>
+                    <dl>
+                      {row.target_type && <><dt>Target</dt><dd>{row.target_type}</dd></>}
+                      {row.context_type && <><dt>Context</dt><dd>{row.context_type}{row.context_id ? ` · ${row.context_id}` : ''}</dd></>}
+                      {row.referenced_board_id && <><dt>{boardIsSource ? 'Source board' : 'Related board'}</dt><dd>{row.referenced_board_id}</dd></>}
+                      {row.referenced_thread_id && <><dt>Source chat</dt><dd>{row.referenced_thread_id}</dd></>}
+                      {readableNote !== String(row.note || '').trim() && <><dt>Raw note</dt><dd>{row.note}</dd></>}
+                    </dl>
+                  </details>
+                )}
+              </div>
+              <div className="memory-card-feedback-actions">
+                {canUseForLesson && (
+                  <label className="feedback-synthesis-select">
+                    <input
+                      type="checkbox"
+                      checked={selectedSynthesisFeedback.has(row.id)}
+                      onChange={() => toggleSynthesisFeedback(row.id)}
+                    />
+                    Use this feedback
+                  </label>
+                )}
                 <div className="style-memory-context-actions">
-                  <span className="style-memory-date">{row.created_at}</span>
                   {canOpenContext && !canOpenSourceBoard && !canOpenRelatedBoard && !canOpenRelatedGarment && !canOpenThread && (
                     <button className="btn-secondary" onClick={() => openFeedbackContext(row)}>
                       Open {row.context_type === 'outfit' ? 'outfit' : 'garment'}
@@ -1765,7 +1781,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
                   <button className="style-memory-retire" onClick={() => removeContextualFeedback(row)}>Remove</button>
                 </div>
               </div>
-            </div>
+            </article>
           )
         })}
         </div>

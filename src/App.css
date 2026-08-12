@@ -11540,16 +11540,6 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   border-bottom: 0;
 }
 
-.style-memory-row-heading,
-.style-memory-context-layout {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.style-memory-row-heading {
-  align-items: baseline;
-}
 
 .style-memory-kind {
   color: var(--accent);
@@ -11691,12 +11681,6 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   field-sizing: content;
   min-height: 54px;
   resize: vertical;
-}
-
-.style-memory-date {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-size: var(--type-caption);
 }
 
 .style-memory-editor,
@@ -12045,22 +12029,11 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   font-size: var(--type-caption);
 }
 
-.style-memory-copy {
-  min-width: 0;
-  flex: 1 1 360px;
-}
-
 .style-memory-context-title {
   margin-top: 4px;
   color: var(--text);
   font-size: 13px;
   font-weight: 650;
-}
-
-.style-memory-label {
-  margin-top: 2px;
-  color: var(--text-muted);
-  font-size: var(--type-meta);
 }
 
 .style-memory-note {
@@ -12378,6 +12351,23 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   color: var(--text-muted);
   font-size: var(--type-caption);
   font-weight: 650;
+}
+
+/* A raw feedback row, same card shell as a lesson but with more possible actions (open source
+   chat/board/garment, use-for-lesson, remove) than a lesson ever has — so its actions live as
+   their own full-width row below the body rather than squeezed into one auto-width column. */
+.memory-card-feedback {
+  grid-template-columns: auto 1fr;
+}
+
+.memory-card-feedback-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
 }
 
 .memory-told {

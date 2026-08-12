@@ -47,6 +47,22 @@ const FEEDBACK_ROWS = [
     created_at: '2026-08-10 09:00:00',
     memory: { destination: 'provisional', strength: 'context', synthesisEligible: true, display: { title: 'Rain walk', summary: 'wrong shoe' } },
   },
+  // Not referenced by any draft's source_feedback_ids below, unlike id 4 — actionableContextualFeedback
+  // excludes any row already used as evidence, so this is the one that stays visible as a raw,
+  // still-unreviewed reaction and exercises the memory-card-feedback row itself.
+  {
+    id: 5, feedback_type: 'wrong_item_read', target_type: 'whole_wardrobe_outfit', context_type: 'wardrobe',
+    context_name: 'Whole wardrobe', note: 'this is a very classic cardigan, does not feel right with the rest', archived: false,
+    payload: {
+      pieceId: 92, pieceName: 'black white trim open cardigan',
+      outfit: { label: 'Soft Structure Contrast: standard wear', pieces: [{ id: 92, name: 'black white trim open cardigan', photo: 'pieces/92.jpg' }] },
+    },
+    created_at: '2026-08-11 17:45:02',
+    memory: {
+      destination: 'provisional', strength: 'context', synthesisEligible: true,
+      display: { title: 'black white trim open cardigan', context: 'Wrong choice for Soft Structure Contrast: standard wear', summary: 'this is a very classic cardigan, does not feel right with the rest' },
+    },
+  },
 ]
 const ROUTES = {
   '/api/stylist-feedback': FEEDBACK_ROWS,
@@ -188,6 +204,24 @@ test('a pending lesson resting card asks a plain question, not a form', async ()
   // A pending product-issue draft renders too, with disposition-appropriate copy, not "remember".
   assert.match(text, /product issue rather than a styling preference/)
   assert.match(text, /Mark reviewed/)
+})
+
+test('a raw feedback row uses the same memory-card shell as an accepted lesson', async () => {
+  const { container, unmount } = await renderProfile({ tab: 'Review feedback', keepMounted: true })
+  try {
+    const text = container.textContent
+    // Her own words are the headline — not the system's "WRONG CHOICE FOR THIS OUTFIT" eyebrow
+    // stacked above a bold title stacked above a quoted note.
+    assert.match(text, /This is a very classic cardigan, does not feel right with the rest/)
+    assert.match(text, /black white trim open cardigan — Wrong choice for Soft Structure Contrast: standard wear/)
+    const card = [...container.querySelectorAll('.memory-card-feedback')].find(el => el.textContent.includes('very classic cardigan'))
+    assert.ok(card, 'feedback row did not render as a .memory-card-feedback')
+    assert.ok(card.querySelector('.memory-card-thumb img'), 'the named garment has a photo in the fixture but no thumbnail rendered')
+    assert.ok(card.querySelector('.feedback-synthesis-select'), '"Use this feedback" control missing from a synthesis-eligible row')
+    assert.ok(card.querySelector('.style-memory-retire'), 'Remove control missing')
+  } finally {
+    unmount()
+  }
 })
 
 test('"Not quite" reveals reason chips, and only "The wording" reveals a textarea', async () => {
