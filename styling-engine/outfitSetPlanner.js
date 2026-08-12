@@ -35,6 +35,7 @@ import {
   pieceStyleProfile,
   hasRejectedReference,
   getAcceptedFeedbackSynthesisMemory,
+  getOwnerRuleNotes,
 } from './rules.js'
 import {
   bottomKind,
@@ -3293,6 +3294,20 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   const composePool = capsuleRosterSelection
     ? capsuleRosterSelection.roster
     : modelPlanPool({ allPieces, slots, constraints, question, mood, planKind })
+  const applicableOwnerRules = [...new Set([
+    ...(Array.isArray(ownerRules) ? ownerRules : []),
+    ...getOwnerRuleNotes(8, {
+      requestContexts: slots.map(slot => ({
+        occasion: slot?.occasion || '',
+        activity: slot?.activity || '',
+        season: slot?.season || (isSummerContext ? 'summer' : (isWinterContext ? 'winter' : '')),
+        weather: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
+        weatherText: [slot?.weather, slot?.slotWeather, slot?.environment, slot?.bestFor, question, mood].filter(Boolean).join(' '),
+        requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor, question].filter(Boolean).join(' '),
+      })),
+      pieces: composePool,
+    }),
+  ])].slice(0, 8)
   const acceptedSynthesisText = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: composePool.map(piece => piece.id),
     contexts: slots.map(slot => ({
@@ -3457,8 +3472,8 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // exception ("can drape over the shoulders if the office AC runs cold")
     // on a regular office day — strengthened framing below to name and
     // forbid that exact move.
-    Array.isArray(ownerRules) && ownerRules.length
-      ? `OWNER RULES — hard requirements, not suggestions. Do not construct exceptions or conditional workarounds (no "in case the AC runs cold"). If a rule makes a slot impossible, disclose the conflict instead of bending the rule. Apply to every outfit you compose: ${ownerRules.map(rule => `"${rule}"`).join('; ')}`
+    Array.isArray(applicableOwnerRules) && applicableOwnerRules.length
+      ? `OWNER GUIDANCE — applicable to this bounded roster and these use cases. Follow it unless the owner explicitly changes it in this request: ${applicableOwnerRules.map(rule => `"${rule}"`).join('; ')}`
       : '',
     acceptedSynthesisText
       ? `OWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for this roster and these use cases; respect each stated boundary: ${acceptedSynthesisText}`

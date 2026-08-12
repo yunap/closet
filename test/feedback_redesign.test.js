@@ -83,13 +83,16 @@ test('synthesis review always shows the proposed lesson when no owner edit exist
 
 test('synthesis review exposes per-card dirty state, editable boundaries, and processed evidence', () => {
   const content = fs.readFileSync(path.join(__dirname, '../src/views/StylistSettings.jsx'), 'utf8')
-  assert.ok(content.includes('disabled={!draftDirty || !applicabilityIsUsable(editedApplicability)}'))
-  assert.ok(content.includes('Changes saved.'))
+  // A pending draft is still authorable — she may reword what the stylist proposed before accepting
+  // it. What she cannot do, here or on an accepted lesson, is adjust where it applies: those
+  // conditions are ANDed, so removing one widens delivery instead of narrowing it.
+  assert.ok(content.includes('const draftDirty = textDirty || boundaryDirty'))
   assert.ok(content.includes('synthesisBoundaryEdits[draft.id] ?? effectiveSynthesisBoundary(draft)'))
+  assert.ok(!content.includes('applicabilityIsUsable'))
+  assert.ok(content.includes('Would be used when:'))
   assert.ok(content.includes('pendingSynthesisDrafts.length > 0'))
   assert.ok(content.includes('actionableContextualFeedback'))
   assert.ok(content.includes('row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id)'))
-  assert.ok(content.includes('feedback-synthesis-draft--accepted'))
   assert.ok(content.includes('actionableContextualFeedback.length > 0 && <div className="style-memory-toolbar">'))
   assert.ok(content.includes('No provisional outfit reactions are currently available for lesson synthesis.'))
 })

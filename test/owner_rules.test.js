@@ -24,6 +24,7 @@ const { db } = await import('../db.js')
 const { getStylistFeedbackMemory, getOwnerRuleNotes } = await import('../styling-engine/rules.js')
 const { storeUserCorrection, executeTool } = await import('../styling-engine/tools.js')
 const { syncPieceRuleReceipt } = await import('../routes/crud.js')
+const { extractOwnerGuidanceApplicability, ownerGuidanceApplies } = await import('../lib/ownerGuidance.js')
 
 after(() => {
   db.close()
@@ -31,6 +32,7 @@ after(() => {
 })
 
 beforeEach(() => {
+  db.prepare('DELETE FROM owner_constraints').run()
   db.prepare('DELETE FROM stylist_feedback').run()
   db.prepare('DELETE FROM pieces').run()
 })
@@ -66,6 +68,116 @@ test('storeUserCorrection dedupe still holds across the type change', () => {
   storeUserCorrection('No flats for me.', 'general', null)
   const rows = db.prepare('SELECT * FROM stylist_feedback').all()
   assert.equal(rows.length, 1, 'an identical note must not stack')
+})
+
+test('storeUserCorrection stores a supported firm-rule proposal for later owner confirmation', () => {
+  const result = storeUserCorrection("I don't wear boots in summer.", 'general', null, {
+    firmRuleProposal: {
+      selector_type: 'footwear',
+      selector_values: ['boots'],
+      context_dimension: 'season',
+      context_values: ['summer'],
+      reason: "Don't suggest boots in summer.",
+    },
+  })
+  assert.equal(result.firm_rule_proposed, true)
+  const row = db.prepare('SELECT * FROM stylist_feedback ORDER BY id DESC LIMIT 1').get()
+  const proposal = JSON.parse(row.payload).ownerConstraintProposal
+  assert.deepEqual(proposal, {
+    version: 1,
+    selectorType: 'footwear',
+    selectorValues: ['boots'],
+    contextDimension: 'season',
+    contextValues: ['summer'],
+    reason: "Don't suggest boots in summer.",
+  })
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM owner_constraints').get().n, 0, 'storing a proposal must not activate a gate')
+})
+
+test('storeUserCorrection keeps the owner rule but drops an incomplete firm-rule proposal', () => {
+  const result = storeUserCorrection('I prefer practical shoes for trips.', 'general', null, {
+    firmRuleProposal: {
+      selector_type: 'footwear',
+      selector_values: ['heels'],
+      context_dimension: 'activity',
+      context_values: [],
+      reason: 'No heels for travel.',
+    },
+  })
+  assert.equal(result.firm_rule_proposed, false)
+  const row = db.prepare('SELECT * FROM stylist_feedback ORDER BY id DESC LIMIT 1').get()
+  assert.equal(JSON.parse(row.payload).ownerConstraintProposal, undefined)
+  assert.equal(JSON.parse(row.payload).ownerGuidanceApplicability.reach, 'garment_context')
+})
+
+test('explicit sandals-for-hiking language gains context-aware delivery without model-supplied structure', () => {
+  const result = storeUserCorrection('I never wear sandals for hiking.', 'general', null)
+  assert.equal(result.scope, 'garment_context')
+  const row = db.prepare('SELECT * FROM stylist_feedback ORDER BY id DESC LIMIT 1').get()
+  const applicability = JSON.parse(row.payload).ownerGuidanceApplicability
+  assert.deepEqual(applicability.garment.footwear, ['sandals'])
+  assert.deepEqual(applicability.context.activities, ['hiking'])
+  assert.deepEqual(getOwnerRuleNotes(8, {
+    requestContext: { activity: 'hiking' },
+    pieces: [{ id: 1, name: 'Leather sandals', category: 'shoes' }],
+  }), ['I never wear sandals for hiking.'])
+  assert.deepEqual(getOwnerRuleNotes(8, {
+    requestContext: { activity: 'walking' },
+    pieces: [{ id: 1, name: 'Leather sandals', category: 'shoes' }],
+  }), [])
+  assert.deepEqual(getOwnerRuleNotes(8, {
+    requestContext: { activity: 'hiking' },
+    pieces: [{ id: 2, name: 'Trail boots', category: 'shoes' }],
+  }), [])
+})
+
+test('new ambiguous guidance is stored for review but receives no prompt authority', () => {
+  const result = storeUserCorrection('This is not really what I mean.', 'general', null)
+  assert.equal(result.scope, 'unresolved')
+  assert.deepEqual(getOwnerRuleNotes(8, { requestContext: {}, pieces: [] }), [])
+  assert.equal(getStylistFeedbackMemory(null, null, 24, { ownerGuidanceContext: { requestContext: {}, pieces: [] } }), '')
+})
+
+test('guidance applicability combines material and footwear instead of widening either selector', () => {
+  const applicability = extractOwnerGuidanceApplicability('Canvas sneakers are not suitable for rainy weather.')
+  assert.deepEqual(applicability.garment.footwear, ['sneakers'])
+  assert.deepEqual(applicability.garment.materials, ['canvas'])
+  const requestContext = { weather: { rainy: true } }
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext,
+    pieces: [{ id: 1, category: 'shoes', name: 'canvas sneakers', fabric_category: 'canvas', fiber_content: [] }],
+  }), true)
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext,
+    pieces: [{ id: 2, category: 'shoes', name: 'leather sneakers', fabric_category: 'leather', fiber_content: [] }],
+  }), false)
+  assert.equal(ownerGuidanceApplies(applicability, {
+    requestContext,
+    pieces: [{ id: 3, category: 'shoes', name: 'canvas flats', fabric_category: 'canvas', fiber_content: [] }],
+  }), false)
+})
+
+test('office and client guidance uses explicit request situations rather than all smart-casual requests', () => {
+  const applicability = extractOwnerGuidanceApplicability('For office and client days: structured silhouettes only.')
+  assert.deepEqual(applicability.context.situations, ['office', 'client'])
+  assert.equal(ownerGuidanceApplies(applicability, { requestContext: { requestText: 'five office outfits' } }), true)
+  assert.equal(ownerGuidanceApplies(applicability, { requestContext: { requestText: 'smart casual museum visit' } }), false)
+})
+
+test('a repeated correction can gain a validated proposal without duplicating the memory', () => {
+  storeUserCorrection('No dresses for travel.', 'general', null)
+  const result = storeUserCorrection('No dresses for travel.', 'general', null, {
+    firmRuleProposal: {
+      selector_type: 'category',
+      selector_values: ['dress'],
+      context_dimension: 'occasion',
+      context_values: ['travel'],
+      reason: "Don't suggest dresses for travel.",
+    },
+  })
+  assert.equal(result.firm_rule_proposed, true)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback').get().n, 1)
+  assert.equal(JSON.parse(db.prepare('SELECT payload FROM stylist_feedback').get().payload).ownerConstraintProposal.contextDimension, 'occasion')
 })
 
 test('a verified garment correction writes the garment rule and a display-only receipt', async () => {

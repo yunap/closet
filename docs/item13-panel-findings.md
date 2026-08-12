@@ -1,7 +1,10 @@
 # Item 13 panel findings — owner review required
 
-**Status:** panel complete. The navigation home and product-issues home are owner-ratified; the
-generated-image-report follow-up is clarified below. The replacement UI remains unimplemented.
+**Status:** panel complete and owner-ratified. The replacement UI is being implemented: Style
+Profile now separates **Active guidance | Review feedback | History**, and uses the established
+Stylist visual language rather than an administrative dashboard treatment. Review feedback now
+shows open product findings with an explicit resolution destination, and piece-scoped generated-
+image reports as read-only projections of their source feedback.
 
 The Mode B panel reviewed the complete packet and all ten fresh fixture captures through the three
 required lenses: fashion-product competence, human↔model interaction design, and cost/product
@@ -14,7 +17,7 @@ and called for a concrete task-based replacement.
 
 The primary hierarchy should be:
 
-1. **What the stylist uses / Active guidance** — constitution, standing guidance, accepted scoped
+1. **Active guidance** — recent active changes, standing guidance, accepted scoped
    lessons and hard limits. Generated-image problem reports remain a separate review concern rather
    than personal style guidance.
 2. **Review feedback / Needs review** — unprocessed reactions that still support an action,
@@ -65,7 +68,7 @@ becomes active until the owner accepts the draft.
 
 ### 7. Origin surfaces show projections, not duplicate authority
 
-Chat, Visual Lab, Lookbook, garments, and Tasks may show lightweight receipts and deep links. They
+Chat, Style Lab, Lookbook, garments, and Tasks may show lightweight receipts and deep links. They
 must use **Source** only for the originating action and **Related** for later matched objects. Each
 projection opens the one canonical record or exact source context and carries no independent state.
 
@@ -85,13 +88,14 @@ polish.
 STYLE PROFILE
 Control what the stylist follows and review what still needs a decision.
 
-[What the stylist uses] [Review feedback 3] [History]
+[Active guidance] [Review feedback] [History]
 
-WHAT THE STYLIST USES
-  Your style & needs
-  Always remember / Standing guidance
-  Limits
-  Specific situations / Scoped guidance
+ACTIVE GUIDANCE
+  Recently learned
+  What your stylist remembers
+  Garment & occasion limits
+  Contextual lessons
+  Your foundation (collapsed)
 
 REVIEW FEEDBACK
   Teach the stylist
@@ -117,10 +121,13 @@ forms appear only after **Edit**. Accepted lessons remain compact until opened i
 - Fashion-product reviewer: keep Style Profile as the trust hub but did not require a primary-nav
   move.
 
-**Owner ruling, 2026-08-11:** Style Profile remains in **Visual Lab**. Stylist is the busy working
-conversation surface; Visual Lab is where the owner teaches, evaluates and configures the stylist.
-Stylist may deep-link to a relevant record but is not the profile's navigation home. A possible
-future rename of Visual Lab is a separate information-architecture decision.
+**Owner ruling, 2026-08-11:** **Visual Lab is renamed Style Lab**, and Style Profile remains inside
+it. Stylist is the busy working conversation surface; Style Lab is where the owner teaches,
+evaluates and configures the stylist. Its stable tab order is **References | Outfit feedback |
+Style profile**. “Calibration boards” becomes “Outfit feedback.” No navigation count is shown merely
+because reactions exist; only genuine pending decisions may be surfaced inside Style Profile →
+Review feedback. Stylist may deep-link to a relevant record but is not the profile's navigation
+home.
 
 ### B. Canonical home for product issues — ratified
 
@@ -172,3 +179,14 @@ Reviewers want a free, evidence-honest **What influenced this result?** disclosu
 The product must not claim prompt guidance caused a model choice merely because it was included.
 This recommendation is adjacent to the Style Profile redesign and needs explicit owner scope before
 implementation.
+
+## Deferred engineering follow-up — explicit firm-rule chat capture
+
+Do not block the Style Profile restructuring on this item. A live test showed that relying on the
+styling model to include an optional structured proposal is neither reliable nor economical: the
+owner's explicit “I never wear sandals for hiking” sentence was saved as prose without a proposal,
+while an existing trip thread pulled the response through five provider iterations and irrelevant
+wardrobe analysis. After the page restructuring, add a local, controlled-vocabulary fast path for
+simple explicit prohibitions. It must save the original sentence plus a server-validated proposal,
+return a short acknowledgement, and make no paid model call. Anything ambiguous stays in the normal
+conversation flow. See item 12 in `feedback-routing-proposal.md` for the measured trace.
