@@ -4,7 +4,7 @@
 // ruling-archaeology log); the interviewable layers link back into the wizard for a re-run.
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { WRONG_PIECE_FOR_OUTFIT_FEEDBACK } from '../../lib/feedbackTaxonomy.js'
+import { canonicalFeedbackType, WRONG_PIECE_FOR_OUTFIT_FEEDBACK } from '../../lib/feedbackTaxonomy.js'
 import { describeOwnerGuidanceScope } from '../../lib/ownerGuidance.js'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 
