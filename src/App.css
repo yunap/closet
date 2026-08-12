@@ -12318,6 +12318,68 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   gap: 4px;
 }
 
+/* A draft still waiting on a decision — same card shell as an accepted lesson, but warmer, since
+   nothing here is in effect yet and the whole point is that it's still just a question. */
+.memory-card-pending {
+  grid-template-columns: 1fr;
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+.memory-card-pending-photos {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.memory-card-pending-prompt {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  font-weight: 650;
+}
+
+.memory-card-pending-wording,
+.memory-card-pending-triage {
+  margin-top: 12px;
+}
+
+.memory-card-pending-triage-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  font-weight: 650;
+}
+
+.memory-card-pending-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.memory-card-pending-later {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  cursor: pointer;
+  padding: 6px 4px;
+}
+
+.memory-card-pending-later:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.feedback-synthesis-selected-count {
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  font-weight: 650;
+}
+
 .memory-told {
   margin-top: 22px;
 }

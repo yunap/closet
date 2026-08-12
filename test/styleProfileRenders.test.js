@@ -44,6 +44,7 @@ const FEEDBACK_ROWS = [
   {
     id: 4, feedback_type: 'wrong_item_read', target_type: 'whole_wardrobe_outfit', context_type: 'wardrobe',
     context_name: 'Whole wardrobe', note: 'wrong shoe', archived: false, payload: { pieceIds: [1, 2] },
+    created_at: '2026-08-10 09:00:00',
     memory: { destination: 'provisional', strength: 'context', synthesisEligible: true, display: { title: 'Rain walk', summary: 'wrong shoe' } },
   },
 ]
@@ -54,6 +55,18 @@ const ROUTES = {
     { id: 1, disposition: 'personal_contextual_lesson', status: 'accepted', title: 'Suede reads autumnal', proposed_text: 'Avoid suede in summer.', boundary: 'summer only', source_feedback_ids: '[4]', payload: JSON.stringify({ applicability: { version: 1, scope: 'piece_context', piece_ids: [92], occasions: [], activities: [], seasons: ['summer'], weather_terms: [] } }), applicabilityOptions: { pieces: [{ id: 92, name: 'midi skirt', photo: null }], occasions: [], activities: [], seasons: ['summer'], weather: [] } },
     { id: 2, disposition: 'insufficient_evidence', status: 'reported', title: 'Nothing learned', rationale: 'no bounded scope', source_feedback_ids: '[4]' },
     { id: 3, disposition: 'general_styling_failure', status: 'accepted', title: 'Athletic shorts', proposed_text: 'wrong register', source_feedback_ids: '[4]' },
+    // A still-pending lesson naming two pieces — exercises draftLessonPhotos' two-photo path and
+    // the full "Not quite" -> chips -> wording reveal, none of which the other three drafts touch.
+    {
+      id: 5, disposition: 'personal_contextual_lesson', status: 'draft',
+      title: 'Ruffled top too delicate', proposed_text: 'This ruffled plum top feels too delicate with textured mauve pants.',
+      source_feedback_ids: '[4]',
+      payload: JSON.stringify({ applicability: { version: 1, scope: 'piece_context', piece_ids: [92, 93], occasions: [], activities: [], seasons: ['summer'], weather_terms: [] } }),
+      applicabilityOptions: { pieces: [{ id: 92, name: 'ruffled plum top', photo: 'pieces/92.jpg' }, { id: 93, name: 'mauve pants', photo: 'pieces/93.jpg' }], occasions: [], activities: [], seasons: ['summer'], weather: [] },
+    },
+    // A pending product-issue draft — exercises the non-lesson branch (no applicability, "Mark
+    // reviewed" instead of "Yes, remember this").
+    { id: 6, disposition: 'general_styling_failure', status: 'draft', title: 'Wrong silhouette', proposed_text: 'The stylist chose an overly casual silhouette.', source_feedback_ids: '[4]' },
   ],
   '/api/owner-constraints': [{ id: 1, status: 'active', selector_type: 'footwear', selector_values: ['boots'], context_dimension: 'season', context_values: ['summer'], reason: 'Not in summer.' }],
   '/api/product-quality-findings': [{ id: 1, status: 'open', title: 'Athletic shorts', description: 'register', source_feedback_ids: '[4]', evidence_snapshot: '[]' }],
@@ -95,7 +108,9 @@ process.on('exit', () => { try { fs.unlinkSync(bundlePath) } catch {} })
 
 // A client render, not renderToStaticMarkup: effects must run and the fetches must resolve, or the
 // lists stay empty and the very callbacks that broke are never entered.
-async function renderProfile({ tab = null } = {}) {
+// keepMounted leaves the container attached (and returns { container, click, unmount }) so a test
+// can click through a multi-step reveal, like the "Not quite" triage, and read the DOM at each step.
+async function renderProfile({ tab = null, keepMounted = false } = {}) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -116,6 +131,13 @@ async function renderProfile({ tab = null } = {}) {
     if (button) await act(async () => { button.click() })
     for (let i = 0; i < 4; i += 1) await act(async () => { await Promise.resolve() })
   }
+  const click = async matcher => {
+    const button = [...container.querySelectorAll('button')].find(matcher)
+    if (!button) return false
+    await act(async () => { button.click() })
+    return true
+  }
+  if (keepMounted) return { container, errors, click, unmount: () => { root.unmount(); container.remove() } }
   const text = container.textContent || ''
   dom.window.removeEventListener('error', onError)
   root.unmount()
@@ -146,4 +168,45 @@ test('the review tab renders the sections that iterate loaded feedback', async (
   assert.match(text, /Fixes your stylist applies when drawing pictures/)
   assert.match(text, /Your stylist now matches the length in your saved photo\./)
   assert.match(text, /Every picture/)
+})
+
+test('a pending lesson resting card asks a plain question, not a form', async () => {
+  const { text } = await renderProfile({ tab: 'Review feedback' })
+  assert.match(text, /Your stylist found a possible lesson/)
+  assert.match(text, /Does this sound right\?/)
+  assert.match(text, /This ruffled plum top feels too delicate with textured mauve pants\./)
+  assert.match(text, /Your stylist would remember this when styling ruffled plum top or mauve pants for summer\./)
+  assert.match(text, /Based on feedback you gave on Aug 10\./)
+  assert.match(text, /Yes, remember this/)
+  assert.match(text, /Not quite/)
+  assert.match(text, /Maybe later/)
+  // The raw fields this replaced must actually be gone, not just visually hidden.
+  assert.doesNotMatch(text, /PERSONAL OR CONTEXTUAL LESSON|Personal or contextual lesson/)
+  assert.doesNotMatch(text, /Boundary/)
+  assert.doesNotMatch(text, /Would be used when/)
+  assert.doesNotMatch(text, /Why it was routed here/)
+  // A pending product-issue draft renders too, with disposition-appropriate copy, not "remember".
+  assert.match(text, /product issue rather than a styling preference/)
+  assert.match(text, /Mark reviewed/)
+})
+
+test('"Not quite" reveals reason chips, and only "The wording" reveals a textarea', async () => {
+  const { container, click, unmount } = await renderProfile({ tab: 'Review feedback', keepMounted: true })
+  try {
+    assert.equal(container.querySelectorAll('.memory-card-pending textarea').length, 0, 'a textarea is visible before any triage choice')
+    const openedTriage = await click(b => b.textContent.trim() === 'Not quite')
+    assert.ok(openedTriage, '"Not quite" button not found')
+    const text1 = container.textContent
+    assert.match(text1, /What isn.t right\?/)
+    assert.match(text1, /The wording/)
+    assert.match(text1, /It applies too broadly/)
+    assert.match(text1, /This shouldn.t be a lesson/)
+    assert.equal(container.querySelectorAll('.memory-card-pending textarea').length, 0, 'a textarea appeared from the chip list alone')
+    const openedWording = await click(b => b.textContent.trim() === 'The wording')
+    assert.ok(openedWording, '"The wording" chip not found')
+    assert.equal(container.querySelectorAll('.memory-card-pending textarea').length, 1, 'choosing "The wording" did not reveal exactly one textarea')
+    assert.match(container.textContent, /Looks better — remember this/)
+  } finally {
+    unmount()
+  }
 })

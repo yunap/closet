@@ -306,6 +306,12 @@ router.patch('/feedback-synthesis/drafts/:id', (req, res) => {
     }
     payload.applicability = sanitized
   }
+  // Not delivered anywhere — no reader depends on this — but the triage reveal offers a reason
+  // without a free-text box for "It applies too broadly" / "This shouldn't be a lesson", and
+  // throwing that context away would leave the reject with no trace of what was wrong.
+  if (status === 'rejected' && req.body?.rejectionReason !== undefined) {
+    payload.rejectionReason = String(req.body.rejectionReason || '').trim().slice(0, 40) || undefined
+  }
   db.transaction(() => {
     db.prepare(`
       UPDATE feedback_synthesis_drafts
