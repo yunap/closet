@@ -410,13 +410,39 @@ population empty, in the same sense as the favourite flags in §1c:
 | path | code | active rows | archived |
 |---|---|---|---|
 | `reach: 'universal'` — sent on every request | writable and matched | **0** | 0 |
-| no envelope at all — passed through unfiltered | live `!applicability` branch | **0** | 60 |
+| no envelope at all — passed through unfiltered | live `!applicability` branch | **0** | 3 |
 
 Every active owner rule carries a resolved envelope (2 `garment_context`, 2 `context`,
 1 `garment`), because the 2026-08-11 migration covered all five and no un-enveloped row has been
-written since. The 60 legacy rows are archived, so the unfiltered branch cannot currently deliver
-anything — but un-archiving one would restore broad delivery for that row, which is why the branch
-is kept rather than removed. Re-check with the query in §0 before relying on either being empty.
+written since. Un-archiving a no-envelope row would restore broad delivery for it, which is why the
+unfiltered branch is kept rather than removed. Re-check with the query in §0 before relying on
+either being empty.
+
+**[2026-08-12] The archived legacy owner rules were purged — all but three.** 57 of the 60 were
+obsolete `preference_reaction`/`message` rows (Jun–Jul 2026) with no remaining reference, and were
+deleted; `backups/wardrobe/wardrobe-before-legacy-owner-rule-purge-2026-08-12.db` holds the
+pre-purge database. **Three were deliberately kept, because archived does not mean unused:**
+
+| id | why it must stay |
+|---|---|
+| 234 | `owner_constraints.source_feedback_id` of the **active** boots × summer firm rule |
+| 457 | `owner_constraints.source_feedback_id` of the **active** sandals × hiking firm rule |
+| 401 | The only surviving explanation for piece 242's active `home` exclusion — that exclusion was written by the 2026-08-10 migration rather than the endpoint, so it has no `Excluded from …` receipt of its own |
+
+This is the archive-as-provenance contract working as designed: confirming a firm rule **archives**
+its source sentence so the instruction is not also prompt authority, and the constraint keeps
+pointing at it for source and undo. Deleting an archived row therefore requires checking
+`owner_constraints.source_feedback_id`, `feedback_synthesis_drafts.source_feedback_ids` and
+`product_quality_findings.source_feedback_ids` first:
+
+```bash
+sqlite3 -readonly wardrobe.db "
+WITH refs AS (
+  SELECT source_feedback_id AS fid FROM owner_constraints WHERE source_feedback_id IS NOT NULL
+  UNION ALL SELECT CAST(j.value AS INTEGER) FROM feedback_synthesis_drafts d, json_each(d.source_feedback_ids) j
+  UNION ALL SELECT CAST(j.value AS INTEGER) FROM product_quality_findings p, json_each(p.source_feedback_ids) j)
+SELECT f.id FROM stylist_feedback f JOIN refs ON refs.fid = f.id WHERE f.archived = 1;"
+```
 
 Both call sites pass 8 (`tools.js` capsule composition, `outfitSetPlanner.js` capsule
 roster), so the delivered maximum is unchanged; what changed is which eight.
