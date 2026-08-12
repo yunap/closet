@@ -90,6 +90,45 @@ test('synthesis preview compacts evidence without copying complete garment paylo
   assert.equal(JSON.stringify(compact).includes('large field intentionally omitted'), false)
 })
 
+test('evidence season resolves the composer\'s unresolved "current season" placeholder against the reaction\'s own created_at, not "now"', () => {
+  const unresolvedRow = {
+    id: 900,
+    created_at: '2026-01-15 10:00:00', // winter
+    payload: JSON.stringify({
+      feedbackEvidence: {
+        version: 2,
+        action: 'wrong_piece_for_outfit',
+        subject: { pieceId: 44, name: 'Canvas sneakers', category: 'shoes' },
+        context: { occasion: 'casual', activity: 'walking', season: 'current season', weather: 'wet' },
+        explicitReason: 'canvas is unsuitable in wet fog',
+      },
+    }),
+  }
+  const compact = compactSynthesisEvidenceRow(unresolvedRow)
+  assert.equal(compact.context.season, 'winter')
+
+  const summerRow = { ...unresolvedRow, id: 901, created_at: '2026-07-15 10:00:00' }
+  assert.equal(compactSynthesisEvidenceRow(summerRow).context.season, 'summer')
+
+  // A term the model proposes as "summer" must actually validate against evidence recorded as the
+  // literal placeholder — otherwise the resolved evidence and the sanitizer would silently disagree
+  // and a correctly-scoped applicability term would be dropped as "unsupported" on every edit.
+  const sanitized = sanitizeSynthesisApplicability(
+    { scope: 'context', piece_ids: [], occasions: [], activities: [], seasons: ['summer'], weather_terms: [] },
+    [compactSynthesisEvidenceRow(summerRow)],
+  )
+  assert.deepEqual(sanitized.seasons, ['summer'])
+
+  // The 'warm' and 'autumn' aliases resolve the same way ownerConstraints.js already resolves them
+  // for firm-rule matching — one shared vocabulary, not two independently-maintained ones.
+  const warmRow = { ...unresolvedRow, id: 902 }
+  warmRow.payload = warmRow.payload.replace('"current season"', '"warm"')
+  assert.equal(compactSynthesisEvidenceRow(warmRow).context.season, 'summer')
+  const autumnRow = { ...unresolvedRow, id: 903 }
+  autumnRow.payload = autumnRow.payload.replace('"current season"', '"autumn"')
+  assert.equal(compactSynthesisEvidenceRow(autumnRow).context.season, 'fall')
+})
+
 test('preview is deterministic, bounded, and estimates cost inputs without a provider call', () => {
   const first = buildFeedbackSynthesisPreview([row(404), row(405, '')], { provider: 'openai', model: 'test-model' })
   const second = buildFeedbackSynthesisPreview([row(404), row(405, '')], { provider: 'openai', model: 'test-model' })

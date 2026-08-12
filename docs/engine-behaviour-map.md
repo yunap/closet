@@ -1,6 +1,7 @@
 # Engine behaviour map
 
-**Status:** twelfth pass, 2026-07-26. Companion to `docs/app-surface-map.md`.
+**Status:** twelfth pass, 2026-07-26; **amended 2026-08-12** to add the owner-constraint gate, which
+shipped with item 12 and had never been recorded here. Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
 Pass 2 added scoring, caches, CI ratchets and the import pipeline's model calls. Pass 3 added the
@@ -86,8 +87,8 @@ remembered from earlier in the session, and nothing in the UI shows what was res
 follow-up produces something unexpected, restored state is a candidate — check
 `getStylistConversationState` before assuming the prompt or the gates changed.
 
-> `styling-engine/core.js:3419` (restore), `:3824` (read), `:3839` (write); mirrored in
-> `tools.js:1803`.
+> `styling-engine/core.js` (restore), `:3824` (read), `:3839` (write); mirrored in
+> `tools.js`.
 
 ---
 
@@ -104,7 +105,7 @@ outright.
 **[by design]** The trim runs on every save, so the table cannot grow. Worth knowing when reasoning
 about why a piece reappeared: eleven generations ago is invisible.
 
-> `styling-engine/rules.js:1465-1474`. Surface counterpart: surface map → composer landing panels.
+> `styling-engine/rules.js`. Surface counterpart: surface map → composer landing panels.
 
 ---
 
@@ -210,7 +211,7 @@ budget. This is preselection, not a new taste score, and it is a provable no-op 
 provided. “Eligible but not shown in the representative rotation” remains distinct from
 “ineligible”: the rotation demonstrates the capsule rather than enumerating every roster piece.
 
-> `styling-engine/provider.js:734` (guard retries), `:758` (tool loop).
+> `styling-engine/provider.js` (guard retries), `:758` (tool loop).
 > `routes/ai.js` (`composeCapsulePlanOnce`, `POST /expand-capsule`).
 
 **[by design] Repeated ordinal names do not create artificial capsule coverage slots.**
@@ -247,12 +248,12 @@ builder against the real wardrobe rather than read from source alone.
 
 - **`getSavedBoardMemory`** → board verdicts *and* specific reasons, in plain language, under
   *"Bias future outfit suggestions toward these successful formulas"* / *"Avoid repeating these
-  drift/problem patterns"*. ~3.2 KB on the current wardrobe. Spliced at `core.js:2683→:2737` and
-  `routes/ai.js:1108-1109→:1116` (per-garment, flagged *"high-authority outfit memory"*) and
+  drift/problem patterns"*. ~3.2 KB on the current wardrobe. Spliced at `core.js→:2737` and
+  `routes/ai.js→:1116` (per-garment, flagged *"high-authority outfit memory"*) and
   `:1119` (global, *"should bias ranking"*).
 - **Owner rules** → injected as **hard requirements**: *"OWNER RULES — hard requirements, not
   suggestions. Do not construct exceptions or conditional workarounds… If a rule makes a slot
-  impossible, disclose the conflict instead of bending the rule."* (`outfitSetPlanner.js:1120`.)
+  impossible, disclose the conflict instead of bending the rule."* (`outfitSetPlanner.js`.)
 - **Style Constitution layers** → all four reach **eight** prompt templates, not just the image
   prompt: `STYLIST_SYSTEM`, `STYLE_SELECTED_ITEM_SYSTEM`, `GENERATE_OUTFIT_IDEAS_SYSTEM`,
   `OUTFIT_COMPOSER_SYSTEM`, `OUTFIT_BOARD_PLANNER_SYSTEM`, `EDITORIAL_NEW_PIECES_SYSTEM`,
@@ -305,7 +306,7 @@ is prompt guidance; it does not mechanically reinforce literal garments or combi
 
 ### `planWorkbenchPieceScore` — measured
 
-`(outfitSetPlanner.js:931)`. Terms, with how often each fires on the real wardrobe:
+`(outfitSetPlanner.js)`. Terms, with how often each fires on the real wardrobe:
 
 | term | fires | note |
 |---|---|---|
@@ -340,7 +341,7 @@ tops and no bottoms.
 
 ### `capsuleVersatilityScore` — measured
 
-`(outfitSetPlanner.js:500)`. `+12` neutral color, `+4` per occasion tag (capped at 4, so `+16` max),
+`(outfitSetPlanner.js)`. `+12` neutral color, `+4` per occasion tag (capped at 4, so `+16` max),
 `+8` solid/no pattern, `+4` trusted, and a summer block (`+10` light, `−24` heavy or
 wool/cashmere/fleece/corduroy/tweed/flannel, `+6` linen/cotton/viscose/tencel/gauze).
 
@@ -362,14 +363,14 @@ matters to the open capsule-cap work in `docs/stylist-bugfix-spec.md`, which is 
 `selectCapsuleRoster` question, and this is the score that roster sorts on.
 
 The source comment is explicit that this score **has no idea what registers the plan needs**
-(`outfitSetPlanner.js:555-563`) — a roster can score high on "versatility" while reading uniformly
+(`outfitSetPlanner.js`) — a roster can score high on "versatility" while reading uniformly
 `elevated` and then failing every `casual` slot's ceiling. That is a live-tested failure from
 2026-07-14, and is what `strictestRegisterCeilingRank` / `capsuleDemandReserve` exist to correct.
 
 ### The keyword-scored surfaces
 
-`scoreWholeWardrobeCandidate` (`rules.js:3273`) and `getRelevanceScore`
-(`rules.js:2824`) score largely by **regex over a concatenated text blob** of the pieces, not over
+`scoreWholeWardrobeCandidate` (`rules.js`) and `getRelevanceScore`
+(`rules.js`) score largely by **regex over a concatenated text blob** of the pieces, not over
 structured tags: `-24` "soft stack risk" when three soft words appear, `-28` catalog/librarian
 drift, `-20` wide+wide, `-24` generic light-neutral, `+8` artistic texture/structure, and so on.
 `bohoSignalForPiece` is the same shape with fractional weights.
@@ -430,7 +431,7 @@ pieces.
 
 This is why a request's phrasing changes results so much: saying "something dressy" switches a
 ±18-per-piece term on across 229 pieces, and `resolveFormalityIntent` derives that intent from
-**regex over the user's own words** (`rules.js:132`) — one of the few keyword paths that is about
+**regex over the user's own words** (`rules.js`) — one of the few keyword paths that is about
 user intent rather than garment text, and correctly `ratchet-allow`ed as such.
 
 ### `compatibilityScoreForSelectedItem` — measured
@@ -449,7 +450,7 @@ explicitly described; they do not mechanically promote literal pieces or pairs.
 
 ### Recency, again — as a score
 
-`getRecentWholeWardrobeSessionInfluence` (`rules.js:1480`) converts the 10-row session memory into
+`getRecentWholeWardrobeSessionInfluence` (`rules.js`) converts the 10-row session memory into
 a *penalty*: `18 × decay` per piece and `30 × decay` per formula family, where
 `decay = max(0.2, 1 − sessionIndex × 0.16)` times an occasion factor. So the most recent session
 penalises a piece by 18 and a formula by 30; by the sixth session back the decay floor (0.2) has
@@ -467,9 +468,9 @@ outfit-evaluation result cache and a paired in-flight registry:
 
 | cache | scope | key | eviction |
 |---|---|---|---|
-| `promptsByUser` (`promptRuntime.js:63`) | server, per user | user id | none — rebuilt on profile/constitution write via `refreshPrompts` |
-| `wardrobeThumbCache` (`provider.js:404`) | server, module-wide | `userId:cacheKey:maxPx` | oldest entry dropped past 300 |
-| `geocodeCache` / `weatherCache` (`weather.js:16-17`) | server, module-wide | location / `dates|lat,lon` | 3-hour TTL |
+| `promptsByUser` (`promptRuntime.js`) | server, per user | user id | none — rebuilt on profile/constitution write via `refreshPrompts` |
+| `wardrobeThumbCache` (`provider.js`) | server, module-wide | `userId:cacheKey:maxPx` | oldest entry dropped past 300 |
+| `geocodeCache` / `weatherCache` (`weather.js`) | server, module-wide | location / `dates|lat,lon` | 3-hour TTL |
 | `threadCache` (`src/utils/chatThreadCache.js`) | browser tab | thread id | none — lives until reload |
 | `relationshipCache` (`src/utils/garmentRelationships.js`) | browser tab | piece id | none, but `loadGarmentRelationships(id, {refresh:true})` bypasses it |
 | `outfitEvaluationResultCache` (`core.js`) | server, module-wide | SHA-256 of cache version + provider/model + mode/token cap + complete system/messages (including images and garment/memory context) | 10-minute TTL; LRU insertion order; max 50 |
@@ -488,7 +489,7 @@ should not rely on upload-filename entropy for tenant scoping.
 next request, not the next restart.
 
 **The two browser caches never expire — and it does not matter, because both consumers
-revalidate.** Traced: `StylistChat.jsx:895-898` and `PieceDetail.jsx:118-122` use the same idiom,
+revalidate.** Traced: `StylistChat.jsx` and `PieceDetail.jsx` use the same idiom,
 `load…(id, { refresh: Boolean(cached) })` — if a cached copy exists they refetch anyway and use the
 cache only for the first paint. So neither cache can serve stale data beyond one frame, and there
 is no cross-tab staleness bug here. The pattern is worth copying for any future cache: paint from
@@ -573,8 +574,8 @@ model call.
 
 ### One function, three composition paths
 
-`wholeWardrobePieceTrustDecision` (`rules.js:2146`) is the hard gate. It is called by the freeform
-`propose_outfit` tool (`tools.js:1122`), by `filterWholeWardrobePiecesForGeneration`, and by
+`wholeWardrobePieceTrustDecision` (`rules.js`) is the hard gate. It is called by the freeform
+`propose_outfit` tool (`tools.js`), by `filterWholeWardrobePiecesForGeneration`, and by
 `scoreWholeWardrobeCandidate` (there as a `-18` support-only *penalty*, not a block). It returns
 `{allowed, supportOnly, reasons}`; `allowed` is simply `reasons.length === 0`.
 
@@ -595,7 +596,20 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    supplies `home` specifically to the owner-exclusion lookup. Other occasion gates still receive
    the public occasion, so an AI-generated `home: low` confidence remains advisory. Mixed
    **home + errands** slots deliberately remain broad because one veto cannot safely describe both uses.
-3. **Auto-use trust** (`autoStylingTrustDecision`, `src/utils/wardrobeAiContext.js:146`), with a
+3. **Owner constraints** (`ownerConstraintApplies`, `lib/ownerConstraints.js`), read by
+   `wholeWardrobePieceTrustDecision` before roster assembly, slot replacement, complementary
+   ranking and each capsule-plan slot. **[added 2026-08-12 — this layer was missing from every
+   earlier pass of this document; it shipped with item 12 and was never recorded here.]** A row is
+   an owner-confirmed standing prohibition that one garment's `occasion_exclusions` cannot express:
+   a selector of verified piece IDs, wardrobe category, structured material or **footwear type**,
+   crossed with one context dimension (occasion, activity, season or weather). Missing context is a
+   no-op — the gate never fires on an unspecified dimension. A match hard-blocks the garment and
+   emits the constraint ID and dimension in the suppression reason; retiring the row is the undo.
+   Season comparison runs through `resolveSeasonTerm`, so `warm` → summer, `autumn` → fall, and the
+   composer's unresolved default `current season` resolves against `requestContext.currentDate`
+   rather than always "now". **[unverified]** no exclusion counts have been measured for this layer;
+   the counts elsewhere in this section predate it.
+4. **Auto-use trust** (`autoStylingTrustDecision`, `src/utils/wardrobeAiContext.js`), with a
    dead escape hatch — see *Exploration mode* below.
    `recommendation_status` of `avoid` / `do_not_recommend` / `needs_fit_review` / `experimental`,
    `role_permission` of `never_auto` / `only_when_requested`, `fit_confidence: low`, the AI
@@ -603,7 +617,7 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    `occasion_permissions` list that omits the request, and a phrase scan of notes for
    *"too small"*, *"do not auto"*, *"testing only"* and similar. Most of these relax under
    `explorationMode: 'aggressive'`.
-4. **Weather physics.** Hot: insulating fiber, or heavy weight, or (medium+ weight *and* insulating
+5. **Weather physics.** Hot: insulating fiber, or heavy weight, or (medium+ weight *and* insulating
    coverage / warm neckline / long sleeves). Cold: shorts, lightweight linen bottoms, high bareness.
    Credible wet exposure excludes footwear whose structured material is canvas or suede. Explicit
    rain, drizzle, wet ground, puddles or mud qualifies; a foggy coastal outdoor walk also qualifies
@@ -612,12 +626,12 @@ the freeform gate. Asking to wear a garment overrides auto-use suitability. Veri
    (cardigans, kimonos) are exempt from the sleeve/coverage clauses (ratified 2026-07-12 after
    summer layering requests kept dying); shoes and accessories are never "insulating"; the
    weight qualifier exists because a light silk maxi was flagged purely for being full-length.
-5. **Profile rules and the register ceiling** (`profileRuleFit`, `rules.js:2039`). Prohibited
+6. **Profile rules and the register ceiling** (`profileRuleFit`, `rules.js`). Prohibited
    materials → footwear-comfort enums → **register ceiling** → prohibited footwear → prohibited
    pieces → `unknown` → discouraged. **This function returns on the FIRST prohibition it finds**,
    so a piece has exactly one profile reason no matter how many it violates.
 
-**Consequence:** layers 1–4 *push* reasons onto a list, layer 5 returns one. A blocked piece can
+**Consequence:** layers 1–5 *push* reasons onto a list, layer 6 returns one. A blocked piece can
 therefore carry several reasons, and the counts below sum to more than the blocked total. It also
 means reason counts are **order-dependent** — under a walking activity, twelve shoes exit at the
 footwear-comfort check and never reach the register check, so the register count drops by ten
@@ -686,7 +700,7 @@ So the open item is not "is the ceiling right" — it is a **column conflict aff
 
 This is upstream of the capsule-cap work, and is the mechanism behind the live-tested 2026-07-14
 failure recorded at
-`outfitSetPlanner.js:555-563` (a roster of `elevated` pieces producing zero outfits for casual
+`outfitSetPlanner.js` (a roster of `elevated` pieces producing zero outfits for casual
 slots). Escalating a slot's `register` lifts the ceiling — that is what the field is for.
 
 `city_smart_casual`, whose ceiling is `elevated`, blocks only 21%. The gap between those two
@@ -708,7 +722,7 @@ per-piece occasion tag, which overrides the tagger; there is nothing to fix in t
 
 ### Gate-field coverage — and the todos side effect
 
-`missingGateFields` (`attributes.js:112`) lists the columns the gate needs: `formality`,
+`missingGateFields` (`attributes.js`) lists the columns the gate needs: `formality`,
 `fabric_weight`, `fiber_content`, `occasions`, plus `heel_height` and `walk_support` on shoes. When
 a hard gate excludes a garment for missing data, a `metadata` todo is written (surface map → Tasks;
 side-effects table above).
@@ -734,9 +748,9 @@ clauses: `needs_fit_review`, `experimental`, `fit_confidence: low`, the AI profi
 `needs_fit_review` and `experimental`, low occasion confidence, and the engine-notes phrase scan.
 
 **Nothing in the codebase ever passes `'aggressive'`.** Every call site is traced:
-`tools.js:1711` and `outfitSetPlanner.js:1032` hard-code `'moderate'`; `rules.js:1150` defaults to
-`'moderate'`; the parameter default is `'moderate'`; `routes/ai.js:1452` forwards a request value.
-The only non-default value produced anywhere is **`'adventurous'`** (`routes/ai.js:2158`, the
+`tools.js` and `outfitSetPlanner.js` hard-code `'moderate'`; `rules.js` defaults to
+`'moderate'`; the parameter default is `'moderate'`; `routes/ai.js` forwards a request value.
+The only non-default value produced anywhere is **`'adventurous'`** (`routes/ai.js`, the
 saved-outfit *adjacent* variant mode) — a different string, which fails the equality check and
 relaxes nothing. No test sets it either.
 
@@ -761,7 +775,7 @@ the next section. None of those are piece-eligibility questions, which is why th
 
 ## After the gate — the outfit-level pass
 
-`locallyGateWholeWardrobeOutfits` (`rules.js:4553`) is where assembled outfits are repaired,
+`locallyGateWholeWardrobeOutfits` (`rules.js`) is where assembled outfits are repaired,
 rejected, deduped and diversified. It has **two modes, and the mode changes the meaning of every
 check in it.**
 
@@ -791,7 +805,7 @@ non-owned piece, user-excluded for the occasion, duplicate formula.
 
 ### Repair — what it actually does
 
-`repairWholeWardrobeOutfit` (`rules.js:4158`) does **not** fill missing slots. Traced end to end,
+`repairWholeWardrobeOutfit` (`rules.js`) does **not** fill missing slots. Traced end to end,
 it does two things, and only one of them touches a garment:
 
 1. **It rewrites the outfit's prose.** `label`, `dominantDirection`, `silhouette`, `reason` and
@@ -829,7 +843,7 @@ the response shape is untouched.
 ### Diversity — the largest penalties in the system
 
 `applyWholeWardrobeDiversity` picks the final set greedily, scoring each candidate against what is
-already selected with `wholeWardrobeDiversitySelectionScore` (`rules.js:4277`). The repeat
+already selected with `wholeWardrobeDiversitySelectionScore` (`rules.js`). The repeat
 penalties, per prior outfit sharing the trait:
 
 | repeated trait | penalty each |
@@ -869,7 +883,7 @@ top+bottom+shoe outfits built from the 123 pieces that pass the `casual` gate
 | print/stripe present | −20 | 2 | 66% |
 
 **Four is the entire formula-family vocabulary, not a sampling artifact.** Formula family comes
-from `WHOLE_WARDROBE_OUTFIT_ARCHETYPES` (`prompts.js:984`), which defines five families, one of
+from `WHOLE_WARDROBE_OUTFIT_ARCHETYPES` (`prompts.js`), which defines five families, one of
 which (`dress_grounding_shoe`) requires a dress. Every separates outfit in the wardrobe therefore
 falls into one of exactly four buckets, and two of them hold 82%.
 
@@ -892,7 +906,7 @@ distinguish two shoes is effectively single-valued.
 `wholeWardrobeVisualRhythm`, `wholeWardrobeHasPrintOrStripe`, `wholeWardrobeFormulaType` and
 `wholeWardrobeHeroPieceId` all test a regex —
 `floral|print|graphic|stripe|striped|pattern|abstract|tapestry` — against `pieceNameBlob`, which is
-`name + category + reads_as` (`rules.js:375`). They never read the structured `pattern_type`
+`name + category + reads_as` (`rules.js`). They never read the structured `pattern_type`
 column, which is populated.
 
 Measured: **90 pieces have a non-solid `pattern_type`; 30 of them are invisible** to these
@@ -931,13 +945,13 @@ measured by `scratch/measure_image_path.js`, which runs the real reference build
 
 ### One switch decides whether any of this is billed
 
-`photoPreservingVisualsEnabled()` (`core.js:1736`) returns true when `PHOTO_PRESERVING_VISUALS` is
+`photoPreservingVisualsEnabled()` (`core.js`) returns true when `PHOTO_PRESERVING_VISUALS` is
 set **or** `WARDROBE_MOCK_AI` is on. When true, every producer renders a **local sharp collage** of
 real garment photos instead of calling a model. `hasOpenAiKey()` failing does the same. So there are
 two renderer families, and the free one is the default in the sandbox.
 
 **[known bug — dead duplicate, unfiled]** There are **two** functions with this name.
-`rules.js:4066` is a copy that checks only `PHOTO_PRESERVING_VISUALS` and **not** `mockAiEnabled()`.
+`rules.js` is a copy that checks only `PHOTO_PRESERVING_VISUALS` and **not** `mockAiEnabled()`.
 `routes/ai.js` imports *that* one (its import block spans lines 52–116, from `rules.js`) — and never
 calls it; the symbol appears exactly once in the file. So this is a latent trap, not a live leak:
 the mock-mode protection is intact today because every live call site uses the `core.js` version.
@@ -1006,12 +1020,12 @@ tagged `fallback_collage`, which is free.
 
 ### Cost reporting — and where it is wrong
 
-Cost is **not** computed by the server. `estimateAiUsageCost` (`provider.js:348`) prices text
-tokens only, and its OpenAI table (`provider.js:279`) has entries for `gpt-5.x` and `gpt-4o` and
+Cost is **not** computed by the server. `estimateAiUsageCost` (`provider.js`) prices text
+tokens only, and its OpenAI table (`provider.js`) has entries for `gpt-5.x` and `gpt-4o` and
 **no image model at all** — so it would return `pricingAvailable: false` for one.
 
 Instead the number the user sees is computed **client-side** in
-`StylistChat.jsx:315`, `calculateOpenAICost`, which re-hard-codes the rates ($2.50/Mtok in,
+`StylistChat.jsx`, `calculateOpenAICost`, which re-hard-codes the rates ($2.50/Mtok in,
 $10/Mtok out) and adds a **flat constant for the image**: `$0.08` for 1024x1536, `$0.04` for
 1024x1024. That constant ignores quality, model, and how many attempts the server actually made.
 It is rendered as *"Measured cost"* and is deliberately always visible, even with the debug flag
@@ -1025,7 +1039,7 @@ Two consequences follow directly:
 2. **[known bug — unfiled] The `gpt-image-1` fallback renderer reports no cost at all.**
    `calculateOpenAICost` returns `null` when `timings.usage` is absent. The collage paths set no
    usage and correctly show nothing — they are free. But the editorial `gpt-image-1` branch
-   (`core.js:3280-3296`) also never sets `timings.usage`, so a **billed** generation renders with
+   (`core.js`) also never sets `timings.usage`, so a **billed** generation renders with
    no cost line. The user sees a generated image and is told nothing about what it cost.
 
 This is the concrete answer to panel finding A6 in the handoff: the `~$0.07` figures are neither
@@ -1039,7 +1053,7 @@ pieces: `wholeWardrobeImagePrompt` is **~3,900 chars (~980 tokens)** for a three
 `editorialImagePrompt` is **~5,800 chars (~1,455 tokens)** for a *single* anchor garment — larger,
 because it splices four Style Constitution layers that the whole-wardrobe prompt does not.
 
-**`wholeWardrobeImagePrompt`** (`core.js:1870`) is four blocks: six blanket garment-fidelity rules
+**`wholeWardrobeImagePrompt`** (`core.js`) is four blocks: six blanket garment-fidelity rules
 ("do not simplify a printed top into a plain tee", "if two listed garments are both printed, keep
 both actual prints recognizable", "do not add extra hero garments, belts, scarves"); a
 **per-piece fidelity checklist**; a person/scene block (full figure, single adult woman, ordinary
@@ -1064,7 +1078,7 @@ real tuck, fit, hem, placement, or construction from the synthetic board. A fina
 validity instruction rejects a proposed action if any affected linked record forbids it. Saved
 **My Outfits** do not use this rule: their first image remains the actual worn-photo authority.
 
-**`editorialImagePrompt`** (`core.js:3011`) splices `BODY_CONTRACT`, `PROVEN_FORMULAS`,
+**`editorialImagePrompt`** (`core.js`) splices `BODY_CONTRACT`, `PROVEN_FORMULAS`,
 `AESTHETIC_GRAVITY`, `LANE_NEUTRALITY` and `EXPRESSIVE_HIERARCHY_RULES`, then a
 category-conditional silhouette rule (a bottom or dress anchor gets "keep that exact length; do not
 force a full-length lower half"), then `anchorFidelityInstructions`.
@@ -1111,7 +1125,7 @@ instead. Neither reads the column that knows the answer.
 `name; category; colors; notes` — no `length_hits_at`, `sleeve_type`, `silhouette`, `fit_on_body`,
 `hem_finish` or `fabric_category`. It also references **`selectedPiece.fabric`, a column that does
 not exist** (the real ones are `fabric_category` / `fabric_weight` / `fiber_content`), so that line
-never renders. `anchorFidelityInstructions` (`core.js:2988`) then derives its rules from
+never renders. `anchorFidelityInstructions` (`core.js`) then derives its rules from
 `name + notes` alone:
 
 | column | populated | stated in name/notes | resulting clause |
@@ -1153,7 +1167,7 @@ occasions and trust status last, so those are the fields that fall off the end.
 
 ## The tagger prompt — where every column comes from
 
-Mapped 2026-07-26. `tagPieceWithProvider` (`routes/ai.js:357`) is the call that populates
+Mapped 2026-07-26. `tagPieceWithProvider` (`routes/ai.js`) is the call that populates
 `formality`, `fabric_weight`, `length_hits_at`, `sleeve_type`, `pattern_type`, `occasions`, the
 style lanes and the whole `style_profile_json`. **Every number elsewhere in this document is
 downstream of it.** Measured by `scratch/measure_image_path.js`.
@@ -1198,7 +1212,7 @@ button-down, refined textured statement top), each with full expected lane score
 confidences, framed as *"range calibration, NOT templates to match."* They exist to set the width
 of the scoring range so quiet pieces do not collapse to 1/5 across every lane.
 
-**Dynamic** — `buildAnchorBlock` (`taggerMerge.js:116`) injects real pieces from *this* wardrobe
+**Dynamic** — `buildAnchorBlock` (`taggerMerge.js`) injects real pieces from *this* wardrobe
 under the header *"These assignments are ground truth for THIS wardrobe — calibrate to them, not to
 general fashion norms."* Two fields are anchored: `formality` and `fabric_weight`, up to 3 examples
 per distinct value, each with a low-detail 448px thumbnail (capped at 8 images, so 18 anchors are
@@ -1242,7 +1256,7 @@ and `casual` by hand. That is a five-row list, not a policy decision.
 
 ### Merge protection
 
-`applyTaggerResult` (`taggerMerge.js:230`) normalises `fiber_content`, `formality`, `heel_height`
+`applyTaggerResult` (`taggerMerge.js`) normalises `fiber_content`, `formality`, `heel_height`
 and `walk_support`, then merges through `mergeWithManualOverrides` — **a manually-overridden field
 is never overwritten by a re-tag**, at both top level and inside `style_profile_json`, with
 `pinManualConfidence` forcing confidence on those fields. This is what makes re-tagging safe and
@@ -1294,7 +1308,7 @@ engine.
 
 ### It is the one classifier that respects confidence — by dropping data
 
-`inferWholeWardrobePieceRoles` (`rules.js:1585`) builds its text from `pieceNameBlob` **plus**
+`inferWholeWardrobePieceRoles` (`rules.js`) builds its text from `pieceNameBlob` **plus**
 structured columns — `pattern_type`, `pattern_complexity`, `fabric_category`, `fabric_weight`,
 `background_color`, `reads_as`, colors, notes. That already makes it better informed than the
 pattern classifiers, which read names only.
@@ -1436,7 +1450,7 @@ raise the baseline — and reading the structured column instead, where one exis
 
 ## `extract-pieces` — the tagger's weaker sibling
 
-`POST /api/ai/extract-pieces` (`routes/ai.js:823`) takes one outfit photo and returns every garment
+`POST /api/ai/extract-pieces` (`routes/ai.js`) takes one outfit photo and returns every garment
 in it. It shares the tagger's *schema* and almost none of its *machinery*. What it does **not**
 send, all of which the tagger does:
 
@@ -1461,7 +1475,7 @@ output, not a mechanism.
 
 **[latent inconsistency] It instructs a fabric-weight vocabulary the engine cannot read.** The
 schema says: *"for SHOES use the shoe scale instead: delicate|slim|medium|chunky."* But
-`fabricWeight()` (`attributes.js:69`) recognises only `heavy`, `ultralight`, `light`,
+`fabricWeight()` (`attributes.js`) recognises only `heavy`, `ultralight`, `light`,
 `lightweight`, `medium` — anything else returns `null`, and nothing normalises the shoe scale.
 A shoe tagged `chunky` would read as having no fabric weight at all, silently skipping the capsule
 summer terms and the `+5 light` workbench term.
@@ -1535,7 +1549,7 @@ low-confidence.
 > The paragraph above reads every `low` as the tagger hedging. On pre-v2 pieces it is not: it is a
 > **normalization default for an absent value**, and some of those values were typed by the owner.
 >
-> `normalizeConfidenceMap` ([`taggerMerge.js:39`](../styling-engine/taggerMerge.js)) ends with:
+> `normalizeConfidenceMap` ([`taggerMerge.js`](../styling-engine/taggerMerge.js)) ends with:
 >
 > ```js
 > return [field, VALID_CONFIDENCE.has(confidence) ? confidence : 'low']
@@ -1575,7 +1589,7 @@ low-confidence.
 > still at `low` on 2026-08-08; the count falls as the owner re-confirms fields by hand, so re-measure
 > rather than citing it). `manifestValue` appends `?`
 > to the same values throughout the wardrobe manifest. And `trustedField`
-> ([`attributes.js:29`](../styling-engine/attributes.js)) accepts only `manual`/`high`/`medium`, so
+> ([`attributes.js`](../styling-engine/attributes.js)) accepts only `manual`/`high`/`medium`, so
 > `attributePieceTextBlob` **drops** `fit_on_body`, `silhouette`, `tuck_behavior` and
 > `waistband_type` entirely on these pieces — the value exists and search cannot see it.
 >
@@ -1584,13 +1598,13 @@ low-confidence.
 > "recorded before provenance was tracked" — and exempt it from the low-confidence warning, the `?`
 > suffix and the `trustedField` rejection; **or** the owner re-confirms the fields by hand, which
 > marks them `manual` correctly, since the piece editor sets a field manual on any interaction with
-> it. A new value must be added to `VALID_CONFIDENCE` (`taggerMerge.js:5`) or
+> it. A new value must be added to `VALID_CONFIDENCE` (`taggerMerge.js`) or
 > `normalizeConfidenceMap` will convert it straight back to `low`, and to all three
-> `getFieldConfidence` implementations (`wardrobeAiContext.js:27`, `attributes.js:23`,
-> `rules.js:367`) or they will disagree about the same garment.
+> `getFieldConfidence` implementations (`wardrobeAiContext.js`, `attributes.js`,
+> `rules.js`) or they will disagree about the same garment.
 
 **[by design]** Low confidence does **not** suppress the value downstream. `trustedFieldText`
-(`wardrobeAiContext.js:36`) prefixes it instead: `length: [low confidence - add worn photo] midi`.
+(`wardrobeAiContext.js`) prefixes it instead: `length: [low confidence - add worn photo] midi`.
 So the image prompts *do* carry the length — annotated with a disclaimer that it is unreliable, on
 81% of pieces. That refines the finding under *The image-generation path*: the whole-wardrobe
 prompt states a length, and simultaneously tells the renderer not to trust it.
@@ -1653,7 +1667,7 @@ blocking the next re-tag, not as optional polish.
 
 **1. Calibration anchors cover two fields out of the several that gate.**
 `tagPieceWithProvider` calls `buildAnchorBlock` with `fields: ['formality', 'fabric_weight']`
-(`routes/ai.js:370`). Measured, on the corrections that already exist:
+(`routes/ai.js`). Measured, on the corrections that already exist:
 
 | anchor fields | anchors produced |
 |---|---|
@@ -1678,7 +1692,7 @@ footwear-comfort gate, and `heel_height` is 100% tagger-set (see the provenance 
 gate matters, the missing input is owner corrections, not prompt text.
 
 **3. Only 8 of 18 anchors get a thumbnail.** `anchorThumbsForTagger` caps at `limit = 8`
-(`routes/ai.js:335`) while the text block lists all 18. Which 8 depends on bucket iteration order,
+(`routes/ai.js`) while the text block lists all 18. Which 8 depends on bucket iteration order,
 not on importance — so the illustrated anchors are effectively arbitrary. Worth making
 deliberate before a run that re-tags the whole wardrobe against them.
 
@@ -1727,13 +1741,13 @@ attacks the smaller half. The levers in order of measured value:
    decide.
 2. **Prompt caching — 31%, quality-neutral, currently impossible.** `tagPieceWithProvider` sets no
    `cache_control` at all, and cannot benefit until the content array is reordered: the per-piece
-   photo is pushed **first** (`routes/ai.js:364`), before the anchors and the prompt, and a cache
+   photo is pushed **first** (`routes/ai.js`), before the anchors and the prompt, and a cache
    prefix must be contiguous from the start. Reorder to *[prompt + anchors] → [photo]*, then mark
    the prefix. The machinery already exists (`provider.js` → `PROMPT_CACHE_BREAKPOINT`,
    `systemToAnthropicBlocks`) and is used by the stylist conversation path.
 3. **Output schema — attacks the expensive half.** `cross_photo_agreement_note` is explicitly
    demanded by the prompt (*"Always emit a brief cross-photo agreement note"*) and then **deleted**
-   in `applyTaggerResult` (`taggerMerge.js:243`) — paid tokens discarded on arrival. The rest of
+   in `applyTaggerResult` (`taggerMerge.js`) — paid tokens discarded on arrival. The rest of
    the schema needs the same field-by-field trace; several sub-fields *are* consumed, so this is an
    audit, not a guess.
 4. **Latency is a second adoption barrier.** Tagging is one call per garment, sequential, while the
@@ -1778,7 +1792,7 @@ wrong or redundant.
   taste-adjacent entries are always SOFT; mood text may trigger a profile only via strong activity
   words, never generic ones; model-added entries are `[proposed]` and inert until ratified. A
   tagger spec may change what the tagger *emits*, not what the profiles *mean*.
-- **Adjacent dead code:** `setPath` (`taggerMerge.js:168`) is marked **DEAD — delete in next spec**
+- **Adjacent dead code:** `setPath` (`taggerMerge.js`) is marked **DEAD — delete in next spec**
   by `cleanup-inventory.md`. Cheap to fold in.
 - **Known mis-tag for a test case:** piece **353** (cargo pants) has `length_hits_at` mis-tagged as
   `mid-thigh` (`freeform-rearchitecture-handoff.md`). Useful as a fixed regression case in any

@@ -10,7 +10,11 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
 const { db, parsePiece } = await import('../db.js')
-const { createOwnerConstraint, setOwnerConstraintStatus } = await import('../lib/ownerConstraints.js')
+const {
+  createOwnerConstraint,
+  createOwnerConstraintFromProposal,
+  setOwnerConstraintStatus,
+} = await import('../lib/ownerConstraints.js')
 const { wholeWardrobePieceTrustDecision, filterWholeWardrobePiecesForGeneration } = await import('../styling-engine/rules.js')
 
 function insertPiece({ name, category, material = '', occasions = ['casual'] }) {
@@ -32,22 +36,22 @@ test('owner-confirmed constraints archive duplicate prose and gate only matching
     sourceFeedbackId: sourceId,
     selectorType: 'category',
     selectorValues: ['dress'],
-    contextDimension: 'activity',
-    contextValues: ['airplane travel'],
+    contextDimension: 'occasion',
+    contextValues: ['travel'],
     reason: 'Owner-confirmed travel constraint.',
   })
   assert.ok(created.constraint.id)
   assert.equal(db.prepare('SELECT archived FROM stylist_feedback WHERE id = ?').get(sourceId).archived, 1)
 
-  const matching = wholeWardrobePieceTrustDecision(dress, { occasion: 'travel', activity: 'airplane travel' })
+  const matching = wholeWardrobePieceTrustDecision(dress, { occasion: 'travel' })
   assert.match(matching.reasons.join(' '), /owner constraint/)
-  const otherPiece = wholeWardrobePieceTrustDecision(pants, { occasion: 'travel', activity: 'airplane travel' })
+  const otherPiece = wholeWardrobePieceTrustDecision(pants, { occasion: 'travel' })
   assert.doesNotMatch(otherPiece.reasons.join(' '), /owner constraint/)
   const otherContext = wholeWardrobePieceTrustDecision(dress, { occasion: 'casual', activity: 'museum' })
   assert.doesNotMatch(otherContext.reasons.join(' '), /owner constraint/)
 
   setOwnerConstraintStatus(db, created.constraint.id, 'retired')
-  assert.doesNotMatch(wholeWardrobePieceTrustDecision(dress, { occasion: 'travel', activity: 'airplane travel' }).reasons.join(' '), /owner constraint/)
+  assert.doesNotMatch(wholeWardrobePieceTrustDecision(dress, { occasion: 'travel' }).reasons.join(' '), /owner constraint/)
 })
 
 test('slot-aware filtering applies material weather constraints per request context', () => {
@@ -92,4 +96,89 @@ test('season constraints are no-ops without season and gate before roster assemb
 
   const winter = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'winter' })
   assert.deepEqual(winter.allowedPieces.map(piece => piece.id), [boots.id, sandals.id])
+})
+
+test('owner can enforce no boots in summer as a footwear-type rule', () => {
+  const boots = insertPiece({ name: 'plain ankle boots', category: 'shoes', material: 'leather' })
+  const sandals = insertPiece({ name: 'plain walking sandals', category: 'shoes', material: 'leather' })
+  createOwnerConstraint(db, {
+    confirmOwnerConstraint: true,
+    selectorType: 'footwear',
+    selectorValues: ['boots'],
+    contextDimension: 'season',
+    contextValues: ['summer'],
+    reason: "Don't suggest boots when season is summer.",
+  })
+
+  const summer = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'summer' })
+  assert.deepEqual(summer.allowedPieces.map(piece => piece.id), [sandals.id])
+  const winter = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'winter' })
+  assert.deepEqual(winter.allowedPieces.map(piece => piece.id), [boots.id, sandals.id])
+  const warm = filterWholeWardrobePiecesForGeneration([boots, sandals], { occasion: 'casual', season: 'warm' })
+  assert.deepEqual(warm.allowedPieces.map(piece => piece.id), [sandals.id])
+  const currentSummer = filterWholeWardrobePiecesForGeneration([boots, sandals], {
+    occasion: 'casual', season: 'current season', currentDate: new Date('2026-07-15T12:00:00Z'),
+  })
+  assert.deepEqual(currentSummer.allowedPieces.map(piece => piece.id), [sandals.id])
+})
+
+test('an unavailable request dimension cannot be stored as an apparently valid firm rule', () => {
+  const created = createOwnerConstraint(db, {
+    confirmOwnerConstraint: true,
+    selectorType: 'category',
+    selectorValues: ['dress'],
+    contextDimension: 'activity',
+    contextValues: ['airplane travel'],
+    reason: "Don't suggest dresses when activity is airplane travel.",
+  })
+  assert.equal(created.statusCode, 400)
+  assert.match(created.error, /Unsupported activity value/)
+})
+
+test('a stored validated proposal becomes a firm rule only after explicit confirmation', () => {
+  const payload = JSON.stringify({
+    ownerConstraintProposal: {
+      version: 1,
+      selectorType: 'footwear',
+      selectorValues: ['boots'],
+      contextDimension: 'season',
+      contextValues: ['summer'],
+      reason: "Don't suggest boots in summer.",
+    },
+  })
+  const sourceId = Number(db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, note, payload) VALUES ('preference_reaction', 'message', ?, ?)
+  `).run("I don't wear boots in the summer", payload).lastInsertRowid)
+
+  const unconfirmed = createOwnerConstraintFromProposal(db, sourceId)
+  assert.equal(unconfirmed.statusCode, 400)
+  assert.equal(db.prepare('SELECT archived FROM stylist_feedback WHERE id = ?').get(sourceId).archived, 0)
+
+  const created = createOwnerConstraintFromProposal(db, sourceId, { confirmOwnerConstraint: true })
+  assert.ok(created.constraint.id)
+  assert.equal(created.constraint.selector_type, 'footwear')
+  assert.equal(db.prepare('SELECT archived FROM stylist_feedback WHERE id = ?').get(sourceId).archived, 1)
+})
+
+test('feedback without a complete supported proposal cannot become a firm rule', () => {
+  const missingId = Number(db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, note, payload) VALUES ('owner_rule', 'message', ?, '{}')
+  `).run('Please make this firm somehow.').lastInsertRowid)
+  const missing = createOwnerConstraintFromProposal(db, missingId, { confirmOwnerConstraint: true })
+  assert.equal(missing.statusCode, 400)
+
+  const malformedId = Number(db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, note, payload) VALUES ('owner_rule', 'message', ?, ?)
+  `).run('No dresses sometimes.', JSON.stringify({
+    ownerConstraintProposal: {
+      version: 1,
+      selectorType: 'category',
+      selectorValues: ['dress'],
+      contextDimension: 'activity',
+      contextValues: [],
+    },
+  })).lastInsertRowid)
+  const malformed = createOwnerConstraintFromProposal(db, malformedId, { confirmOwnerConstraint: true })
+  assert.equal(malformed.statusCode, 400)
+  assert.equal(db.prepare('SELECT archived FROM stylist_feedback WHERE id IN (?, ?)').all(missingId, malformedId).every(row => row.archived === 0), true)
 })

@@ -265,19 +265,32 @@ An occasion exclusion is currently both a structured hard gate and a generated p
 the same instruction in a prompt. Keep the structured exclusion as the sole behavioural authority;
 show its provenance in the UI without delivering the generated receipt as a second rule.
 
-### Remaining work — constraint-shaped learned rules
+### Owner-confirmed conversion — constraint-shaped learned rules
 
 Conversation Memory also contains free-text owner rules whose meaning is stronger than ordinary
 taste guidance, for example “never use these shorts for home outfits.” Today these remain prompt
 guidance. They must not be converted automatically into gates: free text can be ambiguous, and a
 model-authored or mis-scoped sentence must not silently remove garments from consideration.
 
-The intended workflow is owner-confirmed and structured:
+The owner-confirmed structured workflow is now implemented in Style Profile:
 
-1. identify a constraint-shaped learned rule as a **proposal**, preserving its original receipt;
-2. show the owner the parsed garment, prohibited context and intended strength;
+1. attach a complete, validated structured **proposal** only to a learned rule whose meaning has
+   already been verified, preserving its original receipt;
+2. show **Make this a firm rule** only when that proposal already identifies both the clothing and
+   the situation, then show the exact exclusion sentence for confirmation;
 3. only after confirmation, write one canonical structured constraint;
 4. use the prose receipt for source and undo, not as duplicate prompt authority.
+
+The empty **Always avoid** collection is hidden. From a learned sentence the owner can choose
+**Make this a firm rule**, preview the consequence, and confirm without a model call. There is no
+generic free-text rule builder: unsupported or ambiguous memories do not show the action, and the
+server validates the stored proposal again on confirmation. New chat memories receive this proposal
+through the existing `store_user_correction` tool call, so creating the proposal costs no second model
+call and still cannot activate a gate without owner confirmation. The first verified flow is
+`footwear: boots × season: summer`. Footwear type is distinct from the coarse `shoes` wardrobe
+category so the boots rule does not exclude every shoe. “Pants, not dresses, for airplane travel”
+remains ordinary guidance for now: airplane travel is not a structured request dimension, so offering
+a firm button would promise enforcement the current request pipeline cannot provide.
 
 Enforcement must respect the shape of the styling request. For a single-outfit request, an
 ineligible garment is removed before candidate capping and before the model receives the roster.
@@ -299,14 +312,151 @@ incorrectly suppressing garments that are valid for errands. Explicit owner occa
 also appear in the plan garment catalog as a secondary safeguard. AI-generated
 `occasion_confidence` remains advisory and was not promoted into owner authority.
 
-This work also requires relevance selection for the remaining free-text owner memories. The
-current newest-eight prompt slice is not a substitute for structured enforcement and can omit an
-older rule that is directly relevant to the active garment or context.
+### Direct guidance is now relevance-routed
+
+New conversation guidance no longer defaults to “send this on every styling request.” The
+`store_user_correction` write carries a versioned applicability envelope describing whether the
+instruction is universal, garment-relevant, context-relevant, both, or unresolved. The server
+validates that envelope and also runs a deliberately narrow local extractor over explicit supported
+clothing and context terms. This is the safety net exposed by the sandals test: “I never wear
+sandals for hiking” becomes sandals × hiking even when the model omits the optional structure.
+There is no second model call and no additional owner question for an unambiguous sentence.
+The garment half supports exact piece IDs plus conjunctive structured category, footwear, and
+material selectors (for example, canvas **and** sneakers rather than either one). The context half
+supports occasion/activity/season/weather and explicit request situations such as office or client
+days. Situation terms are matched against the actual request/plan-slot wording, so an office rule
+does not leak into every request that happens to share the broad smart-casual profile.
+
+Direct guidance and accepted contextual lessons retain their different provenance and review
+workflows, but now adapt into the same executable relevance matcher. Selected-piece, freeform,
+whole-wardrobe and plan readers supply the bounded active garment set plus the actual request
+occasion/activity/season/weather. Garment-and-context guidance requires both matches; a mixed plan
+may match any real slot. Relevance filtering happens before the delivery cap, so unrelated recent
+rules cannot hide an older applicable one. A new sentence that cannot be scoped is stored for
+review but receives no prompt authority rather than silently becoming global. Existing records
+without the envelope remain legacy-compatible for now and are visibly labelled as unreviewed scope;
+this preserves established behavior without pretending their scope has been verified.
+
+The five active legacy records in the development wardrobe were migrated after a read-only preview
+on 2026-08-11: travel pants/dresses → travel context; canvas sneakers → canvas+sneakers with
+rainy/wet exposure; office/client styling → those explicit request situations; the lilac cardigan
+fit note → exact piece 224; leather jackets → leather+outerwear with summer+travel. The pre-migration
+database is retained under `backups/wardrobe/`.
+
+This advisory route is separate from **Make this a firm rule**. Applicability decides when prompt
+guidance is worth sending; a firm rule changes deterministic garment eligibility and still requires
+a complete supported proposal plus explicit owner confirmation.
+
+Style Profile presents both advisory sources in one **Guidance for specific situations** collection,
+ordered together by recency. “Told directly to your stylist” versus “feedback you reviewed” is
+secondary source/history text, not a separate section. Firm rules and garment occasion exclusions
+remain separate because they change deterministic eligibility rather than prompt guidance.
 
 This mechanism is not a repair for incorrect base classification. In particular, broad `casual`
 eligibility must not be treated as proof of `home` eligibility; if the engine collapses those
 contexts, that is a separate context-routing defect to diagnose and fix rather than a reason to
 manufacture an owner rule.
+
+### Editing applicability without exposing it as a schema — pilot, 2026-08-11
+
+An owner-editable structured-checkbox surface (reach dropdown, garment/context dimension groups)
+was built, shipped to the sandbox, and then removed the same day after owner review: it exposed
+internal routing vocabulary — scope, reach, dimension labels — directly to the person styling her
+own clothes, which nothing else in this app does. Every other surface derives structure from plain
+language or plain actions and shows it back as a sentence; this one asked her to construct it. Two
+guardrail findings from that surface survive the redesign and remain load-bearing:
+
+- A checkbox/dropdown editor can silently produce an unusable or narrower-than-shown state on save
+  when client-side "is this usable" logic doesn't match server-side validation exactly — reproduced
+  concretely for the synthesized-lesson case (an unsupported term, or evidence that drifted since
+  acceptance, could zero out an active lesson's delivery with no error surfaced).
+- A synthesized lesson's evidence can itself contain the composer's unresolved `current season`
+  placeholder rather than a resolved season name, because request-time season context was never
+  normalized before being written into `feedbackEvidence.context.season`. Fixed at the source:
+  `compactSynthesisEvidenceRow` now resolves `current season`/`warm`/`autumn` against the reaction's
+  own `created_at` (not "now"), reusing the same resolution `owner_constraints` firm-rule matching
+  already applied. This was a real, pre-existing data gap the checkbox surface happened to surface
+  first; it is not specific to that UI and stays fixed regardless of what replaces it.
+
+What shipped instead, and is live in Style Profile as of 2026-08-11:
+
+- **Direct guidance** — no separate scope control at all. Editing the note text and saving
+  re-derives `ownerGuidanceApplicability` through the same deterministic extractor
+  `store_user_correction` already runs at capture time; the owner only ever edits her own sentence.
+  A row carrying an exact piece ID from the 2026-08-11 legacy migration is left untouched by a text
+  edit — prose can never reconstruct a piece ID, so that scope is frozen rather than guessed away.
+- **Synthesized lessons** — no scope control either, only plain removable tags ("Currently applies
+  to: olive suede slip-on shoes ×, summer ×") built from the same server-computed,
+  evidence-grounded option set the sanitizer validates against, so nothing shown can be silently
+  dropped. Narrowing only, consistent with synthesis's existing rule that scope must never exceed
+  what evidence actually showed; broadening still requires new evidence and a new synthesis call.
+  Removing the last tag is disabled with a plain nudge toward Retire, and `scope` is recomputed from
+  whatever remains rather than left stale. The server independently rejects (400) any save that
+  would leave an already-accepted lesson with zero delivery scope, as a backstop behind the UI.
+
+### Owner design review, 2026-08-12 — read-only memory, presented as explanations
+
+The owner reviewed the editing surfaces and ruled that **active guidance carries no editing at
+all**. Both card types — direct guidance and accepted synthesized lessons — are read-only, with a
+single action: **Forget this**. Correcting a preference means telling the stylist again in chat,
+which writes its own record through the normal `store_user_correction` path. The governing
+principle: *records open as explanations, not forms; this area should read like "what my stylist
+remembers about me", never like a memory-management console.*
+
+Two intermediate designs were built and removed on the way to that ruling, and both failures are
+worth keeping on the record because they are easy to reintroduce:
+
+1. **A structured scope editor** (reach dropdown, dimension checkboxes) exposed internal routing
+   vocabulary to the person styling her own clothes. Nothing else in this app asks that.
+2. **A "remove a condition" chip row inverted its own meaning.** A lesson's conditions are ANDed,
+   so removing one *widens* where it fires. Verified against the matcher: a lesson scoped
+   `olive suede shoes AND summer`, with the summer chip removed, begins firing in **winter and
+   fall** whenever those shoes are candidates; removing the garment chip instead makes a lesson
+   about one pair colour **every summer request**. The control read as "stop using it here" and did
+   the opposite — and broadening a synthesized lesson past its evidence is exactly what the
+   synthesis guardrails exist to prevent. There is no safe in-place narrowing, so there is no
+   control.
+
+Scope is therefore stated, never edited, and stated as a sentence with the conjunction spelled out
+(*"Applies when styling cream cotton button-up shirt for casual summer."*, *"For canvas sneakers and
+rainy weather"*) rather than a comma-separated row that reads like a list of alternatives.
+
+**Server contract.** `PATCH /stylist-feedback/:id` no longer re-derives applicability from a changed
+note; a stored envelope only ever changes by the owner saying something new in chat. Pending
+synthesis drafts remain authorable (she may reword what the stylist proposed before accepting it),
+but their applicability is not owner-editable either.
+
+**Page structure, from the owner's mockup (2026-08-12).** Active guidance is now two groups plus the
+baseline, which supersedes the earlier "one unified collection ordered by recency" decision recorded
+above in this section — creation path turned out to matter to the reader after all, because the two
+kinds answer different questions:
+
+- **When it matters** — *"Things your stylist remembers for particular clothes or situations"*.
+  Accepted lessons as cards, each showing the garment it is about (its current photo, read from
+  `pieces` rather than the evidence snapshot), the applies-when sentence, and *"Learned from feedback
+  you approved."*
+- **Other things you've told your stylist** — direct guidance as a quieter list with a scope line
+  (*"For travel"*), capped at five with *See all guidance*.
+- **Your foundation** — the onboarding baseline, deliberately distinct from the living memory above
+  it: *"These are the preferences and guidance you set during onboarding."* Seven labelled tiles
+  (Body & comfort, Aesthetic preferences, Proven formulas, Style range, Working relationship, Image
+  guidance, Footwear guidance) using her words rather than layer keys. One is the baseline she
+  authored at setup; the other is what the stylist has learned since.
+
+**"What changed recently" removed, 2026-08-12.** The recency strip above the guidance sections was
+deleted rather than restyled. It duplicated every card in the two sections directly below it, and
+its labels asserted behaviour that relevance routing had already made untrue. Verified at runtime
+against `getOwnerRuleNotes`: a scoped direct-guidance row is delivered on a matching office request
+and **withheld** on an unrelated one; a row whose applicability is `unresolved` is withheld on
+**every** request; only a legacy pre-envelope row is delivered unconditionally. So the strip's
+**"Guides the stylist"** label was accurate for exactly one of three cases and outright false for
+unresolved rows, and pairing it against **"Applies in matching situations"** on lessons implied a
+conditional/unconditional split between the two sources that no longer exists — both are matched.
+Any future recency surface must label by the row's actual envelope, not by which store it came from.
+
+**Still queued:** firm-rule card wording, and the feedback-capture confirmations in chat (*"Got it —
+I won't suggest this piece for Travel"*) that keep a one-off reaction visibly distinct from a durable
+rule.
 
 ## 1f. Calibration reference priority is already qualified by reference kind
 
@@ -343,8 +493,8 @@ the prompt tail where this codebase has already measured stored rules losing (sp
 
 1. **Scope contextual evidence to the decision in play.** Outfit/board evidence should reach a
    call only when its garment or context is relevant; `getSavedBoardRendererMemory` demonstrates
-   the overlap pattern. Standing global owner rules are intentionally different and continue to
-   reach every styling request.
+   the overlap pattern. Direct owner guidance now follows the same principle through its validated
+   applicability envelope; only guidance explicitly stored as universal reaches every request.
 2. **Consolidate, don't concatenate.** *"Marked too plain on 4 outfits containing this jacket"* is
    one line and stronger evidence than four lines.
 3. **Cap per destination, not globally.** A garment with 20 reactions contributes a summary.
@@ -378,8 +528,17 @@ that needs a model of evidence first. Phases 1+ depend on decisions that phase 0
 | 9 | Select accepted personal/contextual lessons by applicable garment, occasion/activity, season/weather and declared boundary | **shipped for the pilot — routing and owner-facing structured applicability control complete** |
 | 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **pilot paused — positive evidence is not currently eligible for paid synthesis** |
 | 11 | Complete approved destination workflows for garment facts and general product-quality findings | **backend complete for the approved scope — wrong-length renderer/retag review is preserved; accepted synthesis findings and explicitly confirmed no-cost reports enter a provenance-linked queue with durable evidence, resolution destination and undo; review UI is deferred to item 13** |
-| 12 | Route owner-confirmed constraint-shaped learned rules into structured, slot-aware eligibility and composition enforcement | **backend complete for structured selectors — existing piece × occasion exclusions remain canonical; confirmed piece/category/material × occasion/activity/season/weather constraints gate before roster or per capsule slot, archive duplicate prose, expose reasons and can be retired; proposal/review UI is deferred to item 13** |
-| 13 | Convene the UI/UX panel and refine the memory/review surfaces | **deferred until items 9–12 have settled behaviour to show** |
+| 12 | Route learned guidance by relevant garment/context and owner-confirmed constraint-shaped rules into structured, slot-aware eligibility | **shipped for prompt relevance and confirmed firm-rule enforcement; the optional local acknowledgement fast path remains follow-up work** |
+| 13 | Convene the UI/UX panel and refine the memory/review surfaces | **panel complete; owner-ratified page restructuring is in progress** |
+
+**Item 12 remaining cost/interaction follow-up.** A live test on 2026-08-11 showed that sending “I
+never wear sandals for hiking” inside an existing trip thread spent five provider iterations
+re-reading trip and shoe context before storing the instruction. The storage defect is now closed:
+the server locally recovers the supported sandals × hiking applicability (and a complete firm-rule
+proposal can still be confirmed without another call). A separate optional optimization remains:
+pre-route simple explicit prohibitions to a brief local acknowledgement so they can skip the full
+stylist/tool loop entirely. That optimization is not required for correct routing and ambiguous
+conversation must continue through ordinary chat.
 
 `Almost right` remains a deliberate follow-up under item 10. Its combination of “preserve
 something” plus a specific diagnostic reason may be more useful than undifferentiated praise, but

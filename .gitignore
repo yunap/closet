@@ -38,6 +38,7 @@ scratch/*
 !scratch/measure_feedback_surface.js
 !scratch/audit_feedback_surface_completeness.js
 !scratch/feedback_surface_inventory.json
+!scratch/backfill_owner_constraint_proposals.js
 !scratch/backfill_positive_board_evidence.js
 !scratch/build_item13_feedback_panel_fixture.js
 !scratch/build_item13_feedback_panel_packet.js

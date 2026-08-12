@@ -200,19 +200,46 @@ router.get('/pieces/usage-stats', (req, res) => {
 // outfit card that would no longer be offered once excluded. This lists every current exclusion
 // so it can be reviewed and restored from Style Profile instead. Must be registered before
 // GET /pieces/:id, or that route's :id param would swallow this path.
+// `occasion_exclusions` stores only the occasion strings — there is no per-exclusion timestamp
+// anywhere on `pieces` (its only date column, `date_added`, is when the garment was added). The one
+// record of WHEN an exclusion was set is the prose receipt the same handler writes into
+// `styling_rules_learned`: "Excluded from <occasion> by <name> (YYYY-MM-DD)". Parse it here, once,
+// and expose a real `changedAt` so callers can order by recency without re-reading prose. The
+// receipt stays display-only provenance — `occasion_exclusions` is still the enforcement record.
+const EXCLUSION_RECEIPT = /^Excluded from (.+?) by .*\((\d{4}-\d{2}-\d{2})\)\s*$/i
+const normalizeOccasionKey = value => String(value || '').toLowerCase().replace(/[-_]+/g, ' ').trim()
+
+function exclusionChangedAt(rules, occasion) {
+  const wanted = normalizeOccasionKey(occasion)
+  // Last matching line wins: excluded → restored → excluded again all append in order.
+  for (let index = rules.length - 1; index >= 0; index -= 1) {
+    const match = EXCLUSION_RECEIPT.exec(String(rules[index] || '').trim())
+    if (match && normalizeOccasionKey(match[1]) === wanted) return { changedAt: match[2], order: index }
+  }
+  return { changedAt: null, order: -1 }
+}
+
 router.get('/pieces/occasion-exclusions', (req, res) => {
   const rows = db.prepare(`
-    SELECT id, name, category, photo, occasion_exclusions FROM pieces
+    SELECT id, name, category, photo, occasion_exclusions, styling_rules_learned FROM pieces
     WHERE occasion_exclusions IS NOT NULL AND occasion_exclusions != '[]' AND occasion_exclusions != ''
     ORDER BY name COLLATE NOCASE
   `).all()
   const entries = []
   for (const row of rows) {
     const occasions = safeJsonParse(row.occasion_exclusions, [])
+    const rules = safeJsonParse(row.styling_rules_learned, []) || []
     for (const occasion of occasions) {
-      entries.push({ pieceId: row.id, name: row.name, category: row.category, photo: row.photo, occasion })
+      const { changedAt, order } = exclusionChangedAt(rules, occasion)
+      entries.push({ pieceId: row.id, name: row.name, category: row.category, photo: row.photo, occasion, changedAt, receiptOrder: order })
     }
   }
+  // Newest first so a preview can show what actually changed recently; entries with no receipt
+  // (set before receipts existed) sort last and keep their alphabetical order.
+  entries.sort((left, right) => {
+    if (left.changedAt !== right.changedAt) return String(right.changedAt || '').localeCompare(String(left.changedAt || ''))
+    return right.receiptOrder - left.receiptOrder
+  })
   res.json(entries)
 })
 
@@ -1095,6 +1122,9 @@ router.patch('/stylist-feedback/:id', (req, res) => {
       note: typeof note === 'string' ? note : row.note,
       label: typeof label === 'string' ? label : row.label,
     }
+    // Guidance is read-only in Style Profile: a memory can be stopped, never reworded in place, so
+    // nothing here re-derives its applicability. A stored envelope only ever changes by the owner
+    // saying something new in chat, which writes its own row through store_user_correction.
     const updateFeedback = db.transaction(() => {
       syncPieceRuleReceipt(row, { note: next.note, archived: Boolean(next.archived) })
       db.prepare('UPDATE stylist_feedback SET archived = ?, note = ?, label = ? WHERE id = ?')

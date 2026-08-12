@@ -126,7 +126,7 @@ export default function App() {
     { id: 'wardrobe', label: 'Wardrobe', icon: 'wardrobe', to: '/wardrobe', badgeCount: pendingTodoCount },
     { id: 'outfits', label: 'Outfits', icon: 'outfits', to: '/outfits' },
     { id: 'stylist', label: 'Stylist', icon: 'stylist', to: '/stylist' },
-    { id: 'visual_lab', label: 'Visual Lab', icon: 'visual_lab', to: '/visual-lab' },
+    { id: 'visual_lab', label: 'Style Lab', icon: 'visual_lab', to: '/visual-lab' },
     { id: 'settings', label: 'Settings', icon: 'settings', to: '/settings' },
   ]), [pendingTodoCount])
 

@@ -8,6 +8,11 @@ import { resolveActivityProfile, ACTIVITY_PROFILES } from './footwear-comfort.js
 import { FEEDBACK_BEHAVIOURS, FEEDBACK_REASON_LABELS, SCOPED_EVIDENCE_KINDS, WRONG_PIECE_FOR_OUTFIT_FEEDBACK, canonicalFeedbackType, feedbackBehaviour } from '../lib/feedbackTaxonomy.js'
 import { ACCENT_COLOR_NAMES } from '../lib/colorTaxonomy.js'
 import { ownerConstraintApplies, parseOwnerConstraintRow } from '../lib/ownerConstraints.js'
+import {
+  ownerGuidanceApplicabilityForFeedback,
+  ownerGuidanceApplicabilityFromSynthesis,
+  ownerGuidanceApplies,
+} from '../lib/ownerGuidance.js'
 
 import {
   fabricWeight,
@@ -703,49 +708,14 @@ export function getProvisionalWrongChoiceMemory(pieceIds = [], limit = 3) {
   }
 }
 
-const normalizedApplicabilityText = value => String(value || '').trim().toLowerCase()
-
-const applicabilityTermMatches = (requestValue, term) => {
-  const haystack = normalizedApplicabilityText(requestValue)
-  const needle = normalizedApplicabilityText(term)
-  if (!haystack || !needle) return false
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
-  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(haystack) // ratchet-allow: exact owner-approved applicability term matched against request context, not garment classification
-}
-
-const applicabilityDimensionMatches = (requestValue, terms) => {
-  const meaningful = (Array.isArray(terms) ? terms : []).map(normalizedApplicabilityText).filter(Boolean)
-  return !meaningful.length || meaningful.some(term => applicabilityTermMatches(requestValue, term))
-}
-
 export function acceptedSynthesisApplicabilityMatches(applicability = {}, requestContext = {}) {
-  if (Number(applicability?.version) !== 1) return false
-  const pieceIds = [...new Set((Array.isArray(applicability?.piece_ids) ? applicability.piece_ids : [])
-    .map(Number).filter(id => Number.isInteger(id) && id > 0))]
-  const requestPieceIds = new Set((Array.isArray(requestContext?.pieceIds) ? requestContext.pieceIds : [])
-    .map(Number).filter(id => Number.isInteger(id) && id > 0))
-  const hasContextConditions = [
-    applicability?.occasions,
-    applicability?.activities,
-    applicability?.seasons,
-    applicability?.weather_terms,
-  ].some(values => Array.isArray(values) && values.some(value => normalizedApplicabilityText(value)))
-  const contextMatches = hasContextConditions &&
-    applicabilityDimensionMatches(requestContext?.occasion, applicability?.occasions) &&
-    applicabilityDimensionMatches(requestContext?.activity, applicability?.activities) &&
-    applicabilityDimensionMatches(requestContext?.season, applicability?.seasons) &&
-    applicabilityDimensionMatches(requestContext?.weather, applicability?.weather_terms)
-  const pieceMatches = pieceIds.some(id => requestPieceIds.has(id))
-
-  if (applicability.scope === 'piece') return pieceMatches
-  if (applicability.scope === 'context') return contextMatches
-  if (applicability.scope === 'piece_context') {
-    // The lesson is relevant only when the constrained garment is in the bounded roster (or exact
-    // outfit) and the request matches its context. Do not spend prompt space on unavailable pieces,
-    // and do not broaden a contextual lesson into an unconditional garment rule.
-    return pieceMatches && contextMatches
-  }
-  return false
+  const routed = ownerGuidanceApplicabilityFromSynthesis(applicability)
+  const pieceIds = (Array.isArray(requestContext?.pieceIds) ? requestContext.pieceIds : [])
+    .map(Number).filter(id => Number.isInteger(id) && id > 0)
+  return ownerGuidanceApplies(routed, {
+    requestContext,
+    pieces: pieceIds.map(id => ({ id })),
+  })
 }
 
 // Only owner-accepted personal/contextual synthesis drafts become styling prompt memory.
@@ -1430,7 +1400,7 @@ function isOwnerRuleRow(row = {}) {
     (row.feedback_type === 'preference_reaction' && row.target_type === 'message')
 }
 
-export function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 16, { excludeContexts = [] } = {}) {
+export function getStylistFeedbackMemory(contextType = null, contextId = null, limit = 16, { excludeContexts = [], ownerGuidanceContext = null } = {}) {
   try {
     const deliveryLimit = Math.max(0, Number(limit) || 0)
     if (!deliveryLimit) return ''
@@ -1478,6 +1448,11 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
       if (acceptedSources.has(Number(r.id))) continue
       const behaviour = feedbackBehaviour(r)
       if (behaviour === FEEDBACK_BEHAVIOURS.OWNER_PROMPT) {
+        const applicability = ownerGuidanceApplicabilityForFeedback(r)
+        // Rows without an envelope are legacy data awaiting owner review. New writers always
+        // persist either a resolved or explicit unresolved envelope, so unresolved new guidance
+        // cannot silently regain global authority.
+        if (applicability && !ownerGuidanceApplies(applicability, ownerGuidanceContext || {})) continue
         if (deliveredUnits >= deliveryLimit) continue
         ownerRuleLines.push(`- OWNER RULE: ${String(r.note || '').trim().slice(0, 280)}`)
         deliveredUnits += 1
@@ -1540,16 +1515,22 @@ export function getStylistFeedbackMemory(contextType = null, contextId = null, l
 // workbench doesn't balloon. Deterministic string pass-through — these
 // remain prompt guidance, never a mechanical gate (the #44 memory-pollution
 // lesson: stored text must never get absolute mechanical authority).
-export function getOwnerRuleNotes(limit = 8) {
+export function getOwnerRuleNotes(limit = 8, ownerGuidanceContext = null) {
   try {
+    const deliveryLimit = Math.max(0, Number(limit) || 0)
+    if (!deliveryLimit) return []
+    const scanLimit = Math.min(Math.max(deliveryLimit * 20, deliveryLimit), 4000)
     const rows = db.prepare(`
-      SELECT note FROM stylist_feedback
+      SELECT * FROM stylist_feedback
       WHERE COALESCE(archived,0) = 0
         AND (feedback_type = 'owner_rule' OR (feedback_type = 'preference_reaction' AND target_type = 'message'))
       ORDER BY id DESC
       LIMIT ?
-    `).all(Number(limit))
-    return rows.map(r => String(r.note || '').trim()).filter(Boolean)
+    `).all(scanLimit)
+    return rows.filter(row => {
+      const applicability = ownerGuidanceApplicabilityForFeedback(row)
+      return !applicability || ownerGuidanceApplies(applicability, ownerGuidanceContext || {})
+    }).map(r => String(r.note || '').trim()).filter(Boolean).slice(0, deliveryLimit)
   } catch {
     return []
   }
@@ -2320,10 +2301,12 @@ export function wholeWardrobePieceTrustDecision(piece = {}, options = {}) {
     id: piece.id,
     category: wardrobeCategoryGroup(piece),
     materials: structuredMaterials,
+    piece,
   }, {
     occasion: ownerExclusionOccasion,
     season: options.season,
     activity: options.activity,
+    currentDate: options.currentDate,
     weather: {
       hot: Boolean(weatherProfile.isHot),
       cold: Boolean(weatherProfile.isCold),

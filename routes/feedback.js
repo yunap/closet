@@ -9,12 +9,13 @@ import {
 import {
   buildFeedbackSynthesisPreview,
   compactSynthesisEvidenceRow,
+  computeSynthesisApplicabilityOptions,
   feedbackSynthesisCall,
   FEEDBACK_SYNTHESIS_DISPOSITIONS,
   sanitizeSynthesisApplicability,
 } from '../lib/feedbackSynthesis.js'
 import { createDirectProductQualityFinding, resolveProductQualityFinding, syncProductQualityFindingForDraft } from '../lib/productQualityFindings.js'
-import { createOwnerConstraint, parseOwnerConstraintRow, setOwnerConstraintStatus } from '../lib/ownerConstraints.js'
+import { createOwnerConstraint, createOwnerConstraintFromProposal, parseOwnerConstraintRow, setOwnerConstraintStatus } from '../lib/ownerConstraints.js'
 
 const router = express.Router()
 const MAX_BATCH = 12
@@ -28,11 +29,31 @@ function feedbackRows(ids) {
   if (!ids.length) return []
   const placeholders = ids.map(() => '?').join(',')
   return db.prepare(`
-    SELECT id, feedback_type, note, payload
+    SELECT id, feedback_type, note, payload, created_at
     FROM stylist_feedback
     WHERE id IN (${placeholders}) AND COALESCE(archived,0) = 0
     ORDER BY id ASC
   `).all(...ids)
+}
+
+// Shared by the drafts listing and the PATCH handler so both compute applicability options from
+// the exact same, currently-non-archived evidence sanitizeSynthesisApplicability will validate
+// against — a checkbox built from anything else could offer a choice the server would reject.
+// The card shows the garment a lesson is about, so the option list carries its photo too. Read
+// from `pieces` at request time rather than the evidence snapshot: the snapshot preserves what the
+// reaction looked like, but the card should show the garment as it is now.
+function withPiecePhotos(options) {
+  if (!options?.pieces?.length) return options
+  const ids = options.pieces.map(piece => piece.id)
+  const rows = db.prepare(`SELECT id, name, photo FROM pieces WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids)
+  const byId = new Map(rows.map(row => [row.id, row]))
+  return { ...options, pieces: options.pieces.map(piece => ({ ...piece, photo: byId.get(piece.id)?.photo || null })) }
+}
+
+function sourceEvidenceForDraft(draft) {
+  let sourceIds = []
+  try { sourceIds = JSON.parse(draft.source_feedback_ids || '[]') } catch { sourceIds = [] }
+  return feedbackRows(requestedIds(sourceIds)).map(compactSynthesisEvidenceRow).filter(Boolean)
 }
 
 function previewFor(ids) {
@@ -149,11 +170,16 @@ router.post('/feedback-synthesis/batches', async (req, res) => {
       })
     }
 
+    // An "insufficient evidence" result is not a proposal — it is the model reporting that the
+    // selected reactions did not contain enough to learn from. Putting it in the decision queue
+    // asked the owner to accept or reject a non-result, and the only way to clear it was Reject,
+    // which then made it look like a suggestion she had turned down. It is recorded as already
+    // reviewed so it never demands a decision; its rationale is still shown as an outcome.
     const insertDraft = db.prepare(`
       INSERT INTO feedback_synthesis_drafts
         (batch_id, disposition, title, proposed_text, boundary, rationale, confidence,
          source_feedback_ids, related_draft_id, status, payload)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     db.transaction(() => {
       for (const result of validResults) {
@@ -167,6 +193,7 @@ router.post('/feedback-synthesis/batches', async (req, res) => {
           String(result.confidence || '').trim(),
           JSON.stringify(result.source_feedback_ids),
           Number(result.related_draft_id) || null,
+          result.disposition === 'insufficient_evidence' ? 'reported' : 'draft',
           JSON.stringify(result),
         )
       }
@@ -196,7 +223,12 @@ router.get('/feedback-synthesis/drafts', (req, res) => {
     ORDER BY d.id DESC
     LIMIT 200
   `).all()
-  res.json(drafts)
+  res.json(drafts.map(draft => ({
+    ...draft,
+    applicabilityOptions: draft.disposition === 'personal_contextual_lesson'
+      ? withPiecePhotos(computeSynthesisApplicabilityOptions(sourceEvidenceForDraft(draft)))
+      : null,
+  })))
 })
 
 router.get('/product-quality-findings', (req, res) => {
@@ -227,7 +259,9 @@ router.get('/owner-constraints', (_req, res) => {
 })
 
 router.post('/owner-constraints', (req, res) => {
-  const result = createOwnerConstraint(db, req.body || {})
+  const result = req.body?.useStoredProposal
+    ? createOwnerConstraintFromProposal(db, req.body?.sourceFeedbackId, req.body || {})
+    : createOwnerConstraint(db, req.body || {})
   if (result.error) return res.status(result.statusCode).json({ error: result.error })
   res.status(201).json({ ...result.constraint, selector_values: JSON.parse(result.constraint.selector_values), context_values: JSON.parse(result.constraint.context_values) })
 })
@@ -242,7 +276,10 @@ router.patch('/feedback-synthesis/drafts/:id', (req, res) => {
   const id = Number(req.params.id)
   const current = db.prepare('SELECT * FROM feedback_synthesis_drafts WHERE id = ?').get(id)
   if (!current) return res.status(404).json({ error: 'Draft not found.' })
-  const allowedStatuses = ['draft', 'accepted', 'deferred', 'rejected', 'retired']
+  // 'reported' is terminal and owner-free: it records an outcome the model produced, not a
+  // proposal awaiting a decision. It is listed so the PATCH route cannot be used to smuggle a
+  // non-result back into the decision queue.
+  const allowedStatuses = ['draft', 'accepted', 'deferred', 'rejected', 'retired', 'reported']
   if (req.body?.status !== undefined && !allowedStatuses.includes(req.body.status)) {
     return res.status(400).json({ error: `Invalid draft status: ${req.body.status}` })
   }
@@ -255,13 +292,19 @@ router.patch('/feedback-synthesis/drafts/:id', (req, res) => {
     : String(req.body.boundary || '').trim().slice(0, 300)
   let payload = {}
   try { payload = JSON.parse(current.payload || '{}') || {} } catch { payload = {} }
+  const sourceEvidence = sourceEvidenceForDraft(current)
   if (req.body?.applicability !== undefined) {
-    let sourceIds = []
-    try { sourceIds = JSON.parse(current.source_feedback_ids || '[]') } catch { sourceIds = [] }
-    const sourceEvidence = feedbackRows(requestedIds(sourceIds)).map(compactSynthesisEvidenceRow).filter(Boolean)
-    payload.applicability = current.disposition === 'personal_contextual_lesson'
+    const sanitized = current.disposition === 'personal_contextual_lesson'
       ? sanitizeSynthesisApplicability(req.body.applicability, sourceEvidence)
       : null
+    // A save that would leave an accepted lesson with no delivery scope is rejected rather than
+    // silently persisted — otherwise the row keeps showing as an active, accepted lesson while
+    // matching zero requests, with nothing on screen indicating it stopped working. Retiring is the
+    // explicit, visible way to deactivate a lesson; editing should never do that as a side effect.
+    if (!sanitized && current.disposition === 'personal_contextual_lesson' && status === 'accepted') {
+      return res.status(400).json({ error: 'This would leave the lesson with no delivery scope. Select at least one garment or context term, or use Retire instead.' })
+    }
+    payload.applicability = sanitized
   }
   db.transaction(() => {
     db.prepare(`
@@ -271,7 +314,29 @@ router.patch('/feedback-synthesis/drafts/:id', (req, res) => {
     `).run(status, editedText, boundary, JSON.stringify(payload), id)
     syncProductQualityFindingForDraft(db, current, { status, editedText })
   })()
-  res.json(db.prepare('SELECT * FROM feedback_synthesis_drafts WHERE id = ?').get(id))
+  const updated = db.prepare('SELECT * FROM feedback_synthesis_drafts WHERE id = ?').get(id)
+  res.json({
+    ...updated,
+    applicabilityOptions: updated.disposition === 'personal_contextual_lesson'
+      ? withPiecePhotos(computeSynthesisApplicabilityOptions(sourceEvidence))
+      : null,
+  })
+})
+
+// Deliberately narrow: only a non-result may be deleted outright. These are model output recording
+// that nothing could be learned — removing one loses none of the owner's own data, and the paid
+// batch (cost, usage, input hash) and the source reactions are separate records that survive. Any
+// other disposition is refused, so this cannot become a way to erase an accepted lesson or a
+// decision she made; those retire and stay visible.
+router.delete('/feedback-synthesis/drafts/:id', (req, res) => {
+  const id = Number(req.params.id)
+  const draft = db.prepare('SELECT * FROM feedback_synthesis_drafts WHERE id = ?').get(id)
+  if (!draft) return res.status(404).json({ error: 'Draft not found.' })
+  if (draft.disposition !== 'insufficient_evidence') {
+    return res.status(400).json({ error: 'Only an unusable synthesis result can be removed. Retire the lesson instead.' })
+  }
+  db.prepare('DELETE FROM feedback_synthesis_drafts WHERE id = ?').run(id)
+  res.json({ success: true })
 })
 
 export default router

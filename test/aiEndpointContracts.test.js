@@ -3799,6 +3799,163 @@ test('feedback synthesis preview is free and the authorized route enforces hash,
   assert.equal(db.prepare('SELECT status FROM feedback_synthesis_drafts WHERE id = ?').get(personal.id).status, 'retired')
 })
 
+test('accepted lesson applicability is evidence-derived, cannot be silently emptied, and text edits alone never touch it', async () => {
+  const insert = db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, note, payload)
+    VALUES ('wrong_item_read', 'whole_wardrobe_outfit', 'wardrobe', ?, ?)`)
+  const evidencePayload = (pieceId, reason) => JSON.stringify({
+    feedbackEvidence: {
+      version: 2,
+      action: 'wrong_piece_for_outfit',
+      subject: { pieceId, name: `Piece ${pieceId}`, category: 'shoes' },
+      context: { outfitLabel: 'Rain walk', occasion: 'casual', activity: 'walking', weather: 'wet' },
+      explicitReason: reason,
+    },
+    outfit: { pieces: [{ id: pieceId, name: `Piece ${pieceId}`, category: 'shoes' }] },
+  })
+  const feedbackId = Number(insert.run('Wet-shoe reason', evidencePayload(seeded.shoe, 'Canvas absorbs water.')).lastInsertRowid)
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => ({ results: [{
+    source_feedback_ids: [feedbackId],
+    disposition: 'personal_contextual_lesson',
+    title: 'Wet-walk footwear preference',
+    proposed_text: 'For wet walks, prefer footwear that does not absorb water.',
+    boundary: 'Wet walking contexts only.',
+    rationale: 'The owner explicitly supplied the practical reason.',
+    confidence: 'explicit_owner',
+    related_draft_id: 0,
+    applicability: { scope: 'piece_context', piece_ids: [seeded.shoe], occasions: [], activities: ['walking'], seasons: [], weather_terms: ['wet'] },
+  }] })
+  const preview = await (await fetch(`${baseUrl}/api/feedback-synthesis/preview?ids=${feedbackId}`)).json()
+  const authorized = await (await fetch(`${baseUrl}/api/feedback-synthesis/batches`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedbackIds: [feedbackId], inputHash: preview.inputHash, authorize: true }),
+  })).json()
+  const draft = authorized.drafts[0]
+
+  const getDrafts = await (await fetch(`${baseUrl}/api/feedback-synthesis/drafts`)).json()
+  const listed = getDrafts.find(row => row.id === draft.id)
+  // Carries the garment's current photo so the card can show the piece rather than describe it.
+  assert.equal(listed.applicabilityOptions.pieces.length, 1)
+  assert.equal(listed.applicabilityOptions.pieces[0].id, seeded.shoe)
+  assert.ok(Object.hasOwn(listed.applicabilityOptions.pieces[0], 'photo'))
+  assert.deepEqual(listed.applicabilityOptions.activities, ['walking'])
+  assert.deepEqual(listed.applicabilityOptions.weather, ['wet'])
+  // Options only ever include what's checkable — nothing on the "occasions" evidence-supported
+  // list here even though occasion 'casual' exists in context, because the model's own applicability
+  // never populated occasions; this is a snapshot of what THIS draft's stored/derivable state is.
+  assert.deepEqual(listed.applicabilityOptions.occasions, ['casual'])
+
+  const accepted = await (await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${draft.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'accepted' }),
+  })).json()
+  assert.equal(accepted.status, 'accepted')
+  const acceptedPayload = JSON.parse(accepted.payload)
+  assert.deepEqual(acceptedPayload.applicability.piece_ids, [seeded.shoe])
+
+  // A save that submits only unsupported/empty applicability terms must be rejected outright, not
+  // silently persisted as null — the row must keep exactly the delivery scope it had before.
+  const rejected = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${draft.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'accepted', applicability: { scope: 'context', piece_ids: [], occasions: [], activities: [], seasons: ['a season never in evidence'], weather_terms: [] } }),
+  })
+  assert.equal(rejected.status, 400)
+  const stillIntact = JSON.parse(db.prepare('SELECT payload FROM feedback_synthesis_drafts WHERE id = ?').get(draft.id).payload)
+  assert.deepEqual(stillIntact.applicability.piece_ids, [seeded.shoe])
+  assert.deepEqual(stillIntact.applicability.activities, ['walking'])
+
+  // Editing only the lesson text — the applicability key is absent from the request body entirely —
+  // must never touch the stored scope, regardless of what evidence looks like at save time.
+  const textOnlyEdit = await (await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${draft.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'accepted', editedText: 'Prefer water-resistant footwear for wet walks.' }),
+  })).json()
+  const afterTextEdit = JSON.parse(textOnlyEdit.payload)
+  assert.deepEqual(afterTextEdit.applicability.piece_ids, [seeded.shoe])
+  assert.deepEqual(afterTextEdit.applicability.activities, ['walking'])
+
+  // A legitimate narrowing — dropping the piece, keeping only the supported context terms — is
+  // still allowed and persists exactly what was submitted (after evidence-support filtering).
+  const narrowed = await (await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${draft.id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'accepted', applicability: { scope: 'context', piece_ids: [], occasions: [], activities: ['walking'], seasons: [], weather_terms: ['wet'] } }),
+  })).json()
+  const afterNarrow = JSON.parse(narrowed.payload)
+  assert.deepEqual(afterNarrow.applicability.piece_ids, [])
+  assert.deepEqual(afterNarrow.applicability.activities, ['walking'])
+  assert.equal(afterNarrow.applicability.scope, 'context')
+})
+
+test('occasion exclusions report when each was set, parsed from their own receipts', async () => {
+  const piece = seeded.shoe
+  await fetch(`${baseUrl}/api/pieces/${piece}/occasion-exclusion`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ occasion: 'hiking', excluded: true }),
+  })
+  const rows = await (await fetch(`${baseUrl}/api/pieces/occasion-exclusions`)).json()
+  const entry = rows.find(row => row.pieceId === piece && row.occasion === 'hiking')
+  // `pieces` has no per-exclusion timestamp (its only date column is date_added), so recency comes
+  // from parsing the prose receipt the writer records. Without this there is no way to preview
+  // "what changed recently" — the endpoint previously returned alphabetical order only.
+  assert.match(entry.changedAt, /^\d{4}-\d{2}-\d{2}$/)
+
+  // An exclusion written without a receipt still lists, sorted last rather than dropped.
+  db.prepare("UPDATE pieces SET occasion_exclusions = '[\"travel\"]', styling_rules_learned = '[]' WHERE id = ?").run(seeded.boot)
+  const withLegacy = await (await fetch(`${baseUrl}/api/pieces/occasion-exclusions`)).json()
+  const legacy = withLegacy.find(row => row.pieceId === seeded.boot)
+  assert.equal(legacy.changedAt, null)
+  assert.equal(withLegacy[withLegacy.length - 1].pieceId, seeded.boot)
+})
+
+test('an unusable synthesis result is never queued for a decision, and only it can be deleted', async () => {
+  const batchId = Number(db.prepare(`
+    INSERT INTO feedback_synthesis_batches (status, feedback_ids, compact_input, input_hash, provider, model)
+    VALUES ('completed', '[]', '', ?, 'test', 'test')
+  `).run(`nonresult-${Date.now()}`).lastInsertRowid)
+  const mk = (disposition, status) => Number(db.prepare(`
+    INSERT INTO feedback_synthesis_drafts (batch_id, disposition, title, proposed_text, source_feedback_ids, status)
+    VALUES (?, ?, 'x', 'y', '[]', ?)
+  `).run(batchId, disposition, status).lastInsertRowid)
+
+  const nonResult = mk('insufficient_evidence', 'reported')
+  const realLesson = mk('personal_contextual_lesson', 'accepted')
+
+  // A non-result is model output about its own failure, so it can be removed outright.
+  const removed = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${nonResult}`, { method: 'DELETE' })
+  assert.equal(removed.status, 200)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM feedback_synthesis_drafts WHERE id = ?').get(nonResult).n, 0)
+
+  // Anything the owner actually decided on must not be deletable through this route.
+  const refused = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${realLesson}`, { method: 'DELETE' })
+  assert.equal(refused.status, 400)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM feedback_synthesis_drafts WHERE id = ?').get(realLesson).n, 1)
+
+  // The paid batch survives either way — that is the cost/provenance record.
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM feedback_synthesis_batches WHERE id = ?').get(batchId).n, 1)
+})
+
+test('guidance is stopped, never reworded: a PATCH cannot re-scope or re-derive an owner rule', async () => {
+  const stored = { version: 1, reach: 'garment_context', garment: { piece_ids: [], categories: [], footwear: ['sneakers'], materials: ['canvas'] }, context: { occasions: [], activities: [], seasons: [], weather: ['rainy'], situations: [] }, source: 'test' }
+  const feedbackId = Number(db.prepare(`
+    INSERT INTO stylist_feedback (feedback_type, target_type, note, payload) VALUES ('owner_rule', 'message', ?, ?)
+  `).run('Canvas sneakers are not suitable for rainy or foggy beach weather.', JSON.stringify({ ownerGuidanceApplicability: stored })).lastInsertRowid)
+
+  // Style Profile offers no rewording, and the route must not quietly re-derive scope for anything
+  // that does send a note — a stored envelope only changes via store_user_correction in chat.
+  const patched = await (await fetch(`${baseUrl}/api/stylist-feedback/${feedbackId}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note: 'I love canvas sneakers with summer dresses.' }),
+  })).json()
+  assert.deepEqual(patched.payload.ownerGuidanceApplicability, stored)
+
+  // Stopping it is the one owner action, and it is an archive rather than a delete.
+  const stopped = await (await fetch(`${baseUrl}/api/stylist-feedback/${feedbackId}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ archived: true }),
+  })).json()
+  assert.equal(stopped.archived, true)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback WHERE id = ?').get(feedbackId).n, 1)
+})
 test('feedback synthesis records provider usage when paid structured output cannot be parsed', async () => {
   const payload = JSON.stringify({
     feedbackEvidence: {
