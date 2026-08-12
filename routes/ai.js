@@ -1129,9 +1129,13 @@ export async function generateOutfitsForPieceInternal({
   let rankedCandidates = selectCandidatesForOutfitGeneration(parsedPiece, allPieces, 32, { occasion, mission, mood, season, weatherProfile, comfortConstraint, activity, request: question, question })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
-  const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16)
-  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24, { excludeContexts: [{ type: 'piece', id: parsedPiece.id }] })
   const selectedPieceRosterIds = [parsedPiece.id, ...rankedCandidates.map(candidate => candidate?.piece?.id)].filter(Boolean)
+  const ownerGuidanceContext = {
+    requestContext: { occasion, activity, season, weather: weatherProfile, weatherText: [mood, question].filter(Boolean).join(' '), requestText: [occasion, activity, mood, question].filter(Boolean).join(' ') },
+    pieces: [parsedPiece, ...rankedCandidates.map(candidate => candidate?.piece).filter(Boolean)],
+  }
+  const selectedFeedbackText = getStylistFeedbackMemory('piece', parsedPiece.id, 16, { ownerGuidanceContext })
+  const globalFeedbackText = getStylistFeedbackMemory(null, null, 24, { excludeContexts: [{ type: 'piece', id: parsedPiece.id }], ownerGuidanceContext })
   const exactOutfitReactionText = getExactOutfitReactionMemory(selectedPieceRosterIds, {
     occasion,
     activity,

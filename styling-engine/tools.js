@@ -31,6 +31,8 @@ import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, normalizeStylingInten
 import { bottomKind, pieceReadsAsStandaloneBaseTop } from './attributes.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 import { getStylistConversationState } from './conversationState.js'
+import { validateOwnerConstraintInput } from '../lib/ownerConstraints.js'
+import { extractOwnerGuidanceApplicability, validateOwnerGuidanceApplicability } from '../lib/ownerGuidance.js'
 
 export const CAPSULE_PLAN_EVIDENCE_BOUNDARY = ` Capsule evidence boundary: a requested colour may serve any visual role and never has to be a hero piece. A roster piece absent from the representative cards means only "not demonstrated" — never rejected, bad, or previously flagged. State a requested-colour shortage or wardrobe gap only when a plan_line explicitly reports insufficient eligible supply; absence from the roster or cards is not supply evidence.`
 
@@ -586,14 +588,52 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "store_user_correction",
-    description: "Store a DURABLE taste preference or correction the user themselves stated. Use piece_id when the statement is about one exact garment; it is verified against garments established in this conversation and saved to that garment rather than globally. Omit piece_id for genuinely wardrobe-wide rules such as 'I do not wear flats'. NEVER store situational or trip facts (this week's weather, a destination, what today's request needs) — those live in THREAD STATE.",
+    description: "Store a DURABLE taste preference or correction the user themselves stated. Use piece_id when the statement is about one exact garment; it is verified against garments established in this conversation and saved to that garment rather than globally. For wardrobe guidance, provide guidance_applicability from explicit user language so it reaches styling only when its garment and/or situation match. The server also recovers narrow unambiguous terms locally. Use universal only when the owner explicitly says the instruction applies generally. When the user's own words state a firm, context-specific exclusion that fits the supported schema, also provide firm_rule_proposal; this only creates a proposal for later owner confirmation and never activates a gate. NEVER store situational or trip facts — those live in THREAD STATE.",
     input_schema: {
       type: "object",
       properties: {
         note: { type: "string", description: "The user preference or correction text." },
         context_type: { type: "string", description: "Context type: 'outfit' or 'general'" },
         context_id: { type: "integer", description: "Optional outfit ID if context is outfit" },
-        piece_id: { type: "integer", description: "Exact garment ID when this correction applies only to one garment. Use only an ID retrieved or established in the current conversation." }
+        piece_id: { type: "integer", description: "Exact garment ID when this correction applies only to one garment. Use only an ID retrieved or established in the current conversation." },
+        guidance_applicability: {
+          type: "object",
+          description: "When this wardrobe-wide guidance is relevant. Use only terms explicitly stated by the owner; omit uncertain fields rather than guessing.",
+          properties: {
+            reach: { type: "string", enum: ["universal", "garment", "context", "garment_context"] },
+            garment: {
+              type: "object",
+              properties: {
+                categories: { type: "array", items: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear", "accessory"] } },
+                footwear: { type: "array", items: { type: "string", enum: ["boots", "sandals", "sneakers", "flats", "heels", "loafers", "mules", "clogs"] } },
+                materials: { type: "array", items: { type: "string", enum: ["canvas", "leather"] } }
+              }
+            },
+            context: {
+              type: "object",
+              properties: {
+                occasions: { type: "array", items: { type: "string" } },
+                activities: { type: "array", items: { type: "string" } },
+                seasons: { type: "array", items: { type: "string" } },
+                weather: { type: "array", items: { type: "string" } },
+                situations: { type: "array", items: { type: "string", enum: ["office", "client"] } }
+              }
+            }
+          },
+          required: ["reach"]
+        },
+        firm_rule_proposal: {
+          type: "object",
+          description: "Optional structured proposal for a firm exclusion explicitly stated by the owner. Omit unless both the clothing selector and context are unambiguous. This is reviewed by the owner before it can affect selection.",
+          properties: {
+            selector_type: { type: "string", enum: ["category", "material", "footwear"] },
+            selector_values: { type: "array", minItems: 1, items: { type: "string" } },
+            context_dimension: { type: "string", enum: ["occasion", "season", "activity", "weather"] },
+            context_values: { type: "array", minItems: 1, items: { type: "string" } },
+            reason: { type: "string", description: "Plain-language consequence faithful to the user's statement." }
+          },
+          required: ["selector_type", "selector_values", "context_dimension", "context_values", "reason"]
+        }
       },
       required: ["note"]
     }
@@ -1867,7 +1907,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return getCurrentImageInventory(state)
       }
       case 'store_user_correction': {
-        const { note, context_type, context_id, piece_id } = args
+        const { note, context_type, context_id, piece_id, firm_rule_proposal, guidance_applicability } = args
         if (piece_id !== undefined && piece_id !== null) {
           const pieceId = Number(piece_id)
           const { retrieved, known } = verifiedPieceIdSets(toolContext)
@@ -1882,7 +1922,11 @@ async function executeToolInternal(name, args, toolContext = {}) {
             }
           }
         }
-        return storeUserCorrection(note, context_type || 'general', context_id, { pieceId: piece_id })
+        return storeUserCorrection(note, context_type || 'general', context_id, {
+          pieceId: piece_id,
+          firmRuleProposal: firm_rule_proposal,
+          guidanceApplicability: guidance_applicability,
+        })
       }
       case 'plan_outfit_set': {
         // Same declared-intent contract as the other composing tools (step 4).
@@ -1982,7 +2026,19 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // plan workbench is where every instruction the model demonstrably
         // obeys lives, ~40k tokens closer than the system-prompt tail where a
         // stored owner rule previously sat unread among reaction crumbs.
-        const ownerRules = getOwnerRuleNotes(8)
+        const ownerRules = getOwnerRuleNotes(8, {
+          requestContexts: planSlots.map(slot => ({
+            occasion: slot.occasion,
+            activity: slot.activity,
+            season: slot.season || planConstraints.season || '',
+            weather: slot.weather || planWeather || '',
+            weatherText: slot.weather || planWeather || '',
+            requestText: [slot.label, slot.occasion, slot.activity].filter(Boolean).join(' '),
+          })),
+          // Before the plan roster exists, only context/universal guidance can enter roster
+          // selection. Garment-scoped guidance is selected again inside the bounded compose pool.
+          pieces: [],
+        })
         const workbench = await buildPlanSlotWorkbench(planSlots, {
           constraints: planConstraints,
           allPieces: planPieces,
@@ -2438,7 +2494,28 @@ export function getCurrentImageInventory(state) {
   return state.visible_image_inventory
 }
 
-export function storeUserCorrection(note, contextType = 'general', contextId = null, { pieceId = null } = {}) {
+function validatedFirmRuleProposal(rawProposal) {
+  if (!rawProposal || typeof rawProposal !== 'object') return null
+  const checked = validateOwnerConstraintInput({
+    confirmOwnerConstraint: true,
+    selectorType: rawProposal.selector_type,
+    selectorValues: rawProposal.selector_values,
+    contextDimension: rawProposal.context_dimension,
+    contextValues: rawProposal.context_values,
+    reason: rawProposal.reason,
+  })
+  if (checked.error || checked.value.selectorType === 'piece_ids') return null
+  return {
+    version: 1,
+    selectorType: checked.value.selectorType,
+    selectorValues: checked.value.selectorValues,
+    contextDimension: checked.value.contextDimension,
+    contextValues: checked.value.contextValues,
+    reason: checked.value.reason,
+  }
+}
+
+export function storeUserCorrection(note, contextType = 'general', contextId = null, { pieceId = null, firmRuleProposal = null, guidanceApplicability = null } = {}) {
   try {
     const trimmed = String(note || '').trim()
     if (!trimmed) return { status: 'validation_error', message: 'Correction text is required. Nothing was stored.' }
@@ -2464,20 +2541,50 @@ export function storeUserCorrection(note, contextType = 'general', contextId = n
     }
     // Dedupe: an identical live note must not stack — repeated turns were
     // multiplying the same text into the high-authority memory section.
+    const proposal = validatedFirmRuleProposal(firmRuleProposal)
+    const applicability = validateOwnerGuidanceApplicability(guidanceApplicability) || extractOwnerGuidanceApplicability(trimmed, { firmRuleProposal: proposal })
     const existing = db.prepare(`
-      SELECT id FROM stylist_feedback
+      SELECT id, payload FROM stylist_feedback
       WHERE note = ? AND feedback_type = 'owner_rule' AND COALESCE(archived, 0) = 0
       LIMIT 1
     `).get(trimmed)
-    if (existing) return { status: 'success', scope: 'global', message: 'This global correction was already stored.' }
+    if (existing) {
+      if (proposal || applicability) {
+        const payload = safeJsonParse(existing.payload, {}) || {}
+        db.prepare('UPDATE stylist_feedback SET payload = ? WHERE id = ?')
+          .run(JSON.stringify({
+            ...payload,
+            ...(proposal ? { ownerConstraintProposal: proposal } : {}),
+            ...(applicability ? { ownerGuidanceApplicability: applicability } : {}),
+          }), existing.id)
+      }
+      return {
+        status: 'success',
+        scope: applicability?.reach || 'unresolved',
+        firm_rule_proposed: Boolean(proposal),
+        message: 'This global correction was already stored.',
+      }
+    }
     // Spec 25 Part 2: 'owner_rule' going forward (previously
     // 'preference_reaction'/'message') — legacy rows keep matching via
     // isOwnerRuleRow's OR clause, no migration needed.
     db.prepare(`
-      INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note)
-      VALUES ('owner_rule', 'message', ?, ?, ?)
-    `).run(contextType, contextId, trimmed)
-    return { status: 'success', scope: 'global', message: 'Global correction stored successfully.' }
+      INSERT INTO stylist_feedback (feedback_type, target_type, context_type, context_id, note, payload)
+      VALUES ('owner_rule', 'message', ?, ?, ?, ?)
+    `).run(contextType, contextId, trimmed, JSON.stringify({
+      ...(proposal ? { ownerConstraintProposal: proposal } : {}),
+      ...(applicability ? { ownerGuidanceApplicability: applicability } : {}),
+    }))
+    return {
+      status: 'success',
+      scope: applicability?.reach || 'unresolved',
+      firm_rule_proposed: Boolean(proposal),
+      message: proposal
+        ? 'Guidance stored with context-aware delivery and a firm-rule proposal for owner review.'
+        : applicability?.reach === 'unresolved'
+          ? 'Guidance stored for review, but its applicability could not be resolved safely.'
+          : 'Guidance stored with context-aware delivery.',
+    }
   } catch (err) {
     console.error('storeUserCorrection error:', err)
     return { status: 'error', message: 'Correction could not be stored.' }

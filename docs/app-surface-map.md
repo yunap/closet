@@ -316,14 +316,163 @@ against this already-shipped mechanism (rather than a new proposal) is what surf
 
 ---
 
-## Visual Lab → Style profile
+## Style Lab → Style profile
 
-**How you get there.** Visual Lab → **Style profile** tab (`/visual-lab?section=profile`).
+**How you get there.** Style Lab → **Style profile** tab (`/visual-lab?section=profile`).
 
-**What you are doing.** Reading and correcting the stylist's working understanding of you, in
-plain text. Four layers, each expandable, each editable, each with **View history**: Body &
-Comfort Contract, Proven Formulas, Aesthetic Gravity, Style Lanes. Layer 3 also offers **Redo
-interview**.
+**What you are doing.** Reading and correcting the stylist's working understanding of you, deciding
+which provisional feedback should become a lesson, reviewing product issues, and inspecting past
+decisions. The page is divided by owner task rather than persistence store:
+
+- **Active guidance** — a maintenance view led by recent changes, followed by one unified
+  **Guidance for specific situations** collection, a compact garment-and-occasion limit summary,
+  and a collapsed foundation containing personal-style and image-generation instructions. New
+  direct guidance and accepted lessons use the same structured relevance matcher: they reach the
+  stylist only when their saved garment/context applicability matches the bounded styling request.
+  They are interleaved by recency and differ only in secondary **Source** text and their existing
+  edit controls; creation path is not a top-level user-facing category.
+  New unresolved guidance receives no prompt authority; older pre-envelope rows are visibly marked
+  as legacy scope rather than falsely presented as context-aware.
+- **Review feedback** — eligible provisional reactions and paid synthesis authorization/drafts,
+  plus open product-quality findings. Product issues do not affect styling until deliberately
+  resolved to a real destination.
+- **History** — retired constraints and lessons, rejected drafts, reviewed conclusions, and
+  resolved or dismissed product findings. These records are provenance only.
+
+The personal guidance layers use user-facing names: Body & comfort, Proven formulas, Aesthetic
+preferences, Style range, and Working relationship. Image-generation guidance is explicitly
+separate: How you should appear and How footwear should appear.
+
+**[by design, owner-ruled 2026-08-12] Active guidance is read-only.** Neither card type can be
+edited in place; each has one action, **Forget this**. Correcting a preference means telling the
+stylist again in chat, which writes its own record. Two editing designs were built and removed
+first: a structured scope form (exposed routing vocabulary to the user), then a remove-a-condition
+chip row that **inverted its own meaning** — conditions are ANDed, so removing one widened where a
+lesson fired instead of narrowing it. Details and the verification in `feedback-routing-proposal.md`.
+
+**Page shape, from the owner's mockup.** Active guidance reads as three groups:
+
+- **When it matters** — accepted synthesized lessons as cards, each with the garment's current photo,
+  an applies-when sentence (*"Applies when styling cream cotton button-up shirt for casual summer."*),
+  and *"Learned from feedback you approved."*
+- **Other things you've told your stylist** — direct guidance as a quieter list with a line glyph and
+  a scope line (*"For travel"*), capped at five behind **See all guidance**.
+- **Your foundation** — the onboarding baseline, visually distinct from the learned memory above it,
+  with seven labelled tiles in her words (Body & comfort, Aesthetic preferences, Proven formulas,
+  Style range, Working relationship, Image guidance, Footwear guidance) and **Review foundation →**.
+
+This supersedes the earlier "one unified collection ordered by recency" arrangement: the two kinds
+answer different questions, so the reader benefits from the split even though creation path is not
+otherwise a user-facing concept.
+
+**[by design, 2026-08-12] The foundation reads as notes, not fields.** Collapsed, the card shows
+seven labelled tiles. **Review foundation** expands it into one row per layer, and:
+
+- **expand ≠ edit** — an open layer renders its content as plain lines on the card surface with no
+  input chrome. Only **Edit** swaps in a textarea, with **Cancel** / **Save**.
+- **one layer open at a time**, so seven sections never unfold at once.
+- **the reading view filters the prompt scaffolding.** A stored layer carries a `Layer N — …`
+  header, ALL-CAPS emphasis aimed at the model, and app-internal glossary lines (*"Confirmed Outfit
+  Lookbook = saved/confirmed outfits in the app DB"*). Those are hidden from the friendly summary
+  and disclosed quietly as *"N technical notes shown when editing"*. **The stored text is never
+  rewritten** — Edit shows it verbatim, so the display filter cannot change what the stylist
+  receives.
+- **Proven formulas is attributed correctly.** It is `[by design]` earned from confirmed outfits and
+  is never interviewed during onboarding (`test/onboarding_wizard.test.js` asserts this), so it
+  carries *"Earned from outfits you've confirmed"* instead of the section's onboarding attribution.
+- `Personalized / Not personalized`, **View history** and **Redo interview** are preserved, demoted
+  into one quiet footer line with a friendly date rather than a raw `2026-07-18 22:24:58` timestamp.
+
+**[by design, 2026-08-12] Garment & occasion limits is a preview, not an inventory.** The section
+answers "what kinds of limits does my stylist have?" rather than asking the owner to audit the whole
+list on every visit:
+
+- **Always avoid** (firm `owner_constraints`) shows **all** rows — there are usually very few and
+  each is broad and high-impact, so hiding any would misrepresent the set. Action is **Stop using
+  rule**.
+- **Specific pieces** (`occasion_exclusions`) shows **4**, newest-changed first, each with the
+  garment's photo and its occasions called out (*"Not for Hiking, Home"*).
+- **Review all N limits** opens a **dedicated view** at `?section=profile&limits=all`, replacing the
+  overview rather than expanding inline — otherwise "show all" recreates the endless page. It is a
+  URL param, so the browser back button returns to the overview (verified).
+
+**[fixed 2026-08-12] `GET /pieces/occasion-exclusions` now reports when each exclusion was set.**
+Recency ordering was impossible before: `pieces` has no per-exclusion timestamp (its only date
+column, `date_added`, is when the garment was added), and the endpoint returned rows in alphabetical
+order. The one record of *when* is the prose receipt the same handler writes into
+`styling_rules_learned` — `Excluded from <occasion> by <name> (YYYY-MM-DD)` — so the route now parses
+the newest matching receipt per piece/occasion and returns a real `changedAt`, sorted newest first.
+The receipt remains display-only provenance; `occasion_exclusions` is still the enforcement record.
+Day precision only, and an exclusion written without a receipt (e.g. the piece-242 `home` entry
+created by the 2026-08-10 migration rather than the UI) returns `changedAt: null` and sorts last —
+confirmed against the real wardrobe, where 7 of 8 exclusions carry a parseable date.
+
+**[by design, owner-ruled 2026-08-12] Two primary tabs, not three.** Style Profile is now
+**Active guidance | Review feedback** — what the stylist uses now, and what still needs attention.
+History was removed from primary navigation: it was an audit trail carrying equal visual weight to
+the two tabs the owner actually works in, and it offered **zero actions** (verified — the whole
+block contained no button or handler), so nothing could be done from it.
+
+- **Past decisions** is now a recovery archive reached by a quiet `View past decisions` link at the
+  bottom of Active guidance, opening as a sub-view at `?section=profile&past=1` — the same pattern
+  as *Review all limits*.
+- **Every row has a recovery action**, which is the archive's only justification: **Start using
+  again** (retired firm rules and retired lessons), **Reconsider** (declined suggestions and
+  reviewed conclusions, which return to Review feedback to be re-decided rather than switched
+  straight back on), and **Reopen** (settled product issues). All three were already supported by
+  the API and simply had no route to them. Round-trip verified: retired firm rule → *Start using
+  again* → `status: active`, gone from the archive, live under **Always avoid**.
+- **Per-item history stays contextual**, which is where it is most useful: an accepted lesson keeps
+  its own **Where this came from** disclosure, and a foundation layer keeps **View history**.
+
+**Review feedback** also lost its storage-flavoured headings: *"Contextual memory / Outfit & styling
+feedback"* → *"Needs your review / Feedback your stylist noticed but hasn't acted on"*, plus
+*"Look for a pattern in what you've flagged"*, *"Waiting on your decision"*, and *"Not about your
+taste / Things your stylist got wrong"*. The cost disclosure before an authorized model call is
+unchanged — it is load-bearing and stays explicit. Archive rows likewise group by what the owner
+did (**No longer used** / **You decided not to keep these** / **Reviewed and closed**) rather than
+by which of the three stores each record came from.
+
+**[fixed 2026-08-12] An unusable synthesis result is reported, never queued as a decision.** A
+`insufficient_evidence` draft is the model saying it could *not* learn anything from the selected
+reactions. It was being created as `status='draft'`, so it landed in **Waiting on your decision**
+alongside real proposals with Accept / Keep for later / Reject — and the only way to clear a
+non-result was **Reject**, which then filed it under declined suggestions. That is how the real
+wardrobe ended up with 5 `insufficient_evidence` rows all marked `rejected`, described as
+*"Your stylist suggested this; you declined it."* — three separate wrongs from one root cause.
+
+- These now insert with a terminal `status='reported'`, so no decision is ever requested.
+- Their **rationale is surfaced** as an outcome in Review feedback (*"Nothing to learn from one
+  reaction"*), because the explanation — e.g. *"the context occasion reads 'Whole wardrobe', which
+  provides no bounded scope"* — is the genuinely useful part: it tells the owner what a reaction
+  needs before it can teach anything.
+- They are **removable for good** (`DELETE /api/feedback-synthesis/drafts/:id`) from both the report
+  and the archive, so they do not accumulate. The route refuses any other disposition, so it cannot
+  be used to erase an accepted lesson or a decision the owner made — those retire and stay visible.
+  The paid batch (cost, usage, input hash) and the source reactions are separate records and survive.
+- The archive lists surviving ones under **Couldn't be turned into a lesson**, separate from
+  **You decided not to keep these**, which now holds only genuine declined suggestions.
+
+**[fixed 2026-08-12] `+ Add reference` is a References-only action.** It sat in the Style Lab page
+header on every tab, so Outfit feedback and Style profile both offered a page-level action for a
+section the owner was not in. It now renders only on References and its upload panel.
+
+**Still queued from the same review:** firm-rule cards should read *"Boots / Never suggested in
+summer / Restore"*, and feedback capture in chat should confirm what it did in plain language
+(*"Got it — I won't suggest this piece for Travel"*), keeping a reaction visibly distinct from a
+durable rule.
+
+**Firm-rule conversion.** The structured constraint collection is hidden while empty. A learned
+sentence shows **Make this a firm rule** only when it carries a complete, validated structured
+proposal. The owner previews the exact “will not suggest” consequence and confirms locally with no
+model call. Ambiguous or unsupported free text has no conversion button; the server validates the
+stored proposal again on confirmation. Confirmation writes one `owner_constraints` row and archives the source feedback sentence so
+prompt guidance and the hard gate cannot duplicate each other. The existing Stylist chat
+`store_user_correction` call may attach the proposal when the owner's words explicitly contain both
+a supported clothing selector and supported context; this adds no second model call. The verified
+live selector is footwear type (`boots` × summer). The airplane-travel sentence remains prompt
+guidance because airplane travel is not yet a structured request dimension and therefore cannot be
+honestly offered as a deterministic rule.
 
 **What actually happens.**
 
@@ -852,15 +1001,16 @@ controls disable while a write is in flight.
 
 ---
 
-## Visual Lab → the four sections
+## Style Lab → the four sections
 
-**How you get there.** `/visual-lab`, tabs: **References**, **Calibration boards**, **Style
+**How you get there.** `/visual-lab`, tabs: **References**, **Outfit feedback**, **Style
 profile**, plus an upload section.
 
 **What actually happens.** **[by design]** Three different jobs that look like one page:
-References is identity calibration (what you actually look like); Calibration boards is an evidence
+References is identity calibration (what you actually look like); Outfit feedback is an evidence
 inbox for judging generated looks; Style profile is the editable prompt text. Feedback given in
-Calibration boards reaches the model in full — see the board-feedback entry above.
+Outfit feedback follows the destination-specific routes documented in the feedback map; stored
+reactions do not all carry prompt authority.
 
 > **Stores.** `VALID_SECTIONS = ['references','saved','profile','upload']`, `VisualLab.jsx:130`.
 

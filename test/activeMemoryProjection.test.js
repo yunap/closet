@@ -2,17 +2,73 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { activeMemoryMetadata } from '../lib/activeMemory.js'
 
-test('standing owner rules explain prompt authority without claiming a hard gate', () => {
+test('legacy owner rules disclose their broad compatibility delivery without claiming a hard gate', () => {
   assert.deepEqual(activeMemoryMetadata({
     feedback_type: 'owner_rule',
     target_type: 'message',
   }), {
     destination: 'owner_prompt',
     source: 'Stylist chat',
-    scope: 'Every styling request',
-    effect: 'Guides the stylist as a standing instruction; it is not a deterministic gate or score.',
+    scope: 'Legacy broad delivery',
+    effect: 'Guides the stylist when its saved applicability matches; it is not a deterministic gate or score.',
     strength: 'standing',
   })
+})
+
+test('new owner guidance projects its executable scope and withholds unresolved rows', () => {
+  const scoped = activeMemoryMetadata({
+    feedback_type: 'owner_rule',
+    target_type: 'message',
+    payload: { ownerGuidanceApplicability: {
+      version: 1,
+      reach: 'garment_context',
+      garment: { footwear: ['sandals'] },
+      context: { activities: ['hiking'] },
+    } },
+  })
+  assert.equal(scoped.scope, 'Matching garments and situations')
+  assert.equal(scoped.strength, 'standing')
+
+  const unresolved = activeMemoryMetadata({
+    feedback_type: 'owner_rule',
+    target_type: 'message',
+    payload: { ownerGuidanceApplicability: { version: 1, reach: 'unresolved' } },
+  })
+  assert.equal(unresolved.scope, 'Needs scope review')
+  assert.equal(unresolved.strength, 'review')
+  assert.match(unresolved.effect, /does not currently reach styling prompts/)
+})
+
+test('Style Profile receives only server-validated firm-rule proposals', () => {
+  const supported = activeMemoryMetadata({
+    id: 10,
+    feedback_type: 'owner_rule',
+    target_type: 'message',
+    payload: { ownerConstraintProposal: {
+      version: 1,
+      selectorType: 'footwear',
+      selectorValues: ['boots'],
+      contextDimension: 'season',
+      contextValues: ['summer'],
+      reason: "Don't suggest boots in summer.",
+    } },
+  })
+  assert.equal(supported.ownerConstraintProposal.selectorType, 'footwear')
+
+  const unavailable = activeMemoryMetadata({
+    id: 11,
+    feedback_type: 'owner_rule',
+    target_type: 'message',
+    payload: { ownerConstraintProposal: {
+      version: 1,
+      selectorType: 'category',
+      selectorValues: ['dress'],
+      contextDimension: 'activity',
+      contextValues: ['airplane travel'],
+      reason: "Don't suggest dresses for airplane travel.",
+    } },
+  })
+  assert.equal(unavailable.ownerConstraintProposal, undefined)
 })
 
 test('garment rule receipts disclose that they are display-only projections', () => {

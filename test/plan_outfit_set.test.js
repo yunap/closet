@@ -2574,7 +2574,7 @@ test('winter indoor sleeveless bases require a stay-on cardigan; a puffer alone 
 
 // --- Owner rules delivered into the plan workbench (spec 25 Part 2) --------
 
-test('workbench instructions contain the OWNER RULES block when owner rules exist, and respect the cap', async () => {
+test('workbench instructions carry applicable owner guidance without mislabelling prompt advice as a hard gate', async () => {
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }])
 
@@ -2583,8 +2583,9 @@ test('workbench instructions contain the OWNER RULES block when owner rules exis
     question: 'city day',
     ownerRules: ['For office and client days: structured silhouettes only — no maxi skirts, no shawls at work.', 'No flats for me.']
   })
-  assert.match(withRules.instructions, /OWNER RULES — hard requirements, not suggestions\./)
-  assert.match(withRules.instructions, /Apply to every outfit you compose:/)
+  assert.match(withRules.instructions, /OWNER GUIDANCE — applicable to this bounded roster and these use cases\./)
+  assert.match(withRules.instructions, /Follow it unless the owner explicitly changes it in this request:/)
+  assert.doesNotMatch(withRules.instructions, /hard requirements/)
   assert.match(withRules.instructions, /"For office and client days: structured silhouettes only — no maxi skirts, no shawls at work\."/)
   assert.match(withRules.instructions, /"No flats for me\."/)
 })

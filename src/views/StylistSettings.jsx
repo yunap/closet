@@ -3,17 +3,19 @@
 // product's core loop. Every save appends the prior text to constitution_history (the
 // ruling-archaeology log); the interviewable layers link back into the wizard for a re-run.
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { WRONG_PIECE_FOR_OUTFIT_FEEDBACK } from '../../lib/feedbackTaxonomy.js'
+import { describeOwnerGuidanceScope } from '../../lib/ownerGuidance.js'
+import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 
 const LAYER_TITLES = {
-  body_contract: 'Layer 1 — Body & Comfort Contract',
-  proven_formulas: 'Layer 2 — Proven Formulas',
-  aesthetic_gravity: 'Layer 3 — Aesthetic Gravity',
-  lane_neutrality: 'Layer 4 — Style Lanes',
-  working_style: 'Working Style',
-  editorial_subject: 'Image Generation — Subject',
-  editorial_shoes: 'Image Generation — Shoe Rules'
+  body_contract: 'Body & comfort',
+  proven_formulas: 'Proven formulas',
+  aesthetic_gravity: 'Aesthetic preferences',
+  lane_neutrality: 'Style range',
+  working_style: 'Working relationship',
+  editorial_subject: 'How you should appear',
+  editorial_shoes: 'How footwear should appear'
 }
 const LAYER_META = {
   body_contract: ['Foundation', 'Comfort, fit, movement, and maintenance requirements.'],
@@ -26,6 +28,13 @@ const LAYER_META = {
 }
 const PERSONAL_STYLE_LAYERS = new Set(['body_contract', 'proven_formulas', 'aesthetic_gravity', 'lane_neutrality', 'working_style'])
 const IMAGE_STYLE_LAYERS = new Set(['editorial_subject', 'editorial_shoes'])
+// Two tabs, not three: what the stylist uses now, and what still needs her attention. Past
+// decisions is an archive for recovery — real, but not equal in weight to those two, so it lives
+// behind a quiet link rather than claiming a third of the primary navigation.
+const STYLE_PROFILE_TABS = [
+  ['guidance', 'Active guidance'],
+  ['review', 'Review feedback'],
+]
 const INTERVIEW_STEPS = { body_contract: 'comfort', aesthetic_gravity: 'aesthetic', working_style: 'working' }
 // The durable learned classes: rules the stylist stored from conversations
 // (store_user_correction → owner_rule; persisted preference reactions). Card-level
@@ -76,88 +85,158 @@ const synthesisApplicability = draft => {
     weather_terms: Array.isArray(value.weather_terms) ? value.weather_terms : [],
   }
 }
-const normalizedApplicability = value => ({
-  ...value,
-  version: 1,
-  piece_ids: parsedIdList(value?.piece_ids),
-  occasions: (value?.occasions || []).map(String).map(item => item.trim()).filter(Boolean),
-  activities: (value?.activities || []).map(String).map(item => item.trim()).filter(Boolean),
-  seasons: (value?.seasons || []).map(String).map(item => item.trim()).filter(Boolean),
-  weather_terms: (value?.weather_terms || []).map(String).map(item => item.trim()).filter(Boolean),
-})
-const applicabilityEqual = (left, right) => JSON.stringify(normalizedApplicability(left)) === JSON.stringify(normalizedApplicability(right))
-const applicabilityIsUsable = value => {
-  const normalized = normalizedApplicability(value)
-  const hasPiece = normalized.piece_ids.length > 0
-  const hasContext = Boolean(normalized.occasions.length || normalized.activities.length || normalized.seasons.length || normalized.weather_terms.length)
-  if (normalized.scope === 'piece') return hasPiece
-  if (normalized.scope === 'context') return hasContext
-  return normalized.scope === 'piece_context' && hasPiece && hasContext
+const constraintContextPhrase = (dimension, value) => {
+  if (dimension === 'season') return `in ${value}`
+  if (dimension === 'weather') return `in ${value} weather`
+  return `for ${value}`
 }
-const commaList = value => String(value || '').split(',').map(item => item.trim()).filter(Boolean)
+const ownerConstraintProposal = row => {
+  const proposal = row?.memory?.ownerConstraintProposal
+  if (!proposal || Number(proposal.version) !== 1) return null
+  if (proposal.selectorValues?.length !== 1 || proposal.contextValues?.length !== 1) return null
+  return proposal
+}
 
-function SynthesisApplicabilityEditor({ sources, value, onChange }) {
-  const sourcePieces = new Map()
-  for (const source of sources) {
-    let sourcePayload = source?.payload || {}
-    if (typeof sourcePayload === 'string') {
-      try { sourcePayload = JSON.parse(sourcePayload) || {} } catch { sourcePayload = {} }
-    }
-    const evidence = sourcePayload.feedbackEvidence || {}
-    const subject = evidence?.subject
-    if (Number(subject?.pieceId)) sourcePieces.set(Number(subject.pieceId), subject.pieceName || source.context_name || `Piece #${subject.pieceId}`)
-    const outfitPieces = Array.isArray(sourcePayload?.outfit?.pieces)
-      ? sourcePayload.outfit.pieces
-      : Array.isArray(sourcePayload?.pieces) ? sourcePayload.pieces : []
-    for (const piece of outfitPieces) if (Number(piece?.id)) sourcePieces.set(Number(piece.id), piece.name || `Piece #${piece.id}`)
+const timestampValue = value => {
+  if (!value) return 0
+  const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${String(value).replace(' ', 'T')}Z`
+  const timestamp = new Date(normalized).getTime()
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+const sentenceCase = value => {
+  const text = String(value || '')
+  return text ? `${text[0].toUpperCase()}${text.slice(1)}` : text
+}
+
+
+// A lesson's conditions are ANDed — every populated dimension has to match before it is sent.
+// Placeholder context the composer writes when nothing was chosen ("none") is not a condition a
+// person would recognise, so it never appears in her sentence.
+const SCOPE_PLACEHOLDERS = new Set(['none', 'unspecified', 'any', 'current season'])
+const synthesisScopeParts = draft => {
+  const applicability = synthesisApplicability(draft)
+  const pieceNames = new Map((draft.applicabilityOptions?.pieces || []).map(piece => [piece.id, piece.name]))
+  const meaningful = values => values.filter(value => !SCOPE_PLACEHOLDERS.has(String(value).toLowerCase()))
+  return {
+    garment: applicability.piece_ids.map(id => pieceNames.get(id) || `piece #${id}`),
+    context: meaningful([
+      ...applicability.occasions,
+      ...applicability.activities,
+      ...applicability.seasons,
+      ...applicability.weather_terms,
+    ]),
   }
-  const updateList = (field, text) => onChange({ ...value, [field]: commaList(text) })
-  const needsPiece = value.scope === 'piece' || value.scope === 'piece_context'
-  const needsContext = value.scope === 'context' || value.scope === 'piece_context'
+}
+const synthesisUsedWhen = draft => {
+  const { garment, context } = synthesisScopeParts(draft)
+  return [garment.join(' or '), context.join(' ')].filter(Boolean).join(' and ')
+}
+
+// "Used when: canvas sneakers · wet weather" — the terms themselves, never the field names that
+// carry them. A row whose scope was never resolved simply shows nothing rather than explaining an
+// internal state she has no way to act on from this card.
+const ownerGuidanceUsedWhen = row => describeOwnerGuidanceScope(row?.memory?.ownerGuidanceApplicability)
+// Her own words for the baseline, not the layer keys. Descriptions say what each one governs so
+// the foundation reads as a summary of what she told the stylist at setup, not a settings index.
+const FOUNDATION_TILES = [
+  ['body_contract', 'Body & comfort', 'Your fit, comfort and movement needs'],
+  ['aesthetic_gravity', 'Aesthetic preferences', 'The looks and details you gravitate toward'],
+  ['proven_formulas', 'Proven formulas', 'Outfit structures that work for you'],
+  ['lane_neutrality', 'Style range', 'How broadly your stylist can explore'],
+  ['working_style', 'Working relationship', 'How you want your stylist to communicate'],
+  ['editorial_subject', 'Image guidance', 'How you appear in generated looks'],
+  ['editorial_shoes', 'Footwear guidance', 'How shoes are handled in generated looks'],
+]
+const FOUNDATION_TILE_GLYPHS = {
+  body_contract: 'M12 4a2 2 0 100 4 2 2 0 000-4zM8 21v-6l-2-3 2-3h8l2 3-2 3v6',
+  aesthetic_gravity: 'M4 5h16v11H4zM8 20h8M9 12l2.5-3 2 2.5L15 10l3 3',
+  proven_formulas: 'M5 4h9l5 5v11H5zM14 4v5h5M8 14h8M8 17h5',
+  lane_neutrality: 'M12 4v16M6 8l-3 4 3 4M18 8l3 4-3 4',
+  working_style: 'M4 5h16v10H9l-5 4z',
+  editorial_subject: 'M4 6h16v12H4zM4 15l4-4 3 3 4-5 5 6',
+  editorial_shoes: 'M3 16h10l4-3 4 1v2H3zM3 16v-5h4l2 3',
+}
+
+// Warmer than the layer keys, and phrased as what the stylist does with each one.
+const FOUNDATION_DESCRIPTIONS = {
+  body_contract: 'How your stylist thinks about fit, movement, and comfort.',
+  proven_formulas: 'Outfit formulas your stylist relies on most.',
+  aesthetic_gravity: "The visual qualities you're drawn to.",
+  lane_neutrality: 'How broadly your stylist can explore different moods.',
+  working_style: 'How you want your stylist to communicate, ask, and respond.',
+  editorial_subject: 'How you want to be represented in generated outfit imagery.',
+  editorial_shoes: 'How footwear should be shown and styled in generated imagery.',
+}
+
+// The stored layer is a prompt: it carries a "Layer N — …" header, ALL-CAPS emphasis aimed at the
+// model, and glossary lines about app internals. None of that belongs in something she reads as
+// her own style notes. This filters the reading view ONLY — the stored text is never rewritten,
+// and Edit shows it verbatim, so nothing here can quietly change what the stylist receives.
+const FOUNDATION_INTERNAL_LINE = /\bDBs?\b|\bdatabase\b|\bapp\s+DB\b/i
+const FOUNDATION_LAYER_HEADER = /^Layer\s+\d+\s+[—-]/i
+const isBareHeading = text => /:$/.test(text) && text.split(/\s+/).length <= 4
+const softenModelEmphasis = text => text.replace(/\b[A-Z]{2,}\b/g, match => match.toLowerCase())
+
+function foundationReadingLines(body) {
+  const lines = []
+  let hiddenCount = 0
+  for (const raw of String(body || '').split('\n')) {
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+    if (FOUNDATION_LAYER_HEADER.test(trimmed) || isBareHeading(trimmed)) continue
+    const text = trimmed.replace(/^[-•]\s*/, '').replace(/[;]$/, '').trim()
+    if (!text) continue
+    if (FOUNDATION_INTERNAL_LINE.test(text)) { hiddenCount += 1; continue }
+    lines.push(softenModelEmphasis(text))
+  }
+  return { lines, hiddenCount }
+}
+
+const friendlyLayerDate = value => {
+  if (!value) return ''
+  const normalized = /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${String(value).replace(' ', 'T')}Z`
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) return String(value)
+  const sameYear = date.getUTCFullYear() === new Date().getUTCFullYear()
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })
+}
+
+const TOLD_GUIDANCE_PREVIEW = 5
+const LIMITS_PREVIEW = 4
+
+// The garment a lesson is about, so the card can show it instead of describing it.
+const lessonPhoto = draft => {
+  const first = synthesisApplicability(draft).piece_ids[0]
+  return (draft.applicabilityOptions?.pieces || []).find(piece => piece.id === first)?.photo || null
+}
+
+// "Applies when styling these shoes for summer." — a sentence, not a field dump.
+const lessonAppliesSentence = draft => {
+  const { garment, context } = synthesisScopeParts(draft)
+  if (garment.length && context.length) return `Applies when styling ${garment.join(' or ')} for ${context.join(' ')}.`
+  if (garment.length) return `Applies when styling ${garment.join(' or ')}.`
+  if (context.length) return `Applies for ${context.join(' ')}.`
+  return 'Applies whenever it is relevant.'
+}
+
+// A quiet line glyph so a list of sentences scans as distinct memories rather than a wall of text.
+// Chosen from what the guidance is actually about; the generic note is the honest fallback.
+const GUIDANCE_GLYPHS = [
+  [/\btravel\b|\bairplane\b|\btrip\b/, 'M2 9l14-5-3 6 3 6-14-5 4-1z'],
+  [/\brain|\bwet\b|\bfog|\bweather\b/, 'M5 12a3 3 0 010-6 4 4 0 017.6-1A3.5 3.5 0 1114 12zm1 2l-1 3m3-3l-1 3m3-3l-1 3'],
+  [/\boffice\b|\bclient\b|\bwork\b/, 'M3 7h14v9H3zM7 7V5h6v2'],
+  [/\bsummer\b|\bhot\b/, 'M10 5v-2m0 14v2m5-9h2M3 10h2m8.5-4.5l1.5-1.5M5 15l1.5-1.5m0-7L5 5m10 10l-1.5-1.5M13 10a3 3 0 11-6 0 3 3 0 016 0z'],
+  [/\bwinter\b|\bcold\b/, 'M10 3v14M4 6l12 8M16 6L4 14'],
+]
+const guidanceGlyph = row => {
+  const haystack = `${row.note || ''} ${ownerGuidanceUsedWhen(row)}`.toLowerCase()
+  const path = GUIDANCE_GLYPHS.find(([pattern]) => pattern.test(haystack))?.[1]
+    || 'M5 4h10v12l-5-3-5 3z'
   return (
-    <fieldset className="feedback-synthesis-applicability">
-      <legend>When this lesson applies</legend>
-      <p>This routing controls when the stylist receives the lesson. The boundary above is explanatory text only.</p>
-      <label>
-        <span>Scope</span>
-        <select value={value.scope} onChange={event => onChange({ ...value, scope: event.target.value })}>
-          <option value="piece">When a selected garment is available</option>
-          <option value="context">Whenever the request context matches</option>
-          <option value="piece_context">Only when both garment and context match</option>
-        </select>
-      </label>
-      {needsPiece && (
-        <div className="feedback-synthesis-piece-options">
-          <span>Garments</span>
-          {[...sourcePieces.entries()].map(([id, name]) => (
-            <label key={id}>
-              <input
-                type="checkbox"
-                checked={value.piece_ids.includes(id)}
-                onChange={event => onChange({
-                  ...value,
-                  piece_ids: event.target.checked
-                    ? [...new Set([...value.piece_ids, id])]
-                    : value.piece_ids.filter(pieceId => pieceId !== id),
-                })}
-              />
-              {name} <span>(#{id})</span>
-            </label>
-          ))}
-          {!sourcePieces.size && <p>No source garments are available for this lesson.</p>}
-        </div>
-      )}
-      {needsContext && (
-        <div className="feedback-synthesis-context-fields">
-          <label><span>Occasions</span><input type="text" value={value.occasions.join(', ')} onChange={event => updateList('occasions', event.target.value)} placeholder="e.g. city" /></label>
-          <label><span>Activities</span><input type="text" value={value.activities.join(', ')} onChange={event => updateList('activities', event.target.value)} placeholder="e.g. walking" /></label>
-          <label><span>Seasons</span><input type="text" value={value.seasons.join(', ')} onChange={event => updateList('seasons', event.target.value)} placeholder="e.g. summer" /></label>
-          <label><span>Weather</span><input type="text" value={value.weather_terms.join(', ')} onChange={event => updateList('weather_terms', event.target.value)} placeholder="e.g. wet, foggy" /></label>
-          <p>Use comma-separated terms found in the original reaction. Unsupported additions are not stored.</p>
-        </div>
-      )}
-      {!applicabilityIsUsable(value) && <p role="alert">Choose the garment and/or context required by this scope before saving.</p>}
-    </fieldset>
+    <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d={path} />
+    </svg>
   )
 }
 
@@ -219,6 +298,7 @@ function relativeSessionTime(value) {
 
 export default function StylistSettings({ mode = 'account', embedded = false, onGoToThread = null } = {}) {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [profile, setProfile] = useState(null)
   const [homeLocation, setHomeLocation] = useState('')
   const [layers, setLayers] = useState([])
@@ -240,12 +320,18 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const [synthesisDrafts, setSynthesisDrafts] = useState([])
   const [synthesisEdits, setSynthesisEdits] = useState({})
   const [synthesisBoundaryEdits, setSynthesisBoundaryEdits] = useState({})
-  const [synthesisApplicabilityEdits, setSynthesisApplicabilityEdits] = useState({})
   const [synthesisSavedId, setSynthesisSavedId] = useState(null)
   const [synthesisBusy, setSynthesisBusy] = useState(false)
+  const [styleProfileTab, setStyleProfileTab] = useState('guidance')
+  const [ownerConstraints, setOwnerConstraints] = useState([])
+  const [productFindings, setProductFindings] = useState([])
+  const [productResolutionDrafts, setProductResolutionDrafts] = useState({})
   const [demo, setDemo] = useState(null)
-  const [learningDrafts, setLearningDrafts] = useState({})
-  const [editingLearningId, setEditingLearningId] = useState(null)
+  const [convertingLearningId, setConvertingLearningId] = useState(null)
+  const [showAllLearnings, setShowAllLearnings] = useState(false)
+  const [foundationOpen, setFoundationOpen] = useState(false)
+  const [openFoundationLayer, setOpenFoundationLayer] = useState(null)
+  const [editingFoundationLayer, setEditingFoundationLayer] = useState(null)
   const [sessions, setSessions] = useState([])
   const [sessionsExpanded, setSessionsExpanded] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState(null)
@@ -268,10 +354,12 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       fetch('/api/pieces/occasion-exclusions').then(r => r.json()).then(rows => {
         setOccasionExclusions(Array.isArray(rows) ? rows : [])
       }).catch(() => setOccasionExclusions([])).finally(() => setOccasionExclusionsLoading(false))
-      const [feedback, savedBoards, synthesisRows] = await Promise.all([
+      const [feedback, savedBoards, synthesisRows, constraints, findings] = await Promise.all([
         fetch('/api/stylist-feedback?limit=1000').then(r => r.json()).catch(() => []),
         fetch('/api/saved-boards?limit=500').then(r => r.json()).catch(() => []),
         fetch('/api/feedback-synthesis/drafts').then(r => r.json()).catch(() => []),
+        fetch('/api/owner-constraints').then(r => r.json()).catch(() => []),
+        fetch('/api/product-quality-findings').then(r => r.json()).catch(() => []),
       ])
       const feedbackRows = Array.isArray(feedback) ? feedback : []
       const activeFeedbackRows = feedbackRows.filter(row => row.memory?.strength !== 'none')
@@ -279,6 +367,8 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       setContextualFeedback(activeFeedbackRows.filter(row => !isStandingLearning(row)))
       setFeedbackBoards(Array.isArray(savedBoards) ? savedBoards : [])
       setSynthesisDrafts(Array.isArray(synthesisRows) ? synthesisRows : [])
+      setOwnerConstraints(Array.isArray(constraints) ? constraints : [])
+      setProductFindings(Array.isArray(findings) ? findings : [])
       setDemo(await fetch('/api/settings/demo-wardrobe').then(r => r.json()).catch(() => null))
       const sessionData = await fetch('/api/auth/sessions').then(r => r.json()).catch(() => null)
       setSessions(sessionData?.sessions || [])
@@ -342,19 +432,26 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     } else flash((await res.json()).error || 'Failed to save layer')
   }
 
-  const saveLearning = async (row) => {
-    const note = learningDrafts[row.id]
-    const res = await fetch(`/api/stylist-feedback/${row.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) })
-    if (res.ok) {
-      const next = { ...learningDrafts }; delete next[row.id]; setLearningDrafts(next)
-      setEditingLearningId(null)
-      flash('Learning updated.'); load()
-    } else flash('Failed to update learning')
-  }
-
   const archiveLearning = async (row) => {
     const res = await fetch(`/api/stylist-feedback/${row.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true }) })
     if (res.ok) { flash('Learning retired — it will no longer influence styling.'); load() }
+  }
+
+  const convertLearningToConstraint = async (row) => {
+    const res = await fetch('/api/owner-constraints', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        confirmOwnerConstraint: true,
+        sourceFeedbackId: row.id,
+        useStoredProposal: true,
+      }),
+    })
+    const result = await res.json().catch(() => ({}))
+    if (!res.ok) return flash(result.error || 'Could not create this rule.')
+    setConvertingLearningId(null)
+    flash('Always-avoid rule created. The old prompt sentence was archived.')
+    load()
   }
 
   const restoreOccasionExclusion = async (entry) => {
@@ -369,6 +466,71 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     } else {
       flash('Failed to restore this piece')
     }
+  }
+
+  const retireOwnerConstraint = async (constraint) => {
+    const res = await fetch(`/api/owner-constraints/${constraint.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'retired' }),
+    })
+    if (res.ok) { flash('Constraint retired.'); load() }
+    else flash('Failed to retire constraint')
+  }
+
+  const dismissProductFinding = async (finding) => {
+    const res = await fetch(`/api/product-quality-findings/${finding.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'dismissed', resolutionType: 'no_change' }),
+    })
+    if (res.ok) { flash('Product issue dismissed.'); load() }
+    else flash('Failed to dismiss product issue')
+  }
+
+  // The archive exists for recovery, so every row in it has to lead somewhere. Each of these
+  // reverses the decision that put the record there; all three were already supported by the API
+  // and simply had no way to reach them.
+  const restoreOwnerConstraint = async (constraint) => {
+    const res = await fetch(`/api/owner-constraints/${constraint.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'active' }),
+    })
+    if (res.ok) { flash('Firm rule is being used again.'); load() }
+    else flash('Could not start using this rule again.')
+  }
+
+  const removeSynthesisNonResult = async (draft) => {
+    const res = await fetch(`/api/feedback-synthesis/drafts/${draft.id}`, { method: 'DELETE' })
+    if (res.ok) { flash('Removed.'); load() }
+    else flash((await res.json().catch(() => ({}))).error || 'Could not remove this.')
+  }
+
+  const reopenProductFinding = async (finding) => {
+    const res = await fetch(`/api/product-quality-findings/${finding.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'open' }),
+    })
+    if (res.ok) { flash('Reopened for review.'); load() }
+    else flash('Could not reopen this issue.')
+  }
+
+  const resolveProductFinding = async (finding) => {
+    const draft = productResolutionDrafts[finding.id] || {}
+    if (!draft.resolutionType) return
+    const res = await fetch(`/api/product-quality-findings/${finding.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: 'resolved',
+        resolutionType: draft.resolutionType,
+        resolutionNote: draft.resolutionNote || '',
+      }),
+    })
+    if (res.ok) {
+      setProductResolutionDrafts(previous => { const next = { ...previous }; delete next[finding.id]; return next })
+      flash('Product issue resolved.'); load()
+    } else flash('Failed to resolve product issue')
   }
 
   const showHistory = async (layer) => {
@@ -395,7 +557,130 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   })
   const visibleContextualFeedback = matchingContextualFeedback.slice(0, feedbackVisibleCount)
   const contextualFeedbackTypes = [...new Set(actionableContextualFeedback.map(row => row.feedback_type).filter(Boolean))].sort()
-  const pendingSynthesisDrafts = synthesisDrafts.filter(draft => ['draft', 'deferred'].includes(draft.status))
+  const pendingSynthesisDrafts = synthesisDrafts.filter(draft =>
+    ['draft', 'deferred'].includes(draft.status) && draft.disposition !== 'insufficient_evidence')
+  const activeOwnerConstraints = ownerConstraints.filter(row => row.status === 'active')
+  // Reported outcomes from recent runs. Shown so the owner can see WHY a reaction taught nothing —
+  // that explanation is the part worth reading, and it tells her what a reaction needs next time.
+  const reportedNonResults = synthesisDrafts
+    .filter(row => row.disposition === 'insufficient_evidence' && row.status === 'reported')
+    .slice(0, 5)
+  const acceptedContextualLessons = synthesisDrafts.filter(draft => draft.status === 'accepted' && draft.disposition === 'personal_contextual_lesson')
+  const visibleLearnings = showAllLearnings ? learnings : learnings.slice(0, TOLD_GUIDANCE_PREVIEW)
+  const guidanceLimitCount = activeOwnerConstraints.length + occasionExclusions.length
+  const groupedOccasionExclusions = [...occasionExclusions.reduce((groups, entry) => {
+    const key = String(entry.pieceId)
+    const group = groups.get(key) || { pieceId: entry.pieceId, name: entry.name, photo: entry.photo, entries: [] }
+    group.entries.push(entry)
+    groups.set(key, group)
+    return groups
+  }, new Map()).values()]
+  // The server already returns exclusions newest-changed first (parsed from each one's receipt),
+  // so grouping preserves that order and the preview shows what actually changed most recently.
+  const showingAllLimits = searchParams.get('limits') === 'all'
+  const showingPastDecisions = searchParams.get('past') === '1'
+  const closeSubView = key => setSearchParams(params => {
+    const next = new URLSearchParams(params)
+    next.delete(key)
+    return next
+  })
+  const openSubView = key => setSearchParams(params => {
+    const next = new URLSearchParams(params)
+    next.set(key, key === 'past' ? '1' : 'all')
+    return next
+  })
+
+  // History is grouped by what she did, not by which table the record came from. The old list
+  // labelled rows "Retired constraint" / "Rejected draft" / "Reviewed conclusion" — storage names
+  // for three stores that, from her side, are the same two or three decisions.
+  const retiredConstraints = ownerConstraints.filter(row => row.status === 'retired')
+  const reviewedDrafts = synthesisDrafts.filter(row => row.status === 'accepted' && row.disposition !== 'personal_contextual_lesson')
+  // "Insufficient evidence" is not a suggestion she turned down — it is the stylist reporting that
+  // it could not learn anything from the reactions it was given. Its rationale says why ("the
+  // occasion field holds a garment descriptor, not a context term"), which is the one thing in this
+  // archive that teaches her how to give feedback that will actually stick. Grouping it with
+  // declined suggestions both misdescribed it and buried the useful part.
+  const unlearnableDrafts = synthesisDrafts.filter(row =>
+    row.disposition === 'insufficient_evidence' && row.status !== 'draft' && row.status !== 'deferred')
+  const declinedDrafts = synthesisDrafts.filter(row =>
+    row.status === 'rejected' && row.disposition !== 'insufficient_evidence')
+  const historyGroups = [
+    {
+      key: 'stopped',
+      title: 'No longer used',
+      description: 'Rules and lessons you stopped using.',
+      glyph: 'M5 12h14',
+      rows: [
+        ...retiredConstraints.map(row => ({
+          key: `constraint-${row.id}`,
+          title: `${sentenceCase(row.selector_values.join(', '))} — not ${constraintContextPhrase(row.context_dimension, row.context_values.join(', '))}`,
+          detail: 'Firm rule you stopped using.',
+          date: row.updated_at || row.created_at,
+          action: { label: 'Start using again', run: () => restoreOwnerConstraint(row) },
+        })),
+        ...synthesisDrafts.filter(row => row.status === 'retired' && row.disposition !== 'insufficient_evidence').map(row => ({
+          key: `retired-${row.id}`,
+          title: row.title || effectiveSynthesisText(row) || 'Saved lesson',
+          detail: row.disposition === 'garment_fact_correction' ? 'Garment correction you stopped using.' : 'Lesson you stopped using.',
+          date: row.updated_at || row.created_at,
+          action: { label: 'Start using again', run: () => updateSynthesisDraft(row, 'accepted') },
+        })),
+      ],
+    },
+    {
+      key: 'declined',
+      title: 'You decided not to keep these',
+      description: 'Suggestions your stylist proposed that you turned down.',
+      glyph: 'M6 6l12 12M18 6L6 18',
+      rows: declinedDrafts.map(row => ({
+        key: `rejected-${row.id}`,
+        title: row.title || effectiveSynthesisText(row) || 'Suggested lesson',
+        detail: 'Your stylist suggested this; you declined it.',
+        date: row.updated_at || row.created_at,
+        // Back to Review feedback rather than straight to active: it was declined once, so it
+        // should be re-decided rather than silently switched on.
+        action: { label: 'Reconsider', run: () => updateSynthesisDraft(row, 'draft') },
+      })),
+    },
+    {
+      key: 'closed',
+      title: 'Reviewed and closed',
+      description: 'Issues that were looked at and settled.',
+      glyph: 'M5 12l4 4L19 7',
+      rows: [
+        ...reviewedDrafts.filter(row => row.disposition !== 'insufficient_evidence').map(row => ({
+          key: `reviewed-${row.id}`,
+          title: row.title || 'Reviewed conclusion',
+          detail: effectiveSynthesisText(row) || row.boundary || '',
+          date: row.updated_at || row.created_at,
+          action: { label: 'Reconsider', run: () => updateSynthesisDraft(row, 'draft') },
+        })),
+        ...productFindings.filter(row => row.status !== 'open').map(row => ({
+          key: `finding-${row.id}`,
+          title: row.title || 'Product issue',
+          detail: row.resolution_note || row.description || (row.status === 'resolved' ? 'Resolved.' : 'Dismissed.'),
+          date: row.updated_at || row.created_at,
+          action: { label: 'Reopen', run: () => reopenProductFinding(row) },
+        })),
+      ],
+    },
+    {
+      key: 'unlearnable',
+      title: "Couldn't be turned into a lesson",
+      description: 'Your stylist looked at these but did not find enough to go on.',
+      glyph: 'M12 8v5m0 3h.01M12 3l9 16H3z',
+      // Removable rather than recoverable: there is nothing to switch back on, and these would
+      // otherwise pile up in the archive. The explanation is the value while it is there.
+      rows: unlearnableDrafts.map(row => ({
+        key: `unlearnable-${row.id}`,
+        title: row.title || 'Nothing could be learned',
+        detail: row.rationale || row.boundary || 'Not enough context to draw a conclusion.',
+        date: row.updated_at || row.created_at,
+        action: { label: 'Remove', run: () => removeSynthesisNonResult(row) },
+      })),
+    },
+  ]
+  const rendererCorrections = contextualFeedback.filter(row => row.memory?.destination === 'renderer')
 
   const feedbackBoardImage = row => row?.payload?.board?.imageUrl || row?.payload?.board?.image_url || ''
   const matchedFeedbackBoard = row => {
@@ -489,11 +774,9 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const updateSynthesisDraft = async (draft, nextStatus) => {
     const hasTextEdit = Object.hasOwn(synthesisEdits, draft.id)
     const hasBoundaryEdit = Object.hasOwn(synthesisBoundaryEdits, draft.id)
-    const hasApplicabilityEdit = Object.hasOwn(synthesisApplicabilityEdits, draft.id)
     const body = { status: nextStatus }
     if (hasTextEdit) body.editedText = synthesisEdits[draft.id]
     if (hasBoundaryEdit) body.boundary = synthesisBoundaryEdits[draft.id]
-    if (hasApplicabilityEdit) body.applicability = synthesisApplicabilityEdits[draft.id]
     const response = await fetch(`/api/feedback-synthesis/drafts/${draft.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -573,50 +856,134 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     if (row.context_type === 'piece' && row.context_id) navigate(`/wardrobe?pieceId=${row.context_id}`)
   }
 
-  const renderStyleLayer = ({ layer, body, updatedAt, isDefault }) => {
-    const [eyebrow, description] = LAYER_META[layer] || ['Guidance', 'Working guidance used by your stylist.']
-    const hasChanges = drafts[layer] !== undefined && drafts[layer] !== body
-    return (
-      <details key={layer} className="style-profile-card" defaultOpen={layer === 'body_contract'}>
-        <summary>
-          <div className="style-profile-card-summary">
-            <span className="style-profile-card-eyebrow">{eyebrow}</span>
-            <strong>{LAYER_TITLES[layer] || layer}</strong>
-            <span className="style-profile-card-description">{description}</span>
-          </div>
-          <span className={`style-profile-card-status ${isDefault ? 'is-default' : ''}`}>
-            {isDefault ? 'Not personalized' : 'Personalized'}
+  const renderExclusionRow = (group) => (
+    <div key={group.pieceId} className="limit-row">
+      <span className="limit-row-thumb">
+        {group.photo
+          ? <img src={uploadThumbnailSrc(`/uploads/${group.photo}`, 'garment-display')} alt="" loading="lazy" decoding="async" />
+          : <span className="limit-row-thumb--empty" aria-hidden="true" />}
+      </span>
+      <div className="limit-row-body">
+        <strong>{group.name}</strong>
+        <span>Not for {group.entries.map((entry, index) => (
+          <span key={entry.occasion}>
+            {index > 0 && ', '}
+            <em>{sentenceCase(entry.occasion)}</em>
           </span>
-        </summary>
-        <div className="style-profile-card-body">
-          <textarea
-            className="style-profile-editor"
-            value={drafts[layer] ?? body}
-            onChange={e => setDrafts({ ...drafts, [layer]: e.target.value })}
-          />
-          <div className="style-profile-card-meta">
-            <span>{!isDefault && updatedAt ? `Last updated ${updatedAt}` : 'Using the default guidance'}</span>
-            <div className="style-profile-card-actions">
-              {INTERVIEW_STEPS[layer] && (
-                <Link to={`/onboarding?step=${INTERVIEW_STEPS[layer]}&return=visual-lab`} className="btn-secondary">Redo interview</Link>
-              )}
-              {!isDefault && <button className="btn-secondary" onClick={() => showHistory(layer)}>{historyFor === layer ? 'Hide history' : 'View history'}</button>}
-              {hasChanges && <button className="btn-primary" onClick={() => saveLayer(layer)}>Save changes</button>}
+        ))}</span>
+      </div>
+      <div className="limit-row-actions">
+        {group.entries.map(entry => (
+          <button key={entry.occasion} className="btn-secondary" onClick={() => restoreOccasionExclusion(entry)}>
+            Restore for {entry.occasion}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
+  const renderStyleLayer = ({ layer, body, updatedAt, isDefault }) => {
+    const description = FOUNDATION_DESCRIPTIONS[layer] || (LAYER_META[layer] || [])[1] || 'Working guidance used by your stylist.'
+    const isOpen = openFoundationLayer === layer
+    const isEditing = editingFoundationLayer === layer
+    const draft = drafts[layer] ?? body
+    const { lines, hiddenCount } = foundationReadingLines(body)
+    return (
+      <div key={layer} className={`foundation-layer${isOpen ? ' is-open' : ''}`}>
+        <div className="foundation-layer-head">
+          <span className="foundation-layer-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <path d={FOUNDATION_TILE_GLYPHS[layer]} />
+            </svg>
+          </span>
+          <button
+            type="button"
+            className="foundation-layer-toggle"
+            aria-expanded={isOpen}
+            onClick={() => {
+              // One open at a time — the foundation is seven sections and only stays readable if
+              // it never unfolds all of them at once.
+              setEditingFoundationLayer(null)
+              setOpenFoundationLayer(current => (current === layer ? null : layer))
+            }}
+          >
+            <strong>{LAYER_TITLES[layer] || layer}</strong>
+            <span>{description}</span>
+          </button>
+          <div className="foundation-layer-actions">
+            {isDefault && <span className="foundation-layer-status">Not personalized</span>}
+            {!isEditing && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => { setOpenFoundationLayer(layer); setEditingFoundationLayer(layer) }}
+              >
+                Edit
+              </button>
+            )}
+            <span className="foundation-layer-chevron" aria-hidden="true">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 8l5 5 5-5" /></svg>
+            </span>
+          </div>
+        </div>
+
+        {isOpen && !isEditing && (
+          <div className="foundation-layer-read">
+            {lines.length > 1
+              ? <ul>{lines.map((line, index) => <li key={index}>{line}</li>)}</ul>
+              : <p>{lines[0] || 'Nothing recorded yet.'}</p>}
+            <p className="foundation-layer-footer">
+              {layer === 'proven_formulas'
+                ? <span>Earned from outfits you&rsquo;ve confirmed</span>
+                : <span>{isDefault || !updatedAt ? 'Using the default guidance' : `Updated ${friendlyLayerDate(updatedAt)}`}</span>}
+              {!isDefault && <><span aria-hidden="true"> · </span><button type="button" className="foundation-layer-link" onClick={() => showHistory(layer)}>{historyFor === layer ? 'Hide history' : 'View history'}</button></>}
+              {INTERVIEW_STEPS[layer] && <><span aria-hidden="true"> · </span><Link className="foundation-layer-link" to={`/onboarding?step=${INTERVIEW_STEPS[layer]}&return=visual-lab`}>Redo interview</Link></>}
+              {hiddenCount > 0 && <><span aria-hidden="true"> · </span><span>{hiddenCount} technical {hiddenCount === 1 ? 'note' : 'notes'} shown when editing</span></>}
+            </p>
+            {historyFor === layer && (
+              <div className="style-profile-history">
+                {historyRows.length === 0 && <div className="style-profile-history-empty">No history yet.</div>}
+                {historyRows.map(row => (
+                  <div key={row.id} className="style-profile-history-entry">
+                    <strong>{row.created_at} · {row.source}</strong>
+                    <pre>{row.prior_body ?? '(no prior text — first write)'}</pre>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {isOpen && isEditing && (
+          <div className="foundation-layer-edit">
+            {/* Edit shows the stored text exactly as the stylist receives it, including the
+                technical lines the reading view leaves out. */}
+            <textarea
+              className="style-profile-editor"
+              value={draft}
+              autoFocus
+              onChange={e => setDrafts({ ...drafts, [layer]: e.target.value })}
+            />
+            <div className="foundation-layer-edit-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => { const next = { ...drafts }; delete next[layer]; setDrafts(next); setEditingFoundationLayer(null) }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={draft === body}
+                onClick={async () => { await saveLayer(layer); setEditingFoundationLayer(null) }}
+              >
+                Save
+              </button>
             </div>
           </div>
-          {historyFor === layer && (
-            <div className="style-profile-history">
-              {historyRows.length === 0 && <div className="style-profile-history-empty">No history yet.</div>}
-              {historyRows.map(row => (
-                <div key={row.id} className="style-profile-history-entry">
-                  <strong>{row.created_at} · {row.source}</strong>
-                  <pre>{row.prior_body ?? '(no prior text — first write)'}</pre>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </details>
+        )}
+      </div>
     )
   }
 
@@ -632,6 +999,29 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       </p>
       </div>
       {status && <div className="settings-status" role="status">{status}</div>}
+
+      {mode === 'style' && (
+        <nav className="style-profile-tabs" aria-label="Style profile sections">
+          {STYLE_PROFILE_TABS.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={styleProfileTab === value ? 'active' : ''}
+              aria-current={styleProfileTab === value ? 'page' : undefined}
+              onClick={() => {
+                setStyleProfileTab(value)
+                if (showingAllLimits) setSearchParams(params => {
+                  const next = new URLSearchParams(params)
+                  next.delete('limits')
+                  return next
+                })
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+      )}
 
       {mode !== 'style' && profile && (
         <section className="account-settings-section">
@@ -684,34 +1074,6 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
         </section>
       )}
 
-      {mode === 'style' && <>
-      <section className="style-profile-section">
-        <div className="style-profile-section-heading">
-          <div>
-            <span>Personal guidance</span>
-            <h2>How your stylist understands you</h2>
-          </div>
-          <p>These layers guide every recommendation. Expand any one to review or correct it.</p>
-        </div>
-        <div className="style-profile-card-list">
-          {layers.filter(({ layer }) => PERSONAL_STYLE_LAYERS.has(layer)).map(renderStyleLayer)}
-        </div>
-      </section>
-
-      <section className="style-profile-section">
-        <div className="style-profile-section-heading">
-          <div>
-            <span>Visual generation</span>
-            <h2>How generated looks represent you</h2>
-          </div>
-          <p>Rendering guidance affects imagery only; it does not limit outfit recommendations.</p>
-        </div>
-        <div className="style-profile-card-list">
-          {layers.filter(({ layer }) => IMAGE_STYLE_LAYERS.has(layer)).map(renderStyleLayer)}
-        </div>
-      </section>
-      </>}
-
       {mode !== 'style' && demo?.count > 0 && (
         <details className="account-settings-disclosure">
           <summary>
@@ -738,136 +1100,224 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
         </details>
       )}
 
-      {mode === 'style' && <>
-      <details className="style-memory-legend">
-        <summary>How the stylist uses this memory</summary>
-        <div className="style-memory-legend-grid">
-          <div><strong>Standing guidance</strong><span>Included in styling prompts until you retire it.</span></div>
-          <div><strong>Hard exclusion</strong><span>The garment is never offered for that occasion until restored.</span></div>
-          <div><strong>Contextual guidance</strong><span>Applied to similar outfit contexts, not as a global garment preference.</span></div>
-          <div><strong>Provisional feedback</strong><span>Kept with its garment and outfit context; it is not a score or standing preference.</span></div>
-          <div><strong>Image correction</strong><span>Guides generated images only; it does not change outfit selection.</span></div>
-        </div>
-      </details>
-      <section className="style-profile-section style-profile-learnings">
-      <div className="style-profile-section-heading">
-        <div>
-          <span>Conversation memory</span>
-          <h2>Learned rules & preferences</h2>
-        </div>
-        <p>Durable corrections learned in chat, such as what you do not wear or weather-specific needs.</p>
-      </div>
-      {feedbackLoading && <div className="style-profile-empty">Loading learned rules and preferences…</div>}
-      {!feedbackLoading && learnings.length === 0 && (
-        <div className="style-profile-empty">Nothing learned yet. Corrections you give the stylist in chat will appear here.</div>
-      )}
-      <div className="style-memory-list">
-      {learnings.map(row => (
-        <div key={row.id} className="style-memory-row style-memory-row--editable">
-          <div className="style-memory-row-heading">
-            <span className="style-memory-kind">
-              {row.feedback_type === 'piece_rule_receipt'
-                ? `garment rule · ${row.context_name || `Piece ${row.context_id}`}`
-                : row.feedback_type.replace('_', ' ')}
-            </span>
-            <span className="style-memory-date">{row.created_at}</span>
+      {/* A dedicated view, not an inline expansion: "Review all" on a long list has to take her
+          somewhere, or Active guidance turns back into the full memory inventory. It is a URL
+          param so the browser back button returns her to the overview. */}
+      {mode === 'style' && styleProfileTab === 'guidance' && showingAllLimits && !showingPastDecisions && (
+        <section className="style-profile-section limits-all">
+          <button type="button" className="limits-all-back" onClick={() => closeSubView('limits')}>
+            <span aria-hidden="true">←</span> Back to active guidance
+          </button>
+          <div className="style-profile-section-heading">
+            <div>
+              <span>All limits</span>
+              <h2>{guidanceLimitCount} active {guidanceLimitCount === 1 ? 'limit' : 'limits'}</h2>
+            </div>
+            <p>Everything your stylist currently leaves out, and the situations it applies to.</p>
           </div>
-          {editingLearningId === row.id ? (
-            <>
-              <textarea
-                className="style-memory-editor"
-                value={learningDrafts[row.id] ?? row.note}
-                onChange={e => setLearningDrafts({ ...learningDrafts, [row.id]: e.target.value })}
-                autoFocus
-              />
-              <div className="style-memory-actions">
-                <button
-                  className="btn-secondary"
-                  onClick={() => {
-                    const next = { ...learningDrafts }
-                    delete next[row.id]
-                    setLearningDrafts(next)
-                    setEditingLearningId(null)
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn-primary"
-                  disabled={(learningDrafts[row.id] ?? row.note) === row.note}
-                  onClick={() => saveLearning(row)}
-                >
-                  Save changes
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="style-memory-read-layout">
-              <div className="style-memory-rule">{row.note}</div>
-              <div className="style-memory-actions style-memory-actions--read">
-                <button
-                  className="btn-secondary"
-                  onClick={() => {
-                    setLearningDrafts({ ...learningDrafts, [row.id]: row.note })
-                    setEditingLearningId(row.id)
-                  }}
-                >
-                  Edit
-                </button>
-                <button className="style-memory-retire" onClick={() => archiveLearning(row)}>Retire</button>
+          {activeOwnerConstraints.length > 0 && (
+            <div className="limit-group">
+              <div className="limit-group-heading"><div><strong>Always avoid</strong><span>Firm rules your stylist always enforces.</span></div></div>
+              <div className="limit-rows">
+                {activeOwnerConstraints.map(row => (
+                  <div key={`all-constraint:${row.id}`} className="limit-row">
+                    <div className="limit-row-body">
+                      <strong>{sentenceCase(row.selector_values.join(', '))}</strong>
+                      <span>Not {constraintContextPhrase(row.context_dimension, row.context_values.join(', '))}.</span>
+                    </div>
+                    <button className="btn-secondary" onClick={() => retireOwnerConstraint(row)}>Stop using rule</button>
+                  </div>
+                ))}
               </div>
             </div>
           )}
-        </div>
-      ))}
-      </div>
-      </section>
+          {groupedOccasionExclusions.length > 0 && (
+            <div className="limit-group">
+              <div className="limit-group-heading"><div><strong>Specific pieces</strong><span>Pieces your stylist avoids for certain occasions.</span></div></div>
+              <div className="limit-rows">{groupedOccasionExclusions.map(renderExclusionRow)}</div>
+            </div>
+          )}
+        </section>
+      )}
 
-      <section className="style-profile-section style-profile-learnings">
+      {mode === 'style' && styleProfileTab === 'guidance' && !showingAllLimits && !showingPastDecisions && <>
+      <section id="contextual-lessons" className="style-profile-section style-profile-learnings style-profile-contextual">
         <div className="style-profile-section-heading">
           <div>
-            <span>Garment memory</span>
-            <h2>Occasion exclusions</h2>
+            <span>When it matters</span>
+            <h2>Things your stylist remembers for particular clothes or situations</h2>
           </div>
-          <p>Garments marked "Wrong for" an occasion from the Stylist chat. This is a hard rule —
-          the piece will never be offered for that occasion again until you restore it here.</p>
+          <p>Your stylist uses these only when the right piece or situation comes up.</p>
         </div>
-        {occasionExclusionsLoading && <div className="style-profile-empty">Loading occasion exclusions…</div>}
-        {!occasionExclusionsLoading && occasionExclusions.length === 0 && (
-          <div className="style-profile-empty">No garments are currently excluded from any occasion.</div>
+        {feedbackLoading && <div className="style-profile-empty">Loading guidance…</div>}
+        {!feedbackLoading && !acceptedContextualLessons.length && !learnings.length && (
+          <div className="style-profile-empty">Nothing here yet — your stylist adds to this as you work together.</div>
         )}
-        <div className="style-memory-list">
-        {occasionExclusions.map(entry => (
-          <div key={`${entry.pieceId}:${entry.occasion}`} className="style-memory-row style-memory-row--context">
-            <div className="style-memory-context-layout">
-              <div className="style-memory-copy">
-                <div className="style-memory-kind">occasion exclusion</div>
-                <div className="style-memory-context-title">{entry.name}</div>
-                <div className="style-memory-note">Won't be offered for {entry.occasion}.</div>
-              </div>
-              <div className="style-memory-context-actions">
-                <button className="btn-secondary" onClick={() => restoreOccasionExclusion(entry)}>
-                  Restore for {entry.occasion}
-                </button>
+
+        {acceptedContextualLessons.length > 0 && (
+          <div className="memory-card-list">
+            {acceptedContextualLessons.map(draft => {
+              const sourceIds = parsedIdList(draft.source_feedback_ids)
+              const sources = sourceIds.map(id => contextualFeedback.find(row => Number(row.id) === id)).filter(Boolean)
+              const photo = lessonPhoto(draft)
+              return (
+                <article key={`lesson:${draft.id}`} id={`contextual-lesson-${draft.id}`} className="memory-card">
+                  <div className="memory-card-thumb">
+                    {photo
+                      ? <img src={uploadThumbnailSrc(`/uploads/${photo}`, 'garment-display')} alt="" loading="lazy" decoding="async" />
+                      : <span className="memory-card-thumb-empty" aria-hidden="true" />}
+                  </div>
+                  <div className="memory-card-body">
+                    <h3>{effectiveSynthesisText(draft)}</h3>
+                    <p className="memory-card-scope">{lessonAppliesSentence(draft)}</p>
+                    <p className="memory-card-source">Learned from feedback you approved.</p>
+                  </div>
+                  <div className="memory-card-actions">
+                    <button type="button" className="btn-secondary" onClick={() => updateSynthesisDraft(draft, 'retired')}>Forget this</button>
+                  </div>
+                  <details className="memory-card-more">
+                    <summary>Where this came from</summary>
+                    {sources.length > 0
+                      ? <ul>{sources.map(source => <li key={source.id}>{source.memory?.display?.title || source.context_name || source.label}: {source.memory?.display?.summary || readableFeedbackNote(source.note)}</li>)}</ul>
+                      : <p>{sourceIds.length ? 'The original reactions are no longer available.' : 'No source reactions recorded.'}</p>}
+                  </details>
+                </article>
+              )
+            })}
+          </div>
+        )}
+
+        {learnings.length > 0 && (
+          <div className="memory-told">
+            <div className="memory-told-heading">Other things you&rsquo;ve told your stylist</div>
+            <div className="memory-told-list">
+              {visibleLearnings.map(row => {
+                const proposal = ownerConstraintProposal(row)
+                const scope = ownerGuidanceUsedWhen(row)
+                return (
+                  <div key={`direct:${row.id}`} id={`learned-guidance-${row.id}`} className="memory-told-row">
+                    <span className="memory-told-icon" aria-hidden="true">{guidanceGlyph(row)}</span>
+                    <div className="memory-told-body">
+                      <p className="memory-told-text">{row.note}</p>
+                      {scope && <p className="memory-told-scope">For {scope}</p>}
+                    </div>
+                    <div className="memory-told-actions">
+                      {proposal && (
+                        <button className="btn-secondary" onClick={() => setConvertingLearningId(row.id)}>Make this a firm rule</button>
+                      )}
+                      <button className="btn-secondary" onClick={() => archiveLearning(row)}>Forget this</button>
+                    </div>
+                    {convertingLearningId === row.id && (
+                      <div className="owner-rule-conversion">
+                        <div>
+                          <strong>Make this an always-avoid rule?</strong>
+                          <span>This rule can be enforced while clothes are being selected.</span>
+                        </div>
+                        <div className="owner-rule-conversion-preview">
+                          <strong>Your stylist will not suggest {proposal.selectorValues[0]} {constraintContextPhrase(proposal.contextDimension, proposal.contextValues[0])}.</strong>
+                          <span>The original learned sentence will be kept in history, but will stop being sent separately.</span>
+                        </div>
+                        <div className="style-memory-actions">
+                          <button className="btn-secondary" onClick={() => setConvertingLearningId(null)}>Cancel</button>
+                          <button className="btn-primary" onClick={() => convertLearningToConstraint(row)}>Confirm firm rule</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {learnings.length > TOLD_GUIDANCE_PREVIEW && (
+              <button type="button" className="btn-secondary memory-see-all" onClick={() => setShowAllLearnings(value => !value)}>
+                {showAllLearnings ? 'Show fewer' : `See all guidance (${learnings.length})`}
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section id="garment-occasion-limits" className="style-profile-section style-profile-limits">
+        <div className="style-profile-section-heading">
+          <div>
+            <span>Garment &amp; occasion limits</span>
+            <h2>Things your stylist knows not to suggest in certain situations</h2>
+          </div>
+          <p>These limits help your stylist skip pieces that aren&rsquo;t a good fit — saving you time and avoiding suggestions you won&rsquo;t wear.</p>
+        </div>
+        {occasionExclusionsLoading && <div className="style-profile-empty">Loading garment limits…</div>}
+        {!occasionExclusionsLoading && guidanceLimitCount === 0 && <div className="style-profile-empty">No garment or occasion limits are active.</div>}
+
+        {activeOwnerConstraints.length > 0 && (
+          <div className="limit-group">
+            <div className="limit-group-heading">
+              <span className="limit-group-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l8 3v6c0 4.4-3.2 8.2-8 9-4.8-.8-8-4.6-8-9V6z" /></svg>
+              </span>
+              <div>
+                <strong>Always avoid</strong>
+                <span>Firm rules your stylist always enforces.</span>
               </div>
             </div>
+            {/* Every firm rule is shown: there are usually very few and each one is broad and
+                high-impact, so hiding any of them behind a "show more" would misrepresent the set. */}
+            <div className="limit-rows">
+              {activeOwnerConstraints.map(row => (
+                <div key={`constraint:${row.id}`} className="limit-row">
+                  <span className="limit-row-thumb limit-row-thumb--glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3a2 2 0 100 4 2 2 0 000-4zM8 21v-6l-2-3 2-3h8l2 3-2 3v6" /></svg>
+                  </span>
+                  <div className="limit-row-body">
+                    <strong>{sentenceCase(row.selector_values.join(', '))}</strong>
+                    <span>Not {constraintContextPhrase(row.context_dimension, row.context_values.join(', '))}.</span>
+                  </div>
+                  <button className="btn-secondary" onClick={() => retireOwnerConstraint(row)}>Stop using rule</button>
+                </div>
+              ))}
+            </div>
           </div>
-        ))}
-        </div>
+        )}
+
+        {groupedOccasionExclusions.length > 0 && (
+          <div className="limit-group">
+            <div className="limit-group-heading">
+              <span className="limit-group-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4a2 2 0 100 4 2 2 0 000-4zM12 8v3l8 6H4l8-6" /></svg>
+              </span>
+              <div>
+                <strong>Specific pieces</strong>
+                <span>Pieces your stylist avoids for certain occasions.</span>
+              </div>
+            </div>
+            {/* A preview, not an inventory. The server returns these newest-changed first, so the
+                four shown are the ones she most likely just changed — the rest live in their own
+                view rather than unrolling the page. */}
+            <div className="limit-rows">
+              {groupedOccasionExclusions.slice(0, LIMITS_PREVIEW).map(renderExclusionRow)}
+            </div>
+            {groupedOccasionExclusions.length > LIMITS_PREVIEW && (
+              <button type="button" className="limit-review-all" onClick={() => openSubView('limits')}>
+                Review all {guidanceLimitCount} limits
+              </button>
+            )}
+          </div>
+        )}
       </section>
 
+      </>}
+
+      {mode === 'style' && styleProfileTab === 'review' && <>
       <section className="style-profile-section style-profile-learnings">
         <div className="style-profile-section-heading">
           <div>
-            <span>Contextual memory</span>
-            <h2>Outfit &amp; styling feedback</h2>
+            <span>Needs your review</span>
+            <h2>Feedback your stylist noticed but hasn&rsquo;t acted on</h2>
           </div>
-          <p>Feedback tied to a particular outfit, styling result, or generated board. It does not become a global style rule.</p>
+          <p>These are reactions to particular outfits. Your stylist keeps them as context — none of them becomes a rule unless you decide it should.</p>
         </div>
         <div className="feedback-synthesis-panel">
           <div>
-            <strong>Turn selected reactions into draft lessons</strong>
-            <p>Select provisional reactions below, then preview the exact model and estimated cost. No model call happens until you authorize it.</p>
+            <strong>Look for a pattern in what you&rsquo;ve flagged</strong>
+            <p>Pick the reactions below that feel related. You&rsquo;ll see the exact cost before anything runs — and nothing happens until you say so.</p>
           </div>
           <button
             type="button"
@@ -895,19 +1345,28 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
             </div>
           )}
         </div>
+        {reportedNonResults.length > 0 && (
+          <div className="synthesis-nonresults">
+            <strong>Nothing to learn from {reportedNonResults.length === 1 ? 'one reaction' : `${reportedNonResults.length} reactions`}</strong>
+            <p>Your stylist looked at {reportedNonResults.length === 1 ? 'this' : 'these'} but didn&rsquo;t find enough to go on. Nothing to decide — it just didn&rsquo;t teach it anything.</p>
+            <ul>
+              {reportedNonResults.map(row => (
+                <li key={row.id}>
+                  {row.rationale || row.boundary || 'Not enough context to draw a conclusion.'}
+                  <button type="button" className="synthesis-nonresult-remove" onClick={() => removeSynthesisNonResult(row)}>Remove</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {pendingSynthesisDrafts.length > 0 && (
           <div className="feedback-synthesis-drafts">
-            <h3>Draft lessons awaiting your decision</h3>
-            <p>These remain drafts until you accept them. General styling issues and garment corrections never become personal preferences.</p>
+            <h3>Waiting on your decision</h3>
+            <p>Your stylist suggested these. Nothing is used until you accept it.</p>
             {pendingSynthesisDrafts.map(draft => {
-              const sourceIds = parsedIdList(draft.source_feedback_ids)
-              const sources = sourceIds.map(id => contextualFeedback.find(row => Number(row.id) === id)).filter(Boolean)
-              const storedApplicability = synthesisApplicability(draft)
-              const editedApplicability = synthesisApplicabilityEdits[draft.id] ?? storedApplicability
               const textDirty = Object.hasOwn(synthesisEdits, draft.id) && synthesisEdits[draft.id].trim() !== effectiveSynthesisText(draft).trim()
               const boundaryDirty = Object.hasOwn(synthesisBoundaryEdits, draft.id) && synthesisBoundaryEdits[draft.id].trim() !== effectiveSynthesisBoundary(draft).trim()
-              const applicabilityDirty = !applicabilityEqual(editedApplicability, storedApplicability)
-              const draftDirty = textDirty || boundaryDirty || applicabilityDirty
+              const draftDirty = textDirty || boundaryDirty
               return (
               <div key={draft.id} className="feedback-synthesis-draft">
                 <div className="style-memory-kind">{SYNTHESIS_DISPOSITION_LABELS[draft.disposition] || draft.disposition}</div>
@@ -927,19 +1386,14 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
                     aria-label={`Edit boundary for ${draft.title || 'draft lesson'}`}
                   />
                 </label>
-                {draft.disposition === 'personal_contextual_lesson' && (
-                  <SynthesisApplicabilityEditor
-                    sources={sources}
-                    value={editedApplicability}
-                    onChange={value => setSynthesisApplicabilityEdits(previous => ({ ...previous, [draft.id]: normalizedApplicability(value) }))}
-                  />
+                {draft.disposition === 'personal_contextual_lesson' && synthesisUsedWhen(draft) && (
+                  <p className="guidance-used-when">Would be used when: <strong>{synthesisUsedWhen(draft)}</strong></p>
                 )}
                 {draft.rationale && <p><strong>Why it was routed here:</strong> {draft.rationale}</p>}
                 <div className="feedback-synthesis-draft-actions">
                   <button
                     type="button"
                     className="btn-primary"
-                    disabled={draft.disposition === 'personal_contextual_lesson' && !applicabilityIsUsable(editedApplicability)}
                     onClick={() => updateSynthesisDraft(draft, 'accepted')}
                   >
                     {draft.disposition === 'personal_contextual_lesson'
@@ -954,84 +1408,100 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
             })}
           </div>
         )}
-        {synthesisDrafts.some(draft => draft.status === 'accepted' && draft.disposition === 'personal_contextual_lesson') && (
-          <div className="feedback-synthesis-drafts">
-            <h3>Accepted personal lessons</h3>
-            <p>These are the only synthesized lessons that currently guide styling. You can revise or retire them at any time.</p>
-            {synthesisDrafts.filter(draft => draft.status === 'accepted' && draft.disposition === 'personal_contextual_lesson').map(draft => {
-              const sourceIds = parsedIdList(draft.source_feedback_ids)
-              const sources = sourceIds.map(id => contextualFeedback.find(row => Number(row.id) === id)).filter(Boolean)
-              const storedApplicability = synthesisApplicability(draft)
-              const editedApplicability = synthesisApplicabilityEdits[draft.id] ?? storedApplicability
-              const textDirty = Object.hasOwn(synthesisEdits, draft.id) && synthesisEdits[draft.id].trim() !== effectiveSynthesisText(draft).trim()
-              const boundaryDirty = Object.hasOwn(synthesisBoundaryEdits, draft.id) && synthesisBoundaryEdits[draft.id].trim() !== effectiveSynthesisBoundary(draft).trim()
-              const applicabilityDirty = !applicabilityEqual(editedApplicability, storedApplicability)
-              const draftDirty = textDirty || boundaryDirty || applicabilityDirty
-              return (
-                <details key={draft.id} className="feedback-synthesis-draft feedback-synthesis-draft--accepted">
-                  <summary className="feedback-synthesis-accepted-summary">
-                    <span className="style-memory-kind">accepted personal or contextual lesson</span>
-                    <strong>{draft.title || 'Accepted lesson'}</strong>
-                  </summary>
-                  <div className="feedback-synthesis-accepted-details">
-                  <textarea
-                    className="style-memory-editor"
-                    value={synthesisEdits[draft.id] ?? effectiveSynthesisText(draft)}
-                    onChange={event => setSynthesisEdits(previous => ({ ...previous, [draft.id]: event.target.value }))}
-                    aria-label={`Edit accepted lesson ${draft.title || draft.id}`}
-                  />
-                  <label className="feedback-synthesis-boundary">
-                    <strong>Boundary</strong>
-                    <textarea
-                      className="style-memory-editor"
-                      value={synthesisBoundaryEdits[draft.id] ?? effectiveSynthesisBoundary(draft)}
-                      onChange={event => setSynthesisBoundaryEdits(previous => ({ ...previous, [draft.id]: event.target.value }))}
-                      aria-label={`Edit boundary for accepted lesson ${draft.title || draft.id}`}
-                    />
-                  </label>
-                  <SynthesisApplicabilityEditor
-                    sources={sources}
-                    value={editedApplicability}
-                    onChange={value => setSynthesisApplicabilityEdits(previous => ({ ...previous, [draft.id]: normalizedApplicability(value) }))}
-                  />
-                  <details className="style-memory-technical">
-                    <summary>Source reactions ({sourceIds.length})</summary>
-                    {sources.length > 0 ? (
-                      <ul>
-                        {sources.map(source => (
-                          <li key={source.id}>#{source.id} · {source.memory?.display?.title || source.context_name || source.label}: {source.memory?.display?.summary || readableFeedbackNote(source.note)}</li>
-                        ))}
-                      </ul>
-                    ) : <p>{sourceIds.length ? sourceIds.map(id => `#${id}`).join(', ') : 'No source IDs recorded.'}</p>}
-                  </details>
-                  <div className="feedback-synthesis-draft-actions">
-                    <button type="button" className="btn-primary" disabled={!draftDirty || !applicabilityIsUsable(editedApplicability)} onClick={() => updateSynthesisDraft(draft, 'accepted')}>Save changes</button>
-                    <button type="button" className="style-memory-retire" onClick={() => updateSynthesisDraft(draft, 'retired')}>Retire lesson</button>
-                    {synthesisSavedId === draft.id && <span className="style-memory-save-confirmation" role="status">Changes saved.</span>}
-                  </div>
-                  </div>
-                </details>
-              )
-            })}
-          </div>
-        )}
-        {synthesisDrafts.some(draft => draft.status === 'accepted' && draft.disposition !== 'personal_contextual_lesson') && (
-          <div className="feedback-synthesis-drafts">
-            <h3>Reviewed synthesis conclusions</h3>
-            <p>These are retained for review and provenance only. They do not guide styling or alter garment data.</p>
-            {synthesisDrafts.filter(draft => draft.status === 'accepted' && draft.disposition !== 'personal_contextual_lesson').map(draft => (
-              <div key={draft.id} className="feedback-synthesis-draft">
-                <div className="style-memory-kind">{SYNTHESIS_DISPOSITION_LABELS[draft.disposition] || draft.disposition}</div>
-                <strong>{draft.title || 'Reviewed conclusion'}</strong>
-                {Boolean(draft.edited_text || draft.proposed_text) && <p>{draft.edited_text || draft.proposed_text}</p>}
-                {draft.boundary && <p><strong>Boundary:</strong> {draft.boundary}</p>}
-                <div className="feedback-synthesis-draft-actions">
-                  <button type="button" className="style-memory-retire" onClick={() => updateSynthesisDraft(draft, 'retired')}>Retire record</button>
-                </div>
+      </section>
+      </>}
+
+      {mode === 'style' && styleProfileTab === 'guidance' && !showingAllLimits && !showingPastDecisions && (
+        <div className="style-profile-foundation">
+            {/* Not a <details>: the row is not a click target and carries no disclosure marker.
+                "Review foundation" is the only control, so nothing here toggles by accident. */}
+            <div className="foundation-head">
+            <div className="foundation-summary">
+              <span className="foundation-badge" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3l1.8 4.7L18.5 9l-4.7 1.8L12 15.5 10.2 10.8 5.5 9l4.7-1.3z" />
+                </svg>
+              </span>
+              <div>
+                <span>Your foundation</span>
+                <strong>The foundation your stylist uses every day</strong>
+                <p className="foundation-blurb">
+                  These are your core preferences and guidance from onboarding.<br />
+                  They help your stylist make better recommendations and create looks that feel like you.
+                </p>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+            <button
+              type="button"
+              className={`foundation-cta${foundationOpen ? ' foundation-cta--quiet' : ''}`}
+              aria-expanded={foundationOpen}
+              onClick={() => {
+                setFoundationOpen(open => !open)
+                setOpenFoundationLayer(null)
+                setEditingFoundationLayer(null)
+              }}
+            >
+              {foundationOpen ? 'Collapse all' : 'Review foundation →'}
+            </button>
+            </div>
+            {/* The seven areas are what the foundation IS, so they always read; only the editable
+                layer text is behind the button. */}
+            {!foundationOpen && <div className="foundation-tiles">
+              {FOUNDATION_TILES.map(([layer, label, blurb]) => (
+                <div key={layer} className="foundation-tile">
+                  <span className="foundation-tile-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                      <path d={FOUNDATION_TILE_GLYPHS[layer]} />
+                    </svg>
+                  </span>
+                  <strong>{label}</strong>
+                  <span>{blurb}</span>
+                </div>
+              ))}
+            </div>}
+            {foundationOpen && <div className="style-profile-foundation-body">
+            <section>
+              <div className="style-profile-section-heading">
+                <div><span>Personal style</span><h2>How your stylist understands you</h2></div>
+                <p>Core guidance used across recommendations.</p>
+              </div>
+              <div className="style-profile-card-list">
+                {layers.filter(({ layer }) => PERSONAL_STYLE_LAYERS.has(layer)).map(renderStyleLayer)}
+              </div>
+            </section>
+            <section>
+              <div className="style-profile-section-heading">
+                <div><span>Generated images</span><h2>How generated looks represent you</h2></div>
+                <p>Image guidance only; it does not limit outfit selection.</p>
+              </div>
+              <div className="style-profile-card-list">
+                {layers.filter(({ layer }) => IMAGE_STYLE_LAYERS.has(layer)).map(renderStyleLayer)}
+              </div>
+            </section>
+            <div className="foundation-nudge">
+              <span className="foundation-nudge-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9V16h7v-2.1A6 6 0 0012 3z" />
+                </svg>
+              </span>
+              <div>
+                <strong>Not sure if this is still right?</strong>
+                <span>You can update anything here anytime. Your stylist learns and adapts as you go.</span>
+              </div>
+              <Link className="btn-primary foundation-nudge-cta" to="/stylist">Share feedback in chat</Link>
+            </div>
+            </div>}
+        </div>
+      )}
+
+      {mode === 'style' && styleProfileTab === 'guidance' && !showingAllLimits && !showingPastDecisions && (
+        <button type="button" className="past-decisions-link" onClick={() => openSubView('past')}>
+          View past decisions
+        </button>
+      )}
+
+      {mode === 'style' && styleProfileTab === 'review' && <>
+      <section className="style-profile-section style-profile-learnings">
         {actionableContextualFeedback.length > 0 && <div className="style-memory-toolbar">
           <input
             type="search"
@@ -1041,7 +1511,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
               setFeedbackSearch(event.target.value)
               setFeedbackVisibleCount(FEEDBACK_PAGE_SIZE)
             }}
-            placeholder="Search by outfit, styling feedback, or note…"
+            placeholder="Search your feedback…"
             aria-label="Search outfit and styling feedback"
           />
           <div className="style-memory-filter-row" aria-label="Filter feedback by context">
@@ -1067,7 +1537,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
               }}
               aria-label="Filter by feedback type"
             >
-              <option value="all">All feedback types</option>
+              <option value="all">Everything</option>
               {contextualFeedbackTypes.map(type => (
                 <option key={type} value={type}>{feedbackTypeDisplayLabel(type)}</option>
               ))}
@@ -1076,7 +1546,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
         </div>}
         {matchingContextualFeedback.length > visibleContextualFeedback.length && (
           <div className="style-memory-results-note">
-            Showing {visibleContextualFeedback.length} of {matchingContextualFeedback.length} matches.
+            Showing {visibleContextualFeedback.length} of {matchingContextualFeedback.length}.
           </div>
         )}
         {feedbackLoading && (
@@ -1125,7 +1595,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
                         checked={selectedSynthesisFeedback.has(row.id)}
                         onChange={() => toggleSynthesisFeedback(row.id)}
                       />
-                      Select for lesson synthesis
+                      Include this one
                     </label>
                   )}
                   <div className="style-memory-kind">
@@ -1185,7 +1655,136 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           </button>
         )}
       </section>
+
+      <section className="style-profile-section style-profile-learnings">
+        <div className="style-profile-section-heading">
+          <div>
+            <span>Not about your taste</span>
+            <h2>Things your stylist got wrong</h2>
+          </div>
+          <p>General styling failures and image-generation problems that need a product decision, not a personal preference.</p>
+        </div>
+        {productFindings.filter(row => row.status === 'open').length === 0 && rendererCorrections.length === 0 && (
+          <div className="style-profile-empty">No product issues currently need review.</div>
+        )}
+        <div className="style-memory-list">
+          {productFindings.filter(row => row.status === 'open').map(row => {
+            let evidence = []
+            try { evidence = JSON.parse(row.evidence_snapshot || '[]') } catch { evidence = [] }
+            return (
+              <div key={row.id} className="style-memory-row">
+                <div className="style-memory-kind style-memory-kind--quiet">No styling effect yet</div>
+                <div className="style-memory-context-title">{row.title || 'Product issue'}</div>
+                {row.description && <div className="style-memory-note">{row.description}</div>}
+                {row.boundary && <div className="style-memory-note"><strong>Boundary:</strong> {row.boundary}</div>}
+                <details className="style-memory-technical">
+                  <summary>Evidence &amp; source ({evidence.length})</summary>
+                  {evidence.length > 0 ? (
+                    <ul>{evidence.map(item => <li key={item.feedback_id}>#{item.feedback_id} · {item.context?.name || item.label || item.feedback_type}</li>)}</ul>
+                  ) : <p>No source snapshot is available.</p>}
+                </details>
+                <div className="product-finding-resolution">
+                  <label>
+                    <span>Resolution</span>
+                    <select
+                      value={productResolutionDrafts[row.id]?.resolutionType || ''}
+                      onChange={event => setProductResolutionDrafts(previous => ({
+                        ...previous,
+                        [row.id]: { ...previous[row.id], resolutionType: event.target.value },
+                      }))}
+                    >
+                      <option value="">Choose where the fix landed…</option>
+                      <option value="shared_rule">Shared engine rule</option>
+                      <option value="model_instruction">Model instruction</option>
+                      <option value="garment_metadata">Garment metadata</option>
+                      <option value="renderer">Image-generation guidance</option>
+                      <option value="no_change">Reviewed; no product change</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>What changed</span>
+                    <textarea
+                      value={productResolutionDrafts[row.id]?.resolutionNote || ''}
+                      onChange={event => setProductResolutionDrafts(previous => ({
+                        ...previous,
+                        [row.id]: { ...previous[row.id], resolutionNote: event.target.value },
+                      }))}
+                      placeholder="Briefly record the decision or fix."
+                    />
+                  </label>
+                </div>
+                <div className="style-memory-actions">
+                  <button className="btn-primary" disabled={!productResolutionDrafts[row.id]?.resolutionType} onClick={() => resolveProductFinding(row)}>Mark resolved</button>
+                  <button className="style-memory-retire" onClick={() => dismissProductFinding(row)}>Dismiss</button>
+                </div>
+              </div>
+            )
+          })}
+          {rendererCorrections.map(row => (
+            <div key={`renderer-${row.id}`} className="style-memory-row">
+              <div className="style-memory-kind style-memory-kind--quiet">Text reminder for image generation</div>
+              <div className="style-memory-context-title">{row.memory?.display?.title || row.context_name || 'Generated image report'}</div>
+              <div className="style-memory-note">{row.memory?.display?.summary || readableFeedbackNote(row.note)}</div>
+              <div className="style-memory-note">The rejected image is not reused. A short reminder is sent only when the same identified garment is rendered.</div>
+              <details className="style-memory-technical">
+                <summary>Source &amp; related records</summary>
+                <dl>
+                  <dt>Source</dt><dd>{row.referenced_board_id ? `Board ${row.referenced_board_id}` : row.referenced_thread_id ? `Chat ${row.referenced_thread_id}` : 'Original feedback record'}</dd>
+                  {row.context_id && <><dt>Garment</dt><dd>{row.context_name || `Piece ${row.context_id}`}</dd></>}
+                </dl>
+              </details>
+            </div>
+          ))}
+        </div>
+      </section>
       </>}
+
+      {mode === 'style' && styleProfileTab === 'guidance' && showingPastDecisions && (
+        <section className="style-profile-section style-profile-history-section limits-all">
+          <button type="button" className="limits-all-back" onClick={() => closeSubView('past')}>
+            <span aria-hidden="true">←</span> Back to active guidance
+          </button>
+          <div className="style-profile-section-heading">
+            <div>
+              <span>Past decisions</span>
+              <h2>Rules, lessons, and suggestions you&rsquo;ve stopped using or declined</h2>
+            </div>
+            <p>Nothing here affects what your stylist suggests. Bring anything back if you change your mind.</p>
+          </div>
+          {historyGroups.every(group => !group.rows.length) && (
+            <div className="style-profile-empty">Nothing here yet — this fills in as you stop using guidance or decline a suggestion.</div>
+          )}
+          {historyGroups.filter(group => group.rows.length).map(group => (
+            <div key={group.key} className="limit-group">
+              <div className="limit-group-heading">
+                <span className="limit-group-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d={group.glyph} />
+                  </svg>
+                </span>
+                <div>
+                  <strong>{group.title}</strong>
+                  <span>{group.description}</span>
+                </div>
+              </div>
+              <div className="limit-rows">
+                {group.rows.map(row => (
+                  <div key={row.key} className="limit-row">
+                    <div className="limit-row-body">
+                      <strong>{row.title}</strong>
+                      {row.detail && <span>{row.detail}</span>}
+                    </div>
+                    {row.date && <span className="history-row-date">{friendlyLayerDate(row.date)}</span>}
+                    {row.action && (
+                      <button type="button" className="btn-secondary" onClick={row.action.run}>{row.action.label}</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
 
       {mode !== 'style' && <>
       <section className="account-settings-section">

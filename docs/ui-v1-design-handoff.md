@@ -722,7 +722,12 @@ The following are **not** open TODOs:
 - reintroducing generated-provenance badges on every Generated Outfits card;
 - wear scoring, masonry, cropped editorial cards, or dense garment-name overlays.
 
-## Visual Lab — Calibration Boards review workflow
+## Style Lab — Outfit feedback review workflow
+
+**Owner naming ruling, 2026-08-11:** the teaching workspace is **Style Lab**, with stable tabs
+**References | Outfit feedback | Style profile**. The route and internal component identifiers may
+remain `/visual-lab` / `VisualLab`; those are implementation details. Outfit feedback receives no
+count merely because stored reactions exist.
 
 **Status:** ruling implemented and verified in the authenticated sandbox on 2026-07-23; not
 yet owner-ratified.

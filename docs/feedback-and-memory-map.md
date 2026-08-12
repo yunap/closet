@@ -105,7 +105,7 @@ Counts regenerate via script §1.
 | 2 | Saved outfit / formula memory | `outfits`, `outfit_pieces` | prompt |
 | 3 | Board feedback and favourites | `saved_boards` (+ `payload.feedback_labels`, `favorite`) | prompt + display; no literal-pair score |
 | 4 | Calibration / reference memory | `calibration_images` (`labels`, `notes`, `kind`, `favorite`) | prompt |
-| 5 | Global owner rules | `stylist_feedback` where `owner_rule` / `preference_reaction`+`message` | prompt |
+| 5 | Direct owner guidance | `stylist_feedback` where `owner_rule` / `preference_reaction`+`message` | relevance-selected prompt; legacy no-envelope rows retain broad delivery pending review |
 | 6 | Board and outfit reactions | all other `stylist_feedback`; `feedback_synthesis_batches`; `feedback_synthesis_drafts`; `product_quality_findings` | routed prompt, provisional context, renderer, product-review queue, retired, or display-only; only accepted personal/contextual synthesis drafts enter styling prompts |
 | 7 | Thread-scoped conversation state | `chat_threads.payload`, `stylist_conversation_state.state_json` | **thread-only** |
 | 8 | Short-lived recency / diversity | `whole_wardrobe_sessions` | **score** (suppression) |
@@ -178,9 +178,22 @@ a temporary context gets mistaken for a standing instruction.
 - Its labels and notes are **styling** memory, not only renderer calibration — which is why it is a
   category here rather than an exclusion.
 
-### 5 · Global owner rules
+### 5 · Direct owner guidance
 
-Covered in §2 · E and §3. **Authority — prompt.** Never garment-scoped; see §2b.
+Covered in §2 · E and §3. **Authority — relevance-selected prompt.** New rows carry
+`payload.ownerGuidanceApplicability`, a validated versioned envelope with universal, garment,
+context, garment+context, or unresolved reach. The server deterministically recovers narrow
+supported terms when the model omits them; unresolved new rows are retained for review but are not
+sent. `ownerGuidanceApplies` is the executable matcher used by direct guidance and, through a shape
+adapter, accepted personal/contextual lessons. Filtering happens before prompt caps. Rows created
+before the envelope remain broadly delivered for compatibility and are labelled as legacy scope in
+Style Profile; that is an explicit migration boundary, not a claim that they are universal.
+Populated garment dimensions are conjunctive: `materials:[canvas]` plus `footwear:[sneakers]`
+matches only canvas sneakers. Context dimensions are likewise conjunctive while values inside one
+dimension are alternatives. Explicit `situations` match request/slot language such as office or
+client rather than widening to the whole resolved smart-casual profile. Plan composition reselects
+garment guidance against the bounded compose pool; the complete wardrobe manifest is not treated as
+an active garment set.
 
 ### 6 · Board and outfit reactions
 

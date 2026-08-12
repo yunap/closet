@@ -164,7 +164,7 @@ export default function VisualLab({ onGoToThread } = {}) {
       const list = Array.isArray(rows) ? rows : []
       setSavedBoards(list)
     } catch {
-      setSavedBoardsError('Calibration boards could not be loaded. Your saved feedback is still safe.')
+      setSavedBoardsError('Outfit feedback could not be loaded. Your saved feedback is still safe.')
     } finally {
       setSavedBoardsLoading(false)
     }
@@ -551,27 +551,31 @@ export default function VisualLab({ onGoToThread } = {}) {
       <div className="view-header sticky-header visual-lab-header">
         <div className="view-header-top">
           <div>
-            <div className="view-title">Visual Lab</div>
+            <div className="view-title">Style Lab</div>
             <div className="view-subtitle">
               {activeSection === 'references' && 'Teach the stylist what feels like you — and what does not.'}
-              {activeSection === 'saved' && 'Review generated boards as evidence for future styling.'}
+              {activeSection === 'saved' && 'Review generated outfits and record what feels right — or does not.'}
               {activeSection === 'profile' && 'Review the working guidance your stylist uses.'}
               {activeSection === 'upload' && 'Upload new reference photo'}
-              {!activeSection && 'Curate visual references and calibration boards'}
+              {!activeSection && 'Teach the stylist what feels like you — and what does not.'}
             </div>
           </div>
-          <button
-            className={`chip ${activeSection === 'upload' ? 'visual-lab-back-reference' : 'visual-lab-add-reference'}`}
-            onClick={() => setActiveSection(activeSection === 'upload' ? 'references' : 'upload')}
-          >
-            {activeSection === 'upload' ? '← Back to references' : '+ Add reference'}
-          </button>
+          {/* Adding a reference only belongs to References. On Outfit feedback and Style profile it
+              was a page-level action for a section the owner is not in. */}
+          {(activeSection === 'references' || activeSection === 'upload' || !activeSection) && (
+            <button
+              className={`chip ${activeSection === 'upload' ? 'visual-lab-back-reference' : 'visual-lab-add-reference'}`}
+              onClick={() => setActiveSection(activeSection === 'upload' ? 'references' : 'upload')}
+            >
+              {activeSection === 'upload' ? '← Back to references' : '+ Add reference'}
+            </button>
+          )}
         </div>
 
         {activeSection !== 'upload' && <div className="filter-row visual-lab-tabs" style={{ marginBottom: 0 }}>
           {[
             ['references', 'References'],
-            ['saved', 'Calibration boards'],
+            ['saved', 'Outfit feedback'],
             ['profile', 'Style profile'],
           ].map(([value, label]) => (
             <button
@@ -776,19 +780,19 @@ export default function VisualLab({ onGoToThread } = {}) {
       <div className="calibration-board-library">
         <div className="calibration-board-library-heading">
           <div>
-            <h2>Calibration boards</h2>
+            <h2>Outfit feedback</h2>
             <p>Review generated looks and record what should—or should not—guide future styling.</p>
           </div>
           <span>{filteredSavedBoards.length} {filteredSavedBoards.length === 1 ? 'board' : 'boards'}</span>
         </div>
 
-        <div className="calibration-board-filters" aria-label="Filter calibration boards">
+        <div className="calibration-board-filters" aria-label="Filter outfit feedback">
           <input
             type="search"
             value={savedBoardSearch}
             onChange={event => setSavedBoardSearch(event.target.value)}
             placeholder="Search boards, pieces, or feedback…"
-            aria-label="Search calibration boards"
+            aria-label="Search outfit feedback"
           />
           <div className="calibration-board-filter-groups">
           <div className="calibration-board-filter-group" role="group" aria-label="Review status">
@@ -822,14 +826,14 @@ export default function VisualLab({ onGoToThread } = {}) {
         </div>
 
         {savedBoardsLoading ? (
-          <div className="style-profile-empty" role="status">Loading calibration boards…</div>
+          <div className="style-profile-empty" role="status">Loading outfit feedback…</div>
         ) : savedBoardsError ? (
           <div className="style-profile-empty calibration-board-error" role="alert">
             <span>{savedBoardsError}</span>
             <button type="button" className="btn-secondary" onClick={loadSavedBoards}>Try again</button>
           </div>
         ) : !savedBoards.length ? (
-          <div className="style-profile-empty">No calibration boards saved yet.</div>
+          <div className="style-profile-empty">No outfit feedback yet.</div>
         ) : !filteredSavedBoards.length ? (
           <div className="style-profile-empty calibration-board-error">
             <span>No boards match these filters.</span>
@@ -890,7 +894,7 @@ export default function VisualLab({ onGoToThread } = {}) {
             </div>
             <div className="calibration-board-detail-content">
               <div className="calibration-board-detail-heading">
-                <span>Calibration board</span>
+                <span>Outfit feedback</span>
                 <h2 id="calibration-board-detail-title">{selectedBoard.title || 'Saved board'}</h2>
                 <p>{selectedBoard.context_name || selectedBoard.board_type?.replaceAll('_', ' ')}</p>
               </div>
