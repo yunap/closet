@@ -271,7 +271,7 @@ surface is deferred, but its bounded storage, routing and undo contract is execu
 - **Writes** — `INSERT INTO whole_wardrobe_sessions` (`rules.js:1499`), which then prunes to the
   last 10 (`rules.js:1504`).
 - **User action** — generating whole-wardrobe outfits. Not an explicit save.
-- **Reads** — `getRecentWholeWardrobeSessionInfluence` (`rules.js:1514`) → `routes/ai.js:1501`, on a
+- **Reads** — `getRecentWholeWardrobeSessionInfluence` (`rules.js:1608`) → `routes/ai.js:1501`, on a
   6-day cutoff. Reset by `DELETE` at `routes/ai.js:1333`, which is user-facing.
 - **Authority** — **score (suppression).** It exists to stop repetition, not to record preference.
 - Empty at time of writing; the writers, readers and reset route are all live.
@@ -374,8 +374,23 @@ Included because it travels with the garment through the same readers as channel
 
 ### E · Standing prose rules
 `stylist_feedback` rows selected by `feedback_type='owner_rule' OR (feedback_type='preference_reaction'
-AND target_type='message')` — see `getOwnerRuleNotes` (`rules.js:1373`) and the shared predicate
-`isOwnerRuleRow` (`rules.js:1291`).
+AND target_type='message')` — see `getOwnerRuleNotes` (`rules.js:1518`) and the shared predicate
+`isOwnerRuleRow` (`rules.js:1398`).
+
+**[amended 2026-08-12] The cap is no longer "the newest 8".** `getOwnerRuleNotes(limit = 8, ctx)`
+now scans the newest `limit * 20` rows (capped at 4000), drops any whose stored applicability does
+not match the supplied request context, and only then takes the newest `limit` survivors. Two
+consequences the old description got wrong:
+
+- **Filtering happens before the cap**, so an older applicable rule can be delivered ahead of a
+  newer inapplicable one. Under the previous behaviour eight recent unrelated rules could bury a
+  relevant older one.
+- **Delivery is no longer global.** Only rows whose envelope matches — plus rows stored as
+  `universal`, plus legacy rows with no envelope at all — are sent. A row whose applicability is
+  `unresolved` is never sent, on any request.
+
+Both call sites pass 8 (`tools.js:2029` capsule composition, `outfitSetPlanner.js:3299` capsule
+roster), so the delivered maximum is unchanged; what changed is which eight.
 
 **[latent inconsistency]** The Style-profile panel labels rows "OWNER RULE" and "PREFERENCE
 REACTION", but the discriminator for delivery is **`target_type`**, which the UI never shows. A
@@ -403,7 +418,7 @@ effect. Where an action has no reader, that is stated.
 |---|---|---|---|---|
 | "Wrong for X" (card menu) | `crud.js:378` | `pieces.occasion_exclusions` **+** a prose receipt in `styling_rules_learned` | `pieceOccasionCompatible` (`rules.js:2216`) | **hard gate**, garment-scoped. The only user action that removes a garment from consideration |
 | Restoring it (chip ✕, or Style profile) | `crud.js:378` | same | same | lifts the gate; the ✕ calls the endpoint rather than editing text |
-| Global verbal correction in chat | `store_user_correction` | `stylist_feedback` `owner_rule`/`message` | `getOwnerRuleNotes` → capsule roster + composition prompts | **prompt**, global; used when no `piece_id` is supplied |
+| Global verbal correction in chat | `store_user_correction` | `stylist_feedback` `owner_rule`/`message` | `getOwnerRuleNotes` → capsule roster + composition prompts | **prompt**, delivered only when its stored applicability matches the request (or is `universal`, or the row predates the envelope); used when no `piece_id` is supplied |
 | Verified garment-specific correction in chat | `store_user_correction(piece_id)` | canonical `pieces.styling_rules_learned` + synchronized `piece_rule_receipt` projection | garment-truth prompts; receipt is Conversation Memory display/edit only | **authoritative garment prompt guidance**, not a deterministic gate or score unless separately mapped to a structured constraint; ID must be retrieved, in the current outfit, or the active garment; failed verification stores nothing |
 | "Wrong choice for this outfit" | `POST /stylist-feedback` (`crud.js:775`) | `stylist_feedback` historical storage value `wrong_item_read` + version-2 `feedbackEvidence` | provisional garment-context reader (bounded delivery inside an already-requested styling call) | **provisional evidence**, no score or standing preference; records available weather and an optional verbatim owner reason without app-inferred diagnosis. Without a reason it is only an exact-outfit reminder and is excluded from synthesis |
 | Positive whole-outfit reaction | `POST /stylist-feedback` (`crud.js:775`) | original reaction payload + version-1 `outfit_logic`; if unavailable, classified `legacy_outfit_snapshot` | consolidated branch of `getStylistFeedbackMemory`; snapshot is synthesis-only evidence | **scoped prompt** for structured formula/silhouette/direction/mood × context; legacy snapshot adds no invented direct logic; no literal-pair selection boost |
@@ -594,18 +609,18 @@ a complaint into corrected data rather than into prompt text.
 
 | reader | consumed by | kind |
 |---|---|---|
-| `getStylistFeedbackMemory` (`rules.js:1296`) | freeform stylist chat (`core.js:4019/4026/4031`), `/evaluate-piece` (`ai.js:1139/1143`) | prompt text |
+| `getStylistFeedbackMemory` (`rules.js:1403`) | freeform stylist chat (`core.js:4019/4026/4031`), `/evaluate-piece` (`ai.js:1139/1143`) | prompt text |
 | `getWholeWardrobeFeedbackMemory` (`rules.js:1388`) | whole-wardrobe generator (`ai.js:1510`, `core.js:2821`) | prompt text |
-| `getSavedBoardRendererMemory` (`rules.js:948`) | the image renderer, via `withSavedBoardRendererMemory` (`core.js:60`) — 5 render call sites; identified garments receive text only, never the rejected generated image | piece-scoped prompt text |
-| `getOwnerRuleNotes` (`rules.js:1373`) | capsule roster selection **and** capsule composition (`tools.js:1966`) | prompt text |
+| `getSavedBoardRendererMemory` (`rules.js:918`) | the image renderer, via `withSavedBoardRendererMemory` (`core.js:60`) — 5 render call sites; identified garments receive text only, never the rejected generated image | piece-scoped prompt text |
+| `getOwnerRuleNotes` (`rules.js:1518`) | capsule roster selection (`outfitSetPlanner.js:3299`) **and** capsule composition (`tools.js:2029`) | prompt text, relevance-filtered before its cap |
 | `getAcceptedFeedbackSynthesisMemory` (`rules.js`) | freeform chat, selected-piece and whole-wardrobe styling prompts | capped prompt text; accepted personal/contextual drafts only |
 | `getLastOutfitEvaluation` (`tools.js:2398`) | the model's tool loop (`tools.js:1857`) | prompt text |
 | ~~`scopedWrongItemInfluenceForRows`~~ | retired 2026-08-10 | old −6/−12 occasion/activity score discarded weather, construction relationships and the owner's reason |
-| `getSavedBoardMemory` (`rules.js:694`) | `/evaluate-piece` (`ai.js:1141/1142`), whole-wardrobe generator (`core.js:2823`) | prompt text |
-| `getOutfitsForPieceMemory` (`rules.js:1259`) | `/evaluate-piece` (`ai.js:1035/1138`) | prompt text |
+| `getSavedBoardMemory` (`rules.js:800`) | `/evaluate-piece` (`ai.js:1141/1142`), whole-wardrobe generator (`core.js:2823`) | prompt text |
+| `getOutfitsForPieceMemory` (`rules.js:1366`) | `/evaluate-piece` (`ai.js:1035/1138`) | prompt text |
 | `getCalibrationMemoryForStylist` (`core.js:313`) | `/evaluate-piece` (`ai.js:1144`), whole-wardrobe (`core.js:2822`) | prompt text |
 | `getStylistConversationState` (`conversationState.js`) | tool loop and freeform conversation pipeline | **thread-only** |
-| `getRecentWholeWardrobeSessionInfluence` (`rules.js:1514`) | whole-wardrobe generation (`ai.js:1501`) | **deterministic suppression** |
+| `getRecentWholeWardrobeSessionInfluence` (`rules.js:1608`) | whole-wardrobe generation (`ai.js:1501`) | **deterministic suppression** |
 
 **The generic deterministic feedback scorer has been removed.** There is no `SCORE` routing
 destination, feedback-weight table, literal-pair board scorer, or whole-outfit feedback scorer.
