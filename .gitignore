@@ -35,6 +35,7 @@ scratch/*
 !scratch/build_capsule_disclosure_demo_thread.js
 !scratch/audit_color_taxonomy.js
 !scratch/rankings_ab_diff.js
+!scratch/measure_capsule_prompt_cache.js
 !scratch/measure_feedback_surface.js
 !scratch/audit_feedback_surface_completeness.js
 !scratch/feedback_surface_inventory.json
