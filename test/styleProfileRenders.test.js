@@ -1,0 +1,149 @@
+// Actually renders StylistSettings. Every other test in this repo asserts against the file's
+// SOURCE TEXT, which cannot catch the failure mode that broke this page three times in one session:
+//
+//   - a helper used but never imported        (canonicalFeedbackType)
+//   - a helper used above its own declaration (feedbackBoardImage, temporal dead zone)
+//   - a binding deleted while a caller stayed (visibleLearnings)
+//
+// All three are ReferenceErrors thrown while the component function executes, so `vite build`
+// reports success and a regex assertion still matches. Only running the component finds them.
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { JSDOM } from 'jsdom'
+
+const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+  url: 'http://localhost/visual-lab?section=profile',
+  pretendToBeVisual: true,
+})
+for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Node', 'Event', 'CustomEvent', 'localStorage']) {
+  if (globalThis[key] === undefined) globalThis[key] = dom.window[key]
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+// Realistic rows matter more than coverage here: the three regressions all lived inside callbacks
+// that iterate loaded feedback, so an empty response never executes them. A static render would
+// pass while the real page threw.
+const FEEDBACK_ROWS = [
+  {
+    id: 1, feedback_type: 'wrong_length', target_type: 'generated_visual_board', context_name: 'Whole wardrobe',
+    note: 'hem looked wrong', archived: false,
+    payload: { board: { label: 'Winery Chic Escape', imageUrl: '/uploads/generated-boards/x.png' }, length_correction: { piece_id: 92, piece_name: 'midi skirt', issue: 'lower_hem_too_short' } },
+    memory: { destination: 'renderer', strength: 'renderer', display: { title: 'Whole wardrobe', summary: 'hem looked wrong' } },
+  },
+  {
+    id: 2, feedback_type: 'body_proportions_drift', target_type: 'generated_visual_board', context_name: 'Whole wardrobe',
+    note: 'proportions off', archived: false,
+    payload: { board: { label: 'Daytime Hiking', imageUrl: '/uploads/generated-boards/y.png' } },
+    memory: { destination: 'renderer', strength: 'renderer', display: { title: 'Whole wardrobe', summary: 'proportions off' } },
+  },
+  {
+    id: 3, feedback_type: 'owner_rule', target_type: 'message', note: 'No boots in summer.', archived: false,
+    payload: { ownerGuidanceApplicability: { version: 1, reach: 'context', garment: { piece_ids: [], categories: [], footwear: [], materials: [] }, context: { occasions: [], activities: [], seasons: ['summer'], weather: [], situations: [] }, source: 't' } },
+    memory: { destination: 'owner_prompt', strength: 'prompt', ownerGuidanceApplicability: { version: 1, reach: 'context', garment: { piece_ids: [], categories: [], footwear: [], materials: [] }, context: { occasions: [], activities: [], seasons: ['summer'], weather: [], situations: [] } } },
+  },
+  {
+    id: 4, feedback_type: 'wrong_item_read', target_type: 'whole_wardrobe_outfit', context_type: 'wardrobe',
+    context_name: 'Whole wardrobe', note: 'wrong shoe', archived: false, payload: { pieceIds: [1, 2] },
+    memory: { destination: 'provisional', strength: 'context', synthesisEligible: true, display: { title: 'Rain walk', summary: 'wrong shoe' } },
+  },
+]
+const ROUTES = {
+  '/api/stylist-feedback': FEEDBACK_ROWS,
+  '/api/saved-boards': [{ id: 10, image_url: '/uploads/generated-boards/x.png', title: 'Winery Chic Escape', linked_piece_ids: [92] }],
+  '/api/feedback-synthesis/drafts': [
+    { id: 1, disposition: 'personal_contextual_lesson', status: 'accepted', title: 'Suede reads autumnal', proposed_text: 'Avoid suede in summer.', boundary: 'summer only', source_feedback_ids: '[4]', payload: JSON.stringify({ applicability: { version: 1, scope: 'piece_context', piece_ids: [92], occasions: [], activities: [], seasons: ['summer'], weather_terms: [] } }), applicabilityOptions: { pieces: [{ id: 92, name: 'midi skirt', photo: null }], occasions: [], activities: [], seasons: ['summer'], weather: [] } },
+    { id: 2, disposition: 'insufficient_evidence', status: 'reported', title: 'Nothing learned', rationale: 'no bounded scope', source_feedback_ids: '[4]' },
+    { id: 3, disposition: 'general_styling_failure', status: 'accepted', title: 'Athletic shorts', proposed_text: 'wrong register', source_feedback_ids: '[4]' },
+  ],
+  '/api/owner-constraints': [{ id: 1, status: 'active', selector_type: 'footwear', selector_values: ['boots'], context_dimension: 'season', context_values: ['summer'], reason: 'Not in summer.' }],
+  '/api/product-quality-findings': [{ id: 1, status: 'open', title: 'Athletic shorts', description: 'register', source_feedback_ids: '[4]', evidence_snapshot: '[]' }],
+  '/api/pieces/occasion-exclusions': [{ pieceId: 92, name: 'midi skirt', category: 'bottom', photo: null, occasion: 'hiking', changedAt: '2026-08-01' }],
+  '/api/settings/constitution': { layers: [{ layer: 'body_contract', body: 'Layer 1 — Body & Comfort:\n- comfortable', updatedAt: '2026-07-18 10:00:00', isDefault: false }] },
+}
+globalThis.fetch = async (url) => {
+  const key = Object.keys(ROUTES).find(route => String(url).startsWith(route))
+  const body = key ? ROUTES[key] : []
+  return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+}
+
+const React = (await import('react')).default
+const { createRoot } = await import('react-dom/client')
+const { act } = await import('react')
+const { MemoryRouter } = await import('react-router-dom')
+
+// Node cannot import .jsx, so bundle the component the way the app does. esbuild ships with vite;
+// bundling also means a missing import inside any dependency of this file surfaces here too.
+const esbuild = await import('esbuild')
+const fs = await import('node:fs')
+const path = await import('node:path')
+const built = await esbuild.build({
+  entryPoints: [new URL('../src/views/StylistSettings.jsx', import.meta.url).pathname],
+  bundle: true,
+  write: false,
+  format: 'esm',
+  platform: 'neutral',
+  jsx: 'automatic',
+  external: ['react', 'react-dom', 'react-dom/*', 'react/*', 'react-router-dom'],
+  logLevel: 'silent',
+})
+// Inside the repo, not os.tmpdir(): the bundle imports react, and Node resolves bare specifiers
+// relative to the importing file, so a temp-dir bundle cannot see node_modules.
+const bundlePath = path.join(new URL('../node_modules/', import.meta.url).pathname, `.style-profile-smoke-${process.pid}.mjs`)
+fs.writeFileSync(bundlePath, built.outputFiles[0].text)
+const StylistSettings = (await import(bundlePath)).default
+process.on('exit', () => { try { fs.unlinkSync(bundlePath) } catch {} })
+
+// A client render, not renderToStaticMarkup: effects must run and the fetches must resolve, or the
+// lists stay empty and the very callbacks that broke are never entered.
+async function renderProfile({ tab = null } = {}) {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  const errors = []
+  const onError = event => errors.push(String(event.error?.message || event.message))
+  dom.window.addEventListener('error', onError)
+  await act(async () => {
+    root.render(React.createElement(
+      MemoryRouter,
+      { initialEntries: ['/visual-lab?section=profile'] },
+      React.createElement(StylistSettings, { mode: 'style', embedded: true }),
+    ))
+  })
+  // let the load() chain settle
+  for (let i = 0; i < 8; i += 1) await act(async () => { await Promise.resolve() })
+  if (tab) {
+    const button = [...container.querySelectorAll('button')].find(b => b.textContent.trim() === tab)
+    if (button) await act(async () => { button.click() })
+    for (let i = 0; i < 4; i += 1) await act(async () => { await Promise.resolve() })
+  }
+  const text = container.textContent || ''
+  dom.window.removeEventListener('error', onError)
+  root.unmount()
+  container.remove()
+  return { text, errors }
+}
+
+test('Style profile renders, with data, without throwing', async () => {
+  const { text } = await renderProfile()
+  assert.ok(text.length > 0, 'rendered no content')
+  assert.match(text, /Active guidance/)
+  assert.match(text, /Review feedback/)
+})
+
+test('the guidance tab renders its loaded records', async () => {
+  const { text } = await renderProfile()
+  assert.match(text, /Things your stylist remembers for particular clothes or situations/)
+  assert.match(text, /Avoid suede in summer\./)     // accepted lesson card, shown by its text
+  assert.match(text, /No boots in summer\./)       // told-you rule
+  assert.match(text, /View past decisions/)        // history is not a primary tab
+})
+
+test('the review tab renders the sections that iterate loaded feedback', async () => {
+  const { text } = await renderProfile({ tab: 'Review feedback' })
+  assert.match(text, /Feedback your stylist noticed but hasn/)
+  assert.match(text, /Things your stylist got wrong/)
+  // The renderer-report grouping is where two of the three ReferenceErrors lived.
+  assert.match(text, /Fixes your stylist applies when drawing pictures/)
+  assert.match(text, /Your stylist now matches the length in your saved photo\./)
+  assert.match(text, /Every picture/)
+})

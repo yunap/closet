@@ -701,6 +701,12 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       })),
     },
   ]
+  const feedbackBoardImage = row => row?.payload?.board?.imageUrl || row?.payload?.board?.image_url || ''
+  const matchedFeedbackBoard = row => {
+    const imageUrl = feedbackBoardImage(row)
+    return imageUrl ? feedbackBoards.find(board => board.image_url === imageUrl) : null
+  }
+
   const rendererCorrections = contextualFeedback.filter(row => row.memory?.destination === 'renderer')
   // What the renderer is actually told, in her words. Three things the old copy got wrong:
   // it never said WHAT looked wrong (the structured `issue` was on hand), it used the context
@@ -742,18 +748,23 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     const title = spec.global ? 'Every picture' : (named || 'A garment in a saved outfit')
     const problem = RENDERER_ISSUE_TEXT[correction.issue] || spec.fallback
     const key = `${title}::${problem}`
-    const group = groups.get(key) || { key, title, problem, effect: spec.effect, global: spec.global, count: 0 }
+    const group = groups.get(key) || {
+      key, title, problem, effect: spec.effect, global: spec.global, count: 0,
+      // The picture that looked wrong is the artifact being reported, so it is the thumbnail —
+      // more use than the garment's catalog photo, which shows nothing about the render. Links go
+      // to both when known. A repeated report links to the most recent occurrence, not all of them.
+      boardImage: feedbackBoardImage(row),
+      boardId: row.referenced_board_id || matchedFeedbackBoard(row)?.id || null,
+      boardLabel: payload.board?.label || '',
+      pieceId: Number(correction.piece_id) || null,
+      pieceName: correction.piece_name || '',
+    }
     group.count += 1
     groups.set(key, group)
     return groups
   }, new Map()).values()]
     .sort((left, right) => (Number(left.global) - Number(right.global)) || (right.count - left.count))
 
-  const feedbackBoardImage = row => row?.payload?.board?.imageUrl || row?.payload?.board?.image_url || ''
-  const matchedFeedbackBoard = row => {
-    const imageUrl = feedbackBoardImage(row)
-    return imageUrl ? feedbackBoards.find(board => board.image_url === imageUrl) : null
-  }
   // Whole-wardrobe-outfit feedback (wrong choice for outfit, bad_occasion, too_safe, ...) carries no
   // board image — it's feedback on the outfit card, not a rendered board — and older rows
   // predate thread-linking entirely, so neither of the above lookups can find anything for them.
@@ -1802,15 +1813,32 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
             </div>
             <p>You reported these looked wrong, so your stylist corrects for them the next time it draws. Nothing here needs a decision from you.</p>
           </div>
-          <div className="limit-rows">
+          <div className="memory-card-list">
             {rendererReportGroups.map(group => (
-              <div key={group.key} className="limit-row">
-                <div className="limit-row-body">
-                  <strong>{group.title}</strong>
-                  <span>{group.problem}. {group.effect}</span>
+              <article key={group.key} className="memory-card">
+                <div className="memory-card-thumb">
+                  {group.boardImage
+                    ? <img src={uploadThumbnailSrc(group.boardImage, 'lookbook-display')} alt="" loading="lazy" decoding="async" />
+                    : <span className="memory-card-thumb-empty" aria-hidden="true" />}
                 </div>
-                {group.count > 1 && <span className="history-row-date">{group.count}×</span>}
-              </div>
+                <div className="memory-card-body">
+                  <h3>{group.title}{group.count > 1 && <span className="memory-card-count"> · reported {group.count}×</span>}</h3>
+                  <p className="memory-card-scope">{group.problem}. {group.effect}</p>
+                  <p className="memory-card-source">
+                    {group.pieceId && (
+                      <button type="button" className="foundation-layer-link" onClick={() => navigate(`/wardrobe?pieceId=${group.pieceId}`)}>
+                        {group.pieceName || 'Open garment'}
+                      </button>
+                    )}
+                    {group.pieceId && group.boardId && <span aria-hidden="true"> · </span>}
+                    {group.boardId && (
+                      <button type="button" className="foundation-layer-link" onClick={() => navigate(`/visual-lab?section=profile&boardId=${group.boardId}`)}>
+                        {group.boardLabel ? `Open “${group.boardLabel}”` : 'Open the outfit'}
+                      </button>
+                    )}
+                  </p>
+                </div>
+              </article>
             ))}
           </div>
         </section>

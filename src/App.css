@@ -12901,3 +12901,8 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 .synthesis-nonresult-remove:hover {
   color: var(--accent);
 }
+
+.memory-card-count {
+  color: var(--text-muted);
+  font-weight: 400;
+}
