@@ -1,7 +1,8 @@
 # Engine behaviour map
 
-**Status:** twelfth pass, 2026-07-26; **amended 2026-08-12** to add the owner-constraint gate, which
-shipped with item 12 and had never been recorded here. Companion to `docs/app-surface-map.md`.
+**Status:** twelfth pass, 2026-07-26; **amended 2026-08-12** to add the owner-constraint gate (which
+shipped with item 12 and had never been recorded here) and the capsule roster prompt cache, the
+seventh cache and the only one covering images. Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
 Pass 2 added scoring, caches, CI ratchets and the import pipeline's model calls. Pass 3 added the
@@ -462,9 +463,11 @@ pieces"* in the composer footer.
 
 ## Caches
 
-Six cache systems now outlive a request. The original derivation script reported 47 `new Map()`
+Seven cache systems now outlive a request. The original derivation script reported 47 `new Map()`
 hits; most are local lookups inside one function and are not caches at all. PR 188 added the
-outfit-evaluation result cache and a paired in-flight registry:
+outfit-evaluation result cache and a paired in-flight registry; the seventh is the capsule roster
+prompt cache described below, which is provider-side rather than a `Map` and so appears in no
+`new Map()` sweep:
 
 | cache | scope | key | eviction |
 |---|---|---|---|
@@ -474,6 +477,7 @@ outfit-evaluation result cache and a paired in-flight registry:
 | `threadCache` (`src/utils/chatThreadCache.js`) | browser tab | thread id | none — lives until reload |
 | `relationshipCache` (`src/utils/garmentRelationships.js`) | browser tab | piece id | none, but `loadGarmentRelationships(id, {refresh:true})` bypasses it |
 | `outfitEvaluationResultCache` (`core.js`) | server, module-wide | SHA-256 of cache version + provider/model + mode/token cap + complete system/messages (including images and garment/memory context) | 10-minute TTL; LRU insertion order; max 50 |
+| capsule roster prompt cache (`routes/ai.js`, `capsuleRosterSelectionContent`) | Anthropic-side, per exact content prefix | the literal `content[0]` text plus every thumbnail before the last `cache_control` | provider TTL; invalidated by any byte change in the prefix — see below |
 
 `outfitEvaluationInFlight` uses the same key but is a coalescing registry rather than a retained
 cache: concurrent identical evaluations await one promise, report `providerCalls: 0` to the
@@ -487,6 +491,64 @@ should not rely on upload-filename entropy for tenant scoping.
 
 **[by design]** The prompt cache is invalidated on write, so a constitution edit takes effect on the
 next request, not the next restart.
+
+### The capsule roster prompt cache — measured 2026-08-12
+
+**A seventh cache, and the only one that caches *images*.** It does not use
+`PROMPT_CACHE_BREAKPOINT` (that marker splits a *system* prompt), so a grep for it misses this
+entirely. `capsuleRosterSelectionContent` (`routes/ai.js`) instead puts `cache_control` directly on
+content blocks:
+
+```
+content[0]  season + size + palette + OWNER RULES + accepted lessons + use cases + candidates
+            └─ cache_control: ephemeral
+imageParts  one text label + one thumbnail per bench piece
+            └─ cache_control: ephemeral on the last one
+[volatile]  repair text, appended only on attempt 2 — after both breakpoints
+```
+
+**Measured against the real wardrobe**, 40-piece bench, 39 with photos (18 hi-res 800px, 21 low
+448px), using the production `capsuleRosterSelectionUserText` and `pieceVisualDetailPolicy`.
+Regenerate with:
+
+```bash
+node scratch/measure_capsule_prompt_cache.js
+```
+
+Read-only, no provider call, safe against a live database.
+
+| block | tokens |
+|---|---|
+| `content[0]` catalog text | 11,344 |
+| thumbnails | 21,000 |
+| **cacheable prefix** | **32,344** |
+| owner rules + accepted lessons, at the **front** of that prefix | **162 (0.50%)** |
+
+Text estimated at ~4 chars/token; images at Anthropic's `(w × h) / 750` — both local estimates, not
+provider-reported usage, so treat them as an order-of-magnitude split rather than a bill. Re-run the
+script if the hi-res/low mix changes: the image half dominates, and `pieceVisualDetailPolicy`
+decides it per piece.
+
+**[by design] The 162 tokens now vary per request, and that is accepted.** Since the owner-guidance
+work, `getOwnerRuleNotes` filters by request context, so the rules block differs between two capsule
+requests whose occasions/seasons differ. Because it sits at the *front* of the prefix, any such
+difference invalidates all 32,344 tokens behind it, thumbnails included — a 0.5% cause with a 100%
+effect.
+
+**The invariant this cache was built for still holds.** Its stated purpose is intra-run: attempt 1
+writes the cache, the attempt-2 repair reads it instead of re-paying for every thumbnail.
+`ownerRules` is computed once per run upstream (`outfitSetPlanner.js` passes the same array into
+both `chooseRoster` calls), so relevance filtering cannot change it between attempts. What
+weakened is only opportunistic *cross-request* reuse, which was never the stated goal and already
+required an identical bench.
+
+**[by design] Not fixed, and the reason is a measured tradeoff.** The only way to restore
+cross-request caching is to move the rules block behind the images, into the volatile tail — which
+puts it roughly 21k tokens deep. The block is positioned early *deliberately*; the comment above it
+cites this codebase's own measurement that stored rules lose out from tail position (spec 25/26,
+`workbenchInstructions`). Trading a measured correctness failure for an unmeasured cache saving is
+the wrong side of that bargain. Revisit only with a measurement showing the rules still bind from
+the tail.
 
 **The two browser caches never expire — and it does not matter, because both consumers
 revalidate.** Traced: `StylistChat.jsx` and `PieceDetail.jsx` use the same idiom,
