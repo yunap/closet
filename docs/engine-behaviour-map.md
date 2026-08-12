@@ -492,6 +492,29 @@ should not rely on upload-filename entropy for tenant scoping.
 **[by design]** The prompt cache is invalidated on write, so a constitution edit takes effect on the
 next request, not the next restart.
 
+### Which garments get a photo — fixed 2026-08-12
+
+Image generation and outfit critique attach at most **five** garment references (`pieces.slice(0, 5)`
+at three call sites in `core.js`). Until 2026-08-12 the five were chosen by **array order**, so which
+garment lost its photo was arbitrary: on a real 8-garment board, a black herringbone pointed heel and
+a floral cutout mule were described in prose while a solid coral maxi dress kept its reference. That
+inverts this project's founding visual-grounding lesson — the pieces hardest to describe in words are
+exactly the ones that must be shown.
+
+`visuallyPrioritizedPieces` (`attributes.js`) now orders them: photographed **complex** pieces first
+(the same hero/colour-accent/loud-or-medium-pattern/textured-fabric test `pieceVisualDetailPolicy`
+already used to pick 800px vs 448px), then photographed plain ones, then anything with no usable
+photo — those return `[]` from `garmentReferenceImages` and previously consumed a slot while
+contributing nothing. Stable within each tier.
+
+**[unverified]** whether five is still the right cap; it was not measured, only re-ordered.
+**20.5%** of saved boards carry more than five pieces, though the largest counts are multi-outfit
+collages rather than single looks.
+
+**[by design]** The photo-preserving collage fallback (`createPhotoPreservingCollageImage`) still
+uses array order. It is a rendered artifact the owner looks at, not a model input, so "hardest to
+describe" is the wrong ranking there.
+
 ### The capsule roster prompt cache — measured 2026-08-12
 
 **A seventh cache, and the only one that caches *images*.** It does not use

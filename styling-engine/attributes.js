@@ -553,6 +553,28 @@ export function pieceReadsAsStandaloneBaseTop(piece = {}) {
  * gets 800px maxPx with 'auto' detail for drape/print clarity.
  * Solid neutral basics get 448px maxPx with 'low' detail to optimize input tokens.
  */
+// Which garments deserve the limited photo slots on an image or critique call. Those calls attach
+// at most five references, and array order used to decide — so a loud patterned hero piece could be
+// rendered from prose while a plain shoe kept its photo. That inverts this project's founding
+// visual-grounding lesson: models compose badly from text alone, so the pieces hardest to describe
+// are exactly the ones that must be shown.
+//
+// Order: photographed complex pieces (the same hero/accent/pattern/texture test that decides 800px
+// vs 448px), then photographed plain ones, then anything without a usable photo — those contribute
+// no reference at all and must not consume a slot. Stable within each tier, so equal pieces keep
+// their original order.
+export function visuallyPrioritizedPieces(pieces = [], limit = Infinity) {
+  const tier = piece => {
+    if (!(piece?.photo || piece?.worn_photo)) return 2
+    return pieceVisualDetailPolicy(piece).maxPx === 800 ? 0 : 1
+  }
+  return (Array.isArray(pieces) ? pieces : [])
+    .map((piece, index) => ({ piece, index, tier: tier(piece) }))
+    .sort((left, right) => (left.tier - right.tier) || (left.index - right.index))
+    .slice(0, limit)
+    .map(entry => entry.piece)
+}
+
 export function pieceVisualDetailPolicy(p, { allowLow = true } = {}) {
   if (!p) return { maxPx: 448, detail: 'low' }
   if (!allowLow) return { maxPx: 768, detail: 'auto' }

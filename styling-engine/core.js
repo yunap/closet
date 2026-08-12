@@ -30,6 +30,7 @@ import {
   mockAiEnabled,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
+import { visuallyPrioritizedPieces } from './attributes.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 import { extractWeatherContext } from './stylingIntent.js'
@@ -2093,7 +2094,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
     }
 
     const garmentStartedAt = Date.now()
-    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImages(piece)))).flat()
+    const garmentRefs = (await Promise.all(visuallyPrioritizedPieces(pieces, 5).map(piece => garmentReferenceImages(piece)))).flat()
     timings.garmentReferenceMs = Date.now() - garmentStartedAt
     for (const ref of garmentRefs) {
       contentParts.push({ type: 'input_text', text: `Linked garment reference: ${ref.label}` })
@@ -2173,7 +2174,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
     const garmentStartedAt = Date.now()
-    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImages(piece)))).flat()
+    const garmentRefs = (await Promise.all(visuallyPrioritizedPieces(pieces, 5).map(piece => garmentReferenceImages(piece)))).flat()
     timings.garmentReferenceMs = Date.now() - garmentStartedAt
 
     if (garmentRefs.length) {
@@ -2798,7 +2799,7 @@ export async function evaluateOutfitThroughSharedPipeline({
     throw err
   }
 
-  const imageRefs = await Promise.all(pieces.slice(0, 5).map(async (piece) => {
+  const imageRefs = await Promise.all(visuallyPrioritizedPieces(pieces, 5).map(async (piece) => {
     const photo = piece.worn_photo || piece.photo
     if (!photo) return null
     const filePath = path.join(userUploadsDir(), photo)
