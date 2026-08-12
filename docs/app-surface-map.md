@@ -407,6 +407,29 @@ Day precision only, and an exclusion written without a receipt (e.g. the piece-2
 created by the 2026-08-10 migration rather than the UI) returns `changedAt: null` and sorts last —
 confirmed against the real wardrobe, where 7 of 8 exclusions carry a parseable date.
 
+**[fixed 2026-08-12] Renderer reports are their own section, and are grouped.** *"Things your
+stylist got wrong"* rendered two unrelated things under one heading that promised *"a product
+decision"*: open `product_quality_findings` (a genuine work queue) and every image-fidelity
+reaction. A renderer report needs no decision — it is already acting on the image prompt — so they
+now sit under **Fixes your stylist applies when drawing pictures**, described as already in effect.
+They are also grouped by garment and report type: six separate `wrong_length` rows for the same
+context were six database rows but one fact about the picture, and the renderer already
+de-duplicates before sending (`getSavedBoardRendererMemory` collects into a `Set`).
+
+**[unverified → confirmed 2026-08-12] The product-issue queue had never held a row.** Its only
+accepted `general_styling_failure` draft was accepted 2026-08-10, one day before
+`lib/productQualityFindings.js` shipped (2026-08-11), so the sync did not exist yet and no finding
+was written. Not a live defect — the handler upserts on `synthesis_draft_id`, and re-accepting
+through `PATCH /feedback-synthesis/drafts/:id` creates the finding correctly (verified end to end
+in the sandbox). Nothing in `styling-engine/` reads `product_quality_findings`, so a finding still
+reaches no prompt.
+
+**[bug] Historical wrong-length reports name impossible fields.** Five live corrections record
+*sleeve* issues against shoes and an accessory — a necklace with "sleeves rendered too long", loafers
+and sandals likewise. They predate the 2026-07-27 fix that filters wrong-length reasons by
+`piece.category`, and `getSavedBoardRendererMemory` still renders them into the image prompt
+verbatim. Reproduce with the query in `feedback-and-memory-map.md` §4; no cleanup has been run.
+
 **[by design, owner-ruled 2026-08-12] Two primary tabs, not three.** Style Profile is now
 **Active guidance | Review feedback** — what the stylist uses now, and what still needs attention.
 History was removed from primary navigation: it was an audit trail carrying equal visual weight to

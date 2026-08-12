@@ -32,6 +32,11 @@ test('Style profile separates active guidance from review work', () => {
   assert.match(styleProfileSource, /fetch\('\/api\/owner-constraints'\)/)
   assert.match(styleProfileSource, /fetch\('\/api\/product-quality-findings'\)/)
   assert.match(styleProfileSource, /row\.memory\?\.destination === 'renderer'/)
+  // Renderer reports are their own section: nothing there awaits a decision, and each is already
+  // acting on the image prompt, so listing them under "got wrong" implied a queue that isn't one.
+  assert.match(styleProfileSource, /Fixes your stylist applies when drawing pictures/)
+  assert.match(styleProfileSource, /const groupedRendererCorrections =/)
+  assert.doesNotMatch(styleProfileSource, /General styling failures and image-generation problems/)
   assert.match(styleProfileSource, /Choose where the fix landed/)
   assert.match(styleProfileSource, /Mark resolved/)
 })

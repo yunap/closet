@@ -702,6 +702,26 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     },
   ]
   const rendererCorrections = contextualFeedback.filter(row => row.memory?.destination === 'renderer')
+  // Reporting the same garment's length six times is six rows in the database but one fact about
+  // the picture, and the renderer already de-duplicates before sending (getSavedBoardRendererMemory
+  // collects into a Set). Showing the raw rows made a handful of reports look like a wall of
+  // identical problems.
+  const groupedRendererCorrections = [...rendererCorrections.reduce((groups, row) => {
+    const title = row.memory?.display?.title || row.context_name || 'Generated image report'
+    const kind = feedbackTypeDisplayLabel(row)
+    const key = `${title}::${kind}`
+    const group = groups.get(key) || { key, title, kind, count: 0 }
+    group.count += 1
+    groups.set(key, group)
+    return groups
+  }, new Map()).values()]
+    .map(group => ({
+      ...group,
+      summary: group.kind === 'wrong length'
+        ? 'Reported as drawn at the wrong length.'
+        : `Reported as: ${group.kind}.`,
+    }))
+    .sort((left, right) => right.count - left.count)
 
   const feedbackBoardImage = row => row?.payload?.board?.imageUrl || row?.payload?.board?.image_url || ''
   const matchedFeedbackBoard = row => {
@@ -1683,9 +1703,9 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
             <span>Not about your taste</span>
             <h2>Things your stylist got wrong</h2>
           </div>
-          <p>General styling failures and image-generation problems that need a product decision, not a personal preference.</p>
+          <p>Times the stylist itself made a mistake, rather than something about your taste. These wait for a decision and never change how your clothes are chosen.</p>
         </div>
-        {productFindings.filter(row => row.status === 'open').length === 0 && rendererCorrections.length === 0 && (
+        {productFindings.filter(row => row.status === 'open').length === 0 && (
           <div className="style-profile-empty">No product issues currently need review.</div>
         )}
         <div className="style-memory-list">
@@ -1741,23 +1761,34 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
               </div>
             )
           })}
-          {rendererCorrections.map(row => (
-            <div key={`renderer-${row.id}`} className="style-memory-row">
-              <div className="style-memory-kind style-memory-kind--quiet">Text reminder for image generation</div>
-              <div className="style-memory-context-title">{row.memory?.display?.title || row.context_name || 'Generated image report'}</div>
-              <div className="style-memory-note">{row.memory?.display?.summary || readableFeedbackNote(row.note)}</div>
-              <div className="style-memory-note">The rejected image is not reused. A short reminder is sent only when the same identified garment is rendered.</div>
-              <details className="style-memory-technical">
-                <summary>Source &amp; related records</summary>
-                <dl>
-                  <dt>Source</dt><dd>{row.referenced_board_id ? `Board ${row.referenced_board_id}` : row.referenced_thread_id ? `Chat ${row.referenced_thread_id}` : 'Original feedback record'}</dd>
-                  {row.context_id && <><dt>Garment</dt><dd>{row.context_name || `Piece ${row.context_id}`}</dd></>}
-                </dl>
-              </details>
-            </div>
-          ))}
         </div>
       </section>
+
+      {/* Its own section. These are not product decisions: nothing here is queued for a human to
+          resolve, and each one is already acting on the image renderer. Grouping them under
+          "things your stylist got wrong" implied a decision that does not exist. */}
+      {groupedRendererCorrections.length > 0 && (
+        <section className="style-profile-section style-profile-learnings">
+          <div className="style-profile-section-heading">
+            <div>
+              <span>Already in effect</span>
+              <h2>Fixes your stylist applies when drawing pictures</h2>
+            </div>
+            <p>You reported these images looked wrong. Your stylist reminds itself when it draws the same garment again — nothing here needs a decision from you.</p>
+          </div>
+          <div className="limit-rows">
+            {groupedRendererCorrections.map(group => (
+              <div key={group.key} className="limit-row">
+                <div className="limit-row-body">
+                  <strong>{group.title}</strong>
+                  <span>{group.summary}</span>
+                </div>
+                {group.count > 1 && <span className="history-row-date">{group.count} reports</span>}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       </>}
 
       {mode === 'style' && styleProfileTab === 'guidance' && showingPastDecisions && (
