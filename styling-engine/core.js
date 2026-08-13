@@ -2119,7 +2119,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
     // and establishing the real identity anchor first — before any competing photo of her arrives
     // — is the point, not just what the text says.
     const calibrationStartedAt = Date.now()
-    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(3)
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
@@ -2208,7 +2208,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
     // below also show her, and establishing the real identity anchor first — before any competing
     // photo of her arrives — is the point, not just what the text says.
     const calibrationStartedAt = Date.now()
-    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(3)
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
@@ -2323,7 +2323,7 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     // calibration photos, so establishing the real identity anchor first, before any of those
     // arrive, matters more here than anywhere else this pattern is used.
     const calibrationStartedAt = Date.now()
-    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(3)
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
@@ -2505,7 +2505,7 @@ export async function createIdealAdditionsComparisonSheetImage({
     // Calibration first: this sheet renders the SAME WOMAN across every figure, so an identity
     // anchor established before the selected garment's own worn photo (if it has one) matters even
     // more here — drift would repeat across every figure, not just one.
-    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(3)
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
       contentParts.push({
