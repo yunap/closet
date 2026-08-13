@@ -1838,9 +1838,19 @@ export async function createOutfitBoardImage({ board, pieces, index }) {
   return `/uploads/${filename}`
 }
 
+// A hanger photo already shows accurate fit for a garment that holds its shape independent of a
+// body — a structured blazer or a straight-hanging skirt looks the same on a hanger as it does
+// worn. It's the fabrics that behave differently under gravity and body shape — clinging, skimming,
+// draping — where a flat photo genuinely can't tell you how the garment will actually sit. fit_on_body
+// already classifies exactly this per piece, so worn evidence is requested only where it adds real
+// information, not automatically for every garment that happens to have one.
+const FIT_HARD_TO_READ_FROM_HANGER = new Set(['skims', 'drapes', 'clings_drapey', 'clings_stretchy'])
+const fitNeedsWornEvidence = piece => FIT_HARD_TO_READ_FROM_HANGER.has(String(piece?.fit_on_body || '').toLowerCase().trim())
+
 export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
   const group = wardrobeCategoryGroup(piece)
   const name = piece.name || 'garment'
+  const includeWorn = Boolean(piece.worn_photo) && fitNeedsWornEvidence(piece)
   const candidates = [
     // A worn photo necessarily shows her face and body — that's what makes it useful for fit and
     // drape — but it is not the identity reference. Said so explicitly: before this, nothing told
@@ -1848,7 +1858,7 @@ export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
     // carry a worn shot, and a wardrobe can have several, taken on different days under different
     // light. Garment fields stay first in the label; the identity disclaimer is appended, not
     // leading, so this reads as a garment reference with a caveat, not an identity reference.
-    piece.worn_photo ? {
+    includeWorn ? {
       kind: 'worn',
       filename: piece.worn_photo,
       label: `${name} (${group}) — worn photo: authoritative for fit, drape, body placement, and real hem position. Do not use this photo's face or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
@@ -1856,7 +1866,11 @@ export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
     piece.photo ? {
       kind: 'hanger',
       filename: piece.photo,
-      label: `${name} (${group}) — hanger photo: authoritative for construction, color, print scale, texture, and garment shape${piece.worn_photo ? '' : '; no worn photo is available, so body fit and drape are unconfirmed and must be inferred conservatively from structured garment data'}`,
+      label: `${name} (${group}) — hanger photo: authoritative for construction, color, print scale, texture, and garment shape${
+        includeWorn ? ''
+          : piece.worn_photo ? '; this garment\'s fit reads clearly from construction alone, so its worn photo is not included'
+          : '; no worn photo is available, so body fit and drape are unconfirmed and must be inferred conservatively from structured garment data'
+      }`,
     } : null,
   ].filter(Boolean)
   return candidates.slice(0, Math.max(0, Number(maxPhotos) || 0))
@@ -2325,7 +2339,8 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     })
     const garmentStartedAt = Date.now()
     // Comparison sheets can contain 18 garments. Keep this preview to one reference per garment
-    // (prefer worn evidence) rather than doubling the request to as many as 36 input images.
+    // (worn evidence when the garment's fit actually needs it, hanger otherwise) rather than
+    // doubling the request to as many as 36 input images.
     const garmentRefs = (await Promise.all(uniquePieces.slice(0, 18).map(piece => garmentReferenceImages(piece, { maxPhotos: 1 })))).flat()
     timings.garmentReferenceMs = Date.now() - garmentStartedAt
     for (const ref of garmentRefs) {
@@ -3600,7 +3615,8 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   try {
     const anchorParts = []
  
-    if (selectedPiece.worn_photo) {
+    const includeAnchorWorn = Boolean(selectedPiece.worn_photo) && fitNeedsWornEvidence(selectedPiece)
+    if (includeAnchorWorn) {
       const filePath = path.join(userUploadsDir(), selectedPiece.worn_photo)
       if (fs.existsSync(filePath)) {
         const buffer = await sharp(filePath)
@@ -3614,7 +3630,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
         })
       }
     }
- 
+
     if (selectedPiece.photo) {
       const filePath = path.join(userUploadsDir(), selectedPiece.photo)
       if (fs.existsSync(filePath)) {
@@ -3625,7 +3641,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
         anchorParts.push({
           base64: buffer.toString('base64'),
           mime: 'image/jpeg',
-          label: `${selectedPiece.name} — hanger photo showing exact print scale, color, texture, and construction detail`,
+          label: `${selectedPiece.name} — hanger photo showing exact print scale, color, texture, and construction detail${includeAnchorWorn ? '' : selectedPiece.worn_photo ? '; this garment\'s fit reads clearly from construction alone, so its worn photo is not included' : ''}`,
         })
       }
     }
