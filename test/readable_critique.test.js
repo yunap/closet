@@ -54,6 +54,22 @@ test('comparison previews cap references and prefer worn evidence', () => {
   assert.deepEqual(refs.map(ref => ref.kind), ['worn'])
 })
 
+// A worn photo necessarily shows her face and body, which is what makes it authoritative for fit
+// — but that same content makes it a plausible identity source if nothing says otherwise. This
+// disclaimer is what stops the model from treating the worn photo as her likeness reference,
+// which the dedicated identity calibration photos alone are meant to be.
+test('a worn photo\'s label disclaims identity use, not just garment fit', () => {
+  const refs = garmentReferencePlan({
+    name: 'silk cardigan',
+    category: 'top',
+    photo: 'cardigan-hanger.jpg',
+    worn_photo: 'cardigan-worn.jpg',
+  })
+  const worn = refs.find(ref => ref.kind === 'worn')
+  assert.match(worn.label, /Do not use this photo's face or body proportions as an identity or likeness reference/)
+  assert.match(worn.label, /identity\/proportion calibration photos/)
+})
+
 const diagnosticRead = {
   visibleFacts: {
     floorLine: 'the pant hem covers most of the shoe',
