@@ -21,14 +21,10 @@ after(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-// fit_on_body decides whether the worn photo is worth sending at all: a garment whose fit reads
-// clearly from its hanger photo (structured, hangs_straight, or untagged) doesn't need it, so these
-// fixtures use 'drapes' — a fabric behavior a flat photo genuinely can't convey.
-test('final renders use worn and hanger evidence with distinct authority for a drapey garment', () => {
+test('final renders use worn and hanger evidence with distinct authority', () => {
   const refs = garmentReferencePlan({
     name: 'silk cardigan',
     category: 'top',
-    fit_on_body: 'drapes',
     photo: 'cardigan-hanger.jpg',
     worn_photo: 'cardigan-worn.jpg',
   })
@@ -37,26 +33,10 @@ test('final renders use worn and hanger evidence with distinct authority for a d
   assert.match(refs[1].label, /construction, color, print scale, texture, and garment shape/)
 })
 
-test('a structured garment skips its worn photo even when one exists', () => {
-  const refs = garmentReferencePlan({
-    name: 'tailored blazer',
-    category: 'top',
-    fit_on_body: 'structured',
-    photo: 'blazer-hanger.jpg',
-    worn_photo: 'blazer-worn.jpg',
-  })
-  assert.deepEqual(refs.map(ref => ref.kind), ['hanger'])
-  assert.match(refs[0].label, /fit reads clearly from construction alone, so its worn photo is not included/)
-  // The photo genuinely wasn't sent — this isn't "no worn photo exists," so that phrasing must not
-  // appear here; it belongs only to the case where there really is nothing to send.
-  assert.doesNotMatch(refs[0].label, /no worn photo is available/)
-})
-
 test('hanger-only evidence discloses that fit and drape are unconfirmed', () => {
   const refs = garmentReferencePlan({
     name: 'silk cardigan',
     category: 'top',
-    fit_on_body: 'drapes',
     photo: 'cardigan-hanger.jpg',
   })
   assert.deepEqual(refs.map(ref => ref.kind), ['hanger'])
@@ -64,21 +44,10 @@ test('hanger-only evidence discloses that fit and drape are unconfirmed', () => 
   assert.match(refs[0].label, /inferred conservatively from structured garment data/)
 })
 
-test('an untagged garment defaults to hanger only, not worn', () => {
-  const refs = garmentReferencePlan({
-    name: 'unlabeled top',
-    category: 'top',
-    photo: 'top-hanger.jpg',
-    worn_photo: 'top-worn.jpg',
-  })
-  assert.deepEqual(refs.map(ref => ref.kind), ['hanger'])
-})
-
-test('comparison previews cap references and prefer worn evidence when the fit needs it', () => {
+test('comparison previews cap references and prefer worn evidence', () => {
   const refs = garmentReferencePlan({
     name: 'silk cardigan',
     category: 'top',
-    fit_on_body: 'drapes',
     photo: 'cardigan-hanger.jpg',
     worn_photo: 'cardigan-worn.jpg',
   }, { maxPhotos: 1 })
@@ -93,7 +62,6 @@ test('a worn photo\'s label disclaims identity use, not just garment fit', () =>
   const refs = garmentReferencePlan({
     name: 'silk cardigan',
     category: 'top',
-    fit_on_body: 'drapes',
     photo: 'cardigan-hanger.jpg',
     worn_photo: 'cardigan-worn.jpg',
   })
