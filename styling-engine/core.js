@@ -1838,6 +1838,19 @@ export async function createOutfitBoardImage({ board, pieces, index }) {
   return `/uploads/${filename}`
 }
 
+// The hanger photo is the authority for print scale, colour, texture and construction, so it needs
+// full resolution. The worn photo's only job is geometry — how the garment falls, where the hem
+// lands, how a sleeve sits — and geometry is large-scale, so it survives downscaling intact. A face
+// does not: at this size there is far less facial detail available to copy.
+//
+// This is deliberate damage to one part of the image to protect another. Verified against two
+// renders of the same wardrobe: the rendered expression tracked whichever worn photo was in that
+// outfit (a downcast closet mirror selfie produced a downcast face; a warm, engaged one produced a
+// warm face), even though the label below explicitly forbids using it as an identity reference.
+// The instruction did not hold, so the pixels have to carry less to copy.
+export const HANGER_REFERENCE_MAX_PX = 768
+export const WORN_REFERENCE_MAX_PX = 400
+
 export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
   const group = wardrobeCategoryGroup(piece)
   const name = piece.name || 'garment'
@@ -1851,11 +1864,13 @@ export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
     piece.worn_photo ? {
       kind: 'worn',
       filename: piece.worn_photo,
-      label: `${name} (${group}) — worn photo: authoritative for fit, drape, body placement, and real hem position. Do not use this photo's face or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
+      maxPx: WORN_REFERENCE_MAX_PX,
+      label: `${name} (${group}) — worn photo, intentionally low resolution: read it only for how this garment hangs, where its hem falls, and how it sits on a body. Do not use this photo's face, hair, expression, or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
     } : null,
     piece.photo ? {
       kind: 'hanger',
       filename: piece.photo,
+      maxPx: HANGER_REFERENCE_MAX_PX,
       label: `${name} (${group}) — hanger photo: authoritative for construction, color, print scale, texture, and garment shape${piece.worn_photo ? '' : '; no worn photo is available, so body fit and drape are unconfirmed and must be inferred conservatively from structured garment data'}`,
     } : null,
   ].filter(Boolean)
@@ -1867,9 +1882,10 @@ export async function garmentReferenceImages(piece, options = {}) {
   for (const planned of garmentReferencePlan(piece, options)) {
     const filePath = path.join(userUploadsDir(), planned.filename)
     if (!fs.existsSync(filePath)) continue
+    const maxPx = Number(planned.maxPx) || HANGER_REFERENCE_MAX_PX
     const buffer = await sharp(filePath)
       .rotate()
-      .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+      .resize(maxPx, maxPx, { fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: 84 })
       .toBuffer()
     refs.push({
@@ -3603,14 +3619,16 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     if (selectedPiece.worn_photo) {
       const filePath = path.join(userUploadsDir(), selectedPiece.worn_photo)
       if (fs.existsSync(filePath)) {
+        // Same reasoning as garmentReferencePlan's WORN_REFERENCE_MAX_PX: geometry survives the
+        // downscale, facial detail does not, and that asymmetry is the whole point.
         const buffer = await sharp(filePath)
-          .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+          .resize(WORN_REFERENCE_MAX_PX, WORN_REFERENCE_MAX_PX, { fit: 'inside', withoutEnlargement: true })
           .jpeg({ quality: 85 })
           .toBuffer()
         anchorParts.push({
           base64: buffer.toString('base64'),
           mime: 'image/jpeg',
-          label: `${selectedPiece.name} — worn photo showing drape, fit, and neckline on a body. Do not use this photo's face or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
+          label: `${selectedPiece.name} — worn photo, intentionally low resolution: read it only for drape, fit, and neckline on a body. Do not use this photo's face, hair, expression, or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
         })
       }
     }

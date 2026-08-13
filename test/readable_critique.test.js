@@ -29,8 +29,28 @@ test('final renders use worn and hanger evidence with distinct authority', () =>
     worn_photo: 'cardigan-worn.jpg',
   })
   assert.deepEqual(refs.map(ref => ref.kind), ['worn', 'hanger'])
-  assert.match(refs[0].label, /fit, drape, body placement, and real hem position/)
+  assert.match(refs[0].label, /how this garment hangs, where its hem falls, and how it sits on a body/)
   assert.match(refs[1].label, /construction, color, print scale, texture, and garment shape/)
+})
+
+// The renderer was copying the facial expression out of whichever worn photo was in the outfit,
+// despite the label expressly forbidding it. Downscaling only the worn photo keeps the geometry
+// that makes it useful (drape, hem position, how it sits) while removing facial detail there is
+// anything to copy from. The hanger photo carries print scale and construction, so it must NOT be
+// downscaled with it.
+test('a worn photo is sent at lower resolution than its hanger photo', () => {
+  const refs = garmentReferencePlan({
+    name: 'silk cardigan',
+    category: 'top',
+    photo: 'cardigan-hanger.jpg',
+    worn_photo: 'cardigan-worn.jpg',
+  })
+  const worn = refs.find(ref => ref.kind === 'worn')
+  const hanger = refs.find(ref => ref.kind === 'hanger')
+  assert.ok(worn.maxPx < hanger.maxPx, 'the worn photo must be downscaled relative to the hanger photo')
+  assert.equal(hanger.maxPx, 768, 'the hanger photo must keep full resolution for print scale and construction')
+  assert.match(worn.label, /intentionally low resolution/)
+  assert.match(worn.label, /face, hair, expression, or body proportions/)
 })
 
 test('hanger-only evidence discloses that fit and drape are unconfirmed', () => {
@@ -66,7 +86,7 @@ test('a worn photo\'s label disclaims identity use, not just garment fit', () =>
     worn_photo: 'cardigan-worn.jpg',
   })
   const worn = refs.find(ref => ref.kind === 'worn')
-  assert.match(worn.label, /Do not use this photo's face or body proportions as an identity or likeness reference/)
+  assert.match(worn.label, /Do not use this photo's face, hair, expression, or body proportions as an identity or likeness reference/)
   assert.match(worn.label, /identity\/proportion calibration photos/)
 })
 
