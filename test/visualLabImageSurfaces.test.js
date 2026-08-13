@@ -32,6 +32,19 @@ test('Style profile separates active guidance from review work', () => {
   assert.match(styleProfileSource, /fetch\('\/api\/owner-constraints'\)/)
   assert.match(styleProfileSource, /fetch\('\/api\/product-quality-findings'\)/)
   assert.match(styleProfileSource, /row\.memory\?\.destination === 'renderer'/)
+  // Renderer reports are their own section: nothing there awaits a decision, and each is already
+  // acting on the image prompt, so listing them under "got wrong" implied a queue that isn't one.
+  assert.match(styleProfileSource, /Fixes your stylist applies when drawing pictures/)
+  assert.match(styleProfileSource, /const rendererReportGroups =/)
+  // Each row says what looked wrong and what the stylist now does about it, and a global
+  // correction is titled "Every picture" rather than pinned to whichever garment was on screen.
+  assert.match(styleProfileSource, /RENDERER_ISSUE_TEXT/)
+  assert.match(styleProfileSource, /Your stylist now matches the length in your saved photo\./)
+  assert.match(styleProfileSource, /spec\.global \? 'Every picture'/)
+  // bad_reference is classified as a renderer type but no renderer path reads it, so it must not
+  // be listed as already in effect.
+  assert.doesNotMatch(styleProfileSource, /bad_reference: \{ global/)
+  assert.doesNotMatch(styleProfileSource, /General styling failures and image-generation problems/)
   assert.match(styleProfileSource, /Choose where the fix landed/)
   assert.match(styleProfileSource, /Mark resolved/)
 })

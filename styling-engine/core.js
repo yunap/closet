@@ -30,6 +30,7 @@ import {
   mockAiEnabled,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
+import { visuallyPrioritizedPieces } from './attributes.js'
 
 import { OCCASION_PROFILES, resolveOccasionProfile } from './occasions.js'
 import { extractWeatherContext } from './stylingIntent.js'
@@ -1837,18 +1838,39 @@ export async function createOutfitBoardImage({ board, pieces, index }) {
   return `/uploads/${filename}`
 }
 
+// The hanger photo is the authority for print scale, colour, texture and construction, so it needs
+// full resolution. The worn photo's only job is geometry — how the garment falls, where the hem
+// lands, how a sleeve sits — and geometry is large-scale, so it survives downscaling intact. A face
+// does not: at this size there is far less facial detail available to copy.
+//
+// This is deliberate damage to one part of the image to protect another. Verified against two
+// renders of the same wardrobe: the rendered expression tracked whichever worn photo was in that
+// outfit (a downcast closet mirror selfie produced a downcast face; a warm, engaged one produced a
+// warm face), even though the label below explicitly forbids using it as an identity reference.
+// The instruction did not hold, so the pixels have to carry less to copy.
+export const HANGER_REFERENCE_MAX_PX = 768
+export const WORN_REFERENCE_MAX_PX = 400
+
 export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
   const group = wardrobeCategoryGroup(piece)
   const name = piece.name || 'garment'
   const candidates = [
+    // A worn photo necessarily shows her face and body — that's what makes it useful for fit and
+    // drape — but it is not the identity reference. Said so explicitly: before this, nothing told
+    // the model to prefer the dedicated calibration photos over whichever garment happened to
+    // carry a worn shot, and a wardrobe can have several, taken on different days under different
+    // light. Garment fields stay first in the label; the identity disclaimer is appended, not
+    // leading, so this reads as a garment reference with a caveat, not an identity reference.
     piece.worn_photo ? {
       kind: 'worn',
       filename: piece.worn_photo,
-      label: `${name} (${group}) — worn photo: authoritative for fit, drape, body placement, and real hem position`,
+      maxPx: WORN_REFERENCE_MAX_PX,
+      label: `${name} (${group}) — worn photo, intentionally low resolution: read it only for how this garment hangs, where its hem falls, and how it sits on a body. Do not use this photo's face, hair, expression, or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
     } : null,
     piece.photo ? {
       kind: 'hanger',
       filename: piece.photo,
+      maxPx: HANGER_REFERENCE_MAX_PX,
       label: `${name} (${group}) — hanger photo: authoritative for construction, color, print scale, texture, and garment shape${piece.worn_photo ? '' : '; no worn photo is available, so body fit and drape are unconfirmed and must be inferred conservatively from structured garment data'}`,
     } : null,
   ].filter(Boolean)
@@ -1860,9 +1882,10 @@ export async function garmentReferenceImages(piece, options = {}) {
   for (const planned of garmentReferencePlan(piece, options)) {
     const filePath = path.join(userUploadsDir(), planned.filename)
     if (!fs.existsSync(filePath)) continue
+    const maxPx = Number(planned.maxPx) || HANGER_REFERENCE_MAX_PX
     const buffer = await sharp(filePath)
       .rotate()
-      .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+      .resize(maxPx, maxPx, { fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: 84 })
       .toBuffer()
     refs.push({
@@ -2092,20 +2115,28 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
       contentParts.push({ type: 'input_image', image_url: `data:image/jpeg;base64,${buffer.toString('base64')}` })
     }
 
-    const garmentStartedAt = Date.now()
-    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImages(piece)))).flat()
-    timings.garmentReferenceMs = Date.now() - garmentStartedAt
-    for (const ref of garmentRefs) {
-      contentParts.push({ type: 'input_text', text: `Linked garment reference: ${ref.label}` })
-      contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
-    }
-
+    // Calibration goes before garment references, not after: garment worn photos also show her,
+    // and establishing the real identity anchor first — before any competing photo of her arrives
+    // — is the point, not just what the text says.
     const calibrationStartedAt = Date.now()
     const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
     timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
     for (const img of calibrationRefs) {
       contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
-      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion calibration reference.' : 'Taste calibration reference.' })
+      contentParts.push({
+        type: 'input_text',
+        text: img.kind === 'real_photo'
+          ? 'Identity/proportion calibration reference — the only authoritative source for her face, body proportions, and likeness. A garment reference photo elsewhere in this prompt may also show a person wearing that garment; that photo is fit/drape evidence only, never an identity reference.'
+          : 'Taste calibration reference.',
+      })
+    }
+
+    const garmentStartedAt = Date.now()
+    const garmentRefs = (await Promise.all(visuallyPrioritizedPieces(pieces, 5).map(piece => garmentReferenceImages(piece)))).flat()
+    timings.garmentReferenceMs = Date.now() - garmentStartedAt
+    for (const ref of garmentRefs) {
+      contentParts.push({ type: 'input_text', text: `Linked garment reference: ${ref.label}` })
+      contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
     }
 
     contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(savedOutfitImagePrompt({ outfit, pieces, occasion, season, variantMode, currentDate }), pieces) })
@@ -2172,8 +2203,25 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
   try {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
+
+    // Calibration goes before garment references, not after: several of the garment worn photos
+    // below also show her, and establishing the real identity anchor first — before any competing
+    // photo of her arrives — is the point, not just what the text says.
+    const calibrationStartedAt = Date.now()
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    for (const img of calibrationRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+      contentParts.push({
+        type: 'input_text',
+        text: img.kind === 'real_photo'
+          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness. Do not copy outfit unless it matches listed wardrobe pieces. Wardrobe garment references below may also show a person wearing that garment; that is fit/drape evidence only, never an identity reference.'
+          : 'Taste calibration reference only.',
+      })
+    }
+
     const garmentStartedAt = Date.now()
-    const garmentRefs = (await Promise.all(pieces.slice(0, 5).map(piece => garmentReferenceImages(piece)))).flat()
+    const garmentRefs = (await Promise.all(visuallyPrioritizedPieces(pieces, 5).map(piece => garmentReferenceImages(piece)))).flat()
     timings.garmentReferenceMs = Date.now() - garmentStartedAt
 
     if (garmentRefs.length) {
@@ -2186,14 +2234,6 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
         contentParts.push({ type: 'input_text', text: `Next image is REQUIRED wardrobe reference: ${ref.label}. Preserve this exact garment in the final outfit. ${pieceTruth}` })
         contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
       }
-    }
-
-    const calibrationStartedAt = Date.now()
-    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
-    timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
-    for (const img of calibrationRefs) {
-      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
-      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches listed wardrobe pieces.' : 'Taste calibration reference only.' })
     }
 
     contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeImagePrompt({ outfit, pieces, occasion, season }), pieces) })
@@ -2276,10 +2316,29 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
 
   try {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-    const contentParts = [{
+    const contentParts = []
+
+    // Calibration goes before garment references, not after. This sheet can carry up to 18
+    // garment images preferring worn evidence — up to 18 photos that may show her — against just 2
+    // calibration photos, so establishing the real identity anchor first, before any of those
+    // arrive, matters more here than anywhere else this pattern is used.
+    const calibrationStartedAt = Date.now()
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
+    for (const img of calibrationRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+      contentParts.push({
+        type: 'input_text',
+        text: img.kind === 'real_photo'
+          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness. Do not copy outfit unless it matches a listed panel. Garment references below may show a person wearing that garment; that is fit/drape evidence only, never an identity reference.'
+          : 'Taste calibration reference only.',
+      })
+    }
+
+    contentParts.push({
       type: 'input_text',
       text: 'WARDROBE GARMENT REFERENCES — these are the saved pieces available for the outfit panels. Use each piece only in the panel where it is listed in the final prompt.'
-    }]
+    })
     const garmentStartedAt = Date.now()
     // Comparison sheets can contain 18 garments. Keep this preview to one reference per garment
     // (prefer worn evidence) rather than doubling the request to as many as 36 input images.
@@ -2288,14 +2347,6 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
     for (const ref of garmentRefs) {
       contentParts.push({ type: 'input_text', text: `Garment reference: ${ref.piece.id} — ${ref.label}` })
       contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
-    }
-
-    const calibrationStartedAt = Date.now()
-    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
-    timings.calibrationReferenceMs = Date.now() - calibrationStartedAt
-    for (const img of calibrationRefs) {
-      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
-      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only. Do not copy outfit unless it matches a listed panel.' : 'Taste calibration reference only.' })
     }
 
     contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(wholeWardrobeComparisonSheetPrompt({ outfits: shown, piecesById, occasion, season, mood }), uniquePieces) })
@@ -2451,17 +2502,25 @@ export async function createIdealAdditionsComparisonSheetImage({
     }
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const contentParts = []
+    // Calibration first: this sheet renders the SAME WOMAN across every figure, so an identity
+    // anchor established before the selected garment's own worn photo (if it has one) matters even
+    // more here — drift would repeat across every figure, not just one.
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
+    for (const img of calibrationRefs) {
+      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+      contentParts.push({
+        type: 'input_text',
+        text: img.kind === 'real_photo'
+          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness across every figure. The garment reference photo below may also show a person wearing it; that is fit/drape evidence only, never an identity reference.'
+          : 'Taste calibration reference only.',
+      })
+    }
     for (const garmentRef of garmentRefs) {
       contentParts.push({ type: 'input_text', text: `Reference photo: ${garmentRef.label}. This exact garment appears on every figure.` })
       contentParts.push({
         type: 'input_image',
         image_url: `data:${garmentRef.mime};base64,${garmentRef.base64}`
       })
-    }
-    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(2)
-    for (const img of calibrationRefs) {
-      contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
-      contentParts.push({ type: 'input_text', text: img.kind === 'real_photo' ? 'Identity/proportion reference only.' : 'Taste calibration reference only.' })
     }
     contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(promptText, [selectedPiece]) })
 
@@ -2798,7 +2857,7 @@ export async function evaluateOutfitThroughSharedPipeline({
     throw err
   }
 
-  const imageRefs = await Promise.all(pieces.slice(0, 5).map(async (piece) => {
+  const imageRefs = await Promise.all(visuallyPrioritizedPieces(pieces, 5).map(async (piece) => {
     const photo = piece.worn_photo || piece.photo
     if (!photo) return null
     const filePath = path.join(userUploadsDir(), photo)
@@ -3459,11 +3518,30 @@ export async function getCalibrationReferenceImagesForGeneration(limit = 3) {
 
 export async function runGPT4oImageGeneration({ client, prompt, size = '1024x1536', referenceImages = [], anchorGarmentImage = null }) {
   const contentParts = []
- 
+
   const anchorPhotos = Array.isArray(anchorGarmentImage)
     ? anchorGarmentImage
     : anchorGarmentImage ? [anchorGarmentImage] : []
- 
+
+  // Calibration goes before the anchor garment photos, not after: an anchor garment can include a
+  // worn photo that also shows her, and establishing the real identity anchor first — before any
+  // competing photo of her arrives — is the point, not just what the caption says.
+  for (const img of referenceImages.slice(0, 3)) {
+    contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
+    const captionParts = [
+      img.kind === 'real_photo'
+        ? (img.favorite
+          ? 'Real photo — the only authoritative source for her visual identity, proportion, and presence. Use it strongly. An anchor garment photo below may also show a person wearing that garment; that is garment fit reference only, never an identity reference.'
+          : 'Real outfit photo — the only authoritative identity reference. An anchor garment photo below may also show a person wearing that garment; that is garment fit reference only, never an identity reference.')
+        : (img.favorite ? 'Good style reference — use strongly for aesthetic direction' : 'Good style reference'),
+      img.labels?.length ? `[${img.labels.join(', ')}]` : '',
+      img.notes ? img.notes : '',
+    ].filter(Boolean)
+    if (captionParts.length) {
+      contentParts.push({ type: 'input_text', text: captionParts.join(' — ') })
+    }
+  }
+
   if (anchorPhotos.length > 0) {
     contentParts.push({
       type: 'input_text',
@@ -3476,21 +3554,7 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
       }
     }
   }
- 
-  for (const img of referenceImages.slice(0, 3)) {
-    contentParts.push({ type: 'input_image', image_url: `data:${img.mime};base64,${img.base64}` })
-    const captionParts = [
-      img.kind === 'real_photo'
-        ? (img.favorite ? 'Real photo — use strongly for visual identity, proportion, and presence reference' : 'Real outfit photo — use for identity reference')
-        : (img.favorite ? 'Good style reference — use strongly for aesthetic direction' : 'Good style reference'),
-      img.labels?.length ? `[${img.labels.join(', ')}]` : '',
-      img.notes ? img.notes : '',
-    ].filter(Boolean)
-    if (captionParts.length) {
-      contentParts.push({ type: 'input_text', text: captionParts.join(' — ') })
-    }
-  }
- 
+
   contentParts.push({ type: 'input_text', text: prompt })
  
   const response = await client.responses.create({
@@ -3555,14 +3619,16 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
     if (selectedPiece.worn_photo) {
       const filePath = path.join(userUploadsDir(), selectedPiece.worn_photo)
       if (fs.existsSync(filePath)) {
+        // Same reasoning as garmentReferencePlan's WORN_REFERENCE_MAX_PX: geometry survives the
+        // downscale, facial detail does not, and that asymmetry is the whole point.
         const buffer = await sharp(filePath)
-          .resize(768, 768, { fit: 'inside', withoutEnlargement: true })
+          .resize(WORN_REFERENCE_MAX_PX, WORN_REFERENCE_MAX_PX, { fit: 'inside', withoutEnlargement: true })
           .jpeg({ quality: 85 })
           .toBuffer()
         anchorParts.push({
           base64: buffer.toString('base64'),
           mime: 'image/jpeg',
-          label: `${selectedPiece.name} — worn photo showing drape, fit, and neckline on a body`,
+          label: `${selectedPiece.name} — worn photo, intentionally low resolution: read it only for drape, fit, and neckline on a body. Do not use this photo's face, hair, expression, or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
         })
       }
     }

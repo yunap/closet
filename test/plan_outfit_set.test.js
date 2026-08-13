@@ -6677,3 +6677,30 @@ test('register elevated imposes no per-look floor; dressy does', async () => {
   assert.equal(dressy.accepted.length, 0, 'dressy must demand a dressy-or-better main piece')
   assert.match(dressy.failures[0].reasons.join(' '), /register floor/i)
 })
+
+test('the limited photo slots go to the garments hardest to describe in words', async () => {
+  const { visuallyPrioritizedPieces } = await import('../styling-engine/attributes.js')
+  const complex = { id: 1, name: 'loud print blouse', photo: 'a.jpg', pattern_complexity: 'loud' }
+  const plain = { id: 2, name: 'plain tee', photo: 'b.jpg' }
+  const plain2 = { id: 3, name: 'plain shoe', photo: 'c.jpg' }
+  const noPhoto = { id: 4, name: 'unphotographed scarf', pattern_complexity: 'loud' }
+
+  // Array order used to decide, so a loud print could be rendered from prose while a plain shoe
+  // kept its reference — the inverse of the visual-grounding principle.
+  assert.deepEqual(
+    visuallyPrioritizedPieces([plain, plain2, complex], 2).map(p => p.id),
+    [1, 2],
+  )
+  // A piece with no usable photo contributes no reference, so it must not consume a slot even
+  // though it is visually complex.
+  assert.deepEqual(
+    visuallyPrioritizedPieces([noPhoto, plain, complex], 2).map(p => p.id),
+    [1, 2],
+  )
+  // Stable within a tier: equally-ranked pieces keep their original order.
+  assert.deepEqual(
+    visuallyPrioritizedPieces([plain, plain2], 2).map(p => p.id),
+    [2, 3],
+  )
+  assert.equal(visuallyPrioritizedPieces([], 5).length, 0)
+})

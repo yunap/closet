@@ -68,7 +68,12 @@ test('Style profile distinguishes reaction sources from related records', () => 
 
 test('Style profile requires a free preview before explicitly authorizing synthesis', () => {
   const content = fs.readFileSync(path.join(__dirname, '../src/views/StylistSettings.jsx'), 'utf8')
-  assert.ok(content.includes('Preview synthesis cost'))
+  // "Preview synthesis cost" / "synthesis" were renamed to "See cost & review" / "Review for a
+  // possible lesson" — she doesn't need to know the backend calls this synthesis — but the
+  // underlying safety property (a free preview happens before any paid call is authorized) is
+  // unchanged and still enforced server-side by requiring authorize:true.
+  assert.ok(content.includes('See cost & review'))
+  assert.ok(content.includes('Review for a possible lesson'))
   assert.ok(content.includes('Preview calls: {synthesisPreview.providerCalls}'))
   assert.ok(content.includes('Authorize one model call'))
   assert.match(content, /authorize:\s*true/)
@@ -81,15 +86,22 @@ test('synthesis review always shows the proposed lesson when no owner edit exist
   assert.doesNotMatch(content, /draft\.edited_text \?\? draft\.proposed_text/)
 })
 
-test('synthesis review exposes per-card dirty state, editable boundaries, and processed evidence', () => {
+test('a pending draft asks a plain question and only reveals editing behind "The wording"', () => {
   const content = fs.readFileSync(path.join(__dirname, '../src/views/StylistSettings.jsx'), 'utf8')
   // A pending draft is still authorable — she may reword what the stylist proposed before accepting
-  // it. What she cannot do, here or on an accepted lesson, is adjust where it applies: those
-  // conditions are ANDed, so removing one widens delivery instead of narrowing it.
-  assert.ok(content.includes('const draftDirty = textDirty || boundaryDirty'))
-  assert.ok(content.includes('synthesisBoundaryEdits[draft.id] ?? effectiveSynthesisBoundary(draft)'))
+  // it — but that's reached through "Not quite" -> "The wording", not an always-visible textarea.
+  // What she cannot do, here or on an accepted lesson, is adjust where it applies: those conditions
+  // are ANDed, so removing one widens delivery instead of narrowing it — there is no boundary
+  // textarea and no applicability editor anywhere in this file.
   assert.ok(!content.includes('applicabilityIsUsable'))
-  assert.ok(content.includes('Would be used when:'))
+  assert.ok(!content.includes('effectiveSynthesisBoundary'))
+  // "Boundary" still legitimately labels a raw field on the separate product-issue list further
+  // down this file (a different surface, out of scope here) — so the real check that the pending
+  // lesson card itself never shows it lives in the render test (styleProfileRenders.test.js),
+  // which reads actual DOM text rather than grepping the whole file for a common word.
+  assert.ok(!content.includes('Would be used when:'))
+  assert.ok(content.includes("triage === 'wording'"))
+  assert.ok(content.includes("triage === 'chips'"))
   assert.ok(content.includes('pendingSynthesisDrafts.length > 0'))
   assert.ok(content.includes('actionableContextualFeedback'))
   assert.ok(content.includes('row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id)'))

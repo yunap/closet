@@ -11540,16 +11540,6 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   border-bottom: 0;
 }
 
-.style-memory-row-heading,
-.style-memory-context-layout {
-  display: flex;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.style-memory-row-heading {
-  align-items: baseline;
-}
 
 .style-memory-kind {
   color: var(--accent);
@@ -11691,12 +11681,6 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   field-sizing: content;
   min-height: 54px;
   resize: vertical;
-}
-
-.style-memory-date {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-size: var(--type-caption);
 }
 
 .style-memory-editor,
@@ -12045,22 +12029,11 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   font-size: var(--type-caption);
 }
 
-.style-memory-copy {
-  min-width: 0;
-  flex: 1 1 360px;
-}
-
 .style-memory-context-title {
   margin-top: 4px;
   color: var(--text);
   font-size: 13px;
   font-weight: 650;
-}
-
-.style-memory-label {
-  margin-top: 2px;
-  color: var(--text-muted);
-  font-size: var(--type-meta);
 }
 
 .style-memory-note {
@@ -12141,6 +12114,31 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.product-finding-evidence-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-finding-evidence-list li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.product-finding-evidence-list strong {
+  color: var(--text);
+}
+
+.product-finding-evidence-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
 }
 
 .style-memory-context-actions {
@@ -12316,6 +12314,85 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   padding-left: 18px;
   display: grid;
   gap: 4px;
+}
+
+/* A draft still waiting on a decision — same card shell as an accepted lesson, but warmer, since
+   nothing here is in effect yet and the whole point is that it's still just a question. */
+.memory-card-pending {
+  grid-template-columns: 1fr;
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+.memory-card-pending-photos {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.memory-card-pending-prompt {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  font-weight: 650;
+}
+
+.memory-card-pending-wording,
+.memory-card-pending-triage {
+  margin-top: 12px;
+}
+
+.memory-card-pending-triage-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  font-weight: 650;
+}
+
+.memory-card-pending-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.memory-card-pending-later {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  cursor: pointer;
+  padding: 6px 4px;
+}
+
+.memory-card-pending-later:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.feedback-synthesis-selected-count {
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  font-weight: 650;
+}
+
+/* A raw feedback row, same card shell as a lesson but with more possible actions (open source
+   chat/board/garment, use-for-lesson, remove) than a lesson ever has — so its actions live as
+   their own full-width row below the body rather than squeezed into one auto-width column. */
+.memory-card-feedback {
+  grid-template-columns: auto 1fr;
+}
+
+.memory-card-feedback-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
 }
 
 .memory-told {
@@ -12900,4 +12977,9 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 
 .synthesis-nonresult-remove:hover {
   color: var(--accent);
+}
+
+.memory-card-count {
+  color: var(--text-muted);
+  font-weight: 400;
 }
