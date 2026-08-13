@@ -1820,7 +1820,35 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
                 <details className="style-memory-technical">
                   <summary>Evidence &amp; source ({evidence.length})</summary>
                   {evidence.length > 0 ? (
-                    <ul>{evidence.map(item => <li key={item.feedback_id}>#{item.feedback_id} · {item.context?.name || item.label || item.feedback_type}</li>)}</ul>
+                    <ul className="product-finding-evidence-list">
+                      {evidence.map(item => {
+                        // The snapshot already carries a real thread id and board image at the
+                        // time the finding was created — resolve them to something clickable
+                        // instead of a bare #id, the same way the raw feedback rows above do.
+                        const board = item.image_url ? feedbackBoards.find(b => b.image_url === item.image_url) : null
+                        const subjectPieceId = item.subject?.pieceId || null
+                        return (
+                          <li key={item.feedback_id}>
+                            <div>
+                              <strong>{item.subject?.name || item.context?.name || item.label || item.feedback_type}</strong>
+                              {item.explicit_reason && <span> — &ldquo;{item.explicit_reason}&rdquo;</span>}
+                            </div>
+                            <div className="product-finding-evidence-links">
+                              {item.thread_id && onGoToThread && (
+                                <button type="button" className="foundation-layer-link" onClick={() => onGoToThread(item.thread_id)}>Open source chat</button>
+                              )}
+                              {board && (
+                                <button type="button" className="foundation-layer-link" onClick={() => navigate(`/visual-lab?section=profile&boardId=${board.id}`)}>Open board</button>
+                              )}
+                              {subjectPieceId && (
+                                <button type="button" className="foundation-layer-link" onClick={() => navigate(`/wardrobe?pieceId=${subjectPieceId}`)}>Open garment</button>
+                              )}
+                              {!(item.thread_id && onGoToThread) && !board && !subjectPieceId && <span>No source is available for this one.</span>}
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ul>
                   ) : <p>No source snapshot is available.</p>}
                 </details>
                 <div className="product-finding-resolution">

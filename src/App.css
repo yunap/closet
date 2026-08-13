@@ -12116,6 +12116,31 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   white-space: pre-wrap;
 }
 
+.product-finding-evidence-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-finding-evidence-list li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.product-finding-evidence-list strong {
+  color: var(--text);
+}
+
+.product-finding-evidence-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 .style-memory-context-actions {
   display: flex;
   flex-wrap: wrap;

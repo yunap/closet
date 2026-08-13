@@ -85,7 +85,20 @@ const ROUTES = {
     { id: 6, disposition: 'general_styling_failure', status: 'draft', title: 'Wrong silhouette', proposed_text: 'The stylist chose an overly casual silhouette.', source_feedback_ids: '[4]' },
   ],
   '/api/owner-constraints': [{ id: 1, status: 'active', selector_type: 'footwear', selector_values: ['boots'], context_dimension: 'season', context_values: ['summer'], reason: 'Not in summer.' }],
-  '/api/product-quality-findings': [{ id: 1, status: 'open', title: 'Athletic shorts', description: 'register', source_feedback_ids: '[4]', evidence_snapshot: '[]' }],
+  '/api/product-quality-findings': [{
+    id: 1, status: 'open', title: 'General: Athletic shorts are not appropriate for an outdoor daytime social occasion', description: 'register', source_feedback_ids: '[408]',
+    // Shape matches lib/productQualityFindings.js's productFindingEvidenceSnapshot exactly — a
+    // real thread id, no board image (this was a text-only outfit, not a rendered board), and the
+    // subject piece with its photo carried in `pieces`.
+    evidence_snapshot: JSON.stringify([{
+      feedback_id: 408, feedback_type: 'wrong_item_read', target_type: 'whole_wardrobe_outfit',
+      label: 'Wrong choice: green utility pocket shorts', image_url: '', thread_id: 'thread_1781752711481',
+      context: { type: 'outfit', outfitLabel: 'Soft Structure Contrast: standard wear', occasion: 'casual' },
+      subject: { type: 'garment', pieceId: 247, name: 'green utility pocket shorts', category: 'bottom' },
+      explicit_reason: 'athletic shorts are not a good choice for an outdoor daytime social',
+      pieces: [{ id: 247, name: 'green utility pocket shorts', photo: 'pieces/247.jpg' }],
+    }]),
+  }],
   '/api/pieces/occasion-exclusions': [{ pieceId: 92, name: 'midi skirt', category: 'bottom', photo: null, occasion: 'hiking', changedAt: '2026-08-01' }],
   '/api/settings/constitution': { layers: [{ layer: 'body_contract', body: 'Layer 1 — Body & Comfort:\n- comfortable', updatedAt: '2026-07-18 10:00:00', isDefault: false }] },
 }
@@ -122,6 +135,9 @@ fs.writeFileSync(bundlePath, built.outputFiles[0].text)
 const StylistSettings = (await import(bundlePath)).default
 process.on('exit', () => { try { fs.unlinkSync(bundlePath) } catch {} })
 
+const onGoToThreadCalls = { ids: [] }
+onGoToThreadCalls.record = id => onGoToThreadCalls.ids.push(id)
+
 // A client render, not renderToStaticMarkup: effects must run and the fetches must resolve, or the
 // lists stay empty and the very callbacks that broke are never entered.
 // keepMounted leaves the container attached (and returns { container, click, unmount }) so a test
@@ -137,7 +153,7 @@ async function renderProfile({ tab = null, keepMounted = false } = {}) {
     root.render(React.createElement(
       MemoryRouter,
       { initialEntries: ['/visual-lab?section=profile'] },
-      React.createElement(StylistSettings, { mode: 'style', embedded: true }),
+      React.createElement(StylistSettings, { mode: 'style', embedded: true, onGoToThread: onGoToThreadCalls.record }),
     ))
   })
   // let the load() chain settle
@@ -240,6 +256,30 @@ test('"Not quite" reveals reason chips, and only "The wording" reveals a textare
     assert.ok(openedWording, '"The wording" chip not found')
     assert.equal(container.querySelectorAll('.memory-card-pending textarea').length, 1, 'choosing "The wording" did not reveal exactly one textarea')
     assert.match(container.textContent, /Looks better — remember this/)
+  } finally {
+    unmount()
+  }
+})
+
+test('a product-issue finding links its evidence to the source chat and garment, not a bare id', async () => {
+  onGoToThreadCalls.ids.length = 0
+  const { container, click, unmount } = await renderProfile({ tab: 'Review feedback', keepMounted: true })
+  try {
+    const summary = [...container.querySelectorAll('.style-memory-technical summary')].find(el => el.textContent.includes('Evidence & source'))
+    assert.ok(summary, 'Evidence & source disclosure not found')
+    await click(b => b === summary)
+    const text = container.textContent
+    // Her actual words, not a bare feedback id.
+    assert.match(text, /green utility pocket shorts/)
+    assert.match(text, /athletic shorts are not a good choice for an outdoor daytime social/)
+    assert.doesNotMatch(text, /#408/, 'still showing the bare feedback id instead of a real link')
+    const clickedChat = await click(b => b.closest('.product-finding-evidence-links') && b.textContent.trim() === 'Open source chat')
+    assert.ok(clickedChat, '"Open source chat" control missing even though the fixture carries a real thread_id')
+    assert.deepEqual(onGoToThreadCalls.ids, ['thread_1781752711481'], 'clicking "Open source chat" did not call onGoToThread with the evidence\'s real thread id')
+    const openGarment = [...container.querySelectorAll('.product-finding-evidence-links button')].find(b => b.textContent.trim() === 'Open garment')
+    assert.ok(openGarment, '"Open garment" control missing even though the fixture carries a subject pieceId')
+    // No board image in this fixture (a text-only outfit) — "Open board" must not appear for it.
+    assert.ok(!container.querySelector('.product-finding-evidence-links')?.textContent.includes('Open board'), '"Open board" rendered despite no image_url in the evidence')
   } finally {
     unmount()
   }
