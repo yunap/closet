@@ -19,7 +19,7 @@ outfit feedback is still in development.
 | Record versioned provisional evidence for **Wrong choice for this outfit** | **complete** | one negative reaction only |
 | Owner-authorized synthesis and review lifecycle | **pilot working** | consumes reasoned **Wrong choice for this outfit** evidence and reasoned **Almost right** / **Not for me** evidence (an owner comment attached to the verdict) |
 | Route accepted lessons only to applicable styling requests | **pilot complete** | source-validated structured applicability is owner-reviewable/editable and matched before the eight-line cap; boundary prose remains explanation only |
-| Learn formula, silhouette, mood or context lessons from positive / `Almost` reactions | **pilot paused** | removing literal garment reinforcement did not remove formula reinforcement; positive reactions remain provenance while a non-reinforcing destination is evaluated. Unrelated to the row above: a *reasoned* Almost/Not-for-me verdict is a diagnostic complaint, not formula reinforcement, and is now eligible |
+| Learn formula, silhouette, mood or context lessons from positive / `Almost` reactions | **closed, 2026-08-14 — not proceeding** | no synthesis or scoring route was found that would not reinforce sameness, contradicting the app's stated purpose (§ "Product direction"); positive reactions remain organizational record for Lookbook inspiration only, with no active or planned path to prompt/scoring authority. Unrelated to this row: a *reasoned* Almost/Not-for-me verdict is a diagnostic complaint, not formula reinforcement, and is eligible under item 8 |
 | Apply approved garment-fact corrections through an appropriate garment-truth workflow | **backend complete for the bounded routes** | field-specific generated-image reports can propose reviewable metadata changes; physical compatibility failures are routed to product quality instead of garment truth |
 | Product workflow for general styling/model mistakes | **backend complete; review UI deferred** | accepted findings and explicitly confirmed no-cost reports enter a durable evidence queue, never personal memory |
 | Route explicit learned constraints before unsuitable garments consume roster capacity | **backend complete; review UI deferred** | confirmed piece/category/material × occasion/activity/season/weather constraints gate per request or capsule slot and can be retired |
@@ -583,7 +583,7 @@ that needs a model of evidence first. Phases 1+ depend on decisions that phase 0
 | ~~7~~ | Verify calibration-image favourite semantics and preserve the working reference rotation (§1f) | **closed — priority is qualified by `kind`; no behavior change** |
 | 8 | **Wrong choice for this outfit** synthesis pilot: derive owner-reviewed advisory conclusions from explicit, versioned reactions | **pilot working — narrow reaction coverage; non-personal destinations remain incomplete** |
 | 9 | Select accepted personal/contextual lessons by applicable garment, occasion/activity, season/weather and declared boundary | **shipped for the pilot — routing and owner-facing structured applicability control complete** |
-| 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **formula/silhouette reinforcement remains paused — see below for the reasoned Almost/Not-for-me route shipped 2026-08-13, which is not that** |
+| 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **closed 2026-08-14, not proceeding for formula/silhouette reinforcement — see below for the reasoned Almost/Not-for-me route shipped 2026-08-13, which is not that** |
 | 11 | Complete approved destination workflows for garment facts and general product-quality findings | **backend complete for the approved scope — wrong-length renderer/retag review is preserved; accepted synthesis findings and explicitly confirmed no-cost reports enter a provenance-linked queue with durable evidence, resolution destination and undo; review UI is deferred to item 13** |
 | 12 | Route learned guidance by relevant garment/context and owner-confirmed constraint-shaped rules into structured, slot-aware eligibility | **shipped for prompt relevance and confirmed firm-rule enforcement; the optional local acknowledgement fast path remains follow-up work** |
 | 13 | Convene the UI/UX panel and refine the memory/review surfaces | **panel complete; owner-ratified page restructuring is in progress** |
@@ -597,9 +597,15 @@ pre-route simple explicit prohibitions to a brief local acknowledgement so they 
 stylist/tool loop entirely. That optimization is not required for correct routing and ambiguous
 conversation must continue through ordinary chat.
 
-`Almost right` remains a deliberate follow-up under item 10 **for formula/silhouette
-preservation** — that route stays paused, and no active formula-preservation route should be
-restored until that meaning and its non-reinforcing destination are specified.
+**Formula/silhouette preservation from positive or `Almost` feedback is closed, not merely
+paused, as of 2026-08-14.** No route was found that would let the app learn "what worked" without
+reinforcing the same literal garments and formulas — every version tried collapsed back into the
+sameness the app's own purpose (§ "Product direction: learn the logic, diversify the closet") exists
+to prevent. Positive feedback (`signature`, `works`, a reasonless `almost`) remains exactly what it
+is today: organizational record, useful as Lookbook inspiration, with no active or planned path into
+prompt authority or scoring. This is a decision, not an open question — no formula-preservation
+route should be built from positive/reasonless-`almost` evidence without a materially different
+proposal that the owner has separately reviewed and accepted, not a resumption of this one.
 
 **Reasoned Almost/Not-for-me route shipped 2026-08-13 — distinct from the paused item.** The item
 10 pause is specifically about *preserving a positive outfit's formula/silhouette/mood/context* —
@@ -977,8 +983,11 @@ The overall user-feedback project may be called complete only when all of the fo
    reader and visible undo or retirement path.
 2. Provisional **Wrong choice for this outfit** evidence remains narrow, and accepted lessons reach
    only styling requests that match their declared applicability.
-3. Positive and `Almost` feedback can produce owner-reviewed transferable lessons about formula,
-   silhouette, mood and context without giving the original garments or pairing selection weight.
+3. Positive and reasonless `Almost` feedback stays organizational Lookbook-inspiration record, per
+   the 2026-08-14 closure (§4, point 1) — this criterion is satisfied by that decision, not by
+   building a synthesis route, since no such route was found that would not give the original
+   garments or pairing selection weight. A *reasoned* Almost/Not-for-me verdict is the separate,
+   already-eligible diagnostic route under item 8 and is not what this criterion governs.
 4. Garment-fact conclusions have an explicit owner-approved route into garment truth, while general
    model mistakes are visibly kept out of personal memory and handed off—or deliberately retained
    as provenance—without pretending they influence styling.
@@ -996,12 +1005,14 @@ this definition of done.
 Decisions about the plan. Questions about *what exists* live in the map's `[owner check wanted]`
 markers.
 
-1. **Positive board learning is deliberately paused.** Today, **Works**, **Signature** and
-   **Almost** preserve visible and organizational provenance, but they do not enter broad styling
-   prompts, scores or synthesis. A future route may teach owner-reviewed transferable outfit logic
-   through scoped formula/silhouette/direction/context evidence, but only after it demonstrates
-   that it will not reinforce the original garments or pairing. It must never promote original
-   garment IDs, pairs, or a garment's general eligibility for a capsule.
+1. **Positive board learning is closed, not paused, as of 2026-08-14.** **Works**, **Signature** and
+   **Almost** preserve visible and organizational provenance — useful as Lookbook inspiration — but
+   they do not enter broad styling prompts, scores or synthesis, and no route to do so is planned.
+   Every formula/silhouette/direction/context route tried reinforced the original garments or
+   pairing regardless of how the literal-garment reward was removed, contradicting the app's stated
+   purpose. It must never promote original garment IDs, pairs, or a garment's general eligibility for
+   a capsule; that guardrail now has no route to guard against, by decision rather than by absence of
+   a good idea.
 2. **No automatic retag threshold is planned for relational feedback.** Repetition does not turn
    an outfit judgment into a garment fact. Existing field-specific wrong-length corrections remain
    the only automatic retag-suggestion path.
