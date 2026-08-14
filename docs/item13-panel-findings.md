@@ -49,10 +49,17 @@ authority.
 
 **Consequence reassurance shipped 2026-08-13** — see `feedback-routing-proposal.md` §1e for the
 exact copy. Section-level for "Always avoid" (one sentence, not per row), per-row for "Specific
-pieces" (owners are more likely to wonder about one specific garment). The AND/OR-explicit editor
-and the free matching/non-matching example remain unshipped — no editor exists yet for either hard-
-limit type beyond viewing and retiring rows, so there is nothing to make explicit or demonstrate
-against yet.
+pieces" (owners are more likely to wonder about one specific garment).
+
+**The AND/OR-explicit editor and matching/non-matching example are not being built — owner ruling,
+built and removed before this recommendation was even written down.** This is not the "unshipped,
+still to do" item the panel's wording implies; it was tried and rejected for the same reason the
+lesson-applicability structured editor was (§ "Editing applicability without exposing it as a
+schema" in `feedback-routing-proposal.md`): it made the owner construct conditional logic to style
+her own clothes rather than have the app explain itself in a sentence. Both hard-limit types
+(`owner_constraints` "Always avoid", `occasion_exclusions` "Specific pieces") remain view-and-retire
+only, by decision, matching the read-only ruling already in force for guidance and lessons. Do not
+re-propose a structured hard-limit editor without new owner direction.
 
 ### 4. Provisional reactions stay visible only while actionable
 
