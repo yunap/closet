@@ -997,13 +997,18 @@ export function getSavedBoardRendererMemory(pieceIds = [], limit = 24) {
       if (feedbackType === 'wrong_garment_details' && names.length) {
         corrections.add(`Preserve the exact construction, color, print, neckline, sleeves, and other visible details of: ${names.join(', ')}.`)
       }
-      if (feedbackType === 'wrong_length' && names.length) {
+      if (feedbackType === 'wrong_length') {
+        // length_correction names exactly one garment — the one this report is actually about. A
+        // malformed/legacy row with no piece_id carries no attribution at all, so it must not fall
+        // back to blaming every other garment that merely shares this board (that previously misled
+        // a garment that was never reported wrong, e.g. shorts blamed for a report about the top
+        // worn with them, just because both were in the same outfit's `board.pieces` list).
         const lengthCorrection = feedbackPayload.length_correction
         const issue = lengthIssueLabels[lengthCorrection?.issue]
-        if (issue && Number(lengthCorrection?.piece_id)) {
-          corrections.add(`${lengthCorrection.piece_name || `Garment ${lengthCorrection.piece_id}`}: prior render had ${issue}; match the saved garment reference length.`)
-        } else {
-          corrections.add(`Match the saved reference lengths for: ${names.join(', ')}; a prior generated board rendered a garment at the wrong length.`)
+        const correctedPieceId = Number(lengthCorrection?.piece_id)
+        const correctedPieceIsRequested = requestedIds.size === 0 || requestedIds.has(correctedPieceId)
+        if (issue && correctedPieceId && correctedPieceIsRequested) {
+          corrections.add(`${lengthCorrection.piece_name || `Garment ${correctedPieceId}`}: prior render had ${issue}; match the saved garment reference length.`)
         }
       }
     }

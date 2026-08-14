@@ -68,14 +68,17 @@ test('Style profile distinguishes reaction sources from related records', () => 
 
 test('Style profile requires a free preview before explicitly authorizing synthesis', () => {
   const content = fs.readFileSync(path.join(__dirname, '../src/views/StylistSettings.jsx'), 'utf8')
-  // "Preview synthesis cost" / "synthesis" were renamed to "See cost & review" / "Review for a
-  // possible lesson" — she doesn't need to know the backend calls this synthesis — but the
-  // underlying safety property (a free preview happens before any paid call is authorized) is
-  // unchanged and still enforced server-side by requiring authorize:true.
-  assert.ok(content.includes('See cost & review'))
-  assert.ok(content.includes('Review for a possible lesson'))
-  assert.ok(content.includes('Preview calls: {synthesisPreview.providerCalls}'))
-  assert.ok(content.includes('Authorize one model call'))
+  // "Preview synthesis cost" / "synthesis" were renamed to "Select reactions to review" / "Check
+  // cost & continue" / "Look for a pattern" — she doesn't need to know the backend calls this
+  // synthesis, or what a "model call" is — but the underlying safety property (a free preview
+  // happens before any paid call is authorized) is unchanged and still enforced server-side by
+  // requiring authorize:true. Technical detail (provider, model, token counts, preview-call count)
+  // moved behind a collapsed "How is this cost calculated?" rather than sitting in the main flow.
+  assert.ok(content.includes('Select reactions to review'))
+  assert.ok(content.includes('Check cost & continue'))
+  assert.ok(content.includes('How is this cost calculated?'))
+  assert.ok(content.includes('Preview calls so far: {synthesisPreview.providerCalls}'))
+  assert.ok(content.includes('Look for a pattern'))
   assert.match(content, /authorize:\s*true/)
   assert.ok(content.includes('Nothing was accepted automatically.'))
 })
@@ -102,9 +105,17 @@ test('a pending draft asks a plain question and only reveals editing behind "The
   assert.ok(!content.includes('Would be used when:'))
   assert.ok(content.includes("triage === 'wording'"))
   assert.ok(content.includes("triage === 'chips'"))
-  assert.ok(content.includes('pendingSynthesisDrafts.length > 0'))
+  // pendingSynthesisDrafts splits into inline (from the click just made, shown inside the panel
+  // itself) and older (from a previous session, shown in the section below) — same card either way.
+  assert.ok(content.includes('inlineSynthesisDrafts.length > 0'))
+  assert.ok(content.includes('olderPendingSynthesisDrafts.length > 0'))
   assert.ok(content.includes('actionableContextualFeedback'))
   assert.ok(content.includes('row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id)'))
+  // A rejected draft must not permanently lock its source feedback out of "Needs your review" —
+  // otherwise editing the underlying reason and retrying synthesis is impossible; the row would
+  // stay hidden forever with no path back except "Reconsider," which reactivates stale draft text
+  // instead of re-running synthesis against the edit.
+  assert.ok(content.includes("draft.status !== 'rejected'"))
   assert.ok(content.includes('actionableContextualFeedback.length > 0 && <div className="style-memory-toolbar">'))
   assert.ok(content.includes('No provisional outfit reactions are currently available for lesson synthesis.'))
 })

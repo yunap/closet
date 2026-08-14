@@ -86,6 +86,8 @@ test('synthesis preview compacts evidence without copying complete garment paylo
     fit: 'drapes',
     fabric: '',
     readsAs: '',
+    silhouette: '',
+    length: '',
   }])
   assert.equal(JSON.stringify(compact).includes('large field intentionally omitted'), false)
 })
@@ -129,9 +131,9 @@ test('evidence season resolves the composer\'s unresolved "current season" place
   assert.equal(compactSynthesisEvidenceRow(autumnRow).context.season, 'fall')
 })
 
-test('preview is deterministic, bounded, and estimates cost inputs without a provider call', () => {
-  const first = buildFeedbackSynthesisPreview([row(404), row(405, '')], { provider: 'openai', model: 'test-model' })
-  const second = buildFeedbackSynthesisPreview([row(404), row(405, '')], { provider: 'openai', model: 'test-model' })
+test('preview is deterministic, bounded, and estimates cost inputs without a provider call', async () => {
+  const first = await buildFeedbackSynthesisPreview([row(404), row(405, '')], { provider: 'openai', model: 'test-model' })
+  const second = await buildFeedbackSynthesisPreview([row(404), row(405, '')], { provider: 'openai', model: 'test-model' })
   assert.equal(first.inputHash, second.inputHash)
   assert.deepEqual(first.feedbackIds, [404])
   assert.ok(first.estimatedInputTokens > 0)
@@ -146,8 +148,8 @@ test('preview is deterministic, bounded, and estimates cost inputs without a pro
   assert.ok(first.estimatedInputTokens > Buffer.byteLength(first.compactInput), 'the bound includes more than user evidence')
 })
 
-test('preview bounds owner prose as well as the number of evidence rows', () => {
-  const preview = buildFeedbackSynthesisPreview([row(404, 'x'.repeat(4000))], { provider: 'openai', model: 'test-model' })
+test('preview bounds owner prose as well as the number of evidence rows', async () => {
+  const preview = await buildFeedbackSynthesisPreview([row(404, 'x'.repeat(4000))], { provider: 'openai', model: 'test-model' })
   assert.equal(preview.evidence[0].ownerReason.length, 500)
   assert.ok(preview.compactInput.length < 2400)
 })
@@ -161,8 +163,8 @@ test('positive synthesis compacts transferable outfit logic without literal garm
   assert.doesNotMatch(JSON.stringify(compact), /999|Literal garment/)
 })
 
-test('positive and Almost structured logic remain compactable but are excluded from paid preview while reinforcement is unresolved', () => {
-  const preview = buildFeedbackSynthesisPreview([
+test('positive and Almost structured logic remain compactable but are excluded from paid preview while reinforcement is unresolved', async () => {
+  const preview = await buildFeedbackSynthesisPreview([
     positiveRow(501, 'works'),
     positiveRow(502, 'almost'),
     { id: 503, feedback_type: 'works', payload: '{}' },
@@ -180,8 +182,8 @@ test('legacy positive board compacts generated clues without garment identity', 
   assert.doesNotMatch(JSON.stringify(compact), /pieceId|name|Literal/)
 })
 
-test('legacy positive board is excluded from paid preview while positive learning is paused', () => {
-  const preview = buildFeedbackSynthesisPreview([legacyPositiveRow(504)], { provider: 'openai', model: 'test-model' })
+test('legacy positive board is excluded from paid preview while positive learning is paused', async () => {
+  const preview = await buildFeedbackSynthesisPreview([legacyPositiveRow(504)], { provider: 'openai', model: 'test-model' })
   assert.deepEqual(preview.feedbackIds, [])
   assert.deepEqual(preview.evidence, [])
 })
@@ -208,13 +210,13 @@ test('legacy generated explanation may support an exact context boundary without
 
 test('synthesis contract separates general model failures from personal memory', () => {
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /For negative evidence, generic physical, practical, or styling knowledge is general_styling_failure/)
-  assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /do not derive a transferable lesson/)
+  assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /Do not derive a cause that is neither stated by the owner nor visible in a photo/)
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /Do not turn the model's own styling mistake into an owner preference/)
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /absorbent canvas footwear selected for credible wet exposure/)
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /fitted narrow-sleeved layer proposed over a long voluminous sleeve/)
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /physical incompatibility between two otherwise-correct garments is not a garment fact/)
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /Never copy, reward or recommend the literal garments/)
-  assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /a lone Almost reaction cannot become a positive rule/)
+  assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /reasonless "almost".*cannot become a positive rule/)
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /legacy_positive_board.*lower-confidence clues/)
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /owner-specific, non-obvious choice/)
   assert.match(FEEDBACK_SYNTHESIS_SYSTEM, /a relaxed top with a structured bottom looks cohesive/)

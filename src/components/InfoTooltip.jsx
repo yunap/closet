@@ -19,6 +19,10 @@ export default function InfoTooltip({
   size = 'md',
   width = 260,
   className = '',
+  // A bare "ⓘ" is easy to miss when the popover behind it is substantial (several short
+  // sections, not one line) — pass triggerText to render a labeled pill instead, so the
+  // affordance itself hints there's real content behind it.
+  triggerText = '',
 }) {
   const isControlled = openProp !== undefined
   const [internalOpen, setInternalOpen] = useState(false)
@@ -62,16 +66,17 @@ export default function InfoTooltip({
       <button
         ref={buttonRef}
         type="button"
-        className={`info-tooltip-trigger size-${size} ${open ? 'active' : ''}`}
+        className={`info-tooltip-trigger size-${size} ${triggerText ? 'has-text' : ''} ${open ? 'active' : ''}`}
         onClick={toggle}
         aria-expanded={open}
         aria-label={label}
         aria-controls={idRef.current}
       >
-        <svg viewBox="0 0 16 16" width="70%" height="70%" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width={triggerText ? 14 : '70%'} height={triggerText ? 14 : '70%'} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <circle cx="8" cy="4.9" r="1.05" fill="currentColor" />
           <path d="M8 7.3V12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
         </svg>
+        {triggerText && <span className="info-tooltip-trigger-text">{triggerText}</span>}
       </button>
       {open && (
         <div

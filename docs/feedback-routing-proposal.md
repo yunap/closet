@@ -17,9 +17,9 @@ outfit feedback is still in development.
 |---|---|---|
 | Remove duplicate, dead and misrouted feedback authority | **complete** | Phases 0–2 cleanup |
 | Record versioned provisional evidence for **Wrong choice for this outfit** | **complete** | one negative reaction only |
-| Owner-authorized synthesis and review lifecycle | **pilot working** | consumes only reasoned **Wrong choice for this outfit** evidence |
+| Owner-authorized synthesis and review lifecycle | **pilot working** | consumes reasoned **Wrong choice for this outfit** evidence and reasoned **Almost right** / **Not for me** evidence (an owner comment attached to the verdict) |
 | Route accepted lessons only to applicable styling requests | **pilot complete** | source-validated structured applicability is owner-reviewable/editable and matched before the eight-line cap; boundary prose remains explanation only |
-| Learn formula, silhouette, mood or context lessons from positive / `Almost` reactions | **pilot paused** | removing literal garment reinforcement did not remove formula reinforcement; positive reactions remain provenance while a non-reinforcing destination is evaluated |
+| Learn formula, silhouette, mood or context lessons from positive / `Almost` reactions | **pilot paused** | removing literal garment reinforcement did not remove formula reinforcement; positive reactions remain provenance while a non-reinforcing destination is evaluated. Unrelated to the row above: a *reasoned* Almost/Not-for-me verdict is a diagnostic complaint, not formula reinforcement, and is now eligible |
 | Apply approved garment-fact corrections through an appropriate garment-truth workflow | **backend complete for the bounded routes** | field-specific generated-image reports can propose reviewable metadata changes; physical compatibility failures are routed to product quality instead of garment truth |
 | Product workflow for general styling/model mistakes | **backend complete; review UI deferred** | accepted findings and explicitly confirmed no-cost reports enter a durable evidence queue, never personal memory |
 | Route explicit learned constraints before unsuitable garments consume roster capacity | **backend complete; review UI deferred** | confirmed piece/category/material × occasion/activity/season/weather constraints gate per request or capsule slot and can be retired |
@@ -264,6 +264,26 @@ An occasion exclusion is currently both a structured hard gate and a generated p
 `styling_rules_learned`. The UI now removes them coherently, but the prose receipt can still repeat
 the same instruction in a prompt. Keep the structured exclusion as the sole behavioural authority;
 show its provenance in the UI without delivering the generated receipt as a second rule.
+
+**Eligibility reassurance shipped 2026-08-13 — implements item13-panel-findings.md consensus §3.**
+The two hard-limit card types (`owner_constraints` "Always avoid" firm rules, and per-garment
+`occasion_exclusions` "Specific pieces") previously stated only what was blocked — "Not for
+walking," "Not for Home" — with no confirmation that the garment remained available everywhere
+else. Reading the card alone, there was no way to tell "skip this one situation" apart from
+"this piece is basically benched." Soft-guidance cards (accepted synthesized lessons, direct
+chat-captured guidance) were deliberately left alone — nothing is actually excluded there, so
+"still available elsewhere" would introduce a concept those cards don't need.
+
+Shipped copy, in `src/views/StylistSettings.jsx`:
+- **Always avoid** — reassurance moved to the section level, stated once rather than per row:
+  *"Firm rules your stylist always follows. These rules only apply in the situations shown.
+  Everything else stays available."* Rows stay unchanged (`Heels — Not for walking.`).
+- **Specific pieces** — reassurance is per-row, since owners are more likely to wonder whether one
+  specific garment has been globally sidelined: *"Skip for Travel · Still available for other
+  occasions"* for a single exclusion, or *"Skip for Hiking and Home · Still available elsewhere"*
+  for multiple (new `joinWithAnd` helper renders the occasion list as prose instead of a comma
+  list). The section heading also gained one framing sentence: *"Pieces your stylist avoids only in
+  the situations shown. Outside those situations, they stay in the mix."*
 
 ### Owner-confirmed conversion — constraint-shaped learned rules
 
@@ -526,7 +546,7 @@ that needs a model of evidence first. Phases 1+ depend on decisions that phase 0
 | ~~7~~ | Verify calibration-image favourite semantics and preserve the working reference rotation (§1f) | **closed — priority is qualified by `kind`; no behavior change** |
 | 8 | **Wrong choice for this outfit** synthesis pilot: derive owner-reviewed advisory conclusions from explicit, versioned reactions | **pilot working — narrow reaction coverage; non-personal destinations remain incomplete** |
 | 9 | Select accepted personal/contextual lessons by applicable garment, occasion/activity, season/weather and declared boundary | **shipped for the pilot — routing and owner-facing structured applicability control complete** |
-| 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **pilot paused — positive evidence is not currently eligible for paid synthesis** |
+| 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **formula/silhouette reinforcement remains paused — see below for the reasoned Almost/Not-for-me route shipped 2026-08-13, which is not that** |
 | 11 | Complete approved destination workflows for garment facts and general product-quality findings | **backend complete for the approved scope — wrong-length renderer/retag review is preserved; accepted synthesis findings and explicitly confirmed no-cost reports enter a provenance-linked queue with durable evidence, resolution destination and undo; review UI is deferred to item 13** |
 | 12 | Route learned guidance by relevant garment/context and owner-confirmed constraint-shaped rules into structured, slot-aware eligibility | **shipped for prompt relevance and confirmed firm-rule enforcement; the optional local acknowledgement fast path remains follow-up work** |
 | 13 | Convene the UI/UX panel and refine the memory/review surfaces | **panel complete; owner-ratified page restructuring is in progress** |
@@ -540,10 +560,41 @@ pre-route simple explicit prohibitions to a brief local acknowledgement so they 
 stylist/tool loop entirely. That optimization is not required for correct routing and ambiguous
 conversation must continue through ordinary chat.
 
-`Almost right` remains a deliberate follow-up under item 10. Its combination of “preserve
-something” plus a specific diagnostic reason may be more useful than undifferentiated praise, but
-no active formula-preservation route should be restored until that meaning and its non-reinforcing
-destination are specified.
+`Almost right` remains a deliberate follow-up under item 10 **for formula/silhouette
+preservation** — that route stays paused, and no active formula-preservation route should be
+restored until that meaning and its non-reinforcing destination are specified.
+
+**Reasoned Almost/Not-for-me route shipped 2026-08-13 — distinct from the paused item.** The item
+10 pause is specifically about *preserving a positive outfit's formula/silhouette/mood/context* —
+the risk that reinforcing "what worked" quietly reinforces the same literal garments. That risk
+does not apply to an `Almost right` or `Not for me` verdict that carries the owner's own written
+reason (the existing optional-comment field on both verdicts, `feedback_details.owner_comment` /
+`ownerComment`; see the "Bounded first step shipped" note below for where that field comes from).
+A reasoned Almost/Not-for-me reaction is evidentially the same shape as a reasoned **Wrong choice
+for this outfit** complaint — the owner naming a specific problem — just scoped to the whole
+outfit instead of one verified garment, so it now follows the same eligibility rule: a verdict
+becomes selectable for the owner-authorized synthesis preview in Style Profile → Review feedback
+only when it carries a non-empty owner comment; a reasonless `almost`/`not_me` (or any `signature`/
+`works`) stays display-only exactly as before.
+
+Implementation: `lib/feedbackTaxonomy.js` adds `REASONED_OUTFIT_VERDICT_TYPES` (`almost`, `not_me`);
+`routes/crud.js`'s `syncFeedbackFromSavedBoard` mirrors the board's `owner_comment` onto the synced
+`stylist_feedback` receipt; `lib/activeMemory.js` grants `synthesisEligible: true` and a
+`provisional_context` destination only when that comment is present; `lib/feedbackSynthesis.js`
+adds a `reasoned_outfit_verdict` evidence kind (reusing `wrong_choice`'s `outfit.otherPieces` +
+`ownerReason` shape, so existing applicability validation needs no change) and teaches the
+synthesis prompt the new evidence kind's rules — no piece may be named unless the owner's own
+comment identifies it. Positive-verdict (`signature`/`works`) formula evidence and reasonless
+`almost` legacy-snapshot evidence remain excluded from the synthesis preview's evidence filter,
+unchanged.
+
+**Adjacent bug found and fixed in the same pass:** `selectOverallVerdict` (VisualLab.jsx) and
+`toggleCanonicalBoardVerdict` (StylistChat.jsx) reused their verdict-toggle logic for the "Add
+optional reason"/"Edit reason" action. Because that logic treats "call again on an already-active
+verdict" as toggle-off, using "Edit reason" on an already-selected Almost/Not-for-me verdict
+silently cleared the verdict entirely instead of just updating its comment — discovered by
+reproducing it live in the sandbox. Fixed by keeping the verdict active whenever the call is a
+comment commit (`ownerComment !== null`), regardless of prior active state.
 
 **Bounded first step shipped:** `Almost right` and `Not for me` can accompany a later styling call
 the owner already requested, without triggering critique, regeneration or synthesis. A reasonless

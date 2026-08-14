@@ -3719,8 +3719,10 @@ test('feedback synthesis preview is free and the authorized route enforces hash,
   const firstId = Number(insert.run('First reason', evidencePayload(seeded.shoe, 'Canvas absorbs water.')).lastInsertRowid)
   const secondId = Number(insert.run('Second reason', evidencePayload(seeded.boot, 'The heel is tiring for a long walk.')).lastInsertRowid)
   let synthesisCalls = 0
-  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+  let capturedMessages = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = (req) => {
     synthesisCalls += 1
+    capturedMessages = req.messages
     return { results: [{
       source_feedback_ids: [firstId],
       disposition: 'personal_contextual_lesson',
@@ -3771,6 +3773,17 @@ test('feedback synthesis preview is free and the authorized route enforces hash,
   assert.equal(synthesisCalls, 1)
   assert.equal(result.drafts.length, 2)
   assert.ok(result.drafts.some(draft => draft.disposition === 'insufficient_evidence' && JSON.parse(draft.source_feedback_ids).includes(secondId)))
+
+  // Both seeded pieces referenced by this evidence carry real photos, so the actual request sent to
+  // the provider must include them. Anthropic requires `source.type: 'base64'` on every image block
+  // (missing it 400s the whole call) — this caught a real bug where that field was omitted.
+  const imageBlocks = (capturedMessages?.[0]?.content || []).filter(block => block.type === 'image')
+  assert.ok(imageBlocks.length > 0, 'photographed pieces should produce at least one image block')
+  for (const block of imageBlocks) {
+    assert.equal(block.source?.type, 'base64')
+    assert.ok(block.source?.media_type, 'image block is missing media_type')
+    assert.ok(block.source?.data?.length > 0, 'image block is missing base64 data')
+  }
 
   const personal = result.drafts.find(draft => draft.disposition === 'personal_contextual_lesson')
   const invalidPatch = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${personal.id}`, {

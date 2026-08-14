@@ -47,6 +47,13 @@ The editor should show plain structured conditions, make AND/OR semantics explic
 free deterministic matching/non-matching example. Original prose remains evidence, not a second
 authority.
 
+**Consequence reassurance shipped 2026-08-13** — see `feedback-routing-proposal.md` §1e for the
+exact copy. Section-level for "Always avoid" (one sentence, not per row), per-row for "Specific
+pieces" (owners are more likely to wonder about one specific garment). The AND/OR-explicit editor
+and the free matching/non-matching example remain unshipped — no editor exists yet for either hard-
+limit type beyond viewing and retiring rows, so there is nothing to make explicit or demonstrate
+against yet.
+
 ### 4. Provisional reactions stay visible only while actionable
 
 Unprocessed reactions belong in **Review feedback → Teach the stylist** while they can be inspected,
@@ -107,6 +114,14 @@ HISTORY
   Processed source reactions
   Resolved/dismissed findings
 ```
+
+**Implementation refinement, confirmed by the owner 2026-08-13: two tabs, not three.** The shipped
+Style Profile has only **Active guidance** and **Review feedback** as primary tabs
+(`STYLE_PROFILE_TABS` in `src/views/StylistSettings.jsx`). History was demoted to a quiet "View
+past decisions" link at the bottom of Active guidance rather than claiming a third of primary
+navigation — an in-code comment explains it as an archive for recovery, "real, but not equal in
+weight to those two." This wireframe predates that call and was never updated to match; do not read
+the missing History tab as an unfinished item.
 
 Cards default to readable statements, consequence, scope, and undo. Textareas and raw applicability
 forms appear only after **Edit**. Accepted lessons remain compact until opened in a focused editor.

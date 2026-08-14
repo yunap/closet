@@ -1043,6 +1043,16 @@ img { display: block; max-width: 100%; }
   font-size: var(--type-caption);
 }
 
+.info-tooltip-trigger.has-text {
+  width: auto;
+  height: auto;
+  padding: 5px 10px 5px 8px;
+  gap: 5px;
+  border-radius: 999px;
+  font-size: var(--type-caption);
+  font-weight: 600;
+}
+
 .info-tooltip-trigger:hover,
 .info-tooltip-trigger.active {
   color: var(--accent);
@@ -1093,6 +1103,144 @@ img { display: block; max-width: 100%; }
 .info-tooltip-popover strong {
   font-weight: 650;
   color: var(--text);
+}
+
+/* Dense enough (four short sections, not one line) that it needs its own header row and
+   breathing room — the shared .info-tooltip-popover padding/font-size stay, this only adds
+   structure inside it. */
+.guidance-explainer {
+  padding: 4px 2px;
+}
+
+.guidance-explainer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.guidance-explainer-header h3 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.guidance-explainer-close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-light);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.guidance-explainer-close:hover {
+  color: var(--text);
+  background: var(--surface-soft);
+}
+
+.guidance-explainer-intro {
+  margin: 4px 0 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.guidance-explainer-list {
+  display: grid;
+  gap: 12px;
+}
+
+.guidance-explainer-item {
+  display: flex;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+.guidance-explainer-list > .guidance-explainer-item:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.guidance-explainer-icon {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.guidance-explainer-item-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.guidance-explainer-item-heading strong {
+  font-size: 13px;
+}
+
+.guidance-explainer-tag {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.guidance-explainer-tag.is-soft {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.guidance-explainer-tag.is-firm {
+  color: var(--text);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+
+.guidance-explainer-item-body {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.guidance-explainer-example {
+  margin: 5px 0 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text-light);
+  line-height: 1.4;
+}
+
+/* A quiet closing footnote, not a fifth category — it previously used the same accent
+   background as an active element, which let it compete with the four sections above it. */
+.guidance-explainer-footer {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+  color: var(--text-light);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.guidance-explainer-footer strong {
+  color: var(--text-muted);
+  font-weight: 650;
 }
 
 .wardrobe-filter-menu .filter-menu-btn:hover {
@@ -5826,6 +5974,19 @@ img { display: block; max-width: 100%; }
   color: var(--text-muted);
   font-size: 13.5px;
   line-height: 1.55;
+}
+
+/* Baseline-aligns the "How this works" trigger with the intro paragraph's text, rather than
+   letting it fall to its own row below — a block-level default made it read as a stray chip. */
+.settings-page-intro-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.settings-page-intro-row .info-tooltip {
+  transform: translateY(1px);
 }
 
 .settings-page-eyebrow,
@@ -11823,23 +11984,40 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   width: fit-content;
 }
 
-.feedback-synthesis-preview {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+.feedback-synthesis-cost {
+  display: grid;
+  gap: 6px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
 
-.feedback-synthesis-preview > div {
-  display: grid;
-  gap: 3px;
-}
-
-.feedback-synthesis-preview span {
+.feedback-synthesis-cost summary {
+  cursor: pointer;
   color: var(--text-muted);
   font-size: var(--type-caption);
+  width: fit-content;
+}
+
+.feedback-synthesis-busy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.feedback-synthesis-spinner {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: feedback-synthesis-spin 0.8s linear infinite;
+}
+
+@keyframes feedback-synthesis-spin {
+  to { transform: rotate(360deg); }
 }
 
 .feedback-synthesis-drafts h3 {
@@ -12229,11 +12407,6 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 
   .style-memory-context-actions {
     justify-content: space-between;
-  }
-
-  .feedback-synthesis-preview {
-    align-items: flex-start;
-    flex-direction: column;
   }
 }
 

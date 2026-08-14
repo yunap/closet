@@ -258,6 +258,36 @@ test('saved-board re-sync preserves renderer correction payload fields', () => {
   assert.equal(payload.feedback_reason, 'owner selected a garment length issue')
 })
 
+test('a wrong_length report with no length_correction does not blame every other garment on the same board', () => {
+  // Legacy/malformed row: typed wrong_length but carries no length_correction at all — there is
+  // no data saying which of the board's garments was actually wrong. `candidate` merely shared the
+  // outfit with `selected`; it must not inherit a length complaint that was never made about it.
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, payload)
+    VALUES ('wrong_length', 'generated_visual_board', 'piece', ?, ?)`)
+    .run(selected.id, JSON.stringify({
+      board: { imageUrl: '/uploads/malformed-length-board.png', pieces: [selected, candidate] },
+      pieceIds: [selected.id, candidate.id],
+    }))
+  assert.equal(getSavedBoardRendererMemory([candidate.id], 20), '')
+  assert.equal(getSavedBoardRendererMemory([selected.id], 20), '')
+})
+
+test('a wrong_length report only corrects the garment its length_correction actually names', () => {
+  const correction = { piece_id: selected.id, piece_name: selected.name, issue: 'upper_hem_too_long' }
+  db.prepare(`INSERT INTO stylist_feedback
+    (feedback_type, target_type, context_type, context_id, payload)
+    VALUES ('wrong_length', 'generated_visual_board', 'piece', ?, ?)`)
+    .run(selected.id, JSON.stringify({
+      board: { imageUrl: '/uploads/attributed-length-board.png', pieces: [selected, candidate] },
+      pieceIds: [selected.id, candidate.id],
+      length_correction: correction,
+    }))
+  const forCorrectedPiece = getSavedBoardRendererMemory([selected.id], 20)
+  assert.match(forCorrectedPiece, /Selected top: prior render had top or jacket hem rendered too long/)
+  assert.equal(getSavedBoardRendererMemory([candidate.id], 20), '')
+})
+
 test('unstructured wrong-item feedback does not regain prompt authority through legacy payload ids', () => {
   const flagged = { id: 9003, name: 'Flagged shoes', category: 'shoes' }
   db.prepare(`INSERT INTO stylist_feedback

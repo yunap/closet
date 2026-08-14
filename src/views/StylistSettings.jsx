@@ -7,6 +7,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { canonicalFeedbackType, WRONG_PIECE_FOR_OUTFIT_FEEDBACK } from '../../lib/feedbackTaxonomy.js'
 import { describeOwnerGuidanceScope } from '../../lib/ownerGuidance.js'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
+import InfoTooltip from '../components/InfoTooltip.jsx'
 
 const LAYER_TITLES = {
   body_contract: 'Body & comfort',
@@ -81,6 +82,11 @@ const constraintContextPhrase = (dimension, value) => {
   if (dimension === 'season') return `in ${value}`
   if (dimension === 'weather') return `in ${value} weather`
   return `for ${value}`
+}
+const joinWithAnd = values => {
+  if (values.length <= 1) return values.join('')
+  if (values.length === 2) return `${values[0]} and ${values[1]}`
+  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`
 }
 const ownerConstraintProposal = row => {
   const proposal = row?.memory?.ownerConstraintProposal
@@ -343,7 +349,13 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const [draftTriage, setDraftTriage] = useState({})
   const [synthesisSavedId, setSynthesisSavedId] = useState(null)
   const [synthesisBusy, setSynthesisBusy] = useState(false)
+  // Drafts from the most recent "Look for a pattern" click, so the panel itself can become the
+  // review card in place — rather than the drafts appearing in a separate section below an
+  // unchanged panel. Replaced (not appended) on each new authorization; a draft drops out of this
+  // set on its own once it's acted on, because it then stops matching pendingSynthesisDrafts.
+  const [justSynthesizedDraftIds, setJustSynthesizedDraftIds] = useState(new Set())
   const [styleProfileTab, setStyleProfileTab] = useState('guidance')
+  const [guidanceExplainerOpen, setGuidanceExplainerOpen] = useState(false)
   const [ownerConstraints, setOwnerConstraints] = useState([])
   const [productFindings, setProductFindings] = useState([])
   const [productResolutionDrafts, setProductResolutionDrafts] = useState({})
@@ -579,7 +591,14 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const currentSession = sessions.find(session => session.isCurrent)
   const otherSessions = sessions.filter(session => !session.isCurrent)
   const normalizedFeedbackSearch = feedbackSearch.trim().toLowerCase()
-  const processedSynthesisFeedbackIds = new Set(synthesisDrafts.flatMap(draft => parsedIdList(draft.source_feedback_ids)))
+  // A rejected draft doesn't lock its source feedback out of trying again — that's the whole point
+  // of "Not quite" over Forget/Retire. Otherwise editing the underlying reason (e.g. via "Edit
+  // reason" in chat) and coming back to re-run synthesis has no effect: the row stays hidden here
+  // forever, and "Reconsider" in Past decisions only reactivates the old draft text rather than
+  // re-running synthesis against the edit. Only count source ids from drafts still standing.
+  const processedSynthesisFeedbackIds = new Set(synthesisDrafts
+    .filter(draft => draft.status !== 'rejected')
+    .flatMap(draft => parsedIdList(draft.source_feedback_ids)))
   const actionableContextualFeedback = contextualFeedback.filter(row =>
     row.memory?.synthesisEligible && !processedSynthesisFeedbackIds.has(row.id)
   )
@@ -594,6 +613,10 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const contextualFeedbackTypes = [...new Set(actionableContextualFeedback.map(row => row.feedback_type).filter(Boolean))].sort()
   const pendingSynthesisDrafts = synthesisDrafts.filter(draft =>
     ['draft', 'deferred'].includes(draft.status) && draft.disposition !== 'insufficient_evidence')
+  // Drafts from the click just made stay inside the panel itself; anything older (or left over
+  // from a previous session) keeps appearing in the section below, unchanged.
+  const inlineSynthesisDrafts = pendingSynthesisDrafts.filter(draft => justSynthesizedDraftIds.has(draft.id))
+  const olderPendingSynthesisDrafts = pendingSynthesisDrafts.filter(draft => !justSynthesizedDraftIds.has(draft.id))
   const activeOwnerConstraints = ownerConstraints.filter(row => row.status === 'active')
   // Reported outcomes from recent runs. Shown so the owner can see WHY a reaction taught nothing —
   // that explanation is the part worth reading, and it tells her what a reaction needs next time.
@@ -755,11 +778,17 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
   const GENERIC_CONTEXT_TITLES = new Set(['whole wardrobe', 'wardrobe', ''])
 
   const rendererReportGroups = [...rendererCorrections.reduce((groups, row) => {
-    const spec = RENDERER_EFFECT_TEXT[canonicalFeedbackType(row.feedback_type)]
+    const canonicalType = canonicalFeedbackType(row.feedback_type)
+    const spec = RENDERER_EFFECT_TEXT[canonicalType]
     if (!spec) return groups
     let payload = row.payload || {}
     if (typeof payload === 'string') { try { payload = JSON.parse(payload) || {} } catch { payload = {} } }
     const correction = payload.length_correction || {}
+    // getSavedBoardRendererMemory (styling-engine/rules.js) only turns a wrong_length report into an
+    // actual renderer instruction when it names a specific piece_id and issue — a legacy/malformed
+    // row with neither contributes nothing there. Listing it here anyway would claim an effect this
+    // row does not, and never did, actually produce.
+    if (canonicalType === 'wrong_length' && !(Number(correction.piece_id) && RENDERER_ISSUE_TEXT[correction.issue])) return groups
     // The correction names the garment; context_name is where the reaction happened.
     // Prefer the garment the correction names; fall back to the outfit it was reported on, since
     // context_name is often the meaningless storage label "Whole wardrobe".
@@ -779,8 +808,13 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       boardLabel: payload.board?.label || '',
       pieceId: Number(correction.piece_id) || null,
       pieceName: correction.piece_name || '',
+      // Every row consolidated into this card, so "Forget this" can archive all of them — archiving
+      // only the one row the thumbnail/links came from would leave the others live, and the same
+      // correction would keep reaching the renderer from whichever row survived.
+      rowIds: [],
     }
     group.count += 1
+    group.rowIds.push(row.id)
     groups.set(key, group)
     return groups
   }, new Map()).values()]
@@ -815,6 +849,20 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       flash('Removed.')
     } else {
       flash('Failed to remove this entry')
+    }
+  }
+
+  // Archives every row a renderer-correction card consolidates — DELETE /stylist-feedback/:id soft-
+  // archives (archived=1), and getSavedBoardRendererMemory already excludes archived rows from both
+  // of its queries, so this genuinely stops the correction from reaching future renders rather than
+  // just hiding the card.
+  const forgetRendererCorrection = async (group) => {
+    const results = await Promise.all(group.rowIds.map(id => fetch(`/api/stylist-feedback/${id}`, { method: 'DELETE' })))
+    if (results.every(res => res.ok)) {
+      setContextualFeedback(prev => prev.filter(r => !group.rowIds.includes(r.id)))
+      flash('Forgotten — your stylist will stop correcting for this.')
+    } else {
+      flash('Could not forget this correction.')
     }
   }
 
@@ -860,6 +908,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Synthesis failed.')
       setSynthesisDrafts(previous => [...(result.drafts || []), ...previous])
+      setJustSynthesizedDraftIds(new Set((result.drafts || []).map(draft => draft.id)))
       setSelectedSynthesisFeedback(new Set())
       setSynthesisPreview(null)
       flash('Draft lessons are ready for review. Nothing was accepted automatically.')
@@ -883,8 +932,18 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     if (!response.ok) return flash(result.error || 'Could not update this draft.')
     setSynthesisDrafts(previous => previous.map(row => row.id === draft.id ? result : row))
     setSynthesisEdits(previous => { const next = { ...previous }; delete next[draft.id]; return next })
-    setSynthesisApplicabilityEdits(previous => { const next = { ...previous }; delete next[draft.id]; return next })
     setDraftTriage(previous => { const next = { ...previous }; delete next[draft.id]; return next })
+    // Once any decision is made — including "Maybe later" — this draft is no longer "just
+    // produced, awaiting its first decision." "Yes"/"Not quite" already leave pendingSynthesisDrafts
+    // entirely, so this is a no-op for them; "Maybe later" keeps status 'deferred' (still pending,
+    // on purpose) but should visibly leave the panel's hero slot for the general list below —
+    // otherwise the identical card sitting in the identical spot reads as the click doing nothing.
+    setJustSynthesizedDraftIds(previous => {
+      if (!previous.has(draft.id)) return previous
+      const next = new Set(previous)
+      next.delete(draft.id)
+      return next
+    })
     setSynthesisSavedId(draft.id)
     setTimeout(() => setSynthesisSavedId(current => current === draft.id ? null : current), 2500)
     flash(nextStatus === 'accepted'
@@ -953,6 +1012,74 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
     if (row.context_type === 'piece' && row.context_id) navigate(`/wardrobe?pieceId=${row.context_id}`)
   }
 
+  // Shared by the panel's inline review card (drafts from the click just made) and the section
+  // below it (anything older). Same card, two possible positions.
+  const renderPendingDraft = (draft) => {
+    const isLesson = draft.disposition === 'personal_contextual_lesson'
+    const sourceIds = parsedIdList(draft.source_feedback_ids)
+    const sources = sourceIds.map(id => contextualFeedback.find(row => Number(row.id) === id)).filter(Boolean)
+    const photos = draftLessonPhotos(draft)
+    const triage = draftTriage[draft.id] || null
+    const setTriage = next => setDraftTriage(previous => ({ ...previous, [draft.id]: next }))
+    const rejectWithReason = reason => updateSynthesisDraft(draft, 'rejected', { rejectionReason: reason })
+    const saveWording = () => updateSynthesisDraft(draft, 'accepted')
+    return (
+      <article key={draft.id} className="memory-card memory-card-pending">
+        {photos.length > 0 && (
+          <div className="memory-card-pending-photos">
+            {photos.map(piece => (
+              <div key={piece.id} className="memory-card-thumb">
+                <img src={uploadThumbnailSrc(`/uploads/${piece.photo}`, 'garment-display')} alt="" loading="lazy" decoding="async" />
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="memory-card-body">
+          <p className="memory-card-pending-prompt">Does this sound right?</p>
+          <h3>{effectiveSynthesisText(draft)}</h3>
+          {isLesson
+            ? <p className="memory-card-scope">{synthesisRememberSentence(draft)}</p>
+            : <p className="memory-card-scope">This looks like a product issue rather than a styling preference — it won&rsquo;t change how clothes are chosen.</p>}
+          {synthesisProvenanceSentence(sources) && (
+            <p className="memory-card-source">{synthesisProvenanceSentence(sources)}</p>
+          )}
+
+          {triage === 'wording' ? (
+            <div className="memory-card-pending-wording">
+              <textarea
+                className="style-memory-editor"
+                value={synthesisEdits[draft.id] ?? effectiveSynthesisText(draft)}
+                onChange={event => setSynthesisEdits(previous => ({ ...previous, [draft.id]: event.target.value }))}
+                aria-label={`Edit ${draft.title || 'draft lesson'}`}
+              />
+              <div className="memory-card-pending-actions">
+                <button type="button" className="btn-primary" onClick={saveWording}>Looks better — remember this</button>
+                <button type="button" className="btn-secondary" onClick={() => { setSynthesisEdits(previous => { const next = { ...previous }; delete next[draft.id]; return next }); setTriage(null) }}>Cancel</button>
+              </div>
+            </div>
+          ) : triage === 'chips' ? (
+            <div className="memory-card-pending-triage">
+              <span className="memory-card-pending-triage-label">What isn&rsquo;t right?</span>
+              <div className="chip-grid">
+                <button type="button" className="chip-toggle" onClick={() => setTriage('wording')}>The wording</button>
+                <button type="button" className="chip-toggle" onClick={() => rejectWithReason('too_broad')}>It applies too broadly</button>
+                <button type="button" className="chip-toggle" onClick={() => rejectWithReason('not_a_lesson')}>This shouldn&rsquo;t be a lesson</button>
+              </div>
+            </div>
+          ) : (
+            <div className="memory-card-pending-actions">
+              <button type="button" className="btn-primary" onClick={() => updateSynthesisDraft(draft, 'accepted')}>
+                {isLesson ? 'Yes, remember this' : 'Mark reviewed'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => setTriage('chips')}>Not quite</button>
+              <button type="button" className="memory-card-pending-later" onClick={() => updateSynthesisDraft(draft, 'deferred')}>Maybe later</button>
+            </div>
+          )}
+        </div>
+      </article>
+    )
+  }
+
   const renderExclusionRow = (group) => (
     <div key={group.pieceId} className="limit-row">
       <span className="limit-row-thumb">
@@ -962,12 +1089,11 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       </span>
       <div className="limit-row-body">
         <strong>{group.name}</strong>
-        <span>Not for {group.entries.map((entry, index) => (
-          <span key={entry.occasion}>
-            {index > 0 && ', '}
-            <em>{sentenceCase(entry.occasion)}</em>
-          </span>
-        ))}</span>
+        <span>
+          Skip for <em>{joinWithAnd(group.entries.map(entry => sentenceCase(entry.occasion)))}</em>
+          {' · '}
+          {group.entries.length > 1 ? 'Still available elsewhere' : 'Still available for other occasions'}
+        </span>
       </div>
       <div className="limit-row-actions">
         {group.entries.map(entry => (
@@ -1089,11 +1215,100 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
       <div className="settings-page-header">
       {mode !== 'style' && <span className="settings-page-eyebrow">Account &amp; application</span>}
       <h1 className="settings-page-title">{mode === 'style' ? 'Style profile' : 'Settings'}</h1>
+      <div className="settings-page-intro-row">
       <p className="settings-page-intro">
         {mode === 'style'
           ? 'This is your stylist’s working understanding of you — plain text, yours to correct.'
           : `Manage your profile, AI provider keys, ${isAdmin ? 'administration, ' : ''}and account security.`}
       </p>
+      {mode === 'style' && (
+        <InfoTooltip
+          label="How your stylist uses this guidance"
+          triggerText="How this works"
+          open={guidanceExplainerOpen}
+          onToggle={setGuidanceExplainerOpen}
+          align="left"
+          width={512}
+        >
+          <div className="guidance-explainer">
+            <div className="guidance-explainer-header">
+              <h3>How your stylist uses this guidance</h3>
+              <button type="button" className="guidance-explainer-close" aria-label="Close" onClick={() => setGuidanceExplainerOpen(false)}>
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13" /></svg>
+              </button>
+            </div>
+            <p className="guidance-explainer-intro">
+              Your stylist remembers things a few different ways. Some are gentle reminders; others are rules it always follows.
+            </p>
+            <div className="guidance-explainer-list">
+              <div className="guidance-explainer-item">
+                <span className="guidance-explainer-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z" /></svg>
+                </span>
+                <div>
+                  <div className="guidance-explainer-item-heading">
+                    <strong>Learned from your feedback</strong>
+                    <span className="guidance-explainer-tag is-soft">Gentle reminder</span>
+                  </div>
+                  <p className="guidance-explainer-item-body">
+                    When you react to outfits or generated looks, your stylist may notice a pattern and ask if you want it remembered — used only when that piece or situation comes up.
+                  </p>
+                </div>
+              </div>
+              <div className="guidance-explainer-item">
+                <span className="guidance-explainer-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v8a1.5 1.5 0 01-1.5 1.5H9l-4 3.5v-3.5H5.5A1.5 1.5 0 014 13.5z" /></svg>
+                </span>
+                <div>
+                  <div className="guidance-explainer-item-heading">
+                    <strong>Things you’ve told your stylist</strong>
+                    <span className="guidance-explainer-tag is-soft">Gentle reminder</span>
+                  </div>
+                  <p className="guidance-explainer-item-body">
+                    Say something directly in chat — “I prefer pants for flights” — and your stylist remembers it for situations it applies to. These guide recommendations but don’t remove pieces from consideration.
+                  </p>
+                </div>
+              </div>
+              <div className="guidance-explainer-item">
+                <span className="guidance-explainer-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l8 3v6c0 4.4-3.2 8.2-8 9-4.8-.8-8-4.6-8-9V6z" /></svg>
+                </span>
+                <div>
+                  <div className="guidance-explainer-item-heading">
+                    <strong>Rules you’ve locked in</strong>
+                    <span className="guidance-explainer-tag is-firm">Always enforced</span>
+                  </div>
+                  <p className="guidance-explainer-item-body">
+                    Turn a clear preference into a firm rule — “No sandals for hiking.” Enforced whenever that situation matches, so those pieces are taken out of consideration.
+                  </p>
+                </div>
+              </div>
+              <div className="guidance-explainer-item">
+                <span className="guidance-explainer-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4a2 2 0 100 4 2 2 0 000-4zM12 8v3l8 6H4l8-6" /></svg>
+                </span>
+                <div>
+                  <div className="guidance-explainer-item-heading">
+                    <strong>Limits on a specific piece</strong>
+                    <span className="guidance-explainer-tag is-firm">Always enforced for this piece</span>
+                  </div>
+                  <p className="guidance-explainer-item-body">
+                    Tell your stylist not to use one garment in one situation — “This scarf, not for travel.”
+                  </p>
+                  <p className="guidance-explainer-example">
+                    Your stylist skips it only for Travel. It stays available for everything else.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="guidance-explainer-footer">
+              <strong>You’re always in control.</strong>
+              You can forget guidance, restore excluded pieces, or update the things you’ve told your stylist.
+            </div>
+          </div>
+        </InfoTooltip>
+      )}
+      </div>
       </div>
       {status && <div className="settings-status" role="status">{status}</div>}
 
@@ -1214,7 +1429,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           </div>
           {activeOwnerConstraints.length > 0 && (
             <div className="limit-group">
-              <div className="limit-group-heading"><div><strong>Always avoid</strong><span>Firm rules your stylist always enforces.</span></div></div>
+              <div className="limit-group-heading"><div><strong>Always avoid</strong><span>Firm rules your stylist always follows. These rules only apply in the situations shown. Everything else stays available.</span></div></div>
               <div className="limit-rows">
                 {activeOwnerConstraints.map(row => (
                   <div key={`all-constraint:${row.id}`} className="limit-row">
@@ -1230,7 +1445,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           )}
           {groupedOccasionExclusions.length > 0 && (
             <div className="limit-group">
-              <div className="limit-group-heading"><div><strong>Specific pieces</strong><span>Pieces your stylist avoids for certain occasions.</span></div></div>
+              <div className="limit-group-heading"><div><strong>Specific pieces</strong><span>Pieces your stylist avoids only in the situations shown. Outside those situations, they stay in the mix.</span></div></div>
               <div className="limit-rows">{groupedOccasionExclusions.map(renderExclusionRow)}</div>
             </div>
           )}
@@ -1257,11 +1472,18 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
               const sourceIds = parsedIdList(draft.source_feedback_ids)
               const sources = sourceIds.map(id => contextualFeedback.find(row => Number(row.id) === id)).filter(Boolean)
               const photo = lessonPhoto(draft)
+              // A lesson generalized from a whole-outfit reaction (no single piece named) has no
+              // garment photo to show — fall back to the source board's own image, same as a raw
+              // feedback row does, rather than an empty box.
+              const boardImage = !photo ? feedbackBoardImage(sources[0]) : null
+              const thumbSrc = photo
+                ? uploadThumbnailSrc(`/uploads/${photo}`, 'garment-display')
+                : (boardImage ? uploadThumbnailSrc(boardImage, 'lookbook-display') : null)
               return (
                 <article key={`lesson:${draft.id}`} id={`contextual-lesson-${draft.id}`} className="memory-card">
                   <div className="memory-card-thumb">
-                    {photo
-                      ? <img src={uploadThumbnailSrc(`/uploads/${photo}`, 'garment-display')} alt="" loading="lazy" decoding="async" />
+                    {thumbSrc
+                      ? <img src={thumbSrc} alt="" loading="lazy" decoding="async" />
                       : <span className="memory-card-thumb-empty" aria-hidden="true" />}
                   </div>
                   <div className="memory-card-body">
@@ -1352,7 +1574,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
               </span>
               <div>
                 <strong>Always avoid</strong>
-                <span>Firm rules your stylist always enforces.</span>
+                <span>Firm rules your stylist always follows. These rules only apply in the situations shown. Everything else stays available.</span>
               </div>
             </div>
             {/* Every firm rule is shown: there are usually very few and each one is broad and
@@ -1382,7 +1604,7 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
               </span>
               <div>
                 <strong>Specific pieces</strong>
-                <span>Pieces your stylist avoids for certain occasions.</span>
+                <span>Pieces your stylist avoids only in the situations shown. Outside those situations, they stay in the mix.</span>
               </div>
             </div>
             {/* A preview, not an inventory. The server returns these newest-changed first, so the
@@ -1412,39 +1634,69 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
           <p>These are reactions to particular outfits. Your stylist keeps them as context — none of them becomes a rule unless you decide it should.</p>
         </div>
         <div className="feedback-synthesis-panel">
-          <div>
-            <strong>See if there&rsquo;s a pattern in your feedback</strong>
-            <p>Select a few reactions that seem related. Your stylist can look for something useful to remember.</p>
-          </div>
-          {selectedSynthesisFeedback.size > 0 && (
-            <span className="feedback-synthesis-selected-count">
-              {selectedSynthesisFeedback.size} reaction{selectedSynthesisFeedback.size === 1 ? '' : 's'} selected
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={!selectedSynthesisFeedback.size || synthesisBusy}
-            onClick={previewSynthesis}
-          >
-            {selectedSynthesisFeedback.size > 0 ? 'Review for a possible lesson' : 'See cost & review'}
-          </button>
-          {synthesisPreview && (
-            <div className="feedback-synthesis-preview" role="status">
+          {inlineSynthesisDrafts.length > 0 ? (
+            <>
               <div>
-                <strong>{synthesisPreview.feedbackIds.length} reactions · {synthesisPreview.provider} / {synthesisPreview.model}</strong>
-                <span>
-                  Conservative maximum {synthesisPreview.estimatedInputTokens.toLocaleString()} input + {synthesisPreview.outputTokenCap.toLocaleString()} output tokens
-                  {synthesisPreview.estimatedCost?.pricingAvailable
-                    ? ` · about $${Number(synthesisPreview.estimatedCost.estimatedUsd).toFixed(4)}`
-                    : ' · local price estimate unavailable'}
-                </span>
-                <span>Preview calls: {synthesisPreview.providerCalls}. The next button authorizes one paid model call.</span>
+                <strong>Your stylist found a possible lesson</strong>
+                <p>Nothing changes unless you choose to remember it.</p>
               </div>
-              <button type="button" className="btn-primary" disabled={synthesisBusy} onClick={authorizeSynthesis}>
-                {synthesisBusy ? 'Synthesizing…' : 'Authorize one model call'}
-              </button>
+              {inlineSynthesisDrafts.map(renderPendingDraft)}
+            </>
+          ) : synthesisBusy && synthesisPreview ? (
+            <div className="feedback-synthesis-busy" role="status" aria-live="polite">
+              <span className="feedback-synthesis-spinner" aria-hidden="true" />
+              <div>
+                <strong>Looking for a pattern…</strong>
+                <p>Your stylist is reviewing {synthesisPreview.feedbackIds.length} reaction{synthesisPreview.feedbackIds.length === 1 ? '' : 's'} together. This usually takes less than a minute.</p>
+              </div>
             </div>
+          ) : synthesisPreview ? (
+            <>
+              <div>
+                <strong>Ready to look for a pattern</strong>
+                <p>Nothing will be saved unless you approve what your stylist finds.</p>
+              </div>
+              <span className="feedback-synthesis-selected-count">
+                {synthesisPreview.feedbackIds.length} reaction{synthesisPreview.feedbackIds.length === 1 ? '' : 's'} selected
+              </span>
+              <div className="feedback-synthesis-cost">
+                <strong>
+                  Estimated cost{synthesisPreview.estimatedCost?.pricingAvailable
+                    ? `: about $${Number(synthesisPreview.estimatedCost.estimatedUsd).toFixed(4)}`
+                    : ' unavailable'}
+                </strong>
+                <details>
+                  <summary>How is this cost calculated?</summary>
+                  <p>{synthesisPreview.feedbackIds.length} reactions · {synthesisPreview.provider} / {synthesisPreview.model}</p>
+                  <p>Conservative maximum {synthesisPreview.estimatedInputTokens.toLocaleString()} input + {synthesisPreview.outputTokenCap.toLocaleString()} output tokens.</p>
+                  {synthesisPreview.imageCount > 0 && (
+                    <p>Includes {synthesisPreview.imageCount} photo{synthesisPreview.imageCount === 1 ? '' : 's'} (outfit image and/or garment photos) so your stylist can see what it&rsquo;s judging, not just read about it.</p>
+                  )}
+                  <p>Preview calls so far: {synthesisPreview.providerCalls}.</p>
+                </details>
+              </div>
+              <button type="button" className="btn-primary" onClick={authorizeSynthesis}>Look for a pattern</button>
+            </>
+          ) : (
+            <>
+              <div>
+                <strong>See if there&rsquo;s a pattern in your feedback</strong>
+                <p>Select a few reactions that seem related. Your stylist can look for something useful to remember.</p>
+              </div>
+              {selectedSynthesisFeedback.size > 0 && (
+                <span className="feedback-synthesis-selected-count">
+                  {selectedSynthesisFeedback.size} reaction{selectedSynthesisFeedback.size === 1 ? '' : 's'} selected
+                </span>
+              )}
+              <button
+                type="button"
+                className={selectedSynthesisFeedback.size > 0 ? 'btn-primary' : 'btn-secondary'}
+                disabled={!selectedSynthesisFeedback.size || synthesisBusy}
+                onClick={previewSynthesis}
+              >
+                {selectedSynthesisFeedback.size > 0 ? 'Check cost & continue' : 'Select reactions to review'}
+              </button>
+            </>
           )}
         </div>
         {reportedNonResults.length > 0 && (
@@ -1452,84 +1704,41 @@ export default function StylistSettings({ mode = 'account', embedded = false, on
             <strong>Nothing to learn from {reportedNonResults.length === 1 ? 'one reaction' : `${reportedNonResults.length} reactions`}</strong>
             <p>Your stylist looked at {reportedNonResults.length === 1 ? 'this' : 'these'} but didn&rsquo;t find enough to go on. Nothing to decide — it just didn&rsquo;t teach it anything.</p>
             <ul>
-              {reportedNonResults.map(row => (
-                <li key={row.id}>
-                  {row.rationale || row.boundary || 'Not enough context to draw a conclusion.'}
-                  <button type="button" className="synthesis-nonresult-remove" onClick={() => removeSynthesisNonResult(row)}>Remove</button>
-                </li>
-              ))}
+              {reportedNonResults.map(row => {
+                const sourceIds = parsedIdList(row.source_feedback_ids)
+                const sources = sourceIds.map(id => contextualFeedback.find(r => Number(r.id) === id)).filter(Boolean)
+                return (
+                  <li key={row.id}>
+                    <div>
+                      {row.rationale || row.boundary || 'Not enough context to draw a conclusion.'}
+                      <button type="button" className="synthesis-nonresult-remove" onClick={() => removeSynthesisNonResult(row)}>Remove</button>
+                    </div>
+                    <details className="memory-card-more">
+                      <summary>Where this came from</summary>
+                      {sources.length > 0
+                        ? <ul>{sources.map(source => {
+                            const hasSourceLink = Boolean(source.referenced_board_id || matchedFeedbackBoard(source)
+                              || (source.referenced_thread_id && onGoToThread) || matchedBoardByPieceSet(source))
+                            return (
+                              <li key={source.id}>
+                                {source.memory?.display?.title || source.context_name || source.label}: {source.memory?.display?.summary || readableFeedbackNote(source.note)}
+                                {hasSourceLink && <> · <button type="button" className="foundation-layer-link" onClick={() => openFeedbackContext(source)}>Open source</button></>}
+                              </li>
+                            )
+                          })}</ul>
+                        : <p>{sourceIds.length ? 'The original reactions are no longer available.' : 'No source reactions recorded.'}</p>}
+                    </details>
+                  </li>
+                )
+              })}
             </ul>
           </div>
         )}
-        {pendingSynthesisDrafts.length > 0 && (
+        {olderPendingSynthesisDrafts.length > 0 && (
           <div className="feedback-synthesis-drafts">
             <h3>Your stylist found a possible lesson</h3>
             <p>Nothing changes unless you choose to remember it.</p>
-            {pendingSynthesisDrafts.map(draft => {
-              const isLesson = draft.disposition === 'personal_contextual_lesson'
-              const sourceIds = parsedIdList(draft.source_feedback_ids)
-              const sources = sourceIds.map(id => contextualFeedback.find(row => Number(row.id) === id)).filter(Boolean)
-              const photos = draftLessonPhotos(draft)
-              const triage = draftTriage[draft.id] || null
-              const setTriage = next => setDraftTriage(previous => ({ ...previous, [draft.id]: next }))
-              const rejectWithReason = reason => updateSynthesisDraft(draft, 'rejected', { rejectionReason: reason })
-              const saveWording = () => updateSynthesisDraft(draft, 'accepted')
-              return (
-              <article key={draft.id} className="memory-card memory-card-pending">
-                {photos.length > 0 && (
-                  <div className="memory-card-pending-photos">
-                    {photos.map(piece => (
-                      <div key={piece.id} className="memory-card-thumb">
-                        <img src={uploadThumbnailSrc(`/uploads/${piece.photo}`, 'garment-display')} alt="" loading="lazy" decoding="async" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="memory-card-body">
-                  <p className="memory-card-pending-prompt">Does this sound right?</p>
-                  <h3>{effectiveSynthesisText(draft)}</h3>
-                  {isLesson
-                    ? <p className="memory-card-scope">{synthesisRememberSentence(draft)}</p>
-                    : <p className="memory-card-scope">This looks like a product issue rather than a styling preference — it won&rsquo;t change how clothes are chosen.</p>}
-                  {synthesisProvenanceSentence(sources) && (
-                    <p className="memory-card-source">{synthesisProvenanceSentence(sources)}</p>
-                  )}
-
-                  {triage === 'wording' ? (
-                    <div className="memory-card-pending-wording">
-                      <textarea
-                        className="style-memory-editor"
-                        value={synthesisEdits[draft.id] ?? effectiveSynthesisText(draft)}
-                        onChange={event => setSynthesisEdits(previous => ({ ...previous, [draft.id]: event.target.value }))}
-                        aria-label={`Edit ${draft.title || 'draft lesson'}`}
-                      />
-                      <div className="memory-card-pending-actions">
-                        <button type="button" className="btn-primary" onClick={saveWording}>Looks better — remember this</button>
-                        <button type="button" className="btn-secondary" onClick={() => { setSynthesisEdits(previous => { const next = { ...previous }; delete next[draft.id]; return next }); setTriage(null) }}>Cancel</button>
-                      </div>
-                    </div>
-                  ) : triage === 'chips' ? (
-                    <div className="memory-card-pending-triage">
-                      <span className="memory-card-pending-triage-label">What isn&rsquo;t right?</span>
-                      <div className="chip-grid">
-                        <button type="button" className="chip-toggle" onClick={() => setTriage('wording')}>The wording</button>
-                        <button type="button" className="chip-toggle" onClick={() => rejectWithReason('too_broad')}>It applies too broadly</button>
-                        <button type="button" className="chip-toggle" onClick={() => rejectWithReason('not_a_lesson')}>This shouldn&rsquo;t be a lesson</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="memory-card-pending-actions">
-                      <button type="button" className="btn-primary" onClick={() => updateSynthesisDraft(draft, 'accepted')}>
-                        {isLesson ? 'Yes, remember this' : 'Mark reviewed'}
-                      </button>
-                      <button type="button" className="btn-secondary" onClick={() => setTriage('chips')}>Not quite</button>
-                      <button type="button" className="memory-card-pending-later" onClick={() => updateSynthesisDraft(draft, 'deferred')}>Maybe later</button>
-                    </div>
-                  )}
-                </div>
-              </article>
-              )
-            })}
+            {olderPendingSynthesisDrafts.map(renderPendingDraft)}
           </div>
         )}
       </section>

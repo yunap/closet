@@ -4006,8 +4006,11 @@ export default function StylistChat({
       setBoardVerdictComment(String(canonical.payload?.feedback_details?.owner_comment || ''))
       return
     }
+    // See VisualLab.jsx's selectOverallVerdict for why: a comment commit must keep an already-active
+    // verdict selected rather than toggling it off, or "Edit reason" silently removes the verdict.
+    const isCommentCommit = ownerComment !== null
     const next = current.filter(value => !verdictValues.has(value))
-    if (!isActive) next.push(type)
+    if (!isActive || isCommentCommit) next.push(type)
     const details = canonical.payload?.feedback_details || {}
     const nextDetails = ownerComment === null
       ? details
