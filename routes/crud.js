@@ -10,8 +10,12 @@ import { collectPieceIdsFromSavedBoardRow, getPieceUsageStats } from '../styling
 import { ownKeyStatus, setOwnKey } from '../lib/apiKeys.js'
 import {
   mergeWithManualOverrides,
+  normalizeAccessorySubtype,
+  normalizeBottomSubtype,
   normalizeFormality,
   normalizeHeelHeight,
+  normalizeJewelryType,
+  normalizeNecklaceLength,
   normalizeManualOverrides,
   normalizeWalkSupport,
   pinManualConfidence,
@@ -131,13 +135,14 @@ router.get('/pieces', (req, res) => {
       fabric_category LIKE ? OR
       pattern_type LIKE ? OR
       neckline LIKE ? OR
-      sleeve_type LIKE ?
+      sleeve_length LIKE ? OR
+      sleeve_shape LIKE ?
     )`
     const term = `%${search}%`
     if (isNum) {
       params.push(Number(searchVal))
     }
-    params.push(term, term, term, term, term, term, term, term)
+    params.push(term, term, term, term, term, term, term, term, term)
   }
   if (occasion)  { q += ' AND occasions LIKE ?';          params.push(`%"${occasion}"%`) }
   if (color)     { q += ' AND colors LIKE ?';             params.push(`%"${color}"%`) }
@@ -254,9 +259,9 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
   const { name, category, colors, occasions, season, notes, status,
     recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
-    neckline, sleeve_type, length_hits_at, silhouette,
+    neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
     fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
-    fit_on_body, tuck_behavior, waistband_type, needs_base,
+    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_state, manual_overrides, color_taxonomy_gaps } = req.body
   const photo      = req.files?.photo?.[0]?.filename || null
@@ -276,16 +281,16 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, photo, worn_photo,
       recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
       pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
-      neckline, sleeve_type, length_hits_at, silhouette,
-      fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch, fit_on_body, tuck_behavior, waistband_type, needs_base,
+      neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
+      fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch, fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype,
       styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
       tag_state, manual_overrides)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active', photo, worn_photo,
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
-    neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null,
+    neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
+    fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype),
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile), tagger_version||null,
     finalTagState, JSON.stringify(finalManualOverrides))
   queueColorTaxonomyReviews(db, {
@@ -302,9 +307,9 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
   const { name, category, colors, occasions, season, notes, status, favorite, clear_photo, clear_worn_photo,
     recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
-    neckline, sleeve_type, length_hits_at, silhouette,
+    neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
     fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
-    fit_on_body, tuck_behavior, waistband_type, needs_base,
+    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_state, manual_overrides, resolved_retag_suggestion_ids, color_taxonomy_gaps } = req.body
   const photo      = req.files?.photo?.[0]?.filename      || (clear_photo      === 'true' ? null : existing.photo)
@@ -334,8 +339,8 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     UPDATE pieces SET name=?,category=?,colors=?,occasions=?,season=?,notes=?,status=?,favorite=?,photo=?,worn_photo=?,
       recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,
       pattern_type=?,pattern_scale=?,pattern_complexity=?,reads_as=?,background_color=?,hem_finish=?,
-      neckline=?,sleeve_type=?,length_hits_at=?,silhouette=?,
-      fabric_category=?,fabric_weight=?,fiber_content=?,formality=?,heel_height=?,walk_support=?,opacity=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,needs_base=?,
+      neckline=?,sleeve_length=?,sleeve_shape=?,length_hits_at=?,silhouette=?,
+      fabric_category=?,fabric_weight=?,fiber_content=?,formality=?,heel_height=?,walk_support=?,opacity=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,needs_base=?,accessory_subtype=?,jewelry_type=?,necklace_length=?,bottom_subtype=?,
       styling_rules_learned=?,pairs_well_with=?,tried_and_rejected=?,style_profile_json=?,tagger_version=?,
       tag_state=?,manual_overrides=?
     WHERE id=?
@@ -343,8 +348,8 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     favorite==='true'?1:0, photo, worn_photo,
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
-    neckline||null, sleeve_type||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null,
+    neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
+    fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype),
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile),
     final_tagger_version, finalTagState, JSON.stringify(finalManualOverrides), req.params.id)
   const resolvedSuggestionIds = safeJsonParse(resolved_retag_suggestion_ids, []).map(Number).filter(Boolean)
@@ -953,7 +958,9 @@ function syncRetagSuggestionsFromSavedBoard(row) {
     const issueLabel = RETAG_ISSUE_LABELS[issue]
     if (!pieceId || !issueLabel) continue
     if (completedKeys.has(`${pieceId}:${issue}`)) continue
-    const field = issue.startsWith('sleeves_') ? 'sleeve_type' : 'length_hits_at'
+    // sleeves_too_long/sleeves_too_short are unambiguously length complaints — route to
+    // sleeve_length specifically, not the shape field.
+    const field = issue.startsWith('sleeves_') ? 'sleeve_length' : 'length_hits_at'
     const pieceName = correction.piece_name || db.prepare('SELECT name FROM pieces WHERE id = ?').get(pieceId)?.name || `Piece ${pieceId}`
     insert.run(
       `Retag suggested for ${pieceName}: ${issueLabel}. Review the garment metadata; no tags were changed automatically.`,

@@ -17,7 +17,8 @@ const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
   'fit_on_body',
   'tuck_behavior',
   'waistband_type',
-  'sleeve_type'
+  'sleeve_length',
+  'sleeve_shape'
 ])
 
 export function getFieldConfidence(piece, field) {
@@ -54,6 +55,10 @@ export function attributePieceTextBlob(p) {
     trustedField(p, 'fit_on_body') ? p.fit_on_body || '' : '',
     trustedField(p, 'tuck_behavior') ? p.tuck_behavior || '' : '',
     trustedField(p, 'waistband_type') ? p.waistband_type || '' : '',
+    p.accessory_subtype || '',
+    p.jewelry_type || '',
+    p.necklace_length || '',
+    p.bottom_subtype || '',
     p.notes || '',
     p.engine_notes || '',
     rules.join(' ')
@@ -108,6 +113,20 @@ function isShoePiece(piece = {}) {
   return category === 'shoe' || category === 'shoes'
 }
 
+function isAccessoryPiece(piece = {}) {
+  return String(piece.category || '').toLowerCase().trim() === 'accessory'
+}
+
+function isBottomPiece(piece = {}) {
+  return String(piece.category || '').toLowerCase().trim() === 'bottom'
+}
+
+export function pieceJewelryType(p) {
+  if (String(p?.accessory_subtype || '').toLowerCase().trim() !== 'jewelry') return null
+  const normalized = String(p?.jewelry_type || '').toLowerCase().trim()
+  return normalized || null
+}
+
 export function missingGateFields(piece = {}) {
   const missing = []
   if (!isPopulated(piece.formality)) missing.push('formality')
@@ -119,28 +138,45 @@ export function missingGateFields(piece = {}) {
     if (!isPopulated(piece.heel_height)) missing.push('heel_height')
     if (!isPopulated(piece.walk_support)) missing.push('walk_support')
   }
+  if (isAccessoryPiece(piece)) {
+    if (!isPopulated(piece.accessory_subtype)) missing.push('accessory_subtype')
+  }
+  if (isBottomPiece(piece)) {
+    if (!isPopulated(piece.bottom_subtype)) missing.push('bottom_subtype')
+  }
   return missing
 }
 
 // Deliberately does not read style_profile_json.bareness: bareness/coverage as their own authored
 // judgment call were never reliably tagged (audit showed "unknown" confidence wardrobe-wide). These
-// are derived only from sleeve_type and length_hits_at — concrete, independently-tagged, visually
-// checkable fields — per the gate-hardening spec that dropped the vaguer standalone category.
+// are derived only from sleeve_length, neckline, and length_hits_at — concrete, independently-tagged,
+// visually checkable fields — per the gate-hardening spec that dropped the vaguer standalone category.
+// sleeve_type used to be checked with a regex against tank/strapless/halter/camisole — words that
+// were never actually valid sleeve_type values, so only "sleeveless" itself ever matched in
+// practice. Now that halter/strapless are real neckline values (not sleeve values), check both
+// fields on their own terms instead of hoping one field's free text contains another axis's word.
 export function pieceBareness(p) {
-  if (p?.sleeve_type && /\b(sleeveless|tank|strapless|halter|camisole)\b/i.test(p.sleeve_type)) {
-    return 'high'
-  }
-  if (p?.length_hits_at && /\b(mini|short|mid-thigh|upper-thigh)\b/i.test(p.length_hits_at)) {
+  if (p?.sleeve_length === 'sleeveless') return 'high'
+  if (p?.neckline && /\b(halter|strapless)\b/i.test(p.neckline)) return 'high'
+  // 'shorts' (new pants vocab, plural) and 'mid_thigh' (new outerwear vocab,
+  // underscore) don't match a strict word-boundary regex tuned for the old
+  // singular/hyphenated spellings — 'short' with a trailing \b never matches
+  // inside "shorts" since both are word characters. Match the stem instead.
+  if (p?.length_hits_at && /\b(mini|shorts?|mid[-_]thigh|upper[-_]thigh)\b/i.test(p.length_hits_at)) {
     return 'high'
   }
   return null
 }
 
 export function pieceCoverage(p) {
-  if (p?.sleeve_type && /\b(long)\b/i.test(p.sleeve_type)) {
+  if (p?.sleeve_length === 'long' || p?.sleeve_length === 'extra_long') {
     return 'full-insulating'
   }
-  if (p?.length_hits_at && /\b(full|ankle|floor|maxi)\b/i.test(p.length_hits_at)) {
+  // Underscore counts as a word character, so a plain \bfull\b/\bfloor\b never
+  // matches inside the new 'full_length'/'floor_length' pants values — there's
+  // no \w/\W transition at the underscore for \b to anchor on. Match the
+  // underscore-joined forms explicitly instead of relying on \b alone.
+  if (p?.length_hits_at && /\b(full[-_]length|ankle|floor[-_]length|maxi)\b/i.test(p.length_hits_at)) {
     return 'full-insulating'
   }
   return null
@@ -177,11 +213,32 @@ export function shoeCoverage(p) {
   return null
 }
 
+const SKIRT_LENGTH_MINI = new Set(['short', 'above-knee', 'knee', 'cropped'])
+const SKIRT_LENGTH_MAXI = new Set(['maxi', 'ankle', 'full-length'])
+
+// Length granularity for a skirt/skort comes from length_hits_at (the shared,
+// already-tagged field), not from bottom_subtype itself — bottom_subtype is
+// deliberately type-only (see db.js), so a skirt's mini/midi/maxi read is
+// derived here rather than baked into the subtype enum.
+function skirtGranularityFromLength(lengthHitsAt) {
+  const length = String(lengthHitsAt || '').toLowerCase().trim()
+  if (SKIRT_LENGTH_MINI.has(length)) return 'skirt-mini'
+  if (SKIRT_LENGTH_MAXI.has(length)) return 'skirt-maxi'
+  return 'skirt-midi'
+}
+
 export function bottomKind(p) {
-  // TODO: backfill bottom_kind
   const category = String(p.category || '').toLowerCase().trim()
   if (category !== 'bottom') return null
 
+  const subtype = String(p.bottom_subtype || '').toLowerCase().trim()
+  if (subtype === 'shorts') return 'shorts'
+  if (subtype === 'skirt') return skirtGranularityFromLength(p.length_hits_at)
+  if (['pants', 'culottes', 'overalls', 'other'].includes(subtype)) return 'pants'
+
+  // Not yet tagged with bottom_subtype (or tagged 'unknown') — fall back to the
+  // pre-existing name/reads_as heuristics rather than leaving the piece
+  // unclassified.
   if (p.style_profile_json?.bottom_kind) {
     const bk = String(p.style_profile_json.bottom_kind).toLowerCase().trim()
     if (['pants', 'shorts', 'skirt-mini', 'skirt-midi', 'skirt-maxi'].includes(bk)) return bk
@@ -490,23 +547,22 @@ export function necklineWarmth(p) {
 }
 
 export function sleeveCoverage(p) {
-  if (!p || !p.sleeve_type) return null
-  if (getFieldConfidence(p, 'sleeve_type') === 'low') return null
-  const s = String(p.sleeve_type || '').toLowerCase().trim()
-  if (/\b(3\/4|long)\b/i.test(s)) return 'long'
-  if (/\b(short|cap|elbow)\b/i.test(s)) return 'short'
-  if (/\b(none|sleeveless|strap|tank|cami|camisole|halter)\b/i.test(s)) return 'none'
+  if (!p || !p.sleeve_length) return null
+  if (getFieldConfidence(p, 'sleeve_length') === 'low') return null
+  const s = String(p.sleeve_length || '').toLowerCase().trim()
+  if (s === '3/4' || s === 'long' || s === 'extra_long') return 'long'
+  if (s === 'short' || s === 'cap' || s === 'elbow') return 'short'
+  if (s === 'sleeveless') return 'none'
   return null
 }
 
 // Construction fact for hard pairing constraints. Unlike sleeveCoverage,
-// this intentionally does not discard a populated structured sleeve_type
+// this intentionally does not discard a populated structured sleeve_length
 // merely because its tagger confidence is low: "sleeveless" is cheap to
 // verify from the garment photo, and treating it as covered creates the
 // higher-cost failure (an unwearable cold-weather outfit).
 export function hasSleevelessConstruction(p) {
-  const sleeve = String(p?.sleeve_type || '').toLowerCase().trim()
-  return ['none', 'sleeveless', 'strap', 'tank', 'cami', 'camisole', 'halter'].includes(sleeve)
+  return String(p?.sleeve_length || '').toLowerCase().trim() === 'sleeveless'
 }
 
 function pieceLayerIntentText(piece = {}) {

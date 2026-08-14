@@ -76,7 +76,7 @@ function pieceAttributeHydrator() {
     if (!id) return piece
     if (!cache.has(id)) {
       cache.set(id, db.prepare(`
-        SELECT sleeve_type, fit_on_body, fabric_category, reads_as, silhouette, length_hits_at
+        SELECT sleeve_length, sleeve_shape, fit_on_body, fabric_category, reads_as, silhouette, length_hits_at
         FROM pieces WHERE id = ?
       `).get(id) || null)
     }

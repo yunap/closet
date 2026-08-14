@@ -634,11 +634,11 @@ test('extreme heat and active movement reach the model as independent pre-compos
   })
   const elevatedTop = insertPiece({
     category: 'top', name: 'elevated structured top', reads_as: 'structured top', occasions: ['casual'],
-    formality: 'elevated', fabric_weight: 'light', sleeve_type: 'sleeveless'
+    formality: 'elevated', fabric_weight: 'light', sleeve_length: 'sleeveless'
   })
   const everydayTop = insertPiece({
     category: 'top', name: 'easy everyday tank', reads_as: 'easy tank', occasions: ['casual'],
-    formality: 'everyday', fabric_weight: 'light', sleeve_type: 'sleeveless'
+    formality: 'everyday', fabric_weight: 'light', sleeve_length: 'sleeveless'
   })
   insertPiece({ category: 'shoes', name: 'second flat shoes', reads_as: 'open toe sandals', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light', heel_height: 'flat', walk_support: 'high' })
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
@@ -1139,8 +1139,8 @@ test('assembled capsule cards persist the bounded roster and slot context needed
 
 test('capsule workbench states validator requirements before the model composes', async () => {
   const allPieces = [
-    { id: 1, name: 'sleeveless base', category: 'top', sleeve_type: 'sleeveless', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual'], status: 'active' },
-    { id: 2, name: 'long sleeve top', category: 'top', sleeve_type: 'long', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 1, name: 'sleeveless base', category: 'top', sleeve_length: 'sleeveless', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual'], status: 'active' },
+    { id: 2, name: 'long sleeve top', category: 'top', sleeve_length: 'long', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual'], status: 'active' },
     { id: 3, name: 'pants one', category: 'bottom', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual'], status: 'active' },
     { id: 4, name: 'pants two', category: 'bottom', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual'], status: 'active' },
     { id: 5, name: 'loafers', category: 'shoes', formality: 'everyday', occasions: ['casual'], status: 'active' },
@@ -2557,7 +2557,7 @@ test('a compatible Supplement label closes the original partial-delivery gap ins
 
 test('winter indoor sleeveless bases require a stay-on cardigan; a puffer alone does not satisfy the layer', () => {
   const sleeveless = parsePiece({
-    id: 1, name: 'black sleeveless blouse', category: 'top', sleeve_type: 'sleeveless',
+    id: 1, name: 'black sleeveless blouse', category: 'top', sleeve_length: 'sleeveless',
     formality: 'elevated', status: 'active', style_profile_json: '{}'
   })
   const bottom = parsePiece({ id: 2, name: 'black trousers', category: 'bottom', formality: 'elevated', status: 'active', style_profile_json: '{}' })
@@ -2642,7 +2642,7 @@ test('model plan workbench exposes authoritative garment construction without sp
       silhouette: 'oversized',
       length_hits_at: 'hip',
       hem_finish: 'design_hem',
-      sleeve_type: 'long',
+      sleeve_length: 'long',
       fit_on_body: 'hangs_straight',
       tuck_behavior: 'wear_over_only',
       opacity: 'opaque',
@@ -2701,7 +2701,7 @@ function insertPiece(overrides = {}) {
     fabric_weight: 'light',
     fiber_content: [],
     formality: 'everyday',
-    sleeve_type: '',
+    sleeve_length: '',
     length_hits_at: '',
     heel_height: null,
     walk_support: null,
@@ -2714,13 +2714,13 @@ function insertPiece(overrides = {}) {
       recommendation_status, fit_confidence, role_permission, occasion_permissions,
       engine_notes, photo, worn_photo, pattern_type, pattern_scale,
       pattern_complexity, reads_as, silhouette, fabric_category, fabric_weight, fiber_content,
-      formality, sleeve_type, length_hits_at, heel_height, walk_support, style_profile_json
+      formality, sleeve_length, length_hits_at, heel_height, walk_support, style_profile_json
     ) VALUES (
       @name, @category, @colors, @occasions, @season, @notes, @status,
       @recommendation_status, @fit_confidence, @role_permission, @occasion_permissions,
       @engine_notes, @photo, @worn_photo, @pattern_type, @pattern_scale,
       @pattern_complexity, @reads_as, @silhouette, @fabric_category, @fabric_weight, @fiber_content,
-      @formality, @sleeve_type, @length_hits_at, @heel_height, @walk_support, @style_profile_json
+      @formality, @sleeve_length, @length_hits_at, @heel_height, @walk_support, @style_profile_json
     )
   `).run({
     ...piece,
@@ -3409,19 +3409,19 @@ test('explicit winter indoor capsule excludes warm-only tops and keeps sleeve-co
     ['plum long sleeve blouse', 'year-round', 'long'],
     ['cream long sleeve knit', 'year-round', 'long'],
   ]) {
-    insertPiece({ category: 'top', name, season, sleeve_type: sleeves, colors: ['navy'], reads_as: 'indoor capsule top', pattern_type: 'solid', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual', 'smart-casual', 'city'] })
+    insertPiece({ category: 'top', name, season, sleeve_length: sleeves, colors: ['navy'], reads_as: 'indoor capsule top', pattern_type: 'solid', fabric_weight: 'medium', formality: 'everyday', occasions: ['casual', 'smart-casual', 'city'] })
   }
   for (const name of ['black pants', 'navy jeans', 'grey trousers', 'olive skirt']) {
     insertPiece({ category: 'bottom', name, season: 'year-round', colors: ['black'], reads_as: 'capsule bottom', formality: 'everyday', occasions: ['casual', 'smart-casual', 'city'] })
   }
-  insertPiece({ category: 'dress', name: 'indoor day dress', season: 'year-round', sleeve_type: 'short', colors: ['navy'], reads_as: 'indoor dress', formality: 'everyday', occasions: ['casual', 'smart-casual'] })
-  insertPiece({ category: 'outerwear', name: 'transition jacket', season: 'year-round', sleeve_type: 'long', colors: ['olive'], reads_as: 'light transition jacket', formality: 'everyday', occasions: ['casual', 'smart-casual', 'city'] })
-  insertPiece({ category: 'outerwear', name: 'charcoal knit cardigan', season: 'cool', sleeve_type: 'long', colors: ['charcoal'], reads_as: 'soft indoor cardigan', fabric_category: 'knit', fabric_weight: 'medium', fiber_content: ['wool'], formality: 'everyday', occasions: ['casual', 'smart-casual', 'city'] })
+  insertPiece({ category: 'dress', name: 'indoor day dress', season: 'year-round', sleeve_length: 'short', colors: ['navy'], reads_as: 'indoor dress', formality: 'everyday', occasions: ['casual', 'smart-casual'] })
+  insertPiece({ category: 'outerwear', name: 'transition jacket', season: 'year-round', sleeve_length: 'long', colors: ['olive'], reads_as: 'light transition jacket', formality: 'everyday', occasions: ['casual', 'smart-casual', 'city'] })
+  insertPiece({ category: 'outerwear', name: 'charcoal knit cardigan', season: 'cool', sleeve_length: 'long', colors: ['charcoal'], reads_as: 'soft indoor cardigan', fabric_category: 'knit', fabric_weight: 'medium', fiber_content: ['wool'], formality: 'everyday', occasions: ['casual', 'smart-casual', 'city'] })
   insertPiece({
     category: 'outerwear',
     name: 'black winter puffer coat',
     season: 'cool',
-    sleeve_type: 'long',
+    sleeve_length: 'long',
     colors: ['black'],
     reads_as: 'insulated winter coat',
     fabric_category: 'synthetic',
@@ -3449,11 +3449,11 @@ test('explicit winter indoor capsule excludes warm-only tops and keeps sleeve-co
   const roster = selectCapsuleRoster(pool, { budget: 14, isWinter: true, occasions: slots.map(slot => slot.occasion), slots })
   const tops = roster.filter(piece => wardrobeCategoryGroup(piece) === 'top')
   const layers = roster.filter(piece => wardrobeCategoryGroup(piece) === 'outerwear')
-  const covered = tops.filter(piece => ['short', '3/4', 'long'].includes(piece.sleeve_type))
+  const covered = tops.filter(piece => ['short', '3/4', 'long'].includes(piece.sleeve_length))
 
   assert.ok(!roster.some(piece => piece.name === 'warm floral tank'), `warm-only top should not consume explicit winter roster space, got ${roster.map(piece => piece.name)}`)
-  assert.ok(covered.length >= Math.ceil(tops.length / 2), `sleeve-covered indoor bases should be the majority, got ${tops.map(piece => `${piece.name}:${piece.sleeve_type}`)}`)
-  assert.ok(tops.some(piece => piece.sleeve_type === 'sleeveless'), 'year-round sleeveless layering bases should remain eligible')
+  assert.ok(covered.length >= Math.ceil(tops.length / 2), `sleeve-covered indoor bases should be the majority, got ${tops.map(piece => `${piece.name}:${piece.sleeve_length}`)}`)
+  assert.ok(tops.some(piece => piece.sleeve_length === 'sleeveless'), 'year-round sleeveless layering bases should remain eligible')
   assert.equal(layers.length, 2, `14-piece winter capsule should budget two distinct layer roles, got ${layers.map(piece => piece.name)}`)
   assert.ok(layers.some(piece => piece.name === 'charcoal knit cardigan'), `winter capsule should reserve an indoor knit layer, got ${layers.map(piece => piece.name)}`)
   assert.ok(layers.some(piece => piece.name === 'black winter puffer coat'), `winter capsule should reserve cold-capable transition outerwear, got ${layers.map(piece => piece.name)}`)
@@ -4429,7 +4429,7 @@ test('validateCapsuleRoster does not reject a roster for colour or aesthetic rea
 // guarantee and then hands the roster to a pass free to undo it; these tests
 // pin the end-of-selection check that makes the guarantees hold jointly.
 test('the post-condition check repairs a guarantee a later pass undid', () => {
-  const mk = (id, name, formality, sleeve) => ({ id, name, category: 'top', formality, sleeve_type: sleeve, season: 'year-round' })
+  const mk = (id, name, formality, sleeve) => ({ id, name, category: 'top', formality, sleeve_length: sleeve, season: 'year-round' })
   const elevatedA = mk(1, 'elevated long blouse A', 'elevated', 'long')
   const elevatedB = mk(2, 'elevated long blouse B', 'elevated', 'long')
   const sleeveless = mk(3, 'everyday sleeveless shell', 'everyday', 'sleeveless')
@@ -4447,7 +4447,7 @@ test('the post-condition check repairs a guarantee a later pass undid', () => {
 
   const { roster: repaired, unsatisfied } = enforceCapsulePostConditions(roster, groups, conditions, scoreOf, new Set())
   const everyday = repaired.filter(piece => ['lounge', 'everyday'].includes(String(pieceFormality(piece))))
-  const covered = repaired.filter(piece => ['short', 'long'].includes(String(piece.sleeve_type)))
+  const covered = repaired.filter(piece => ['short', 'long'].includes(String(piece.sleeve_length)))
 
   assert.equal(unsatisfied.length, 0, `both guarantees are satisfiable here, got ${JSON.stringify(unsatisfied)}`)
   assert.ok(everyday.length >= 2, `register reserve must be restored, got ${everyday.length}: ${repaired.map(p => p.name).join(', ')}`)
@@ -4754,9 +4754,9 @@ test('a wardrobe too thin for the requested capsule is declined before compositi
 test('the post-condition check leaves a satisfied roster untouched', () => {
   // This is what keeps every already-ratified selection byte-identical: no
   // violated condition means no swap, not a re-optimisation.
-  const everydayKnit = { id: 1, name: 'everyday long knit', category: 'top', formality: 'everyday', sleeve_type: 'long' }
-  const everydayTee = { id: 2, name: 'everyday short tee', category: 'top', formality: 'everyday', sleeve_type: 'short' }
-  const spare = { id: 3, name: 'higher scoring everyday knit', category: 'top', formality: 'everyday', sleeve_type: 'long' }
+  const everydayKnit = { id: 1, name: 'everyday long knit', category: 'top', formality: 'everyday', sleeve_length: 'long' }
+  const everydayTee = { id: 2, name: 'everyday short tee', category: 'top', formality: 'everyday', sleeve_length: 'short' }
+  const spare = { id: 3, name: 'higher scoring everyday knit', category: 'top', formality: 'everyday', sleeve_length: 'long' }
   const roster = [everydayKnit, everydayTee]
   const conditions = capsuleRosterPostConditions({
     quotas: { top: 2 },

@@ -148,7 +148,7 @@ test('hot visual roster excludes insulating fiber but keeps light wool gauze', (
     photo: 'img.jpg',
     fabric_weight: 'medium',
     fiber_content: ['wool'],
-    sleeve_type: 'sleeveless'
+    sleeve_length: 'sleeveless'
   }
   const woolGauze = {
     id: 7102,
@@ -157,7 +157,7 @@ test('hot visual roster excludes insulating fiber but keeps light wool gauze', (
     photo: 'img.jpg',
     fabric_weight: 'light',
     fiber_content: ['wool'],
-    sleeve_type: 'sleeveless'
+    sleeve_length: 'sleeveless'
   }
   const res = buildVisualComposerRoster([woolShell, woolGauze], {
     occasion: 'travel',
@@ -323,7 +323,7 @@ test('white octopus graphic t-shirt hot weather recommendations include appropri
 })
 
 test('scoreWholeWardrobeCandidate applies weather penalties and boosts correctly', () => {
-  const heavyTurtleneck = { id: 1001, name: 'Heavy Turtleneck', category: 'top', fabric_weight: 'heavy', sleeve_type: 'long' }
+  const heavyTurtleneck = { id: 1001, name: 'Heavy Turtleneck', category: 'top', fabric_weight: 'heavy', sleeve_length: 'long' }
   const heavyJeans = { id: 1002, name: 'Heavy Jeans', category: 'bottom', fabric_weight: 'heavy', style_profile_json: { bottom_kind: 'pants' } }
   const lightShorts = { id: 1003, name: 'Linen Shorts', category: 'bottom', fabric_weight: 'light', style_profile_json: { bottom_kind: 'shorts' } }
 

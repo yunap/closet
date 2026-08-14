@@ -1932,7 +1932,12 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
       piece.silhouette ? `preserve its ${String(piece.silhouette).replaceAll('_', ' ')} silhouette` : '',
       piece.length_hits_at ? `keep its ${String(piece.length_hits_at).replaceAll('_', ' ')} length` : '',
       piece.hem_finish ? `show its complete ${String(piece.hem_finish).replaceAll('_', ' ')}` : '',
-      piece.sleeve_type && piece.sleeve_type !== 'none' ? `preserve its ${String(piece.sleeve_type).replaceAll('_', ' ')} sleeves` : '',
+      (() => {
+        const length = piece.sleeve_length && piece.sleeve_length !== 'sleeveless' ? String(piece.sleeve_length).replaceAll('_', ' ') : ''
+        const shape = piece.sleeve_shape && piece.sleeve_shape !== 'other' && piece.sleeve_shape !== 'unknown' ? String(piece.sleeve_shape).replaceAll('_', ' ') : ''
+        const combined = [length, shape].filter(Boolean).join(' ')
+        return combined ? `preserve its ${combined} sleeves` : ''
+      })(),
       piece.fit_on_body && piece.fit_on_body !== 'none' ? `render its fit as ${String(piece.fit_on_body).replaceAll('_', ' ')}` : '',
       piece.tuck_behavior === 'wear_over_only'
         ? 'wear it fully outside the bottom waistband, with the complete hem visible and no part tucked in'
@@ -3362,11 +3367,14 @@ export function anchorFidelityInstructions(selectedPiece = {}) {
     parts.push(`Anchor length: this garment hits at ${readable(length)} — render it at exactly that length. Wrong length is the most common failure on this path; do not lengthen or shorten the anchor to suit the composition.`)
   }
 
-  const sleeve = anchorColumn(selectedPiece, 'sleeve_type')
-  if (sleeve === 'sleeveless') {
+  const sleeveLength = anchorColumn(selectedPiece, 'sleeve_length')
+  const sleeveShape = anchorColumn(selectedPiece, 'sleeve_shape')
+  if (sleeveLength === 'sleeveless') {
     parts.push('Keep the anchor sleeveless; do not add sleeves.')
-  } else if (sleeve) {
-    parts.push(`Anchor sleeve: ${readable(sleeve)} — preserve that exact sleeve length and volume; do not lengthen, shorten, or slim it, and do not cover it with a layer that would crush it.`)
+  } else if (sleeveLength || sleeveShape) {
+    const sleeveDesc = [sleeveLength, sleeveShape !== 'other' && sleeveShape !== 'unknown' ? sleeveShape : '']
+      .filter(Boolean).map(readable).join(' ')
+    parts.push(`Anchor sleeve: ${sleeveDesc} — preserve that exact sleeve length and volume; do not lengthen, shorten, or slim it, and do not cover it with a layer that would crush it.`)
   } else {
     if (/sleeveless|tank|shell/.test(described)) parts.push('Keep the anchor sleeveless; do not add sleeves.')
     if (/short sleeve|short-sleeve/.test(described)) parts.push('Keep the anchor short-sleeved; do not make it long-sleeved.')

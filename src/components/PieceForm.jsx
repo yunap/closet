@@ -4,7 +4,7 @@ import { GATE_CRITICAL_FIELDS, missingGateFields } from '../../styling-engine/at
 import { ColorEditor } from './ColorSelector.jsx'
 
 const CATEGORIES  = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory']
-const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home', 'walking']
+const OCCASIONS   = ['casual', 'city', 'evening', 'smart-casual', 'outdoor', 'home']
 const SEASONS     = ['warm', 'cool', 'year-round']
 const RECOMMENDATION_STATUSES = [
   { value: 'trusted', label: 'Trusted' },
@@ -66,6 +66,39 @@ const WALK_SUPPORT_OPTIONS = [
   { value: 'low', label: 'Low' },
 ]
 
+const ACCESSORY_SUBTYPE_OPTIONS = [
+  { value: 'belt', label: 'Belt' },
+  { value: 'bag', label: 'Bag' },
+  { value: 'jewelry', label: 'Jewelry' },
+  { value: 'scarf', label: 'Scarf' },
+  { value: 'hat', label: 'Hat' },
+  { value: 'watch', label: 'Watch' },
+  { value: 'gloves', label: 'Gloves' },
+  { value: 'other', label: 'Other' },
+]
+const JEWELRY_TYPE_OPTIONS = [
+  { value: 'necklace', label: 'Necklace' },
+  { value: 'earrings', label: 'Earrings' },
+  { value: 'bracelet', label: 'Bracelet' },
+  { value: 'ring', label: 'Ring' },
+  { value: 'pin', label: 'Pin' },
+]
+const NECKLACE_LENGTH_OPTIONS = [
+  { value: 'choker', label: 'Choker' },
+  { value: 'short', label: 'Short' },
+  { value: 'long', label: 'Long' },
+]
+
+const BOTTOM_SUBTYPE_OPTIONS = [
+  { value: 'pants', label: 'Pants' },
+  { value: 'shorts', label: 'Shorts' },
+  { value: 'skirt', label: 'Skirt' },
+  { value: 'culottes', label: 'Culottes' },
+  { value: 'overalls', label: 'Overalls' },
+  { value: 'other', label: 'Other' },
+  { value: 'unknown', label: 'Unknown' },
+]
+
 const CLOTHING_CATEGORIES = ['top', 'bottom', 'dress', 'outerwear']
 
 const CONSTRUCTION_BY_CATEGORY = {
@@ -76,7 +109,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     silhouetteLabel: 'Silhouette',
     silhouetteOptions: ['fitted','slim','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
     lengthLabel: 'Length hits at',
-    lengthOptions: ['crop','waist','hip','tunic','mid-thigh'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','tunic','unknown'],
     hemLabel: 'Hem finish',
     hemHint: 'determines tuck ability',
     hemOptions: [
@@ -91,7 +124,9 @@ const CONSTRUCTION_BY_CATEGORY = {
     silhouetteLabel: 'Bottom shape',
     silhouetteOptions: ['straight leg','wide leg','bootcut','flare','tapered','barrel','A-line skirt','pencil skirt','full skirt','slip skirt','relaxed','structured'],
     lengthLabel: 'Length',
-    lengthOptions: ['short','above-knee','knee','below-knee','midi','maxi','ankle','full-length','cropped'],
+    // No static lengthOptions: bottom's length vocabulary depends on
+    // bottom_subtype (skirt vs pants) — see BOTTOM_SKIRT_LENGTH_OPTIONS /
+    // BOTTOM_PANTS_LENGTH_OPTIONS below, chosen at render time.
     hemLabel: 'Hem / leg opening',
     hemOptions: [
       { value: 'straight_loose', label: 'straight/open' },
@@ -111,7 +146,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     silhouetteLabel: 'Dress shape',
     silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
     lengthLabel: 'Length',
-    lengthOptions: ['mini','above-knee','knee','below-knee','midi','maxi'],
+    lengthOptions: ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown'],
   },
   outerwear: {
     sectionLabel: 'Construction',
@@ -119,16 +154,19 @@ const CONSTRUCTION_BY_CATEGORY = {
     silhouetteLabel: 'Outerwear shape',
     silhouetteOptions: ['cropped','fitted','boxy','relaxed','oversized','structured','longline'],
     lengthLabel: 'Length hits at',
-    lengthOptions: ['waist','hip','mid-thigh','knee','longline'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','unknown'],
   },
   shoes: {
     sectionLabel: 'Shoe Details',
     silhouetteLabel: 'Shoe shape',
     silhouetteOptions: ['pointed','almond','round','square','open-toe','mule','loafer','boot','sandal','heel','flat','sneaker'],
     lengthLabel: 'Coverage / shaft',
-    lengthOptions: ['open','closed','ankle','mid-calf','knee','over-knee'],
+    lengthOptions: ['low','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
   },
 }
+
+const BOTTOM_SKIRT_LENGTH_OPTIONS = ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown']
+const BOTTOM_PANTS_LENGTH_OPTIONS = ['shorts','knee','mid_calf','ankle','full_length','floor_length','unknown']
 
 const FABRIC_BY_CATEGORY = {
   shoes: {
@@ -378,7 +416,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     reads_as:           piece?.reads_as           || '',
     // Construction
     neckline:           piece?.neckline           || null,
-    sleeve_type:        piece?.sleeve_type        || null,
+    sleeve_length:      piece?.sleeve_length      || null,
+    sleeve_shape:       piece?.sleeve_shape       || null,
     length_hits_at:     piece?.length_hits_at     || null,
     silhouette:         piece?.silhouette         || null,
     hem_finish:         piece?.hem_finish         || null,
@@ -396,6 +435,12 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     fit_on_body:        piece?.fit_on_body        || null,
     tuck_behavior:      piece?.tuck_behavior      || null,
     waistband_type:     piece?.waistband_type     || null,
+    // Accessory
+    accessory_subtype:  piece?.accessory_subtype  || null,
+    jewelry_type:       piece?.jewelry_type       || null,
+    necklace_length:    piece?.necklace_length    || null,
+    // Bottom
+    bottom_subtype:     piece?.bottom_subtype     || null,
     // Learned wisdom
     styling_rules_learned: piece?.styling_rules_learned || [],
     tried_and_rejected:    piece?.tried_and_rejected    || [],
@@ -573,7 +618,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'reads_as', tags.reads_as)
         applyTagValue(next, 'hem_finish', tags.hem_finish)
         applyTagValue(next, 'neckline', tags.neckline)
-        applyTagValue(next, 'sleeve_type', tags.sleeve_type)
+        applyTagValue(next, 'sleeve_length', tags.sleeve_length)
+        applyTagValue(next, 'sleeve_shape', tags.sleeve_shape)
         applyTagValue(next, 'length_hits_at', tags.length_hits_at)
         applyTagValue(next, 'silhouette', tags.silhouette)
         applyTagValue(next, 'fabric_category', tags.fabric_category)
@@ -587,6 +633,10 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'stretch', tags.stretch)
         applyTagValue(next, 'tuck_behavior', tags.tuck_behavior)
         applyTagValue(next, 'waistband_type', tags.waistband_type)
+        applyTagValue(next, 'accessory_subtype', tags.accessory_subtype)
+        applyTagValue(next, 'bottom_subtype', tags.bottom_subtype)
+        applyTagValue(next, 'jewelry_type', tags.jewelry_type)
+        applyTagValue(next, 'necklace_length', tags.necklace_length)
         next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
         if (tags.fit_on_body && tags.fit_on_body !== 'none') applyTagValue(next, 'fit_on_body', tags.fit_on_body)
         applyTagValue(next, 'tagger_version', tags.tagger_version)
@@ -632,7 +682,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       let changedCount = 0
       setForm(f => {
         const next = { ...f }
-        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_type','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','tagger_version'].forEach(field => {
+        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_length','sleeve_shape','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','accessory_subtype','jewelry_type','necklace_length','bottom_subtype','tagger_version'].forEach(field => {
           applyTagValue(next, field, tags[field])
         })
         if (!f.name) applyTagValue(next, 'name', tags.name_suggestion || tags.name, '')
@@ -761,6 +811,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     occasions: 'Occasions',
     heel_height: 'Heel height',
     walk_support: 'Walk support',
+    accessory_subtype: 'Accessory type',
+    bottom_subtype: 'Bottom type',
   }
   const revealMissingField = (field) => {
     const group = dialogRef.current?.querySelector(`[data-piece-field="${field}"]`)
@@ -1152,14 +1204,28 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               {constructionConfig.showNeckline && (
                 <div className="form-group">
                   <label className="form-label">Neckline</label>
-                  <ChipRow options={['V','scoop','crew','boat','mock','cowl','off-shoulder','square','wrap','other']} value={form.neckline} onChange={v => set('neckline', v)} />
+                  <ChipRow options={['V','scoop','crew','boat','mock','turtleneck','cowl','off-shoulder','square','wrap','halter','strapless','one-shoulder','collared','shawl','other','unknown']} value={form.neckline} onChange={v => set('neckline', v)} />
                 </div>
               )}
 
               {constructionConfig.showSleeve && (
-                <div className={`form-group ${suggestedFields.has('sleeve_type') ? 'retag-field-highlight' : ''}`}>
-                  <label className="form-label">Sleeve {suggestedFields.has('sleeve_type') && <span className="retag-review-marker">Review suggested</span>}</label>
-                  <ChipRow options={['sleeveless','cap','short','3/4','long','bell','bishop']} value={form.sleeve_type} onChange={v => set('sleeve_type', v)} />
+                <div className={`form-group ${suggestedFields.has('sleeve_length') ? 'retag-field-highlight' : ''}`} data-piece-field="sleeve_length">
+                  <label className="form-label">Sleeve Length {suggestedFields.has('sleeve_length') && <span className="retag-review-marker">Review suggested</span>}</label>
+                  <ChipRow options={['sleeveless','cap','short','elbow','3/4','long','extra_long','unknown']} value={form.sleeve_length} onChange={v => set('sleeve_length', v)} />
+                </div>
+              )}
+
+              {constructionConfig.showSleeve && form.sleeve_length !== 'sleeveless' && (
+                <div className={`form-group ${suggestedFields.has('sleeve_shape') ? 'retag-field-highlight' : ''}`} data-piece-field="sleeve_shape">
+                  <label className="form-label">Sleeve Shape {suggestedFields.has('sleeve_shape') && <span className="retag-review-marker">Review suggested</span>}</label>
+                  <ChipRow options={['fitted','straight','relaxed','puff','bishop','bell','flutter','raglan','dolman','other','unknown']} value={form.sleeve_shape} onChange={v => set('sleeve_shape', v)} />
+                </div>
+              )}
+
+              {cat === 'bottom' && (
+                <div className={`form-group ${suggestedFields.has('bottom_subtype') ? 'retag-field-highlight' : ''}`} data-piece-field="bottom_subtype">
+                  <FieldLabel field="bottom_subtype">Bottom Type {suggestedFields.has('bottom_subtype') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
+                  <ChipRow options={BOTTOM_SUBTYPE_OPTIONS} value={form.bottom_subtype} onChange={v => set('bottom_subtype', v)} />
                 </div>
               )}
 
@@ -1170,7 +1236,13 @@ export default function PieceForm({ piece, onSave, onCancel }) {
 
               <div className={`form-group ${suggestedFields.has('length_hits_at') ? 'retag-field-highlight' : ''}`}>
                 <label className="form-label">{constructionConfig.lengthLabel} {suggestedFields.has('length_hits_at') && <span className="retag-review-marker">Review suggested</span>}</label>
-                <ChipRow options={constructionConfig.lengthOptions} value={form.length_hits_at} onChange={v => set('length_hits_at', v)} />
+                <ChipRow
+                  options={cat === 'bottom'
+                    ? (form.bottom_subtype === 'skirt' ? BOTTOM_SKIRT_LENGTH_OPTIONS : BOTTOM_PANTS_LENGTH_OPTIONS)
+                    : constructionConfig.lengthOptions}
+                  value={form.length_hits_at}
+                  onChange={v => set('length_hits_at', v)}
+                />
               </div>
 
               {constructionConfig.hemOptions && (
@@ -1239,6 +1311,31 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 <FieldLabel field="walk_support">Walk support</FieldLabel>
                 <ChipRow options={WALK_SUPPORT_OPTIONS} value={form.walk_support} onChange={v => set('walk_support', v)} />
               </div>
+            </>
+          )}
+
+          {cat === 'accessory' && (
+            <>
+              <Section label="Accessory type" />
+
+              <div className="form-group" data-piece-field="accessory_subtype">
+                <FieldLabel field="accessory_subtype">Type</FieldLabel>
+                <ChipRow options={ACCESSORY_SUBTYPE_OPTIONS} value={form.accessory_subtype} onChange={v => set('accessory_subtype', v)} />
+              </div>
+
+              {form.accessory_subtype === 'jewelry' && (
+                <div className="form-group" data-piece-field="jewelry_type">
+                  <FieldLabel field="jewelry_type">Jewelry Type</FieldLabel>
+                  <ChipRow options={JEWELRY_TYPE_OPTIONS} value={form.jewelry_type} onChange={v => set('jewelry_type', v)} />
+                </div>
+              )}
+
+              {form.accessory_subtype === 'jewelry' && form.jewelry_type === 'necklace' && (
+                <div className="form-group" data-piece-field="necklace_length">
+                  <FieldLabel field="necklace_length">Necklace Length</FieldLabel>
+                  <ChipRow options={NECKLACE_LENGTH_OPTIONS} value={form.necklace_length} onChange={v => set('necklace_length', v)} />
+                </div>
+              )}
             </>
           )}
             </div>

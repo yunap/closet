@@ -845,7 +845,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
         // Include extracted visual attributes
         ;[
           'background_color', 'pattern_type', 'pattern_scale', 'pattern_complexity',
-          'reads_as', 'hem_finish', 'neckline', 'sleeve_type', 'length_hits_at',
+          'reads_as', 'hem_finish', 'neckline', 'sleeve_length', 'sleeve_shape', 'length_hits_at',
           'silhouette', 'fabric_category', 'fabric_weight'
         ].forEach(key => {
           if (piece[key] !== undefined && piece[key] !== null) {

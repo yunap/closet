@@ -353,6 +353,12 @@ function initDb(dbPath) {
     'pattern_type TEXT', 'pattern_scale TEXT', 'pattern_complexity TEXT',
     'reads_as TEXT', 'hem_finish TEXT',
     'neckline TEXT', 'sleeve_type TEXT', 'length_hits_at TEXT',
+    // sleeve_type is superseded by the sleeve_length/sleeve_shape split below.
+    // The old column is kept (never dropped, per this file's additive-only
+    // migration convention) so historical data isn't destroyed, and its
+    // values are one-time backfilled into the new columns further down. New
+    // reads/writes should use sleeve_length/sleeve_shape, not sleeve_type.
+    'sleeve_length TEXT', 'sleeve_shape TEXT',
     'silhouette TEXT', 'fabric_category TEXT', 'fabric_weight TEXT',
     'opacity TEXT',
     'fiber_content TEXT DEFAULT "[]"',
@@ -376,10 +382,125 @@ function initDb(dbPath) {
     // NOT the same as an owner-judged 'no'; only the second is evidence. See
     // docs/capsule-roster-selection-spec.md §7b.
     'needs_base TEXT',
+    // accessory_subtype: belt|bag|jewelry|scarf|hat|watch|gloves|other. NULL
+    // for all non-accessory categories. jewelry_type only meaningful
+    // when accessory_subtype is 'jewelry'.
+    'accessory_subtype TEXT',
+    'jewelry_type TEXT',
+    // necklace_length: choker|short|long. Only meaningful when jewelry_type is
+    // 'necklace' — how it sits/falls, the detail that matters for neckline pairing.
+    'necklace_length TEXT',
+    // bottom_subtype: pants|shorts|skirt|culottes|overalls|other|unknown. NULL
+    // for all non-bottom categories. Type only, deliberately no length baked
+    // in — bottomKind() combines this with length_hits_at for skirt
+    // granularity instead of encoding both into one value.
+    'bottom_subtype TEXT',
   ]
   NEW_COLUMNS.forEach(col => {
     try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
   })
+
+  // One-time backfill: sleeve_type -> sleeve_length / sleeve_shape split. The old
+  // enum conflated two axes (sleeveless/cap/short/3-4/long/none are lengths;
+  // bell/bishop are shapes with no length ever captured), so this is lossy by
+  // construction for bell/bishop pieces — sleeve_length is left null for those
+  // rather than guessed, and they surface through the normal missing-field
+  // review flow like any other ungated attribute. Guarded to only touch rows
+  // that haven't been split yet, so it's safe to run on every startup.
+  try {
+    const SLEEVE_LENGTH_VALUES = new Set(['sleeveless', 'cap', 'short', 'elbow', '3/4', 'long', 'extra_long'])
+    const SLEEVE_SHAPE_VALUES = new Set(['fitted', 'straight', 'relaxed', 'puff', 'bishop', 'bell', 'flutter', 'dolman'])
+    const unsplit = db.prepare(`
+      SELECT id, sleeve_type FROM pieces
+      WHERE sleeve_type IS NOT NULL AND sleeve_type != ''
+        AND sleeve_length IS NULL AND sleeve_shape IS NULL
+    `).all()
+    const update = db.prepare('UPDATE pieces SET sleeve_length = ?, sleeve_shape = ? WHERE id = ?')
+    for (const piece of unsplit) {
+      const value = String(piece.sleeve_type || '').toLowerCase().trim()
+      if (value === 'none' || value === 'unknown') continue
+      const length = SLEEVE_LENGTH_VALUES.has(value) ? value : null
+      const shape = SLEEVE_SHAPE_VALUES.has(value) ? value : null
+      if (length || shape) update.run(length, shape, piece.id)
+    }
+  } catch (err) {
+    console.warn('Failed to backfill sleeve_length/sleeve_shape from sleeve_type:', err.message)
+  }
+
+  // One-time remap: length_hits_at from one flat shared enum to a per-category
+  // (and, for bottoms, per-bottom_subtype) vocabulary. Same column, values
+  // rewritten in place — idempotent by construction: renamed values (e.g.
+  // 'crop' -> 'cropped') never match an old-format key again on a later run,
+  // and values already in the new format simply aren't keys in the rename
+  // map, so they pass through untouched. Bottom pieces need bottom_subtype to
+  // know which vocabulary applies; for pieces where that's still unset this
+  // also backfills it from the same name/reads_as heuristic bottomKind() in
+  // attributes.js already uses as its own fallback — not a superior
+  // classifier, just enough to route this migration and give bottom_subtype
+  // a real value instead of leaving it perpetually null pending re-tagging.
+  try {
+    const RENAME = {
+      'crop': 'cropped', 'above-knee': 'above_knee', 'below-knee': 'below_knee',
+      'mid-thigh': 'mid_thigh', 'full-length': 'full_length', 'mid-calf': 'mid_calf',
+      'over-knee': 'over_knee',
+    }
+    const TOP_VALID = new Set(['cropped', 'waist', 'high_hip', 'hip', 'low_hip', 'tunic'])
+    const OUTERWEAR_VALID = new Set(['cropped', 'waist', 'high_hip', 'hip', 'low_hip', 'mid_thigh', 'knee', 'mid_calf', 'ankle'])
+    const SKIRT_VALID = new Set(['mini', 'above_knee', 'knee', 'below_knee', 'midi', 'ankle', 'maxi'])
+    const PANTS_VALID = new Set(['shorts', 'knee', 'mid_calf', 'ankle', 'full_length', 'floor_length'])
+    const SHOES_VALID = new Set(['low', 'below_ankle', 'ankle', 'high_top', 'mid_calf', 'knee', 'over_knee'])
+
+    function remapLength(raw, validSet, extraRename = {}) {
+      const value = String(raw || '').toLowerCase().trim()
+      if (!value || value === 'unknown') return null
+      const renamed = extraRename[value] || RENAME[value] || value
+      return validSet.has(renamed) ? renamed : null
+    }
+
+    function guessBottomSubtype(name, readsAs) {
+      const text = `${name || ''} ${readsAs || ''}`.toLowerCase()
+      if (/\bskirt\b/.test(text)) return 'skirt'
+      if (/\bshorts?\b/.test(text)) return 'shorts'
+      return 'pants'
+    }
+
+    const rows = db.prepare(`
+      SELECT id, category, bottom_subtype, name, reads_as, length_hits_at FROM pieces
+      WHERE length_hits_at IS NOT NULL AND length_hits_at != ''
+    `).all()
+    const updateLength = db.prepare('UPDATE pieces SET length_hits_at = ? WHERE id = ?')
+    const updateBoth = db.prepare('UPDATE pieces SET length_hits_at = ?, bottom_subtype = ? WHERE id = ?')
+    for (const piece of rows) {
+      const category = String(piece.category || '').toLowerCase().trim()
+      let remapped = null
+      let subtypeToWrite = null
+      if (category === 'top') {
+        remapped = remapLength(piece.length_hits_at, TOP_VALID)
+      } else if (category === 'outerwear') {
+        remapped = remapLength(piece.length_hits_at, OUTERWEAR_VALID)
+      } else if (category === 'dress') {
+        remapped = remapLength(piece.length_hits_at, SKIRT_VALID, { short: 'mini', 'full-length': 'maxi' })
+      } else if (category === 'shoes') {
+        remapped = remapLength(piece.length_hits_at, SHOES_VALID, { open: 'low', closed: null })
+      } else if (category === 'bottom') {
+        const subtype = String(piece.bottom_subtype || '').toLowerCase().trim() || guessBottomSubtype(piece.name, piece.reads_as)
+        if (!piece.bottom_subtype) subtypeToWrite = subtype
+        remapped = subtype === 'skirt'
+          ? remapLength(piece.length_hits_at, SKIRT_VALID, { short: 'mini', 'full-length': 'maxi' })
+          : remapLength(piece.length_hits_at, PANTS_VALID, { short: 'shorts' })
+      } else {
+        continue // accessory: length_hits_at not applicable
+      }
+      if (remapped !== String(piece.length_hits_at || '').toLowerCase().trim()) {
+        if (subtypeToWrite) updateBoth.run(remapped, subtypeToWrite, piece.id)
+        else updateLength.run(remapped, piece.id)
+      } else if (subtypeToWrite) {
+        db.prepare('UPDATE pieces SET bottom_subtype = ? WHERE id = ?').run(subtypeToWrite, piece.id)
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to remap length_hits_at to per-category vocabulary:', err.message)
+  }
 
   // Additive learning-schema migrations. Existing local databases keep working.
   ;[
