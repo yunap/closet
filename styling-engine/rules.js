@@ -4131,6 +4131,7 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [])
     silhouette: outfit?.silhouette || '',
     bestFor: outfit?.bestFor || outfit?.best_for || '',
     reason: outfit?.reason || outfit?.why || '',
+    stylingInstructions: outfit?.styling_instructions || outfit?.stylingInstructions || '',
     watchFor: outfit?.watchFor || outfit?.watch_for || 'none',
     pieceIds: ids.slice(0, 6),
     missingPieces: [],

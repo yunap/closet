@@ -83,3 +83,26 @@ test('locallyGateWholeWardrobeOutfits rehydrates trimmed pieces so register-ceil
   assert.match(footwearFlags, /heel unsuitable/, 'footwear comfort must actually fire on the high heel, not degrade to "not yet tagged"')
   assert.doesNotMatch(footwearFlags, /not yet tagged/i)
 })
+
+// 2026-08-14: normalizeWholeWardrobeOutfitObject is a field-by-field whitelist, not a spread — a
+// new field the model returns (e.g. styling_instructions, the whole-wardrobe visual composer's
+// authoritative garment-relationship mechanics field) is silently dropped here unless explicitly
+// carried through, the same class of gap the trim above already causes for gate-relevant fields.
+test('normalizeWholeWardrobeOutfitObject carries styling_instructions through from the model output, and defaults to empty when absent', () => {
+  const dressyTop = { ...base, id: 301, name: 'silk cami top', category: 'top', formality: 'dressy' }
+  const flatShoe = { ...base, id: 302, name: 'canvas slip shoe', category: 'shoes', formality: 'everyday', heel_height: 'flat', walk_support: 'high' }
+  const everydayBottom = { ...base, id: 303, name: 'cotton trousers', category: 'bottom', formality: 'everyday' }
+  const candidatePieces = [dressyTop, flatShoe, everydayBottom]
+
+  const withMechanics = normalizeWholeWardrobeOutfitObject(
+    { label: 'With mechanics', pieceIds: [301, 303, 302], styling_instructions: 'Leave the top untucked over the trousers.' },
+    candidatePieces
+  )
+  assert.equal(withMechanics.stylingInstructions, 'Leave the top untucked over the trousers.')
+
+  const withoutMechanics = normalizeWholeWardrobeOutfitObject(
+    { label: 'Without mechanics', pieceIds: [301, 303, 302] },
+    candidatePieces
+  )
+  assert.equal(withoutMechanics.stylingInstructions, '')
+})

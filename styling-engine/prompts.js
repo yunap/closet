@@ -1148,6 +1148,7 @@ Composition rules:
 - Pattern discipline: one loud piece per outfit, grounded by solid supporting pieces.
 - Respect the rotation warnings and any rejected-pairing memory provided.
 - Do not use the words: flattering, elongating, slimming, balanced, elevated, sophisticated, cohesive, visual interest.
+- When two or more pieces in an outfit have a physical relationship that isn't obvious from the pieces alone — a belt worn over one layer and not another, a cardigan meant to hang open rather than tuck, which garment a tie/sash cinches, sleeve/hem interaction between layers — put that in that outfit's \`styling_instructions\`, not \`reason\`: concrete, actionable mechanics ("open cardigan over the dress, belt over the cardigan at the natural waist"), the way you'd explain it to the person getting dressed. This is the ONLY field the image renderer treats as authoritative for how pieces relate to each other. Omit it (empty string) for a simple outfit with no layering or positioning decision.
 
 Before finalizing each outfit, check its 'pieces' array: does it contain exactly one shoe-category entry? A layered outfit (extra outerwear/cardigan piece) is not exempt — shoes are always required regardless of how many other pieces the outfit has. If no shoe is present, add the best available one or the '[missing wardrobe gap: shoes]' placeholder before moving to the next outfit. Never output a finished outfit with zero shoes.
 
@@ -1166,6 +1167,7 @@ JSON shape:
         {"id": 9, "name": "casual sneakers shoes"}
       ],
       "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
+      "styling_instructions": "",
       "watchFor": "one real risk or none"
     },
     {
@@ -1181,6 +1183,7 @@ JSON shape:
         {"id": 9, "name": "casual sneakers shoes"}
       ],
       "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
+      "styling_instructions": "leave the cardigan open over the blouse; no belt or tuck involved here",
       "watchFor": "one real risk or none"
     }
   ],

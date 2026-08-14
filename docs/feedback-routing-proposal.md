@@ -651,6 +651,22 @@ schema plus the whole-wardrobe image path only; the editorial single-piece rende
 sheet, and critique/evaluation prompts still treat only `reason` and are expected to be expanded onto
 `styling_instructions` in a follow-up pass.
 
+**Correction, same day: the primary "Create outfits from my wardrobe" flow was missed on the first
+pass.** That flow's cards are composed by a *second*, separate model call —
+`WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` (`styling-engine/prompts.js`), driven from
+`routes/ai.js:1666` — not by `propose_outfit`. The first pass only added the field to
+`propose_outfit`'s schema (the freeform-chat tool), so this composer's own JSON contract had no
+`styling_instructions` slot for the model to use, and — separately — its output passes through
+`normalizeWholeWardrobeOutfitObject` (`styling-engine/rules.js`), a field-by-field whitelist rather
+than a spread, which would have silently dropped the field even if the model had returned it. Fixed
+both: the composer's JSON shape now includes `styling_instructions` with the same guidance as
+`propose_outfit`, and `normalizeWholeWardrobeOutfitObject` carries `stylingInstructions` through
+(defaulting to `''`). This is the flow behind the "Create outfits from my wardrobe" screen and its
+"Generate outfit image" button, so it's the more commonly hit of the two paths — worth flagging for
+future item-13-style scope calls: "whole-wardrobe path" has two independent model-facing schemas
+(the freeform tool and this composer), and both need touching, not just the one that matches the
+originating bug report.
+
 **Formula/silhouette preservation from positive or `Almost` feedback is closed, not merely
 paused, as of 2026-08-14.** No route was found that would let the app learn "what worked" without
 reinforcing the same literal garments and formulas — every version tried collapsed back into the
