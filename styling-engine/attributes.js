@@ -10,7 +10,7 @@ export const INSULATING_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca'
 export const FORMALITY_VALUES = ['lounge', 'everyday', 'elevated', 'dressy']
 export const HEEL_HEIGHT_VALUES = ['flat', 'low', 'mid', 'high']
 export const WALK_SUPPORT_VALUES = ['high', 'medium', 'low']
-export const GATE_CRITICAL_FIELDS = ['formality', 'fabric_weight', 'fiber_content', 'occasions', 'heel_height', 'walk_support']
+export const GATE_CRITICAL_FIELDS = ['formality', 'fabric_weight', 'visual_weight', 'fiber_content', 'occasions', 'heel_height', 'walk_support']
 
 const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
   'silhouette',
@@ -132,7 +132,14 @@ export function pieceJewelryType(p) {
 export function missingGateFields(piece = {}) {
   const missing = []
   if (!isPopulated(piece.formality)) missing.push('formality')
-  if (!isPopulated(piece.fabric_weight)) missing.push('fabric_weight')
+  // visual_weight supersedes fabric_weight for shoes/accessory — the clothing
+  // weight scale (ultralight/light/.../heavy) never applied to them; they now
+  // have their own gate-critical field instead.
+  if (isShoePiece(piece) || isAccessoryPiece(piece)) {
+    if (!isPopulated(piece.visual_weight)) missing.push('visual_weight')
+  } else if (!isPopulated(piece.fabric_weight)) {
+    missing.push('fabric_weight')
+  }
   if (!isPopulated(piece.fiber_content)) missing.push('fiber_content')
   // Intake treats empty occasions as a curation prompt; later activity gates may treat absence as a weaker statement.
   if (!isPopulated(piece.occasions)) missing.push('occasions')
@@ -200,7 +207,7 @@ export function pieceHasWetSensitiveFootwearMaterial(p = {}) {
     String(p.fabric_category || '').toLowerCase().trim(),
     ...(Array.isArray(p.fiber_content) ? p.fiber_content : []).map(value => String(value || '').toLowerCase().trim()),
   ].filter(Boolean))
-  return materials.has('canvas') || materials.has('suede')
+  return materials.has('canvas') || materials.has('suede') || materials.has('nubuck')
 }
 
 export function shoeCoverage(p) {

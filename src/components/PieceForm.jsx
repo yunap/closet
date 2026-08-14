@@ -49,9 +49,9 @@ const NEEDS_BASE_OPTIONS = [
 ]
 
 const FIBER_OPTIONS = [
-  'cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 
-  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal', 
-  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic', 
+  'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
+  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
+  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
   'spandex', 'leather', 'suede', 'denim', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
@@ -183,7 +183,7 @@ const FABRIC_BY_CATEGORY = {
   shoes: {
     sectionLabel: 'Material',
     fabricLabel: 'Material',
-    fabricOptions: ['leather','suede','patent','canvas','mesh','synthetic','textile','rubber','other'],
+    fabricOptions: ['leather','suede','nubuck','patent','canvas','mesh','woven','synthetic','textile','rubber','other'],
     weightLabel: 'Visual weight',
     weightOptions: ['delicate','slim','medium','chunky'],
     showStretch: false,
@@ -191,7 +191,7 @@ const FABRIC_BY_CATEGORY = {
   accessory: {
     sectionLabel: 'Material',
     fabricLabel: 'Material',
-    fabricOptions: ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','other'],
+    fabricOptions: ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','other'],
     weightLabel: 'Visual weight',
     weightOptions: ['delicate','slim','medium','chunky'],
     showStretch: false,
@@ -199,7 +199,7 @@ const FABRIC_BY_CATEGORY = {
   default: {
     sectionLabel: 'Fabric',
     fabricLabel: 'Fabric',
-    fabricOptions: ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','lace','crochet','wool','cashmere','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other'],
+    fabricOptions: ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','organza','lace','crochet','jacquard','wool','cashmere','boucle','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other'],
     weightLabel: 'Weight',
     weightOptions: ['ultralight','light','medium','heavy'],
     showStretch: true,
@@ -435,6 +435,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     // Fabric
     fabric_category:    piece?.fabric_category    || null,
     fabric_weight:      piece?.fabric_weight      || null,
+    visual_weight:      piece?.visual_weight      || null,
     opacity:            piece?.opacity            || null,
     needs_base:         piece?.needs_base         || null,
     fiber_content:      piece?.fiber_content      || [],
@@ -638,6 +639,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'silhouette', tags.silhouette)
         applyTagValue(next, 'fabric_category', tags.fabric_category)
         applyTagValue(next, 'fabric_weight', tags.fabric_weight)
+        applyTagValue(next, 'visual_weight', tags.visual_weight)
         applyTagValue(next, 'opacity', tags.opacity)
         applyTagValue(next, 'needs_base', tags.needs_base)
         applyTagValue(next, 'fiber_content', tags.fiber_content)
@@ -698,7 +700,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       let changedCount = 0
       setForm(f => {
         const next = { ...f }
-        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_length','sleeve_shape','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','accessory_subtype','jewelry_type','necklace_length','bottom_subtype','shoe_type','toe_shape','tagger_version'].forEach(field => {
+        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_length','sleeve_shape','length_hits_at','silhouette','fabric_category','fabric_weight','visual_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','accessory_subtype','jewelry_type','necklace_length','bottom_subtype','shoe_type','toe_shape','tagger_version'].forEach(field => {
           applyTagValue(next, field, tags[field])
         })
         if (!f.name) applyTagValue(next, 'name', tags.name_suggestion || tags.name, '')
@@ -823,6 +825,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const missingGateLabels = {
     formality: 'Formality',
     fabric_weight: 'Fabric weight',
+    visual_weight: 'Visual weight',
     fiber_content: 'Fiber content',
     occasions: 'Occasions',
     heel_height: 'Heel height',
@@ -1189,7 +1192,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
 
           <div className="form-group">
             <label className="form-label">Pattern type</label>
-            <ChipRow options={['solid','floral','stripe','botanical','geometric','abstract','animal','graphic','plaid','other']} value={form.pattern_type} onChange={v => set('pattern_type', v)} />
+            <ChipRow options={['solid','floral','botanical','stripe','polka_dot','check','plaid','geometric','abstract','animal','graphic','paisley','patchwork','other']} value={form.pattern_type} onChange={v => set('pattern_type', v)} />
           </div>
 
           <div className="form-group">
@@ -1308,9 +1311,12 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <ChipRow options={fabricConfig.fabricOptions} value={form.fabric_category} onChange={v => set('fabric_category', v)} />
           </div>
 
-          <div className="form-group" data-piece-field="fabric_weight">
-            <FieldLabel field="fabric_weight">{fabricConfig.weightLabel}</FieldLabel>
-            <ChipRow options={fabricConfig.weightOptions} value={form.fabric_weight} onChange={v => set('fabric_weight', v)} />
+          <div className="form-group" data-piece-field={cat === 'shoes' || cat === 'accessory' ? 'visual_weight' : 'fabric_weight'}>
+            <FieldLabel field={cat === 'shoes' || cat === 'accessory' ? 'visual_weight' : 'fabric_weight'}>{fabricConfig.weightLabel}</FieldLabel>
+            {cat === 'shoes' || cat === 'accessory'
+              ? <ChipRow options={fabricConfig.weightOptions} value={form.visual_weight} onChange={v => set('visual_weight', v)} />
+              : <ChipRow options={fabricConfig.weightOptions} value={form.fabric_weight} onChange={v => set('fabric_weight', v)} />
+            }
           </div>
 
           {form.category !== 'shoes' && form.category !== 'accessory' && (
@@ -1328,14 +1334,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           )}
 
           <div className="form-group" data-piece-field="fiber_content">
-            <FieldLabel field="fiber_content">Fiber content</FieldLabel>
+            <FieldLabel field="fiber_content">{cat === 'shoes' || cat === 'accessory' ? 'Material properties' : 'Fiber content'}</FieldLabel>
             <ChipRow options={FIBER_OPTIONS} value={form.fiber_content} onChange={v => set('fiber_content', v)} multi />
           </div>
 
           {fabricConfig.showStretch && (
             <div className="form-group">
-              <label className="form-label">Stretch</label>
-              <ChipRow options={['none','minimal','stretchy']} value={form.stretch} onChange={v => set('stretch', v)} />
+              <FieldLabel field="stretch">Stretch</FieldLabel>
+              <ChipRow options={['none','minimal','moderate','stretchy']} value={form.stretch} onChange={v => set('stretch', v)} />
             </div>
           )}
 

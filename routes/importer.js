@@ -567,7 +567,7 @@ const TAG_EST_OUTPUT_TOKENS = 1400
 const TAGGABLE_PIECE_COLUMNS = new Set([
   'name', 'category', 'colors', 'occasions', 'season', 'notes', 'pattern_type', 'pattern_scale',
   'pattern_complexity', 'reads_as', 'hem_finish', 'neckline', 'sleeve_length', 'sleeve_shape', 'length_hits_at',
-  'silhouette', 'fabric_category', 'fabric_weight', 'stretch', 'fit_on_body', 'tuck_behavior',
+  'silhouette', 'fabric_category', 'fabric_weight', 'visual_weight', 'stretch', 'fit_on_body', 'tuck_behavior',
   'waistband_type', 'background_color', 'style_profile_json', 'fiber_content', 'formality',
   'heel_height', 'walk_support', 'opacity', 'needs_base', 'accessory_subtype', 'jewelry_type',
   'necklace_length', 'bottom_subtype', 'shoe_type', 'toe_shape', 'tagger_version'

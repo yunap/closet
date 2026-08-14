@@ -5,7 +5,10 @@ const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
 const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
   'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
-  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown'])
+  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'hemp', 'unknown'])
+// lyocell is the generic fiber name; tencel is its branded form and is this wardrobe's one
+// stored concept for both — remap before validating rather than treating them as distinct values.
+const FIBER_SYNONYMS = { lyocell: 'tencel' }
 const VALID_FORMALITY = new Set(['lounge', 'everyday', 'elevated', 'dressy'])
 const VALID_HEEL_HEIGHT = new Set(['flat', 'low', 'mid', 'high'])
 const VALID_WALK_SUPPORT = new Set(['high', 'medium', 'low'])
@@ -36,7 +39,9 @@ export const CONFIDENCE_FIELDS = [
   'hem_finish',
   'fabric_category',
   'fabric_weight',
+  'visual_weight',
   'opacity',
+  'stretch',
   'fiber_content',
   'formality',
   'heel_height',
@@ -59,6 +64,7 @@ export function normalizeFiberContent(value = []) {
   const raw = Array.isArray(value) ? value : []
   const normalized = raw
     .map(v => String(v || '').toLowerCase().trim())
+    .map(v => FIBER_SYNONYMS[v] || v)
     .map(v => VALID_FIBERS.has(v) ? v : 'unknown')
     .filter(Boolean)
   return [...new Set(normalized.length ? normalized : ['unknown'])]

@@ -18,10 +18,16 @@ const FABRIC_WEIGHT_OPTIONS = [
   { value: 'medium', label: 'Medium' },
   { value: 'heavy', label: 'Heavy' },
 ]
+const VISUAL_WEIGHT_OPTIONS = [
+  { value: 'delicate', label: 'Delicate' },
+  { value: 'slim', label: 'Slim' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'chunky', label: 'Chunky' },
+]
 const FIBER_OPTIONS = [
-  'cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 
-  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal', 
-  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic', 
+  'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
+  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
+  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
   'spandex', 'leather', 'suede', 'denim', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
@@ -78,7 +84,7 @@ function emptyForm() {
     name: '', category: 'top', colors: [], occasions: [], season: 'year-round', notes: '', status: 'active',
     pattern_type: null, pattern_scale: null, pattern_complexity: null, reads_as: '',
     hem_finish: null, neckline: null, sleeve_length: null, sleeve_shape: null, length_hits_at: null,
-    silhouette: null, fabric_category: null, fabric_weight: null, opacity: null, needs_base: null, fiber_content: [],
+    silhouette: null, fabric_category: null, fabric_weight: null, visual_weight: null, opacity: null, needs_base: null, fiber_content: [],
     formality: null, heel_height: null, walk_support: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
     accessory_subtype: null, jewelry_type: null, necklace_length: null, bottom_subtype: null,
@@ -533,7 +539,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
   const patternConstFields = [
     'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
     'neckline', 'sleeve_length', 'sleeve_shape', 'silhouette', 'length_hits_at', 'hem_finish',
-    'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype',
+    'stretch', 'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype',
     'shoe_type', 'toe_shape'
   ]
   const hasLowConfidencePatternConst = patternConstFields.some(field => 
@@ -734,10 +740,10 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
           >
             <option value="">-- Select Fabric --</option>
             {(form.category === 'shoes'
-              ? ['leather','suede','patent','canvas','mesh','synthetic','textile','rubber','other']
+              ? ['leather','suede','nubuck','patent','canvas','mesh','woven','synthetic','textile','rubber','other']
               : form.category === 'accessory'
-              ? ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','other']
-              : ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','lace','crochet','wool','cashmere','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other']
+              ? ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','other']
+              : ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','organza','lace','crochet','jacquard','wool','cashmere','boucle','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other']
             ).map(opt => (
               <option key={opt} value={opt}>{opt}</option>
             ))}
@@ -745,22 +751,41 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
         </div>
 
         <div className="form-group">
-          <FieldLabel field="fabric_weight">Fabric Weight</FieldLabel>
-          <div className="radio-row">
-            {FABRIC_WEIGHT_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                className={`radio-btn ${form.fabric_weight === opt.value ? 'active' : ''}`}
-                onClick={() => set('fabric_weight', opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          {form.category === 'shoes' || form.category === 'accessory' ? (
+            <>
+              <FieldLabel field="visual_weight">Visual Weight</FieldLabel>
+              <div className="radio-row">
+                {VISUAL_WEIGHT_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`radio-btn ${form.visual_weight === opt.value ? 'active' : ''}`}
+                    onClick={() => set('visual_weight', opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <FieldLabel field="fabric_weight">Fabric Weight</FieldLabel>
+              <div className="radio-row">
+                {FABRIC_WEIGHT_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`radio-btn ${form.fabric_weight === opt.value ? 'active' : ''}`}
+                    onClick={() => set('fabric_weight', opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="form-group">
-          <FieldLabel field="fiber_content">Fiber Content</FieldLabel>
+          <FieldLabel field="fiber_content">{form.category === 'shoes' || form.category === 'accessory' ? 'Material Properties' : 'Fiber Content'}</FieldLabel>
           <div className="chip-grid">
             {FIBER_OPTIONS.map(fib => (
               <button
@@ -872,7 +897,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
               <FieldLabel field="pattern_type">Pattern Type</FieldLabel>
               <select className="form-select" value={form.pattern_type || ''} onChange={e => set('pattern_type', e.target.value || null)}>
                 <option value="">-- Select Pattern Type --</option>
-                {['solid','floral','stripe','botanical','geometric','abstract','animal','graphic','plaid','other'].map(opt => (
+                {['solid','floral','botanical','stripe','polka_dot','check','plaid','geometric','abstract','animal','graphic','paisley','patchwork','other'].map(opt => (
                   <option key={opt} value={opt}>{opt}</option>
                 ))}
               </select>
@@ -1025,6 +1050,20 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
                     const lbl = typeof opt === 'string' ? opt : opt.label
                     return <option key={val} value={val}>{lbl}</option>
                   })}
+                </select>
+              </div>
+            )}
+
+            {/* Stretch */}
+            {['top', 'bottom', 'dress', 'outerwear'].includes(form.category) && (
+              <div className="form-group">
+                <FieldLabel field="stretch">Stretch</FieldLabel>
+                <select className="form-select" value={form.stretch || ''} onChange={e => set('stretch', e.target.value || null)}>
+                  <option value="">-- Select Stretch --</option>
+                  <option value="none">none</option>
+                  <option value="minimal">minimal</option>
+                  <option value="moderate">moderate</option>
+                  <option value="stretchy">stretchy</option>
                 </select>
               </div>
             )}
@@ -1319,7 +1358,9 @@ export default function BatchAdd({ onDone }) {
             silhouette:         tags.silhouette         || null,
             fabric_category:    tags.fabric_category    || null,
             fabric_weight:      tags.fabric_weight      || null,
+            visual_weight:      tags.visual_weight      || null,
             opacity:            tags.opacity            || null,
+            stretch:            tags.stretch            || null,
             needs_base:         tags.needs_base         || null,
             fiber_content:      tags.fiber_content      || [],
             formality:          tags.formality          || null,

@@ -2454,6 +2454,7 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.needs_base === 'yes' ? 'NEEDS_BASE_LAYER' : '',
     piece.fabric_category ? `fabric:${piece.fabric_category}` : '',
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
+    piece.visual_weight ? `weight:${piece.visual_weight}` : '',
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
     piece.reads_as ? `reads:${String(piece.reads_as).slice(0, 80)}` : '',

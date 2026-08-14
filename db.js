@@ -400,6 +400,12 @@ function initDb(dbPath) {
     // kept (never dropped) but no longer applicable to shoes going forward.
     'shoe_type TEXT',
     'toe_shape TEXT',
+    // visual_weight: delicate|slim|medium|chunky. Supersedes fabric_weight for
+    // shoes/accessory, which reused the clothing weight scale (ultralight/
+    // light/medium/heavy) under a "visual weight" UI label without a real
+    // backing concept. fabric_weight is kept (never dropped) and is now
+    // clothing-only going forward; see the one-time backfill below.
+    'visual_weight TEXT',
   ]
   NEW_COLUMNS.forEach(col => {
     try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
@@ -627,6 +633,27 @@ function initDb(dbPath) {
     }
   } catch (err) {
     console.warn('Failed to split shoe silhouette into shoe_type/toe_shape:', err.message)
+  }
+
+  // One-time backfill: shoes/accessory fabric_weight (which reused the
+  // delicate/slim/medium/chunky scale under a "Visual weight" UI label with no
+  // real backing column) into the new visual_weight column. fabric_weight
+  // itself is left untouched (kept, not dropped) and is clothing-only going
+  // forward — the engine no longer reads it for shoes/accessory.
+  try {
+    const VISUAL_WEIGHT_VALID = new Set(['delicate', 'slim', 'medium', 'chunky'])
+    const rows = db.prepare(`
+      SELECT id, fabric_weight FROM pieces
+      WHERE category IN ('shoes', 'accessory') AND fabric_weight IS NOT NULL AND fabric_weight != ''
+        AND visual_weight IS NULL
+    `).all()
+    const update = db.prepare('UPDATE pieces SET visual_weight = ? WHERE id = ?')
+    for (const piece of rows) {
+      const value = String(piece.fabric_weight || '').toLowerCase().trim()
+      if (VISUAL_WEIGHT_VALID.has(value)) update.run(value, piece.id)
+    }
+  } catch (err) {
+    console.warn('Failed to backfill shoe/accessory visual_weight from fabric_weight:', err.message)
   }
 
   // Additive learning-schema migrations. Existing local databases keep working.

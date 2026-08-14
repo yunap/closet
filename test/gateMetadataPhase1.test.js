@@ -85,7 +85,7 @@ test('missingGateFields respects shoe-only fields and intake occasion curation',
   assert.deepEqual(missingGateFields({
     category: 'shoes',
     formality: 'everyday',
-    fabric_weight: 'medium',
+    visual_weight: 'medium',
     fiber_content: ['leather'],
     occasions: ['city'],
     heel_height: 'flat',
@@ -94,7 +94,7 @@ test('missingGateFields respects shoe-only fields and intake occasion curation',
   assert.deepEqual(missingGateFields({
     category: 'shoes',
     formality: 'everyday',
-    fabric_weight: 'medium',
+    visual_weight: 'medium',
     fiber_content: ['leather'],
     occasions: ['city'],
     heel_height: 'flat',
@@ -113,6 +113,38 @@ test('missingGateFields respects shoe-only fields and intake occasion curation',
     fabric_weight: 'light',
     fiber_content: ['cotton'],
     occasions: ['casual']
+  }), [])
+})
+
+test('missingGateFields uses visual_weight for shoes/accessory, not fabric_weight', () => {
+  // fabric_weight populated but visual_weight is not — the clothing weight scale
+  // no longer counts for shoes/accessory; visual_weight is the gate-critical field now.
+  assert.deepEqual(missingGateFields({
+    category: 'shoes',
+    formality: 'everyday',
+    fabric_weight: 'medium',
+    fiber_content: ['leather'],
+    occasions: ['city'],
+    heel_height: 'flat',
+    walk_support: 'high',
+    shoe_type: 'boot'
+  }), ['visual_weight'])
+  assert.deepEqual(missingGateFields({
+    category: 'accessory',
+    formality: 'everyday',
+    fabric_weight: 'medium',
+    fiber_content: ['metal'],
+    occasions: ['city'],
+    accessory_subtype: 'belt'
+  }), ['visual_weight'])
+  // visual_weight populated, fabric_weight is not — fine, fabric_weight isn't checked for these categories.
+  assert.deepEqual(missingGateFields({
+    category: 'accessory',
+    formality: 'everyday',
+    visual_weight: 'slim',
+    fiber_content: ['metal'],
+    occasions: ['city'],
+    accessory_subtype: 'belt'
   }), [])
 })
 

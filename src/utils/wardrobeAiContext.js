@@ -252,7 +252,12 @@ export function buildWardrobePieceTruthText(piece = {}) {
     ? trustedFieldText(piece, 'sleeve_shape', 'sleeve shape', piece.sleeve_shape)
     : null
   if (sleeveShapeText) parts.push(sleeveShapeText)
-  if (piece.fabric_category) parts.push(`fabric: ${piece.fabric_category}${piece.fabric_weight ? `/${piece.fabric_weight}` : ''}`)
+  // shoes/accessory use visual_weight (delicate/slim/medium/chunky — visual
+  // scale, not fabric weight); everything else uses fabric_weight.
+  const weightForFabricLine = (piece.category === 'shoes' || piece.category === 'accessory')
+    ? piece.visual_weight
+    : piece.fabric_weight
+  if (piece.fabric_category) parts.push(`fabric: ${piece.fabric_category}${weightForFabricLine ? `/${weightForFabricLine}` : ''}`)
   if (piece.opacity && piece.opacity !== 'opaque') {
     const opacityText = trustedFieldText(piece, 'opacity', 'opacity', piece.opacity)
     if (opacityText) parts.push(opacityText)
@@ -338,8 +343,10 @@ function manifestValue(piece, field, value) {
 export function buildWardrobeManifestLine(piece = {}) {
   const colors = Array.isArray(piece.colors) ? piece.colors.filter(Boolean) : []
   const color = piece.reads_as || piece.background_color || colors.join('/')
+  const weightField = (piece.category === 'shoes' || piece.category === 'accessory') ? 'visual_weight' : 'fabric_weight'
+  const weightValue = piece[weightField]
   const fabric = piece.fabric_category
-    ? `${manifestValue(piece, 'fabric_category', piece.fabric_category)}${piece.fabric_weight ? `/${manifestValue(piece, 'fabric_weight', piece.fabric_weight)}` : ''}`
+    ? `${manifestValue(piece, 'fabric_category', piece.fabric_category)}${weightValue ? `/${manifestValue(piece, weightField, weightValue)}` : ''}`
     : ''
   const pattern = piece.pattern_complexity && piece.pattern_complexity !== 'solid'
     ? [piece.pattern_type, piece.pattern_scale].filter(Boolean).join('/')
