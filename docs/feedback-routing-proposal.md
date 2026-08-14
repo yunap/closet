@@ -179,6 +179,23 @@ item-11 correction now treats canvas and suede footwear as ineligible for credib
 (explicit rain/wet/mud, or a foggy coastal outdoor walk) while leaving ordinary fog and dry walking
 alone. Do not infer either a personal ban or a new per-piece weather exclusion from an outfit reaction.
 
+**A `general_styling_failure` synthesis finding led to a real gap in that shared gate, 2026-08-14.**
+A `wrong_choice` reaction on "green utility pocket shorts" for `outdoor_daytime_social` synthesized
+into "athletic shorts are not appropriate for an outdoor daytime social occasion." That is not a
+subjective register judgment — the piece's `fabric_category` is genuinely `technical/performance`,
+and `outdoor_daytime_social`'s occasion profile (`styling-engine/occasions.js`) already declares
+`discouraged_materials: [..., "performance fabric"]`, exactly the kind of shared, deterministic
+material-physics gate this section says such a rule belongs in, not per-garment owner memory. But
+checking the gate directly (`profileRuleFit`, no model call needed) showed it did not fire: the
+gate's phrase `"performance fabric"` never matched the auto-tagger's actual enum value
+`"technical/performance"`, because `pieceMatchesMaterial` requires the literal phrase as a
+substring rather than a synonym or fuzzy match. The rule existed and was correctly scoped to the
+shared gate; it simply never matched the one material category it was presumably written for.
+Fixed by adding the tagger's literal enum value alongside the descriptive phrase. The general
+lesson: a synthesis finding restating what looks like an existing deterministic rule is worth
+checking against that rule directly before trusting either that the rule already covers the case or
+that the finding is redundant — the two had silently diverged.
+
 ### C2 · "Did this garment or pairing work *here*?" → scoped evidence
 
 **Soft, and currently too broad.** *"I didn't like these shorts in this outfit"* is weak evidence
