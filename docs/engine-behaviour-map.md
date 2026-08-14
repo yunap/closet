@@ -2,7 +2,10 @@
 
 **Status:** twelfth pass, 2026-07-26; **amended 2026-08-12** to add the owner-constraint gate (which
 shipped with item 12 and had never been recorded here) and the capsule roster prompt cache, the
-seventh cache and the only one covering images. Companion to `docs/app-surface-map.md`.
+seventh cache and the only one covering images; **amended 2026-08-14** to trace `fiber_content`'s
+two other consumers (`pieceHasWetSensitiveFootwearMaterial`, `capsuleVersatilityScore`'s summer
+term) alongside the already-documented hot-weather clause, finding one live gap and one latent one.
+Companion to `docs/app-surface-map.md`.
 
 Pass 1 covered side effects, thread state, recency memory, retry loops, prompt splices and sweeps.
 Pass 2 added scoring, caches, CI ratchets and the import pipeline's model calls. Pass 3 added the
@@ -17,7 +20,7 @@ owner-set versus model-set, pass 10 **the role vocabulary** behind formula-famil
 classification, and a sweep that found **the singular/plural gap** — a bug class that understates
 several of this document's own measurements — and `extract-pieces`, the tagger's weaker sibling.
 
-**Start at [Findings this map produced](#findings-this-map-produced)** — thirty-three things that
+**Start at [Findings this map produced](#findings-this-map-produced)** — thirty-four things that
 were not known before this document existed, including one unreachable code path, a billed render
 that reports no cost, a cost gate that under-quotes by 1.6x, two fully-built features with zero
 adoption, and a fidelity gap that lines up exactly with the most common recorded render complaint.
@@ -825,6 +828,32 @@ anyway. So no garment currently escapes hot-weather gating through this hole. It
 worth knowing before someone adds an untagged wool sweater — not a live defect, and the heavy-weight
 and coverage clauses catch most of what the fiber clause would.
 
+**`fiber_content` has two other real consumers, checked the same way — one is live, one is not.**
+`fiber_content` is not single-purpose: `pieceHasWetSensitiveFootwearMaterial` (`attributes.js`)
+also reads it, gating footwear out of wet-exposure requests when `'suede'` is present (or
+`fabric_category = 'canvas'`); `capsuleVersatilityScore` (`outfitSetPlanner.js`) reads it inside
+its summer-only term, penalizing `wool`/`cashmere`/`fleece` and rewarding `linen`/`cotton`/etc. via
+the same `fiber_content`-or-`fabric_category` check. Both settled by
+`scratch/measure_open_questions.js` (Q7, Q8):
+
+- **The wet-exposure clause is a live miss, not a latent one.** Of the 27 no-`fiber_content` shoes,
+  1 is still caught via `fabric_category = 'canvas'`, but **2 are missed entirely**: piece 199
+  ("burgundy suede cork wedge sandals") and piece 200 ("taupe suede ankle boots") both name `suede`
+  in their own title, have empty `fiber_content`, and `fabric_category = 'other'` — so
+  `pieceHasWetSensitiveFootwearMaterial` returns false and neither is excluded from a wet-exposure
+  request today. (Piece 200 is the same taupe suede boots already flagged in the capsule-bench work
+  as under-selected with "nothing structural" explaining why — this is the structural reason.)
+- **The capsule summer term is latent, like the hot-weather clause.** 0 of the 35 no-`fiber_content`
+  pieces would score differently in `capsuleVersatilityScore`'s summer term if `fiber_content` were
+  populated — every one of them either already gets the same answer through `fabric_category`, or
+  doesn't match either list. Also: this term is additive scoring, not a hard gate, so even a real
+  miss here would be a ranking effect, not a visibility one — unlike the wet-exposure clause, which
+  hides a piece from the roster outright.
+
+(Measured against the live wardrobe at 242 active pieces, 6 more than this section's 236-piece
+baseline — the population count above may drift slightly on a fresh run; re-run
+`scratch/measure_open_questions.js` rather than trusting these counts indefinitely.)
+
 ### Exploration mode — a relaxation that can never fire
 
 **[known bug — string mismatch, unfiled]** `autoStylingTrustDecision` computes
@@ -1589,7 +1618,7 @@ proposing a fix that resolves one against the other.
 | **`formality`** | **202** | 229 | register ceiling — the largest single exclusion |
 | `fit_confidence` | 72 | 236 | +30 workbench term, auto-use trust |
 | `occasions` | 38 | 233 | occasion gate, +35 workbench term |
-| `fiber_content` | 37 | 201 | hot-weather insulating-fiber clause |
+| `fiber_content` | 37† | 201† | hot-weather insulating-fiber clause, wet-exposure footwear clause, capsule summer term |
 | `fabric_category` | 28 | 230 | weather + profile material rules |
 | `name` | 17 | 236 | **every keyword classifier in the engine** |
 | `season` | 16 | 236 | not gated directly |
@@ -1604,6 +1633,13 @@ proposing a fix that resolves one against the other.
 | **`heel_height`** | **0** | 33 | activity footwear gate — **entirely tagger-set** |
 | **`recommendation_status`** | **0** | 236 | auto-use trust gate — **entirely tagger-set** |
 | **`role_permission`** | **0** | 236 | auto-use trust gate — **entirely tagger-set** |
+
+† `fiber_content`'s owner-set/populated counts are as of the 236-piece pass and not re-measured
+here — only its "what it decides" cell was corrected, after tracing two consumers this table
+previously omitted (`pieceHasWetSensitiveFootwearMaterial`, `capsuleVersatilityScore`'s summer
+term — see *Gate-field coverage* above for what's actually live vs. latent about each). The
+wardrobe is 242 active pieces as of this correction, 6 more than this table's baseline. Re-run
+`node scratch/measure_provenance.js` for current counts on any row before relying on them.
 
 `formality` is an outlier by an order of magnitude — 86% hand-corrected. Everything else the gates
 read is predominantly or entirely model output. Note the two trust-gate columns with **zero**
@@ -1994,6 +2030,13 @@ trace rather than left as a question:
 33. **The `gpt-image-*` fallback chain has exactly one live caller.** The five main producers
     hard-code `gpt-4o`; only the editorial path can reach it, and it can attempt up to five billed
     generations before falling back to an SVG placeholder. → *The image-generation path.*
+34. **`fiber_content` has a live wet-exposure gap, not just the already-documented latent
+    hot-weather one.** Two owned pieces — "burgundy suede cork wedge sandals" and "taupe suede
+    ankle boots" — name `suede` in their own title but have empty `fiber_content` and
+    `fabric_category = 'other'`, so `pieceHasWetSensitiveFootwearMaterial` returns false and
+    neither is excluded from a wet-exposure request today. The parallel capsule-scoring consumer
+    checked clean (0 pieces affected, and it's additive scoring rather than a hard gate regardless).
+    → *The gates → Gate-field coverage.*
 
 ## Still to map
 

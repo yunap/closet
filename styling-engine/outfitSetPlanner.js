@@ -1157,7 +1157,7 @@ function describeCapsuleAccentSupplyGap(palette = [], bench = []) {
   return `[capsule palette: the eligible wardrobe could not supply ${missing.map(colorFamilyDisplayName).join(', ')} for this season and lifestyle, so those places stayed in the neutral foundation rather than substituting unrelated colours]`
 }
 
-function capsuleVersatilityScore(piece = {}, { isSummer = false, palette = [] } = {}) {
+export function capsuleVersatilityScore(piece = {}, { isSummer = false, palette = [] } = {}) {
   let score = 0
   const colors = (Array.isArray(piece.colors) ? piece.colors : []).map(color => String(color).toLowerCase())
   // The recombination bonus, paid only to pieces that introduce no colour of
