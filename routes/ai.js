@@ -2173,6 +2173,7 @@ router.post('/generate-outfit-boards', async (req, res) => {
       boards.push({
         label: board.label || `Outfit board ${idx + 1}`,
         reason: board.reason || '',
+        stylingInstructions: board.styling_instructions || board.stylingInstructions || '',
         watchFor: board.watchFor || '',
         pieces: boardPieces.map(p => ({ id: p.id, name: p.name, category: p.category, missing: !!p.missing })),
         imageUrl
@@ -2270,6 +2271,7 @@ router.post('/generate-wardrobe-outfit-image', async (req, res) => {
     const board = {
       label: outfit.label || 'Whole wardrobe generated outfit',
       reason: outfit.reason || '',
+      stylingInstructions: outfit.stylingInstructions || outfit.styling_instructions || '',
       watchFor: outfit.watchFor || '',
       pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
       imageUrl: rendered.imageUrl,

@@ -3013,6 +3013,12 @@ export default function StylistChat({
                               </details>
                             )}
 
+                            {board.stylingInstructions && (
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                                <strong>How to wear it:</strong> {board.stylingInstructions}
+                              </div>
+                            )}
+
                             {board.debug?.timings && (() => {
                               const cost = calculateOpenAICost(board.debug.timings)
                               const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
@@ -3679,6 +3685,12 @@ export default function StylistChat({
                                   {board.reason}
                                 </div>
                               </details>
+                            )}
+
+                            {board.stylingInstructions && (
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                                <strong>How to wear it:</strong> {board.stylingInstructions}
+                              </div>
                             )}
 
                             {board.debug?.timings && (() => {
@@ -6439,6 +6451,12 @@ export default function StylistChat({
                                       {board.reason}
                                     </div>
                                   </details>
+                                )}
+
+                                {board.stylingInstructions && (
+                                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                    <strong>How to wear it:</strong> {board.stylingInstructions}
+                                  </div>
                                 )}
 
                                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8, width: '100%', alignItems: 'center' }}>

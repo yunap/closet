@@ -888,7 +888,7 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.deepEqual(JSON.parse(firstRun.coverage_gaps), json.debug.activityCoverageGaps)
 
   // 1. Generate an image from a visual-composer card via the existing /api/ai/generate-wardrobe-outfit-image endpoint
-  const outfit = json.structuredOutfits[0]
+  const outfit = { ...json.structuredOutfits[0], stylingInstructions: 'Leave the top untucked over the pants.' }
   const imageJson = await postJson('/api/ai/generate-wardrobe-outfit-image', {
     outfit,
     occasion: 'city',
@@ -898,6 +898,7 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.equal(imageJson.mode, 'generate_wardrobe_outfit_image')
   assert.ok(imageJson.imageUrl)
   assert.equal(imageJson.wholeWardrobe, true)
+  assert.equal(imageJson.stylingInstructions, 'Leave the top untucked over the pants.', 'styling_instructions on the outfit must survive the round-trip to the generated board response, not just the image prompt')
 
   // 2. Run the workflow twice in a row and confirm the second call's outfits differ meaningfully (rotation warning loop test)
   const json2 = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
@@ -1235,6 +1236,18 @@ test('selected-piece board generation returns saved-garment visual boards', asyn
   assert.ok(Array.isArray(json.boards))
   assert.ok(json.boards[0].imageUrl.startsWith('/uploads/generated-boards/'))
   assert.ok(fs.existsSync(path.join(userUploadsDir(), json.boards[0].imageUrl.replace('/uploads/', ''))))
+})
+
+test('selected-piece board generation carries styling_instructions through from client-supplied structured outfits', async () => {
+  const json = await postJson('/api/ai/generate-outfit-boards', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+    structuredOutfits: [{ ...selectedPieceOutfit(), stylingInstructions: 'Leave the top untucked over the pants.' }],
+  })
+
+  assert.equal(json.mode, 'generate_outfit_boards')
+  assert.equal(json.boards[0].stylingInstructions, 'Leave the top untucked over the pants.')
 })
 
 test('whole-wardrobe image endpoint returns one generated board artifact', async () => {

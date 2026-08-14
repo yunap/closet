@@ -699,6 +699,32 @@ redundant. In auditing it, found `createIdealAdditionsComparisonSheetImage`'s pr
 reads `visualPrompt` at all (unlike the final single-render path, which treats it as the primary
 directive) — a real but separate inconsistency, filed as its own follow-up rather than folded in here.
 
+**A third, previously-unmapped rendering surface found and fixed, same day: the "Generate visual
+boards" flat-collage flow.** Owner-reported live repro (thread `thread_1786659896815`): asked "how
+should I wear my patchwork knit top with the lace midi dress? Do I need a belt?", got a specific,
+correct prose answer ("wear it open... no belt needed, it would fight the dress's waist seam..."),
+then clicked "Generate visual boards" and got a board whose caption didn't reflect any of that.
+Root-caused via the actual stored thread payload (`chat_threads.payload`, pulled through a disposable
+copy of the live `wardrobe.db` — the WAL file has to be copied alongside the `.db` file or recent
+writes are invisible). This flow (`generateVisualBoards` in `StylistChat.jsx` → `POST
+/api/ai/generate-outfit-boards`, `routes/ai.js:2116`) is structurally distinct from every other
+outfit-composing path already covered: `createOutfitBoardImage` (`styling-engine/core.js`) is a local
+SVG+sharp garment-photo collage, not an AI-rendered scene — "not virtual try-on" is in the system
+prompt's own text — so there is no image-rendering prompt for `styling_instructions` to govern here.
+But the board's caption is model-authored text (`OUTFIT_BOARD_PLANNER_SYSTEM`,
+`outfitBoardPlannerTemplate` in `styling-engine/prompts.js`, called from `routes/ai.js:2150` when the
+free-text concept parsers find nothing to extract — the actual path taken for a plain conversational
+answer like this one), and its JSON schema had no `styling_instructions` slot either. Fixed: the
+planner's schema now has the field, with an explicit instruction to copy the mechanics from the
+concept text near-verbatim rather than invent new ones (this planner is meant to be "a renderer, not
+a second stylist"); `boardPlanFromStructuredOutfits` (the client-supplied-outfits sibling path) and
+the route's board-building loop both carry it through; the client now shows a "How to wear it" line
+next to the board's existing caption. Also fixed in passing: `POST /generate-wardrobe-outfit-image`'s
+response object (the one behind every card's "Generate outfit image" button) whitelisted
+`label/reason/watchFor/pieces/imageUrl/debug` and silently dropped `stylingInstructions` even on
+cards that already had it and had already used it correctly for the image itself — so the post-
+generation board display never showed the "How to wear it" line even when the render had honored it.
+
 **Formula/silhouette preservation from positive or `Almost` feedback is closed, not merely
 paused, as of 2026-08-14.** No route was found that would let the app learn "what worked" without
 reinforcing the same literal garments and formulas — every version tried collapsed back into the

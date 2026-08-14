@@ -719,6 +719,7 @@ Rules:
 - Prefer 2-3 boards. Do not force an expressive/playful board if the concept text does not include a sound expressive option.
 - Keep each board to 2-5 garments total.
 - If the concept text labels an outfit as weaker/fallback, reflect that in the board label; do not upgrade it to signature.
+- If the concept text states how two or more of the board's garments physically relate to each other when worn (layering order, where a belt/tie lands, tuck/drape behavior) — you are a renderer here, so carry that instruction over into \`styling_instructions\` close to verbatim; do not invent new mechanics that weren't in the concept text, and leave it empty if the concept text didn't state any.
 
 JSON shape:
 {
@@ -726,6 +727,7 @@ JSON shape:
     {
       "label": "strongest artistic-minimal",
       "reason": "short visual reason",
+      "styling_instructions": "how these garments relate to each other, copied from the concept text, or empty string",
       "pieceIds": [1, 2, 3]
     }
   ]

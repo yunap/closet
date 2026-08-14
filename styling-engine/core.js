@@ -1675,6 +1675,7 @@ export function boardPlanFromStructuredOutfits(structuredOutfits, selectedPiece,
     return {
       label: outfit.label || (index === 0 ? 'strongest artistic-minimal' : index === 1 ? 'usable variation' : 'optional experimental'),
       reason: outfit.reason || outfit.why || '',
+      stylingInstructions: outfit.styling_instructions || outfit.stylingInstructions || '',
       watchFor: outfit.watchFor || outfit.watch_for || '',
       pieceIds: unique,
       missingPieces: missingPieces.slice(0, Math.max(0, 5 - unique.length))
