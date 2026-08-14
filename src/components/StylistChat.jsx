@@ -4358,7 +4358,8 @@ export default function StylistChat({
           directions: outfits.map(d => ({
             label: d.label || d.title || 'Ideal direction',
             additions: d.missingPieces || [],
-            reason: d.reason || ''
+            reason: d.reason || '',
+            visualPrompt: d.visualPrompt || ''
           })),
           occasion: firstOutfit?.occasion || generateOccasion,
           season: firstOutfit?.season || generateSeason

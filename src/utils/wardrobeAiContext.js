@@ -223,13 +223,18 @@ export function buildWardrobePieceTruthText(piece = {}) {
   if (lengthText) parts.push(lengthText)
   const silhouetteText = trustedFieldText(piece, 'silhouette', 'silhouette', piece.silhouette)
   if (silhouetteText) parts.push(silhouetteText)
-  // sleeve_type was populated on 207 of 236 pieces and reached NO composing
-  // prompt — so a capsule look put a short-sleeved cardigan over a bishop
-  // sleeve, because as far as the model could see the top had no sleeve at all.
-  // Same shape as the missing length clause: the wardrobe knows, the prompt
-  // never says, the correction arrives afterwards as feedback.
-  const sleeveText = trustedFieldText(piece, 'sleeve_type', 'sleeve', piece.sleeve_type)
-  if (sleeveText) parts.push(sleeveText)
+  // sleeve_type (now split into sleeve_length/sleeve_shape) was populated on 207
+  // of 236 pieces and reached NO composing prompt — so a capsule look put a
+  // short-sleeved cardigan over a bishop sleeve, because as far as the model
+  // could see the top had no sleeve at all. Same shape as the missing length
+  // clause: the wardrobe knows, the prompt never says, the correction arrives
+  // afterwards as feedback.
+  const sleeveLengthText = trustedFieldText(piece, 'sleeve_length', 'sleeve length', piece.sleeve_length)
+  if (sleeveLengthText) parts.push(sleeveLengthText)
+  const sleeveShapeText = piece.sleeve_length !== 'sleeveless'
+    ? trustedFieldText(piece, 'sleeve_shape', 'sleeve shape', piece.sleeve_shape)
+    : null
+  if (sleeveShapeText) parts.push(sleeveShapeText)
   if (piece.fabric_category) parts.push(`fabric: ${piece.fabric_category}${piece.fabric_weight ? `/${piece.fabric_weight}` : ''}`)
   if (piece.opacity && piece.opacity !== 'opaque') {
     const opacityText = trustedFieldText(piece, 'opacity', 'opacity', piece.opacity)
@@ -244,6 +249,13 @@ export function buildWardrobePieceTruthText(piece = {}) {
 
   const tuck = computeTuckNote(piece) || computeWaistbandNote(piece)
   if (tuck) parts.push(tuck)
+
+  if (piece.accessory_subtype) {
+    const jewelryDetail = piece.accessory_subtype === 'jewelry' && piece.jewelry_type
+      ? ` (${piece.jewelry_type}${piece.jewelry_type === 'necklace' && piece.necklace_length ? `, ${piece.necklace_length}` : ''})`
+      : ''
+    parts.push(`accessory type: ${piece.accessory_subtype}${jewelryDetail}`)
+  }
 
   if (Array.isArray(piece.occasions) && piece.occasions.length) parts.push(piece.occasions.join(', '))
   if (piece.status && piece.status !== 'active') parts.push(`status: ${piece.status}`)

@@ -5239,7 +5239,7 @@ test('shoes and open-front layers are not hot-weather insulating pieces (round-3
     'shoe fabric_weight describes the shoe, not warmth')
 
   // Owner ruling 2026-07-12: open-front cardigans are exempt as layers.
-  const cardigan = { id: 9302, name: 'dark grey knit draped cardigan', category: 'top', fabric_weight: 'medium', sleeve_type: 'long', reads_as: 'open draped cardigan layer' }
+  const cardigan = { id: 9302, name: 'dark grey knit draped cardigan', category: 'top', fabric_weight: 'medium', sleeve_length: 'long', reads_as: 'open draped cardigan layer' }
   assert.equal(wholeWardrobePieceTrustDecision(cardigan, hot).reasons.includes('hot weather: insulating piece'), false,
     'open-front cardigans pass the hot gate')
 
@@ -5250,7 +5250,7 @@ test('shoes and open-front layers are not hot-weather insulating pieces (round-3
   assert.ok(wholeWardrobePieceTrustDecision(woolCardigan, hot).reasons.includes('hot weather: insulating fiber'))
 
   // A closed medium long-sleeve top (not a layer piece) remains blocked — pending any broader ruling.
-  const longSleeve = { id: 9305, name: 'white ruffled long sleeve top', category: 'top', fabric_weight: 'medium', sleeve_type: 'long' }
+  const longSleeve = { id: 9305, name: 'white ruffled long sleeve top', category: 'top', fabric_weight: 'medium', sleeve_length: 'long' }
   assert.ok(wholeWardrobePieceTrustDecision(longSleeve, hot).reasons.includes('hot weather: insulating piece'))
 })
 

@@ -9,9 +9,17 @@ const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 
 const VALID_FORMALITY = new Set(['lounge', 'everyday', 'elevated', 'dressy'])
 const VALID_HEEL_HEIGHT = new Set(['flat', 'low', 'mid', 'high'])
 const VALID_WALK_SUPPORT = new Set(['high', 'medium', 'low'])
+const VALID_ACCESSORY_SUBTYPE = new Set(['belt', 'bag', 'jewelry', 'scarf', 'hat', 'watch', 'gloves', 'other'])
+const VALID_BOTTOM_SUBTYPE = new Set(['pants', 'shorts', 'skirt', 'culottes', 'overalls', 'other', 'unknown'])
+const VALID_JEWELRY_TYPE = new Set(['necklace', 'earrings', 'bracelet', 'ring', 'pin'])
+const VALID_NECKLACE_LENGTH = new Set(['choker', 'short', 'long'])
 
 export const CONFIDENCE_FIELDS = [
   'category',
+  'accessory_subtype',
+  'bottom_subtype',
+  'jewelry_type',
+  'necklace_length',
   'colors',
   'background_color',
   'pattern_type',
@@ -19,7 +27,8 @@ export const CONFIDENCE_FIELDS = [
   'pattern_complexity',
   'reads_as',
   'neckline',
-  'sleeve_type',
+  'sleeve_length',
+  'sleeve_shape',
   'length_hits_at',
   'silhouette',
   'hem_finish',
@@ -68,6 +77,22 @@ export function normalizeHeelHeight(value) {
 
 export function normalizeWalkSupport(value) {
   return normalizeEnumValue(value, VALID_WALK_SUPPORT)
+}
+
+export function normalizeAccessorySubtype(value) {
+  return normalizeEnumValue(value, VALID_ACCESSORY_SUBTYPE)
+}
+
+export function normalizeBottomSubtype(value) {
+  return normalizeEnumValue(value, VALID_BOTTOM_SUBTYPE)
+}
+
+export function normalizeJewelryType(value) {
+  return normalizeEnumValue(value, VALID_JEWELRY_TYPE)
+}
+
+export function normalizeNecklaceLength(value) {
+  return normalizeEnumValue(value, VALID_NECKLACE_LENGTH)
 }
 
 export function normalizePhotoProperties(value = {}) {
@@ -242,6 +267,10 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   if ('formality' in patch) patch.formality = normalizeFormality(patch.formality)
   if ('heel_height' in patch) patch.heel_height = normalizeHeelHeight(patch.heel_height)
   if ('walk_support' in patch) patch.walk_support = normalizeWalkSupport(patch.walk_support)
+  if ('accessory_subtype' in patch) patch.accessory_subtype = normalizeAccessorySubtype(patch.accessory_subtype)
+  if ('bottom_subtype' in patch) patch.bottom_subtype = normalizeBottomSubtype(patch.bottom_subtype)
+  if ('jewelry_type' in patch) patch.jewelry_type = normalizeJewelryType(patch.jewelry_type)
+  if ('necklace_length' in patch) patch.necklace_length = normalizeNecklaceLength(patch.necklace_length)
   delete patch._confidence
   delete patch.photo_properties
   delete patch.cross_photo_agreement_note
