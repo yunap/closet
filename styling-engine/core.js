@@ -2459,11 +2459,13 @@ export async function createIdealAdditionsComparisonSheetImage({
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
 
   const garmentRefs = await garmentReferenceImages(selectedPiece)
+  const anchorRules = anchorFidelityInstructions(selectedPiece)
 
   const directionLines = directions.map((d, i) => [
     `FIGURE ${i + 1} — "${d.label}"`,
     `Wears the selected garment (see reference photo) plus these NEW pieces: ${
       (d.additions || []).join(', ')}`,
+    d.visualPrompt ? `PRIMARY RENDERING DIRECTIVE for this figure — follow this exactly: ${d.visualPrompt}` : '',
     d.reason ? `Styling intent: ${d.reason}` : ''
   ].filter(Boolean).join('\n')).join('\n\n')
 
@@ -2472,6 +2474,7 @@ export async function createIdealAdditionsComparisonSheetImage({
     '',
     'Selected garment fidelity rules:',
     '- Every figure wears the EXACT garment shown in the attached reference photo. Preserve its color, length, neckline, fabric weight, and silhouette precisely. Do not restyle, recolor, or shorten it.',
+    anchorRules ? `- ${anchorRules}` : '',
     '',
     'Addition pieces:',
     '- The other pieces per figure are described in text below. Render them as plausible, realistic garments matching the descriptions.',

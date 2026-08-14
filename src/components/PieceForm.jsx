@@ -107,6 +107,7 @@ const CONSTRUCTION_BY_CATEGORY = {
   dress: {
     sectionLabel: 'Construction',
     showNeckline: true,
+    showSleeve: true,
     silhouetteLabel: 'Dress shape',
     silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
     lengthLabel: 'Length',

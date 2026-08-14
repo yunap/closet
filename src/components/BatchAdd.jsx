@@ -50,6 +50,7 @@ const REVIEW_CONSTRUCTION_CONFIG = {
   },
   dress: {
     showNeckline: true,
+    showSleeve: true,
     silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
     lengthOptions: ['mini','above-knee','knee','midi','maxi'],
   },
