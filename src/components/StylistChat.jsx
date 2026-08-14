@@ -4888,6 +4888,7 @@ export default function StylistChat({
       let nextThreadMemory = threadMemory
       let generatedBoards = null
       let replyRenderedBoards = null
+      let replyIsLocalAcknowledgment = false
 
       if (useCapsuleExpansion) {
         const existingCapsuleOutfits = messages.flatMap(message =>
@@ -5236,6 +5237,7 @@ export default function StylistChat({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
@@ -5313,6 +5315,7 @@ export default function StylistChat({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
@@ -5385,6 +5388,7 @@ export default function StylistChat({
         }
         replyText = data.answer || data.error || 'Something went wrong.'
         replyDebug = data.debug || null
+        replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (Array.isArray(data.renderedBoards) && data.renderedBoards.length) {
           replyRenderedBoards = data.renderedBoards
@@ -5428,6 +5432,7 @@ export default function StylistChat({
         textOnly: replyWardrobeEvaluation,
         outfitName: replyOutfitName,
         debug: replyDebug,
+        isLocalAcknowledgment: replyIsLocalAcknowledgment,
         mode: replyMode,
         savedOutfitVariantMode: replySavedOutfitVariantMode,
         variantSourceOutfit: replyVariantSourceOutfit,
@@ -6262,7 +6267,7 @@ export default function StylistChat({
                 </div>
               )}
 
-              {m.role === 'assistant' && !m.isError && i > 0 && activeContext && i === latestAssistantIndex && (
+              {m.role === 'assistant' && !m.isError && !m.isLocalAcknowledgment && i > 0 && activeContext && i === latestAssistantIndex && (
                 <div style={{ marginTop: 4, marginBottom: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
                     {activeContext.type === 'piece' && !isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && (

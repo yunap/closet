@@ -3584,6 +3584,10 @@ router.post('/ask', async (req, res) => {
           savedCorrections: [{ note: currentQuestion, ...result }],
           renderedBoards: [],
           provider: 'local',
+          // A plain acknowledgment, not a real conversational turn — the client must not offer
+          // follow-up affordances (e.g. "Generate visual boards") that assume this reply actually
+          // discussed the active piece/outfit context.
+          isLocalAcknowledgment: true,
           structuredOutfits: [],
           structuredOutfitsSource: null,
           structuredOutfitsOccasion: null,

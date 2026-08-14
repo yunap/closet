@@ -2169,6 +2169,9 @@ test('item 12 fast path: an explicit "never wear" prohibition is stored with zer
   assert.match(json.answer, /hiking/i)
   assert.equal(json.savedCorrections.length, 1)
   assert.equal(json.savedCorrections[0].scope, 'garment_context')
+  // The client uses this to suppress follow-up affordances (e.g. "Generate visual boards") that
+  // assume the reply actually discussed the active piece/outfit context — this reply never did.
+  assert.equal(json.isLocalAcknowledgment, true)
   const after = db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback').get().n
   assert.equal(after, before + 1)
   const row = db.prepare("SELECT * FROM stylist_feedback WHERE note = 'I never wear sandals for hiking'").get()
