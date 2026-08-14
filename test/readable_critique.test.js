@@ -238,6 +238,39 @@ test('generated outfit image prompt treats garment truth as authoritative over c
   assert.doesNotMatch(prompt, /Stylist mechanics:/)
 })
 
+test('generated outfit image prompt treats styling_instructions as authoritative for garment relationships', () => {
+  const prompt = wholeWardrobeImagePrompt({
+    outfit: {
+      label: 'Gallery',
+      reason: 'A soft, elevated layered look.',
+      stylingInstructions: 'Open cardigan over the dress, then belt over the cardigan at the natural waist.',
+    },
+    pieces: [{
+      name: 'floral midi dress',
+      category: 'dress',
+    }, {
+      name: 'cream cardigan',
+      category: 'outerwear',
+    }, {
+      name: 'brown belt',
+      category: 'accessory',
+    }],
+  })
+
+  assert.match(prompt, /Authoritative styling instructions \(how these garments relate to each other — follow exactly\):\nOpen cardigan over the dress, then belt over the cardigan at the natural waist\./)
+  assert.match(prompt, /Final render check: the visible outfit must satisfy every authoritative garment-construction direction and the authoritative styling instructions \(if present\) above/)
+  assert.match(prompt, /Non-authoritative styling intent: A soft, elevated layered look\./)
+})
+
+test('generated outfit image prompt omits the styling_instructions section when the field is absent', () => {
+  const prompt = wholeWardrobeImagePrompt({
+    outfit: { label: 'Gallery', reason: 'A soft, elevated layered look.' },
+    pieces: [{ name: 'plain tee', category: 'top' }],
+  })
+
+  assert.doesNotMatch(prompt, /Authoritative styling instructions \(how these garments relate to each other/)
+})
+
 test('critique request ranks linked garment truth above generated card rationale', () => {
   const coreSource = fs.readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
   assert.match(coreSource, /Card rationale \(non-authoritative styling intent only/)

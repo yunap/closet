@@ -3494,6 +3494,11 @@ export default function StylistChat({
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                       {isBrokenCard && !STYLIST_DEBUG_ENABLED ? stripEngineRejectionSuffix(outfit.reason) : outfit.reason}
                     </div>
+                    {outfit.stylingInstructions && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 8 }}>
+                        <strong>How to wear it:</strong> {outfit.stylingInstructions}
+                      </div>
+                    )}
                     {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 6 }}>
                         <strong>Watch:</strong> {outfit.watchFor}

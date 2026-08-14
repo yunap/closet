@@ -630,6 +630,27 @@ preference'`, added after live data showed raw-text auto-save mis-filing plain r
 preferences) exists to keep out of auto-storage. That guardrail test is still green; do not widen
 the trigger vocabulary without re-checking it.
 
+**Garment-relationship mechanics now have a dedicated, authoritative field — schema + whole-wardrobe
+path shipped, 2026-08-14.** Live thread `thread_1786645082564` showed the model correctly explaining
+layering mechanics in prose ("Open cardigan over the dress, then belt over the cardigan at the
+natural waist...") and the resulting rendered image ignoring all of it — `wholeWardrobeImagePrompt`
+only ever treated `outfit.reason` as non-authoritative styling intent, so there was nowhere for
+garment-relationship instructions to land as a hard constraint. `propose_outfit`'s schema gained a
+`styling_instructions` field, distinct from `why_it_works`: concrete, actionable mechanics (layering
+order, where a belt/tie lands and what it cinches, tuck/drape behavior between two named garments),
+not the concept of why the outfit works. `styling-engine/tools.js` carries it through onto every
+outfit object (`stylingInstructions`, defaulting to `''`); `wholeWardrobeImagePrompt`
+(`styling-engine/core.js`) renders it as a new "Authoritative styling instructions" section — the one
+exception to "structured garment fields are authoritative, card prose is not" — and the final render
+check now requires satisfying it. The prompt guidance also tells the model it has almost certainly
+already said the mechanics in prose whenever asked "how do I wear this," so it should stop leaving
+that knowledge in chat only. Per owner instruction, `styling_instructions` is also surfaced directly
+to the user: a "How to wear it" line in the outfit card's "Why this outfit" panel
+(`StylistChat.jsx`), not just consumed internally by the image generator. Scope for this pass is the
+schema plus the whole-wardrobe image path only; the editorial single-piece render path, comparison
+sheet, and critique/evaluation prompts still treat only `reason` and are expected to be expanded onto
+`styling_instructions` in a follow-up pass.
+
 **Formula/silhouette preservation from positive or `Almost` feedback is closed, not merely
 paused, as of 2026-08-14.** No route was found that would let the app learn "what worked" without
 reinforcing the same literal garments and formulas — every version tried collapsed back into the

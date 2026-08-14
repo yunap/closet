@@ -3345,6 +3345,7 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
     occasion: 'city',
     season: 'highs 80-90F',
     why_it_works: 'a column of light neutrals grounded by the shoe',
+    styling_instructions: 'Leave the top untucked over the wide-leg pants.',
     missing_gaps: ['lightweight rain shell']
   }, toolContext)
 
@@ -3359,6 +3360,30 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
   assert.equal(card.pieces[0].role, 'primary_top')
   assert.deepEqual(card.missingPieces, ['lightweight rain shell'])
   assert.equal(card.previewOnly, true)
+  assert.equal(card.stylingInstructions, 'Leave the top untucked over the wide-leg pants.')
+})
+
+test('executeTool propose_outfit defaults stylingInstructions to an empty string when the model omits it', async () => {
+  const toolContext = {
+    occasion: 'city',
+    season: 'current season',
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+    generatedOutfits: []
+  }
+  const proposed = await executeTool('propose_outfit', {
+    label: 'No mechanics needed',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ],
+    occasion: 'city',
+    why_it_works: 'a simple, clean pairing'
+  }, toolContext)
+
+  assert.equal(proposed.status, 'success')
+  assert.equal(toolContext.generatedOutfits[0].stylingInstructions, '')
 })
 
 test('executeTool propose_outfit errors on an unresolved ID and does not append', async () => {
