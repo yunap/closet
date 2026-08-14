@@ -2154,6 +2154,43 @@ test('freeform ask correction turns do NOT auto-store the raw question as a pref
   assert.equal(Number(row.context_id), seeded.outfitId)
 })
 
+test('item 12 fast path: an explicit "never wear" prohibition is stored with zero model calls, even inside an active thread', async () => {
+  // Reproduces the exact 2026-08-11 measured case (feedback-routing-proposal.md item 12): the
+  // sentence is self-contained, so re-reading trip/thread context to store it is pure overhead.
+  const before = db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback').get().n
+  const json = await postJson('/api/ai/ask', {
+    question: 'I never wear sandals for hiking',
+    pieces: [],
+    history: [{ role: 'user', content: 'planning a trip' }, { role: 'assistant', content: 'sure, tell me more' }],
+    threadContext: 'Trip: Yosemite hiking weekend',
+  })
+  assert.equal(aiCalls.length, 0, 'the fast path must not invoke the model at all')
+  assert.match(json.answer, /sandals/i)
+  assert.match(json.answer, /hiking/i)
+  assert.equal(json.savedCorrections.length, 1)
+  assert.equal(json.savedCorrections[0].scope, 'garment_context')
+  const after = db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback').get().n
+  assert.equal(after, before + 1)
+  const row = db.prepare("SELECT * FROM stylist_feedback WHERE note = 'I never wear sandals for hiking'").get()
+  assert.equal(row.feedback_type, 'owner_rule')
+  const payload = JSON.parse(row.payload)
+  assert.deepEqual(payload.ownerGuidanceApplicability.garment.footwear, ['sandals'])
+  assert.deepEqual(payload.ownerGuidanceApplicability.context.activities, ['hiking'])
+})
+
+test('item 12 fast path only fires on an explicit durability marker, not any negated "wear" phrasing', async () => {
+  // "always avoid wearing" is the other phrase in the controlled vocabulary; weaker phrasings
+  // ("don't wear", "won't wear") are deliberately excluded — see the guardrail test above for why.
+  const json = await postJson('/api/ai/ask', {
+    question: 'I always avoid wearing wool in summer',
+    pieces: [],
+    history: [],
+  })
+  assert.equal(aiCalls.length, 0)
+  const row = db.prepare("SELECT * FROM stylist_feedback WHERE note = 'I always avoid wearing wool in summer'").get()
+  assert.ok(row)
+})
+
 test('freeform ask new_request clears and does not restore database session state', async () => {
   const pieces = db.prepare('SELECT * FROM pieces WHERE status = ?').all('active').map(row => ({
     ...row,

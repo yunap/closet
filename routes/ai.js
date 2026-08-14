@@ -57,6 +57,9 @@ import {
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
 
+import { storeUserCorrection } from '../styling-engine/tools.js'
+import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
+
 import {
   isStyleSelectedQuestion,
   weatherProfileFromContext,
@@ -3564,12 +3567,40 @@ router.post('/ask', async (req, res) => {
   // success path.
   let diagnosticsContext = null
   try {
+    const currentQuestion = req.body.question || ''
+    // Item 12's deferred fast path (feedback-routing-proposal.md): a simple, explicit, self-
+    // contained prohibition needs no model turn at all — extractOwnerGuidanceApplicability already
+    // resolves it deterministically. Applies regardless of thread state, since the whole point is
+    // to skip the cost even inside an existing conversation (the measured case: five provider
+    // iterations to store one sentence in an active trip thread). Anything the local extractor
+    // can't confidently place falls through to the normal loop below, unchanged.
+    const prohibitionApplicability = detectExplicitProhibition(currentQuestion)
+    if (prohibitionApplicability) {
+      const result = storeUserCorrection(currentQuestion, 'general', null, { guidanceApplicability: prohibitionApplicability })
+      if (result.status === 'success') {
+        const scopeText = describeOwnerGuidanceScope(prohibitionApplicability)
+        return res.json({
+          answer: scopeText ? `Got it — noted for ${scopeText}.` : 'Got it — noted.',
+          savedCorrections: [{ note: currentQuestion, ...result }],
+          renderedBoards: [],
+          provider: 'local',
+          structuredOutfits: [],
+          structuredOutfitsSource: null,
+          structuredOutfitsOccasion: null,
+          structuredOutfitsSeason: null,
+          structuredOutfitsMood: null,
+          structuredOutfitsMission: null,
+          structuredOutfitsActivity: null,
+          debug: null,
+          suggestedTitle: null,
+        })
+      }
+    }
     const extractedWeather = req.body.weather || extractWeatherContext([
       req.body.question || '',
       req.body.threadContext || '',
       req.body.generatedContext || ''
     ].join('\n'))
-    const currentQuestion = req.body.question || ''
     // A capsule often spans two turns: the first names the season/palette and
     // the second answers the stylist's lifestyle clarification. The plan tool
     // used to receive only turn two, silently dropping "in yellow" before

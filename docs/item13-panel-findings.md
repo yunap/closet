@@ -216,3 +216,6 @@ wardrobe analysis. After the page restructuring, add a local, controlled-vocabul
 simple explicit prohibitions. It must save the original sentence plus a server-validated proposal,
 return a short acknowledgement, and make no paid model call. Anything ambiguous stays in the normal
 conversation flow. See item 12 in `feedback-routing-proposal.md` for the measured trace.
+
+**Shipped, 2026-08-14** — see item 12's "Fast path shipped" note in `feedback-routing-proposal.md`
+for the implementation and the guardrail it had to be kept narrow enough not to violate.

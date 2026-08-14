@@ -602,7 +602,7 @@ that needs a model of evidence first. Phases 1+ depend on decisions that phase 0
 | 9 | Select accepted personal/contextual lessons by applicable garment, occasion/activity, season/weather and declared boundary | **shipped for the pilot — routing and owner-facing structured applicability control complete** |
 | 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **closed 2026-08-14, not proceeding for formula/silhouette reinforcement — see below for the reasoned Almost/Not-for-me route shipped 2026-08-13, which is not that** |
 | 11 | Complete approved destination workflows for garment facts and general product-quality findings | **backend complete for the approved scope — wrong-length renderer/retag review is preserved; accepted synthesis findings and explicitly confirmed no-cost reports enter a provenance-linked queue with durable evidence, resolution destination and undo; review UI is deferred to item 13** |
-| 12 | Route learned guidance by relevant garment/context and owner-confirmed constraint-shaped rules into structured, slot-aware eligibility | **shipped for prompt relevance and confirmed firm-rule enforcement; the optional local acknowledgement fast path remains follow-up work** |
+| 12 | Route learned guidance by relevant garment/context and owner-confirmed constraint-shaped rules into structured, slot-aware eligibility | **shipped for prompt relevance, confirmed firm-rule enforcement, and the local acknowledgement fast path (2026-08-14)** |
 | 13 | Convene the UI/UX panel and refine the memory/review surfaces | **panel complete; owner-ratified page restructuring is in progress** |
 
 **Item 12 remaining cost/interaction follow-up.** A live test on 2026-08-11 showed that sending “I
@@ -613,6 +613,22 @@ proposal can still be confirmed without another call). A separate optional optim
 pre-route simple explicit prohibitions to a brief local acknowledgement so they can skip the full
 stylist/tool loop entirely. That optimization is not required for correct routing and ambiguous
 conversation must continue through ordinary chat.
+
+**Fast path shipped, 2026-08-14.** `detectExplicitProhibition` (`lib/ownerGuidance.js`) checks the
+raw question against a tight, explicit durability-marker vocabulary ("never wear", "always avoid
+wearing" — deliberately not "don't/won't/do not wear") before anything else runs in `POST /ask`. If
+`extractOwnerGuidanceApplicability` resolves it to a non-`unresolved` scope, the server calls
+`storeUserCorrection` directly and returns a short acknowledgement — zero provider calls, regardless
+of thread state, reproducing the exact 2026-08-11 measured scenario (an existing trip thread) at
+zero cost instead of five iterations. Anything the local extractor can't confidently place, or that
+uses a weaker negation, falls through to the ordinary loop unchanged.
+The narrow vocabulary is load-bearing, not a style choice: "I do not wear flats", said mid-
+conversation about an active outfit, resolves through the same controlled vocabulary (footwear:
+flats) but carries no durability marker — it is exactly the ambiguous, in-the-moment-correction case
+the 2026-07-12 guardrail (`'freeform ask correction turns do NOT auto-store the raw question as a
+preference'`, added after live data showed raw-text auto-save mis-filing plain requests as global
+preferences) exists to keep out of auto-storage. That guardrail test is still green; do not widen
+the trigger vocabulary without re-checking it.
 
 **Formula/silhouette preservation from positive or `Almost` feedback is closed, not merely
 paused, as of 2026-08-14.** No route was found that would let the app learn "what worked" without
