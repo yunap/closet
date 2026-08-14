@@ -20,12 +20,12 @@ import {
 test('normalizeConfidenceMap defaults missing and malformed confidence to low', () => {
   const confidence = normalizeConfidenceMap({
     silhouette: 'high',
-    sleeve_type: 'banana',
+    sleeve_length: 'banana',
     fit_on_body: 'manual'
   })
 
   assert.equal(confidence.silhouette, 'high')
-  assert.equal(confidence.sleeve_type, 'low')
+  assert.equal(confidence.sleeve_length, 'low')
   assert.equal(confidence.fit_on_body, 'manual')
   assert.equal(confidence.length_hits_at, 'low')
   assert.deepEqual(Object.keys(confidence).sort(), [...CONFIDENCE_FIELDS].sort())

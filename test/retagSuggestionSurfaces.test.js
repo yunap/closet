@@ -18,9 +18,9 @@ test('pending fidelity corrections surface as garment retag suggestions', () => 
 })
 
 test('garment edit highlights suggested fields and resolves only explicit suggestion ids', () => {
-  assert.match(form, /suggestedFields\.has\('sleeve_type'\)/)
+  assert.match(form, /suggestedFields\.has\('sleeve_length'\)/)
   assert.match(form, /suggestedFields\.has\('length_hits_at'\)/)
-  assert.match(form, /below-knee/)
+  assert.match(form, /below_knee/)
   assert.match(form, /retag-review-marker/)
   assert.match(form, /resolved_retag_suggestion_ids/)
   assert.match(routes, /resolved_retag_suggestion_ids/)

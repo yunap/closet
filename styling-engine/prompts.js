@@ -4,7 +4,8 @@ export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
 - Additional expressive pieces are welcome when they share the hero's register (mood, formality, material family) and do a DIFFERENT job — e.g. an expressive skirt + a small accent bag + a structural pendant can coexist. Layered artisan texture in one register is richness, not noise.
 - The failure mode is competition, not multiplicity: two loud elements in different registers fighting for the same job (two heroes), or accents that argue with the hero's mood.
-- Pattern discipline is separate and stays strict: at most one loud print per outfit, grounded by quiet supporting pieces. This counts every piece in the outfit, not just the top and bottom — a loud shoe or a loud accessory (bag, scarf, jewelry) is a second loud print exactly like a second loud garment, and blows the same budget.`
+- Pattern discipline is separate and stays strict: at most one loud print per outfit, grounded by quiet supporting pieces. This counts every piece in the outfit, not just the top and bottom — a loud shoe or a loud accessory (bag, scarf, jewelry) is a second loud print exactly like a second loud garment, and blows the same budget.
+- Jewelry discipline follows the same "one job per slot" logic: check each accessory's accessory_subtype and, for jewelry, its jewelry_type. Two pieces with the same placement (e.g. two necklaces, or a statement ring plus a second ring) compete for the same visual slot exactly like two loud prints — pick one per placement unless they are worn as a deliberate stacked set.`
 
 export const TAG_PIECE_SYSTEM = `You tag wardrobe items from hanger or flat-lay photos. Return only valid JSON matching the requested schema. Use lavender/lilac/mauve for muted purple or purple-pink items; do not collapse them into taupe unless the item is truly warm grey-brown. Separate literal visual facts from style interpretation: floral, botanical, crochet, and print describe the garment surface; bohemian is a style lane only when the construction, material, movement, or styling logic genuinely supports it. Do not mark every floral or botanical item as modern_bohemian. Do not suppress bohemian when it is objectively visible. Use folk_artisan for prairie/craft/rustic/Free People heritage construction, and reserve workwear_utilitarian for real workwear or technical utility. Be conservative with home and grounding_piece: soft/relaxed does not mean home, and movement-heavy skirts are not grounding pieces. Never tag standard daytime tops, basic tank tops, everyday t-shirts, jeans, trousers, or outdoor jackets as "home" unless they are comfort-loungewear/pajamas/sleepwear. The "home" occasion is strictly comfort loungewear or sleepwear; standard daywear items must be "home": "low" or omitted.`
 
@@ -837,7 +838,7 @@ its own merits; do not pull it toward whichever anchor it superficially resemble
 
 ANCHOR A — Basic ribbed jersey tank (low expressive baseline)
   A plain solid-color ribbed cotton tank, flat snug knit, no detailing.
-  silhouette: "fitted", fit_on_body: "skims", sleeve_type: "none",
+  silhouette: "fitted", fit_on_body: "skims", sleeve_length: "sleeveless",
   pattern_complexity: "solid".
   Style lanes: polished_classic: 1, artistic_minimal: 0, modern_bohemian: 0,
   romantic_soft: 0, earthy_structured: 0.
@@ -846,7 +847,7 @@ ANCHOR A — Basic ribbed jersey tank (low expressive baseline)
 
 ANCHOR B — Classic stiff cotton button-down (single-lane baseline)
   A solid collared shirt in crisp cotton, tailored, no expressive detailing.
-  silhouette: "slim", fit_on_body: "structured", sleeve_type: "long",
+  silhouette: "slim", fit_on_body: "structured", sleeve_length: "long", sleeve_shape: "straight",
   pattern_complexity: "solid".
   Style lanes: polished_classic: 3, all other lanes: 0.
   Occasions: smart-casual: "high", city: "high", casual: "medium", evening: "low",
@@ -856,7 +857,7 @@ ANCHOR C — Refined textured statement top (high expressive baseline)
   A solid top in a refined fabrication with sculptural construction — e.g. smocked or
   pintucked body with volumed (bishop/puff) sleeves and a finished back detail — executed
   in quality fabric, not jersey.
-  silhouette: "fitted", fit_on_body: "skims", sleeve_type: "bishop",
+  silhouette: "fitted", fit_on_body: "skims", sleeve_length: "long", sleeve_shape: "bishop",
   pattern_complexity: "solid".
   Style lanes: artistic_minimal: 4, romantic_soft: 3, polished_classic: 1,
   modern_bohemian: 1, earthy_structured: 0.
@@ -873,6 +874,10 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'sculptural asymmetrical cowl knit top' or 'black cream botanical midi skirt'",
   "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
   "category": "top|bottom|dress|outerwear|shoes|accessory",
+  "accessory_subtype": "belt|bag|jewelry|scarf|hat|watch|gloves|other|null (accessory only; null/omit for non-accessories)",
+  "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",
+  "jewelry_type": "necklace|earrings|bracelet|ring|pin|null (only when accessory_subtype is jewelry; null/omit otherwise)",
+  "necklace_length": "choker|short|long|null (only when jewelry_type is necklace; null/omit otherwise)",
   "background_color": "the literal base/background color of the garment, e.g. black, navy, cream, white",
   "colors": ["${colorTaggerInstruction()}"],
   "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
@@ -882,11 +887,14 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "pattern_complexity": "solid|quiet|medium|loud",
   "reads_as": "short phrase: the dominant visual impression",
   "hem_finish": "straight_loose (only standard flat, horizontal straight hem)|banded_elastic|ribbed|design_hem (high-low, curved, side-slits, vented, or decorative hem meant to be worn over/untucked)",
-  "neckline": "V|scoop|crew|boat|mock|cowl|off-shoulder|square|wrap|other|none",
-  "sleeve_type": "sleeveless|cap|short|3/4|long|bell|bishop|none",
-  "length_hits_at": "crop|waist|hip|mid-thigh|above-knee|knee|below-knee|midi|maxi|ankle|full-length",
+  "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown",
+  "sleeve_length": "sleeveless|cap|short|elbow|3/4|long|extra_long|unknown",
+  "sleeve_shape": "fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown|null (omit for sleeveless)",
+  "length_hits_at": "Valid values depend on category (and, for bottom, bottom_subtype) — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|mid_calf|ankle|unknown; dress, or bottom when bottom_subtype is skirt -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom when bottom_subtype is pants/culottes/overalls/other -> shorts|knee|mid_calf|ankle|full_length|floor_length|unknown; shoes -> low|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown (low = fully open/minimal upper, not a coverage judgment — that lives in a separate field). Not applicable to accessory.",
   "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
+  "tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only|null (top only — judge from hem_finish and length: design_hem or ribbed hems are wear_over_only; a fitted straight hem that's clearly meant to tuck is tucks_anywhere; null/omit for non-tops)",
+  "waistband_type": "structured_high_waist|structured_mid_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed|null (bottom only; null/omit for non-bottoms)",
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
   "fabric_weight": "ultralight|light|medium|heavy — for SHOES use the shoe scale instead: delicate|slim|medium|chunky (a substantial shoe is chunky, not heavy)",
   "opacity": "opaque|semi_sheer|sheer|open_weave",
@@ -941,6 +949,10 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   },
   "_confidence": {
     "category": "high|medium|low",
+    "accessory_subtype": "high|medium|low",
+    "bottom_subtype": "high|medium|low",
+    "jewelry_type": "high|medium|low",
+    "necklace_length": "high|medium|low",
     "colors": "high|medium|low",
     "background_color": "high|medium|low",
     "pattern_type": "high|medium|low",
@@ -948,7 +960,8 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "pattern_complexity": "high|medium|low",
     "reads_as": "high|medium|low",
     "neckline": "high|medium|low",
-    "sleeve_type": "high|medium|low",
+    "sleeve_length": "high|medium|low",
+    "sleeve_shape": "high|medium|low",
     "length_hits_at": "high|medium|low",
     "silhouette": "high|medium|low",
     "hem_finish": "high|medium|low",

@@ -60,7 +60,8 @@ test('anchor fidelity states the tagged length, sleeve, pattern and fit', () => 
     name: 'black textured long sleeve top',
     category: 'top',
     length_hits_at: 'waist',
-    sleeve_type: 'bishop',
+    sleeve_length: 'long',
+    sleeve_shape: 'bishop',
     pattern_type: 'geometric',
     pattern_scale: 'bold',
     fabric_category: 'synthetic',
@@ -72,7 +73,7 @@ test('anchor fidelity states the tagged length, sleeve, pattern and fit', () => 
 
   assert.match(rules, /hits at waist/)
   assert.match(rules, /do not lengthen or shorten the anchor/)
-  assert.match(rules, /Anchor sleeve: bishop/)
+  assert.match(rules, /Anchor sleeve: long bishop/)
   assert.match(rules, /geometric at bold scale/)
   assert.match(rules, /synthetic, light weight/)
   assert.match(rules, /Anchor silhouette: fitted/)
@@ -85,7 +86,7 @@ test('anchor fidelity states the tagged length, sleeve, pattern and fit', () => 
 test('anchor fidelity ignores not-applicable column sentinels', () => {
   const rules = anchorFidelityInstructions({
     id: 12, name: 'wide-leg linen trousers', category: 'bottom',
-    sleeve_type: 'none', length_hits_at: 'full-length', hem_finish: 'none',
+    sleeve_length: 'unknown', length_hits_at: 'full-length', hem_finish: 'none',
   })
   assert.doesNotMatch(rules, /sleeve/i)
   assert.doesNotMatch(rules, /hem finish/i)
@@ -106,7 +107,7 @@ test('anchor fidelity falls back to name/notes when no column is tagged', () => 
 test('the editorial anchor description is the shared wardrobe truth text', () => {
   const selectedPiece = {
     id: 263, name: 'black textured long sleeve top', category: 'top',
-    colors: ['black'], length_hits_at: 'waist', sleeve_type: 'bishop',
+    colors: ['black'], length_hits_at: 'waist', sleeve_length: 'long', sleeve_shape: 'bishop',
   }
   const prompt = editorialImagePrompt({
     selectedPiece,

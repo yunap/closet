@@ -26,7 +26,7 @@ const row = (id, reason = 'canvas is unsuitable in wet fog') => ({
     outfit: {
       pieces: [
         { id: 44, name: 'Canvas sneakers', category: 'shoes', notes: 'large field intentionally omitted' },
-        { id: 12, name: 'Bishop-sleeve top', category: 'top', sleeve_type: 'bishop', fit_on_body: 'drapes' },
+        { id: 12, name: 'Bishop-sleeve top', category: 'top', sleeve_shape: 'bishop', fit_on_body: 'drapes' },
       ],
     },
   }),
@@ -82,7 +82,8 @@ test('synthesis preview compacts evidence without copying complete garment paylo
     id: 12,
     name: 'Bishop-sleeve top',
     category: 'top',
-    sleeveType: 'bishop',
+    sleeveLength: '',
+    sleeveShape: 'bishop',
     fit: 'drapes',
     fabric: '',
     readsAs: '',

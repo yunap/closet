@@ -8,7 +8,8 @@ const REVIEW_EDITABLE_FIELDS = [
   'category', 'colors', 'occasions', 'season', 'formality',
   'fabric_category', 'fabric_weight', 'fiber_content', 'heel_height', 'walk_support',
   'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
-  'neckline', 'sleeve_type', 'silhouette', 'length_hits_at', 'hem_finish'
+  'neckline', 'sleeve_length', 'sleeve_shape', 'silhouette', 'length_hits_at', 'hem_finish',
+  'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype'
 ]
 
 export function lowConfidenceFields(piece = {}) {
@@ -25,8 +26,15 @@ export function lowConfidenceFields(piece = {}) {
       // Category specific visibility constraints
       if ((field === 'heel_height' || field === 'walk_support') && category !== 'shoes') return false
       if (field === 'neckline' && category !== 'top' && category !== 'dress') return false
-      if (field === 'sleeve_type' && category !== 'top' && category !== 'dress' && category !== 'outerwear') return false
-      
+      if ((field === 'sleeve_length' || field === 'sleeve_shape') && category !== 'top' && category !== 'dress' && category !== 'outerwear') return false
+      if (field === 'fit_on_body' && !['top', 'bottom', 'dress', 'outerwear'].includes(category)) return false
+      if (field === 'tuck_behavior' && category !== 'top') return false
+      if (field === 'waistband_type' && category !== 'bottom') return false
+      if (field === 'accessory_subtype' && category !== 'accessory') return false
+      if (field === 'bottom_subtype' && category !== 'bottom') return false
+      if (field === 'jewelry_type' && (category !== 'accessory' || piece.accessory_subtype !== 'jewelry')) return false
+      if (field === 'necklace_length' && (category !== 'accessory' || piece.jewelry_type !== 'necklace')) return false
+
       return true
     })
     .map(([field]) => field)

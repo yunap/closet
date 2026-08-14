@@ -374,7 +374,8 @@ const STRUCTURE_FIT_CONFIDENCE_FIELDS = new Set([
   'fit_on_body',
   'tuck_behavior',
   'waistband_type',
-  'sleeve_type'
+  'sleeve_length',
+  'sleeve_shape'
 ])
 
 export function getFieldConfidence(piece, field) {
@@ -403,6 +404,7 @@ export function pieceTextBlob(p) {
     trustedField(p, 'fit_on_body') ? p.fit_on_body : '',
     trustedField(p, 'tuck_behavior') ? p.tuck_behavior : '',
     trustedField(p, 'waistband_type') ? p.waistband_type : '',
+    p.accessory_subtype, p.jewelry_type, p.necklace_length, p.bottom_subtype,
     p.notes,
     ...(p.colors || []), ...(p.occasions || []),
     ...stylingRulesForPrompt(p.styling_rules_learned), ...(p.tried_and_rejected || [])
@@ -1783,7 +1785,8 @@ function structuredPieceSignalTokens(piece = {}) {
     piece.bottom_shape,
     piece.length_hits_at,
     piece.neckline,
-    piece.sleeve_type,
+    piece.sleeve_length,
+    piece.sleeve_shape,
     piece.hem
   ].filter(Boolean)
     .join(' ')
