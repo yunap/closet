@@ -152,6 +152,19 @@ calibration. A field-specific wrong-length report may also create a reviewable r
 the app cannot assume whether the render or stored garment data was wrong; no metadata changes
 automatically.
 
+**Misattribution bug found and fixed, 2026-08-14.** A `wrong_length` row with no actual
+`length_correction` data (a legacy/malformed report — no `piece_id`, no `issue`) was silently
+treated as a valid correction for *every* garment sharing that report's outfit board, not just the
+one it was actually about — a print top and a pair of shorts worn together could each inherit a
+length complaint that was, per the board's own recorded `watchFor` note, really about the top. This
+existed in two independently-drifted places that had to be fixed together: `getSavedBoardRendererMemory`
+(what actually reaches the image-generation prompt) and the Style Profile "Already in effect" list
+(`rendererReportGroups` in `StylistSettings.jsx`, a separate reader over the same raw rows). Both now
+require a genuine `piece_id` + recognized `issue` before attributing a correction to a garment;
+neither falls back to guessing across a shared board. This is the "double authority" failure mode
+row 0.4 exists to catch, recurring as two readers of the same evidence silently disagreeing about
+what it meant rather than as a second scorer.
+
 ### C1 · "This garment is prohibited in this context" → a scoped constraint
 
 **Hard, and it already works.** `occasion_exclusions` is the only per-garment channel that is both
@@ -474,6 +487,18 @@ unresolved rows, and pairing it against **"Applies in matching situations"** on 
 conditional/unconditional split between the two sources that no longer exists — both are matched.
 Any future recency surface must label by the row's actual envelope, not by which store it came from.
 
+**"How this works" guidance explainer shipped, 2026-08-14.** The four active-guidance categories
+(learned lessons, direct chat guidance, locked-in firm rules, per-piece limits) read as
+understandable individually but the soft-guidance/hard-exclusion distinction between them required
+reading all four card types across the page to infer. A popover, opened from a text trigger next to
+the page intro (not a bare icon — discoverability, not decoration), states the four categories in
+plain language with a one-line consequence label per category ("Gentle reminder" vs. "Always
+enforced"), an explicit "stays available for everything else" example for the piece-limit category
+(the same reassurance shipped § "Eligibility reassurance" above, demonstrated rather than only
+described), and a quiet closing reassurance that memory can always be changed. No routing
+vocabulary — scope, reach, dimension, synthesis — appears anywhere in it, consistent with the
+2026-08-12 ruling that this page reads as explanations, not a console.
+
 **Still queued:** firm-rule card wording, and the feedback-capture confirmations in chat (*"Got it —
 I won't suggest this piece for Travel"*) that keep a one-off reaction visibly distinct from a durable
 rule.
@@ -518,6 +543,18 @@ the prompt tail where this codebase has already measured stored rules losing (sp
 2. **Consolidate, don't concatenate.** *"Marked too plain on 4 outfits containing this jacket"* is
    one line and stronger evidence than four lines.
 3. **Cap per destination, not globally.** A garment with 20 reactions contributes a summary.
+
+**Images are a prompt-size and cost dimension too, 2026-08-14.** The wrong-choice/reasoned-verdict
+synthesis pilot (item 8) attaches the generated outfit image and referenced garment photos to its
+call, not just text — a text-only description of "the vest shape doesn't work with the cropped top"
+is a claim the model previously had no way to actually verify. This is scoped the same way the text
+rules above are: resolution is tiered by garment complexity (reusing the app's existing
+`pieceVisualDetailPolicy`, not inventing a new one), capped at one board image plus four garment
+photos per evidence item (`MAX_GARMENT_IMAGES_PER_EVIDENCE_ITEM`, prioritized by
+`visuallyPrioritizedPieces`), and the pre-authorization cost preview now sums real image-token cost
+(Anthropic's width×height/750 formula) rather than only estimating text bytes, so the owner sees the
+true cost before authorizing. This does not change what evidence is eligible (§ "Phase 1" above,
+item 8) — only what the model can verify once it is.
 
 ## 3. The plan
 
@@ -595,6 +632,40 @@ verdict" as toggle-off, using "Edit reason" on an already-selected Almost/Not-fo
 silently cleared the verdict entirely instead of just updating its comment — discovered by
 reproducing it live in the sandbox. Fixed by keeping the verdict active whenever the call is a
 comment commit (`ownerComment !== null`), regardless of prior active state.
+
+**Photo evidence can independently establish a reasoned verdict's cause, 2026-08-14.** The system
+prompt previously treated the owner's own words as the *only* authority for a reasoned wrong-choice
+or Almost/Not-for-me cause — a rule written before photos were attached (see the image
+prompt-size-discipline note above), when there was nothing else to verify a claim against. Now that
+a photo is attached, a directly-visible issue (a print/pattern clash, a proportion or silhouette
+mismatch, a color with no echo elsewhere in the outfit) is sufficient on its own, even when the
+owner's own account is hedged among several guesses or entirely absent ("not sure why, maybe
+proportions, maybe shape, maybe contrast"). The model is told to prefer whichever cause a photo
+actually confirms over guessing blindly among the owner's hedged possibilities. This does not loosen
+the invention guard — a cause still must be either stated by the owner or visible in a photo, never
+neither.
+
+**Identifying the garments an evidence item is about is kept separate from what the resulting lesson
+is scoped to, 2026-08-14 — a real over-scoping bug found live.** Confirming which specific garments
+a photo shows is a *narrower* question than what the transferable lesson should generalize to, and
+the two were getting conflated: a lesson about "these two prints clash in a similar tonal range"
+was coming back bound to `piece_ids` for exactly those two garments (`scope: 'piece'`), so it would
+only ever fire again if one of those two literal pieces was reselected — defeating the entire point
+of a transferable lesson (§ "Product direction: learn the logic, diversify the closet"). A
+combination-level issue (clash, mismatch, silhouette conflict) that would recur with any
+similarly-attributed pieces must generalize into `scope: 'context'` with empty `piece_ids`, exactly
+like evidence with no identifiable piece at all; a `piece_id` is bound only when the cause is
+inherent to that literal garment and would not transfer (a specific fit problem, a specific fabric
+behavior).
+
+**A rejected synthesis draft no longer permanently locks its source feedback out of review,
+2026-08-14.** `processedSynthesisFeedbackIds` (`StylistSettings.jsx`) excluded a feedback row from
+"Needs your review" the moment it appeared as source for *any* draft, including a rejected one —
+so declining a suggestion ("This shouldn't be a lesson") and then editing the underlying reason to
+try again had no path back; the only existing recovery, Past Decisions → **Reconsider**, reactivates
+the *old* draft text rather than re-running synthesis against the edit. A feedback row's source ids
+are now excluded only by drafts that are still standing (`status !== 'rejected'`); once every draft
+referencing it is rejected, it reopens for a fresh synthesis attempt.
 
 **Bounded first step shipped:** `Almost right` and `Not for me` can accompany a later styling call
 the owner already requested, without triggering critique, regeneration or synthesis. A reasonless
