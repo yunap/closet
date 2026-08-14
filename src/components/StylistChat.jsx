@@ -3013,6 +3013,12 @@ export default function StylistChat({
                               </details>
                             )}
 
+                            {board.stylingInstructions && (
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                                <strong>How to wear it:</strong> {board.stylingInstructions}
+                              </div>
+                            )}
+
                             {board.debug?.timings && (() => {
                               const cost = calculateOpenAICost(board.debug.timings)
                               const costStr = cost !== null ? `$${cost.toFixed(2)}` : ''
@@ -3494,6 +3500,11 @@ export default function StylistChat({
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                       {isBrokenCard && !STYLIST_DEBUG_ENABLED ? stripEngineRejectionSuffix(outfit.reason) : outfit.reason}
                     </div>
+                    {outfit.stylingInstructions && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginTop: 8 }}>
+                        <strong>How to wear it:</strong> {outfit.stylingInstructions}
+                      </div>
+                    )}
                     {outfit.watchFor && !/^none$/i.test(String(outfit.watchFor).trim()) && (!isBrokenCard || STYLIST_DEBUG_ENABLED) && (
                       <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.45, marginTop: 6 }}>
                         <strong>Watch:</strong> {outfit.watchFor}
@@ -3674,6 +3685,12 @@ export default function StylistChat({
                                   {board.reason}
                                 </div>
                               </details>
+                            )}
+
+                            {board.stylingInstructions && (
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                                <strong>How to wear it:</strong> {board.stylingInstructions}
+                              </div>
                             )}
 
                             {board.debug?.timings && (() => {
@@ -4006,8 +4023,11 @@ export default function StylistChat({
       setBoardVerdictComment(String(canonical.payload?.feedback_details?.owner_comment || ''))
       return
     }
+    // See VisualLab.jsx's selectOverallVerdict for why: a comment commit must keep an already-active
+    // verdict selected rather than toggling it off, or "Edit reason" silently removes the verdict.
+    const isCommentCommit = ownerComment !== null
     const next = current.filter(value => !verdictValues.has(value))
-    if (!isActive) next.push(type)
+    if (!isActive || isCommentCommit) next.push(type)
     const details = canonical.payload?.feedback_details || {}
     const nextDetails = ownerComment === null
       ? details
@@ -4885,6 +4905,7 @@ export default function StylistChat({
       let nextThreadMemory = threadMemory
       let generatedBoards = null
       let replyRenderedBoards = null
+      let replyIsLocalAcknowledgment = false
 
       if (useCapsuleExpansion) {
         const existingCapsuleOutfits = messages.flatMap(message =>
@@ -5233,6 +5254,7 @@ export default function StylistChat({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
@@ -5310,6 +5332,7 @@ export default function StylistChat({
         replyText = data.answer || 'Outfit follow-up complete.'
         replyWardrobeEvaluation = false
         replyDebug = data.debug || null
+        replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (data.savedCorrections && data.savedCorrections.length > 0) {
           const lastCorrection = data.savedCorrections[data.savedCorrections.length - 1]
@@ -5382,6 +5405,7 @@ export default function StylistChat({
         }
         replyText = data.answer || data.error || 'Something went wrong.'
         replyDebug = data.debug || null
+        replyIsLocalAcknowledgment = Boolean(data.isLocalAcknowledgment)
         replyStructuredOutfits = data.structuredOutfits || null
         if (Array.isArray(data.renderedBoards) && data.renderedBoards.length) {
           replyRenderedBoards = data.renderedBoards
@@ -5425,6 +5449,7 @@ export default function StylistChat({
         textOnly: replyWardrobeEvaluation,
         outfitName: replyOutfitName,
         debug: replyDebug,
+        isLocalAcknowledgment: replyIsLocalAcknowledgment,
         mode: replyMode,
         savedOutfitVariantMode: replySavedOutfitVariantMode,
         variantSourceOutfit: replyVariantSourceOutfit,
@@ -6259,7 +6284,7 @@ export default function StylistChat({
                 </div>
               )}
 
-              {m.role === 'assistant' && !m.isError && i > 0 && activeContext && i === latestAssistantIndex && (
+              {m.role === 'assistant' && !m.isError && !m.isLocalAcknowledgment && i > 0 && activeContext && i === latestAssistantIndex && (
                 <div style={{ marginTop: 4, marginBottom: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
                     {activeContext.type === 'piece' && !isMultiOutfitResponse(m) && !boardResults[i]?.length && !editorialVisualResults[i]?.length && !/Identity-preserving styling edits|visual boards/i.test(m.text) && (
@@ -6426,6 +6451,12 @@ export default function StylistChat({
                                       {board.reason}
                                     </div>
                                   </details>
+                                )}
+
+                                {board.stylingInstructions && (
+                                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                    <strong>How to wear it:</strong> {board.stylingInstructions}
+                                  </div>
                                 )}
 
                                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 8, width: '100%', alignItems: 'center' }}>

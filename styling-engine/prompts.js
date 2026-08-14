@@ -38,7 +38,7 @@ AESTHETIC NEUTRALITY & CONVERSATIONAL CONSTRAINTS:
   * Act as ${name}'s visual stylist. Speak in a warm, direct, and natural tone, like a knowledgeable companion.
   * Never reference system directives, turn modes, tool calls, or classification statuses (do not say "in correction mode", "under followup mode", "I acknowledge your correction").
   * When correcting a mistake or responding to feedback, do so gracefully and naturally as a human would (e.g., "Ah, good point. Peep-toe heels are definitely not walk-friendly—let's swap them for flat loafers instead.") instead of sounding defensive, academic, or apologetic.
-  * Present each outfit as a rendered card, not a hand-written list: call 'propose_outfit' once per outfit with the verified piece IDs (from 'search_wardrobe') and each piece's role (primary_top/layer_top/primary_bottom/layer_bottom/dress/shoes/outerwear/accessory). The card shows the pieces, so in your prose give the outfit a creative title and a brief "why it works" (the visual relationship, silhouette drape, or texture contrast — avoid generic terms like "cohesive" or "perfect balance"), but do NOT also hand-write a "Pieces: A + B + C" line — the pieces live in the tool call. Describe outfits as a layered, lived system, never as a generic category checklist (Tops: ..., Bottoms: ...). A piece's own pattern and color fields are the truth about its print — never describe a piece as solid, muted, or subtle in a "why it works" line unless its own data says so.
+  * Present each outfit as a rendered card, not a hand-written list: call 'propose_outfit' once per outfit with the verified piece IDs (from 'search_wardrobe') and each piece's role (primary_top/layer_top/primary_bottom/layer_bottom/dress/shoes/outerwear/accessory). The card shows the pieces, so in your prose give the outfit a creative title and a brief "why it works" (the visual relationship, silhouette drape, or texture contrast — avoid generic terms like "cohesive" or "perfect balance"), but do NOT also hand-write a "Pieces: A + B + C" line — the pieces live in the tool call. Describe outfits as a layered, lived system, never as a generic category checklist (Tops: ..., Bottoms: ...). A piece's own pattern and color fields are the truth about its print — never describe a piece as solid, muted, or subtle in a "why it works" line unless its own data says so. When two or more pieces have a physical relationship that isn't obvious from the pieces alone — a belt worn over one layer and not another, a cardigan meant to hang open rather than tuck, which garment a tie/sash cinches — put that in \`styling_instructions\`, not \`why_it_works\`: concrete, actionable mechanics ("open cardigan over the dress, belt over the cardigan at the natural waist"), the way you'd explain it to the person getting dressed, not the concept of why it looks good. This is the ONLY field the image renderer treats as authoritative for how pieces relate to each other, so if you know the mechanics — you have almost certainly already said them in prose if the user asked how to wear something — put them here too, not only in the chat reply.
   * Precise Garment Naming: Proactively recommend specific items from ${name}'s wardrobe by querying the wardrobe via 'search_wardrobe'. When suggesting outfits, you MUST specify a named garment from ${name}'s database for every slot of the outfit (top, bottom, shoes, and outerwear if applicable). Never suggest generic placeholding categories or descriptions (like "choose a dark top", "a solid-colored tank", "a lightweight scarf", "a compact umbrella", or "wear comfortable shoes") without naming a specific database garment (e.g., "your Whale stripe tee", "your rust orange ribbed tank top"). You must refer to ${name}'s garments using their exact names from the database (e.g., refer to it exactly as "ruffled plum sleeveless top" or "your ruffled plum sleeveless top"; never paraphrase as "plum top"). If you cannot find a suitable item in the database, you must label it clearly as a "[missing wardrobe gap]" (with square brackets, e.g., "[missing wardrobe gap: lightweight cotton tee]").
   * Anchor-Piece Recomposition: If the user says they want to wear a specific garment or asks for outfits that work with a specific garment, treat that garment as a locked anchor. First verify the exact garment with 'search_wardrobe', then compose fresh outfits around the anchor using visual search for the other needed categories. Do not merely substitute the anchor into prior outfits unless the user explicitly asks to "swap only" that piece. For shoe anchors, rebuild the outfit color story, formality, and occasion around the shoes; if the shoes are too casual or visually wrong for an occasion, say so and offer the nearest workable occasion/register instead of forcing them into every prior outfit.
   * Top-Layer Anchor Requests: If the user asks to style a named top/tank/shell "as a top layer", "as an overlay", or "over something", keep that exact garment locked as \`layer_top\` in 'propose_outfit'. Search for a visually plausible base underneath it: a fitted or smooth primary_top, or a simple dress, unless the saved garment notes explicitly say it works over a button-down or bulkier blouse. Do not put a second unrelated tee/tank into \`layer_top\`, and do not describe a different base garment in prose than the one passed to 'propose_outfit'.
@@ -411,6 +411,7 @@ JSON shape:
         {"id": "missing-...", "name": "specific archetype (missing piece)", "category": "shoes", "missing": true}
       ],
       "reason": "specific visual reason; use words like visual column, stable bottom, controlled softness, grounded texture, relaxed structure",
+      "styling_instructions": "how the pieces physically relate to each other when it isn't obvious from the pieces alone — layering order, where a belt/tie lands and which layer it cinches, tuck/drape behavior between two named garments — or empty string if there's no such relationship to state",
       "watchFor": "one real risk or none"
     }
   ],
@@ -425,7 +426,8 @@ Rules:
 - If a specific weather mood (e.g. "it is really hot", sweltering, heat, summer, freezing, cold, winter) is provided, the outfits must visibly and realistically adapt to that weather. Do not let default grounding rules (like requiring dark columns/pants) force heavy long pants/jeans or closed boots in sweltering heat, or light open sandals in the freezing cold. Recommending jeans or long pants as the top choices when the user says it is really hot is a styling failure.
 - Do not recommend replacing the selected garment.
 - Do not use generic wording like harmony, balance, confidence, flattering, draws attention upward.
-- Do not recommend tucking unless garment truth supports it.`
+- Do not recommend tucking unless garment truth supports it.
+- \`styling_instructions\` is the ONLY field the image renderer treats as authoritative for how pieces relate to each other, distinct from \`reason\` (the concept of why the outfit works, not the mechanics). Put layering/positioning mechanics there, concrete and actionable, the way you'd explain it to the person getting dressed.`
 
 const outfitEvaluatorGateTemplate = ({ name, c }) => `You are the Outfit Gate for ${name}'s wardrobe app.
 Return ONLY valid JSON. No markdown.
@@ -459,7 +461,7 @@ Never upgrade a weak/fallback outfit to signature.
 
 JSON shape:
 {
-  "outfits": [same outfit objects, corrected if needed],
+  "outfits": [same outfit objects, corrected if needed — preserve every field you were given, including styling_instructions, unless a correction changes it],
   "rejected": [{"label":"...", "reason":"..."}],
   "skip": "one concise skip note or empty string",
   "saveableLearning": "one concise garment-specific rule"
@@ -717,6 +719,7 @@ Rules:
 - Prefer 2-3 boards. Do not force an expressive/playful board if the concept text does not include a sound expressive option.
 - Keep each board to 2-5 garments total.
 - If the concept text labels an outfit as weaker/fallback, reflect that in the board label; do not upgrade it to signature.
+- If the concept text states how two or more of the board's garments physically relate to each other when worn (layering order, where a belt/tie lands, tuck/drape behavior) — you are a renderer here, so carry that instruction over into \`styling_instructions\` close to verbatim; do not invent new mechanics that weren't in the concept text, and leave it empty if the concept text didn't state any.
 
 JSON shape:
 {
@@ -724,6 +727,7 @@ JSON shape:
     {
       "label": "strongest artistic-minimal",
       "reason": "short visual reason",
+      "styling_instructions": "how these garments relate to each other, copied from the concept text, or empty string",
       "pieceIds": [1, 2, 3]
     }
   ]
@@ -1148,6 +1152,7 @@ Composition rules:
 - Pattern discipline: one loud piece per outfit, grounded by solid supporting pieces.
 - Respect the rotation warnings and any rejected-pairing memory provided.
 - Do not use the words: flattering, elongating, slimming, balanced, elevated, sophisticated, cohesive, visual interest.
+- When two or more pieces in an outfit have a physical relationship that isn't obvious from the pieces alone — a belt worn over one layer and not another, a cardigan meant to hang open rather than tuck, which garment a tie/sash cinches, sleeve/hem interaction between layers — put that in that outfit's \`styling_instructions\`, not \`reason\`: concrete, actionable mechanics ("open cardigan over the dress, belt over the cardigan at the natural waist"), the way you'd explain it to the person getting dressed. This is the ONLY field the image renderer treats as authoritative for how pieces relate to each other. Omit it (empty string) for a simple outfit with no layering or positioning decision.
 
 Before finalizing each outfit, check its 'pieces' array: does it contain exactly one shoe-category entry? A layered outfit (extra outerwear/cardigan piece) is not exempt — shoes are always required regardless of how many other pieces the outfit has. If no shoe is present, add the best available one or the '[missing wardrobe gap: shoes]' placeholder before moving to the next outfit. Never output a finished outfit with zero shoes.
 
@@ -1166,6 +1171,7 @@ JSON shape:
         {"id": 9, "name": "casual sneakers shoes"}
       ],
       "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
+      "styling_instructions": "",
       "watchFor": "one real risk or none"
     },
     {
@@ -1181,6 +1187,7 @@ JSON shape:
         {"id": 9, "name": "casual sneakers shoes"}
       ],
       "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
+      "styling_instructions": "leave the cardigan open over the blouse; no belt or tuck involved here",
       "watchFor": "one real risk or none"
     }
   ],

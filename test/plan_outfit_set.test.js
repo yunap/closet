@@ -769,6 +769,38 @@ test('submit_plan_outfits accepts gate-allowed pieces that were not in the shown
   assert.equal(result.accepted.length, 1)
 })
 
+test('submit_plan_outfits carries styling_instructions through to the accepted outfit, defaulting to empty when omitted', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  const bottomId = insertPiece({ category: 'bottom', name: 'mechanics pants', occasions: ['city'], formality: 'everyday' })
+  const shoesId = insertPiece({ category: 'shoes', name: 'mechanics shoes', occasions: ['city'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const topIds = []
+  for (let i = 0; i < 45; i += 1) {
+    topIds.push(insertPiece({ category: 'top', name: `mechanics top ${i}`, occasions: ['city'], formality: 'everyday' }))
+  }
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([
+    { label: 'City Day', occasion: 'city', activity: 'none', count: 1, weather: 'indoor' },
+  ])
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city outfit' })
+  const slotId = workbench.pendingPlan.slots[0].id
+  const topId = Number(topIds[0])
+
+  const withMechanics = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slotId,
+    piece_ids: [topId, Number(bottomId), Number(shoesId)],
+    styling_instructions: 'Leave the top untucked over the pants.'
+  }])
+  assert.equal(withMechanics.accepted.length, 1)
+  assert.equal(withMechanics.accepted[0].stylingInstructions, 'Leave the top untucked over the pants.')
+
+  const withoutMechanics = validateSubmittedPlanOutfits(workbench.pendingPlan, [{
+    slot_id: slotId,
+    piece_ids: [topId, Number(bottomId), Number(shoesId)],
+  }])
+  assert.equal(withoutMechanics.accepted.length, 1)
+  assert.equal(withoutMechanics.accepted[0].stylingInstructions, '')
+})
+
 test('submit_plan_outfits rejects gate-suppressed pieces with the gate reason', async () => {
   db.prepare('DELETE FROM pieces').run()
   const topId = insertPiece({ category: 'top', name: 'hot gate top', occasions: ['casual'], formality: 'everyday', fabric_weight: 'light' })

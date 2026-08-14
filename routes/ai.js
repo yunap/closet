@@ -57,6 +57,9 @@ import {
   normalizeOccasion
 } from '../styling-engine/stylingIntent.js'
 
+import { storeUserCorrection } from '../styling-engine/tools.js'
+import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
+
 import {
   isStyleSelectedQuestion,
   weatherProfileFromContext,
@@ -2170,6 +2173,7 @@ router.post('/generate-outfit-boards', async (req, res) => {
       boards.push({
         label: board.label || `Outfit board ${idx + 1}`,
         reason: board.reason || '',
+        stylingInstructions: board.styling_instructions || board.stylingInstructions || '',
         watchFor: board.watchFor || '',
         pieces: boardPieces.map(p => ({ id: p.id, name: p.name, category: p.category, missing: !!p.missing })),
         imageUrl
@@ -2267,6 +2271,7 @@ router.post('/generate-wardrobe-outfit-image', async (req, res) => {
     const board = {
       label: outfit.label || 'Whole wardrobe generated outfit',
       reason: outfit.reason || '',
+      stylingInstructions: outfit.stylingInstructions || outfit.styling_instructions || '',
       watchFor: outfit.watchFor || '',
       pieces: pieces.map(p => ({ id: p.id, name: p.name, category: wardrobeCategoryGroup(p), photo: p.photo || null, worn_photo: p.worn_photo || null })),
       imageUrl: rendered.imageUrl,
@@ -2814,9 +2819,10 @@ export function capsulePlanCompositionSchema(targetOutfits = 1) {
             slot_id: { type: 'string' },
             piece_ids: { type: 'array', items: { type: 'integer' } },
             title: { type: 'string' },
-            reason: { type: 'string' }
+            reason: { type: 'string' },
+            styling_instructions: { type: 'string', description: "Garment-relationship mechanics not obvious from the pieces alone (layering order, where a belt/tie lands, tuck/drape between two named garments), or empty string if not applicable." }
           },
-          required: ['slot_id', 'piece_ids', 'title', 'reason']
+          required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions']
         }
       }
     },
@@ -3564,12 +3570,44 @@ router.post('/ask', async (req, res) => {
   // success path.
   let diagnosticsContext = null
   try {
+    const currentQuestion = req.body.question || ''
+    // Item 12's deferred fast path (feedback-routing-proposal.md): a simple, explicit, self-
+    // contained prohibition needs no model turn at all — extractOwnerGuidanceApplicability already
+    // resolves it deterministically. Applies regardless of thread state, since the whole point is
+    // to skip the cost even inside an existing conversation (the measured case: five provider
+    // iterations to store one sentence in an active trip thread). Anything the local extractor
+    // can't confidently place falls through to the normal loop below, unchanged.
+    const prohibitionApplicability = detectExplicitProhibition(currentQuestion)
+    if (prohibitionApplicability) {
+      const result = storeUserCorrection(currentQuestion, 'general', null, { guidanceApplicability: prohibitionApplicability })
+      if (result.status === 'success') {
+        const scopeText = describeOwnerGuidanceScope(prohibitionApplicability)
+        return res.json({
+          answer: scopeText ? `Got it — noted for ${scopeText}.` : 'Got it — noted.',
+          savedCorrections: [{ note: currentQuestion, ...result }],
+          renderedBoards: [],
+          provider: 'local',
+          // A plain acknowledgment, not a real conversational turn — the client must not offer
+          // follow-up affordances (e.g. "Generate visual boards") that assume this reply actually
+          // discussed the active piece/outfit context.
+          isLocalAcknowledgment: true,
+          structuredOutfits: [],
+          structuredOutfitsSource: null,
+          structuredOutfitsOccasion: null,
+          structuredOutfitsSeason: null,
+          structuredOutfitsMood: null,
+          structuredOutfitsMission: null,
+          structuredOutfitsActivity: null,
+          debug: null,
+          suggestedTitle: null,
+        })
+      }
+    }
     const extractedWeather = req.body.weather || extractWeatherContext([
       req.body.question || '',
       req.body.threadContext || '',
       req.body.generatedContext || ''
     ].join('\n'))
-    const currentQuestion = req.body.question || ''
     // A capsule often spans two turns: the first names the season/palette and
     // the second answers the stylist's lifestyle clarification. The plan tool
     // used to receive only turn two, silently dropping "in yellow" before

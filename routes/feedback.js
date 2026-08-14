@@ -1,21 +1,34 @@
 import express from 'express'
-import { db } from '../db.js'
+import fs from 'fs'
+import path from 'path'
+import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import {
   ACTIVE_STYLIST_MODEL,
   AI_PROVIDER,
   askStylistStructuredWithUsage,
   estimateAiUsageCost,
+  prepareWardrobeThumb,
 } from '../styling-engine/provider.js'
+import { pieceVisualDetailPolicy, visuallyPrioritizedPieces } from '../styling-engine/attributes.js'
 import {
   buildFeedbackSynthesisPreview,
   compactSynthesisEvidenceRow,
   computeSynthesisApplicabilityOptions,
+  estimateImagePixelTokens,
   feedbackSynthesisCall,
   FEEDBACK_SYNTHESIS_DISPOSITIONS,
   sanitizeSynthesisApplicability,
 } from '../lib/feedbackSynthesis.js'
 import { createDirectProductQualityFinding, resolveProductQualityFinding, syncProductQualityFindingForDraft } from '../lib/productQualityFindings.js'
 import { createOwnerConstraint, createOwnerConstraintFromProposal, parseOwnerConstraintRow, setOwnerConstraintStatus } from '../lib/ownerConstraints.js'
+
+// Board images are resized larger than a garment thumb (enough to read overall silhouette/color/
+// pattern interplay, not fine texture) but still far below the source render's native resolution.
+const BOARD_IMAGE_MAX_PX = 800
+// Bounds worst-case cost for a big outfit (accessories, layers): prioritized the same way other
+// vision calls in this app already prioritize photo slots (visuallyPrioritizedPieces) — complex/
+// hero pieces first, since those are the ones text attributes describe worst.
+const MAX_GARMENT_IMAGES_PER_EVIDENCE_ITEM = 4
 
 const router = express.Router()
 const MAX_BATCH = 12
@@ -50,17 +63,105 @@ function withPiecePhotos(options) {
   return { ...options, pieces: options.pieces.map(piece => ({ ...piece, photo: byId.get(piece.id)?.photo || null })) }
 }
 
+// The feedback payload only ever snapshots the lightweight outfit-card shape (id/name/category/
+// photo) — sleeve, fit, fabric, reads_as, silhouette and length live on the piece record and were
+// never captured there. Hydrate each piece from `pieces` at request time so the synthesis model
+// actually sees the garment attributes an owner's reason ("the vest shape", "strange proportions")
+// needs to be checked against, instead of always receiving them blank. Cached per call since the
+// same piece can appear as both a subject and an otherPieces entry across several feedback rows.
+function pieceAttributeHydrator() {
+  const cache = new Map()
+  return piece => {
+    const id = Number(piece?.id)
+    if (!id) return piece
+    if (!cache.has(id)) {
+      cache.set(id, db.prepare(`
+        SELECT sleeve_type, fit_on_body, fabric_category, reads_as, silhouette, length_hits_at
+        FROM pieces WHERE id = ?
+      `).get(id) || null)
+    }
+    const attrs = cache.get(id)
+    return attrs ? { ...piece, ...attrs } : piece
+  }
+}
+
 function sourceEvidenceForDraft(draft) {
   let sourceIds = []
   try { sourceIds = JSON.parse(draft.source_feedback_ids || '[]') } catch { sourceIds = [] }
-  return feedbackRows(requestedIds(sourceIds)).map(compactSynthesisEvidenceRow).filter(Boolean)
+  return feedbackRows(requestedIds(sourceIds)).map(row => compactSynthesisEvidenceRow(row)).filter(Boolean)
 }
 
-function previewFor(ids) {
-  const preview = buildFeedbackSynthesisPreview(feedbackRows(ids), {
+// Mirrors the frontend's feedbackBoardImage (StylistSettings.jsx) — the same board.imageUrl the
+// owner sees rendered for this reaction is what gets attached here, so the model is looking at
+// exactly the image the owner reacted to, not a different render of the same outfit.
+function boardImageUrlForRow(row) {
+  const payload = typeof row?.payload === 'string' ? (safeJsonParse(row.payload, {}) || {}) : (row?.payload || {})
+  return payload?.board?.imageUrl || payload?.board?.image_url || payload?.outfit?.imageUrl || ''
+}
+
+function uploadsFilePath(relativeOrFilename) {
+  const cleaned = String(relativeOrFilename || '').replace(/^\/?uploads\//, '')
+  if (!cleaned) return null
+  const filePath = path.join(userUploadsDir(), cleaned)
+  return fs.existsSync(filePath) ? filePath : null
+}
+
+// Text-only evidence was cheap and safe but visually blind — a claim like "the vest shape doesn't
+// work with the cropped top" is a claim about fit/silhouette the text attributes can only
+// approximate. Attaches the board render (what the owner actually reacted to) plus photos for the
+// referenced garments, each preceded by a text label so the model can tell which evidence/garment
+// an image belongs to. Every block carries `_tokenEstimate` for structuredRequestInputTokenUpperBound
+// — see feedbackSynthesis.js for why that can't be derived from the block's own (base64) size.
+async function imageBlocksForEvidence(evidenceList, rawRowById) {
+  const referencedPieceIds = [...new Set(evidenceList.flatMap(item => [
+    Number(item?.subject?.id),
+    ...(Array.isArray(item?.outfit?.otherPieces) ? item.outfit.otherPieces.map(piece => Number(piece?.id)) : []),
+  ]).filter(id => Number.isInteger(id) && id > 0))]
+  const pieceRows = referencedPieceIds.length
+    ? db.prepare(`
+        SELECT id, photo, worn_photo, pattern_complexity, fabric_category, fabric_weight, style_profile_json
+        FROM pieces WHERE id IN (${referencedPieceIds.map(() => '?').join(',')})
+      `).all(...referencedPieceIds)
+    : []
+  const pieceById = new Map(pieceRows.map(row => [row.id, { ...row, style_profile_json: safeJsonParse(row.style_profile_json, {}) }]))
+
+  const blocks = []
+  for (const item of evidenceList) {
+    const rawRow = rawRowById.get(Number(item.evidenceId))
+    const boardImageUrl = rawRow ? boardImageUrlForRow(rawRow) : ''
+    const boardFilePath = boardImageUrl ? uploadsFilePath(boardImageUrl) : null
+    if (boardFilePath) {
+      const thumb = await prepareWardrobeThumb(boardFilePath, `synthesis-board:${item.evidenceId}`, { maxPx: BOARD_IMAGE_MAX_PX })
+      blocks.push({ type: 'text', text: `Evidence ${item.evidenceId} — the generated outfit image the owner reacted to:` })
+      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(BOARD_IMAGE_MAX_PX) })
+    }
+
+    const itemPieceIds = [Number(item?.subject?.id), ...(Array.isArray(item?.outfit?.otherPieces) ? item.outfit.otherPieces.map(piece => Number(piece?.id)) : [])]
+      .filter(id => Number.isInteger(id) && id > 0)
+    const candidatePieces = itemPieceIds.map(id => pieceById.get(id)).filter(Boolean)
+    const prioritized = visuallyPrioritizedPieces(candidatePieces, MAX_GARMENT_IMAGES_PER_EVIDENCE_ITEM)
+    for (const piece of prioritized) {
+      const photoFile = piece.photo || piece.worn_photo
+      const filePath = photoFile ? uploadsFilePath(photoFile) : null
+      if (!filePath) continue
+      const { maxPx } = pieceVisualDetailPolicy(piece)
+      const thumb = await prepareWardrobeThumb(filePath, `synthesis-piece:${item.evidenceId}:${piece.id}`, { maxPx })
+      blocks.push({ type: 'text', text: `Evidence ${item.evidenceId} — garment ${piece.id}:` })
+      blocks.push({ type: 'image', source: { type: 'base64', ...thumb }, _tokenEstimate: estimateImagePixelTokens(maxPx) })
+    }
+  }
+  return blocks
+}
+
+async function previewFor(ids) {
+  const rows = feedbackRows(ids)
+  const rawRowById = new Map(rows.map(row => [Number(row.id), row]))
+  const preview = await buildFeedbackSynthesisPreview(rows, {
     provider: AI_PROVIDER,
     model: ACTIVE_STYLIST_MODEL,
     maxItems: MAX_BATCH,
+    hydratePiece: pieceAttributeHydrator(),
+    buildImageBlocks: evidence => imageBlocksForEvidence(evidence, rawRowById),
   })
   const cost = estimateAiUsageCost({
     provider: AI_PROVIDER,
@@ -73,11 +174,11 @@ function previewFor(ids) {
   return { ...preview, estimatedCost: cost }
 }
 
-router.get('/feedback-synthesis/preview', (req, res) => {
+router.get('/feedback-synthesis/preview', async (req, res) => {
   try {
     const ids = requestedIds(req.query.ids)
     if (!ids.length) return res.status(400).json({ error: 'Select at least one feedback item.' })
-    const preview = previewFor(ids)
+    const preview = await previewFor(ids)
     if (!preview.feedbackIds.length) return res.status(400).json({ error: 'No eligible provisional feedback was selected.' })
     res.json({
       feedbackIds: preview.feedbackIds,
@@ -89,6 +190,7 @@ router.get('/feedback-synthesis/preview', (req, res) => {
       estimatedOutputTokens: preview.estimatedOutputTokens,
       outputTokenCap: preview.outputTokenCap,
       estimatedCost: preview.estimatedCost,
+      imageCount: preview.imageBlocks.filter(block => block.type === 'image').length,
       providerCalls: 0,
     })
   } catch (err) {
@@ -100,7 +202,7 @@ router.post('/feedback-synthesis/batches', async (req, res) => {
   const ids = requestedIds(req.body?.feedbackIds)
   if (req.body?.authorize !== true) return res.status(400).json({ error: 'Explicit authorization is required.' })
   if (!ids.length) return res.status(400).json({ error: 'Select at least one feedback item.' })
-  const preview = previewFor(ids)
+  const preview = await previewFor(ids)
   if (!preview.feedbackIds.length) return res.status(400).json({ error: 'No eligible provisional feedback was selected.' })
   if (!req.body?.inputHash || req.body.inputHash !== preview.inputHash) {
     return res.status(409).json({ error: 'The synthesis preview changed. Review the updated cost before authorizing.' })
@@ -126,7 +228,7 @@ router.post('/feedback-synthesis/batches', async (req, res) => {
   try {
     db.prepare("UPDATE feedback_synthesis_batches SET status = 'processing' WHERE id = ?").run(batchId)
     const { value, usage } = await askStylistStructuredWithUsage(
-      feedbackSynthesisCall(preview.compactInput, preview.outputTokenCap)
+      feedbackSynthesisCall(preview.compactInput, preview.outputTokenCap, preview.imageBlocks)
     )
     const allowedIds = new Set(preview.feedbackIds)
     const evidenceById = new Map(preview.evidence.map(item => [Number(item.evidenceId), item]))

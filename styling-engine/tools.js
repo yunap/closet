@@ -753,7 +753,8 @@ export const STYLIST_TOOLS = [
               slot_id: { type: "string", description: "The slot id returned by plan_outfit_set." },
               piece_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs chosen only from that slot's allowed piece list." },
               title: { type: "string", description: "Optional short card title." },
-              reason: { type: "string", description: "Optional one-sentence styling rationale." }
+              reason: { type: "string", description: "Optional one-sentence styling rationale." },
+              styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order, where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments. Concrete and actionable, not a restatement of `reason` — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision." }
             },
             required: ["slot_id", "piece_ids"]
           }
@@ -783,7 +784,8 @@ export const STYLIST_TOOLS = [
         },
         label: { type: "string", description: "Creative outfit title." },
         occasion_context: { type: "string", description: "The occasion / vibe / style lane this outfit is for." },
-        why_it_works: { type: "string", description: "Brief styling rationale." },
+        why_it_works: { type: "string", description: "Brief styling rationale — the concept, not the mechanics." },
+        styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order (what goes over/under what), where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments, sleeve/hem interaction between layers. Concrete and actionable, not a restatement of why_it_works — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision (e.g. a plain top + bottom + shoes)." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
         occasion: { type: "string", enum: OCCASION_VALUES, description: "Occasion for card context. Optional." },
         season: { type: "string", description: "Season/weather context. Optional. For indoor occasions (office, restaurant, meeting, gallery), pass season:'indoor' — the live forecast applies only to time spent outdoors." },
@@ -1191,7 +1193,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
         return resultList
       }
       case 'propose_outfit': {
-        const { pieces = [], label = '', occasion_context = '', why_it_works = '', missing_gaps = [], occasion, season, activity } = args
+        const { pieces = [], label = '', occasion_context = '', why_it_works = '', styling_instructions = '', missing_gaps = [], occasion, season, activity } = args
         const rawPieces = Array.isArray(pieces) ? pieces : []
         if (!rawPieces.length) {
           return { status: "validation_error", message: "propose_outfit needs at least one piece, each with an id and a role.", issues: ["no pieces provided"] }
@@ -1338,6 +1340,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasionContext: occasion_context || '',
             why: why_it_works || '',
             reason: why_it_works || '',
+            stylingInstructions: styling_instructions || '',
             source: 'proposed',
             activity: resolvedActivity,
             debug: outfitDebug,
@@ -1403,6 +1406,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasionContext: occasion_context || '',
             why: why_it_works || '',
             reason: why_it_works || '',
+            stylingInstructions: styling_instructions || '',
             source: 'proposed',
             activity: resolvedActivity,
             debug: outfitDebug,
@@ -1472,6 +1476,7 @@ async function executeToolInternal(name, args, toolContext = {}) {
           occasionContext: occasion_context || '',
           why: why_it_works || '',
           reason: why_it_works || '',
+          stylingInstructions: styling_instructions || '',
           pieceIds: proposedPieceIds,
           pieces: resolved,
           missingPieces: Array.isArray(missing_gaps) ? missing_gaps.filter(Boolean).map(String) : [],
@@ -1700,6 +1705,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasionContext: outfit.occasionContext || outfit.occasion_context || resolvedOccasion,
             why,
             reason: why,
+            // Carried forward, not recomputed: a slot swap only replaces one role (usually
+            // shoes/outerwear), so a prior layering/positioning instruction about the untouched
+            // pieces (e.g. a belt over a cardigan) is still accurate. If the swapped role was
+            // itself the subject of the instruction, this can go stale — no cheap way to detect
+            // that here, so it's a known tradeoff rather than a bug.
+            stylingInstructions: outfit.stylingInstructions || '',
             pieceIds: resolved.map(piece => Number(piece.id)),
             pieces: resolved,
             missingPieces: [],

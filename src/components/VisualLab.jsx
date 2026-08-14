@@ -479,9 +479,14 @@ export default function VisualLab({ onGoToThread } = {}) {
       setVerdictComment(String(payload.feedback_details?.owner_comment || ''))
       return
     }
+    // A comment commit — the initial "almost"/"not_me" prompt, or "Add optional reason"/"Edit
+    // reason" on a verdict that's already active — always means "keep this verdict selected, apply
+    // the comment." Without this, re-running the ordinary toggle logic for an already-active label
+    // removes the verdict instead of just updating its reason.
+    const isCommentCommit = ownerComment !== null
     const wasSignature = current.includes('signature')
     const nextLabels = current.filter(value => !verdictValues.has(value))
-    if (!isActive) nextLabels.push(label)
+    if (!isActive || isCommentCommit) nextLabels.push(label)
     const details = payload.feedback_details && typeof payload.feedback_details === 'object'
       ? payload.feedback_details
       : {}

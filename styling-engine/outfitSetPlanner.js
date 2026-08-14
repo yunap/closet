@@ -3945,6 +3945,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     const outfit = {
       title: String(raw?.title || slot.label || '').trim(),
       reason: String(raw?.reason || '').trim(),
+      stylingInstructions: String(raw?.styling_instructions || raw?.stylingInstructions || '').trim(),
       pieces,
       pieceIds: dedupedIds,
       source: 'plan_outfit_set',

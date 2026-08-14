@@ -395,8 +395,10 @@ test('StylistChat handles errors by rendering distinct error bubble and bypassin
   assert.match(source, /background:\s*'rgba\(219,\s*68,\s*85,\s*0\.08\)'/)
   assert.match(source, /border:\s*'1px\s*solid\s*rgba\(219,\s*68,\s*85,\s*0\.25\)'/)
 
-  // Verify that styling rule buttons are bypassed for error messages
-  assert.match(source, /!m\.isError\s*&&\s*i\s*>\s*0\s*&&\s*activeContext\s*&&\s*i\s*===\s*latestAssistantIndex/)
+  // Verify that styling rule buttons are bypassed for error messages, and (2026-08-14) for a
+  // plain local-acknowledgment reply that never actually discussed the active piece/outfit —
+  // see the item 12 fast path in routes/ai.js.
+  assert.match(source, /!m\.isError\s*&&\s*!m\.isLocalAcknowledgment\s*&&\s*i\s*>\s*0\s*&&\s*activeContext\s*&&\s*i\s*===\s*latestAssistantIndex/)
 
   // Verify that the client-side follow-up query uses the existing thread and does not create a new one
   assert.match(source, /let\s*isTransitioningNew\s*=\s*currentThreadId\s*===\s*'new_chat'/)

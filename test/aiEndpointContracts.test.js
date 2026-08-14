@@ -888,7 +888,7 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.deepEqual(JSON.parse(firstRun.coverage_gaps), json.debug.activityCoverageGaps)
 
   // 1. Generate an image from a visual-composer card via the existing /api/ai/generate-wardrobe-outfit-image endpoint
-  const outfit = json.structuredOutfits[0]
+  const outfit = { ...json.structuredOutfits[0], stylingInstructions: 'Leave the top untucked over the pants.' }
   const imageJson = await postJson('/api/ai/generate-wardrobe-outfit-image', {
     outfit,
     occasion: 'city',
@@ -898,6 +898,7 @@ test('visual wardrobe composer endpoint returns outfits and populates debug show
   assert.equal(imageJson.mode, 'generate_wardrobe_outfit_image')
   assert.ok(imageJson.imageUrl)
   assert.equal(imageJson.wholeWardrobe, true)
+  assert.equal(imageJson.stylingInstructions, 'Leave the top untucked over the pants.', 'styling_instructions on the outfit must survive the round-trip to the generated board response, not just the image prompt')
 
   // 2. Run the workflow twice in a row and confirm the second call's outfits differ meaningfully (rotation warning loop test)
   const json2 = await postJson('/api/ai/generate-wardrobe-outfits-visual', {
@@ -1235,6 +1236,18 @@ test('selected-piece board generation returns saved-garment visual boards', asyn
   assert.ok(Array.isArray(json.boards))
   assert.ok(json.boards[0].imageUrl.startsWith('/uploads/generated-boards/'))
   assert.ok(fs.existsSync(path.join(userUploadsDir(), json.boards[0].imageUrl.replace('/uploads/', ''))))
+})
+
+test('selected-piece board generation carries styling_instructions through from client-supplied structured outfits', async () => {
+  const json = await postJson('/api/ai/generate-outfit-boards', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+    structuredOutfits: [{ ...selectedPieceOutfit(), stylingInstructions: 'Leave the top untucked over the pants.' }],
+  })
+
+  assert.equal(json.mode, 'generate_outfit_boards')
+  assert.equal(json.boards[0].stylingInstructions, 'Leave the top untucked over the pants.')
 })
 
 test('whole-wardrobe image endpoint returns one generated board artifact', async () => {
@@ -2152,6 +2165,46 @@ test('freeform ask correction turns do NOT auto-store the raw question as a pref
   assert.ok(row)
   assert.equal(row.context_type, 'outfit')
   assert.equal(Number(row.context_id), seeded.outfitId)
+})
+
+test('item 12 fast path: an explicit "never wear" prohibition is stored with zero model calls, even inside an active thread', async () => {
+  // Reproduces the exact 2026-08-11 measured case (feedback-routing-proposal.md item 12): the
+  // sentence is self-contained, so re-reading trip/thread context to store it is pure overhead.
+  const before = db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback').get().n
+  const json = await postJson('/api/ai/ask', {
+    question: 'I never wear sandals for hiking',
+    pieces: [],
+    history: [{ role: 'user', content: 'planning a trip' }, { role: 'assistant', content: 'sure, tell me more' }],
+    threadContext: 'Trip: Yosemite hiking weekend',
+  })
+  assert.equal(aiCalls.length, 0, 'the fast path must not invoke the model at all')
+  assert.match(json.answer, /sandals/i)
+  assert.match(json.answer, /hiking/i)
+  assert.equal(json.savedCorrections.length, 1)
+  assert.equal(json.savedCorrections[0].scope, 'garment_context')
+  // The client uses this to suppress follow-up affordances (e.g. "Generate visual boards") that
+  // assume the reply actually discussed the active piece/outfit context — this reply never did.
+  assert.equal(json.isLocalAcknowledgment, true)
+  const after = db.prepare('SELECT COUNT(*) AS n FROM stylist_feedback').get().n
+  assert.equal(after, before + 1)
+  const row = db.prepare("SELECT * FROM stylist_feedback WHERE note = 'I never wear sandals for hiking'").get()
+  assert.equal(row.feedback_type, 'owner_rule')
+  const payload = JSON.parse(row.payload)
+  assert.deepEqual(payload.ownerGuidanceApplicability.garment.footwear, ['sandals'])
+  assert.deepEqual(payload.ownerGuidanceApplicability.context.activities, ['hiking'])
+})
+
+test('item 12 fast path only fires on an explicit durability marker, not any negated "wear" phrasing', async () => {
+  // "always avoid wearing" is the other phrase in the controlled vocabulary; weaker phrasings
+  // ("don't wear", "won't wear") are deliberately excluded — see the guardrail test above for why.
+  const json = await postJson('/api/ai/ask', {
+    question: 'I always avoid wearing wool in summer',
+    pieces: [],
+    history: [],
+  })
+  assert.equal(aiCalls.length, 0)
+  const row = db.prepare("SELECT * FROM stylist_feedback WHERE note = 'I always avoid wearing wool in summer'").get()
+  assert.ok(row)
 })
 
 test('freeform ask new_request clears and does not restore database session state', async () => {
@@ -3305,6 +3358,7 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
     occasion: 'city',
     season: 'highs 80-90F',
     why_it_works: 'a column of light neutrals grounded by the shoe',
+    styling_instructions: 'Leave the top untucked over the wide-leg pants.',
     missing_gaps: ['lightweight rain shell']
   }, toolContext)
 
@@ -3319,6 +3373,30 @@ test('executeTool propose_outfit appends a structured card when IDs resolve and 
   assert.equal(card.pieces[0].role, 'primary_top')
   assert.deepEqual(card.missingPieces, ['lightweight rain shell'])
   assert.equal(card.previewOnly, true)
+  assert.equal(card.stylingInstructions, 'Leave the top untucked over the wide-leg pants.')
+})
+
+test('executeTool propose_outfit defaults stylingInstructions to an empty string when the model omits it', async () => {
+  const toolContext = {
+    occasion: 'city',
+    season: 'current season',
+    declaredIntent: { want: 'cards' },
+    retrievedPieceIds: new Set([seeded.top, seeded.bottom, seeded.shoe]),
+    generatedOutfits: []
+  }
+  const proposed = await executeTool('propose_outfit', {
+    label: 'No mechanics needed',
+    pieces: [
+      { id: seeded.top, role: 'primary_top' },
+      { id: seeded.bottom, role: 'primary_bottom' },
+      { id: seeded.shoe, role: 'shoes' }
+    ],
+    occasion: 'city',
+    why_it_works: 'a simple, clean pairing'
+  }, toolContext)
+
+  assert.equal(proposed.status, 'success')
+  assert.equal(toolContext.generatedOutfits[0].stylingInstructions, '')
 })
 
 test('executeTool propose_outfit errors on an unresolved ID and does not append', async () => {
@@ -3719,8 +3797,10 @@ test('feedback synthesis preview is free and the authorized route enforces hash,
   const firstId = Number(insert.run('First reason', evidencePayload(seeded.shoe, 'Canvas absorbs water.')).lastInsertRowid)
   const secondId = Number(insert.run('Second reason', evidencePayload(seeded.boot, 'The heel is tiring for a long walk.')).lastInsertRowid)
   let synthesisCalls = 0
-  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+  let capturedMessages = null
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = (req) => {
     synthesisCalls += 1
+    capturedMessages = req.messages
     return { results: [{
       source_feedback_ids: [firstId],
       disposition: 'personal_contextual_lesson',
@@ -3771,6 +3851,17 @@ test('feedback synthesis preview is free and the authorized route enforces hash,
   assert.equal(synthesisCalls, 1)
   assert.equal(result.drafts.length, 2)
   assert.ok(result.drafts.some(draft => draft.disposition === 'insufficient_evidence' && JSON.parse(draft.source_feedback_ids).includes(secondId)))
+
+  // Both seeded pieces referenced by this evidence carry real photos, so the actual request sent to
+  // the provider must include them. Anthropic requires `source.type: 'base64'` on every image block
+  // (missing it 400s the whole call) — this caught a real bug where that field was omitted.
+  const imageBlocks = (capturedMessages?.[0]?.content || []).filter(block => block.type === 'image')
+  assert.ok(imageBlocks.length > 0, 'photographed pieces should produce at least one image block')
+  for (const block of imageBlocks) {
+    assert.equal(block.source?.type, 'base64')
+    assert.ok(block.source?.media_type, 'image block is missing media_type')
+    assert.ok(block.source?.data?.length > 0, 'image block is missing base64 data')
+  }
 
   const personal = result.drafts.find(draft => draft.disposition === 'personal_contextual_lesson')
   const invalidPatch = await fetch(`${baseUrl}/api/feedback-synthesis/drafts/${personal.id}`, {
@@ -5218,7 +5309,7 @@ test('suggest_slot_swaps creates current-outfit variants without one propose_out
     declaredIntent: { want: 'cards', outfitCount: null, turnMode: 'followup' },
     generatedOutfits: [],
     currentOutfitSet: [
-      { index: 1, label: 'Coast Floral', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }
+      { index: 1, label: 'Coast Floral', piece_ids: [seeded.top, seeded.bottom, seeded.shoe], stylingInstructions: 'Tuck the top in loosely.' }
     ],
     knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe]
   }
@@ -5245,6 +5336,7 @@ test('suggest_slot_swaps creates current-outfit variants without one propose_out
   assert.equal(toolContext.sourceLocked, true)
   assert.equal(toolContext.slotSwapCompleted, true)
   assert.deepEqual(stylistToolsForTurn(toolContext), [], 'slot swap completion closes the tool loop for this turn')
+  assert.equal(toolContext.generatedOutfits[0].stylingInstructions, 'Tuck the top in loosely.', 'styling_instructions carries forward from the base outfit into the swap variant')
 
   const duplicate = await executeTool('propose_outfit', {
     label: 'Duplicate swap',

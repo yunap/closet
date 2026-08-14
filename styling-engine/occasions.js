@@ -13,7 +13,11 @@ export const OCCASION_PROFILES = [
     register_ceiling: "elevated",
     register_target: "elevated",
     rules: {
-      discouraged_materials: ["sweatshirt fleece", "performance fabric"],
+      // "technical/performance" added 2026-08-14 (owner-authorized mechanical fix, not a new
+      // taste rule): it's the auto-tagger's actual fabric_category enum value for this material —
+      // "performance fabric" alone never matched a single tagged piece because
+      // pieceMatchesMaterial does literal phrase matching, not synonym/fuzzy matching.
+      discouraged_materials: ["sweatshirt fleece", "performance fabric", "technical/performance"],
       discouraged_materials_warm: ["cashmere", "heavy wool", "dense knits", "thick corduroy"],
       discouraged_footwear: ["athletic", "athletic running shoe", "athletic running shoes", "athletic shoe", "athletic shoes", "running shoe", "running shoes", "running sneaker", "running sneakers", "gym shoe", "gym shoes", "gym sneaker", "gym sneakers"],
       discouraged_footwear_summer: ["heavy boot", "heavy boots", "zip ankle boot", "zip ankle boots", "shearling boot", "shearling boots", "thick winter boot", "thick winter boots"],

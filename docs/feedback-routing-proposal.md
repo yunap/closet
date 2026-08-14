@@ -17,9 +17,9 @@ outfit feedback is still in development.
 |---|---|---|
 | Remove duplicate, dead and misrouted feedback authority | **complete** | Phases 0–2 cleanup |
 | Record versioned provisional evidence for **Wrong choice for this outfit** | **complete** | one negative reaction only |
-| Owner-authorized synthesis and review lifecycle | **pilot working** | consumes only reasoned **Wrong choice for this outfit** evidence |
+| Owner-authorized synthesis and review lifecycle | **pilot working** | consumes reasoned **Wrong choice for this outfit** evidence and reasoned **Almost right** / **Not for me** evidence (an owner comment attached to the verdict) |
 | Route accepted lessons only to applicable styling requests | **pilot complete** | source-validated structured applicability is owner-reviewable/editable and matched before the eight-line cap; boundary prose remains explanation only |
-| Learn formula, silhouette, mood or context lessons from positive / `Almost` reactions | **pilot paused** | removing literal garment reinforcement did not remove formula reinforcement; positive reactions remain provenance while a non-reinforcing destination is evaluated |
+| Learn formula, silhouette, mood or context lessons from positive / `Almost` reactions | **closed, 2026-08-14 — not proceeding** | no synthesis or scoring route was found that would not reinforce sameness, contradicting the app's stated purpose (§ "Product direction"); positive reactions remain organizational record for Lookbook inspiration only, with no active or planned path to prompt/scoring authority. Unrelated to this row: a *reasoned* Almost/Not-for-me verdict is a diagnostic complaint, not formula reinforcement, and is eligible under item 8 |
 | Apply approved garment-fact corrections through an appropriate garment-truth workflow | **backend complete for the bounded routes** | field-specific generated-image reports can propose reviewable metadata changes; physical compatibility failures are routed to product quality instead of garment truth |
 | Product workflow for general styling/model mistakes | **backend complete; review UI deferred** | accepted findings and explicitly confirmed no-cost reports enter a durable evidence queue, never personal memory |
 | Route explicit learned constraints before unsuitable garments consume roster capacity | **backend complete; review UI deferred** | confirmed piece/category/material × occasion/activity/season/weather constraints gate per request or capsule slot and can be retired |
@@ -152,6 +152,19 @@ calibration. A field-specific wrong-length report may also create a reviewable r
 the app cannot assume whether the render or stored garment data was wrong; no metadata changes
 automatically.
 
+**Misattribution bug found and fixed, 2026-08-14.** A `wrong_length` row with no actual
+`length_correction` data (a legacy/malformed report — no `piece_id`, no `issue`) was silently
+treated as a valid correction for *every* garment sharing that report's outfit board, not just the
+one it was actually about — a print top and a pair of shorts worn together could each inherit a
+length complaint that was, per the board's own recorded `watchFor` note, really about the top. This
+existed in two independently-drifted places that had to be fixed together: `getSavedBoardRendererMemory`
+(what actually reaches the image-generation prompt) and the Style Profile "Already in effect" list
+(`rendererReportGroups` in `StylistSettings.jsx`, a separate reader over the same raw rows). Both now
+require a genuine `piece_id` + recognized `issue` before attributing a correction to a garment;
+neither falls back to guessing across a shared board. This is the "double authority" failure mode
+row 0.4 exists to catch, recurring as two readers of the same evidence silently disagreeing about
+what it meant rather than as a second scorer.
+
 ### C1 · "This garment is prohibited in this context" → a scoped constraint
 
 **Hard, and it already works.** `occasion_exclusions` is the only per-garment channel that is both
@@ -165,6 +178,23 @@ physics must remain in the shared gate rather than becoming per-garment owner me
 item-11 correction now treats canvas and suede footwear as ineligible for credible wet exposure
 (explicit rain/wet/mud, or a foggy coastal outdoor walk) while leaving ordinary fog and dry walking
 alone. Do not infer either a personal ban or a new per-piece weather exclusion from an outfit reaction.
+
+**A `general_styling_failure` synthesis finding led to a real gap in that shared gate, 2026-08-14.**
+A `wrong_choice` reaction on "green utility pocket shorts" for `outdoor_daytime_social` synthesized
+into "athletic shorts are not appropriate for an outdoor daytime social occasion." That is not a
+subjective register judgment — the piece's `fabric_category` is genuinely `technical/performance`,
+and `outdoor_daytime_social`'s occasion profile (`styling-engine/occasions.js`) already declares
+`discouraged_materials: [..., "performance fabric"]`, exactly the kind of shared, deterministic
+material-physics gate this section says such a rule belongs in, not per-garment owner memory. But
+checking the gate directly (`profileRuleFit`, no model call needed) showed it did not fire: the
+gate's phrase `"performance fabric"` never matched the auto-tagger's actual enum value
+`"technical/performance"`, because `pieceMatchesMaterial` requires the literal phrase as a
+substring rather than a synonym or fuzzy match. The rule existed and was correctly scoped to the
+shared gate; it simply never matched the one material category it was presumably written for.
+Fixed by adding the tagger's literal enum value alongside the descriptive phrase. The general
+lesson: a synthesis finding restating what looks like an existing deterministic rule is worth
+checking against that rule directly before trusting either that the rule already covers the case or
+that the finding is redundant — the two had silently diverged.
 
 ### C2 · "Did this garment or pairing work *here*?" → scoped evidence
 
@@ -264,6 +294,26 @@ An occasion exclusion is currently both a structured hard gate and a generated p
 `styling_rules_learned`. The UI now removes them coherently, but the prose receipt can still repeat
 the same instruction in a prompt. Keep the structured exclusion as the sole behavioural authority;
 show its provenance in the UI without delivering the generated receipt as a second rule.
+
+**Eligibility reassurance shipped 2026-08-13 — implements item13-panel-findings.md consensus §3.**
+The two hard-limit card types (`owner_constraints` "Always avoid" firm rules, and per-garment
+`occasion_exclusions` "Specific pieces") previously stated only what was blocked — "Not for
+walking," "Not for Home" — with no confirmation that the garment remained available everywhere
+else. Reading the card alone, there was no way to tell "skip this one situation" apart from
+"this piece is basically benched." Soft-guidance cards (accepted synthesized lessons, direct
+chat-captured guidance) were deliberately left alone — nothing is actually excluded there, so
+"still available elsewhere" would introduce a concept those cards don't need.
+
+Shipped copy, in `src/views/StylistSettings.jsx`:
+- **Always avoid** — reassurance moved to the section level, stated once rather than per row:
+  *"Firm rules your stylist always follows. These rules only apply in the situations shown.
+  Everything else stays available."* Rows stay unchanged (`Heels — Not for walking.`).
+- **Specific pieces** — reassurance is per-row, since owners are more likely to wonder whether one
+  specific garment has been globally sidelined: *"Skip for Travel · Still available for other
+  occasions"* for a single exclusion, or *"Skip for Hiking and Home · Still available elsewhere"*
+  for multiple (new `joinWithAnd` helper renders the occasion list as prose instead of a comma
+  list). The section heading also gained one framing sentence: *"Pieces your stylist avoids only in
+  the situations shown. Outside those situations, they stay in the mix."*
 
 ### Owner-confirmed conversion — constraint-shaped learned rules
 
@@ -454,6 +504,18 @@ unresolved rows, and pairing it against **"Applies in matching situations"** on 
 conditional/unconditional split between the two sources that no longer exists — both are matched.
 Any future recency surface must label by the row's actual envelope, not by which store it came from.
 
+**"How this works" guidance explainer shipped, 2026-08-14.** The four active-guidance categories
+(learned lessons, direct chat guidance, locked-in firm rules, per-piece limits) read as
+understandable individually but the soft-guidance/hard-exclusion distinction between them required
+reading all four card types across the page to infer. A popover, opened from a text trigger next to
+the page intro (not a bare icon — discoverability, not decoration), states the four categories in
+plain language with a one-line consequence label per category ("Gentle reminder" vs. "Always
+enforced"), an explicit "stays available for everything else" example for the piece-limit category
+(the same reassurance shipped § "Eligibility reassurance" above, demonstrated rather than only
+described), and a quiet closing reassurance that memory can always be changed. No routing
+vocabulary — scope, reach, dimension, synthesis — appears anywhere in it, consistent with the
+2026-08-12 ruling that this page reads as explanations, not a console.
+
 **Still queued:** firm-rule card wording, and the feedback-capture confirmations in chat (*"Got it —
 I won't suggest this piece for Travel"*) that keep a one-off reaction visibly distinct from a durable
 rule.
@@ -499,6 +561,18 @@ the prompt tail where this codebase has already measured stored rules losing (sp
    one line and stronger evidence than four lines.
 3. **Cap per destination, not globally.** A garment with 20 reactions contributes a summary.
 
+**Images are a prompt-size and cost dimension too, 2026-08-14.** The wrong-choice/reasoned-verdict
+synthesis pilot (item 8) attaches the generated outfit image and referenced garment photos to its
+call, not just text — a text-only description of "the vest shape doesn't work with the cropped top"
+is a claim the model previously had no way to actually verify. This is scoped the same way the text
+rules above are: resolution is tiered by garment complexity (reusing the app's existing
+`pieceVisualDetailPolicy`, not inventing a new one), capped at one board image plus four garment
+photos per evidence item (`MAX_GARMENT_IMAGES_PER_EVIDENCE_ITEM`, prioritized by
+`visuallyPrioritizedPieces`), and the pre-authorization cost preview now sums real image-token cost
+(Anthropic's width×height/750 formula) rather than only estimating text bytes, so the owner sees the
+true cost before authorizing. This does not change what evidence is eligible (§ "Phase 1" above,
+item 8) — only what the model can verify once it is.
+
 ## 3. The plan
 
 Ordered so that everything in phase 0 is a **removal or a narrowing** — no new mechanism, nothing
@@ -526,9 +600,9 @@ that needs a model of evidence first. Phases 1+ depend on decisions that phase 0
 | ~~7~~ | Verify calibration-image favourite semantics and preserve the working reference rotation (§1f) | **closed — priority is qualified by `kind`; no behavior change** |
 | 8 | **Wrong choice for this outfit** synthesis pilot: derive owner-reviewed advisory conclusions from explicit, versioned reactions | **pilot working — narrow reaction coverage; non-personal destinations remain incomplete** |
 | 9 | Select accepted personal/contextual lessons by applicable garment, occasion/activity, season/weather and declared boundary | **shipped for the pilot — routing and owner-facing structured applicability control complete** |
-| 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **pilot paused — positive evidence is not currently eligible for paid synthesis** |
+| 10 | Extend owner-authorized learning to positive and `Almost` reactions without reinforcing literal garments **or formulas** | **closed 2026-08-14, not proceeding for formula/silhouette reinforcement — see below for the reasoned Almost/Not-for-me route shipped 2026-08-13, which is not that** |
 | 11 | Complete approved destination workflows for garment facts and general product-quality findings | **backend complete for the approved scope — wrong-length renderer/retag review is preserved; accepted synthesis findings and explicitly confirmed no-cost reports enter a provenance-linked queue with durable evidence, resolution destination and undo; review UI is deferred to item 13** |
-| 12 | Route learned guidance by relevant garment/context and owner-confirmed constraint-shaped rules into structured, slot-aware eligibility | **shipped for prompt relevance and confirmed firm-rule enforcement; the optional local acknowledgement fast path remains follow-up work** |
+| 12 | Route learned guidance by relevant garment/context and owner-confirmed constraint-shaped rules into structured, slot-aware eligibility | **shipped for prompt relevance, confirmed firm-rule enforcement, and the local acknowledgement fast path (2026-08-14)** |
 | 13 | Convene the UI/UX panel and refine the memory/review surfaces | **panel complete; owner-ratified page restructuring is in progress** |
 
 **Item 12 remaining cost/interaction follow-up.** A live test on 2026-08-11 showed that sending “I
@@ -540,10 +614,192 @@ pre-route simple explicit prohibitions to a brief local acknowledgement so they 
 stylist/tool loop entirely. That optimization is not required for correct routing and ambiguous
 conversation must continue through ordinary chat.
 
-`Almost right` remains a deliberate follow-up under item 10. Its combination of “preserve
-something” plus a specific diagnostic reason may be more useful than undifferentiated praise, but
-no active formula-preservation route should be restored until that meaning and its non-reinforcing
-destination are specified.
+**Fast path shipped, 2026-08-14.** `detectExplicitProhibition` (`lib/ownerGuidance.js`) checks the
+raw question against a tight, explicit durability-marker vocabulary ("never wear", "always avoid
+wearing" — deliberately not "don't/won't/do not wear") before anything else runs in `POST /ask`. If
+`extractOwnerGuidanceApplicability` resolves it to a non-`unresolved` scope, the server calls
+`storeUserCorrection` directly and returns a short acknowledgement — zero provider calls, regardless
+of thread state, reproducing the exact 2026-08-11 measured scenario (an existing trip thread) at
+zero cost instead of five iterations. Anything the local extractor can't confidently place, or that
+uses a weaker negation, falls through to the ordinary loop unchanged.
+The narrow vocabulary is load-bearing, not a style choice: "I do not wear flats", said mid-
+conversation about an active outfit, resolves through the same controlled vocabulary (footwear:
+flats) but carries no durability marker — it is exactly the ambiguous, in-the-moment-correction case
+the 2026-07-12 guardrail (`'freeform ask correction turns do NOT auto-store the raw question as a
+preference'`, added after live data showed raw-text auto-save mis-filing plain requests as global
+preferences) exists to keep out of auto-storage. That guardrail test is still green; do not widen
+the trigger vocabulary without re-checking it.
+
+**Garment-relationship mechanics now have a dedicated, authoritative field — schema + whole-wardrobe
+path shipped, 2026-08-14.** Live thread `thread_1786645082564` showed the model correctly explaining
+layering mechanics in prose ("Open cardigan over the dress, then belt over the cardigan at the
+natural waist...") and the resulting rendered image ignoring all of it — `wholeWardrobeImagePrompt`
+only ever treated `outfit.reason` as non-authoritative styling intent, so there was nowhere for
+garment-relationship instructions to land as a hard constraint. `propose_outfit`'s schema gained a
+`styling_instructions` field, distinct from `why_it_works`: concrete, actionable mechanics (layering
+order, where a belt/tie lands and what it cinches, tuck/drape behavior between two named garments),
+not the concept of why the outfit works. `styling-engine/tools.js` carries it through onto every
+outfit object (`stylingInstructions`, defaulting to `''`); `wholeWardrobeImagePrompt`
+(`styling-engine/core.js`) renders it as a new "Authoritative styling instructions" section — the one
+exception to "structured garment fields are authoritative, card prose is not" — and the final render
+check now requires satisfying it. The prompt guidance also tells the model it has almost certainly
+already said the mechanics in prose whenever asked "how do I wear this," so it should stop leaving
+that knowledge in chat only. Per owner instruction, `styling_instructions` is also surfaced directly
+to the user: a "How to wear it" line in the outfit card's "Why this outfit" panel
+(`StylistChat.jsx`), not just consumed internally by the image generator. Scope for this pass is the
+schema plus the whole-wardrobe image path only; the editorial single-piece render path, comparison
+sheet, and critique/evaluation prompts still treat only `reason` and are expected to be expanded onto
+`styling_instructions` in a follow-up pass.
+
+**Correction, same day: the primary "Create outfits from my wardrobe" flow was missed on the first
+pass.** That flow's cards are composed by a *second*, separate model call —
+`WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` (`styling-engine/prompts.js`), driven from
+`routes/ai.js:1666` — not by `propose_outfit`. The first pass only added the field to
+`propose_outfit`'s schema (the freeform-chat tool), so this composer's own JSON contract had no
+`styling_instructions` slot for the model to use, and — separately — its output passes through
+`normalizeWholeWardrobeOutfitObject` (`styling-engine/rules.js`), a field-by-field whitelist rather
+than a spread, which would have silently dropped the field even if the model had returned it. Fixed
+both: the composer's JSON shape now includes `styling_instructions` with the same guidance as
+`propose_outfit`, and `normalizeWholeWardrobeOutfitObject` carries `stylingInstructions` through
+(defaulting to `''`). This is the flow behind the "Create outfits from my wardrobe" screen and its
+"Generate outfit image" button, so it's the more commonly hit of the two paths — worth flagging for
+future item-13-style scope calls: "whole-wardrobe path" has two independent model-facing schemas
+(the freeform tool and this composer), and both need touching, not just the one that matches the
+originating bug report.
+
+**Extended to every remaining outfit-composing model call, 2026-08-14.** Rather than wait for each
+missed flow to surface as its own bug report, audited every place in the codebase where the model
+composes a multi-piece outfit and traced each one to whatever renders it (or confirmed it isn't
+rendered as an image at all). Fixed:
+- `submit_plan_outfits` tool schema and `capsulePlanCompositionSchema` (routes/ai.js) — freeform
+  chat capsule/trip/coordinated-plan composition, both the model tool-loop path and the atomic
+  enforced-capsule path. `validateSubmittedPlanOutfits` (`styling-engine/outfitSetPlanner.js`), the
+  single choke-point whitelist both paths share, now carries `stylingInstructions` through.
+- `outfitComposerTemplate`/`OUTFIT_COMPOSER_SYSTEM` and `outfitEvaluatorGateTemplate` — the selected-
+  item "ideal missing-piece" composition + gate pair (`generate-outfits-for-piece` in `idealMode`).
+  The closet-only default sub-path of that same route already inherited the whole-wardrobe-composer
+  fix for free, since it happens to reuse `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` directly.
+  `normalizeGeneratedOutfitObject` (`styling-engine/core.js`) — another field-by-field whitelist —
+  now carries the field through.
+- `wholeWardrobeComparisonSheetPrompt` (`styling-engine/core.js`) — the multi-panel comparison-sheet
+  image, which builds its own per-panel prompt independent of `wholeWardrobeImagePrompt` and was
+  silently dropping `stylingInstructions` even on outfits that already carried it (e.g. from
+  `propose_outfit`).
+- `suggest_slot_swaps` (`styling-engine/tools.js`) — a slot swap only replaces one role, so it now
+  carries the base outfit's `stylingInstructions` forward onto each variant rather than dropping it.
+  Noted as a known tradeoff, not fully solved: if the swapped role was itself the subject of the
+  instruction (rare — swaps are usually shoes/outerwear), the carried-forward text can go stale, and
+  there's no cheap way to detect that case here.
+
+Deliberately left alone: `editorialNewPiecesTemplate`/`EDITORIAL_NEW_PIECES_SYSTEM` (the "ideal new
+pieces to buy" flow) already asks the model for one fully authoritative `visualPrompt` per direction
+that folds layering/positioning into the silhouette description — a different design from the
+"structured facts + secondary reason" pattern everywhere else, so bolting on a second field would be
+redundant. In auditing it, found `createIdealAdditionsComparisonSheetImage`'s preview sheet never
+reads `visualPrompt` at all (unlike the final single-render path, which treats it as the primary
+directive) — a real but separate inconsistency, filed as its own follow-up rather than folded in here.
+
+**A third, previously-unmapped rendering surface found and fixed, same day: the "Generate visual
+boards" flat-collage flow.** Owner-reported live repro (thread `thread_1786659896815`): asked "how
+should I wear my patchwork knit top with the lace midi dress? Do I need a belt?", got a specific,
+correct prose answer ("wear it open... no belt needed, it would fight the dress's waist seam..."),
+then clicked "Generate visual boards" and got a board whose caption didn't reflect any of that.
+Root-caused via the actual stored thread payload (`chat_threads.payload`, pulled through a disposable
+copy of the live `wardrobe.db` — the WAL file has to be copied alongside the `.db` file or recent
+writes are invisible). This flow (`generateVisualBoards` in `StylistChat.jsx` → `POST
+/api/ai/generate-outfit-boards`, `routes/ai.js:2116`) is structurally distinct from every other
+outfit-composing path already covered: `createOutfitBoardImage` (`styling-engine/core.js`) is a local
+SVG+sharp garment-photo collage, not an AI-rendered scene — "not virtual try-on" is in the system
+prompt's own text — so there is no image-rendering prompt for `styling_instructions` to govern here.
+But the board's caption is model-authored text (`OUTFIT_BOARD_PLANNER_SYSTEM`,
+`outfitBoardPlannerTemplate` in `styling-engine/prompts.js`, called from `routes/ai.js:2150` when the
+free-text concept parsers find nothing to extract — the actual path taken for a plain conversational
+answer like this one), and its JSON schema had no `styling_instructions` slot either. Fixed: the
+planner's schema now has the field, with an explicit instruction to copy the mechanics from the
+concept text near-verbatim rather than invent new ones (this planner is meant to be "a renderer, not
+a second stylist"); `boardPlanFromStructuredOutfits` (the client-supplied-outfits sibling path) and
+the route's board-building loop both carry it through; the client now shows a "How to wear it" line
+next to the board's existing caption. Also fixed in passing: `POST /generate-wardrobe-outfit-image`'s
+response object (the one behind every card's "Generate outfit image" button) whitelisted
+`label/reason/watchFor/pieces/imageUrl/debug` and silently dropped `stylingInstructions` even on
+cards that already had it and had already used it correctly for the image itself — so the post-
+generation board display never showed the "How to wear it" line even when the render had honored it.
+
+**Formula/silhouette preservation from positive or `Almost` feedback is closed, not merely
+paused, as of 2026-08-14.** No route was found that would let the app learn "what worked" without
+reinforcing the same literal garments and formulas — every version tried collapsed back into the
+sameness the app's own purpose (§ "Product direction: learn the logic, diversify the closet") exists
+to prevent. Positive feedback (`signature`, `works`, a reasonless `almost`) remains exactly what it
+is today: organizational record, useful as Lookbook inspiration, with no active or planned path into
+prompt authority or scoring. This is a decision, not an open question — no formula-preservation
+route should be built from positive/reasonless-`almost` evidence without a materially different
+proposal that the owner has separately reviewed and accepted, not a resumption of this one.
+
+**Reasoned Almost/Not-for-me route shipped 2026-08-13 — distinct from the paused item.** The item
+10 pause is specifically about *preserving a positive outfit's formula/silhouette/mood/context* —
+the risk that reinforcing "what worked" quietly reinforces the same literal garments. That risk
+does not apply to an `Almost right` or `Not for me` verdict that carries the owner's own written
+reason (the existing optional-comment field on both verdicts, `feedback_details.owner_comment` /
+`ownerComment`; see the "Bounded first step shipped" note below for where that field comes from).
+A reasoned Almost/Not-for-me reaction is evidentially the same shape as a reasoned **Wrong choice
+for this outfit** complaint — the owner naming a specific problem — just scoped to the whole
+outfit instead of one verified garment, so it now follows the same eligibility rule: a verdict
+becomes selectable for the owner-authorized synthesis preview in Style Profile → Review feedback
+only when it carries a non-empty owner comment; a reasonless `almost`/`not_me` (or any `signature`/
+`works`) stays display-only exactly as before.
+
+Implementation: `lib/feedbackTaxonomy.js` adds `REASONED_OUTFIT_VERDICT_TYPES` (`almost`, `not_me`);
+`routes/crud.js`'s `syncFeedbackFromSavedBoard` mirrors the board's `owner_comment` onto the synced
+`stylist_feedback` receipt; `lib/activeMemory.js` grants `synthesisEligible: true` and a
+`provisional_context` destination only when that comment is present; `lib/feedbackSynthesis.js`
+adds a `reasoned_outfit_verdict` evidence kind (reusing `wrong_choice`'s `outfit.otherPieces` +
+`ownerReason` shape, so existing applicability validation needs no change) and teaches the
+synthesis prompt the new evidence kind's rules — no piece may be named unless the owner's own
+comment identifies it. Positive-verdict (`signature`/`works`) formula evidence and reasonless
+`almost` legacy-snapshot evidence remain excluded from the synthesis preview's evidence filter,
+unchanged.
+
+**Adjacent bug found and fixed in the same pass:** `selectOverallVerdict` (VisualLab.jsx) and
+`toggleCanonicalBoardVerdict` (StylistChat.jsx) reused their verdict-toggle logic for the "Add
+optional reason"/"Edit reason" action. Because that logic treats "call again on an already-active
+verdict" as toggle-off, using "Edit reason" on an already-selected Almost/Not-for-me verdict
+silently cleared the verdict entirely instead of just updating its comment — discovered by
+reproducing it live in the sandbox. Fixed by keeping the verdict active whenever the call is a
+comment commit (`ownerComment !== null`), regardless of prior active state.
+
+**Photo evidence can independently establish a reasoned verdict's cause, 2026-08-14.** The system
+prompt previously treated the owner's own words as the *only* authority for a reasoned wrong-choice
+or Almost/Not-for-me cause — a rule written before photos were attached (see the image
+prompt-size-discipline note above), when there was nothing else to verify a claim against. Now that
+a photo is attached, a directly-visible issue (a print/pattern clash, a proportion or silhouette
+mismatch, a color with no echo elsewhere in the outfit) is sufficient on its own, even when the
+owner's own account is hedged among several guesses or entirely absent ("not sure why, maybe
+proportions, maybe shape, maybe contrast"). The model is told to prefer whichever cause a photo
+actually confirms over guessing blindly among the owner's hedged possibilities. This does not loosen
+the invention guard — a cause still must be either stated by the owner or visible in a photo, never
+neither.
+
+**Identifying the garments an evidence item is about is kept separate from what the resulting lesson
+is scoped to, 2026-08-14 — a real over-scoping bug found live.** Confirming which specific garments
+a photo shows is a *narrower* question than what the transferable lesson should generalize to, and
+the two were getting conflated: a lesson about "these two prints clash in a similar tonal range"
+was coming back bound to `piece_ids` for exactly those two garments (`scope: 'piece'`), so it would
+only ever fire again if one of those two literal pieces was reselected — defeating the entire point
+of a transferable lesson (§ "Product direction: learn the logic, diversify the closet"). A
+combination-level issue (clash, mismatch, silhouette conflict) that would recur with any
+similarly-attributed pieces must generalize into `scope: 'context'` with empty `piece_ids`, exactly
+like evidence with no identifiable piece at all; a `piece_id` is bound only when the cause is
+inherent to that literal garment and would not transfer (a specific fit problem, a specific fabric
+behavior).
+
+**A rejected synthesis draft no longer permanently locks its source feedback out of review,
+2026-08-14.** `processedSynthesisFeedbackIds` (`StylistSettings.jsx`) excluded a feedback row from
+"Needs your review" the moment it appeared as source for *any* draft, including a rejected one —
+so declining a suggestion ("This shouldn't be a lesson") and then editing the underlying reason to
+try again had no path back; the only existing recovery, Past Decisions → **Reconsider**, reactivates
+the *old* draft text rather than re-running synthesis against the edit. A feedback row's source ids
+are now excluded only by drafts that are still standing (`status !== 'rejected'`); once every draft
+referencing it is rejected, it reopens for a fresh synthesis attempt.
 
 **Bounded first step shipped:** `Almost right` and `Not for me` can accompany a later styling call
 the owner already requested, without triggering critique, regeneration or synthesis. A reasonless
@@ -855,8 +1111,11 @@ The overall user-feedback project may be called complete only when all of the fo
    reader and visible undo or retirement path.
 2. Provisional **Wrong choice for this outfit** evidence remains narrow, and accepted lessons reach
    only styling requests that match their declared applicability.
-3. Positive and `Almost` feedback can produce owner-reviewed transferable lessons about formula,
-   silhouette, mood and context without giving the original garments or pairing selection weight.
+3. Positive and reasonless `Almost` feedback stays organizational Lookbook-inspiration record, per
+   the 2026-08-14 closure (§4, point 1) — this criterion is satisfied by that decision, not by
+   building a synthesis route, since no such route was found that would not give the original
+   garments or pairing selection weight. A *reasoned* Almost/Not-for-me verdict is the separate,
+   already-eligible diagnostic route under item 8 and is not what this criterion governs.
 4. Garment-fact conclusions have an explicit owner-approved route into garment truth, while general
    model mistakes are visibly kept out of personal memory and handed off—or deliberately retained
    as provenance—without pretending they influence styling.
@@ -874,12 +1133,14 @@ this definition of done.
 Decisions about the plan. Questions about *what exists* live in the map's `[owner check wanted]`
 markers.
 
-1. **Positive board learning is deliberately paused.** Today, **Works**, **Signature** and
-   **Almost** preserve visible and organizational provenance, but they do not enter broad styling
-   prompts, scores or synthesis. A future route may teach owner-reviewed transferable outfit logic
-   through scoped formula/silhouette/direction/context evidence, but only after it demonstrates
-   that it will not reinforce the original garments or pairing. It must never promote original
-   garment IDs, pairs, or a garment's general eligibility for a capsule.
+1. **Positive board learning is closed, not paused, as of 2026-08-14.** **Works**, **Signature** and
+   **Almost** preserve visible and organizational provenance — useful as Lookbook inspiration — but
+   they do not enter broad styling prompts, scores or synthesis, and no route to do so is planned.
+   Every formula/silhouette/direction/context route tried reinforced the original garments or
+   pairing regardless of how the literal-garment reward was removed, contradicting the app's stated
+   purpose. It must never promote original garment IDs, pairs, or a garment's general eligibility for
+   a capsule; that guardrail now has no route to guard against, by decision rather than by absence of
+   a good idea.
 2. **No automatic retag threshold is planned for relational feedback.** Repetition does not turn
    an outfit judgment into a garment fact. Existing field-specific wrong-length corrections remain
    the only automatic retag-suggestion path.

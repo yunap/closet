@@ -44,7 +44,7 @@ const FEEDBACK_ROWS = [
   {
     id: 4, feedback_type: 'wrong_item_read', target_type: 'whole_wardrobe_outfit', context_type: 'wardrobe',
     context_name: 'Whole wardrobe', note: 'wrong shoe', archived: false, payload: { pieceIds: [1, 2] },
-    created_at: '2026-08-10 09:00:00',
+    created_at: '2026-08-10 09:00:00', referenced_board_id: 10,
     memory: { destination: 'provisional', strength: 'context', synthesisEligible: true, display: { title: 'Rain walk', summary: 'wrong shoe' } },
   },
   // Not referenced by any draft's source_feedback_ids below, unlike id 4 — actionableContextualFeedback
@@ -62,6 +62,16 @@ const FEEDBACK_ROWS = [
       destination: 'provisional', strength: 'context', synthesisEligible: true,
       display: { title: 'black white trim open cardigan', context: 'Wrong choice for Soft Structure Contrast: standard wear', summary: 'this is a very classic cardigan, does not feel right with the rest' },
     },
+  },
+  // A legacy/malformed wrong_length report with no length_correction at all — it names no garment
+  // and no issue, so getSavedBoardRendererMemory (styling-engine/rules.js) never turns it into an
+  // actual renderer instruction for anything. It must not produce its own "already in effect" card
+  // either, or the page would claim a fix that was never real.
+  {
+    id: 6, feedback_type: 'wrong_length', target_type: 'generated_visual_board', context_name: 'Whole wardrobe',
+    note: 'something about the render looked off', archived: false,
+    payload: { board: { label: 'Undocumented Board', imageUrl: '/uploads/generated-boards/z.png' } },
+    memory: { destination: 'renderer', strength: 'renderer', display: { title: 'Whole wardrobe', summary: 'something about the render looked off' } },
   },
 ]
 const ROUTES = {
@@ -200,6 +210,27 @@ test('the review tab renders the sections that iterate loaded feedback', async (
   assert.match(text, /Fixes your stylist applies when drawing pictures/)
   assert.match(text, /Your stylist now matches the length in your saved photo\./)
   assert.match(text, /Every picture/)
+  // Row 6's report has no length_correction, so it must not surface as its own phantom card.
+  assert.doesNotMatch(text, /Undocumented Board/)
+  assert.doesNotMatch(text, /something about the render looked off/)
+})
+
+test('an insufficient-evidence card shows where it came from, with a link to the source', async () => {
+  const { container, click, unmount } = await renderProfile({ tab: 'Review feedback', keepMounted: true })
+  try {
+    const text = container.textContent
+    assert.match(text, /Nothing to learn from one reaction/)
+    assert.match(text, /no bounded scope/)
+    // Previously just "no bounded scope" and a Remove link, with no way to tell which reaction
+    // produced it, or reach it. "Where this came from" reuses the same source list an accepted
+    // lesson shows, plus a link when the source board/thread is still reachable.
+    assert.match(text, /Where this came from/)
+    assert.match(text, /Rain walk: wrong shoe/)
+    const opened = await click(b => b.textContent.trim() === 'Open source')
+    assert.ok(opened, '"Open source" control missing even though the fixture carries a referenced_board_id')
+  } finally {
+    unmount()
+  }
 })
 
 test('a pending lesson resting card asks a plain question, not a form', async () => {

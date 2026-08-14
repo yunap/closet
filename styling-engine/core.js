@@ -510,6 +510,7 @@ export function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidateP
     silhouette: outfit?.silhouette || '',
     bestFor: outfit?.bestFor || outfit?.best_for || '',
     reason: outfit?.reason || outfit?.why || '',
+    stylingInstructions: outfit?.styling_instructions || outfit?.stylingInstructions || '',
     watchFor: outfit?.watchFor || outfit?.watch_for || 'none',
     pieceIds: ids.slice(0, 5),
     missingPieces: cleanMissing,
@@ -1674,6 +1675,7 @@ export function boardPlanFromStructuredOutfits(structuredOutfits, selectedPiece,
     return {
       label: outfit.label || (index === 0 ? 'strongest artistic-minimal' : index === 1 ? 'usable variation' : 'optional experimental'),
       reason: outfit.reason || outfit.why || '',
+      stylingInstructions: outfit.styling_instructions || outfit.stylingInstructions || '',
       watchFor: outfit.watchFor || outfit.watch_for || '',
       pieceIds: unique,
       missingPieces: missingPieces.slice(0, Math.max(0, 5 - unique.length))
@@ -1952,11 +1954,13 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     '- If two listed garments are both printed, keep both actual prints recognizable; do not merge them into one invented print.',
     '- Do not add extra hero garments, patterned layers, belts, scarves, or accessories unless the listed outfit explicitly includes them.',
     '- Shoes must match the listed shoe reference if shoes are included.',
-    '- Structured garment fields and reference images are authoritative. Outfit labels, reasons, and style prose are intent notes only and must be ignored wherever they conflict with garment construction, fit, length, hem, sleeve, tuck, waistband, opacity, or layering behavior.',
+    '- Structured garment fields and reference images are authoritative for each garment’s own construction: fit, length, hem, sleeve, tuck, waistband, and opacity. Outfit labels, reasons, and style prose are intent notes only and must be ignored wherever they conflict with those per-garment facts. The one exception is "Authoritative styling instructions" below, when present: it governs how the listed garments relate to each other (layering order, what sits over/under what, where a belt or tie lands) and must be followed exactly, even where a more conventional default would look plausible — it can direct a relationship between garments, but it can never override a single garment’s own construction fields above.',
     '',
     `Piece-specific fidelity checklist:\n${fidelityChecklist}`,
     '',
     `Authoritative garment construction:\n${constructionChecklist}`,
+    '',
+    outfit.stylingInstructions ? `Authoritative styling instructions (how these garments relate to each other — follow exactly):\n${outfit.stylingInstructions}` : '',
     '',
     'Person / scene:',
     '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
@@ -1972,7 +1976,7 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     '',
     `Saved wardrobe pieces to use:\n${pieceLines}`,
     '',
-    'Final render check: the visible outfit must satisfy every authoritative garment-construction direction above, even when a more conventional styling choice would look plausible.'
+    'Final render check: the visible outfit must satisfy every authoritative garment-construction direction and the authoritative styling instructions (if present) above, even when a more conventional styling choice would look plausible.'
   ].filter(Boolean).join('\n')
 }
 
@@ -1986,6 +1990,7 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
       outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
       outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
       outfit.reason ? `Mechanics: ${outfit.reason}` : '',
+      outfit.stylingInstructions ? `Authoritative styling instructions (how these garments relate to each other — follow exactly): ${outfit.stylingInstructions}` : '',
       `Pieces: ${pieceText}`
     ].filter(Boolean).join('\n')
   }).join('\n\n')
@@ -2013,6 +2018,7 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
     '- Do not swap the main garments between panels.',
     '- Preserve the garment category, color family, print scale, neckline/sleeve/hem behavior, and shoe type as much as possible.',
     '- The outfits should be visibly different as formulas, not minor recolors of the same outfit.',
+    "- Where a panel lists authoritative styling instructions, follow them exactly for that panel's layering/positioning, even where a more conventional default would look plausible.",
     '',
     'Style direction:',
     '- Relaxed artistic realism, grounded personal style, believable wearable outfits.',

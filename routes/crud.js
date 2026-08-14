@@ -35,6 +35,7 @@ import {
   canonicalFeedbackType,
   KNOWN_FEEDBACK_TYPES,
   POSITIVE_OUTFIT_LOGIC_TYPES,
+  REASONED_OUTFIT_VERDICT_TYPES,
   WRONG_PIECE_FOR_OUTFIT_FEEDBACK,
 } from '../lib/feedbackTaxonomy.js'
 
@@ -736,6 +737,12 @@ export function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
     ORDER BY id DESC
   `)
 
+  // "Almost right" / "Not for me" carry their reason in feedback_details.owner_comment on the
+  // board, not in scoped_evidence — mirror it onto the synced receipt so REASONED_OUTFIT_VERDICT_TYPES
+  // rows can be recognized as reasoned evidence downstream (lib/activeMemory.js, feedbackSynthesis.js)
+  // without a second lookup back to saved_boards.
+  const ownerComment = String(boardPayload.feedback_details?.owner_comment || '').trim()
+
   for (const label of new Set([...previous, ...next])) {
     const matches = findRows.all(label, imageUrl)
     if (next.has(label)) {
@@ -747,6 +754,7 @@ export function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
         board: boardInfo,
         ...(boardPayload.outfit ? { outfit: boardPayload.outfit } : {}),
         ...(scopedEvidence ? { scopedEvidence } : {}),
+        ...(REASONED_OUTFIT_VERDICT_TYPES.has(label) && ownerComment ? { ownerComment } : {}),
       }
       const existing = matches[0]
       if (existing) {
@@ -756,6 +764,10 @@ export function syncFeedbackFromSavedBoard(row, previousLabels, nextLabels) {
           board: boardInfo,
           ...(boardPayload.outfit ? { outfit: boardPayload.outfit } : {}),
           ...(scopedEvidence ? { scopedEvidence } : {}),
+        }
+        if (REASONED_OUTFIT_VERDICT_TYPES.has(label)) {
+          if (ownerComment) mergedPayload.ownerComment = ownerComment
+          else delete mergedPayload.ownerComment
         }
         db.prepare('UPDATE stylist_feedback SET archived = 0, payload = ? WHERE id = ?')
           .run(JSON.stringify(mergedPayload), existing.id)
@@ -871,6 +883,37 @@ export function backfillPositiveSavedBoardEvidence({ apply = false } = {}) {
     result.receiptUpdated = receiptUpdates.length
   }
   result.receiptPendingUpdates = receiptUpdates.length
+  return result
+}
+
+// One-time backfill for the 2026-08-13 reasoned-Almost/Not-for-me eligibility fix. Before that fix,
+// syncFeedbackFromSavedBoard never mirrored a board's feedback_details.owner_comment onto its
+// stylist_feedback receipt, so any Almost/Not-for-me reaction commented before the fix landed has a
+// stale mirror missing ownerComment — it stays synthesisEligible: false until re-synced. Re-running
+// syncFeedbackFromSavedBoard with unchanged before/after labels forces exactly that resync using the
+// current (fixed) logic; it writes nothing else and does not touch boards without an owner comment.
+export function backfillReasonedOutfitVerdictComments({ apply = false } = {}) {
+  const rows = db.prepare(`
+    SELECT * FROM saved_boards
+    WHERE COALESCE(archived, 0) = 0
+      AND EXISTS (
+        SELECT 1 FROM json_each(json_extract(payload, '$.feedback_labels'))
+        WHERE value IN ('almost', 'not_me')
+      )
+      AND COALESCE(TRIM(json_extract(payload, '$.feedback_details.owner_comment')), '') != ''
+    ORDER BY id
+  `).all()
+  const result = { scanned: rows.length, resynced: 0 }
+  if (apply && rows.length) {
+    db.transaction(() => {
+      for (const row of rows) {
+        const payload = safeJsonParse(row.payload, {}) || {}
+        const labels = Array.isArray(payload.feedback_labels) ? payload.feedback_labels : []
+        syncFeedbackFromSavedBoard(row, labels, labels)
+      }
+    })()
+    result.resynced = rows.length
+  }
   return result
 }
 

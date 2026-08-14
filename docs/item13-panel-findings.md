@@ -47,6 +47,20 @@ The editor should show plain structured conditions, make AND/OR semantics explic
 free deterministic matching/non-matching example. Original prose remains evidence, not a second
 authority.
 
+**Consequence reassurance shipped 2026-08-13** — see `feedback-routing-proposal.md` §1e for the
+exact copy. Section-level for "Always avoid" (one sentence, not per row), per-row for "Specific
+pieces" (owners are more likely to wonder about one specific garment).
+
+**The AND/OR-explicit editor and matching/non-matching example are not being built — owner ruling,
+built and removed before this recommendation was even written down.** This is not the "unshipped,
+still to do" item the panel's wording implies; it was tried and rejected for the same reason the
+lesson-applicability structured editor was (§ "Editing applicability without exposing it as a
+schema" in `feedback-routing-proposal.md`): it made the owner construct conditional logic to style
+her own clothes rather than have the app explain itself in a sentence. Both hard-limit types
+(`owner_constraints` "Always avoid", `occasion_exclusions` "Specific pieces") remain view-and-retire
+only, by decision, matching the read-only ruling already in force for guidance and lessons. Do not
+re-propose a structured hard-limit editor without new owner direction.
+
 ### 4. Provisional reactions stay visible only while actionable
 
 Unprocessed reactions belong in **Review feedback → Teach the stylist** while they can be inspected,
@@ -107,6 +121,14 @@ HISTORY
   Processed source reactions
   Resolved/dismissed findings
 ```
+
+**Implementation refinement, confirmed by the owner 2026-08-13: two tabs, not three.** The shipped
+Style Profile has only **Active guidance** and **Review feedback** as primary tabs
+(`STYLE_PROFILE_TABS` in `src/views/StylistSettings.jsx`). History was demoted to a quiet "View
+past decisions" link at the bottom of Active guidance rather than claiming a third of primary
+navigation — an in-code comment explains it as an archive for recovery, "real, but not equal in
+weight to those two." This wireframe predates that call and was never updated to match; do not read
+the missing History tab as an unfinished item.
 
 Cards default to readable statements, consequence, scope, and undo. Textareas and raw applicability
 forms appear only after **Edit**. Accepted lessons remain compact until opened in a focused editor.
@@ -177,8 +199,12 @@ Reviewers want a free, evidence-honest **What influenced this result?** disclosu
   rejected generated image was not reused.”
 
 The product must not claim prompt guidance caused a model choice merely because it was included.
-This recommendation is adjacent to the Style Profile redesign and needs explicit owner scope before
-implementation.
+
+**Owner ruling, 2026-08-14: not being implemented.** Scoping questions were raised (where it
+surfaces, whether it's computed live or logged at generation time, what threshold justifies a claim
+of influence, display density) but the owner declined before working through them — this is a
+decision not to build the feature, not an open scoping question waiting on answers. Do not re-propose
+"What influenced this result?" without new owner direction.
 
 ## Deferred engineering follow-up — explicit firm-rule chat capture
 
@@ -190,3 +216,6 @@ wardrobe analysis. After the page restructuring, add a local, controlled-vocabul
 simple explicit prohibitions. It must save the original sentence plus a server-validated proposal,
 return a short acknowledgement, and make no paid model call. Anything ambiguous stays in the normal
 conversation flow. See item 12 in `feedback-routing-proposal.md` for the measured trace.
+
+**Shipped, 2026-08-14** — see item 12's "Fast path shipped" note in `feedback-routing-proposal.md`
+for the implementation and the guardrail it had to be kept narrow enough not to violate.
