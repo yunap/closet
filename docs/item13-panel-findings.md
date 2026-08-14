@@ -192,8 +192,12 @@ Reviewers want a free, evidence-honest **What influenced this result?** disclosu
   rejected generated image was not reused.”
 
 The product must not claim prompt guidance caused a model choice merely because it was included.
-This recommendation is adjacent to the Style Profile redesign and needs explicit owner scope before
-implementation.
+
+**Owner ruling, 2026-08-14: not being implemented.** Scoping questions were raised (where it
+surfaces, whether it's computed live or logged at generation time, what threshold justifies a claim
+of influence, display density) but the owner declined before working through them — this is a
+decision not to build the feature, not an open scoping question waiting on answers. Do not re-propose
+"What influenced this result?" without new owner direction.
 
 ## Deferred engineering follow-up — explicit firm-rule chat capture
 
