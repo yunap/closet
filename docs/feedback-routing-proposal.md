@@ -667,6 +667,38 @@ future item-13-style scope calls: "whole-wardrobe path" has two independent mode
 (the freeform tool and this composer), and both need touching, not just the one that matches the
 originating bug report.
 
+**Extended to every remaining outfit-composing model call, 2026-08-14.** Rather than wait for each
+missed flow to surface as its own bug report, audited every place in the codebase where the model
+composes a multi-piece outfit and traced each one to whatever renders it (or confirmed it isn't
+rendered as an image at all). Fixed:
+- `submit_plan_outfits` tool schema and `capsulePlanCompositionSchema` (routes/ai.js) — freeform
+  chat capsule/trip/coordinated-plan composition, both the model tool-loop path and the atomic
+  enforced-capsule path. `validateSubmittedPlanOutfits` (`styling-engine/outfitSetPlanner.js`), the
+  single choke-point whitelist both paths share, now carries `stylingInstructions` through.
+- `outfitComposerTemplate`/`OUTFIT_COMPOSER_SYSTEM` and `outfitEvaluatorGateTemplate` — the selected-
+  item "ideal missing-piece" composition + gate pair (`generate-outfits-for-piece` in `idealMode`).
+  The closet-only default sub-path of that same route already inherited the whole-wardrobe-composer
+  fix for free, since it happens to reuse `WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM` directly.
+  `normalizeGeneratedOutfitObject` (`styling-engine/core.js`) — another field-by-field whitelist —
+  now carries the field through.
+- `wholeWardrobeComparisonSheetPrompt` (`styling-engine/core.js`) — the multi-panel comparison-sheet
+  image, which builds its own per-panel prompt independent of `wholeWardrobeImagePrompt` and was
+  silently dropping `stylingInstructions` even on outfits that already carried it (e.g. from
+  `propose_outfit`).
+- `suggest_slot_swaps` (`styling-engine/tools.js`) — a slot swap only replaces one role, so it now
+  carries the base outfit's `stylingInstructions` forward onto each variant rather than dropping it.
+  Noted as a known tradeoff, not fully solved: if the swapped role was itself the subject of the
+  instruction (rare — swaps are usually shoes/outerwear), the carried-forward text can go stale, and
+  there's no cheap way to detect that case here.
+
+Deliberately left alone: `editorialNewPiecesTemplate`/`EDITORIAL_NEW_PIECES_SYSTEM` (the "ideal new
+pieces to buy" flow) already asks the model for one fully authoritative `visualPrompt` per direction
+that folds layering/positioning into the silhouette description — a different design from the
+"structured facts + secondary reason" pattern everywhere else, so bolting on a second field would be
+redundant. In auditing it, found `createIdealAdditionsComparisonSheetImage`'s preview sheet never
+reads `visualPrompt` at all (unlike the final single-render path, which treats it as the primary
+directive) — a real but separate inconsistency, filed as its own follow-up rather than folded in here.
+
 **Formula/silhouette preservation from positive or `Almost` feedback is closed, not merely
 paused, as of 2026-08-14.** No route was found that would let the app learn "what worked" without
 reinforcing the same literal garments and formulas — every version tried collapsed back into the

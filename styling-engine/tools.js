@@ -753,7 +753,8 @@ export const STYLIST_TOOLS = [
               slot_id: { type: "string", description: "The slot id returned by plan_outfit_set." },
               piece_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs chosen only from that slot's allowed piece list." },
               title: { type: "string", description: "Optional short card title." },
-              reason: { type: "string", description: "Optional one-sentence styling rationale." }
+              reason: { type: "string", description: "Optional one-sentence styling rationale." },
+              styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order, where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments. Concrete and actionable, not a restatement of `reason` — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision." }
             },
             required: ["slot_id", "piece_ids"]
           }
@@ -1704,6 +1705,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
             occasionContext: outfit.occasionContext || outfit.occasion_context || resolvedOccasion,
             why,
             reason: why,
+            // Carried forward, not recomputed: a slot swap only replaces one role (usually
+            // shoes/outerwear), so a prior layering/positioning instruction about the untouched
+            // pieces (e.g. a belt over a cardigan) is still accurate. If the swapped role was
+            // itself the subject of the instruction, this can go stale — no cheap way to detect
+            // that here, so it's a known tradeoff rather than a bug.
+            stylingInstructions: outfit.stylingInstructions || '',
             pieceIds: resolved.map(piece => Number(piece.id)),
             pieces: resolved,
             missingPieces: [],

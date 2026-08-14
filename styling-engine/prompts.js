@@ -411,6 +411,7 @@ JSON shape:
         {"id": "missing-...", "name": "specific archetype (missing piece)", "category": "shoes", "missing": true}
       ],
       "reason": "specific visual reason; use words like visual column, stable bottom, controlled softness, grounded texture, relaxed structure",
+      "styling_instructions": "how the pieces physically relate to each other when it isn't obvious from the pieces alone — layering order, where a belt/tie lands and which layer it cinches, tuck/drape behavior between two named garments — or empty string if there's no such relationship to state",
       "watchFor": "one real risk or none"
     }
   ],
@@ -425,7 +426,8 @@ Rules:
 - If a specific weather mood (e.g. "it is really hot", sweltering, heat, summer, freezing, cold, winter) is provided, the outfits must visibly and realistically adapt to that weather. Do not let default grounding rules (like requiring dark columns/pants) force heavy long pants/jeans or closed boots in sweltering heat, or light open sandals in the freezing cold. Recommending jeans or long pants as the top choices when the user says it is really hot is a styling failure.
 - Do not recommend replacing the selected garment.
 - Do not use generic wording like harmony, balance, confidence, flattering, draws attention upward.
-- Do not recommend tucking unless garment truth supports it.`
+- Do not recommend tucking unless garment truth supports it.
+- \`styling_instructions\` is the ONLY field the image renderer treats as authoritative for how pieces relate to each other, distinct from \`reason\` (the concept of why the outfit works, not the mechanics). Put layering/positioning mechanics there, concrete and actionable, the way you'd explain it to the person getting dressed.`
 
 const outfitEvaluatorGateTemplate = ({ name, c }) => `You are the Outfit Gate for ${name}'s wardrobe app.
 Return ONLY valid JSON. No markdown.
@@ -459,7 +461,7 @@ Never upgrade a weak/fallback outfit to signature.
 
 JSON shape:
 {
-  "outfits": [same outfit objects, corrected if needed],
+  "outfits": [same outfit objects, corrected if needed — preserve every field you were given, including styling_instructions, unless a correction changes it],
   "rejected": [{"label":"...", "reason":"..."}],
   "skip": "one concise skip note or empty string",
   "saveableLearning": "one concise garment-specific rule"

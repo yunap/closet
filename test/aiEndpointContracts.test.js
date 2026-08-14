@@ -5296,7 +5296,7 @@ test('suggest_slot_swaps creates current-outfit variants without one propose_out
     declaredIntent: { want: 'cards', outfitCount: null, turnMode: 'followup' },
     generatedOutfits: [],
     currentOutfitSet: [
-      { index: 1, label: 'Coast Floral', piece_ids: [seeded.top, seeded.bottom, seeded.shoe] }
+      { index: 1, label: 'Coast Floral', piece_ids: [seeded.top, seeded.bottom, seeded.shoe], stylingInstructions: 'Tuck the top in loosely.' }
     ],
     knownOutfitPieceIds: [seeded.top, seeded.bottom, seeded.shoe]
   }
@@ -5323,6 +5323,7 @@ test('suggest_slot_swaps creates current-outfit variants without one propose_out
   assert.equal(toolContext.sourceLocked, true)
   assert.equal(toolContext.slotSwapCompleted, true)
   assert.deepEqual(stylistToolsForTurn(toolContext), [], 'slot swap completion closes the tool loop for this turn')
+  assert.equal(toolContext.generatedOutfits[0].stylingInstructions, 'Tuck the top in loosely.', 'styling_instructions carries forward from the base outfit into the swap variant')
 
   const duplicate = await executeTool('propose_outfit', {
     label: 'Duplicate swap',

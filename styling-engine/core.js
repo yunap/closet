@@ -510,6 +510,7 @@ export function normalizeGeneratedOutfitObject(outfit, selectedPiece, candidateP
     silhouette: outfit?.silhouette || '',
     bestFor: outfit?.bestFor || outfit?.best_for || '',
     reason: outfit?.reason || outfit?.why || '',
+    stylingInstructions: outfit?.styling_instructions || outfit?.stylingInstructions || '',
     watchFor: outfit?.watchFor || outfit?.watch_for || 'none',
     pieceIds: ids.slice(0, 5),
     missingPieces: cleanMissing,
@@ -1988,6 +1989,7 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
       outfit.dominantDirection ? `Direction: ${outfit.dominantDirection}` : '',
       outfit.silhouette ? `Silhouette: ${outfit.silhouette}` : '',
       outfit.reason ? `Mechanics: ${outfit.reason}` : '',
+      outfit.stylingInstructions ? `Authoritative styling instructions (how these garments relate to each other — follow exactly): ${outfit.stylingInstructions}` : '',
       `Pieces: ${pieceText}`
     ].filter(Boolean).join('\n')
   }).join('\n\n')
@@ -2015,6 +2017,7 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
     '- Do not swap the main garments between panels.',
     '- Preserve the garment category, color family, print scale, neckline/sleeve/hem behavior, and shoe type as much as possible.',
     '- The outfits should be visibly different as formulas, not minor recolors of the same outfit.',
+    "- Where a panel lists authoritative styling instructions, follow them exactly for that panel's layering/positioning, even where a more conventional default would look plausible.",
     '',
     'Style direction:',
     '- Relaxed artistic realism, grounded personal style, believable wearable outfits.',

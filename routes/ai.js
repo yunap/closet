@@ -2817,9 +2817,10 @@ export function capsulePlanCompositionSchema(targetOutfits = 1) {
             slot_id: { type: 'string' },
             piece_ids: { type: 'array', items: { type: 'integer' } },
             title: { type: 'string' },
-            reason: { type: 'string' }
+            reason: { type: 'string' },
+            styling_instructions: { type: 'string', description: "Garment-relationship mechanics not obvious from the pieces alone (layering order, where a belt/tie lands, tuck/drape between two named garments), or empty string if not applicable." }
           },
-          required: ['slot_id', 'piece_ids', 'title', 'reason']
+          required: ['slot_id', 'piece_ids', 'title', 'reason', 'styling_instructions']
         }
       }
     },

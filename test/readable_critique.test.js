@@ -10,7 +10,7 @@ process.env.WARDROBE_DB_PATH = path.join(tmpRoot, 'wardrobe.db')
 process.env.WARDROBE_SYSTEM_DB_PATH = path.join(tmpRoot, 'system.db')
 process.env.WARDROBE_UPLOADS_DIR = path.join(tmpRoot, 'uploads')
 
-const { formatSharedOutfitEvaluation, CRITIQUE_DETAILS_DELIMITER, wholeWardrobeImagePrompt, garmentReferencePlan } = await import('../styling-engine/core.js')
+const { formatSharedOutfitEvaluation, CRITIQUE_DETAILS_DELIMITER, wholeWardrobeImagePrompt, wholeWardrobeComparisonSheetPrompt, garmentReferencePlan, normalizeGeneratedOutfitObject } = await import('../styling-engine/core.js')
 const { buildPrompts } = await import('../styling-engine/prompts.js')
 const { db } = await import('../db.js')
 const WHOLE_WARDROBE_EVALUATOR_SYSTEM = buildPrompts().WHOLE_WARDROBE_EVALUATOR_SYSTEM
@@ -269,6 +269,47 @@ test('generated outfit image prompt omits the styling_instructions section when 
   })
 
   assert.doesNotMatch(prompt, /Authoritative styling instructions \(how these garments relate to each other/)
+})
+
+test('normalizeGeneratedOutfitObject (selected-item composer/gate path) carries styling_instructions through, and defaults to empty when absent', () => {
+  const selectedPiece = { id: 1, name: 'cream cardigan' }
+  const candidatePieces = [
+    selectedPiece,
+    { id: 2, name: 'floral midi dress', category: 'dress' },
+    { id: 3, name: 'brown belt', category: 'accessory' },
+  ]
+
+  const withMechanics = normalizeGeneratedOutfitObject({
+    label: 'Layered look',
+    pieceIds: [2, 3],
+    reason: 'A soft, elevated layered look.',
+    styling_instructions: 'Open cardigan over the dress, belt over the cardigan at the natural waist.',
+  }, selectedPiece, candidatePieces)
+  assert.equal(withMechanics.stylingInstructions, 'Open cardigan over the dress, belt over the cardigan at the natural waist.')
+
+  const withoutMechanics = normalizeGeneratedOutfitObject({
+    label: 'Simple look',
+    pieceIds: [2],
+    reason: 'Clean and simple.',
+  }, selectedPiece, candidatePieces)
+  assert.equal(withoutMechanics.stylingInstructions, '')
+})
+
+test('whole-wardrobe comparison sheet prompt surfaces each panel\'s authoritative styling instructions when present', () => {
+  const piecesById = new Map([
+    [10, { id: 10, name: 'cream cardigan', category: 'outerwear' }],
+    [11, { id: 11, name: 'floral midi dress', category: 'dress' }],
+  ])
+  const prompt = wholeWardrobeComparisonSheetPrompt({
+    outfits: [
+      { label: 'Layered', pieceIds: [10, 11], reason: 'soft layered look', stylingInstructions: 'Leave the cardigan open over the dress.' },
+      { label: 'Plain', pieceIds: [11], reason: 'simple' },
+    ],
+    piecesById,
+  })
+
+  assert.match(prompt, /Authoritative styling instructions \(how these garments relate to each other — follow exactly\): Leave the cardigan open over the dress\./)
+  assert.match(prompt, /follow them exactly for that panel's layering\/positioning/)
 })
 
 test('critique request ranks linked garment truth above generated card rationale', () => {
