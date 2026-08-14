@@ -56,10 +56,12 @@ The real risk is two different validation tiers silently disagreeing:
 | `sleeve_length` | top, dress, outerwear | `sleeveless \| cap \| short \| elbow \| 3/4 \| long \| extra_long \| unknown` | yes | PieceForm, BatchAdd | Split from `sleeve_type` 2026-08-14 — see split writeup below. Dress got sleeve UI at all for the first time earlier the same day (was tagged, never editable — [PieceForm.jsx:109](../src/components/PieceForm.jsx)). |
 | `sleeve_shape` | top, dress, outerwear (hidden when `sleeve_length = sleeveless`) | `fitted \| straight \| relaxed \| puff \| bishop \| bell \| flutter \| raglan \| dolman \| other \| unknown` | yes | PieceForm, BatchAdd | Split from `sleeve_type` 2026-08-14; `raglan` added same day |
 | `length_hits_at` | top, bottom, dress, outerwear, shoes | Genuinely per-category vocabulary as of 2026-08-14 — see "Category-conditional length_hits_at" writeup below for the full value lists and the bottom skirt-vs-pants split | yes | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].lengthOptions` for top/dress/outerwear/shoes; `BOTTOM_SKIRT_LENGTH_OPTIONS`/`BOTTOM_PANTS_LENGTH_OPTIONS` (chosen by `bottom_subtype` at render time) for bottom |
-| `silhouette` | all clothing + shoes | Per-category option list | yes | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].silhouetteOptions` |
-| `hem_finish` | top, bottom | `straight_loose \| banded_elastic \| ribbed \| design_hem` (top); different set for bottom | yes | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].hemOptions` |
+| `silhouette` | top, bottom, dress, outerwear (**not shoes** — see `shoe_type`/`toe_shape`) | **top**: `fitted \| slim \| straight \| relaxed \| boxy \| drop-shoulder \| oversized \| peplum \| wrap` — **bottom, `bottom_subtype = skirt`**: `a_line \| pencil \| full \| slip \| straight \| pleated \| wrap` — **bottom, `bottom_subtype` pants/culottes/overalls/other**: `straight \| wide \| bootcut \| flare \| tapered \| barrel \| relaxed` — **dress**: `fitted \| sheath \| shift \| A-line \| wrap \| slip \| column \| fit-and-flare \| empire \| relaxed` — **outerwear**: `fitted \| straight \| boxy \| relaxed \| oversized \| structured` | yes, category- and `bottom_subtype`-conditional in `prompts.js` as of 2026-08-14 | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].silhouetteOptions` for top/dress/outerwear; `BOTTOM_SKIRT_SILHOUETTE_OPTIONS`/`BOTTOM_PANTS_SILHOUETTE_OPTIONS` (chosen by `bottom_subtype` at render time) for bottom. **Rewritten 2026-08-14** to close the tagger/UI mismatch noted below — top gained `straight`; bottom's `structured` was dropped (meaningless for either skirts or pants; use `fit_on_body = structured` instead) and the field became `bottom_subtype`-conditional; dress gained `empire`; outerwear dropped `cropped` (opportunistically preserved into that piece's `length_hits_at` by the migration if unset) and `longline` (no unambiguous target — outerwear length concepts now live entirely in `length_hits_at`, see below) and gained `straight`. Shoes lost generic `silhouette` entirely — see `shoe_type`/`toe_shape`. |
+| `shoe_type` | shoes | `mule \| loafer \| boot \| sandal \| pump \| flat \| sneaker \| other \| unknown` | yes | PieceForm, BatchAdd | `SHOE_TYPE_OPTIONS`; gate-critical for shoes (`missingGateFields`). New 2026-08-14, replacing shoes' slice of the old generic `silhouette` enum (`mule\|loafer\|boot\|sandal\|heel\|flat\|sneaker`). Deliberately never uses `heel` — `heel_height` already represents heel height, so a `heel` shoe type would just duplicate that axis without saying what kind of shoe it is. One-time migration mapped recognizable old `silhouette` words (`loafer`, `boot`, etc.) across; this sandbox's real shoe data had generic-fit words instead (`slim`/`fitted`/`relaxed` — leftover from before shoes had their own silhouette vocabulary at all), so those backfilled to null and surface via the normal missing-field review chip rather than being guessed. |
+| `toe_shape` | shoes | `pointed \| almond \| round \| square \| open_toe \| other \| unknown` | yes | PieceForm, BatchAdd | `TOE_SHAPE_OPTIONS`. New 2026-08-14, replacing shoes' other slice of the old generic `silhouette` enum (`pointed\|almond\|round\|square\|open-toe`). Same backfill-or-null migration behavior as `shoe_type`. |
+| `hem_finish` | top, bottom | **top**: `straight_loose \| banded_elastic \| ribbed \| shirttail \| high_low \| other` — **bottom**: `straight_open \| cuffed \| raw_frayed \| tapered \| elastic_banded \| slit \| asymmetric \| other` | yes, category-conditional in `prompts.js` as of 2026-08-14 | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].hemOptions`. **Rewritten 2026-08-14** to close the tagger/UI mismatch noted below: top gained `shirttail` and `high_low`, dropped the catch-all `design_hem`; bottom's whole vocabulary was renamed/expanded (`straight_loose`→`straight_open`, `raw`→`raw_frayed`, `banded_elastic`→`elastic_banded`, `asymmetrical`→`asymmetric`, dropped `design_hem`, kept `cuffed`/`tapered`/`slit`). **Only `straight_loose` (top) / `straight_open` (bottom) and `banded_elastic` (top) / `elastic_banded` (bottom) are tuckable** — every other value, including `shirttail`, is a wear-over/no-tuck hem. This was a real correction: shirttail hems (the curved, longer-in-back style typically worn untucked with the tails hanging free) were initially assumed tuckable and are not — confirmed against a photo. See `computeTuckNote()` in `wardrobeAiContext.js`, which now checks hem_finish against exactly those two tuckable values instead of the old `ribbed`/`design_hem` no-tuck check. |
 | `tuck_behavior` | top | `tucks_anywhere \| tucks_with_structure \| wear_over_only` | **yes as of 2026-08-14** (previously tagger only rated confidence on this field, never produced a value — see `_confidence` vs schema split in `prompts.js`) | PieceForm; **BatchAdd added 2026-08-14** (was DB+gate-wired but had zero UI anywhere before this pass) | `prompts.js` schema |
-| `waistband_type` | bottom | `structured_high_waist \| structured_mid_waist \| soft_elastic_pull_on \| tight_no_room \| drawstring_relaxed` | **yes as of 2026-08-14** (same gap as tuck_behavior) | PieceForm; **BatchAdd added 2026-08-14** | `prompts.js` schema |
+| `waistband_type` | bottom | `structured_high_waist \| structured_mid_waist \| structured_low_waist \| soft_elastic_pull_on \| tight_no_room \| drawstring_relaxed` | **yes as of 2026-08-14** (same gap as tuck_behavior; `structured_low_waist` added same pass) | PieceForm; **BatchAdd added 2026-08-14** | `prompts.js` schema. `structured_low_waist` receives tuck the same way the other structured waistbands do — see `computeWaistbandNote()` in `wardrobeAiContext.js`. |
 | `fit_on_body` | clothing | `clings_stretchy \| clings_drapey \| skims \| hangs_straight \| drapes \| structured \| none` | yes | PieceForm, BatchAdd (added 2026-08-14 — was tagged and DB-wired but had no BatchAdd control before this pass) | `prompts.js` schema |
 | `heel_height` | shoes | `flat \| low \| mid \| high` | yes | PieceForm, BatchAdd | `HEEL_HEIGHT_OPTIONS`; gate-critical for shoes |
 | `walk_support` | shoes | `high \| medium \| low` | yes | PieceForm, BatchAdd | `WALK_SUPPORT_OPTIONS`; gate-critical for shoes |
@@ -176,7 +178,7 @@ Previously one flat shared enum across every category. Now genuinely per-categor
 `bottom_subtype` for bottoms:
 
 - **top**: `cropped | waist | high_hip | hip | low_hip | tunic | unknown`
-- **outerwear**: `cropped | waist | high_hip | hip | low_hip | mid_thigh | knee | mid_calf | ankle | unknown`
+- **outerwear**: `cropped | waist | high_hip | hip | low_hip | mid_thigh | knee | mid_calf | ankle | full_length | floor_length | unknown` — `full_length`/`floor_length` added 2026-08-14 so outerwear length concepts that used to live (lossily) in `silhouette`'s dropped `longline` value have a real home; a piece whose old `silhouette` was `longline` had that word opportunistically preserved into `length_hits_at` by the migration if the piece didn't already have a `length_hits_at` value set
 - **dress**, or **bottom** when `bottom_subtype = skirt`: `mini | above_knee | knee | below_knee | midi | ankle | maxi | unknown`
 - **bottom** when `bottom_subtype` is `pants | culottes | overalls | other`: `shorts | knee | mid_calf | ankle | full_length | floor_length | unknown`
 - **shoes**: `low | below_ankle | ankle | high_top | mid_calf | knee | over_knee | unknown` — `low`
@@ -202,6 +204,59 @@ hyphens. Underscore is a `\w` character, so `\bfull\b` never matches inside `ful
 forms explicitly. Worth remembering for any future field that moves to underscore_case: a
 `\b`-anchored regex tuned for hyphenated values will silently stop matching, not error.
 
+## Silhouette/hem_finish rewrite, shoe_type/toe_shape split, and waistband_type addition (2026-08-14)
+
+A second coder-handoff pass, same day as the sleeve/bottom_subtype/length_hits_at work above.
+Motivated by documenting `silhouette` and `hem_finish`'s real per-category value lists for this
+file (see rows above) and discovering the tagger schema didn't match the UI's lists at all —
+same class of drift the earlier `length_hits_at` split had already fixed once.
+
+**Shoes were the worst case.** The old shared `silhouette` enum conflated two unrelated shoe axes
+— what kind of shoe (`mule`, `loafer`, `boot`, `sandal`, `heel`, `flat`, `sneaker`) and what shape
+the toe is (`pointed`, `almond`, `round`, `square`, `open-toe`) — into one field a shoe piece could
+only pick one value from. Split into `shoe_type` and `toe_shape` (rows above), wired through the
+**full tagging/edit/merge path**, not just exposed in the form:
+
+- `db.js`: new `shoe_type`/`toe_shape` columns, one-time migration mapping recognizable old
+  `silhouette` shoe words into both new columns (`TOE_SHAPE_MAP`/`SHOE_TYPE_MAP`), guarded to only
+  run where both new columns are still null.
+- `prompts.js` / `routes/ai.js` tagger schemas: both fields added to both copies (this is one of
+  the few fields present in the `/extract-pieces` duplicate schema — see drift note below).
+- `taggerMerge.js`: both added to `CONFIDENCE_FIELDS` so they get review badges.
+- `attributes.js` `missingGateFields()`: `shoe_type` (not `toe_shape`) is gate-critical for shoes,
+  same tier as `heel_height`/`walk_support`.
+- **Three separate free-text "blob" builders** that regex-based gates (`pieceMatchesFootwear()`
+  and friends in `rules.js`/`occasions.js`/`footwear-comfort.js`) depend on for words like
+  `loafer`/`boot`/`sandal` needed the new fields added or those gates would have gone silently
+  blind the moment `silhouette` stopped carrying shoe-type words: `attributePieceTextBlob()`
+  (`attributes.js`), `pieceTextBlob()` (`rules.js`), and a third, easy-to-miss **local blob
+  duplicated inline inside `inferWholeWardrobePieceRoles()`** (also `rules.js`, not the same code
+  path as `pieceTextBlob()`) that drives `sharp_finish`/`soft_shoe` role inference. All three now
+  include `shoe_type`/`toe_shape`.
+- `tools.js`: `search_wardrobe` piece object now surfaces both fields.
+- `PieceForm.jsx`/`BatchAdd.jsx`: `silhouette` UI hidden entirely for `category = shoes`; new
+  Shoe Type / Toe Shape chip rows shown instead, with the same missing-field review-highlight
+  treatment other gate-critical fields get.
+- `crud.js`/`importer.js`/`intakeReview.js`/`OutfitLookbook.jsx`: standard field-list wiring
+  (POST/PUT columns, `TAGGABLE_PIECE_COLUMNS`, `REVIEW_EDITABLE_FIELDS`, extracted-piece
+  forwarding) — same pattern every prior field addition in this doc followed.
+
+**A duplicate dead function was found and deliberately left alone.** `computeTuckNote()` and
+`computeWaistbandNote()` — the functions that turn `hem_finish`/`waistband_type` into a stylist-
+facing tuck note — exist as **two independent implementations**: a live one in
+`wardrobeAiContext.js` (actually called by `buildWardrobePieceTruthText`, the chat-facing piece
+description) and a dead one in `styling-engine/core.js` that's exported but never imported
+anywhere. Only the live copy was updated for the new tuckable-hems rule and
+`structured_low_waist`; the dead copy in `core.js` still has the old logic. Not a bug fix scope
+here — flagging so a future cleanup pass doesn't have to rediscover it.
+
+**routes/ai.js `/extract-pieces` schema sync, this pass**: `hem_finish` (category-conditional),
+`length_hits_at`'s outerwear extension, `silhouette` (merged bottom pants+skirt vocab into one
+list since that endpoint has no `bottom_subtype` to condition on), `shoe_type`, `toe_shape` — all
+synced. `bottom_subtype`, `accessory_subtype`, `jewelry_type`, `necklace_length`, `tuck_behavior`,
+`waistband_type` remain **not** in that endpoint's schema — left as the same documented drift the
+prior pass called out, not expanded or fixed here.
+
 ## Known drift / open items
 
 - `stretch` has no tagger support at all — always manual.
@@ -213,8 +268,12 @@ forms explicitly. Worth remembering for any future field that moves to underscor
   only capture mechanism. Deliberately deferred: `accessory_subtype`/`jewelry_type` shipped
   as the minimal-viable slice; further subtype fields wait until real tagged data shows what's
   actually missing.
-- `routes/ai.js`'s `/extract-pieces` schema still doesn't have `accessory_subtype`, `jewelry_type`,
-  `necklace_length`, `tuck_behavior`, or `waistband_type` (only `neckline`, the sleeve split, and
-  now the category-conditional `length_hits_at` — without `bottom_subtype`, since that endpoint
-  doesn't tag it — got synced). Two independent tagger schemas remain a real drift risk; unifying
-  them is worth doing at some point, not done here.
+- `routes/ai.js`'s `/extract-pieces` schema still doesn't have `bottom_subtype`, `accessory_subtype`,
+  `jewelry_type`, `necklace_length`, `tuck_behavior`, or `waistband_type` (`neckline`, the sleeve
+  split, category-conditional `length_hits_at`/`silhouette`/`hem_finish`, and the new `shoe_type`/
+  `toe_shape` are synced as of 2026-08-14). Two independent tagger schemas remain a real drift
+  risk; unifying them is worth doing at some point, not done here.
+- `styling-engine/core.js` has a dead, unused duplicate of `computeTuckNote()`/
+  `computeWaistbandNote()` that was not updated for the 2026-08-14 tuckable-hems rule or
+  `structured_low_waist` — the live versions both consumers actually use are in
+  `wardrobeAiContext.js`. Worth deleting the dead copy at some point, not done here.

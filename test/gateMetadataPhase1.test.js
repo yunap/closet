@@ -88,8 +88,18 @@ test('missingGateFields respects shoe-only fields and intake occasion curation',
     fabric_weight: 'medium',
     fiber_content: ['leather'],
     occasions: ['city'],
-    heel_height: 'flat'
+    heel_height: 'flat',
+    shoe_type: 'boot'
   }), ['walk_support'])
+  assert.deepEqual(missingGateFields({
+    category: 'shoes',
+    formality: 'everyday',
+    fabric_weight: 'medium',
+    fiber_content: ['leather'],
+    occasions: ['city'],
+    heel_height: 'flat',
+    walk_support: 'high'
+  }), ['shoe_type'])
   assert.deepEqual(missingGateFields({
     category: 'top',
     formality: 'everyday',

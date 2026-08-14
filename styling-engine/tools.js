@@ -1138,6 +1138,8 @@ async function executeToolInternal(name, args, toolContext = {}) {
             pattern_scale: p.pattern_scale,
             pattern_complexity: p.pattern_complexity,
             silhouette: p.silhouette,
+            shoe_type: p.shoe_type,
+            toe_shape: p.toe_shape,
             fabric_category: p.fabric_category,
             fabric_weight: p.fabric_weight,
             opacity: p.opacity,

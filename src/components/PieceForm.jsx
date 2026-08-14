@@ -107,22 +107,28 @@ const CONSTRUCTION_BY_CATEGORY = {
     showNeckline: true,
     showSleeve: true,
     silhouetteLabel: 'Silhouette',
-    silhouetteOptions: ['fitted','slim','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
+    silhouetteOptions: ['fitted','slim','straight','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
     lengthLabel: 'Length hits at',
     lengthOptions: ['cropped','waist','high_hip','hip','low_hip','tunic','unknown'],
     hemLabel: 'Hem finish',
-    hemHint: 'determines tuck ability',
+    hemHint: 'only straight_loose/banded_elastic are tuckable',
     hemOptions: [
       { value: 'straight_loose', label: 'straight - tuckable' },
-      { value: 'banded_elastic', label: 'banded/elastic' },
+      { value: 'banded_elastic', label: 'banded/elastic - tuckable' },
       { value: 'ribbed',         label: 'ribbed - wear over' },
-      { value: 'design_hem',     label: 'design hem - wear over' },
+      { value: 'curved',         label: 'curved - wear over' },
+      { value: 'shirttail',      label: 'shirttail - wear over' },
+      { value: 'high_low',       label: 'high-low - wear over' },
+      { value: 'asymmetric',     label: 'asymmetric - wear over' },
+      { value: 'other',          label: 'other - wear over' },
     ],
   },
   bottom: {
     sectionLabel: 'Construction',
     silhouetteLabel: 'Bottom shape',
-    silhouetteOptions: ['straight leg','wide leg','bootcut','flare','tapered','barrel','A-line skirt','pencil skirt','full skirt','slip skirt','relaxed','structured'],
+    // No static silhouetteOptions: depends on bottom_subtype (skirt vs
+    // pants), same as lengthOptions below — see BOTTOM_SKIRT_SILHOUETTE_OPTIONS
+    // / BOTTOM_PANTS_SILHOUETTE_OPTIONS, chosen at render time.
     lengthLabel: 'Length',
     // No static lengthOptions: bottom's length vocabulary depends on
     // bottom_subtype (skirt vs pants) — see BOTTOM_SKIRT_LENGTH_OPTIONS /
@@ -135,8 +141,8 @@ const CONSTRUCTION_BY_CATEGORY = {
       { value: 'tapered', label: 'tapered' },
       { value: 'banded_elastic', label: 'elastic/banded' },
       { value: 'slit', label: 'slit' },
-      { value: 'asymmetrical', label: 'asymmetrical' },
-      { value: 'design_hem', label: 'design hem' },
+      { value: 'asymmetric', label: 'asymmetric' },
+      { value: 'other', label: 'other' },
     ],
   },
   dress: {
@@ -144,7 +150,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     showNeckline: true,
     showSleeve: true,
     silhouetteLabel: 'Dress shape',
-    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
+    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','empire','relaxed'],
     lengthLabel: 'Length',
     lengthOptions: ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown'],
   },
@@ -152,19 +158,24 @@ const CONSTRUCTION_BY_CATEGORY = {
     sectionLabel: 'Construction',
     showSleeve: true,
     silhouetteLabel: 'Outerwear shape',
-    silhouetteOptions: ['cropped','fitted','boxy','relaxed','oversized','structured','longline'],
+    silhouetteOptions: ['fitted','straight','boxy','relaxed','oversized','structured'],
     lengthLabel: 'Length hits at',
-    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','unknown'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','full_length','floor_length','unknown'],
   },
   shoes: {
     sectionLabel: 'Shoe Details',
-    silhouetteLabel: 'Shoe shape',
-    silhouetteOptions: ['pointed','almond','round','square','open-toe','mule','loafer','boot','sandal','heel','flat','sneaker'],
+    // No silhouette here — shoe_type/toe_shape replace it (the old flat
+    // silhouette list mixed toe shape and shoe type into one enum).
     lengthLabel: 'Coverage / shaft',
     lengthOptions: ['low','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
   },
 }
 
+const SHOE_TYPE_OPTIONS = ['mule','loafer','boot','sandal','pump','flat','sneaker','other','unknown']
+const TOE_SHAPE_OPTIONS = ['pointed','almond','round','square','open_toe','other','unknown']
+
+const BOTTOM_SKIRT_SILHOUETTE_OPTIONS = ['a_line','pencil','full','slip','straight','pleated','wrap']
+const BOTTOM_PANTS_SILHOUETTE_OPTIONS = ['straight_leg','wide_leg','bootcut','flare','tapered','barrel','relaxed']
 const BOTTOM_SKIRT_LENGTH_OPTIONS = ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown']
 const BOTTOM_PANTS_LENGTH_OPTIONS = ['shorts','knee','mid_calf','ankle','full_length','floor_length','unknown']
 
@@ -441,6 +452,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     necklace_length:    piece?.necklace_length    || null,
     // Bottom
     bottom_subtype:     piece?.bottom_subtype     || null,
+    // Shoes
+    shoe_type:          piece?.shoe_type          || null,
+    toe_shape:          piece?.toe_shape          || null,
     // Learned wisdom
     styling_rules_learned: piece?.styling_rules_learned || [],
     tried_and_rejected:    piece?.tried_and_rejected    || [],
@@ -635,6 +649,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'waistband_type', tags.waistband_type)
         applyTagValue(next, 'accessory_subtype', tags.accessory_subtype)
         applyTagValue(next, 'bottom_subtype', tags.bottom_subtype)
+        applyTagValue(next, 'shoe_type', tags.shoe_type)
+        applyTagValue(next, 'toe_shape', tags.toe_shape)
         applyTagValue(next, 'jewelry_type', tags.jewelry_type)
         applyTagValue(next, 'necklace_length', tags.necklace_length)
         next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
@@ -682,7 +698,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       let changedCount = 0
       setForm(f => {
         const next = { ...f }
-        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_length','sleeve_shape','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','accessory_subtype','jewelry_type','necklace_length','bottom_subtype','tagger_version'].forEach(field => {
+        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_length','sleeve_shape','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','accessory_subtype','jewelry_type','necklace_length','bottom_subtype','shoe_type','toe_shape','tagger_version'].forEach(field => {
           applyTagValue(next, field, tags[field])
         })
         if (!f.name) applyTagValue(next, 'name', tags.name_suggestion || tags.name, '')
@@ -813,6 +829,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     walk_support: 'Walk support',
     accessory_subtype: 'Accessory type',
     bottom_subtype: 'Bottom type',
+    shoe_type: 'Shoe type',
   }
   const revealMissingField = (field) => {
     const group = dialogRef.current?.querySelector(`[data-piece-field="${field}"]`)
@@ -1229,10 +1246,32 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 </div>
               )}
 
-              <div className="form-group">
-                <FieldLabel field="silhouette">{constructionConfig.silhouetteLabel}</FieldLabel>
-                <ChipRow options={constructionConfig.silhouetteOptions} value={form.silhouette} onChange={v => set('silhouette', v)} />
-              </div>
+              {cat !== 'shoes' && (
+                <div className="form-group">
+                  <FieldLabel field="silhouette">{constructionConfig.silhouetteLabel}</FieldLabel>
+                  <ChipRow
+                    options={cat === 'bottom'
+                      ? (form.bottom_subtype === 'skirt' ? BOTTOM_SKIRT_SILHOUETTE_OPTIONS : BOTTOM_PANTS_SILHOUETTE_OPTIONS)
+                      : constructionConfig.silhouetteOptions}
+                    value={form.silhouette}
+                    onChange={v => set('silhouette', v)}
+                  />
+                </div>
+              )}
+
+              {cat === 'shoes' && (
+                <>
+                  <div className={`form-group ${suggestedFields.has('shoe_type') ? 'retag-field-highlight' : ''}`} data-piece-field="shoe_type">
+                    <FieldLabel field="shoe_type">Shoe Type {suggestedFields.has('shoe_type') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
+                    <ChipRow options={SHOE_TYPE_OPTIONS} value={form.shoe_type} onChange={v => set('shoe_type', v)} />
+                  </div>
+
+                  <div className={`form-group ${suggestedFields.has('toe_shape') ? 'retag-field-highlight' : ''}`} data-piece-field="toe_shape">
+                    <FieldLabel field="toe_shape">Toe Shape {suggestedFields.has('toe_shape') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
+                    <ChipRow options={TOE_SHAPE_OPTIONS} value={form.toe_shape} onChange={v => set('toe_shape', v)} />
+                  </div>
+                </>
+              )}
 
               <div className={`form-group ${suggestedFields.has('length_hits_at') ? 'retag-field-highlight' : ''}`}>
                 <label className="form-label">{constructionConfig.lengthLabel} {suggestedFields.has('length_hits_at') && <span className="retag-review-marker">Review suggested</span>}</label>
@@ -1384,6 +1423,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                     options={[
                       { value: 'structured_high_waist', label: 'structured high' },
                       { value: 'structured_mid_waist',  label: 'structured mid' },
+                      { value: 'structured_low_waist',  label: 'structured low' },
                       { value: 'soft_elastic_pull_on',  label: 'soft elastic' },
                       { value: 'tight_no_room',          label: 'tight - no tuck' },
                       { value: 'drawstring_relaxed',     label: 'drawstring' },
@@ -1437,6 +1477,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                       options={[
                         { value: 'structured_high_waist', label: 'structured high' },
                         { value: 'structured_mid_waist', label: 'structured mid' },
+                        { value: 'structured_low_waist', label: 'structured low' },
                         { value: 'soft_elastic_pull_on', label: 'soft elastic' },
                         { value: 'tight_no_room', label: 'tight - no tuck' },
                         { value: 'drawstring_relaxed', label: 'drawstring' },

@@ -395,6 +395,11 @@ function initDb(dbPath) {
     // in — bottomKind() combines this with length_hits_at for skirt
     // granularity instead of encoding both into one value.
     'bottom_subtype TEXT',
+    // shoe_type/toe_shape supersede the generic silhouette field for shoes,
+    // which mixed toe shape and shoe type into one flat list. silhouette is
+    // kept (never dropped) but no longer applicable to shoes going forward.
+    'shoe_type TEXT',
+    'toe_shape TEXT',
   ]
   NEW_COLUMNS.forEach(col => {
     try { db.exec(`ALTER TABLE pieces ADD COLUMN ${col}`) } catch {}
@@ -500,6 +505,128 @@ function initDb(dbPath) {
     }
   } catch (err) {
     console.warn('Failed to remap length_hits_at to per-category vocabulary:', err.message)
+  }
+
+  // One-time remap: silhouette per category. Top/dress gained new values with
+  // all old values still valid (no-op for existing data beyond validation).
+  // Bottom is now bottom_subtype-routed like length_hits_at. Outerwear drops
+  // the two length-flavored values ('cropped', 'longline') now that length
+  // lives in length_hits_at — 'cropped' has an exact-name equivalent there so
+  // it's opportunistically preserved; 'longline' has no unambiguous landing
+  // point (could mean anywhere from mid-thigh to floor) so it's dropped
+  // rather than guessed, same as any other ambiguous case in this file.
+  try {
+    const TOP_SIL_VALID = new Set(['fitted', 'slim', 'straight', 'relaxed', 'boxy', 'drop-shoulder', 'oversized', 'peplum', 'wrap'])
+    const DRESS_SIL_VALID = new Set(['fitted', 'sheath', 'shift', 'A-line', 'wrap', 'slip', 'column', 'fit-and-flare', 'empire', 'relaxed'])
+    const OUTERWEAR_SIL_VALID = new Set(['fitted', 'straight', 'boxy', 'relaxed', 'oversized', 'structured'])
+    const PANTS_SIL_VALID = new Set(['straight_leg', 'wide_leg', 'bootcut', 'flare', 'tapered', 'barrel', 'relaxed'])
+    const SKIRT_SIL_VALID = new Set(['a_line', 'pencil', 'full', 'slip', 'straight', 'pleated', 'wrap'])
+    const PANTS_SIL_RENAME = { 'straight leg': 'straight_leg', 'wide leg': 'wide_leg' }
+    const SKIRT_SIL_RENAME = { 'a-line skirt': 'a_line', 'pencil skirt': 'pencil', 'full skirt': 'full', 'slip skirt': 'slip' }
+
+    function remapSilhouette(raw, validSet, renameMap = {}) {
+      const value = String(raw || '').toLowerCase().trim()
+      if (!value) return null
+      const renamed = renameMap[value] || value
+      // Case-insensitive membership: valid sets carry their canonical casing
+      // (e.g. 'A-line') but stored/raw values are lowercased for comparison.
+      for (const candidate of validSet) {
+        if (candidate.toLowerCase() === renamed) return candidate
+      }
+      return null
+    }
+
+    const rows = db.prepare(`
+      SELECT id, category, bottom_subtype, silhouette FROM pieces
+      WHERE silhouette IS NOT NULL AND silhouette != ''
+    `).all()
+    const updateSil = db.prepare('UPDATE pieces SET silhouette = ? WHERE id = ?')
+    const updateSilAndLength = db.prepare('UPDATE pieces SET silhouette = ?, length_hits_at = ? WHERE id = ?')
+    for (const piece of rows) {
+      const category = String(piece.category || '').toLowerCase().trim()
+      const current = String(piece.silhouette || '').toLowerCase().trim()
+      if (category === 'top') {
+        const remapped = remapSilhouette(piece.silhouette, TOP_SIL_VALID)
+        if (remapped !== piece.silhouette) updateSil.run(remapped, piece.id)
+      } else if (category === 'dress') {
+        const remapped = remapSilhouette(piece.silhouette, DRESS_SIL_VALID)
+        if (remapped !== piece.silhouette) updateSil.run(remapped, piece.id)
+      } else if (category === 'outerwear') {
+        if (current === 'cropped') {
+          // Preserve the length information in the field that now owns it,
+          // but only if length_hits_at isn't already saying something else.
+          const existingLength = db.prepare('SELECT length_hits_at FROM pieces WHERE id = ?').get(piece.id)?.length_hits_at
+          updateSilAndLength.run(null, existingLength || 'cropped', piece.id)
+        } else {
+          const remapped = remapSilhouette(piece.silhouette, OUTERWEAR_SIL_VALID)
+          if (remapped !== piece.silhouette) updateSil.run(remapped, piece.id)
+        }
+      } else if (category === 'bottom') {
+        const subtype = String(piece.bottom_subtype || '').toLowerCase().trim()
+        const remapped = subtype === 'skirt'
+          ? remapSilhouette(piece.silhouette, SKIRT_SIL_VALID, SKIRT_SIL_RENAME)
+          : remapSilhouette(piece.silhouette, PANTS_SIL_VALID, PANTS_SIL_RENAME)
+        if (remapped !== piece.silhouette) updateSil.run(remapped, piece.id)
+      }
+      // shoes: silhouette is handled by the shoe_type/toe_shape split below,
+      // and is otherwise left untouched (deprecated, not dropped).
+    }
+  } catch (err) {
+    console.warn('Failed to remap silhouette to per-category vocabulary:', err.message)
+  }
+
+  // One-time remap: hem_finish. Both categories' old 'design_hem'/'asymmetrical'
+  // catch-all split into more specific values with no single unambiguous
+  // target, so it's dropped rather than guessed (surfaces via missing-field
+  // review). Bottom's 'asymmetrical' -> 'asymmetric' is a clean rename to
+  // match top's spelling.
+  try {
+    const TOP_HEM_VALID = new Set(['straight_loose', 'banded_elastic', 'ribbed', 'curved', 'shirttail', 'high_low', 'asymmetric', 'other'])
+    const BOTTOM_HEM_VALID = new Set(['straight_loose', 'cuffed', 'raw', 'tapered', 'banded_elastic', 'slit', 'asymmetric', 'other'])
+    const rows = db.prepare(`
+      SELECT id, category, hem_finish FROM pieces
+      WHERE hem_finish IS NOT NULL AND hem_finish != ''
+    `).all()
+    const update = db.prepare('UPDATE pieces SET hem_finish = ? WHERE id = ?')
+    for (const piece of rows) {
+      const category = String(piece.category || '').toLowerCase().trim()
+      const value = String(piece.hem_finish || '').toLowerCase().trim()
+      let remapped = null
+      if (category === 'top') {
+        remapped = TOP_HEM_VALID.has(value) ? value : null
+      } else if (category === 'bottom') {
+        remapped = value === 'asymmetrical' ? 'asymmetric' : (BOTTOM_HEM_VALID.has(value) ? value : null)
+      } else {
+        continue
+      }
+      if (remapped !== value) update.run(remapped, piece.id)
+    }
+  } catch (err) {
+    console.warn('Failed to remap hem_finish to per-category vocabulary:', err.message)
+  }
+
+  // One-time split: shoes' generic silhouette (which mixed toe shape and shoe
+  // type into one flat list) into shoe_type + toe_shape. silhouette itself is
+  // left untouched (deprecated, not dropped, per this file's convention).
+  // 'heel' is deliberately not migrated to shoe_type — heel_height already
+  // represents heel height, and 'heel' as a shoe type is redundant/vague.
+  try {
+    const TOE_SHAPE_MAP = { pointed: 'pointed', almond: 'almond', round: 'round', square: 'square', 'open-toe': 'open_toe' }
+    const SHOE_TYPE_MAP = { mule: 'mule', loafer: 'loafer', boot: 'boot', sandal: 'sandal', flat: 'flat', sneaker: 'sneaker' }
+    const rows = db.prepare(`
+      SELECT id, silhouette FROM pieces
+      WHERE category = 'shoes' AND silhouette IS NOT NULL AND silhouette != ''
+        AND shoe_type IS NULL AND toe_shape IS NULL
+    `).all()
+    const update = db.prepare('UPDATE pieces SET shoe_type = ?, toe_shape = ? WHERE id = ?')
+    for (const piece of rows) {
+      const value = String(piece.silhouette || '').toLowerCase().trim()
+      const shoeType = SHOE_TYPE_MAP[value] || null
+      const toeShape = TOE_SHAPE_MAP[value] || null
+      if (shoeType || toeShape) update.run(shoeType, toeShape, piece.id)
+    }
+  } catch (err) {
+    console.warn('Failed to split shoe silhouette into shoe_type/toe_shape:', err.message)
   }
 
   // Additive learning-schema migrations. Existing local databases keep working.

@@ -64,11 +64,20 @@ export function pieceGarmentIntelligence(piece = {}) {
   }
 }
 
+// Only these two hem finishes are actually tuckable. Everything else — ribbed,
+// curved, shirttail (a curved, tuck-optimized-LOOKING shape that is not
+// actually tuckable), high_low, asymmetric, other — plays the same "wear
+// over" role the old design_hem catch-all used to. Checking by exclusion
+// instead of an explicit no-tuck list means a future new hem_finish value
+// defaults to no-tuck (the safe default) rather than silently passing as
+// tuckable if this list isn't updated.
+const TUCKABLE_HEMS = new Set(['straight_loose', 'banded_elastic'])
+
 export function computeTuckNote(piece = {}) {
   if (!CLOTHING_WITH_TUCK.has(piece.category)) return null
   if (piece.tuck_behavior === 'wear_over_only') return 'no tuck — wear over only'
   if (piece.fabric_category === 'silk' || piece.fabric_category === 'satin') return 'no tuck — silk/satin cannot hold'
-  if (piece.hem_finish === 'ribbed' || piece.hem_finish === 'design_hem') return 'no tuck — design hem'
+  if (piece.hem_finish && !TUCKABLE_HEMS.has(piece.hem_finish)) return 'no tuck — design hem'
   if (piece.tuck_behavior === 'tucks_with_structure') return 'tucks with structured waist or belt only'
   if (piece.tuck_behavior === 'tucks_anywhere') return 'tucks freely'
   return null
@@ -80,6 +89,7 @@ export function computeWaistbandNote(piece = {}) {
   if (piece.waistband_type === 'soft_elastic_pull_on') return 'elastic waist — no tuck'
   if (piece.waistband_type === 'structured_high_waist') return 'structured high waist — receives tuck'
   if (piece.waistband_type === 'structured_mid_waist') return 'structured mid waist — receives tuck'
+  if (piece.waistband_type === 'structured_low_waist') return 'structured low waist — receives tuck'
   if (piece.waistband_type === 'drawstring_relaxed') return 'drawstring — no tuck'
   return null
 }
@@ -223,6 +233,13 @@ export function buildWardrobePieceTruthText(piece = {}) {
   if (lengthText) parts.push(lengthText)
   const silhouetteText = trustedFieldText(piece, 'silhouette', 'silhouette', piece.silhouette)
   if (silhouetteText) parts.push(silhouetteText)
+  // silhouette is not applicable to shoes (see garment-field-reference.md) — shoe_type/toe_shape
+  // are its replacement there, so they need the same treatment or a shoe's type/toe shape
+  // reaches no composing prompt at all, same failure shape as the sleeve_type gap above.
+  const shoeTypeText = trustedFieldText(piece, 'shoe_type', 'shoe type', piece.shoe_type)
+  if (shoeTypeText) parts.push(shoeTypeText)
+  const toeShapeText = trustedFieldText(piece, 'toe_shape', 'toe shape', piece.toe_shape)
+  if (toeShapeText) parts.push(toeShapeText)
   // sleeve_type (now split into sleeve_length/sleeve_shape) was populated on 207
   // of 236 pieces and reached NO composing prompt — so a capsule look put a
   // short-sleeved cardigan over a bishop sleeve, because as far as the model
@@ -335,6 +352,8 @@ export function buildWardrobeManifestLine(piece = {}) {
     piece.opacity && piece.opacity !== 'opaque' ? `opacity ${manifestValue(piece, 'opacity', piece.opacity)}` : '',
     piece.needs_base === 'yes' ? 'needs base layer' : '',
     piece.silhouette ? `silhouette ${manifestValue(piece, 'silhouette', piece.silhouette)}` : '',
+    piece.shoe_type ? `shoe type ${manifestValue(piece, 'shoe_type', piece.shoe_type)}` : '',
+    piece.toe_shape ? `toe ${manifestValue(piece, 'toe_shape', piece.toe_shape)}` : '',
     piece.length_hits_at ? `hits ${manifestValue(piece, 'length_hits_at', piece.length_hits_at)}` : '',
     pattern ? `pattern ${pattern}` : '',
     piece.formality ? `formality ${manifestValue(piece, 'formality', piece.formality)}` : '',

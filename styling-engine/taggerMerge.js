@@ -31,6 +31,8 @@ export const CONFIDENCE_FIELDS = [
   'sleeve_shape',
   'length_hits_at',
   'silhouette',
+  'shoe_type',
+  'toe_shape',
   'hem_finish',
   'fabric_category',
   'fabric_weight',

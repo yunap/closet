@@ -9,7 +9,8 @@ const REVIEW_EDITABLE_FIELDS = [
   'fabric_category', 'fabric_weight', 'fiber_content', 'heel_height', 'walk_support',
   'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
   'neckline', 'sleeve_length', 'sleeve_shape', 'silhouette', 'length_hits_at', 'hem_finish',
-  'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype'
+  'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype',
+  'shoe_type', 'toe_shape'
 ]
 
 export function lowConfidenceFields(piece = {}) {
@@ -32,6 +33,8 @@ export function lowConfidenceFields(piece = {}) {
       if (field === 'waistband_type' && category !== 'bottom') return false
       if (field === 'accessory_subtype' && category !== 'accessory') return false
       if (field === 'bottom_subtype' && category !== 'bottom') return false
+      if (field === 'silhouette' && category === 'shoes') return false
+      if ((field === 'shoe_type' || field === 'toe_shape') && category !== 'shoes') return false
       if (field === 'jewelry_type' && (category !== 'accessory' || piece.accessory_subtype !== 'jewelry')) return false
       if (field === 'necklace_length' && (category !== 'accessory' || piece.jewelry_type !== 'necklace')) return false
 

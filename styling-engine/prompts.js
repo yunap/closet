@@ -766,10 +766,10 @@ Evaluate the garment's visual structure and weight along these two axes:
    - Fluid/Soft (ribbed knit, waffle knit, smocking/pucker, silk, gauze): Conforms to body contours, moves, or drapes. Fit matches: "skims" or "drapes" (never "structured").
 
 === DESCRIPTIVE CUES & LABELS ===
-- Sleeve Type: Select "bishop" or "bell" when there is visible sleeve volume (ballooning through the arm, gathered at the shoulder, or cinched tightly at the cuff). Do not default to "long" if these voluminous features are present. Default to "long" only for simple, straight, non-voluminous long sleeves.
-- Hem Finish: Select "design_hem" for high-low, curved shirt-tails, side-slits, or scalloped hems that are styled untucked. Select "straight_loose" for flat, horizontal straight hems.
-- Neckline: Select V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, or other based on construction.
-- Silhouette: Select fitted, slim, relaxed, boxy, A-line, drop-shoulder, or oversized.
+- Sleeve Shape: Select "bishop" or "bell" when there is visible sleeve volume (ballooning through the arm, gathered at the shoulder, or cinched tightly at the cuff). Do not default to sleeve_length "long" with no shape if these voluminous features are present — sleeve_length and sleeve_shape are separate fields; a voluminous long sleeve is sleeve_length "long" + sleeve_shape "bishop"/"bell". Default to a plain sleeve_shape only for simple, straight, non-voluminous sleeves.
+- Hem Finish: for a top, select "shirttail" specifically for a curved hem that's longer at the sides/back than the front (classic dress-shirt shape) — it is NOT tuckable despite looking tuck-ready. Select "curved" or "high_low" for other high-low/curved shapes, "asymmetric" for uneven/one-sided hems, "other" for anything else decorative. Select "straight_loose" for flat, horizontal straight hems (the only hem, besides "banded_elastic", that's actually tuckable).
+- Neckline: Select V, scoop, crew, boat, mock, turtleneck, cowl, off-shoulder, square, wrap, halter, strapless, one-shoulder, collared, shawl, other, or unknown based on construction.
+- Silhouette: category-conditional — see the silhouette field description in the schema below for the exact per-category list.
 - Fit on Body: Select clings_stretchy, clings_drapey, skims, hangs_straight, drapes, or structured.
 - Fabric Weight: judge from drape, silhouette structure, hem details, and fiber signals:
   * "ultralight": sheer or gauzy; light visibly passes through; fabric floats rather than hangs (voile, chiffon, gauze).
@@ -886,15 +886,17 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "pattern_scale": "none|subtle|medium|bold",
   "pattern_complexity": "solid|quiet|medium|loud",
   "reads_as": "short phrase: the dominant visual impression",
-  "hem_finish": "straight_loose (only standard flat, horizontal straight hem)|banded_elastic|ribbed|design_hem (high-low, curved, side-slits, vented, or decorative hem meant to be worn over/untucked)",
+  "hem_finish": "Valid values depend on category — top -> straight_loose (standard flat, horizontal straight hem)|banded_elastic|ribbed|curved|shirttail (curved, longer at the sides/back than front — this is a wear-over shape, NOT tuckable despite looking tuck-ready)|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. Only straight_loose and banded_elastic are tuckable; every other value (including shirttail) is a wear-over/no-tuck hem.",
   "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown",
   "sleeve_length": "sleeveless|cap|short|elbow|3/4|long|extra_long|unknown",
   "sleeve_shape": "fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown|null (omit for sleeveless)",
-  "length_hits_at": "Valid values depend on category (and, for bottom, bottom_subtype) — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|mid_calf|ankle|unknown; dress, or bottom when bottom_subtype is skirt -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom when bottom_subtype is pants/culottes/overalls/other -> shorts|knee|mid_calf|ankle|full_length|floor_length|unknown; shoes -> low|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown (low = fully open/minimal upper, not a coverage judgment — that lives in a separate field). Not applicable to accessory.",
-  "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
+  "length_hits_at": "Valid values depend on category (and, for bottom, bottom_subtype) — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|mid_calf|ankle|full_length|floor_length|unknown; dress, or bottom when bottom_subtype is skirt -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom when bottom_subtype is pants/culottes/overalls/other -> shorts|knee|mid_calf|ankle|full_length|floor_length|unknown; shoes -> low|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown (low = fully open/minimal upper, not a coverage judgment — that lives in a separate field). Not applicable to accessory.",
+  "silhouette": "Valid values depend on category (and, for bottom, bottom_subtype) — not applicable to shoes, use shoe_type/toe_shape instead: top -> fitted|slim|straight|relaxed|boxy|drop-shoulder|oversized|peplum|wrap; dress -> fitted|sheath|shift|A-line|wrap|slip|column|fit-and-flare|empire|relaxed; outerwear -> fitted|straight|boxy|relaxed|oversized|structured; bottom when bottom_subtype is skirt -> a_line|pencil|full|slip|straight|pleated|wrap; bottom when bottom_subtype is pants/culottes/overalls/other -> straight_leg|wide_leg|bootcut|flare|tapered|barrel|relaxed.",
+  "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|other|unknown|null (shoes only; null/omit for non-shoes). Never use 'heel' here — heel_height already represents heel height.",
+  "toe_shape": "pointed|almond|round|square|open_toe|other|unknown|null (shoes only; null/omit for non-shoes)",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
-  "tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only|null (top only — judge from hem_finish and length: design_hem or ribbed hems are wear_over_only; a fitted straight hem that's clearly meant to tuck is tucks_anywhere; null/omit for non-tops)",
-  "waistband_type": "structured_high_waist|structured_mid_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed|null (bottom only; null/omit for non-bottoms)",
+  "tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only|null (top only — judge from hem_finish and length: only straight_loose and banded_elastic hems are wear_over_only=false; every other hem_finish value, shirttail included, is wear_over_only; a fitted straight_loose or banded_elastic hem that's clearly meant to tuck is tucks_anywhere; null/omit for non-tops)",
+  "waistband_type": "structured_high_waist|structured_mid_waist|structured_low_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed|null (bottom only; null/omit for non-bottoms)",
   "fabric_category": "jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|lace|crochet|wool|cashmere|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other",
   "fabric_weight": "ultralight|light|medium|heavy — for SHOES use the shoe scale instead: delicate|slim|medium|chunky (a substantial shoe is chunky, not heavy)",
   "opacity": "opaque|semi_sheer|sheer|open_weave",
@@ -964,6 +966,8 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "sleeve_shape": "high|medium|low",
     "length_hits_at": "high|medium|low",
     "silhouette": "high|medium|low",
+    "shoe_type": "high|medium|low",
+    "toe_shape": "high|medium|low",
     "hem_finish": "high|medium|low",
     "fabric_category": "high|medium|low",
     "fabric_weight": "high|medium|low",

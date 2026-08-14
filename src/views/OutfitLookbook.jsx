@@ -846,7 +846,7 @@ function OutfitForm({ outfit = null, onSave, onCancel }) {
         ;[
           'background_color', 'pattern_type', 'pattern_scale', 'pattern_complexity',
           'reads_as', 'hem_finish', 'neckline', 'sleeve_length', 'sleeve_shape', 'length_hits_at',
-          'silhouette', 'fabric_category', 'fabric_weight'
+          'silhouette', 'shoe_type', 'toe_shape', 'fabric_category', 'fabric_weight'
         ].forEach(key => {
           if (piece[key] !== undefined && piece[key] !== null) {
             fd.append(key, piece[key])

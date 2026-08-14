@@ -38,33 +38,37 @@ const WALK_SUPPORT_OPTIONS = [
 const BOTTOM_SKIRT_LENGTH_OPTIONS = ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown']
 const BOTTOM_PANTS_LENGTH_OPTIONS = ['shorts','knee','mid_calf','ankle','full_length','floor_length','unknown']
 
+const BOTTOM_SKIRT_SILHOUETTE_OPTIONS = ['a_line','pencil','full','slip','straight','pleated','wrap']
+const BOTTOM_PANTS_SILHOUETTE_OPTIONS = ['straight_leg','wide_leg','bootcut','flare','tapered','barrel','relaxed']
+const SHOE_TYPE_OPTIONS = ['mule','loafer','boot','sandal','pump','flat','sneaker','other','unknown']
+const TOE_SHAPE_OPTIONS = ['pointed','almond','round','square','open_toe','other','unknown']
+
 const REVIEW_CONSTRUCTION_CONFIG = {
   top: {
     showNeckline: true,
     showSleeve: true,
-    silhouetteOptions: ['fitted','slim','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
+    silhouetteOptions: ['fitted','slim','straight','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
     lengthOptions: ['cropped','waist','high_hip','hip','low_hip','tunic','unknown'],
-    hemOptions: ['straight_loose', 'banded_elastic', 'ribbed', 'design_hem'],
+    hemOptions: ['straight_loose', 'banded_elastic', 'ribbed', 'curved', 'shirttail', 'high_low', 'asymmetric', 'other'],
   },
   bottom: {
-    silhouetteOptions: ['straight leg','wide leg','bootcut','flare','tapered','barrel','A-line skirt','pencil skirt','full skirt','slip skirt','relaxed','structured'],
-    // No static lengthOptions — depends on bottom_subtype (skirt vs pants),
-    // chosen at render time from BOTTOM_SKIRT_LENGTH_OPTIONS/BOTTOM_PANTS_LENGTH_OPTIONS.
-    hemOptions: ['straight_loose', 'cuffed', 'raw', 'tapered', 'banded_elastic', 'slit', 'asymmetrical', 'design_hem'],
+    // No static silhouetteOptions/lengthOptions — both depend on bottom_subtype
+    // (skirt vs pants), chosen at render time.
+    hemOptions: ['straight_loose', 'cuffed', 'raw', 'tapered', 'banded_elastic', 'slit', 'asymmetric', 'other'],
   },
   dress: {
     showNeckline: true,
     showSleeve: true,
-    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
+    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','empire','relaxed'],
     lengthOptions: ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown'],
   },
   outerwear: {
     showSleeve: true,
-    silhouetteOptions: ['cropped','fitted','boxy','relaxed','oversized','structured','longline'],
-    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','unknown'],
+    silhouetteOptions: ['fitted','straight','boxy','relaxed','oversized','structured'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','full_length','floor_length','unknown'],
   },
   shoes: {
-    silhouetteOptions: ['pointed','almond','round','square','open-toe','mule','loafer','boot','sandal','heel','flat','sneaker'],
+    // No silhouette — shoe_type/toe_shape replace it.
     lengthOptions: ['low','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
   }
 }
@@ -78,6 +82,7 @@ function emptyForm() {
     formality: null, heel_height: null, walk_support: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
     accessory_subtype: null, jewelry_type: null, necklace_length: null, bottom_subtype: null,
+    shoe_type: null, toe_shape: null,
     style_profile_json: {},
     tagger_version: null,
     manual_overrides: [],
@@ -528,7 +533,8 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
   const patternConstFields = [
     'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
     'neckline', 'sleeve_length', 'sleeve_shape', 'silhouette', 'length_hits_at', 'hem_finish',
-    'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype'
+    'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype',
+    'shoe_type', 'toe_shape'
   ]
   const hasLowConfidencePatternConst = patternConstFields.some(field => 
     String(confidence[field] || '').toLowerCase() === 'low'
@@ -953,16 +959,43 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
             )}
 
             {/* Silhouette */}
-            {REVIEW_CONSTRUCTION_CONFIG[form.category]?.silhouetteOptions && (
+            {(form.category === 'bottom' || REVIEW_CONSTRUCTION_CONFIG[form.category]?.silhouetteOptions) && (
               <div className="form-group">
                 <FieldLabel field="silhouette">Silhouette / Shape</FieldLabel>
                 <select className="form-select" value={form.silhouette || ''} onChange={e => set('silhouette', e.target.value || null)}>
                   <option value="">-- Select Silhouette --</option>
-                  {REVIEW_CONSTRUCTION_CONFIG[form.category].silhouetteOptions.map(opt => (
+                  {(form.category === 'bottom'
+                    ? (form.bottom_subtype === 'skirt' ? BOTTOM_SKIRT_SILHOUETTE_OPTIONS : BOTTOM_PANTS_SILHOUETTE_OPTIONS)
+                    : REVIEW_CONSTRUCTION_CONFIG[form.category].silhouetteOptions
+                  ).map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>
               </div>
+            )}
+
+            {/* Shoe Type / Toe Shape */}
+            {form.category === 'shoes' && (
+              <>
+                <div className="form-group">
+                  <FieldLabel field="shoe_type">Shoe Type</FieldLabel>
+                  <select className="form-select" value={form.shoe_type || ''} onChange={e => set('shoe_type', e.target.value || null)}>
+                    <option value="">-- Select Shoe Type --</option>
+                    {SHOE_TYPE_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <FieldLabel field="toe_shape">Toe Shape</FieldLabel>
+                  <select className="form-select" value={form.toe_shape || ''} onChange={e => set('toe_shape', e.target.value || null)}>
+                    <option value="">-- Select Toe Shape --</option>
+                    {TOE_SHAPE_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
             )}
 
             {/* Length */}
@@ -1033,6 +1066,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
                   <option value="">-- Select Waistband --</option>
                   <option value="structured_high_waist">structured high</option>
                   <option value="structured_mid_waist">structured mid</option>
+                  <option value="structured_low_waist">structured low</option>
                   <option value="soft_elastic_pull_on">soft elastic</option>
                   <option value="tight_no_room">tight - no tuck</option>
                   <option value="drawstring_relaxed">drawstring</option>
@@ -1296,6 +1330,8 @@ export default function BatchAdd({ onDone }) {
             waistband_type:     tags.waistband_type     || null,
             accessory_subtype:  tags.accessory_subtype  || null,
             bottom_subtype:     tags.bottom_subtype     || null,
+            shoe_type:          tags.shoe_type          || null,
+            toe_shape:          tags.toe_shape          || null,
             jewelry_type:       tags.jewelry_type       || null,
             necklace_length:    tags.necklace_length    || null,
             style_profile_json: tags.style_profile_json || {},

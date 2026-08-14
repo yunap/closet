@@ -49,6 +49,8 @@ export function attributePieceTextBlob(p) {
     p.pattern_scale || '',
     p.pattern_complexity || '',
     trustedField(p, 'silhouette') ? p.silhouette || '' : '',
+    p.shoe_type || '',
+    p.toe_shape || '',
     p.fabric_category || '',
     p.fabric_weight || '',
     ...(Array.isArray(p.fiber_content) ? p.fiber_content : []),
@@ -137,6 +139,7 @@ export function missingGateFields(piece = {}) {
   if (isShoePiece(piece)) {
     if (!isPopulated(piece.heel_height)) missing.push('heel_height')
     if (!isPopulated(piece.walk_support)) missing.push('walk_support')
+    if (!isPopulated(piece.shoe_type)) missing.push('shoe_type')
   }
   if (isAccessoryPiece(piece)) {
     if (!isPopulated(piece.accessory_subtype)) missing.push('accessory_subtype')
