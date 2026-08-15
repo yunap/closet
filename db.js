@@ -656,6 +656,21 @@ function initDb(dbPath) {
     console.warn('Failed to backfill shoe/accessory visual_weight from fabric_weight:', err.message)
   }
 
+  // One-time unstick: shoes/accessory pieces sitting at tag_state 'provisional' forever because
+  // the only way out was a worn photo, but those categories have no fit_on_body field for a worn
+  // photo to inform in the first place — a ring or a belt has no "fit and drape" judgment to make.
+  // tagStateForPhotos/tagStateForTaggerResult (taggerMerge.js) no longer require a worn photo for
+  // these categories going forward; this catches up pieces already stuck under the old rule.
+  try {
+    db.prepare(`
+      UPDATE pieces SET tag_state = 'fully_tagged'
+      WHERE category IN ('shoes', 'accessory') AND tag_state = 'provisional'
+        AND photo IS NOT NULL AND photo != ''
+    `).run()
+  } catch (err) {
+    console.warn('Failed to unstick shoe/accessory pieces from provisional tag_state:', err.message)
+  }
+
   // Additive learning-schema migrations. Existing local databases keep working.
   ;[
     'is_gold INTEGER DEFAULT 0',

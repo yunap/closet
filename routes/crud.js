@@ -276,7 +276,7 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     manual_overrides: finalManualOverrides,
     style_profile_json: confidencePinnedProfile
   }).style_profile_json
-  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo })
+  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo, category })
   const r = db.prepare(`
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, photo, worn_photo,
       recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
@@ -334,7 +334,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     manual_overrides: finalManualOverrides,
     style_profile_json: confidencePinnedProfile
   }).style_profile_json
-  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo })
+  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo, category: category || existing.category })
   db.prepare(`
     UPDATE pieces SET name=?,category=?,colors=?,occasions=?,season=?,notes=?,status=?,favorite=?,photo=?,worn_photo=?,
       recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,

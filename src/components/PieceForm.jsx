@@ -53,7 +53,7 @@ const FIBER_OPTIONS = [
   'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
   'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
   'spandex', 'leather', 'suede', 'denim',
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'unknown'
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
@@ -192,7 +192,7 @@ const FABRIC_BY_CATEGORY = {
   accessory: {
     sectionLabel: 'Material',
     fabricLabel: 'Primary Material',
-    fabricOptions: ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','other'],
+    fabricOptions: ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','horn','shell','resin','other'],
     weightLabel: 'Visual weight',
     weightOptions: ['delicate','slim','medium','chunky'],
     showStretch: false,

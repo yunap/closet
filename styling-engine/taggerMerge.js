@@ -9,7 +9,7 @@ const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 
   // Not textile fibers — added so accessory/jewelry pieces (fabric_category metal/stone/
   // wood/ceramic/glass) have a real value to align fiber_content with, instead of always
   // collapsing to 'unknown'. Same rationale as leather/suede/denim already being here.
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'unknown'])
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin', 'unknown'])
 // lyocell is the generic fiber name; tencel is its branded form and is this wardrobe's one
 // stored concept for both — remap before validating rather than treating them as distinct values.
 const FIBER_SYNONYMS = { lyocell: 'tencel' }
@@ -305,16 +305,30 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   return applySoftScoreFloors(merged)
 }
 
-export function tagStateForPhotos({ photo, worn_photo, style_profile_json } = {}) {
+// Categories with no fit_on_body field (see CLOTHING_CATEGORIES in PieceForm.jsx) have nothing
+// a worn photo would let a person judge — a ring or a belt doesn't have "fit and drape" the way
+// a shirt does. Without this, those pieces sat at tag_state 'provisional' forever: the only way
+// out was a worn photo, but the field that photo would inform is never shown for them.
+const FIT_IRRELEVANT_CATEGORIES = new Set(['shoes', 'accessory'])
+function categoryHasFitPhotoRelevance(category) {
+  return !FIT_IRRELEVANT_CATEGORIES.has(String(category || '').toLowerCase().trim())
+}
+
+export function tagStateForPhotos({ photo, worn_photo, style_profile_json, category } = {}) {
   if (hasFitVisiblePhoto(style_profile_json || {})) return 'fully_tagged'
   if (worn_photo) return 'fully_tagged'
+  if (photo && !categoryHasFitPhotoRelevance(category)) return 'fully_tagged'
   if (photo) return 'provisional'
   return 'untagged'
 }
 
 export function tagStateForTaggerResult(tags = {}, fallback = {}) {
   const profile = tags.style_profile_json || {}
+  const category = tags.category || fallback.category
   if (hasFitVisiblePhoto(profile)) return 'fully_tagged'
-  if (hasPhotoPropertyJudgment(profile)) return fallback.photo || fallback.worn_photo ? 'provisional' : 'untagged'
-  return tagStateForPhotos(fallback)
+  if (hasPhotoPropertyJudgment(profile)) {
+    if (fallback.photo && !categoryHasFitPhotoRelevance(category)) return 'fully_tagged'
+    return fallback.photo || fallback.worn_photo ? 'provisional' : 'untagged'
+  }
+  return tagStateForPhotos({ ...fallback, category })
 }
