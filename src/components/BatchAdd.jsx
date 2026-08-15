@@ -76,7 +76,7 @@ const REVIEW_CONSTRUCTION_CONFIG = {
   },
   shoes: {
     // No silhouette — shoe_type/toe_shape replace it.
-    lengthOptions: ['low','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
+    lengthOptions: ['open','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
   }
 }
 

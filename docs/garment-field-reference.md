@@ -182,10 +182,14 @@ Previously one flat shared enum across every category. Now genuinely per-categor
 - **outerwear**: `cropped | waist | high_hip | hip | low_hip | mid_thigh | knee | mid_calf | ankle | full_length | floor_length | unknown` — `full_length`/`floor_length` added 2026-08-14 so outerwear length concepts that used to live (lossily) in `silhouette`'s dropped `longline` value have a real home; a piece whose old `silhouette` was `longline` had that word opportunistically preserved into `length_hits_at` by the migration if the piece didn't already have a `length_hits_at` value set
 - **dress**, or **bottom** when `bottom_subtype = skirt`: `mini | above_knee | knee | below_knee | midi | ankle | maxi | unknown`
 - **bottom** when `bottom_subtype` is `pants | culottes | overalls | other`: `shorts | knee | mid_calf | ankle | full_length | floor_length | unknown`
-- **shoes**: `low | below_ankle | ankle | high_top | mid_calf | knee | over_knee | unknown` — `low`
-  replaces the old `open`/`closed` pair. Those were never actually reachable from the tagger (not
-  in its schema) and duplicated the separate `shoe_coverage` field's job, so nothing of value was
-  preserved by keeping them.
+- **shoes**: `open | below_ankle | ankle | high_top | mid_calf | knee | over_knee | unknown` — this
+  value replaced the old `open`/`closed` pair back on 2026-08-14. Those were never actually
+  reachable from the tagger (not in its schema) and duplicated the separate `shoe_coverage` field's
+  job, so nothing of value was preserved by keeping them. **Renamed `low` -> `open` same-day
+  follow-up**: the concept never changed (fully open/minimal upper, e.g. a sandal or slide — the
+  schema text already said so), but `low` read as a height tier sitting next to
+  `below_ankle`/`ankle`/etc. and was easy to misread as "the shoe sits low on the foot" rather than
+  "the shoe is open." One-time `db.js` migration renamed any existing `low` values in place.
 - **accessory**: not applicable, untouched.
 
 Same column, values rewritten in place by a one-time `db.js` migration (idempotent — renamed

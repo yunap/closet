@@ -671,6 +671,16 @@ function initDb(dbPath) {
     console.warn('Failed to unstick shoe/accessory pieces from provisional tag_state:', err.message)
   }
 
+  // One-time rename: shoes' length_hits_at value 'low' -> 'open'. The concept never changed
+  // (fully open/minimal upper, e.g. a sandal or slide — not a coverage-height judgment), only the
+  // label, which read as a height tier next to below_ankle/ankle/high_top/etc. and was easy to
+  // misread as "shoe sits low on the foot" rather than "shoe is open".
+  try {
+    db.prepare(`UPDATE pieces SET length_hits_at = 'open' WHERE category = 'shoes' AND length_hits_at = 'low'`).run()
+  } catch (err) {
+    console.warn('Failed to rename shoe length_hits_at low -> open:', err.message)
+  }
+
   // Additive learning-schema migrations. Existing local databases keep working.
   ;[
     'is_gold INTEGER DEFAULT 0',

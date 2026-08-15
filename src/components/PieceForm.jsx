@@ -168,7 +168,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     // No silhouette here — shoe_type/toe_shape replace it (the old flat
     // silhouette list mixed toe shape and shoe type into one enum).
     lengthLabel: 'Coverage / shaft',
-    lengthOptions: ['low','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
+    lengthOptions: ['open','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
   },
 }
 
