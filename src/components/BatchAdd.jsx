@@ -28,7 +28,8 @@ const FIBER_OPTIONS = [
   'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
   'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
   'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
-  'spandex', 'leather', 'suede', 'denim', 'unknown'
+  'spandex', 'leather', 'suede', 'denim',
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
@@ -706,13 +707,15 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
           </div>
         </div>
 
-        {/* Season */}
-        <div className="form-group">
-          <label className="form-label">Season</label>
-          <div className="radio-row">
-            {SEASONS.map(s => <button key={s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
+        {/* Season — skipped for jewelry, no seasonal relevance */}
+        {!(form.category === 'accessory' && form.accessory_subtype === 'jewelry') && (
+          <div className="form-group">
+            <label className="form-label">Season</label>
+            <div className="radio-row">
+              {SEASONS.map(s => <button key={s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
+            </div>
           </div>
-        </div>
+        )}
 
         {form.category !== 'accessory' && (
           <div className="form-group">
@@ -742,7 +745,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
             {(form.category === 'shoes'
               ? ['leather','suede','nubuck','patent','canvas','mesh','woven','synthetic','textile','rubber','other']
               : form.category === 'accessory'
-              ? ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','other']
+              ? ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','other']
               : ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','organza','lace','crochet','jacquard','wool','cashmere','boucle','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other']
             ).map(opt => (
               <option key={opt} value={opt}>{opt}</option>
@@ -892,38 +895,44 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
         {detailsExpanded && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '14px', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', background: 'rgba(104, 77, 98, 0.02)' }}>
             
-            {/* Pattern Type */}
-            <div className="form-group">
-              <FieldLabel field="pattern_type">Pattern Type</FieldLabel>
-              <select className="form-select" value={form.pattern_type || ''} onChange={e => set('pattern_type', e.target.value || null)}>
-                <option value="">-- Select Pattern Type --</option>
-                {['solid','floral','botanical','stripe','polka_dot','check','plaid','geometric','abstract','animal','graphic','paisley','patchwork','other'].map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            </div>
+            {/* Pattern fields: skipped for jewelry — no meaningful pattern, and these are three
+                chip-heavy selects the user shouldn't have to wade through for a solid metal piece. */}
+            {!(form.category === 'accessory' && form.accessory_subtype === 'jewelry') && (
+              <>
+                {/* Pattern Type */}
+                <div className="form-group">
+                  <FieldLabel field="pattern_type">Pattern Type</FieldLabel>
+                  <select className="form-select" value={form.pattern_type || ''} onChange={e => set('pattern_type', e.target.value || null)}>
+                    <option value="">-- Select Pattern Type --</option>
+                    {['solid','floral','botanical','stripe','polka_dot','check','plaid','geometric','abstract','animal','graphic','paisley','patchwork','other'].map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
 
-            {/* Pattern Scale */}
-            <div className="form-group">
-              <FieldLabel field="pattern_scale">Pattern Scale</FieldLabel>
-              <select className="form-select" value={form.pattern_scale || ''} onChange={e => set('pattern_scale', e.target.value || null)}>
-                <option value="">-- Select Pattern Scale --</option>
-                {['none','subtle','medium','bold'].map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            </div>
+                {/* Pattern Scale */}
+                <div className="form-group">
+                  <FieldLabel field="pattern_scale">Pattern Scale</FieldLabel>
+                  <select className="form-select" value={form.pattern_scale || ''} onChange={e => set('pattern_scale', e.target.value || null)}>
+                    <option value="">-- Select Pattern Scale --</option>
+                    {['none','subtle','medium','bold'].map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
 
-            {/* Pattern Complexity */}
-            <div className="form-group">
-              <FieldLabel field="pattern_complexity">Pattern Complexity</FieldLabel>
-              <select className="form-select" value={form.pattern_complexity || ''} onChange={e => set('pattern_complexity', e.target.value || null)}>
-                <option value="">-- Select Pattern Complexity --</option>
-                {['solid','quiet','medium','loud'].map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            </div>
+                {/* Pattern Complexity */}
+                <div className="form-group">
+                  <FieldLabel field="pattern_complexity">Pattern Complexity</FieldLabel>
+                  <select className="form-select" value={form.pattern_complexity || ''} onChange={e => set('pattern_complexity', e.target.value || null)}>
+                    <option value="">-- Select Pattern Complexity --</option>
+                    {['solid','quiet','medium','loud'].map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
 
             {/* Reads As */}
             <div className="form-group">

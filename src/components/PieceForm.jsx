@@ -52,7 +52,8 @@ const FIBER_OPTIONS = [
   'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
   'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
   'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
-  'spandex', 'leather', 'suede', 'denim', 'unknown'
+  'spandex', 'leather', 'suede', 'denim',
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
@@ -191,7 +192,7 @@ const FABRIC_BY_CATEGORY = {
   accessory: {
     sectionLabel: 'Material',
     fabricLabel: 'Material',
-    fabricOptions: ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','other'],
+    fabricOptions: ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','other'],
     weightLabel: 'Visual weight',
     weightOptions: ['delicate','slim','medium','chunky'],
     showStretch: false,
@@ -1042,12 +1043,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <ChipRow labelledBy="piece-form-occasions-label" options={OCCASIONS} value={form.occasions} onChange={v => set('occasions', v)} multi />
           </div>
 
+          {!(form.category === 'accessory' && form.accessory_subtype === 'jewelry') && (
           <div className="form-group">
             <div id="piece-form-season-label" className="form-label">Season</div>
             <div className="radio-row" role="group" aria-labelledby="piece-form-season-label">
               {SEASONS.map(s => <button type="button" key={s} aria-pressed={form.season === s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
             </div>
           </div>
+          )}
 
           {isEdit && (
             <div className="form-group">
@@ -1188,25 +1191,59 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               <small>{isEdit ? 'Pattern, construction, material, and silhouette' : 'Optional pattern, material, and silhouette details'}</small>
             </summary>
             <div className="piece-form-disclosure-body">
-          <Section label="Pattern & Visual" />
 
-          <div className="form-group">
-            <label className="form-label">Pattern type</label>
-            <ChipRow options={['solid','floral','botanical','stripe','polka_dot','check','plaid','geometric','abstract','animal','graphic','paisley','patchwork','other']} value={form.pattern_type} onChange={v => set('pattern_type', v)} />
-          </div>
+          {cat === 'accessory' && (
+            <>
+              <Section label="Accessory type" />
 
-          <div className="form-group">
-            <label className="form-label">Pattern scale</label>
-            <ChipRow options={['none','subtle','medium','bold']} value={form.pattern_scale} onChange={v => set('pattern_scale', v)} />
-          </div>
+              <div className="form-group" data-piece-field="accessory_subtype">
+                <FieldLabel field="accessory_subtype">Type</FieldLabel>
+                <ChipRow options={ACCESSORY_SUBTYPE_OPTIONS} value={form.accessory_subtype} onChange={v => set('accessory_subtype', v)} />
+              </div>
 
-          <div className="form-group">
-            <FieldLabel field="pattern_complexity">
-              Pattern complexity
-              <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>solid / quiet 1–2 colors / medium 2–3 / loud 3+</span>
-            </FieldLabel>
-            <ChipRow options={['solid','quiet','medium','loud']} value={form.pattern_complexity} onChange={v => set('pattern_complexity', v)} />
-          </div>
+              {form.accessory_subtype === 'jewelry' && (
+                <div className="form-group" data-piece-field="jewelry_type">
+                  <FieldLabel field="jewelry_type">Jewelry Type</FieldLabel>
+                  <ChipRow options={JEWELRY_TYPE_OPTIONS} value={form.jewelry_type} onChange={v => set('jewelry_type', v)} />
+                </div>
+              )}
+
+              {form.accessory_subtype === 'jewelry' && form.jewelry_type === 'necklace' && (
+                <div className="form-group" data-piece-field="necklace_length">
+                  <FieldLabel field="necklace_length">Necklace Length</FieldLabel>
+                  <ChipRow options={NECKLACE_LENGTH_OPTIONS} value={form.necklace_length} onChange={v => set('necklace_length', v)} />
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Jewelry (necklace, earrings, bracelet, ring, pin) has no meaningful pattern —
+              skip the whole chip wall rather than showing fields that always resolve to
+              solid/none. reads_as stays: it's one free-text field, not a wall of options,
+              and "delicate gold minimalist" is still a real visual read for a necklace. */}
+          {!(cat === 'accessory' && form.accessory_subtype === 'jewelry') && (
+            <>
+              <Section label="Pattern & Visual" />
+
+              <div className="form-group">
+                <label className="form-label">Pattern type</label>
+                <ChipRow options={['solid','floral','botanical','stripe','polka_dot','check','plaid','geometric','abstract','animal','graphic','paisley','patchwork','other']} value={form.pattern_type} onChange={v => set('pattern_type', v)} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Pattern scale</label>
+                <ChipRow options={['none','subtle','medium','bold']} value={form.pattern_scale} onChange={v => set('pattern_scale', v)} />
+              </div>
+
+              <div className="form-group">
+                <FieldLabel field="pattern_complexity">
+                  Pattern complexity
+                  <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>solid / quiet 1–2 colors / medium 2–3 / loud 3+</span>
+                </FieldLabel>
+                <ChipRow options={['solid','quiet','medium','loud']} value={form.pattern_complexity} onChange={v => set('pattern_complexity', v)} />
+              </div>
+            </>
+          )}
 
           <div className="form-group">
             <FieldLabel field="reads_as">
@@ -1359,30 +1396,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             </>
           )}
 
-          {cat === 'accessory' && (
-            <>
-              <Section label="Accessory type" />
-
-              <div className="form-group" data-piece-field="accessory_subtype">
-                <FieldLabel field="accessory_subtype">Type</FieldLabel>
-                <ChipRow options={ACCESSORY_SUBTYPE_OPTIONS} value={form.accessory_subtype} onChange={v => set('accessory_subtype', v)} />
-              </div>
-
-              {form.accessory_subtype === 'jewelry' && (
-                <div className="form-group" data-piece-field="jewelry_type">
-                  <FieldLabel field="jewelry_type">Jewelry Type</FieldLabel>
-                  <ChipRow options={JEWELRY_TYPE_OPTIONS} value={form.jewelry_type} onChange={v => set('jewelry_type', v)} />
-                </div>
-              )}
-
-              {form.accessory_subtype === 'jewelry' && form.jewelry_type === 'necklace' && (
-                <div className="form-group" data-piece-field="necklace_length">
-                  <FieldLabel field="necklace_length">Necklace Length</FieldLabel>
-                  <ChipRow options={NECKLACE_LENGTH_OPTIONS} value={form.necklace_length} onChange={v => set('necklace_length', v)} />
-                </div>
-              )}
-            </>
-          )}
             </div>
           </details>
 
