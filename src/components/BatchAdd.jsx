@@ -735,7 +735,10 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
         )}
 
         <div className="form-group">
-          <FieldLabel field="fabric_category">Fabric Category</FieldLabel>
+          <FieldLabel field="fabric_category">
+            {form.category === 'shoes' || form.category === 'accessory' ? 'Primary Material' : 'Fabric Category'}
+            {(form.category === 'shoes' || form.category === 'accessory') && <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>one value — for a mix (e.g. metal + stone), also check Material Properties below</span>}
+          </FieldLabel>
           <select
             className="form-select"
             value={form.fabric_category || ''}

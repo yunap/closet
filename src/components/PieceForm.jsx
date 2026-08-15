@@ -183,7 +183,7 @@ const BOTTOM_PANTS_LENGTH_OPTIONS = ['shorts','knee','mid_calf','ankle','full_le
 const FABRIC_BY_CATEGORY = {
   shoes: {
     sectionLabel: 'Material',
-    fabricLabel: 'Material',
+    fabricLabel: 'Primary Material',
     fabricOptions: ['leather','suede','nubuck','patent','canvas','mesh','woven','synthetic','textile','rubber','other'],
     weightLabel: 'Visual weight',
     weightOptions: ['delicate','slim','medium','chunky'],
@@ -191,7 +191,7 @@ const FABRIC_BY_CATEGORY = {
   },
   accessory: {
     sectionLabel: 'Material',
-    fabricLabel: 'Material',
+    fabricLabel: 'Primary Material',
     fabricOptions: ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','other'],
     weightLabel: 'Visual weight',
     weightOptions: ['delicate','slim','medium','chunky'],
@@ -1344,7 +1344,10 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           <Section label={fabricConfig.sectionLabel} />
 
           <div className="form-group">
-            <FieldLabel field="fabric_category">{fabricConfig.fabricLabel}</FieldLabel>
+            <FieldLabel field="fabric_category">
+              {fabricConfig.fabricLabel}
+              {(cat === 'shoes' || cat === 'accessory') && <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>one value — for a mix (e.g. metal + stone), also check Material Properties below</span>}
+            </FieldLabel>
             <ChipRow options={fabricConfig.fabricOptions} value={form.fabric_category} onChange={v => set('fabric_category', v)} />
           </div>
 
