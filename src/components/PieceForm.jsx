@@ -522,7 +522,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [saving,      setSaving]      = useState(false)
   const [tagging,     setTagging]     = useState(false)
   const [tagError,    setTagError]    = useState(null)
-  const [fitNoting,   setFitNoting]   = useState(false)
   const [previewImage, setPreviewImage] = useState(null)
   const [styleReadExpanded, setStyleReadExpanded] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -684,54 +683,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     finally { setTagging(false) }
   }
 
-  // Combined evaluation from worn photo — routes through the same tagger as hanger photos.
-  const handleWornPhoto = async (file) => {
-    setDirty(true)
-    setTagError(null)
-    setWornFile(file); setWornPrev(URL.createObjectURL(file)); setClearWorn(false)
-    setFitNoting(true)
-    try {
-      const fd = new FormData()
-      fd.append('worn_photo', file)
-      if (hangerFile) fd.append('photo', hangerFile)
-      const res = await fetch(isEdit ? `/api/ai/tag-piece-existing/${piece.id}` : '/api/ai/tag-piece', { method: 'POST', body: fd })
-      const tags = await res.json()
-      if (tags.error) throw new Error(tags.error)
-      const taxonomyGaps = Array.isArray(tags.color_taxonomy_gaps) ? tags.color_taxonomy_gaps : []
-      setColorTaxonomyGaps(taxonomyGaps)
-      let changedCount = 0
-      setForm(f => {
-        const next = { ...f }
-        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_length','sleeve_shape','length_hits_at','silhouette','fabric_category','fabric_weight','visual_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','accessory_subtype','jewelry_type','necklace_length','bottom_subtype','shoe_type','toe_shape','tagger_version'].forEach(field => {
-          applyTagValue(next, field, tags[field])
-        })
-        if (!f.name) applyTagValue(next, 'name', tags.name_suggestion || tags.name, '')
-        if (!f.notes) applyTagValue(next, 'notes', tags.notes_suggestion || tags.notes, '')
-        next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
-        applyTagValue(next, 'tag_state', tags.tag_state || 'fully_tagged')
-        changedCount = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(f[key])).length
-        return next
-      })
-      const gapSummary = taxonomyGaps.length
-        ? ` Unsupported ${taxonomyGaps.length === 1 ? 'shade' : 'shades'} ${taxonomyGaps.join(', ')} ${isEdit ? 'were added' : 'will be added when you save'} to Retag suggestions and were not applied.`
-        : ''
-      setAiUpdateSummary((changedCount
-        ? `Worn-photo analysis updated ${changedCount} ${changedCount === 1 ? 'detail' : 'details'}. Review them before saving.`
-        : 'Worn-photo analysis did not change any garment details.') + gapSummary)
-      const confidence = tags.style_profile_json?._confidence || tags._confidence
-      if (confidence) {
-        const flags = {}
-        Object.entries(confidence).forEach(([field, conf]) => {
-          if (conf === 'medium' || conf === 'low') flags[field] = conf
-        })
-        setConfidenceFlags(flags)
-      }
-    } catch { setTagError('The worn photo was added, but fit analysis failed. You can still review and save it.') }
-    finally { setFitNoting(false) }
-  }
-
   const handleSubmit = async () => {
-    if (!form.name.trim() || tagging || fitNoting) {
+    if (!form.name.trim() || tagging) {
       if (!form.name.trim()) setSaveError('Add a name before saving.')
       return
     }
@@ -935,7 +888,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               />
               {!isEdit && hangerFile && (
                 <div className="piece-form-ai-action">
-                  <button type="button" onClick={handleTagThis} disabled={tagging || fitNoting || saving} className="piece-form-ai-button">
+                  <button type="button" onClick={handleTagThis} disabled={tagging || saving} className="piece-form-ai-button">
                     {tagging
                       ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Tagging…</>
                       : '◇ Fill details with AI'}
@@ -948,9 +901,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             </div>
             <PhotoSlot
               label="Worn photo"
-              hint={fitNoting ? '◌ Evaluating…' : 'Auto-generates fit note'}
+              hint="Adds fit and drape context for the stylist"
               preview={wornPrev}
-              onChange={e => { const f = e.target.files[0]; if (f) handleWornPhoto(f) }}
+              onChange={e => { const f = e.target.files[0]; if (f) { setDirty(true); setWornFile(f); setWornPrev(URL.createObjectURL(f)); setClearWorn(false) } }}
               onClear={() => { setDirty(true); setWornFile(null); setClearWorn(true) }}
               pendingRemoval={clearWorn}
               onRestore={() => { setClearWorn(false); setWornPrev(piece?.worn_photo ? `/uploads/${piece.worn_photo}` : null) }}
@@ -961,7 +914,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           {/* Tag This button */}
           {isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn) || hangerFile) && (
             <div>
-              <button type="button" onClick={handleTagThis} disabled={tagging || fitNoting || saving} className="piece-form-ai-button">
+              <button type="button" onClick={handleTagThis} disabled={tagging || saving} className="piece-form-ai-button">
                 {tagging
                   ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Tagging…</>
                   : '◇ Update details with AI'}
@@ -1574,10 +1527,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <>
               <Section label="Notes" />
               <div className="form-group">
-                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  Styling notes
-                  {fitNoting && <span style={{ color: 'var(--accent)', fontSize: 10, fontStyle: 'italic' }}>◌ evaluating fit…</span>}
-                </label>
+                <label className="form-label">Styling notes</label>
                 <textarea className="form-textarea" placeholder="Anything you've learned about how to wear this piece…" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ minHeight: 100 }} />
               </div>
             </>
@@ -1609,7 +1559,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 : dirty ? 'Unsaved changes' : 'No unsaved changes')}
           </div>
           <button type="button" className="btn-secondary" onClick={requestClose} disabled={saving}>Cancel</button>
-          <button type="button" className="btn-primary" onClick={handleSubmit} disabled={saving || tagging || fitNoting || !form.name.trim()}>
+          <button type="button" className="btn-primary" onClick={handleSubmit} disabled={saving || tagging || !form.name.trim()}>
             {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add piece'}
           </button>
         </div>
