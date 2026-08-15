@@ -59,8 +59,8 @@ The real risk is two different validation tiers silently disagreeing:
 | `silhouette` | top, bottom, dress, outerwear (**not shoes** — see `shoe_type`/`toe_shape`) | **top**: `fitted \| slim \| straight \| relaxed \| boxy \| drop-shoulder \| oversized \| peplum \| wrap` — **bottom, `bottom_subtype = skirt`**: `a_line \| pencil \| full \| slip \| straight \| pleated \| wrap` — **bottom, `bottom_subtype` pants/culottes/overalls/other**: `straight \| wide \| bootcut \| flare \| tapered \| barrel \| relaxed` — **dress**: `fitted \| sheath \| shift \| A-line \| wrap \| slip \| column \| fit-and-flare \| empire \| relaxed` — **outerwear**: `fitted \| straight \| boxy \| relaxed \| oversized \| structured` | yes, category- and `bottom_subtype`-conditional in `prompts.js` as of 2026-08-14 | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].silhouetteOptions` for top/dress/outerwear; `BOTTOM_SKIRT_SILHOUETTE_OPTIONS`/`BOTTOM_PANTS_SILHOUETTE_OPTIONS` (chosen by `bottom_subtype` at render time) for bottom. **Rewritten 2026-08-14** to close the tagger/UI mismatch noted below — top gained `straight`; bottom's `structured` was dropped (meaningless for either skirts or pants; use `fit_on_body = structured` instead) and the field became `bottom_subtype`-conditional; dress gained `empire`; outerwear dropped `cropped` (opportunistically preserved into that piece's `length_hits_at` by the migration if unset) and `longline` (no unambiguous target — outerwear length concepts now live entirely in `length_hits_at`, see below) and gained `straight`. Shoes lost generic `silhouette` entirely — see `shoe_type`/`toe_shape`. |
 | `shoe_type` | shoes | `mule \| loafer \| boot \| sandal \| pump \| flat \| sneaker \| slip_on \| other \| unknown` | yes | PieceForm, BatchAdd | `SHOE_TYPE_OPTIONS`; gate-critical for shoes (`missingGateFields`). New 2026-08-14, replacing shoes' slice of the old generic `silhouette` enum (`mule\|loafer\|boot\|sandal\|heel\|flat\|sneaker`). Deliberately never uses `heel` — `heel_height` already represents heel height, so a `heel` shoe type would just duplicate that axis without saying what kind of shoe it is. One-time migration mapped recognizable old `silhouette` words (`loafer`, `boot`, etc.) across; this sandbox's real shoe data had generic-fit words instead (`slim`/`fitted`/`relaxed` — leftover from before shoes had their own silhouette vocabulary at all), so those backfilled to null and surface via the normal missing-field review chip rather than being guessed. `slip_on` added same-day follow-up: a closure-free shoe (no laces/buckle/zip) that isn't itself a loafer, mule, or flat shape — e.g. a slip-on sneaker. |
 | `toe_shape` | shoes | `pointed \| almond \| round \| square \| open_toe \| other \| unknown` | yes | PieceForm, BatchAdd | `TOE_SHAPE_OPTIONS`. New 2026-08-14, replacing shoes' other slice of the old generic `silhouette` enum (`pointed\|almond\|round\|square\|open-toe`). Same backfill-or-null migration behavior as `shoe_type`. |
-| `hem_finish` | top, bottom | **top**: `straight_loose \| banded_elastic \| ribbed \| curved \| shirttail \| high_low \| asymmetric \| other` — **bottom**: `straight_loose \| cuffed \| raw \| tapered \| banded_elastic \| slit \| asymmetric \| other` | yes, category-conditional in `prompts.js` as of 2026-08-14 | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].hemOptions`. Stored values are unchanged for the fields both categories already had (`straight_loose`, `banded_elastic`, `raw`, etc.) — only PieceForm's display **labels** got friendlier text for a few (e.g. bottom's `straight_loose` chip reads "straight/open", `raw` reads "raw/frayed", `banded_elastic` reads "elastic/banded"); do not confuse the label with the stored value when grepping for a value elsewhere. **Rewritten 2026-08-14** to close the tagger/UI mismatch noted below: top gained `curved`, `shirttail`, `high_low`, and `asymmetric`, dropped the catch-all `design_hem`; bottom's `asymmetrical` was renamed to `asymmetric` (matching top) and `design_hem` was dropped, `other` added. **Only `straight_loose` and `banded_elastic` are tuckable, in either category** — every other value, including `shirttail`, is a wear-over/no-tuck hem. This was a real correction: shirttail hems (the curved, longer-in-back style typically worn untucked with the tails hanging free) were initially assumed tuckable and are not — confirmed against a photo. See `computeTuckNote()` in `wardrobeAiContext.js`, which now checks hem_finish against exactly those two tuckable values instead of the old `ribbed`/`design_hem` no-tuck check. |
-| `tuck_behavior` | top | `tucks_anywhere \| tucks_with_structure \| wear_over_only` | **yes as of 2026-08-14** (previously tagger only rated confidence on this field, never produced a value — see `_confidence` vs schema split in `prompts.js`) | PieceForm; **BatchAdd added 2026-08-14** (was DB+gate-wired but had zero UI anywhere before this pass) | `prompts.js` schema |
+| `hem_finish` | top, bottom | **top**: `straight_loose \| banded_elastic \| ribbed \| curved \| shirttail \| high_low \| asymmetric \| other` — **bottom**: `straight_loose \| cuffed \| raw \| tapered \| banded_elastic \| slit \| asymmetric \| other` | yes, category-conditional in `prompts.js` as of 2026-08-14 | PieceForm, BatchAdd | `CONSTRUCTION_BY_CATEGORY[cat].hemOptions`. Stored values are unchanged for the fields both categories already had (`straight_loose`, `banded_elastic`, `raw`, etc.) — only PieceForm's display **labels** got friendlier text for a few (e.g. bottom's `straight_loose` chip reads "straight/open", `raw` reads "raw/frayed", `banded_elastic` reads "elastic/banded"); do not confuse the label with the stored value when grepping for a value elsewhere. **Rewritten 2026-08-14** to close the tagger/UI mismatch noted below: top gained `curved`, `shirttail`, `high_low`, and `asymmetric`, dropped the catch-all `design_hem`; bottom's `asymmetrical` was renamed to `asymmetric` (matching top) and `design_hem` was dropped, `other` added. **This is a construction/shape field only, and does not determine tuckability** — see `tuck_behavior` for that. A same-day-plus-one correction (2026-08-15) reversed an earlier version of this row that said "only `straight_loose`/`banded_elastic` are tuckable, everything else including `shirttail` is wear-over" — coder review flagged that a hem's shape does not by itself determine whether a garment tucks (a fitted shirttail or ribbed hem can be designed to tuck; a straight hem on an oversized top may not be), and PieceForm's chip labels had baked that wrong rule directly into the UI (`"ribbed - wear over"`, `"straight - tuckable"`, etc.) — those suffixes are gone, chips now show construction only. |
+| `tuck_behavior` | top | `tucks_anywhere \| tucks_with_structure \| wear_over_only` | **yes as of 2026-08-14** (previously tagger only rated confidence on this field, never produced a value — see `_confidence` vs schema split in `prompts.js`) | PieceForm; **BatchAdd added 2026-08-14** (was DB+gate-wired but had zero UI anywhere before this pass) | `prompts.js` schema. **This is the sole authority on tuckability** (2026-08-15 correction, see `hem_finish` row) — the tagger schema previously instructed the model to derive this mechanically from `hem_finish` ("judge from hem_finish and length: only straight_loose/banded_elastic hems are wear_over_only=false"), which meant the two fields were never actually independent despite `tuck_behavior` existing as its own column. Rewritten to instruct independent judgment from the garment's own cut/fit/design intent (fitted-through-body vs. loose/boxy, peplum/tunic length, worn photo if available) instead. The styling-chat system prompt had the identical bug (`"Ribbed or design hems → always wear_over_only"` in the TUCK COMPATIBILITY block) and got the same fix. If `tuck_behavior` is unset, downstream logic (`computeTuckNote()`) no longer infers a hard no-tuck rule from the hem — it returns null (no claim made) rather than guessing; the gap surfaces through the normal confidence/review system instead (`tuck_behavior` is a `STRUCTURE_FIT_CONFIDENCE_FIELDS` entry in `attributes.js`). |
 | `waistband_type` | bottom | `structured_high_waist \| structured_mid_waist \| structured_low_waist \| soft_elastic_pull_on \| tight_no_room \| drawstring_relaxed` | **yes as of 2026-08-14** (same gap as tuck_behavior; `structured_low_waist` added same pass) | PieceForm; **BatchAdd added 2026-08-14** | `prompts.js` schema. `structured_low_waist` receives tuck the same way the other structured waistbands do — see `computeWaistbandNote()` in `wardrobeAiContext.js`. |
 | `fit_on_body` | clothing | `clings_stretchy \| clings_drapey \| skims \| hangs_straight \| drapes \| structured \| none` | yes | PieceForm, BatchAdd (added 2026-08-14 — was tagged and DB-wired but had no BatchAdd control before this pass) | `prompts.js` schema |
 | `heel_height` | shoes | `flat \| low \| mid \| high` | yes | PieceForm, BatchAdd | `HEEL_HEIGHT_OPTIONS`; gate-critical for shoes |
@@ -262,6 +262,57 @@ synced. `bottom_subtype`, `accessory_subtype`, `jewelry_type`, `necklace_length`
 `waistband_type` remain **not** in that endpoint's schema — left as the same documented drift the
 prior pass called out, not expanded or fixed here.
 
+## Hem finish / tuck_behavior decoupling (2026-08-15, coder review)
+
+The 2026-08-14 `hem_finish` rewrite (above) introduced a real bug: it encoded tuckability directly
+into `hem_finish` — "only `straight_loose`/`banded_elastic` are tuckable, everything else including
+`shirttail` is a wear-over/no-tuck hem" — both in the tagger schema and in PieceForm's chip labels
+(`"ribbed - wear over"`, `"straight - tuckable"`, etc.). A coder review caught that this is too
+rigid: hem construction does not determine tuck behavior by itself (a fitted shirttail or ribbed
+hem can be designed to tuck; a straight hem on an oversized top may not be), and the wardrobe
+already has a dedicated `tuck_behavior` field (`tucks_anywhere | tucks_with_structure |
+wear_over_only`) that should be the actual authority.
+
+Worse than the UI framing: `tuck_behavior`'s own tagger schema instruction said to derive it
+*mechanically from hem_finish* ("judge from hem_finish and length: only straight_loose/
+banded_elastic hems are wear_over_only=false") — meaning the two fields, despite being separate DB
+columns, were never actually independent signals. The styling-chat system prompt had the identical
+rule baked into its TUCK COMPATIBILITY block ("Ribbed or design hems → always wear_over_only").
+And `computeTuckNote()` (both the live copy in `wardrobeAiContext.js` and the dead duplicate in
+`core.js`) checked `hem_finish` against a not-tuckable set *before* falling through to check
+`tuck_behavior`, so an explicit `tuck_behavior: tucks_anywhere` on a ribbed-hem piece was silently
+overridden to "no tuck — design hem" anyway.
+
+Fixed across all four:
+- **PieceForm.jsx**: hem chip labels show construction only (`straight`, `banded / elastic`,
+  `ribbed`, `curved`, `shirttail`, `high-low`, `asymmetric`, `other`) — no `"- tuckable"`/
+  `"- wear over"` suffix. The `hemHint` line ("only straight_loose/banded_elastic are tuckable")
+  is removed. (BatchAdd.jsx never had this problem — its hem `<select>` already just echoed the
+  raw enum values as labels.)
+- **`prompts.js` tagger schema**: `hem_finish` now says "construction/shape judgment only — do not
+  use it to decide tuckability." `tuck_behavior` now instructs independent judgment from the
+  garment's own cut, fit, and design intent (fitted-through-body vs. loose/boxy, peplum/tunic
+  length that would sit wrong if tucked, worn photo if available) instead of deriving from hem
+  shape. `routes/ai.js`'s `/extract-pieces` duplicate schema got the matching `hem_finish` fix
+  (it has no `tuck_behavior` field to fix — same documented drift as always).
+- **`prompts.js` styling-chat system prompt**: the TUCK COMPATIBILITY block's "Ribbed or design
+  hems → always wear_over_only" line is removed; the `tuck_behavior: wear_over_only` line now notes
+  explicitly that `tuck_behavior` is the authority and hem shape alone doesn't decide it.
+- **`computeTuckNote()`** (both `wardrobeAiContext.js` and the dead `core.js` copy): the
+  `hem_finish`-based no-tuck check is removed entirely. Precedence is now: explicit
+  `tuck_behavior: wear_over_only` → silk/satin fabric (a real physical constraint, left as-is,
+  out of this review's scope) → `tucks_with_structure` → `tucks_anywhere` → `null` (no claim) if
+  `tuck_behavior` is unset. A piece with no `tuck_behavior` value no longer gets a hard "no tuck"
+  inferred from its hem — it gets no tuck note at all, and the gap is surfaced the same way every
+  other missing structure-fit field is: `tuck_behavior` is already a `STRUCTURE_FIT_CONFIDENCE_FIELDS`
+  entry in `attributes.js`, so it drives a review badge rather than needing its own ad hoc "not
+  confirmed" string.
+
+Deliberately **not** touched: the fabric-based `silk`/`satin` → `wear_over_only` override in
+`computeTuckNote()`. That's a physical constraint on the fabric itself (satin/silk can't hold a
+crease/tuck regardless of what `tuck_behavior` was tagged), not the same class of bug as inferring
+from hem *shape* — the coder review was scoped to hem_finish specifically.
+
 ## Known drift / open items
 
 - Full value-spelling parity check (tagger enum spelling vs. UI chip label vs. any literal-string
@@ -282,6 +333,8 @@ prior pass called out, not expanded or fixed here.
   and the new `shoe_type`/`toe_shape`/`visual_weight` are synced as of 2026-08-14). Two independent
   tagger schemas remain a real drift risk; unifying them is worth doing at some point, not done here.
 - `styling-engine/core.js` has a dead, unused duplicate of `computeTuckNote()`/
-  `computeWaistbandNote()` that was not updated for the 2026-08-14 tuckable-hems rule or
-  `structured_low_waist` — the live versions both consumers actually use are in
-  `wardrobeAiContext.js`. Worth deleting the dead copy at some point, not done here.
+  `computeWaistbandNote()` — the live version both consumers actually use is in
+  `wardrobeAiContext.js`. Kept in sync by hand on both the `structured_low_waist` addition and the
+  2026-08-15 hem_finish/tuck_behavior fix (see below) since it's cheap to do and a future reader
+  grepping for the function shouldn't find two implementations disagreeing, but it is still dead
+  code with zero callers. Worth deleting at some point, not done here.

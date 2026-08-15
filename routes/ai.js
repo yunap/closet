@@ -879,7 +879,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "pattern_scale": "none|subtle|medium|bold",
       "pattern_complexity": "solid|quiet|medium|loud",
       "reads_as": "short phrase: the dominant visual impression",
-      "hem_finish": "Valid values depend on category — top -> straight_loose|banded_elastic|ribbed|curved|shirttail|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. Only straight_loose and banded_elastic are tuckable.",
+      "hem_finish": "Valid values depend on category — top -> straight_loose|banded_elastic|ribbed|curved|shirttail|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. Construction/shape only — does not determine tuckability.",
       "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown",
       "sleeve_length": "sleeveless|cap|short|elbow|3/4|long|extra_long|unknown",
       "sleeve_shape": "fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown|null (omit for sleeveless)",

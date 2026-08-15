@@ -97,9 +97,10 @@ PHOTO VISIBILITY — be honest about this:
 - Never give advice based on reconstructing what an unattached previous photo might have shown.
 
 TUCK COMPATIBILITY (two-piece check before every tuck suggestion):
-- Top tuck_behavior "wear_over_only" → NEVER suggest tucking.
+- Top tuck_behavior "wear_over_only" → NEVER suggest tucking. tuck_behavior is the authority on
+  whether a top can be tucked — hem_finish describes hem shape/construction only and does not by
+  itself determine tuckability (a ribbed or shaped hem can still be designed to tuck).
 - Silk, satin, chiffon → always wear_over_only regardless of notes.
-- Ribbed or design hems → always wear_over_only.
 - Bottom waistband "tight_no_room" or "soft_elastic_pull_on" → cannot receive a tuck.
 - If tuck check fails → pivot to untucked pairing. Never suggest a tuck that won't hold.
 
@@ -886,7 +887,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "pattern_scale": "none|subtle|medium|bold",
   "pattern_complexity": "solid|quiet|medium|loud",
   "reads_as": "short phrase: the dominant visual impression",
-  "hem_finish": "Valid values depend on category — top -> straight_loose (standard flat, horizontal straight hem)|banded_elastic|ribbed|curved|shirttail (curved, longer at the sides/back than front — this is a wear-over shape, NOT tuckable despite looking tuck-ready)|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. Only straight_loose and banded_elastic are tuckable; every other value (including shirttail) is a wear-over/no-tuck hem.",
+  "hem_finish": "Valid values depend on category — top -> straight_loose (standard flat, horizontal straight hem)|banded_elastic|ribbed|curved|shirttail (curved, longer at the sides/back than front)|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. This is a construction/shape judgment only — do not use it to decide tuckability; see tuck_behavior for that, which is judged independently.",
   "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown",
   "sleeve_length": "sleeveless|cap|short|elbow|3/4|long|extra_long|unknown",
   "sleeve_shape": "fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown|null (omit for sleeveless)",
@@ -895,7 +896,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|slip_on|other|unknown|null (shoes only; null/omit for non-shoes). Never use 'heel' here — heel_height already represents heel height. 'slip_on' is for a shoe with no closure (no laces, buckle, or zip) that is not itself a loafer, mule, or flat shape — e.g. a slip-on sneaker.",
   "toe_shape": "pointed|almond|round|square|open_toe|other|unknown|null (shoes only; null/omit for non-shoes)",
   "fit_on_body": "clings_stretchy|clings_drapey|skims|hangs_straight|drapes|structured|none",
-  "tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only|null (top only — judge from hem_finish and length: only straight_loose and banded_elastic hems are wear_over_only=false; every other hem_finish value, shirttail included, is wear_over_only; a fitted straight_loose or banded_elastic hem that's clearly meant to tuck is tucks_anywhere; null/omit for non-tops)",
+  "tuck_behavior": "tucks_anywhere|tucks_with_structure|wear_over_only|null (top only; null/omit for non-tops). Judge independently from the garment's own cut, fit, and design intent — do NOT derive this mechanically from hem_finish; a hem shape alone does not determine tuckability (e.g. a fitted shirttail or ribbed hem can still be designed to tuck, and a straight_loose hem on an oversized/boxy top may not be). tucks_anywhere = fitted or semi-fitted through the body, sits flat when tucked without help. tucks_with_structure = tuckable but needs a belt or structured waistband to sit cleanly (loose/relaxed fit, or bulk that needs containing). wear_over_only = clearly designed to be worn untucked (peplum, tunic length, cropped so it would sit above/below the waistband if tucked, or a hem/silhouette meant to be seen, not tucked away). Use the worn photo if available; otherwise judge from cut and length shown in the hanger photo.",
   "waistband_type": "structured_high_waist|structured_mid_waist|structured_low_waist|soft_elastic_pull_on|tight_no_room|drawstring_relaxed|null (bottom only; null/omit for non-bottoms)",
   "fabric_category": "Valid values depend on category — top/bottom/dress/outerwear -> jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|organza|lace|crochet|jacquard|wool|cashmere|boucle|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other; shoes -> leather|suede|nubuck|patent|canvas|mesh|woven (use woven for raffia/straw/other woven shoe materials)|synthetic|textile|rubber|other; accessory -> leather|suede|metal|stone|straw|canvas|synthetic|textile|rubber|wood|ceramic|glass|horn|shell|resin|pearl|crystal|enamel|other. Never use the clothing list for a shoe or accessory piece.",
   "fabric_weight": "ultralight|light|medium|heavy|null (top/bottom/dress/outerwear only; null/omit for shoes/accessory — use visual_weight for those instead)",

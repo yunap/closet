@@ -64,20 +64,16 @@ export function pieceGarmentIntelligence(piece = {}) {
   }
 }
 
-// Only these two hem finishes are actually tuckable. Everything else — ribbed,
-// curved, shirttail (a curved, tuck-optimized-LOOKING shape that is not
-// actually tuckable), high_low, asymmetric, other — plays the same "wear
-// over" role the old design_hem catch-all used to. Checking by exclusion
-// instead of an explicit no-tuck list means a future new hem_finish value
-// defaults to no-tuck (the safe default) rather than silently passing as
-// tuckable if this list isn't updated.
-const TUCKABLE_HEMS = new Set(['straight_loose', 'banded_elastic'])
-
+// tuck_behavior is the sole authority on whether a piece can be tucked —
+// hem_finish is construction only (what shape the hem is) and must not be
+// used to infer or override tuck permission. A piece with no tuck_behavior
+// set returns null here rather than guessing from its hem; that gap is
+// already surfaced through the normal confidence/review system instead
+// (tuck_behavior is a STRUCTURE_FIT_CONFIDENCE_FIELDS entry in attributes.js).
 export function computeTuckNote(piece = {}) {
   if (!CLOTHING_WITH_TUCK.has(piece.category)) return null
   if (piece.tuck_behavior === 'wear_over_only') return 'no tuck — wear over only'
   if (piece.fabric_category === 'silk' || piece.fabric_category === 'satin') return 'no tuck — silk/satin cannot hold'
-  if (piece.hem_finish && !TUCKABLE_HEMS.has(piece.hem_finish)) return 'no tuck — design hem'
   if (piece.tuck_behavior === 'tucks_with_structure') return 'tucks with structured waist or belt only'
   if (piece.tuck_behavior === 'tucks_anywhere') return 'tucks freely'
   return null
