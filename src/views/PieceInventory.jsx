@@ -21,6 +21,39 @@ const CATEGORIES = [
   { value: 'accessory', label: 'Accessories' },
 ]
 
+// Only categories with a real subtype/type column get the Type filter — one list per category,
+// never more than one applies at a time. Keep in sync with the tagger's own enum for each field.
+const SUBTYPE_OPTIONS_BY_CATEGORY = {
+  bottom: [
+    { value: 'pants',    label: 'Pants' },
+    { value: 'shorts',   label: 'Shorts' },
+    { value: 'skirt',    label: 'Skirts' },
+    { value: 'culottes', label: 'Culottes' },
+    { value: 'overalls', label: 'Overalls' },
+    { value: 'other',    label: 'Other' },
+  ],
+  shoes: [
+    { value: 'mule',    label: 'Mules' },
+    { value: 'loafer',  label: 'Loafers' },
+    { value: 'boot',    label: 'Boots' },
+    { value: 'sandal',  label: 'Sandals' },
+    { value: 'pump',    label: 'Pumps' },
+    { value: 'flat',    label: 'Flats' },
+    { value: 'sneaker', label: 'Sneakers' },
+    { value: 'other',   label: 'Other' },
+  ],
+  accessory: [
+    { value: 'belt',    label: 'Belts' },
+    { value: 'bag',     label: 'Bags' },
+    { value: 'jewelry', label: 'Jewelry' },
+    { value: 'scarf',   label: 'Scarves' },
+    { value: 'hat',     label: 'Hats' },
+    { value: 'watch',   label: 'Watches' },
+    { value: 'gloves',  label: 'Gloves' },
+    { value: 'other',   label: 'Other' },
+  ],
+}
+
 const OCCASIONS = [
   { value: '',             label: 'All occasions' },
   { value: 'casual',       label: 'Casual' },
@@ -56,6 +89,7 @@ export default function PieceInventory({ onSendToStylist }) {
   // Reads fall back to the same defaults as the old useState initialisers.
   const search       = searchParams.get('q')        ?? ''
   const filterCat    = searchParams.get('category') ?? ''
+  const filterSubtype = searchParams.get('subtype') ?? ''
   const filterOcc    = searchParams.get('occasion') ?? ''
   const filterSeason = searchParams.get('season')   ?? ''
   const filterColor  = searchParams.get('color')    ?? ''
@@ -134,6 +168,7 @@ export default function PieceInventory({ onSendToStylist }) {
     piecesRequestRef.current = { controller, id: requestId }
     const params = new URLSearchParams()
     if (filterCat)    params.set('category', filterCat)
+    if (filterSubtype && SUBTYPE_OPTIONS_BY_CATEGORY[filterCat]) params.set('subtype', filterSubtype)
     if (filterOcc)    params.set('occasion', filterOcc)
     if (filterSeason) params.set('season', filterSeason)
     if (filterColor)  params.set('color', filterColor)
@@ -159,7 +194,7 @@ export default function PieceInventory({ onSendToStylist }) {
     } finally {
       if (piecesRequestRef.current.id === requestId) setLoading(false)
     }
-  }, [filterCat, filterOcc, filterSeason, filterColor, filterColorFamily, filterFabric, debouncedSearch, favOnly])
+  }, [filterCat, filterSubtype, filterOcc, filterSeason, filterColor, filterColorFamily, filterFabric, debouncedSearch, favOnly])
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => () => piecesRequestRef.current.controller?.abort(), [])
@@ -291,17 +326,21 @@ export default function PieceInventory({ onSendToStylist }) {
   const handleEdit = (piece) => { setDetailPiece(null); setEditPiece(piece); setShowForm(true) }
   const occasionLabel = OCCASIONS.find(o => o.value === filterOcc)?.label
   const seasonLabel   = SEASONS.find(s => s.value === filterSeason)?.label
+  const subtypeOptions = SUBTYPE_OPTIONS_BY_CATEGORY[filterCat]
+  const subtypeLabel   = subtypeOptions?.find(o => o.value === filterSubtype)?.label
   const activeCompactFilters = [
     filterOcc    ? { key: 'occasion', label: occasionLabel, clear: () => setFilter({ occasion: '' }) } : null,
     filterSeason ? { key: 'season',   label: seasonLabel,   clear: () => setFilter({ season: '' }) } : null,
+    (filterSubtype && subtypeOptions) ? { key: 'subtype', label: subtypeLabel, clear: () => setFilter({ subtype: '' }) } : null,
     (filterColor || filterColorFamily) ? { key: 'color', label: filterColor ? `${COLOR_FAMILY_LABELS[activeColorFamily]} · ${filterColor}` : COLOR_FAMILY_LABELS[filterColorFamily], clear: () => setFilter({ color: '', color_family: '' }) } : null,
     filterFabric ? { key: 'fabric',   label: filterFabric,  clear: () => setFilter({ fabric: '' }) } : null,
   ].filter(Boolean)
-  const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', color: '', color_family: '', fabric: '' })
-  const hasActiveFilters = Boolean(search || filterCat || filterOcc || filterSeason || filterColor || filterColorFamily || filterFabric || favOnly)
+  const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', subtype: '', color: '', color_family: '', fabric: '' })
+  const hasActiveFilters = Boolean(search || filterCat || filterSubtype || filterOcc || filterSeason || filterColor || filterColorFamily || filterFabric || favOnly)
   const clearWardrobeFilters = () => setFilter({
     q: '',
     category: '',
+    subtype: '',
     occasion: '',
     season: '',
     color: '',
@@ -449,7 +488,7 @@ export default function PieceInventory({ onSendToStylist }) {
         <div className="wardrobe-filter-group">
           <div className="filter-row" aria-label="Wardrobe categories">
             {CATEGORIES.map(c => (
-              <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value })} aria-pressed={filterCat === c.value}>{c.label}</button>
+              <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value, subtype: '' })} aria-pressed={filterCat === c.value}>{c.label}</button>
             ))}
           </div>
         </div>
@@ -507,6 +546,37 @@ export default function PieceInventory({ onSendToStylist }) {
                   >
                     <span>{s.label}</span>
                     {filterSeason === s.value && <span aria-hidden="true">✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="wardrobe-filter-menu">
+            <button
+              className={`filter-menu-btn ${openFilterMenu === 'subtype' || filterSubtype ? 'active' : ''}`}
+              onClick={() => setOpenFilterMenu(openFilterMenu === 'subtype' ? null : 'subtype')}
+              aria-expanded={openFilterMenu === 'subtype'}
+              aria-haspopup="listbox"
+              data-filter-trigger="subtype"
+              disabled={!subtypeOptions}
+              title={!subtypeOptions ? 'Select Bottoms, Shoes, or Accessories to filter by type' : undefined}
+            >
+              <span>{filterSubtype ? `Type: ${subtypeLabel}` : 'Type'}</span>
+              <span className="filter-menu-chevron">⌄</span>
+            </button>
+            {openFilterMenu === 'subtype' && subtypeOptions && (
+              <div className="filter-menu-popover" role="listbox" aria-label="Type" data-filter-menu="subtype" onKeyDown={handleFilterMenuKeyDown}>
+                {subtypeOptions.map(o => (
+                  <button
+                    key={o.value}
+                    className={`custom-select-option ${filterSubtype === o.value ? 'active' : ''}`}
+                    onClick={() => selectFilterOption('subtype', { subtype: filterSubtype === o.value ? '' : o.value })}
+                    role="option"
+                    aria-selected={filterSubtype === o.value}
+                  >
+                    <span>{o.label}</span>
+                    {filterSubtype === o.value && <span aria-hidden="true">✓</span>}
                   </button>
                 ))}
               </div>

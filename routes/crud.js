@@ -117,10 +117,20 @@ function withRetagSuggestions(piece, suggestionsByPiece = null) {
 
 // ── Pieces API ─────────────────────────────────────────────────────────────────
 router.get('/pieces', (req, res) => {
-  const { category, occasion, season, status, search, favorites, color, color_family, fabric } = req.query
+  const { category, occasion, season, status, search, favorites, color, color_family, fabric, subtype } = req.query
   let q = 'SELECT * FROM pieces WHERE 1=1'
   const params = []
   if (category)  { q += ' AND category = ?';              params.push(category) }
+  if (subtype) {
+    // Which column "subtype" means depends on category — each category has its own subtype
+    // field, never more than one applies at a time. subtypeColumn is chosen from a fixed
+    // whitelist, never interpolated from user input.
+    const subtypeColumn = category === 'bottom' ? 'bottom_subtype'
+      : category === 'accessory' ? 'accessory_subtype'
+      : category === 'shoes' ? 'shoe_type'
+      : null
+    if (subtypeColumn) { q += ` AND ${subtypeColumn} = ?`; params.push(subtype) }
+  }
   if (season && season !== 'all') { q += " AND (season = ? OR season = 'year-round')"; params.push(season) }
   if (status)    { q += ' AND status = ?';                params.push(status) }
   if (search)    {

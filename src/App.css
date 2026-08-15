@@ -1001,6 +1001,12 @@ img { display: block; max-width: 100%; }
   white-space: nowrap;
 }
 
+.wardrobe-filter-menu .filter-menu-btn:disabled {
+  color: var(--text-light);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .wardrobe-sort-group {
   display: flex;
   align-items: center;
