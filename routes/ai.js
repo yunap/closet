@@ -424,6 +424,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
 
   const { text: raw, usage } = await askStylistWithUsage(payload)
   if (onUsage && usage) onUsage(usage)
+  console.log('[Tag Piece] RAW RESPONSE LENGTH:', raw?.length, 'RAW RESPONSE:', raw)
   let tags
   try {
     tags = parseModelJson(raw, { context: 'tagger', maxTokens: payload.maxTokens })
@@ -449,6 +450,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     tags._confidence = confidence
     tags.photo_properties = photoProperties
   }
+  console.log('[Tag Piece] Final normalized tags:', JSON.stringify(tags, null, 2))
   return tags
 }
 
