@@ -874,7 +874,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "name_suggestion": "descriptive name: [visual]+[pattern/texture]+[shape]+[length], 3-5 words, lowercase. e.g. 'sculptural asymmetrical cowl knit top' or 'black cream botanical midi skirt'",
   "notes_suggestion": "1-2 sentence stylist summary of the item's visual structure, texture, design details (e.g. asymmetrical button cowls, curved high-low design hems), and styling potential for the user's notes.",
   "category": "top|bottom|dress|outerwear|shoes|accessory",
-  "accessory_subtype": "belt|bag|jewelry|scarf|hat|watch|gloves|other|null (accessory only; null/omit for non-accessories)",
+  "accessory_subtype": "belt|bag|jewelry|scarf|hat|watch|glasses|gloves|other|null (accessory only; null/omit for non-accessories)",
   "bottom_subtype": "pants|shorts|skirt|culottes|overalls|other|unknown|null (bottom only; null/omit for non-bottoms)",
   "jewelry_type": "necklace|earrings|bracelet|ring|pin|null (only when accessory_subtype is jewelry; null/omit otherwise)",
   "necklace_length": "choker|short|long|null (only when jewelry_type is necklace; null/omit otherwise)",

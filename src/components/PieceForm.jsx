@@ -74,6 +74,7 @@ const ACCESSORY_SUBTYPE_OPTIONS = [
   { value: 'scarf', label: 'Scarf' },
   { value: 'hat', label: 'Hat' },
   { value: 'watch', label: 'Watch' },
+  { value: 'glasses', label: 'Glasses' },
   { value: 'gloves', label: 'Gloves' },
   { value: 'other', label: 'Other' },
 ]

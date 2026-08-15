@@ -846,7 +846,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
               <FieldLabel field="accessory_subtype">Accessory Type</FieldLabel>
               <select className="form-select" value={form.accessory_subtype || ''} onChange={e => set('accessory_subtype', e.target.value || null)}>
                 <option value="">-- Select Type --</option>
-                {['belt','bag','jewelry','scarf','hat','watch','gloves','other'].map(opt => (
+                {['belt','bag','jewelry','scarf','hat','watch','glasses','gloves','other'].map(opt => (
                   <option key={opt} value={opt}>{opt}</option>
                 ))}
               </select>

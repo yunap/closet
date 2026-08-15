@@ -382,7 +382,7 @@ function initDb(dbPath) {
     // NOT the same as an owner-judged 'no'; only the second is evidence. See
     // docs/capsule-roster-selection-spec.md §7b.
     'needs_base TEXT',
-    // accessory_subtype: belt|bag|jewelry|scarf|hat|watch|gloves|other. NULL
+    // accessory_subtype: belt|bag|jewelry|scarf|hat|watch|glasses|gloves|other. NULL
     // for all non-accessory categories. jewelry_type only meaningful
     // when accessory_subtype is 'jewelry'.
     'accessory_subtype TEXT',
