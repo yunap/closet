@@ -5,7 +5,7 @@ const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
 const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
   'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
-  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'hemp',
+  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'tweed', 'hemp',
   // Not textile fibers — added so accessory/jewelry pieces (fabric_category metal/stone/
   // wood/ceramic/glass) have a real value to align fiber_content with, instead of always
   // collapsing to 'unknown'. Same rationale as leather/suede/denim already being here.

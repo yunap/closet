@@ -52,7 +52,7 @@ const FIBER_OPTIONS = [
   'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
   'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
   'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
-  'spandex', 'leather', 'suede', 'denim',
+  'spandex', 'leather', 'suede', 'denim', 'tweed',
   'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
   'pearl', 'crystal', 'enamel', 'unknown'
 ]
