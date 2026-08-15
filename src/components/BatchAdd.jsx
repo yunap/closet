@@ -29,7 +29,8 @@ const FIBER_OPTIONS = [
   'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
   'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
   'spandex', 'leather', 'suede', 'denim',
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin', 'unknown'
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
+  'pearl', 'crystal', 'enamel', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
@@ -748,7 +749,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
             {(form.category === 'shoes'
               ? ['leather','suede','nubuck','patent','canvas','mesh','woven','synthetic','textile','rubber','other']
               : form.category === 'accessory'
-              ? ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','horn','shell','resin','other']
+              ? ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','horn','shell','resin','pearl','crystal','enamel','other']
               : ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','organza','lace','crochet','jacquard','wool','cashmere','boucle','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other']
             ).map(opt => (
               <option key={opt} value={opt}>{opt}</option>

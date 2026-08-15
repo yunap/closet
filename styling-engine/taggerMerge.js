@@ -9,7 +9,10 @@ const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 
   // Not textile fibers — added so accessory/jewelry pieces (fabric_category metal/stone/
   // wood/ceramic/glass) have a real value to align fiber_content with, instead of always
   // collapsing to 'unknown'. Same rationale as leather/suede/denim already being here.
-  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin', 'unknown'])
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
+  // Jewelry-specific materials — pearl/crystal/enamel don't fit any of the above (not stone,
+  // not glass, not metal) but are common enough jewelry materials to need their own value.
+  'pearl', 'crystal', 'enamel', 'unknown'])
 // lyocell is the generic fiber name; tencel is its branded form and is this wardrobe's one
 // stored concept for both — remap before validating rather than treating them as distinct values.
 const FIBER_SYNONYMS = { lyocell: 'tencel' }
