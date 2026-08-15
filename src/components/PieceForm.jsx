@@ -172,7 +172,7 @@ const CONSTRUCTION_BY_CATEGORY = {
   },
 }
 
-const SHOE_TYPE_OPTIONS = ['mule','loafer','boot','sandal','pump','flat','sneaker','other','unknown']
+const SHOE_TYPE_OPTIONS = ['mule','loafer','boot','sandal','pump','flat','sneaker','slip_on','other','unknown']
 const TOE_SHAPE_OPTIONS = ['pointed','almond','round','square','open_toe','other','unknown']
 
 const BOTTOM_SKIRT_SILHOUETTE_OPTIONS = ['a_line','pencil','full','slip','straight','pleated','wrap']
