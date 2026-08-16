@@ -434,7 +434,23 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     }]
   }
 
+  // Latency + cache-hit logging: no instrumentation existed for tag calls before this (unlike
+  // outfit generation's generation_runs / freeform_generation_runs tables) despite this being one
+  // of the largest, slowest call shapes in the app (~7-10k input tokens, up to 2500 output, full
+  // stylist model, one or two images). Console-only for now, not persisted — this answers "is it
+  // actually slow, and is the caching fix from this session actually landing" without a schema
+  // change; promote to a real table if it turns out to be worth tracking over time.
+  const tagCallStartedAt = Date.now()
   const { text: raw, usage } = await askStylistWithUsage(payload)
+  const tagCallMs = Date.now() - tagCallStartedAt
+  const cacheReadTokens = usage?.cacheReadInputTokens || 0
+  const cacheCreationTokens = usage?.cacheCreationInputTokens || 0
+  const cacheStatus = cacheReadTokens > 0
+    ? `HIT (${cacheReadTokens} tok read from cache)`
+    : cacheCreationTokens > 0
+      ? `MISS, wrote ${cacheCreationTokens} tok to cache`
+      : 'no cache activity reported'
+  console.log(`[Tag Piece] provider call took ${tagCallMs}ms — input ${usage?.inputTokens ?? '?'} tok, output ${usage?.outputTokens ?? '?'} tok, cache: ${cacheStatus}`)
   if (onUsage && usage) onUsage(usage)
   console.log('[Tag Piece] RAW RESPONSE LENGTH:', raw?.length, 'RAW RESPONSE:', raw)
   let tags
