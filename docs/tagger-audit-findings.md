@@ -228,12 +228,37 @@ one goes stale" problem Q7 found in the tagger prompts themselves, now found in 
 built to check them. Not fixed here (out of scope for a measurement script edit), flagged for
 whoever next touches that file.
 
-**`stretch` at 1 consumer file is the strongest new candidate for the same class of finding as
-`fiber_content`'s latent hot-weather gap** (`engine-behaviour-map.md`) — populated on 236/245
-pieces (per Q6, corrected 39 times), instructed clearly in the prompt, and read by almost nothing
-downstream. Not traced further here (Q4's job was surfacing the candidate list, not chasing each
-one) — worth a dedicated look before any tagger-prompt work spends tokens improving `stretch`
-tagging quality for a field the engine barely reads.
+**[correction, 2026-08-15]** This section originally claimed `stretch` was *"populated on 236/245
+pieces"* — wrong, and caught only while tracing the field further (below). The real number is
+**57/244 (23%)**; the 236 figure was misattributed from an unrelated wardrobe-size baseline
+elsewhere in this document. Corrected here rather than silently edited, since the wrong number was
+live in this doc for part of this session.
+
+**Traced 2026-08-15, script: `scratch/trace_stretch_consumption.js`.** `stretch`'s one consumer,
+`refinedFabric()` in `styling-engine/softScoreFloors.js:76`, only reads it inside a narrow branch:
+`fabric_category === 'synthetic'` AND `fabric_weight` is `ultralight`/`light` AND `fit_on_body` is
+`drapes` or unset. Every other fabric category short-circuits to a verdict before `stretch` is ever
+consulted. On the real wardrobe:
+
+- Only **8/244 pieces (3%)** ever reach the branch where `stretch` is read at all.
+- Of those 8, **zero** have `stretch` actually block the outcome (none are `moderate`/`stretchy` —
+  every piece that reaches the check also happens to pass it).
+
+**Verdict: fully non-discriminating today, not a latent gap.** This puts `stretch` in the same
+category `engine-behaviour-map.md` documented for `heel_height`/`role_permission` before they were
+ever corrected — a correctly-wired mechanism with zero pieces currently able to exercise it —
+**not** the same category as `fiber_content`'s live wet-exposure miss, which affected two real,
+identifiable garments. Spending tagger-prompt tokens improving `stretch` tagging quality would not
+change any current outcome; the gate it feeds is too narrow for this wardrobe's composition to
+ever fire it, regardless of tagging accuracy.
+
+**One design risk found in passing, not confirmed live:** unset `stretch` is treated identically to
+`stretch: "none"` in the pass-list (`['none', 'minimal', ''].includes(...)`), rather than being
+excluded conservatively the way `needs_base`'s own instruction explicitly requires ("conservative
+default: null, not 'no'"). 5 of the 8 reachable pieces have no `stretch` value at all and pass
+anyway. No known case today produces a wrong answer from this — there's no ground truth showing any
+of those 5 are actually stretchy — but it's backwards from the schema's own stated convention for
+handling absence, and worth fixing if this gate is ever widened to matter more.
 
 Truncation check: **zero** missing `style_lanes`/`garment_intelligence`/`_confidence`/
 `photo_properties` across all 73 v2-tagged pieces — no truncation evidence at the current output
@@ -373,7 +398,7 @@ ways) needs new billed calls and was deliberately not run. Gate holds.
 
 ## Synthesis — is the tagger the best it can be?
 
-**Not yet, but four free, no-quality-risk items shipped the same session this was written, and the
+**Not yet, but seven free, no-quality-risk items shipped the same session this was written, and the
 rest is now a ranked worklist rather than a feeling.** Shipped:
 
 1. **Caching fix** (Q5) — content-array reorder + `cache_control` on the real prefix boundary.
@@ -397,6 +422,11 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    sentence. Rewrote the instruction to be strictly intrinsic and redirected displaced
    pairing-conditional statements to the two existing fields already shaped for them. Only affects
    pieces tagged from now on — not retroactive to the wardrobe's existing free text.
+7. **`stretch`'s low consumer count traced and resolved** (Q4) — its one consumer only ever fires
+   for 8/244 pieces (synthetic + light + drapey), and zero of those 8 currently have `stretch`
+   change the outcome. Not a latent gap in the `fiber_content` sense — a correctly-wired mechanism
+   this wardrobe's composition never exercises. Also corrected a factual error this doc had stated
+   earlier in the same session (`stretch` populated on 236/245 — wrong; the real number is 57/244).
 
 **Still open, ranked by leverage:**
 
@@ -423,8 +453,10 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    the prompt text changed as intended, not that a freshly-tagged piece actually stops mixing.
    Re-running `scratch/audit_freetext_structured_consistency.js` against newly-tagged pieces would
    close that loop.
-7. **The consumer-count method works and found a new candidate** (`stretch`, Q4) for the same class
-   of finding `fiber_content` already got — worth the same trace before, not after, prompt work.
+7. **The design risk found while tracing `stretch` is unconfirmed, not fixed.** Unset `stretch`
+   silently passes the same test as `stretch: "none"` — backwards from this schema's own stated
+   convention for absent values elsewhere (`needs_base`). No known wrong outcome today; flagged for
+   whoever next touches `softScoreFloors.js`, not fixed here since it isn't live.
 8. **Q1's core question — is one photo enough — remains genuinely open.** The free proxy was too
    confounded to answer it; only a controlled, billed corpus can, and that's the one piece of this
    audit still waiting on a go-ahead.

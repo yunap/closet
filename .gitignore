@@ -59,3 +59,4 @@ scratch/*
 !scratch/measure_tagger_cost_levers.js
 !scratch/measure_confidence_by_photo_set.js
 !scratch/backfill_pinned_confidence.js
+!scratch/trace_stretch_consumption.js
