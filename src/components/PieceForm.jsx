@@ -627,51 +627,60 @@ export default function PieceForm({ piece, onSave, onCancel }) {
       if (tags.error) throw new Error(tags.error)
       const taxonomyGaps = Array.isArray(tags.color_taxonomy_gaps) ? tags.color_taxonomy_gaps : []
       setColorTaxonomyGaps(taxonomyGaps)
-      let changedCount = 0
-      setForm(f => {
-        const next = { ...f }
-        applyTagValue(next, 'category', tags.category)
-        applyTagValue(next, 'colors', tags.colors)
-        applyTagValue(next, 'occasions', tags.occasions)
-        applyTagValue(next, 'season', tags.season)
-        if (!f.name) applyTagValue(next, 'name', tags.name_suggestion, '')
-        if (!f.notes) applyTagValue(next, 'notes', tags.notes_suggestion, '')
-        applyTagValue(next, 'background_color', tags.background_color)
-        applyTagValue(next, 'pattern_type', tags.pattern_type)
-        applyTagValue(next, 'pattern_scale', tags.pattern_scale)
-        applyTagValue(next, 'pattern_complexity', tags.pattern_complexity)
-        applyTagValue(next, 'reads_as', tags.reads_as)
-        applyTagValue(next, 'hem_finish', tags.hem_finish)
-        applyTagValue(next, 'neckline', tags.neckline)
-        applyTagValue(next, 'sleeve_length', tags.sleeve_length)
-        applyTagValue(next, 'sleeve_shape', tags.sleeve_shape)
-        applyTagValue(next, 'length_hits_at', tags.length_hits_at)
-        applyTagValue(next, 'silhouette', tags.silhouette)
-        applyTagValue(next, 'fabric_category', tags.fabric_category)
-        applyTagValue(next, 'fabric_weight', tags.fabric_weight)
-        applyTagValue(next, 'visual_weight', tags.visual_weight)
-        applyTagValue(next, 'opacity', tags.opacity)
-        applyTagValue(next, 'needs_base', tags.needs_base)
-        applyTagValue(next, 'fiber_content', tags.fiber_content)
-        applyTagValue(next, 'formality', tags.formality)
-        applyTagValue(next, 'heel_height', tags.heel_height)
-        applyTagValue(next, 'walk_support', tags.walk_support)
-        applyTagValue(next, 'stretch', tags.stretch)
-        applyTagValue(next, 'tuck_behavior', tags.tuck_behavior)
-        applyTagValue(next, 'waistband_type', tags.waistband_type)
-        applyTagValue(next, 'accessory_subtype', tags.accessory_subtype)
-        applyTagValue(next, 'bottom_subtype', tags.bottom_subtype)
-        applyTagValue(next, 'shoe_type', tags.shoe_type)
-        applyTagValue(next, 'toe_shape', tags.toe_shape)
-        applyTagValue(next, 'jewelry_type', tags.jewelry_type)
-        applyTagValue(next, 'necklace_length', tags.necklace_length)
-        next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
-        if (tags.fit_on_body && tags.fit_on_body !== 'none') applyTagValue(next, 'fit_on_body', tags.fit_on_body)
-        applyTagValue(next, 'tagger_version', tags.tagger_version)
-        applyTagValue(next, 'tag_state', tags.tag_state || (wornFile || piece?.worn_photo ? 'fully_tagged' : 'provisional'))
-        changedCount = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(f[key])).length
-        return next
-      })
+      // Compute the diff synchronously against the current form state, then set it directly —
+      // NOT inside a setForm functional updater. React does not invoke a functional updater
+      // synchronously at the call site; it runs later during the render phase. The previous code
+      // mutated an outer `changedCount` variable from inside that updater and then read it on the
+      // very next line, before React had actually run the updater — so `changedCount` was
+      // effectively always still its initial value (0) by the time the toast message below used
+      // it, regardless of how many fields the tag response actually changed. Confirmed live: a
+      // brand-new piece tagged for the first time filled in every field correctly, yet showed "AI
+      // found no new details to apply. Your protected edits were preserved." Reading `form`
+      // directly here is safe — both "Tag this" buttons and Save are disabled for the whole
+      // duration of this async call (`disabled={tagging || saving}` / `disabled={saving ||
+      // tagging || ...}`), so nothing else can change `form` while this is in flight.
+      const next = { ...form }
+      applyTagValue(next, 'category', tags.category)
+      applyTagValue(next, 'colors', tags.colors)
+      applyTagValue(next, 'occasions', tags.occasions)
+      applyTagValue(next, 'season', tags.season)
+      if (!form.name) applyTagValue(next, 'name', tags.name_suggestion, '')
+      if (!form.notes) applyTagValue(next, 'notes', tags.notes_suggestion, '')
+      applyTagValue(next, 'background_color', tags.background_color)
+      applyTagValue(next, 'pattern_type', tags.pattern_type)
+      applyTagValue(next, 'pattern_scale', tags.pattern_scale)
+      applyTagValue(next, 'pattern_complexity', tags.pattern_complexity)
+      applyTagValue(next, 'reads_as', tags.reads_as)
+      applyTagValue(next, 'hem_finish', tags.hem_finish)
+      applyTagValue(next, 'neckline', tags.neckline)
+      applyTagValue(next, 'sleeve_length', tags.sleeve_length)
+      applyTagValue(next, 'sleeve_shape', tags.sleeve_shape)
+      applyTagValue(next, 'length_hits_at', tags.length_hits_at)
+      applyTagValue(next, 'silhouette', tags.silhouette)
+      applyTagValue(next, 'fabric_category', tags.fabric_category)
+      applyTagValue(next, 'fabric_weight', tags.fabric_weight)
+      applyTagValue(next, 'visual_weight', tags.visual_weight)
+      applyTagValue(next, 'opacity', tags.opacity)
+      applyTagValue(next, 'needs_base', tags.needs_base)
+      applyTagValue(next, 'fiber_content', tags.fiber_content)
+      applyTagValue(next, 'formality', tags.formality)
+      applyTagValue(next, 'heel_height', tags.heel_height)
+      applyTagValue(next, 'walk_support', tags.walk_support)
+      applyTagValue(next, 'stretch', tags.stretch)
+      applyTagValue(next, 'tuck_behavior', tags.tuck_behavior)
+      applyTagValue(next, 'waistband_type', tags.waistband_type)
+      applyTagValue(next, 'accessory_subtype', tags.accessory_subtype)
+      applyTagValue(next, 'bottom_subtype', tags.bottom_subtype)
+      applyTagValue(next, 'shoe_type', tags.shoe_type)
+      applyTagValue(next, 'toe_shape', tags.toe_shape)
+      applyTagValue(next, 'jewelry_type', tags.jewelry_type)
+      applyTagValue(next, 'necklace_length', tags.necklace_length)
+      next.style_profile_json = mergeTagProfile(form.style_profile_json, tags.style_profile_json)
+      if (tags.fit_on_body && tags.fit_on_body !== 'none') applyTagValue(next, 'fit_on_body', tags.fit_on_body)
+      applyTagValue(next, 'tagger_version', tags.tagger_version)
+      applyTagValue(next, 'tag_state', tags.tag_state || (wornFile || piece?.worn_photo ? 'fully_tagged' : 'provisional'))
+      const changedCount = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(form[key])).length
+      setForm(next)
       setDirty(true)
       const gapSummary = taxonomyGaps.length
         ? ` Unsupported ${taxonomyGaps.length === 1 ? 'shade' : 'shades'} ${taxonomyGaps.join(', ')} ${isEdit && !hangerFile ? 'were added' : 'will be added when you save'} to Retag suggestions and were not applied.`

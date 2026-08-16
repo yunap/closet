@@ -75,6 +75,63 @@ function mockCritique() {
   }
 }
 
+function mockTaggerResult() {
+  // Deliberately gives structural fields different values than any typical existing piece
+  // (fit_on_body/silhouette/length_hits_at etc.) so a re-tag against the mock reliably produces
+  // a real, non-zero diff — useful for exercising the "AI updated N details" vs. "no new details"
+  // toast path in PieceForm.jsx, which had no mock coverage before this branch existed.
+  return {
+    name_suggestion: 'mock sandbox tagged item',
+    notes_suggestion: 'Mock sandbox tagger output — WARDROBE_MOCK_AI is on, no billed AI call was made.',
+    category: 'top',
+    background_color: 'sage',
+    colors: ['sage', 'cream'],
+    occasions: ['casual', 'city'],
+    season: 'year-round',
+    pattern_type: 'solid',
+    pattern_scale: 'none',
+    pattern_complexity: 'solid',
+    reads_as: 'clean mock sandbox top',
+    hem_finish: 'straight_loose',
+    neckline: 'crew',
+    sleeve_length: 'short',
+    sleeve_shape: 'straight',
+    length_hits_at: 'hip',
+    silhouette: 'relaxed',
+    fabric_category: 'jersey',
+    fabric_weight: 'light',
+    stretch: 'moderate',
+    fit_on_body: 'skims',
+    fiber_content: ['cotton'],
+    formality: 'everyday',
+    opacity: 'opaque',
+    needs_base: null,
+    style_profile_json: {
+      style_lanes: { artistic_minimal: 0, modern_bohemian: 0, folk_artisan: 0, boho_romantic: 0, boho_festival: 0, graphic_casual: 2, earthy_structured: 0, polished_classic: 2, romantic_soft: 0, workwear_utilitarian: 0 },
+      visual_roles: ['support_piece'],
+      coverage: 'normal',
+      bareness: 'normal',
+      style_notes: { best_use: 'mock sandbox support piece', risk: 'reads plain without a texture partner' },
+      garment_intelligence: {
+        auto_use_trust: 'trusted',
+        best_outfit_role: 'support',
+        pairing_requirements: ['needs a textured or patterned partner piece'],
+        failure_risks: ['may pill with heavy wear'],
+        occasion_confidence: { casual: 'high', city: 'medium', evening: 'low', 'smart-casual': 'medium', outdoor: 'low', home: 'low' },
+        formula_compatibility: ['compact top + patterned bottom'],
+        real_wear_notes: { fit: 'skims through the body', drape: 'light, moves with the body', scale: 'compact', placement: 'sits at hip', maintenance: '' },
+        do_not_pair_rules: ['avoid another loud pattern']
+      },
+      _confidence: {
+        category: 'high', colors: 'high', background_color: 'high', pattern_type: 'high', pattern_scale: 'high', pattern_complexity: 'high', reads_as: 'high', neckline: 'high', sleeve_length: 'high', sleeve_shape: 'high', length_hits_at: 'medium', silhouette: 'medium', hem_finish: 'high', fabric_category: 'high', fabric_weight: 'medium', fiber_content: 'low', formality: 'medium', fit_on_body: 'low', stretch: 'medium', opacity: 'high', accessory_subtype: 'high', bottom_subtype: 'high', jewelry_type: 'high', necklace_length: 'high', shoe_type: 'high', toe_shape: 'high', heel_height: 'high', walk_support: 'high', tuck_behavior: 'high', waistband_type: 'high', visual_weight: 'high', needs_base: 'low'
+      },
+      photo_properties: {
+        'HANGER PHOTO': { fit_visible: false, real_context: false, notes: 'Mock sandbox hanger read — flat garment shot.' }
+      }
+    }
+  }
+}
+
 export function installMockAiHandler(db) {
   globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
     const systemPrompt = String(system || '')
@@ -82,6 +139,10 @@ export function installMockAiHandler(db) {
     const latestText = Array.isArray(latestMessage?.content)
       ? latestMessage.content.map(part => part?.text || '').join('\n')
       : String(latestMessage?.content || '')
+
+    if (systemPrompt.includes('You tag wardrobe items')) {
+      return mockTaggerResult()
+    }
 
     if (systemPrompt.includes('visual support-piece critic')) {
       const rows = samplePieces(db, 4)
