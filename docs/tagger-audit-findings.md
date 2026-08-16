@@ -1,7 +1,8 @@
 # Tagger audit findings
 
-**Status:** first pass complete, 2026-08-15; amended 2026-08-16 with real Q1 evidence (n=3, growing)
-and five follow-on fixes found live while gathering it. Executes `docs/tagger-audit-plan.md`'s Q2–Q7
+**Status:** first pass complete, 2026-08-15; amended 2026-08-16 with real Q1 evidence (n=8, growing),
+a first real latency measurement, and six follow-on fixes found live while gathering it. Executes
+`docs/tagger-audit-plan.md`'s Q2–Q7
 (all free questions); Q1 is answered by an incrementally-growing real corpus rather than a one-shot
 synthetic batch — the owner tags each garment hanger-only, captures the result, adds a worn photo,
 re-tags, and that pair becomes a real data point, for no incremental cost beyond garments they were
@@ -379,7 +380,7 @@ plan.
 
 ---
 
-## Q1 — Schema fit to photo availability (answered by a growing real corpus, n=3 so far)
+## Q1 — Schema fit to photo availability (answered by a growing real corpus, n=8 so far)
 
 **Script:** `scratch/measure_confidence_by_photo_set.js`
 
@@ -404,12 +405,11 @@ run this session** — that gate was about *me* spending on calls the owner didn
 and holds for that specific ask. It does not gate the owner's own ordinary tagging, which turns out
 to produce the exact same comparison for free.
 
-**[2026-08-16, the actual corpus — n=3 so far, growing]** Three real garments the owner needed to
-tag anyway (135, 141, 996780 — two previously hanger-only unversioned pieces, one brand-new) went
-through the same controlled comparison via the ordinary "Update details with AI" flow: hanger-only
-first, result captured, worn photo added, re-tagged. Every additional garment tagged this way adds
-another real data point to this same set — this section grows as that happens, not as a one-time
-report.
+**[2026-08-16, the actual corpus — n=8 so far, growing]** Eight real garments the owner needed to
+tag anyway went through the same controlled comparison via the ordinary "Update details with AI"
+flow: hanger-only first, result captured, worn photo added, re-tagged. Every additional garment
+tagged this way adds another real data point to this same set — this section grows as that happens,
+not as a one-time report.
 
 **Piece 135 ("black grey textured cropped cardigan"): the worn photo changed the answer, not just
 the confidence.**
@@ -449,21 +449,122 @@ were already confident and correct from the hanger photo alone on this piece and
 all — evidence the tagger doesn't uniformly hedge everything without a worn photo, just the fields
 that genuinely need one.
 
-**Two smaller findings from the same three pieces, unrelated to the photo-authority mechanism
-itself:** piece 135's `hem_finish` (`asymmetric`→`other`) and `stretch` (`moderate`→`minimal`)
-changed value between conditions despite neither being fit-dependent, with confidence staying
-`high`/`medium` throughout — no hedge at either point. Piece 996780's `hem_finish` confidence
-*dropped* (`high`→`medium`) with the value unchanged, on a field the authority map says should be
-answerable from the flat hanger photo alone. Both are ordinary call-to-call tagger variance on
-fields the worn photo shouldn't be influencing, not the mechanism Q1 is about — worth knowing, a
-different question than this one.
+**Piece 996781 ("white ruffle-front lace-sleeve blouse", top): confirmation, plus a useful
+contrast field.**
 
-**Reading n=3 honestly:** one correction (135), two confirmations (141, 996780) — both outcomes the
-photo-authority map is designed to produce, both observed more than once. Three garments is a real
-but early sample, not yet a stratified spread across categories (all three are outerwear/dress so
-far) — the read so far leans toward "a hanger photo alone can produce a confidently-wrong structural
-answer," not just "a low-confidence but ultimately correct one," and gets more reliable with every
-additional pair.
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | `hangs_straight` (low) | `hangs_straight` (**high**) |
+| `silhouette` | `relaxed` (medium) | `relaxed` (**high**) |
+| `tuck_behavior` | `wear_over_only` (high) | `wear_over_only` (high — unchanged) |
+| `sleeve_shape` | `relaxed` (medium) | `straight` (medium) — value changed |
+
+`tuck_behavior` was already high-confidence from the hanger photo and stayed exactly the same —
+real evidence the tagger isn't reflexively hedging every fit-adjacent field without a worn photo,
+only the ones it judges as actually needing one. `sleeve_shape` changing value is a new kind of
+drift not seen in the first three pairs, and isn't clearly assigned either way by the
+photo-authority map (sleeve *existence* is hanger-authoritative; sleeve *shape* isn't explicit).
+
+**Piece 996782 ("black ditsy floral popover blouse", top): the cleanest confirmation yet.**
+
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | `hangs_straight` (low) | `hangs_straight` (**high**) |
+| `silhouette` | `relaxed` (high) | `relaxed` (high — unchanged) |
+| `tuck_behavior` | `tucks_with_structure` (medium) | `tucks_with_structure` (medium — unchanged) |
+| `hem_finish` | `shirttail` (high) | `shirttail` (high — unchanged) |
+
+Only `fit_on_body` moved; everything else that was already settled — whether high or medium — held
+exactly. This also corrected an over-read from the first two pairs: `hem_finish` confidence
+*dropping* on a re-tag looked like it might be a systematic effect after 996780; here it didn't
+happen at all, putting it at 2 of 5 pairs rather than 2 of 2 — a reminder that a pattern seen twice
+in a row can still be noise, not yet a rule.
+
+**Piece 996783 ("emerald green v-neck sleeveless tank", top): mixed — confirmation plus a second
+correction.**
+
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | `skims` (low) | `skims` (**high**) |
+| `tuck_behavior` | `tucks_anywhere` (medium) | `tucks_anywhere` (**high**) |
+| `silhouette` | `relaxed` (medium) | `straight` (**high**) — value changed |
+
+`silhouette` changing value here, on top of piece 135's correction, means it's now been wrong in
+**2 of 8 pairs** — and both times the hanger-only guess was `relaxed` and got corrected to
+something more specific (`fitted`, `straight`) once the worn photo showed the real drape. Same
+field failing the same way twice is more informative than the raw correction count: `relaxed`
+looks like a plausible fallback guess for `silhouette` on a hanger photo when the actual cut is
+hard to judge flat, corrected once real drape is visible.
+
+**Piece 996784 ("floral botanical print active leggings", bottom — first bottom-category data):
+confirmation plus a third correction, different field this time.**
+
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | `clings_stretchy` (medium) | `clings_stretchy` (**high**) |
+| `length_hits_at` | `mid_calf` (medium) | `ankle` (**high**) — value changed |
+| `silhouette` | `tapered` (high) | `tapered` (high — unchanged) |
+| `waistband_type` | `structured_high_waist` (medium) | `structured_high_waist` (medium — unchanged) |
+
+`length_hits_at` changing value here matches piece 135's earlier correction on the same field —
+now **2 of 8 pairs** for `length_hits_at`, same as `silhouette`. Two different fields have each
+independently been wrong twice across eight pairs; neither is a fluke at this point. Also the first
+piece where `fit_on_body` started above `low` confidence (`medium`) — a fitted, technical-fabric
+legging, plausibly easier to read from a flat photo than a drapey woven top.
+
+**Piece 996785 ("tan corduroy skinny zip-hem pants", bottom): the strongest confirmation yet — no
+guess at all, then a confident answer.**
+
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | **`null`** — no value, no confidence | `skims` (**high**) |
+| `length_hits_at` | `ankle` (medium) | `ankle` (high — unchanged) |
+| `silhouette` | `tapered` (high) | `tapered` (high — unchanged) |
+| `waistband_type` | `structured_mid_waist` (high) | `structured_mid_waist` (high — unchanged) |
+
+Every other pair so far had *some* low-or-medium-confidence guess that got upgraded. This one had
+nothing — the tagger correctly declined to guess `fit_on_body` from the hanger photo alone, then
+answered confidently once a worn photo existed. That is the photo-authority mechanism working
+exactly as designed, in its cleanest form across the whole corpus.
+
+**Smaller findings from across the eight pieces, unrelated to the photo-authority mechanism
+itself:** piece 135's `hem_finish` and `stretch` changed value between conditions despite neither
+being fit-dependent, confidence staying `high`/`medium` throughout — no hedge at either point.
+`hem_finish` confidence *dropped* on re-tag in 2 of 8 pairs (996780, 996781) with the value
+unchanged both times, on a field the authority map says should be answerable from the flat hanger
+photo alone — real but inconsistent (3 of 8 pairs showed no such drop), ordinary call-to-call
+tagger variance rather than anything the worn photo should be causing.
+
+**Reading n=8 honestly:** 3 corrections (135's three fields, 996783's `silhouette`, 996784's
+`length_hits_at`), 5 confirmations (141, 996780, 996781, 996782, 996785) — both outcomes the
+photo-authority map is designed to produce, both observed repeatedly. Category coverage: outerwear
+×2, dress ×1, top ×4, bottom ×2 — the two categories with zero coverage at n=3 (top, bottom) now
+have the most data of any category. Two specific fields (`silhouette`, `length_hits_at`) have each
+independently failed the same way twice, which is a more useful signal than the aggregate
+correction rate: a hanger photo alone doesn't fail randomly across every field, it fails
+predictably on a small number of them. The read holds and sharpens: "a hanger photo alone can
+produce a confidently-wrong structural answer," specifically on `silhouette` and `length_hits_at`
+more than the others measured so far.
+
+**Latency, measured for the first time — 2026-08-16.** Raised twice as "feels slow" earlier this
+session with nothing to check it against (see the two UI-bug entries below); `routes/ai.js` had no
+timing instrumentation for tag calls at all before this pass (`commit 36b16de` added it). First
+real measurement, on piece 996785's hanger-only call, immediately after a `wardrobe-api` restart:
+
+> **32,908ms.** Input: 1,578 tok (uncached) + 11,254 tok (freshly written to cache) ≈ 12,832 tok
+> total. Output: 1,615 tok. Cache: **MISS** — expected, since the restart cleared any warm cache.
+
+**Caching (shipped earlier this session) is not expected to fix most of this.** Prompt caching
+only skips *re-processing* input the model has already seen; it does nothing for how long the
+model takes to *generate* its answer. At typical decode speeds for a large frontier model, ~1,615
+output tokens lines up closely with a ~33-second wait — the dominant cost here is very likely
+output length, not input reprocessing or lack of caching. The next call in this session should
+show `cache: HIT`, which should measurably help cost and the input-side latency, but the
+output-generation time — most of the 33 seconds — is untouched by it. The two real levers for
+cutting that time are trimming what the tagger is asked to write (shorter free-text fields) or a
+faster-decoding model tier for tagging — both bigger, separate decisions already on the open list
+below (the model-tier one is the same 67%-cost-savings item that needs a real quality check before
+anyone acts on it).
 
 **Two adjacent UI bugs found and fixed while gathering this data, unrelated to tagger quality
 itself:** tagging a brand-new piece for the first time was showing "AI found no new details to
@@ -509,6 +610,12 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    change the outcome. Not a latent gap in the `fiber_content` sense — a correctly-wired mechanism
    this wardrobe's composition never exercises. Also corrected a factual error this doc had stated
    earlier in the same session (`stretch` populated on 236/245 — wrong; the real number is 57/244).
+8. **Two adjacent UI bugs found and fixed while gathering the Q1 corpus, plus latency
+   instrumentation added** — a false "no new details, protected edits preserved" toast that fired
+   on every tag call regardless of outcome (React state-timing bug, `commit 8fae4fa`); a false
+   "photo will be removed" + dead "Restore" prompt for a photo that was never saved in the first
+   place (`commit 85d2740`); and tag-call latency/cache-hit logging that didn't exist before
+   (`commit 36b16de`), which produced this session's first real measurement — see Q1.
 
 **Still open, ranked by leverage:**
 
@@ -539,14 +646,21 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    silently passes the same test as `stretch: "none"` — backwards from this schema's own stated
    convention for absent values elsewhere (`needs_base`). No known wrong outcome today; flagged for
    whoever next touches `softScoreFloors.js`, not fixed here since it isn't live.
-8. **Q1's core question is being answered by a real, growing corpus, not a separate gated batch.**
-   The free proxy was too confounded to answer it; the actual answer is coming from the owner's own
-   ordinary tagging — same piece, hanger-only then hanger+worn, captured each time, at n=3 and
-   counting (135, 141, 996780). One correction (a wrong hanger-only read on three structural fields
-   at once), two confirmations. Not yet a stratified spread across categories, and gets more
-   reliable with every additional pair — but it is the real thing this question needed, not a
-   stand-in for it, and it already points toward "a hanger photo alone can produce a
-   confidently-wrong structural answer," not just "a low-confidence but ultimately correct one."
+9. **Q1's core question is being answered by a real, growing corpus, not a separate gated batch,
+   and now has real category coverage.** The free proxy was too confounded to answer it; the
+   actual answer is coming from the owner's own ordinary tagging — same piece, hanger-only then
+   hanger+worn, captured each time, at **n=8** and counting, spanning outerwear/dress/top/bottom.
+   3 corrections, 5 confirmations. Two specific fields (`silhouette`, `length_hits_at`) have each
+   independently failed the same way twice — a hanger photo doesn't fail randomly, it fails
+   predictably on a small number of fields. It is the real thing this question needed, not a
+   stand-in for it, and the read has sharpened from "leans toward" to a specific, actionable
+   claim: hanger-only tagging is least trustworthy on `silhouette` and `length_hits_at`.
+10. **Tag-call latency is real and measured for the first time — ~33 seconds on the first call
+    after a restart** — and caching (shipped earlier this session) is not expected to fix most of
+    it. The dominant cost is output-generation time (~1,615 tokens), which caching cannot touch;
+    caching only helps input reprocessing and cost. Cutting the wait for real needs either a
+    shorter output schema or a faster-decoding model tier — both bigger, undecided questions, not
+    something this pass can resolve on its own.
 
 Nothing here overrides `docs/engine-behaviour-map.md`'s existing findings — every number either
 confirmed them on fresher data (Q2, Q5's caching/`cross_photo_agreement_note` claims) or extended
