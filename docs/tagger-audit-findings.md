@@ -1,8 +1,8 @@
 # Tagger audit findings
 
-**Status:** first pass complete, 2026-08-15; amended 2026-08-16 with real Q1 evidence (n=8, growing),
-a first real latency measurement, and six follow-on fixes found live while gathering it. Executes
-`docs/tagger-audit-plan.md`'s Q2–Q7
+**Status:** first pass complete, 2026-08-15; amended 2026-08-16 with real Q1 evidence (n=9, growing),
+a first real latency measurement, and ten follow-on fixes/confirmations found live while gathering
+it. Executes `docs/tagger-audit-plan.md`'s Q2–Q7
 (all free questions); Q1 is answered by an incrementally-growing real corpus rather than a one-shot
 synthetic batch — the owner tags each garment hanger-only, captures the result, adds a worn photo,
 re-tags, and that pair becomes a real data point, for no incremental cost beyond garments they were
@@ -380,7 +380,7 @@ plan.
 
 ---
 
-## Q1 — Schema fit to photo availability (answered by a growing real corpus, n=8 so far)
+## Q1 — Schema fit to photo availability (answered by a growing real corpus, n=9 so far)
 
 **Script:** `scratch/measure_confidence_by_photo_set.js`
 
@@ -405,7 +405,7 @@ run this session** — that gate was about *me* spending on calls the owner didn
 and holds for that specific ask. It does not gate the owner's own ordinary tagging, which turns out
 to produce the exact same comparison for free.
 
-**[2026-08-16, the actual corpus — n=8 so far, growing]** Eight real garments the owner needed to
+**[2026-08-16, the actual corpus — n=9 so far, growing]** Nine real garments the owner needed to
 tag anyway went through the same controlled comparison via the ordinary "Update details with AI"
 flow: hanger-only first, result captured, worn photo added, re-tagged. Every additional garment
 tagged this way adds another real data point to this same set — this section grows as that happens,
@@ -525,21 +525,36 @@ guess at all, then a confident answer.**
 Every other pair so far had *some* low-or-medium-confidence guess that got upgraded. This one had
 nothing — the tagger correctly declined to guess `fit_on_body` from the hanger photo alone, then
 answered confidently once a worn photo existed. That is the photo-authority mechanism working
-exactly as designed, in its cleanest form across the whole corpus.
+exactly as designed, in its cleanest form across the whole corpus — until the next pair.
 
-**Smaller findings from across the eight pieces, unrelated to the photo-authority mechanism
+**Piece 996786 ("cream wide-leg fleece drawstring pants", bottom): the same clean pattern, back to
+back.**
+
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | **`null`** — no value, no confidence | `hangs_straight` (**high**) |
+| `length_hits_at` | `ankle` (medium) | `ankle` (medium — unchanged) |
+| `silhouette` | `wide_leg` (high) | `wide_leg` (high — unchanged) |
+| `waistband_type` | `drawstring_relaxed` (high) | `drawstring_relaxed` (high — unchanged) |
+
+Two in a row now with the same "no guess → confident answer" pattern on `fit_on_body`, both on
+loose/wide-leg cuts. That's a real, specific pattern, not a one-off: the tagger appears to reliably
+decline to guess `fit_on_body` on relaxed/wide-leg bottoms from a hanger photo alone, more so than
+on fitted pieces, and answers confidently once real evidence exists.
+
+**Smaller findings from across the nine pieces, unrelated to the photo-authority mechanism
 itself:** piece 135's `hem_finish` and `stretch` changed value between conditions despite neither
 being fit-dependent, confidence staying `high`/`medium` throughout — no hedge at either point.
-`hem_finish` confidence *dropped* on re-tag in 2 of 8 pairs (996780, 996781) with the value
+`hem_finish` confidence *dropped* on re-tag in 2 of 9 pairs (996780, 996781) with the value
 unchanged both times, on a field the authority map says should be answerable from the flat hanger
-photo alone — real but inconsistent (3 of 8 pairs showed no such drop), ordinary call-to-call
+photo alone — real but inconsistent (most pairs showed no such drop), ordinary call-to-call
 tagger variance rather than anything the worn photo should be causing.
 
-**Reading n=8 honestly:** 3 corrections (135's three fields, 996783's `silhouette`, 996784's
-`length_hits_at`), 5 confirmations (141, 996780, 996781, 996782, 996785) — both outcomes the
-photo-authority map is designed to produce, both observed repeatedly. Category coverage: outerwear
-×2, dress ×1, top ×4, bottom ×2 — the two categories with zero coverage at n=3 (top, bottom) now
-have the most data of any category. Two specific fields (`silhouette`, `length_hits_at`) have each
+**Reading n=9 honestly:** 3 corrections (135's three fields, 996783's `silhouette`, 996784's
+`length_hits_at`), 6 confirmations (141, 996780, 996781, 996782, 996785, 996786) — both outcomes
+the photo-authority map is designed to produce, both observed repeatedly. Category coverage:
+outerwear ×2, dress ×1, top ×4, bottom ×3 — the two categories with zero coverage at n=3 (top,
+bottom) now have the most data of any category. Two specific fields (`silhouette`, `length_hits_at`) have each
 independently failed the same way twice, which is a more useful signal than the aggregate
 correction rate: a hanger photo alone doesn't fail randomly across every field, it fails
 predictably on a small number of them. The read holds and sharpens: "a hanger photo alone can
@@ -616,6 +631,22 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    "photo will be removed" + dead "Restore" prompt for a photo that was never saved in the first
    place (`commit 85d2740`); and tag-call latency/cache-hit logging that didn't exist before
    (`commit 36b16de`), which produced this session's first real measurement — see Q1.
+9. **`style_notes.risk` fix confirmed against real output, not just prompt text.** Re-ran
+   `scratch/audit_freetext_structured_consistency.js` against the live wardrobe: all 7 pieces
+   tagged with the current prompt show genuinely intrinsic risk text (fabric wrinkling, color
+   washing out in sun, print reading busy up close, fabric showing dirt) — none repeat the old
+   "looks deficient if not paired with X" pattern. One honest near-miss, not a clean sweep: piece
+   996783's risk says *"any adjacent pattern or saturated color will **compete** directly with
+   it"* — close to the literal prohibited phrase ("competes with Y"), though framed as a
+   consequence of the color's own dominance rather than the old deficiency-without-a-partner
+   framing. 6 of 7 clean, 1 of 7 borderline.
+10. **`stretch`'s null-handling risk fixed.** `refinedFabric()` (`softScoreFloors.js`) required
+    `stretch` to be `none`/`minimal`/**unset** to pass — an absent value silently passed the same
+    test as a confirmed non-stretchy one, backwards from this schema's own conservative-default
+    convention (`needs_base`'s explicit rule). Now requires stretch to be *explicitly* known and
+    non-stretchy; unset correctly fails the check. Verified directly: unset → `false` (was `true`),
+    `stretch: "none"` → still `true` (unchanged), `stretch: "stretchy"` → still `false`
+    (unchanged). Existing `test/softScoreFloors.test.js` unaffected.
 
 **Still open, ranked by leverage:**
 
@@ -638,29 +669,21 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
 5. **`style_notes.best_use`'s softer self/pairing conflation is still open** (Q3) — a "styling
    role" is relational by definition, so unlike `risk` it can't be fully separated by an instruction
    rewrite alone. Not addressed this session.
-6. **The fix to `style_notes.risk` hasn't been confirmed against real output yet** (Q3) — verified
-   the prompt text changed as intended, not that a freshly-tagged piece actually stops mixing.
-   Re-running `scratch/audit_freetext_structured_consistency.js` against newly-tagged pieces would
-   close that loop.
-7. **The design risk found while tracing `stretch` is unconfirmed, not fixed.** Unset `stretch`
-   silently passes the same test as `stretch: "none"` — backwards from this schema's own stated
-   convention for absent values elsewhere (`needs_base`). No known wrong outcome today; flagged for
-   whoever next touches `softScoreFloors.js`, not fixed here since it isn't live.
-9. **Q1's core question is being answered by a real, growing corpus, not a separate gated batch,
+6. **Q1's core question is being answered by a real, growing corpus, not a separate gated batch,
    and now has real category coverage.** The free proxy was too confounded to answer it; the
    actual answer is coming from the owner's own ordinary tagging — same piece, hanger-only then
-   hanger+worn, captured each time, at **n=8** and counting, spanning outerwear/dress/top/bottom.
-   3 corrections, 5 confirmations. Two specific fields (`silhouette`, `length_hits_at`) have each
+   hanger+worn, captured each time, at **n=9** and counting, spanning outerwear/dress/top/bottom.
+   3 corrections, 6 confirmations. Two specific fields (`silhouette`, `length_hits_at`) have each
    independently failed the same way twice — a hanger photo doesn't fail randomly, it fails
    predictably on a small number of fields. It is the real thing this question needed, not a
    stand-in for it, and the read has sharpened from "leans toward" to a specific, actionable
    claim: hanger-only tagging is least trustworthy on `silhouette` and `length_hits_at`.
-10. **Tag-call latency is real and measured for the first time — ~33 seconds on the first call
-    after a restart** — and caching (shipped earlier this session) is not expected to fix most of
-    it. The dominant cost is output-generation time (~1,615 tokens), which caching cannot touch;
-    caching only helps input reprocessing and cost. Cutting the wait for real needs either a
-    shorter output schema or a faster-decoding model tier — both bigger, undecided questions, not
-    something this pass can resolve on its own.
+7. **Tag-call latency is real and measured for the first time — ~33 seconds on the first call
+   after a restart** — and caching (shipped earlier this session) is not expected to fix most of
+   it. The dominant cost is output-generation time (~1,615 tokens), which caching cannot touch;
+   caching only helps input reprocessing and cost. Cutting the wait for real needs either a
+   shorter output schema or a faster-decoding model tier — both bigger, undecided questions, not
+   something this pass can resolve on its own.
 
 Nothing here overrides `docs/engine-behaviour-map.md`'s existing findings — every number either
 confirmed them on fresher data (Q2, Q5's caching/`cross_photo_agreement_note` claims) or extended
