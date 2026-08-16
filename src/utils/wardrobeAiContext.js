@@ -64,11 +64,16 @@ export function pieceGarmentIntelligence(piece = {}) {
   }
 }
 
+// tuck_behavior is the sole authority on whether a piece can be tucked —
+// hem_finish is construction only (what shape the hem is) and must not be
+// used to infer or override tuck permission. A piece with no tuck_behavior
+// set returns null here rather than guessing from its hem; that gap is
+// already surfaced through the normal confidence/review system instead
+// (tuck_behavior is a STRUCTURE_FIT_CONFIDENCE_FIELDS entry in attributes.js).
 export function computeTuckNote(piece = {}) {
   if (!CLOTHING_WITH_TUCK.has(piece.category)) return null
   if (piece.tuck_behavior === 'wear_over_only') return 'no tuck — wear over only'
   if (piece.fabric_category === 'silk' || piece.fabric_category === 'satin') return 'no tuck — silk/satin cannot hold'
-  if (piece.hem_finish === 'ribbed' || piece.hem_finish === 'design_hem') return 'no tuck — design hem'
   if (piece.tuck_behavior === 'tucks_with_structure') return 'tucks with structured waist or belt only'
   if (piece.tuck_behavior === 'tucks_anywhere') return 'tucks freely'
   return null
@@ -80,6 +85,7 @@ export function computeWaistbandNote(piece = {}) {
   if (piece.waistband_type === 'soft_elastic_pull_on') return 'elastic waist — no tuck'
   if (piece.waistband_type === 'structured_high_waist') return 'structured high waist — receives tuck'
   if (piece.waistband_type === 'structured_mid_waist') return 'structured mid waist — receives tuck'
+  if (piece.waistband_type === 'structured_low_waist') return 'structured low waist — receives tuck'
   if (piece.waistband_type === 'drawstring_relaxed') return 'drawstring — no tuck'
   return null
 }
@@ -223,6 +229,13 @@ export function buildWardrobePieceTruthText(piece = {}) {
   if (lengthText) parts.push(lengthText)
   const silhouetteText = trustedFieldText(piece, 'silhouette', 'silhouette', piece.silhouette)
   if (silhouetteText) parts.push(silhouetteText)
+  // silhouette is not applicable to shoes (see garment-field-reference.md) — shoe_type/toe_shape
+  // are its replacement there, so they need the same treatment or a shoe's type/toe shape
+  // reaches no composing prompt at all, same failure shape as the sleeve_type gap above.
+  const shoeTypeText = trustedFieldText(piece, 'shoe_type', 'shoe type', piece.shoe_type)
+  if (shoeTypeText) parts.push(shoeTypeText)
+  const toeShapeText = trustedFieldText(piece, 'toe_shape', 'toe shape', piece.toe_shape)
+  if (toeShapeText) parts.push(toeShapeText)
   // sleeve_type (now split into sleeve_length/sleeve_shape) was populated on 207
   // of 236 pieces and reached NO composing prompt — so a capsule look put a
   // short-sleeved cardigan over a bishop sleeve, because as far as the model
@@ -235,7 +248,12 @@ export function buildWardrobePieceTruthText(piece = {}) {
     ? trustedFieldText(piece, 'sleeve_shape', 'sleeve shape', piece.sleeve_shape)
     : null
   if (sleeveShapeText) parts.push(sleeveShapeText)
-  if (piece.fabric_category) parts.push(`fabric: ${piece.fabric_category}${piece.fabric_weight ? `/${piece.fabric_weight}` : ''}`)
+  // shoes/accessory use visual_weight (delicate/slim/medium/chunky — visual
+  // scale, not fabric weight); everything else uses fabric_weight.
+  const weightForFabricLine = (piece.category === 'shoes' || piece.category === 'accessory')
+    ? piece.visual_weight
+    : piece.fabric_weight
+  if (piece.fabric_category) parts.push(`fabric: ${piece.fabric_category}${weightForFabricLine ? `/${weightForFabricLine}` : ''}`)
   if (piece.opacity && piece.opacity !== 'opaque') {
     const opacityText = trustedFieldText(piece, 'opacity', 'opacity', piece.opacity)
     if (opacityText) parts.push(opacityText)
@@ -321,8 +339,10 @@ function manifestValue(piece, field, value) {
 export function buildWardrobeManifestLine(piece = {}) {
   const colors = Array.isArray(piece.colors) ? piece.colors.filter(Boolean) : []
   const color = piece.reads_as || piece.background_color || colors.join('/')
+  const weightField = (piece.category === 'shoes' || piece.category === 'accessory') ? 'visual_weight' : 'fabric_weight'
+  const weightValue = piece[weightField]
   const fabric = piece.fabric_category
-    ? `${manifestValue(piece, 'fabric_category', piece.fabric_category)}${piece.fabric_weight ? `/${manifestValue(piece, 'fabric_weight', piece.fabric_weight)}` : ''}`
+    ? `${manifestValue(piece, 'fabric_category', piece.fabric_category)}${weightValue ? `/${manifestValue(piece, weightField, weightValue)}` : ''}`
     : ''
   const pattern = piece.pattern_complexity && piece.pattern_complexity !== 'solid'
     ? [piece.pattern_type, piece.pattern_scale].filter(Boolean).join('/')
@@ -335,6 +355,8 @@ export function buildWardrobeManifestLine(piece = {}) {
     piece.opacity && piece.opacity !== 'opaque' ? `opacity ${manifestValue(piece, 'opacity', piece.opacity)}` : '',
     piece.needs_base === 'yes' ? 'needs base layer' : '',
     piece.silhouette ? `silhouette ${manifestValue(piece, 'silhouette', piece.silhouette)}` : '',
+    piece.shoe_type ? `shoe type ${manifestValue(piece, 'shoe_type', piece.shoe_type)}` : '',
+    piece.toe_shape ? `toe ${manifestValue(piece, 'toe_shape', piece.toe_shape)}` : '',
     piece.length_hits_at ? `hits ${manifestValue(piece, 'length_hits_at', piece.length_hits_at)}` : '',
     pattern ? `pattern ${pattern}` : '',
     piece.formality ? `formality ${manifestValue(piece, 'formality', piece.formality)}` : '',

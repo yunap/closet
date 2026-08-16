@@ -49,10 +49,12 @@ const NEEDS_BASE_OPTIONS = [
 ]
 
 const FIBER_OPTIONS = [
-  'cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 
-  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal', 
-  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic', 
-  'spandex', 'leather', 'suede', 'denim', 'unknown'
+  'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
+  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
+  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
+  'spandex', 'leather', 'suede', 'denim', 'tweed',
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
+  'pearl', 'crystal', 'enamel', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
@@ -73,6 +75,7 @@ const ACCESSORY_SUBTYPE_OPTIONS = [
   { value: 'scarf', label: 'Scarf' },
   { value: 'hat', label: 'Hat' },
   { value: 'watch', label: 'Watch' },
+  { value: 'glasses', label: 'Glasses' },
   { value: 'gloves', label: 'Gloves' },
   { value: 'other', label: 'Other' },
 ]
@@ -107,22 +110,27 @@ const CONSTRUCTION_BY_CATEGORY = {
     showNeckline: true,
     showSleeve: true,
     silhouetteLabel: 'Silhouette',
-    silhouetteOptions: ['fitted','slim','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
+    silhouetteOptions: ['fitted','slim','straight','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
     lengthLabel: 'Length hits at',
     lengthOptions: ['cropped','waist','high_hip','hip','low_hip','tunic','unknown'],
     hemLabel: 'Hem finish',
-    hemHint: 'determines tuck ability',
     hemOptions: [
-      { value: 'straight_loose', label: 'straight - tuckable' },
-      { value: 'banded_elastic', label: 'banded/elastic' },
-      { value: 'ribbed',         label: 'ribbed - wear over' },
-      { value: 'design_hem',     label: 'design hem - wear over' },
+      { value: 'straight_loose', label: 'straight' },
+      { value: 'banded_elastic', label: 'banded / elastic' },
+      { value: 'ribbed',         label: 'ribbed' },
+      { value: 'curved',         label: 'curved' },
+      { value: 'shirttail',      label: 'shirttail' },
+      { value: 'high_low',       label: 'high-low' },
+      { value: 'asymmetric',     label: 'asymmetric' },
+      { value: 'other',          label: 'other' },
     ],
   },
   bottom: {
     sectionLabel: 'Construction',
     silhouetteLabel: 'Bottom shape',
-    silhouetteOptions: ['straight leg','wide leg','bootcut','flare','tapered','barrel','A-line skirt','pencil skirt','full skirt','slip skirt','relaxed','structured'],
+    // No static silhouetteOptions: depends on bottom_subtype (skirt vs
+    // pants), same as lengthOptions below — see BOTTOM_SKIRT_SILHOUETTE_OPTIONS
+    // / BOTTOM_PANTS_SILHOUETTE_OPTIONS, chosen at render time.
     lengthLabel: 'Length',
     // No static lengthOptions: bottom's length vocabulary depends on
     // bottom_subtype (skirt vs pants) — see BOTTOM_SKIRT_LENGTH_OPTIONS /
@@ -135,8 +143,8 @@ const CONSTRUCTION_BY_CATEGORY = {
       { value: 'tapered', label: 'tapered' },
       { value: 'banded_elastic', label: 'elastic/banded' },
       { value: 'slit', label: 'slit' },
-      { value: 'asymmetrical', label: 'asymmetrical' },
-      { value: 'design_hem', label: 'design hem' },
+      { value: 'asymmetric', label: 'asymmetric' },
+      { value: 'other', label: 'other' },
     ],
   },
   dress: {
@@ -144,7 +152,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     showNeckline: true,
     showSleeve: true,
     silhouetteLabel: 'Dress shape',
-    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
+    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','empire','relaxed'],
     lengthLabel: 'Length',
     lengthOptions: ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown'],
   },
@@ -152,35 +160,40 @@ const CONSTRUCTION_BY_CATEGORY = {
     sectionLabel: 'Construction',
     showSleeve: true,
     silhouetteLabel: 'Outerwear shape',
-    silhouetteOptions: ['cropped','fitted','boxy','relaxed','oversized','structured','longline'],
+    silhouetteOptions: ['fitted','straight','boxy','relaxed','oversized','structured'],
     lengthLabel: 'Length hits at',
-    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','unknown'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','full_length','floor_length','unknown'],
   },
   shoes: {
     sectionLabel: 'Shoe Details',
-    silhouetteLabel: 'Shoe shape',
-    silhouetteOptions: ['pointed','almond','round','square','open-toe','mule','loafer','boot','sandal','heel','flat','sneaker'],
+    // No silhouette here — shoe_type/toe_shape replace it (the old flat
+    // silhouette list mixed toe shape and shoe type into one enum).
     lengthLabel: 'Coverage / shaft',
-    lengthOptions: ['low','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
+    lengthOptions: ['open','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
   },
 }
 
+const SHOE_TYPE_OPTIONS = ['mule','loafer','boot','sandal','pump','flat','sneaker','slip_on','other','unknown']
+const TOE_SHAPE_OPTIONS = ['pointed','almond','round','square','open_toe','other','unknown']
+
+const BOTTOM_SKIRT_SILHOUETTE_OPTIONS = ['a_line','pencil','full','slip','straight','pleated','wrap']
+const BOTTOM_PANTS_SILHOUETTE_OPTIONS = ['straight_leg','wide_leg','bootcut','flare','tapered','barrel','relaxed']
 const BOTTOM_SKIRT_LENGTH_OPTIONS = ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown']
 const BOTTOM_PANTS_LENGTH_OPTIONS = ['shorts','knee','mid_calf','ankle','full_length','floor_length','unknown']
 
 const FABRIC_BY_CATEGORY = {
   shoes: {
     sectionLabel: 'Material',
-    fabricLabel: 'Material',
-    fabricOptions: ['leather','suede','patent','canvas','mesh','synthetic','textile','rubber','other'],
+    fabricLabel: 'Primary Material',
+    fabricOptions: ['leather','suede','nubuck','patent','canvas','mesh','woven','synthetic','textile','rubber','other'],
     weightLabel: 'Visual weight',
     weightOptions: ['delicate','slim','medium','chunky'],
     showStretch: false,
   },
   accessory: {
     sectionLabel: 'Material',
-    fabricLabel: 'Material',
-    fabricOptions: ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','other'],
+    fabricLabel: 'Primary Material',
+    fabricOptions: ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','horn','shell','resin','pearl','crystal','enamel','other'],
     weightLabel: 'Visual weight',
     weightOptions: ['delicate','slim','medium','chunky'],
     showStretch: false,
@@ -188,7 +201,7 @@ const FABRIC_BY_CATEGORY = {
   default: {
     sectionLabel: 'Fabric',
     fabricLabel: 'Fabric',
-    fabricOptions: ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','lace','crochet','wool','cashmere','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other'],
+    fabricOptions: ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','organza','lace','crochet','jacquard','wool','cashmere','boucle','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other'],
     weightLabel: 'Weight',
     weightOptions: ['ultralight','light','medium','heavy'],
     showStretch: true,
@@ -424,6 +437,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     // Fabric
     fabric_category:    piece?.fabric_category    || null,
     fabric_weight:      piece?.fabric_weight      || null,
+    visual_weight:      piece?.visual_weight      || null,
     opacity:            piece?.opacity            || null,
     needs_base:         piece?.needs_base         || null,
     fiber_content:      piece?.fiber_content      || [],
@@ -441,6 +455,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     necklace_length:    piece?.necklace_length    || null,
     // Bottom
     bottom_subtype:     piece?.bottom_subtype     || null,
+    // Shoes
+    shoe_type:          piece?.shoe_type          || null,
+    toe_shape:          piece?.toe_shape          || null,
     // Learned wisdom
     styling_rules_learned: piece?.styling_rules_learned || [],
     tried_and_rejected:    piece?.tried_and_rejected    || [],
@@ -505,7 +522,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const [saving,      setSaving]      = useState(false)
   const [tagging,     setTagging]     = useState(false)
   const [tagError,    setTagError]    = useState(null)
-  const [fitNoting,   setFitNoting]   = useState(false)
   const [previewImage, setPreviewImage] = useState(null)
   const [styleReadExpanded, setStyleReadExpanded] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -588,15 +604,24 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   // Auto-tag from a new hanger photo. In edit mode, retag from saved hanger + worn photos when available.
   const handleTagThis = async () => {
     const hasExistingPhoto = isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn))
-    if (!hangerFile && !hasExistingPhoto) return
+    if (!hangerFile && !wornFile && !hasExistingPhoto) return
     setTagging(true); setTagError(null)
     try {
       let res
-      if (hangerFile) {
-        const fd = new FormData(); fd.append('photo', hangerFile)
-        res = await fetch('/api/ai/tag-piece', { method: 'POST', body: fd })
+      if (isEdit) {
+        // Always retag through tag-piece-existing so ground-truth overrides and the
+        // wardrobe anchor block still apply, even when a new hanger photo is picked —
+        // /tag-piece has neither. Any newly-selected (not yet saved) photo is sent
+        // along; a field left unsent falls back to whatever's already saved on the piece.
+        const fd = new FormData()
+        if (hangerFile) fd.append('photo', hangerFile)
+        if (wornFile) fd.append('worn_photo', wornFile)
+        res = await fetch(`/api/ai/tag-piece-existing/${piece.id}`, { method: 'POST', body: fd })
       } else {
-        res = await fetch(`/api/ai/tag-piece-existing/${piece.id}`, { method: 'POST' })
+        const fd = new FormData()
+        fd.append('photo', hangerFile)
+        if (wornFile) fd.append('worn_photo', wornFile)
+        res = await fetch('/api/ai/tag-piece', { method: 'POST', body: fd })
       }
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
@@ -624,6 +649,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'silhouette', tags.silhouette)
         applyTagValue(next, 'fabric_category', tags.fabric_category)
         applyTagValue(next, 'fabric_weight', tags.fabric_weight)
+        applyTagValue(next, 'visual_weight', tags.visual_weight)
         applyTagValue(next, 'opacity', tags.opacity)
         applyTagValue(next, 'needs_base', tags.needs_base)
         applyTagValue(next, 'fiber_content', tags.fiber_content)
@@ -635,6 +661,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
         applyTagValue(next, 'waistband_type', tags.waistband_type)
         applyTagValue(next, 'accessory_subtype', tags.accessory_subtype)
         applyTagValue(next, 'bottom_subtype', tags.bottom_subtype)
+        applyTagValue(next, 'shoe_type', tags.shoe_type)
+        applyTagValue(next, 'toe_shape', tags.toe_shape)
         applyTagValue(next, 'jewelry_type', tags.jewelry_type)
         applyTagValue(next, 'necklace_length', tags.necklace_length)
         next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
@@ -664,54 +692,8 @@ export default function PieceForm({ piece, onSave, onCancel }) {
     finally { setTagging(false) }
   }
 
-  // Combined evaluation from worn photo — routes through the same tagger as hanger photos.
-  const handleWornPhoto = async (file) => {
-    setDirty(true)
-    setTagError(null)
-    setWornFile(file); setWornPrev(URL.createObjectURL(file)); setClearWorn(false)
-    setFitNoting(true)
-    try {
-      const fd = new FormData()
-      fd.append('worn_photo', file)
-      if (hangerFile) fd.append('photo', hangerFile)
-      const res = await fetch(isEdit ? `/api/ai/tag-piece-existing/${piece.id}` : '/api/ai/tag-piece', { method: 'POST', body: fd })
-      const tags = await res.json()
-      if (tags.error) throw new Error(tags.error)
-      const taxonomyGaps = Array.isArray(tags.color_taxonomy_gaps) ? tags.color_taxonomy_gaps : []
-      setColorTaxonomyGaps(taxonomyGaps)
-      let changedCount = 0
-      setForm(f => {
-        const next = { ...f }
-        ;['category','colors','occasions','season','background_color','pattern_type','pattern_scale','pattern_complexity','reads_as','hem_finish','neckline','sleeve_length','sleeve_shape','length_hits_at','silhouette','fabric_category','fabric_weight','opacity','needs_base','formality','heel_height','walk_support','fit_on_body','tuck_behavior','waistband_type','accessory_subtype','jewelry_type','necklace_length','bottom_subtype','tagger_version'].forEach(field => {
-          applyTagValue(next, field, tags[field])
-        })
-        if (!f.name) applyTagValue(next, 'name', tags.name_suggestion || tags.name, '')
-        if (!f.notes) applyTagValue(next, 'notes', tags.notes_suggestion || tags.notes, '')
-        next.style_profile_json = mergeTagProfile(f.style_profile_json, tags.style_profile_json)
-        applyTagValue(next, 'tag_state', tags.tag_state || 'fully_tagged')
-        changedCount = Object.keys(next).filter(key => JSON.stringify(next[key]) !== JSON.stringify(f[key])).length
-        return next
-      })
-      const gapSummary = taxonomyGaps.length
-        ? ` Unsupported ${taxonomyGaps.length === 1 ? 'shade' : 'shades'} ${taxonomyGaps.join(', ')} ${isEdit ? 'were added' : 'will be added when you save'} to Retag suggestions and were not applied.`
-        : ''
-      setAiUpdateSummary((changedCount
-        ? `Worn-photo analysis updated ${changedCount} ${changedCount === 1 ? 'detail' : 'details'}. Review them before saving.`
-        : 'Worn-photo analysis did not change any garment details.') + gapSummary)
-      const confidence = tags.style_profile_json?._confidence || tags._confidence
-      if (confidence) {
-        const flags = {}
-        Object.entries(confidence).forEach(([field, conf]) => {
-          if (conf === 'medium' || conf === 'low') flags[field] = conf
-        })
-        setConfidenceFlags(flags)
-      }
-    } catch { setTagError('The worn photo was added, but fit analysis failed. You can still review and save it.') }
-    finally { setFitNoting(false) }
-  }
-
   const handleSubmit = async () => {
-    if (!form.name.trim() || tagging || fitNoting) {
+    if (!form.name.trim() || tagging) {
       if (!form.name.trim()) setSaveError('Add a name before saving.')
       return
     }
@@ -807,12 +789,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   const missingGateLabels = {
     formality: 'Formality',
     fabric_weight: 'Fabric weight',
+    visual_weight: 'Visual weight',
     fiber_content: 'Fiber content',
     occasions: 'Occasions',
     heel_height: 'Heel height',
     walk_support: 'Walk support',
     accessory_subtype: 'Accessory type',
     bottom_subtype: 'Bottom type',
+    shoe_type: 'Shoe type',
   }
   const revealMissingField = (field) => {
     const group = dialogRef.current?.querySelector(`[data-piece-field="${field}"]`)
@@ -913,7 +897,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               />
               {!isEdit && hangerFile && (
                 <div className="piece-form-ai-action">
-                  <button type="button" onClick={handleTagThis} disabled={tagging || fitNoting || saving} className="piece-form-ai-button">
+                  <button type="button" onClick={handleTagThis} disabled={tagging || saving} className="piece-form-ai-button">
                     {tagging
                       ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Tagging…</>
                       : '◇ Fill details with AI'}
@@ -926,9 +910,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             </div>
             <PhotoSlot
               label="Worn photo"
-              hint={fitNoting ? '◌ Evaluating…' : 'Auto-generates fit note'}
+              hint="Adds fit and drape context for the stylist"
               preview={wornPrev}
-              onChange={e => { const f = e.target.files[0]; if (f) handleWornPhoto(f) }}
+              onChange={e => { const f = e.target.files[0]; if (f) { setDirty(true); setWornFile(f); setWornPrev(URL.createObjectURL(f)); setClearWorn(false) } }}
               onClear={() => { setDirty(true); setWornFile(null); setClearWorn(true) }}
               pendingRemoval={clearWorn}
               onRestore={() => { setClearWorn(false); setWornPrev(piece?.worn_photo ? `/uploads/${piece.worn_photo}` : null) }}
@@ -937,9 +921,9 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           </div>
 
           {/* Tag This button */}
-          {isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn) || hangerFile) && (
+          {isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn) || hangerFile || wornFile) && (
             <div>
-              <button type="button" onClick={handleTagThis} disabled={tagging || fitNoting || saving} className="piece-form-ai-button">
+              <button type="button" onClick={handleTagThis} disabled={tagging || saving} className="piece-form-ai-button">
                 {tagging
                   ? <><span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>◌</span> Tagging…</>
                   : '◇ Update details with AI'}
@@ -1022,12 +1006,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <ChipRow labelledBy="piece-form-occasions-label" options={OCCASIONS} value={form.occasions} onChange={v => set('occasions', v)} multi />
           </div>
 
+          {!(form.category === 'accessory' && form.accessory_subtype === 'jewelry') && (
           <div className="form-group">
             <div id="piece-form-season-label" className="form-label">Season</div>
             <div className="radio-row" role="group" aria-labelledby="piece-form-season-label">
               {SEASONS.map(s => <button type="button" key={s} aria-pressed={form.season === s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
             </div>
           </div>
+          )}
 
           {isEdit && (
             <div className="form-group">
@@ -1168,25 +1154,59 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               <small>{isEdit ? 'Pattern, construction, material, and silhouette' : 'Optional pattern, material, and silhouette details'}</small>
             </summary>
             <div className="piece-form-disclosure-body">
-          <Section label="Pattern & Visual" />
 
-          <div className="form-group">
-            <label className="form-label">Pattern type</label>
-            <ChipRow options={['solid','floral','stripe','botanical','geometric','abstract','animal','graphic','plaid','other']} value={form.pattern_type} onChange={v => set('pattern_type', v)} />
-          </div>
+          {cat === 'accessory' && (
+            <>
+              <Section label="Accessory type" />
 
-          <div className="form-group">
-            <label className="form-label">Pattern scale</label>
-            <ChipRow options={['none','subtle','medium','bold']} value={form.pattern_scale} onChange={v => set('pattern_scale', v)} />
-          </div>
+              <div className="form-group" data-piece-field="accessory_subtype">
+                <FieldLabel field="accessory_subtype">Type</FieldLabel>
+                <ChipRow options={ACCESSORY_SUBTYPE_OPTIONS} value={form.accessory_subtype} onChange={v => set('accessory_subtype', v)} />
+              </div>
 
-          <div className="form-group">
-            <FieldLabel field="pattern_complexity">
-              Pattern complexity
-              <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>solid / quiet 1–2 colors / medium 2–3 / loud 3+</span>
-            </FieldLabel>
-            <ChipRow options={['solid','quiet','medium','loud']} value={form.pattern_complexity} onChange={v => set('pattern_complexity', v)} />
-          </div>
+              {form.accessory_subtype === 'jewelry' && (
+                <div className="form-group" data-piece-field="jewelry_type">
+                  <FieldLabel field="jewelry_type">Jewelry Type</FieldLabel>
+                  <ChipRow options={JEWELRY_TYPE_OPTIONS} value={form.jewelry_type} onChange={v => set('jewelry_type', v)} />
+                </div>
+              )}
+
+              {form.accessory_subtype === 'jewelry' && form.jewelry_type === 'necklace' && (
+                <div className="form-group" data-piece-field="necklace_length">
+                  <FieldLabel field="necklace_length">Necklace Length</FieldLabel>
+                  <ChipRow options={NECKLACE_LENGTH_OPTIONS} value={form.necklace_length} onChange={v => set('necklace_length', v)} />
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Jewelry (necklace, earrings, bracelet, ring, pin) has no meaningful pattern —
+              skip the whole chip wall rather than showing fields that always resolve to
+              solid/none. reads_as stays: it's one free-text field, not a wall of options,
+              and "delicate gold minimalist" is still a real visual read for a necklace. */}
+          {!(cat === 'accessory' && form.accessory_subtype === 'jewelry') && (
+            <>
+              <Section label="Pattern & Visual" />
+
+              <div className="form-group">
+                <label className="form-label">Pattern type</label>
+                <ChipRow options={['solid','floral','botanical','stripe','polka_dot','check','plaid','geometric','abstract','animal','graphic','paisley','patchwork','other']} value={form.pattern_type} onChange={v => set('pattern_type', v)} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Pattern scale</label>
+                <ChipRow options={['none','subtle','medium','bold']} value={form.pattern_scale} onChange={v => set('pattern_scale', v)} />
+              </div>
+
+              <div className="form-group">
+                <FieldLabel field="pattern_complexity">
+                  Pattern complexity
+                  <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>solid / quiet 1–2 colors / medium 2–3 / loud 3+</span>
+                </FieldLabel>
+                <ChipRow options={['solid','quiet','medium','loud']} value={form.pattern_complexity} onChange={v => set('pattern_complexity', v)} />
+              </div>
+            </>
+          )}
 
           <div className="form-group">
             <FieldLabel field="reads_as">
@@ -1229,10 +1249,32 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 </div>
               )}
 
-              <div className="form-group">
-                <FieldLabel field="silhouette">{constructionConfig.silhouetteLabel}</FieldLabel>
-                <ChipRow options={constructionConfig.silhouetteOptions} value={form.silhouette} onChange={v => set('silhouette', v)} />
-              </div>
+              {cat !== 'shoes' && (
+                <div className="form-group">
+                  <FieldLabel field="silhouette">{constructionConfig.silhouetteLabel}</FieldLabel>
+                  <ChipRow
+                    options={cat === 'bottom'
+                      ? (form.bottom_subtype === 'skirt' ? BOTTOM_SKIRT_SILHOUETTE_OPTIONS : BOTTOM_PANTS_SILHOUETTE_OPTIONS)
+                      : constructionConfig.silhouetteOptions}
+                    value={form.silhouette}
+                    onChange={v => set('silhouette', v)}
+                  />
+                </div>
+              )}
+
+              {cat === 'shoes' && (
+                <>
+                  <div className={`form-group ${suggestedFields.has('shoe_type') ? 'retag-field-highlight' : ''}`} data-piece-field="shoe_type">
+                    <FieldLabel field="shoe_type">Shoe Type {suggestedFields.has('shoe_type') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
+                    <ChipRow options={SHOE_TYPE_OPTIONS} value={form.shoe_type} onChange={v => set('shoe_type', v)} />
+                  </div>
+
+                  <div className={`form-group ${suggestedFields.has('toe_shape') ? 'retag-field-highlight' : ''}`} data-piece-field="toe_shape">
+                    <FieldLabel field="toe_shape">Toe Shape {suggestedFields.has('toe_shape') && <span className="retag-review-marker">Review suggested</span>}</FieldLabel>
+                    <ChipRow options={TOE_SHAPE_OPTIONS} value={form.toe_shape} onChange={v => set('toe_shape', v)} />
+                  </div>
+                </>
+              )}
 
               <div className={`form-group ${suggestedFields.has('length_hits_at') ? 'retag-field-highlight' : ''}`}>
                 <label className="form-label">{constructionConfig.lengthLabel} {suggestedFields.has('length_hits_at') && <span className="retag-review-marker">Review suggested</span>}</label>
@@ -1265,13 +1307,19 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           <Section label={fabricConfig.sectionLabel} />
 
           <div className="form-group">
-            <FieldLabel field="fabric_category">{fabricConfig.fabricLabel}</FieldLabel>
+            <FieldLabel field="fabric_category">
+              {fabricConfig.fabricLabel}
+              {(cat === 'shoes' || cat === 'accessory') && <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>one value — for a mix (e.g. metal + stone), also check Material Properties below</span>}
+            </FieldLabel>
             <ChipRow options={fabricConfig.fabricOptions} value={form.fabric_category} onChange={v => set('fabric_category', v)} />
           </div>
 
-          <div className="form-group" data-piece-field="fabric_weight">
-            <FieldLabel field="fabric_weight">{fabricConfig.weightLabel}</FieldLabel>
-            <ChipRow options={fabricConfig.weightOptions} value={form.fabric_weight} onChange={v => set('fabric_weight', v)} />
+          <div className="form-group" data-piece-field={cat === 'shoes' || cat === 'accessory' ? 'visual_weight' : 'fabric_weight'}>
+            <FieldLabel field={cat === 'shoes' || cat === 'accessory' ? 'visual_weight' : 'fabric_weight'}>{fabricConfig.weightLabel}</FieldLabel>
+            {cat === 'shoes' || cat === 'accessory'
+              ? <ChipRow options={fabricConfig.weightOptions} value={form.visual_weight} onChange={v => set('visual_weight', v)} />
+              : <ChipRow options={fabricConfig.weightOptions} value={form.fabric_weight} onChange={v => set('fabric_weight', v)} />
+            }
           </div>
 
           {form.category !== 'shoes' && form.category !== 'accessory' && (
@@ -1289,14 +1337,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           )}
 
           <div className="form-group" data-piece-field="fiber_content">
-            <FieldLabel field="fiber_content">Fiber content</FieldLabel>
+            <FieldLabel field="fiber_content">{cat === 'shoes' || cat === 'accessory' ? 'Material properties' : 'Fiber content'}</FieldLabel>
             <ChipRow options={FIBER_OPTIONS} value={form.fiber_content} onChange={v => set('fiber_content', v)} multi />
           </div>
 
           {fabricConfig.showStretch && (
             <div className="form-group">
-              <label className="form-label">Stretch</label>
-              <ChipRow options={['none','minimal','stretchy']} value={form.stretch} onChange={v => set('stretch', v)} />
+              <FieldLabel field="stretch">Stretch</FieldLabel>
+              <ChipRow options={['none','minimal','moderate','stretchy']} value={form.stretch} onChange={v => set('stretch', v)} />
             </div>
           )}
 
@@ -1314,30 +1362,6 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             </>
           )}
 
-          {cat === 'accessory' && (
-            <>
-              <Section label="Accessory type" />
-
-              <div className="form-group" data-piece-field="accessory_subtype">
-                <FieldLabel field="accessory_subtype">Type</FieldLabel>
-                <ChipRow options={ACCESSORY_SUBTYPE_OPTIONS} value={form.accessory_subtype} onChange={v => set('accessory_subtype', v)} />
-              </div>
-
-              {form.accessory_subtype === 'jewelry' && (
-                <div className="form-group" data-piece-field="jewelry_type">
-                  <FieldLabel field="jewelry_type">Jewelry Type</FieldLabel>
-                  <ChipRow options={JEWELRY_TYPE_OPTIONS} value={form.jewelry_type} onChange={v => set('jewelry_type', v)} />
-                </div>
-              )}
-
-              {form.accessory_subtype === 'jewelry' && form.jewelry_type === 'necklace' && (
-                <div className="form-group" data-piece-field="necklace_length">
-                  <FieldLabel field="necklace_length">Necklace Length</FieldLabel>
-                  <ChipRow options={NECKLACE_LENGTH_OPTIONS} value={form.necklace_length} onChange={v => set('necklace_length', v)} />
-                </div>
-              )}
-            </>
-          )}
             </div>
           </details>
 
@@ -1384,6 +1408,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                     options={[
                       { value: 'structured_high_waist', label: 'structured high' },
                       { value: 'structured_mid_waist',  label: 'structured mid' },
+                      { value: 'structured_low_waist',  label: 'structured low' },
                       { value: 'soft_elastic_pull_on',  label: 'soft elastic' },
                       { value: 'tight_no_room',          label: 'tight - no tuck' },
                       { value: 'drawstring_relaxed',     label: 'drawstring' },
@@ -1437,6 +1462,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                       options={[
                         { value: 'structured_high_waist', label: 'structured high' },
                         { value: 'structured_mid_waist', label: 'structured mid' },
+                        { value: 'structured_low_waist', label: 'structured low' },
                         { value: 'soft_elastic_pull_on', label: 'soft elastic' },
                         { value: 'tight_no_room', label: 'tight - no tuck' },
                         { value: 'drawstring_relaxed', label: 'drawstring' },
@@ -1510,10 +1536,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
             <>
               <Section label="Notes" />
               <div className="form-group">
-                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  Styling notes
-                  {fitNoting && <span style={{ color: 'var(--accent)', fontSize: 10, fontStyle: 'italic' }}>◌ evaluating fit…</span>}
-                </label>
+                <label className="form-label">Styling notes</label>
                 <textarea className="form-textarea" placeholder="Anything you've learned about how to wear this piece…" value={form.notes} onChange={e => set('notes', e.target.value)} style={{ minHeight: 100 }} />
               </div>
             </>
@@ -1545,7 +1568,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 : dirty ? 'Unsaved changes' : 'No unsaved changes')}
           </div>
           <button type="button" className="btn-secondary" onClick={requestClose} disabled={saving}>Cancel</button>
-          <button type="button" className="btn-primary" onClick={handleSubmit} disabled={saving || tagging || fitNoting || !form.name.trim()}>
+          <button type="button" className="btn-primary" onClick={handleSubmit} disabled={saving || tagging || !form.name.trim()}>
             {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add piece'}
           </button>
         </div>

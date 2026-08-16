@@ -1157,7 +1157,7 @@ function describeCapsuleAccentSupplyGap(palette = [], bench = []) {
   return `[capsule palette: the eligible wardrobe could not supply ${missing.map(colorFamilyDisplayName).join(', ')} for this season and lifestyle, so those places stayed in the neutral foundation rather than substituting unrelated colours]`
 }
 
-function capsuleVersatilityScore(piece = {}, { isSummer = false, palette = [] } = {}) {
+export function capsuleVersatilityScore(piece = {}, { isSummer = false, palette = [] } = {}) {
   let score = 0
   const colors = (Array.isArray(piece.colors) ? piece.colors : []).map(color => String(color).toLowerCase())
   // The recombination bonus, paid only to pieces that introduce no colour of
@@ -2454,6 +2454,7 @@ function planWorkbenchPieceLine(piece = {}) {
     piece.needs_base === 'yes' ? 'NEEDS_BASE_LAYER' : '',
     piece.fabric_category ? `fabric:${piece.fabric_category}` : '',
     piece.fabric_weight ? `weight:${piece.fabric_weight}` : '',
+    piece.visual_weight ? `weight:${piece.visual_weight}` : '',
     piece.heel_height ? `heel:${piece.heel_height}` : '',
     piece.walk_support ? `support:${piece.walk_support}` : '',
     piece.reads_as ? `reads:${String(piece.reads_as).slice(0, 80)}` : '',

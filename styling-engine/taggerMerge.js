@@ -5,11 +5,21 @@ const MANUAL_CONFIDENCE = 'manual'
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low', MANUAL_CONFIDENCE])
 const VALID_FIBERS = new Set(['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'fleece', 'down',
   'cotton', 'linen', 'silk', 'tencel', 'modal', 'rayon', 'viscose', 'polyester', 'nylon',
-  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'unknown'])
+  'acrylic', 'spandex', 'leather', 'suede', 'denim', 'tweed', 'hemp',
+  // Not textile fibers — added so accessory/jewelry pieces (fabric_category metal/stone/
+  // wood/ceramic/glass) have a real value to align fiber_content with, instead of always
+  // collapsing to 'unknown'. Same rationale as leather/suede/denim already being here.
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
+  // Jewelry-specific materials — pearl/crystal/enamel don't fit any of the above (not stone,
+  // not glass, not metal) but are common enough jewelry materials to need their own value.
+  'pearl', 'crystal', 'enamel', 'unknown'])
+// lyocell is the generic fiber name; tencel is its branded form and is this wardrobe's one
+// stored concept for both — remap before validating rather than treating them as distinct values.
+const FIBER_SYNONYMS = { lyocell: 'tencel' }
 const VALID_FORMALITY = new Set(['lounge', 'everyday', 'elevated', 'dressy'])
 const VALID_HEEL_HEIGHT = new Set(['flat', 'low', 'mid', 'high'])
 const VALID_WALK_SUPPORT = new Set(['high', 'medium', 'low'])
-const VALID_ACCESSORY_SUBTYPE = new Set(['belt', 'bag', 'jewelry', 'scarf', 'hat', 'watch', 'gloves', 'other'])
+const VALID_ACCESSORY_SUBTYPE = new Set(['belt', 'bag', 'jewelry', 'scarf', 'hat', 'watch', 'glasses', 'gloves', 'other'])
 const VALID_BOTTOM_SUBTYPE = new Set(['pants', 'shorts', 'skirt', 'culottes', 'overalls', 'other', 'unknown'])
 const VALID_JEWELRY_TYPE = new Set(['necklace', 'earrings', 'bracelet', 'ring', 'pin'])
 const VALID_NECKLACE_LENGTH = new Set(['choker', 'short', 'long'])
@@ -31,10 +41,14 @@ export const CONFIDENCE_FIELDS = [
   'sleeve_shape',
   'length_hits_at',
   'silhouette',
+  'shoe_type',
+  'toe_shape',
   'hem_finish',
   'fabric_category',
   'fabric_weight',
+  'visual_weight',
   'opacity',
+  'stretch',
   'fiber_content',
   'formality',
   'heel_height',
@@ -57,6 +71,7 @@ export function normalizeFiberContent(value = []) {
   const raw = Array.isArray(value) ? value : []
   const normalized = raw
     .map(v => String(v || '').toLowerCase().trim())
+    .map(v => FIBER_SYNONYMS[v] || v)
     .map(v => VALID_FIBERS.has(v) ? v : 'unknown')
     .filter(Boolean)
   return [...new Set(normalized.length ? normalized : ['unknown'])]
@@ -293,16 +308,30 @@ export function applyTaggerResult(existingPiece = {}, tags = {}) {
   return applySoftScoreFloors(merged)
 }
 
-export function tagStateForPhotos({ photo, worn_photo, style_profile_json } = {}) {
+// Categories with no fit_on_body field (see CLOTHING_CATEGORIES in PieceForm.jsx) have nothing
+// a worn photo would let a person judge — a ring or a belt doesn't have "fit and drape" the way
+// a shirt does. Without this, those pieces sat at tag_state 'provisional' forever: the only way
+// out was a worn photo, but the field that photo would inform is never shown for them.
+const FIT_IRRELEVANT_CATEGORIES = new Set(['shoes', 'accessory'])
+function categoryHasFitPhotoRelevance(category) {
+  return !FIT_IRRELEVANT_CATEGORIES.has(String(category || '').toLowerCase().trim())
+}
+
+export function tagStateForPhotos({ photo, worn_photo, style_profile_json, category } = {}) {
   if (hasFitVisiblePhoto(style_profile_json || {})) return 'fully_tagged'
   if (worn_photo) return 'fully_tagged'
+  if (photo && !categoryHasFitPhotoRelevance(category)) return 'fully_tagged'
   if (photo) return 'provisional'
   return 'untagged'
 }
 
 export function tagStateForTaggerResult(tags = {}, fallback = {}) {
   const profile = tags.style_profile_json || {}
+  const category = tags.category || fallback.category
   if (hasFitVisiblePhoto(profile)) return 'fully_tagged'
-  if (hasPhotoPropertyJudgment(profile)) return fallback.photo || fallback.worn_photo ? 'provisional' : 'untagged'
-  return tagStateForPhotos(fallback)
+  if (hasPhotoPropertyJudgment(profile)) {
+    if (fallback.photo && !categoryHasFitPhotoRelevance(category)) return 'fully_tagged'
+    return fallback.photo || fallback.worn_photo ? 'provisional' : 'untagged'
+  }
+  return tagStateForPhotos({ ...fallback, category })
 }

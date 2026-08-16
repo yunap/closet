@@ -18,11 +18,19 @@ const FABRIC_WEIGHT_OPTIONS = [
   { value: 'medium', label: 'Medium' },
   { value: 'heavy', label: 'Heavy' },
 ]
+const VISUAL_WEIGHT_OPTIONS = [
+  { value: 'delicate', label: 'Delicate' },
+  { value: 'slim', label: 'Slim' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'chunky', label: 'Chunky' },
+]
 const FIBER_OPTIONS = [
-  'cotton', 'linen', 'silk', 'wool', 'merino', 'cashmere', 
-  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal', 
-  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic', 
-  'spandex', 'leather', 'suede', 'denim', 'unknown'
+  'cotton', 'linen', 'hemp', 'silk', 'wool', 'merino', 'cashmere',
+  'alpaca', 'mohair', 'fleece', 'down', 'tencel', 'modal',
+  'rayon', 'viscose', 'polyester', 'nylon', 'acrylic',
+  'spandex', 'leather', 'suede', 'denim', 'tweed',
+  'metal', 'stone', 'wood', 'ceramic', 'glass', 'horn', 'shell', 'resin',
+  'pearl', 'crystal', 'enamel', 'unknown'
 ]
 const HEEL_HEIGHT_OPTIONS = [
   { value: 'flat', label: 'Flat' },
@@ -38,34 +46,38 @@ const WALK_SUPPORT_OPTIONS = [
 const BOTTOM_SKIRT_LENGTH_OPTIONS = ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown']
 const BOTTOM_PANTS_LENGTH_OPTIONS = ['shorts','knee','mid_calf','ankle','full_length','floor_length','unknown']
 
+const BOTTOM_SKIRT_SILHOUETTE_OPTIONS = ['a_line','pencil','full','slip','straight','pleated','wrap']
+const BOTTOM_PANTS_SILHOUETTE_OPTIONS = ['straight_leg','wide_leg','bootcut','flare','tapered','barrel','relaxed']
+const SHOE_TYPE_OPTIONS = ['mule','loafer','boot','sandal','pump','flat','sneaker','slip_on','other','unknown']
+const TOE_SHAPE_OPTIONS = ['pointed','almond','round','square','open_toe','other','unknown']
+
 const REVIEW_CONSTRUCTION_CONFIG = {
   top: {
     showNeckline: true,
     showSleeve: true,
-    silhouetteOptions: ['fitted','slim','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
+    silhouetteOptions: ['fitted','slim','straight','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
     lengthOptions: ['cropped','waist','high_hip','hip','low_hip','tunic','unknown'],
-    hemOptions: ['straight_loose', 'banded_elastic', 'ribbed', 'design_hem'],
+    hemOptions: ['straight_loose', 'banded_elastic', 'ribbed', 'curved', 'shirttail', 'high_low', 'asymmetric', 'other'],
   },
   bottom: {
-    silhouetteOptions: ['straight leg','wide leg','bootcut','flare','tapered','barrel','A-line skirt','pencil skirt','full skirt','slip skirt','relaxed','structured'],
-    // No static lengthOptions — depends on bottom_subtype (skirt vs pants),
-    // chosen at render time from BOTTOM_SKIRT_LENGTH_OPTIONS/BOTTOM_PANTS_LENGTH_OPTIONS.
-    hemOptions: ['straight_loose', 'cuffed', 'raw', 'tapered', 'banded_elastic', 'slit', 'asymmetrical', 'design_hem'],
+    // No static silhouetteOptions/lengthOptions — both depend on bottom_subtype
+    // (skirt vs pants), chosen at render time.
+    hemOptions: ['straight_loose', 'cuffed', 'raw', 'tapered', 'banded_elastic', 'slit', 'asymmetric', 'other'],
   },
   dress: {
     showNeckline: true,
     showSleeve: true,
-    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','relaxed'],
+    silhouetteOptions: ['fitted','sheath','shift','A-line','wrap','slip','column','fit-and-flare','empire','relaxed'],
     lengthOptions: ['mini','above_knee','knee','below_knee','midi','ankle','maxi','unknown'],
   },
   outerwear: {
     showSleeve: true,
-    silhouetteOptions: ['cropped','fitted','boxy','relaxed','oversized','structured','longline'],
-    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','unknown'],
+    silhouetteOptions: ['fitted','straight','boxy','relaxed','oversized','structured'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','full_length','floor_length','unknown'],
   },
   shoes: {
-    silhouetteOptions: ['pointed','almond','round','square','open-toe','mule','loafer','boot','sandal','heel','flat','sneaker'],
-    lengthOptions: ['low','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
+    // No silhouette — shoe_type/toe_shape replace it.
+    lengthOptions: ['open','below_ankle','ankle','high_top','mid_calf','knee','over_knee','unknown'],
   }
 }
 
@@ -74,10 +86,11 @@ function emptyForm() {
     name: '', category: 'top', colors: [], occasions: [], season: 'year-round', notes: '', status: 'active',
     pattern_type: null, pattern_scale: null, pattern_complexity: null, reads_as: '',
     hem_finish: null, neckline: null, sleeve_length: null, sleeve_shape: null, length_hits_at: null,
-    silhouette: null, fabric_category: null, fabric_weight: null, opacity: null, needs_base: null, fiber_content: [],
+    silhouette: null, fabric_category: null, fabric_weight: null, visual_weight: null, opacity: null, needs_base: null, fiber_content: [],
     formality: null, heel_height: null, walk_support: null,
     stretch: null, fit_on_body: null, tuck_behavior: null, waistband_type: null,
     accessory_subtype: null, jewelry_type: null, necklace_length: null, bottom_subtype: null,
+    shoe_type: null, toe_shape: null,
     style_profile_json: {},
     tagger_version: null,
     manual_overrides: [],
@@ -528,7 +541,8 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
   const patternConstFields = [
     'pattern_type', 'pattern_scale', 'pattern_complexity', 'reads_as',
     'neckline', 'sleeve_length', 'sleeve_shape', 'silhouette', 'length_hits_at', 'hem_finish',
-    'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype'
+    'stretch', 'fit_on_body', 'tuck_behavior', 'waistband_type', 'accessory_subtype', 'jewelry_type', 'necklace_length', 'bottom_subtype',
+    'shoe_type', 'toe_shape'
   ]
   const hasLowConfidencePatternConst = patternConstFields.some(field => 
     String(confidence[field] || '').toLowerCase() === 'low'
@@ -694,13 +708,15 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
           </div>
         </div>
 
-        {/* Season */}
-        <div className="form-group">
-          <label className="form-label">Season</label>
-          <div className="radio-row">
-            {SEASONS.map(s => <button key={s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
+        {/* Season — skipped for jewelry, no seasonal relevance */}
+        {!(form.category === 'accessory' && form.accessory_subtype === 'jewelry') && (
+          <div className="form-group">
+            <label className="form-label">Season</label>
+            <div className="radio-row">
+              {SEASONS.map(s => <button key={s} className={`radio-btn ${form.season === s ? 'active' : ''}`} onClick={() => set('season', s)}>{s}</button>)}
+            </div>
           </div>
-        </div>
+        )}
 
         {form.category !== 'accessory' && (
           <div className="form-group">
@@ -720,7 +736,10 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
         )}
 
         <div className="form-group">
-          <FieldLabel field="fabric_category">Fabric Category</FieldLabel>
+          <FieldLabel field="fabric_category">
+            {form.category === 'shoes' || form.category === 'accessory' ? 'Primary Material' : 'Fabric Category'}
+            {(form.category === 'shoes' || form.category === 'accessory') && <span style={{ fontSize: 10, color: 'var(--text-light)', marginLeft: 6, fontStyle: 'italic', fontWeight: 400 }}>one value — for a mix (e.g. metal + stone), also check Material Properties below</span>}
+          </FieldLabel>
           <select
             className="form-select"
             value={form.fabric_category || ''}
@@ -728,10 +747,10 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
           >
             <option value="">-- Select Fabric --</option>
             {(form.category === 'shoes'
-              ? ['leather','suede','patent','canvas','mesh','synthetic','textile','rubber','other']
+              ? ['leather','suede','nubuck','patent','canvas','mesh','woven','synthetic','textile','rubber','other']
               : form.category === 'accessory'
-              ? ['leather','suede','metal','straw','canvas','synthetic','textile','rubber','other']
-              : ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','lace','crochet','wool','cashmere','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other']
+              ? ['leather','suede','metal','stone','straw','canvas','synthetic','textile','rubber','wood','ceramic','glass','horn','shell','resin','pearl','crystal','enamel','other']
+              : ['jersey','knit','rib knit','ponte','sweatshirt fleece','fleece','cotton','poplin','linen','linen blend','rayon','viscose','modal','silk','satin','crepe','chiffon','organza','lace','crochet','jacquard','wool','cashmere','boucle','denim','twill','canvas','corduroy','tweed','velvet','leather','faux leather','suede','faux suede','mesh','technical/performance','synthetic','other']
             ).map(opt => (
               <option key={opt} value={opt}>{opt}</option>
             ))}
@@ -739,22 +758,41 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
         </div>
 
         <div className="form-group">
-          <FieldLabel field="fabric_weight">Fabric Weight</FieldLabel>
-          <div className="radio-row">
-            {FABRIC_WEIGHT_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                className={`radio-btn ${form.fabric_weight === opt.value ? 'active' : ''}`}
-                onClick={() => set('fabric_weight', opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          {form.category === 'shoes' || form.category === 'accessory' ? (
+            <>
+              <FieldLabel field="visual_weight">Visual Weight</FieldLabel>
+              <div className="radio-row">
+                {VISUAL_WEIGHT_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`radio-btn ${form.visual_weight === opt.value ? 'active' : ''}`}
+                    onClick={() => set('visual_weight', opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <FieldLabel field="fabric_weight">Fabric Weight</FieldLabel>
+              <div className="radio-row">
+                {FABRIC_WEIGHT_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`radio-btn ${form.fabric_weight === opt.value ? 'active' : ''}`}
+                    onClick={() => set('fabric_weight', opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="form-group">
-          <FieldLabel field="fiber_content">Fiber Content</FieldLabel>
+          <FieldLabel field="fiber_content">{form.category === 'shoes' || form.category === 'accessory' ? 'Material Properties' : 'Fiber Content'}</FieldLabel>
           <div className="chip-grid">
             {FIBER_OPTIONS.map(fib => (
               <button
@@ -809,7 +847,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
               <FieldLabel field="accessory_subtype">Accessory Type</FieldLabel>
               <select className="form-select" value={form.accessory_subtype || ''} onChange={e => set('accessory_subtype', e.target.value || null)}>
                 <option value="">-- Select Type --</option>
-                {['belt','bag','jewelry','scarf','hat','watch','gloves','other'].map(opt => (
+                {['belt','bag','jewelry','scarf','hat','watch','glasses','gloves','other'].map(opt => (
                   <option key={opt} value={opt}>{opt}</option>
                 ))}
               </select>
@@ -861,38 +899,44 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
         {detailsExpanded && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '14px', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-sm)', background: 'rgba(104, 77, 98, 0.02)' }}>
             
-            {/* Pattern Type */}
-            <div className="form-group">
-              <FieldLabel field="pattern_type">Pattern Type</FieldLabel>
-              <select className="form-select" value={form.pattern_type || ''} onChange={e => set('pattern_type', e.target.value || null)}>
-                <option value="">-- Select Pattern Type --</option>
-                {['solid','floral','stripe','botanical','geometric','abstract','animal','graphic','plaid','other'].map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            </div>
+            {/* Pattern fields: skipped for jewelry — no meaningful pattern, and these are three
+                chip-heavy selects the user shouldn't have to wade through for a solid metal piece. */}
+            {!(form.category === 'accessory' && form.accessory_subtype === 'jewelry') && (
+              <>
+                {/* Pattern Type */}
+                <div className="form-group">
+                  <FieldLabel field="pattern_type">Pattern Type</FieldLabel>
+                  <select className="form-select" value={form.pattern_type || ''} onChange={e => set('pattern_type', e.target.value || null)}>
+                    <option value="">-- Select Pattern Type --</option>
+                    {['solid','floral','botanical','stripe','polka_dot','check','plaid','geometric','abstract','animal','graphic','paisley','patchwork','other'].map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
 
-            {/* Pattern Scale */}
-            <div className="form-group">
-              <FieldLabel field="pattern_scale">Pattern Scale</FieldLabel>
-              <select className="form-select" value={form.pattern_scale || ''} onChange={e => set('pattern_scale', e.target.value || null)}>
-                <option value="">-- Select Pattern Scale --</option>
-                {['none','subtle','medium','bold'].map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            </div>
+                {/* Pattern Scale */}
+                <div className="form-group">
+                  <FieldLabel field="pattern_scale">Pattern Scale</FieldLabel>
+                  <select className="form-select" value={form.pattern_scale || ''} onChange={e => set('pattern_scale', e.target.value || null)}>
+                    <option value="">-- Select Pattern Scale --</option>
+                    {['none','subtle','medium','bold'].map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
 
-            {/* Pattern Complexity */}
-            <div className="form-group">
-              <FieldLabel field="pattern_complexity">Pattern Complexity</FieldLabel>
-              <select className="form-select" value={form.pattern_complexity || ''} onChange={e => set('pattern_complexity', e.target.value || null)}>
-                <option value="">-- Select Pattern Complexity --</option>
-                {['solid','quiet','medium','loud'].map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            </div>
+                {/* Pattern Complexity */}
+                <div className="form-group">
+                  <FieldLabel field="pattern_complexity">Pattern Complexity</FieldLabel>
+                  <select className="form-select" value={form.pattern_complexity || ''} onChange={e => set('pattern_complexity', e.target.value || null)}>
+                    <option value="">-- Select Pattern Complexity --</option>
+                    {['solid','quiet','medium','loud'].map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
 
             {/* Reads As */}
             <div className="form-group">
@@ -953,16 +997,43 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
             )}
 
             {/* Silhouette */}
-            {REVIEW_CONSTRUCTION_CONFIG[form.category]?.silhouetteOptions && (
+            {(form.category === 'bottom' || REVIEW_CONSTRUCTION_CONFIG[form.category]?.silhouetteOptions) && (
               <div className="form-group">
                 <FieldLabel field="silhouette">Silhouette / Shape</FieldLabel>
                 <select className="form-select" value={form.silhouette || ''} onChange={e => set('silhouette', e.target.value || null)}>
                   <option value="">-- Select Silhouette --</option>
-                  {REVIEW_CONSTRUCTION_CONFIG[form.category].silhouetteOptions.map(opt => (
+                  {(form.category === 'bottom'
+                    ? (form.bottom_subtype === 'skirt' ? BOTTOM_SKIRT_SILHOUETTE_OPTIONS : BOTTOM_PANTS_SILHOUETTE_OPTIONS)
+                    : REVIEW_CONSTRUCTION_CONFIG[form.category].silhouetteOptions
+                  ).map(opt => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
                 </select>
               </div>
+            )}
+
+            {/* Shoe Type / Toe Shape */}
+            {form.category === 'shoes' && (
+              <>
+                <div className="form-group">
+                  <FieldLabel field="shoe_type">Shoe Type</FieldLabel>
+                  <select className="form-select" value={form.shoe_type || ''} onChange={e => set('shoe_type', e.target.value || null)}>
+                    <option value="">-- Select Shoe Type --</option>
+                    {SHOE_TYPE_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <FieldLabel field="toe_shape">Toe Shape</FieldLabel>
+                  <select className="form-select" value={form.toe_shape || ''} onChange={e => set('toe_shape', e.target.value || null)}>
+                    <option value="">-- Select Toe Shape --</option>
+                    {TOE_SHAPE_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
             )}
 
             {/* Length */}
@@ -992,6 +1063,20 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
                     const lbl = typeof opt === 'string' ? opt : opt.label
                     return <option key={val} value={val}>{lbl}</option>
                   })}
+                </select>
+              </div>
+            )}
+
+            {/* Stretch */}
+            {['top', 'bottom', 'dress', 'outerwear'].includes(form.category) && (
+              <div className="form-group">
+                <FieldLabel field="stretch">Stretch</FieldLabel>
+                <select className="form-select" value={form.stretch || ''} onChange={e => set('stretch', e.target.value || null)}>
+                  <option value="">-- Select Stretch --</option>
+                  <option value="none">none</option>
+                  <option value="minimal">minimal</option>
+                  <option value="moderate">moderate</option>
+                  <option value="stretchy">stretchy</option>
                 </select>
               </div>
             )}
@@ -1033,6 +1118,7 @@ function ReviewPhase({ items, currentIndex, onSave, onSkip, onSwap, onPrev, thum
                   <option value="">-- Select Waistband --</option>
                   <option value="structured_high_waist">structured high</option>
                   <option value="structured_mid_waist">structured mid</option>
+                  <option value="structured_low_waist">structured low</option>
                   <option value="soft_elastic_pull_on">soft elastic</option>
                   <option value="tight_no_room">tight - no tuck</option>
                   <option value="drawstring_relaxed">drawstring</option>
@@ -1285,7 +1371,9 @@ export default function BatchAdd({ onDone }) {
             silhouette:         tags.silhouette         || null,
             fabric_category:    tags.fabric_category    || null,
             fabric_weight:      tags.fabric_weight      || null,
+            visual_weight:      tags.visual_weight      || null,
             opacity:            tags.opacity            || null,
+            stretch:            tags.stretch            || null,
             needs_base:         tags.needs_base         || null,
             fiber_content:      tags.fiber_content      || [],
             formality:          tags.formality          || null,
@@ -1296,6 +1384,8 @@ export default function BatchAdd({ onDone }) {
             waistband_type:     tags.waistband_type     || null,
             accessory_subtype:  tags.accessory_subtype  || null,
             bottom_subtype:     tags.bottom_subtype     || null,
+            shoe_type:          tags.shoe_type          || null,
+            toe_shape:          tags.toe_shape          || null,
             jewelry_type:       tags.jewelry_type       || null,
             necklace_length:    tags.necklace_length    || null,
             style_profile_json: tags.style_profile_json || {},

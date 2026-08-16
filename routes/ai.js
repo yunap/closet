@@ -424,6 +424,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
 
   const { text: raw, usage } = await askStylistWithUsage(payload)
   if (onUsage && usage) onUsage(usage)
+  console.log('[Tag Piece] RAW RESPONSE LENGTH:', raw?.length, 'RAW RESPONSE:', raw)
   let tags
   try {
     tags = parseModelJson(raw, { context: 'tagger', maxTokens: payload.maxTokens })
@@ -449,6 +450,7 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     tags._confidence = confidence
     tags.photo_properties = photoProperties
   }
+  console.log('[Tag Piece] Final normalized tags:', JSON.stringify(tags, null, 2))
   return tags
 }
 
@@ -873,21 +875,25 @@ Return ONLY a valid JSON object — no markdown, no explanation, just JSON:
       "colors": ["${colorTaggerInstruction()}"],
       "occasions": ["only from: casual, city, evening, smart-casual, outdoor, home"],
       "season": "warm|cool|year-round",
-      "pattern_type": "solid|floral|stripe|botanical|geometric|abstract|animal|graphic|plaid|other",
+      "pattern_type": "solid|floral (flowers dominate)|botanical (leaves/vines/plant forms)|stripe|polka_dot (repeated dots/circles)|check (regular repeated grid/check pattern, including gingham/windowpane)|plaid (intersecting bands/lines, often multicolor or irregular)|geometric (geometric shapes are the dominant motif)|abstract (nonrepresentational, painterly, irregular, tie-dye/resist-dye-like motifs — there is no separate tie_dye value; use abstract plus reads_as for that nuance)|animal (animal-surface patterns or repeated animal motifs; a single illustrated animal belongs under graphic instead)|graphic (illustration, text, logo, or prominent printed image)|paisley (recognizable paisley/boteh motif)|patchwork (visibly composed of distinct patterned/printed blocks or panels)|other",
       "pattern_scale": "none|subtle|medium|bold",
       "pattern_complexity": "solid|quiet|medium|loud",
       "reads_as": "short phrase: the dominant visual impression",
-      "hem_finish": "straight_loose|banded_elastic|ribbed|design_hem",
+      "hem_finish": "Valid values depend on category — top -> straight_loose|banded_elastic|ribbed|curved|shirttail|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. Construction/shape only — does not determine tuckability.",
       "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown",
       "sleeve_length": "sleeveless|cap|short|elbow|3/4|long|extra_long|unknown",
       "sleeve_shape": "fitted|straight|relaxed|puff|bishop|bell|flutter|raglan|dolman|other|unknown|null (omit for sleeveless)",
-      "length_hits_at": "Valid values depend on category — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|mid_calf|ankle|unknown; dress -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom (this endpoint does not distinguish skirts from pants, so allow either's landing points) -> mini|above_knee|knee|below_knee|midi|maxi|shorts|mid_calf|ankle|full_length|floor_length|unknown; shoes -> low|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown. Not applicable to accessory.",
-      "silhouette": "fitted|slim|relaxed|boxy|A-line|drop-shoulder|oversized",
-      "fabric_category": "jersey|knit|linen|silk|satin|cotton|wool|cashmere|viscose|denim|twill|canvas|corduroy|tweed|velvet|leather|suede|ponte|synthetic|fleece|other",
-      "fabric_weight": "ultralight|light|medium|heavy — for SHOES use the shoe scale instead: delicate|slim|medium|chunky (a substantial shoe is chunky, not heavy)",
+      "length_hits_at": "Valid values depend on category — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|mid_calf|ankle|full_length|floor_length|unknown; dress -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom (this endpoint does not distinguish skirts from pants, so allow either's landing points) -> mini|above_knee|knee|below_knee|midi|maxi|shorts|mid_calf|ankle|full_length|floor_length|unknown; shoes -> open|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown (open = fully open/minimal upper, e.g. a sandal or slide). Not applicable to accessory.",
+      "silhouette": "Valid values depend on category — not applicable to shoes, use shoe_type/toe_shape instead: top -> fitted|slim|straight|relaxed|boxy|drop-shoulder|oversized|peplum|wrap; dress -> fitted|sheath|shift|A-line|wrap|slip|column|fit-and-flare|empire|relaxed; outerwear -> fitted|straight|boxy|relaxed|oversized|structured; bottom (this endpoint does not distinguish skirts from pants, so allow either's landing points) -> straight_leg|wide_leg|bootcut|flare|tapered|barrel|relaxed|a_line|pencil|full|slip|straight|pleated|wrap.",
+      "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|slip_on|other|unknown|null (shoes only). Never 'heel' — heel_height covers that. 'slip_on' is a closure-free shoe (no laces/buckle/zip) that isn't a loafer, mule, or flat shape — e.g. a slip-on sneaker.",
+      "toe_shape": "pointed|almond|round|square|open_toe|other|unknown|null (shoes only)",
+      "fabric_category": "Valid values depend on category — top/bottom/dress/outerwear -> jersey|knit|rib knit|ponte|sweatshirt fleece|fleece|cotton|poplin|linen|linen blend|rayon|viscose|modal|silk|satin|crepe|chiffon|organza|lace|crochet|jacquard|wool|cashmere|boucle|denim|twill|canvas|corduroy|tweed|velvet|leather|faux leather|suede|faux suede|mesh|technical/performance|synthetic|other; shoes -> leather|suede|nubuck|patent|canvas|mesh|woven|synthetic|textile|rubber|other; accessory -> leather|suede|metal|stone|straw|canvas|synthetic|textile|rubber|wood|ceramic|glass|horn|shell|resin|pearl|crystal|enamel|other. Never use the clothing list for a shoe or accessory piece.",
+      "fabric_weight": "ultralight|light|medium|heavy|null (top/bottom/dress/outerwear only; null/omit for shoes/accessory — use visual_weight instead)",
+      "visual_weight": "delicate|slim|medium|chunky|null (shoes/accessory only; null/omit for clothing — this is NOT fabric weight, it is visual scale/heft, e.g. a substantial shoe is chunky, a fine chain necklace is delicate)",
       "opacity": "opaque|semi_sheer|sheer|open_weave",
+      "stretch": "none|minimal|moderate|stretchy|null (clothing only; null/omit for shoes/accessory. Tag conservatively; omit if the photo does not show enough to judge)",
       "needs_base": "yes|no|null (omit unless clearly a construction that cannot be worn alone against skin — conservative default is null, not 'no')",
-      "fiber_content": ["array of visible/likely fibers from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, unknown. Use 'unknown' if not determinable."],
+      "fiber_content": ["array of visible/likely fibers/materials from this canonical list only: wool, merino, cashmere, alpaca, mohair, fleece, down, cotton, linen, hemp, silk, tencel, modal, rayon, viscose, polyester, nylon, acrylic, spandex, leather, suede, denim, tweed, metal, stone, wood, ceramic, glass, horn, shell, resin, pearl, crystal, enamel, unknown. metal/stone/wood/ceramic/glass/horn/shell/resin/pearl/crystal/enamel are for accessory/jewelry pieces. Use 'tencel' for lyocell/Tencel fabric — there is no separate 'lyocell' value. Use 'unknown' if not determinable."],
       "formality": "lounge|everyday|elevated|dressy",
       "heel_height": "flat|low|mid|high|null (shoes only; null/omit for non-shoes)",
       "walk_support": "high|medium|low|null (shoes only; null/omit for non-shoes)"
@@ -996,7 +1002,8 @@ const tagExistingHandler = async (req, res) => {
     })
     tags.tag_state = tagStateForTaggerResult(tags, {
       photo: Boolean(photoFile || piece.photo),
-      worn_photo: Boolean(wornPhotoFile || piece.worn_photo)
+      worn_photo: Boolean(wornPhotoFile || piece.worn_photo),
+      category: piece.category
     })
     const merged = applyTaggerResult(parsePiece(piece), tags)
     merged._confidence = merged.style_profile_json?._confidence || {}

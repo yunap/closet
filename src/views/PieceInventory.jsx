@@ -21,6 +21,52 @@ const CATEGORIES = [
   { value: 'accessory', label: 'Accessories' },
 ]
 
+// Bottoms and Accessories get a subtype dropdown directly on their category chip (split-button:
+// clicking the label selects "all of this category", clicking the chevron opens the menu).
+// Keep in sync with the tagger's own enum for each field.
+const BOTTOM_SUBTYPE_OPTIONS = [
+  { value: 'pants',    label: 'Pants' },
+  { value: 'shorts',   label: 'Shorts' },
+  { value: 'skirt',    label: 'Skirts' },
+  { value: 'culottes', label: 'Culottes' },
+  { value: 'overalls', label: 'Overalls' },
+  { value: 'other',    label: 'Other' },
+]
+
+const SHOE_TYPE_OPTIONS = [
+  { value: 'mule',    label: 'Mules' },
+  { value: 'loafer',  label: 'Loafers' },
+  { value: 'boot',    label: 'Boots' },
+  { value: 'sandal',  label: 'Sandals' },
+  { value: 'pump',    label: 'Pumps' },
+  { value: 'flat',    label: 'Flats' },
+  { value: 'sneaker', label: 'Sneakers' },
+  { value: 'slip_on', label: 'Slip-ons' },
+  { value: 'other',   label: 'Other' },
+]
+
+// 'jewelry' is deliberately not a plain option here — it opens a nested submenu (JEWELRY_TYPE_OPTIONS)
+// instead of being directly selectable, since accessory_subtype=jewelry alone is one of the states
+// that submenu itself offers ("All jewelry").
+const ACCESSORY_SUBTYPE_OPTIONS = [
+  { value: 'belt',    label: 'Belts' },
+  { value: 'bag',     label: 'Bags' },
+  { value: 'scarf',   label: 'Scarves' },
+  { value: 'hat',     label: 'Hats' },
+  { value: 'watch',   label: 'Watches' },
+  { value: 'glasses', label: 'Glasses' },
+  { value: 'gloves',  label: 'Gloves' },
+  { value: 'other',   label: 'Other' },
+]
+
+const JEWELRY_TYPE_OPTIONS = [
+  { value: 'necklace', label: 'Necklaces' },
+  { value: 'earrings', label: 'Earrings' },
+  { value: 'bracelet', label: 'Bracelets' },
+  { value: 'ring',     label: 'Rings' },
+  { value: 'pin',      label: 'Pins' },
+]
+
 const OCCASIONS = [
   { value: '',             label: 'All occasions' },
   { value: 'casual',       label: 'Casual' },
@@ -56,6 +102,8 @@ export default function PieceInventory({ onSendToStylist }) {
   // Reads fall back to the same defaults as the old useState initialisers.
   const search       = searchParams.get('q')        ?? ''
   const filterCat    = searchParams.get('category') ?? ''
+  const filterSubtype = searchParams.get('subtype') ?? ''
+  const filterJewelryType = searchParams.get('jewelry_type') ?? ''
   const filterOcc    = searchParams.get('occasion') ?? ''
   const filterSeason = searchParams.get('season')   ?? ''
   const filterColor  = searchParams.get('color')    ?? ''
@@ -91,6 +139,7 @@ export default function PieceInventory({ onSendToStylist }) {
   const [editPiece, setEditPiece]     = useState(null)
   const [detailPiece, setDetailPiece] = useState(null)
   const [openFilterMenu, setOpenFilterMenu] = useState(null)
+  const [jewelrySubmenuOpen, setJewelrySubmenuOpen] = useState(false)
   const [fabricSearch, setFabricSearch] = useState('')
   const compactFilterRef = useRef(null)
   const [showAddMenu, setShowAddMenu] = useState(false)
@@ -134,6 +183,12 @@ export default function PieceInventory({ onSendToStylist }) {
     piecesRequestRef.current = { controller, id: requestId }
     const params = new URLSearchParams()
     if (filterCat)    params.set('category', filterCat)
+    if (filterSubtype && (filterCat === 'bottom' || filterCat === 'accessory' || filterCat === 'shoes')) {
+      params.set('subtype', filterSubtype)
+      if (filterCat === 'accessory' && filterSubtype === 'jewelry' && filterJewelryType) {
+        params.set('jewelry_type', filterJewelryType)
+      }
+    }
     if (filterOcc)    params.set('occasion', filterOcc)
     if (filterSeason) params.set('season', filterSeason)
     if (filterColor)  params.set('color', filterColor)
@@ -159,7 +214,7 @@ export default function PieceInventory({ onSendToStylist }) {
     } finally {
       if (piecesRequestRef.current.id === requestId) setLoading(false)
     }
-  }, [filterCat, filterOcc, filterSeason, filterColor, filterColorFamily, filterFabric, debouncedSearch, favOnly])
+  }, [filterCat, filterSubtype, filterJewelryType, filterOcc, filterSeason, filterColor, filterColorFamily, filterFabric, debouncedSearch, favOnly])
 
   useEffect(() => { fetchPieces() }, [fetchPieces])
   useEffect(() => () => piecesRequestRef.current.controller?.abort(), [])
@@ -264,6 +319,7 @@ export default function PieceInventory({ onSendToStylist }) {
       if (!compactFilterRef.current?.contains(event.target)) {
         setOpenFilterMenu(null)
         setFabricSearch('')
+        setJewelrySubmenuOpen(false)
       }
     }
     const handleKeyDown = (event) => {
@@ -271,6 +327,7 @@ export default function PieceInventory({ onSendToStylist }) {
         const trigger = compactFilterRef.current?.querySelector(`[data-filter-trigger="${openFilterMenu}"]`)
         setOpenFilterMenu(null)
         setFabricSearch('')
+        setJewelrySubmenuOpen(false)
         trigger?.focus()
       }
     }
@@ -282,6 +339,12 @@ export default function PieceInventory({ onSendToStylist }) {
     }
   }, [openFilterMenu])
 
+  // Whichever menu the user just opened, the jewelry submenu should not still be showing from
+  // a previous visit to the Accessories menu.
+  useEffect(() => {
+    if (openFilterMenu !== 'category:accessory') setJewelrySubmenuOpen(false)
+  }, [openFilterMenu])
+
   const handleFavorite = async (piece) => {
     await fetch(`/api/pieces/${piece.id}/favorite`, { method: 'PATCH' })
     fetchPieces()
@@ -291,6 +354,19 @@ export default function PieceInventory({ onSendToStylist }) {
   const handleEdit = (piece) => { setDetailPiece(null); setEditPiece(piece); setShowForm(true) }
   const occasionLabel = OCCASIONS.find(o => o.value === filterOcc)?.label
   const seasonLabel   = SEASONS.find(s => s.value === filterSeason)?.label
+  // Category chip resting labels collapse the hierarchy: a jewelry_type selection reads
+  // "Accessories · Necklaces", never "Accessories · Jewelry · Necklaces" — the intermediate
+  // level is only meaningful inside the open menu, not in the closed-state label.
+  const bottomSubtypeLabel = BOTTOM_SUBTYPE_OPTIONS.find(o => o.value === filterSubtype)?.label
+  const bottomsLabel = (filterCat === 'bottom' && bottomSubtypeLabel) ? `Bottoms · ${bottomSubtypeLabel}` : 'Bottoms'
+  const shoeTypeLabel = SHOE_TYPE_OPTIONS.find(o => o.value === filterSubtype)?.label
+  const shoesLabel = (filterCat === 'shoes' && shoeTypeLabel) ? `Shoes · ${shoeTypeLabel}` : 'Shoes'
+  const accessorySubtypeLabel = ACCESSORY_SUBTYPE_OPTIONS.find(o => o.value === filterSubtype)?.label
+  const jewelryTypeLabel = JEWELRY_TYPE_OPTIONS.find(o => o.value === filterJewelryType)?.label
+  const accessoriesLabel = filterCat !== 'accessory' ? 'Accessories'
+    : filterSubtype === 'jewelry' ? (jewelryTypeLabel ? `Accessories · ${jewelryTypeLabel}` : 'Accessories · Jewelry')
+    : accessorySubtypeLabel ? `Accessories · ${accessorySubtypeLabel}`
+    : 'Accessories'
   const activeCompactFilters = [
     filterOcc    ? { key: 'occasion', label: occasionLabel, clear: () => setFilter({ occasion: '' }) } : null,
     filterSeason ? { key: 'season',   label: seasonLabel,   clear: () => setFilter({ season: '' }) } : null,
@@ -298,10 +374,12 @@ export default function PieceInventory({ onSendToStylist }) {
     filterFabric ? { key: 'fabric',   label: filterFabric,  clear: () => setFilter({ fabric: '' }) } : null,
   ].filter(Boolean)
   const clearAllCompactFilters = () => setFilter({ occasion: '', season: '', color: '', color_family: '', fabric: '' })
-  const hasActiveFilters = Boolean(search || filterCat || filterOcc || filterSeason || filterColor || filterColorFamily || filterFabric || favOnly)
+  const hasActiveFilters = Boolean(search || filterCat || filterSubtype || filterJewelryType || filterOcc || filterSeason || filterColor || filterColorFamily || filterFabric || favOnly)
   const clearWardrobeFilters = () => setFilter({
     q: '',
     category: '',
+    subtype: '',
+    jewelry_type: '',
     occasion: '',
     season: '',
     color: '',
@@ -446,15 +524,222 @@ export default function PieceInventory({ onSendToStylist }) {
           </div>
         </div>
 
+        <div className="wardrobe-filter-and-compact-rows" ref={compactFilterRef}>
         <div className="wardrobe-filter-group">
-          <div className="filter-row" aria-label="Wardrobe categories">
-            {CATEGORIES.map(c => (
-              <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => setFilter({ category: c.value })} aria-pressed={filterCat === c.value}>{c.label}</button>
-            ))}
+          <div className={`filter-row ${openFilterMenu?.startsWith('category:') ? 'filter-row-menu-open' : ''}`} aria-label="Wardrobe categories">
+            {CATEGORIES.map(c => {
+              if (c.value === 'bottom') {
+                return (
+                  <div key="bottom" className="wardrobe-filter-menu wardrobe-category-menu">
+                    <div className={`chip-split ${filterCat === 'bottom' ? 'active' : ''}`}>
+                      <button
+                        className="chip-split-label"
+                        onClick={() => { setFilter({ category: 'bottom', subtype: '' }); setOpenFilterMenu(null) }}
+                        aria-pressed={filterCat === 'bottom'}
+                      >
+                        {bottomsLabel}
+                      </button>
+                      <button
+                        className="chip-split-chevron"
+                        onClick={() => setOpenFilterMenu(openFilterMenu === 'category:bottom' ? null : 'category:bottom')}
+                        aria-expanded={openFilterMenu === 'category:bottom'}
+                        aria-haspopup="listbox"
+                        aria-label="Bottoms subtypes"
+                        data-filter-trigger="category:bottom"
+                      >
+                        <span className="filter-menu-chevron">⌄</span>
+                      </button>
+                    </div>
+                    {openFilterMenu === 'category:bottom' && (
+                      <div className="filter-menu-popover" role="listbox" aria-label="Bottoms" data-filter-menu="category:bottom" onKeyDown={handleFilterMenuKeyDown}>
+                        <button
+                          className={`custom-select-option ${filterCat === 'bottom' && !filterSubtype ? 'active' : ''}`}
+                          onClick={() => selectFilterOption('category:bottom', { category: 'bottom', subtype: '' })}
+                          role="option"
+                          aria-selected={filterCat === 'bottom' && !filterSubtype}
+                        >
+                          <span>All bottoms</span>
+                          {filterCat === 'bottom' && !filterSubtype && <span aria-hidden="true">✓</span>}
+                        </button>
+                        {BOTTOM_SUBTYPE_OPTIONS.map(o => (
+                          <button
+                            key={o.value}
+                            className={`custom-select-option ${filterCat === 'bottom' && filterSubtype === o.value ? 'active' : ''}`}
+                            onClick={() => selectFilterOption('category:bottom', { category: 'bottom', subtype: o.value })}
+                            role="option"
+                            aria-selected={filterCat === 'bottom' && filterSubtype === o.value}
+                          >
+                            <span>{o.label}</span>
+                            {filterCat === 'bottom' && filterSubtype === o.value && <span aria-hidden="true">✓</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+              if (c.value === 'shoes') {
+                return (
+                  <div key="shoes" className="wardrobe-filter-menu wardrobe-category-menu">
+                    <div className={`chip-split ${filterCat === 'shoes' ? 'active' : ''}`}>
+                      <button
+                        className="chip-split-label"
+                        onClick={() => { setFilter({ category: 'shoes', subtype: '' }); setOpenFilterMenu(null) }}
+                        aria-pressed={filterCat === 'shoes'}
+                      >
+                        {shoesLabel}
+                      </button>
+                      <button
+                        className="chip-split-chevron"
+                        onClick={() => setOpenFilterMenu(openFilterMenu === 'category:shoes' ? null : 'category:shoes')}
+                        aria-expanded={openFilterMenu === 'category:shoes'}
+                        aria-haspopup="listbox"
+                        aria-label="Shoe subtypes"
+                        data-filter-trigger="category:shoes"
+                      >
+                        <span className="filter-menu-chevron">⌄</span>
+                      </button>
+                    </div>
+                    {openFilterMenu === 'category:shoes' && (
+                      <div className="filter-menu-popover" role="listbox" aria-label="Shoes" data-filter-menu="category:shoes" onKeyDown={handleFilterMenuKeyDown}>
+                        <button
+                          className={`custom-select-option ${filterCat === 'shoes' && !filterSubtype ? 'active' : ''}`}
+                          onClick={() => selectFilterOption('category:shoes', { category: 'shoes', subtype: '' })}
+                          role="option"
+                          aria-selected={filterCat === 'shoes' && !filterSubtype}
+                        >
+                          <span>All shoes</span>
+                          {filterCat === 'shoes' && !filterSubtype && <span aria-hidden="true">✓</span>}
+                        </button>
+                        {SHOE_TYPE_OPTIONS.map(o => (
+                          <button
+                            key={o.value}
+                            className={`custom-select-option ${filterCat === 'shoes' && filterSubtype === o.value ? 'active' : ''}`}
+                            onClick={() => selectFilterOption('category:shoes', { category: 'shoes', subtype: o.value })}
+                            role="option"
+                            aria-selected={filterCat === 'shoes' && filterSubtype === o.value}
+                          >
+                            <span>{o.label}</span>
+                            {filterCat === 'shoes' && filterSubtype === o.value && <span aria-hidden="true">✓</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+              if (c.value === 'accessory') {
+                return (
+                  <div key="accessory" className="wardrobe-filter-menu wardrobe-category-menu">
+                    <div className={`chip-split ${filterCat === 'accessory' ? 'active' : ''}`}>
+                      <button
+                        className="chip-split-label"
+                        onClick={() => { setFilter({ category: 'accessory', subtype: '', jewelry_type: '' }); setOpenFilterMenu(null) }}
+                        aria-pressed={filterCat === 'accessory'}
+                      >
+                        {accessoriesLabel}
+                      </button>
+                      <button
+                        className="chip-split-chevron"
+                        onClick={() => setOpenFilterMenu(openFilterMenu === 'category:accessory' ? null : 'category:accessory')}
+                        aria-expanded={openFilterMenu === 'category:accessory'}
+                        aria-haspopup="listbox"
+                        aria-label="Accessory subtypes"
+                        data-filter-trigger="category:accessory"
+                      >
+                        <span className="filter-menu-chevron">⌄</span>
+                      </button>
+                    </div>
+                    {openFilterMenu === 'category:accessory' && (
+                      <div className="filter-menu-popover" role="listbox" aria-label="Accessories" data-filter-menu="category:accessory" onKeyDown={handleFilterMenuKeyDown}>
+                        <button
+                          className={`custom-select-option ${filterCat === 'accessory' && !filterSubtype ? 'active' : ''}`}
+                          onClick={() => selectFilterOption('category:accessory', { category: 'accessory', subtype: '', jewelry_type: '' })}
+                          role="option"
+                          aria-selected={filterCat === 'accessory' && !filterSubtype}
+                        >
+                          <span>All accessories</span>
+                          {filterCat === 'accessory' && !filterSubtype && <span aria-hidden="true">✓</span>}
+                        </button>
+                        {ACCESSORY_SUBTYPE_OPTIONS.slice(0, 2).map(o => (
+                          <button
+                            key={o.value}
+                            className={`custom-select-option ${filterCat === 'accessory' && filterSubtype === o.value ? 'active' : ''}`}
+                            onClick={() => selectFilterOption('category:accessory', { category: 'accessory', subtype: o.value, jewelry_type: '' })}
+                            role="option"
+                            aria-selected={filterCat === 'accessory' && filterSubtype === o.value}
+                          >
+                            <span>{o.label}</span>
+                            {filterCat === 'accessory' && filterSubtype === o.value && <span aria-hidden="true">✓</span>}
+                          </button>
+                        ))}
+                        <div
+                          className="custom-select-submenu-wrap"
+                          onMouseEnter={() => setJewelrySubmenuOpen(true)}
+                          onMouseLeave={() => setJewelrySubmenuOpen(false)}
+                        >
+                          <button
+                            className={`custom-select-option custom-select-option-submenu ${filterCat === 'accessory' && filterSubtype === 'jewelry' ? 'active' : ''}`}
+                            onClick={() => setJewelrySubmenuOpen(true)}
+                            role="option"
+                            aria-haspopup="listbox"
+                            aria-expanded={jewelrySubmenuOpen}
+                            aria-selected={filterCat === 'accessory' && filterSubtype === 'jewelry'}
+                          >
+                            <span>Jewelry</span>
+                            <span aria-hidden="true">{filterCat === 'accessory' && filterSubtype === 'jewelry' ? '✓ ' : ''}›</span>
+                          </button>
+                          {jewelrySubmenuOpen && (
+                            <div className="filter-menu-popover filter-menu-submenu" role="listbox" aria-label="Jewelry">
+                              <button
+                                className={`custom-select-option ${filterCat === 'accessory' && filterSubtype === 'jewelry' && !filterJewelryType ? 'active' : ''}`}
+                                onClick={() => selectFilterOption('category:accessory', { category: 'accessory', subtype: 'jewelry', jewelry_type: '' })}
+                                role="option"
+                                aria-selected={filterCat === 'accessory' && filterSubtype === 'jewelry' && !filterJewelryType}
+                              >
+                                <span>All jewelry</span>
+                                {filterCat === 'accessory' && filterSubtype === 'jewelry' && !filterJewelryType && <span aria-hidden="true">✓</span>}
+                              </button>
+                              {JEWELRY_TYPE_OPTIONS.map(o => (
+                                <button
+                                  key={o.value}
+                                  className={`custom-select-option ${filterJewelryType === o.value ? 'active' : ''}`}
+                                  onClick={() => selectFilterOption('category:accessory', { category: 'accessory', subtype: 'jewelry', jewelry_type: o.value })}
+                                  role="option"
+                                  aria-selected={filterJewelryType === o.value}
+                                >
+                                  <span>{o.label}</span>
+                                  {filterJewelryType === o.value && <span aria-hidden="true">✓</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {ACCESSORY_SUBTYPE_OPTIONS.slice(2).map(o => (
+                          <button
+                            key={o.value}
+                            className={`custom-select-option ${filterCat === 'accessory' && filterSubtype === o.value ? 'active' : ''}`}
+                            onClick={() => selectFilterOption('category:accessory', { category: 'accessory', subtype: o.value, jewelry_type: '' })}
+                            role="option"
+                            aria-selected={filterCat === 'accessory' && filterSubtype === o.value}
+                          >
+                            <span>{o.label}</span>
+                            {filterCat === 'accessory' && filterSubtype === o.value && <span aria-hidden="true">✓</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+              return (
+                <button key={c.value} className={`chip ${filterCat === c.value ? 'active' : ''}`} onClick={() => { setFilter({ category: c.value, subtype: '', jewelry_type: '' }); setOpenFilterMenu(null) }} aria-pressed={filterCat === c.value}>{c.label}</button>
+              )
+            })}
           </div>
         </div>
 
-        <div className="wardrobe-compact-filter-row" ref={compactFilterRef}>
+        <div className="wardrobe-compact-filter-row">
           <div className="wardrobe-filter-menu">
             <button
               className={`filter-menu-btn ${openFilterMenu === 'occasion' || filterOcc ? 'active' : ''}`}
@@ -656,6 +941,7 @@ export default function PieceInventory({ onSendToStylist }) {
               </div>
             </InfoTooltip>
           </div>
+        </div>
         </div>
 
         {activeCompactFilters.length > 0 && (

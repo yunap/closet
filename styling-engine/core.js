@@ -140,11 +140,15 @@ export function normalizeCalibrationRow(row) {
 }
 
 // ── Tuck and waistband rules calculation ─────────────────────────────────────
+// tuck_behavior is the sole authority on whether a piece can be tucked —
+// hem_finish is construction only (what shape the hem is) and must not be
+// used to infer or override tuck permission. A piece with no tuck_behavior
+// set returns null here rather than guessing from its hem; that gap is
+// already surfaced through the normal confidence/review system instead.
 export function computeTuckNote(p) {
   if (!p.category || !['top','dress','outerwear'].includes(p.category)) return null
   if (p.tuck_behavior === 'wear_over_only') return 'no tuck — wear over only'
   if (p.fabric_category === 'silk' || p.fabric_category === 'satin') return 'no tuck — silk/satin cannot hold'
-  if (p.hem_finish === 'ribbed' || p.hem_finish === 'design_hem') return 'no tuck — design hem'
   if (p.tuck_behavior === 'tucks_with_structure') return 'tucks with structured waist or belt only'
   if (p.tuck_behavior === 'tucks_anywhere') return 'tucks freely'
   return null

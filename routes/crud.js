@@ -117,10 +117,24 @@ function withRetagSuggestions(piece, suggestionsByPiece = null) {
 
 // ── Pieces API ─────────────────────────────────────────────────────────────────
 router.get('/pieces', (req, res) => {
-  const { category, occasion, season, status, search, favorites, color, color_family, fabric } = req.query
+  const { category, occasion, season, status, search, favorites, color, color_family, fabric, subtype, jewelry_type } = req.query
   let q = 'SELECT * FROM pieces WHERE 1=1'
   const params = []
   if (category)  { q += ' AND category = ?';              params.push(category) }
+  if (subtype) {
+    // Which column "subtype" means depends on category — each category has its own subtype
+    // field, never more than one applies at a time. subtypeColumn is chosen from a fixed
+    // whitelist, never interpolated from user input.
+    const subtypeColumn = category === 'bottom' ? 'bottom_subtype'
+      : category === 'accessory' ? 'accessory_subtype'
+      : category === 'shoes' ? 'shoe_type'
+      : null
+    if (subtypeColumn) { q += ` AND ${subtypeColumn} = ?`; params.push(subtype) }
+    // jewelry_type only means anything one level below accessory_subtype = 'jewelry'.
+    if (category === 'accessory' && subtype === 'jewelry' && jewelry_type) {
+      q += ' AND jewelry_type = ?'; params.push(jewelry_type)
+    }
+  }
   if (season && season !== 'all') { q += " AND (season = ? OR season = 'year-round')"; params.push(season) }
   if (status)    { q += ' AND status = ?';                params.push(status) }
   if (search)    {
@@ -260,8 +274,8 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
-    fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
-    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype,
+    fabric_category, fabric_weight, visual_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
+    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_state, manual_overrides, color_taxonomy_gaps } = req.body
   const photo      = req.files?.photo?.[0]?.filename || null
@@ -276,21 +290,21 @@ router.post('/pieces', upload.fields([{ name: 'photo' }, { name: 'worn_photo' }]
     manual_overrides: finalManualOverrides,
     style_profile_json: confidencePinnedProfile
   }).style_profile_json
-  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo })
+  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo, category })
   const r = db.prepare(`
     INSERT INTO pieces (name, category, colors, occasions, season, notes, status, photo, worn_photo,
       recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
       pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
       neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
-      fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch, fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype,
+      fabric_category, fabric_weight, visual_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch, fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape,
       styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
       tag_state, manual_overrides)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, category, colors||'[]', occasions||'[]', season||'year-round', notes||'', status||'active', photo, worn_photo,
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype),
+    fabric_category||null, fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null,
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile), tagger_version||null,
     finalTagState, JSON.stringify(finalManualOverrides))
   queueColorTaxonomyReviews(db, {
@@ -308,8 +322,8 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     recommendation_status, fit_confidence, role_permission, occasion_permissions, engine_notes,
     pattern_type, pattern_scale, pattern_complexity, reads_as, background_color, hem_finish,
     neckline, sleeve_length, sleeve_shape, length_hits_at, silhouette,
-    fabric_category, fabric_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
-    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype,
+    fabric_category, fabric_weight, visual_weight, fiber_content, formality, heel_height, walk_support, opacity, stretch,
+    fit_on_body, tuck_behavior, waistband_type, needs_base, accessory_subtype, jewelry_type, necklace_length, bottom_subtype, shoe_type, toe_shape,
     styling_rules_learned, pairs_well_with, tried_and_rejected, style_profile_json, tagger_version,
     tag_state, manual_overrides, resolved_retag_suggestion_ids, color_taxonomy_gaps } = req.body
   const photo      = req.files?.photo?.[0]?.filename      || (clear_photo      === 'true' ? null : existing.photo)
@@ -334,13 +348,13 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     manual_overrides: finalManualOverrides,
     style_profile_json: confidencePinnedProfile
   }).style_profile_json
-  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo })
+  const finalTagState = tag_state || tagStateForPhotos({ photo, worn_photo, category: category || existing.category })
   db.prepare(`
     UPDATE pieces SET name=?,category=?,colors=?,occasions=?,season=?,notes=?,status=?,favorite=?,photo=?,worn_photo=?,
       recommendation_status=?,fit_confidence=?,role_permission=?,occasion_permissions=?,engine_notes=?,
       pattern_type=?,pattern_scale=?,pattern_complexity=?,reads_as=?,background_color=?,hem_finish=?,
       neckline=?,sleeve_length=?,sleeve_shape=?,length_hits_at=?,silhouette=?,
-      fabric_category=?,fabric_weight=?,fiber_content=?,formality=?,heel_height=?,walk_support=?,opacity=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,needs_base=?,accessory_subtype=?,jewelry_type=?,necklace_length=?,bottom_subtype=?,
+      fabric_category=?,fabric_weight=?,visual_weight=?,fiber_content=?,formality=?,heel_height=?,walk_support=?,opacity=?,stretch=?,fit_on_body=?,tuck_behavior=?,waistband_type=?,needs_base=?,accessory_subtype=?,jewelry_type=?,necklace_length=?,bottom_subtype=?,shoe_type=?,toe_shape=?,
       styling_rules_learned=?,pairs_well_with=?,tried_and_rejected=?,style_profile_json=?,tagger_version=?,
       tag_state=?,manual_overrides=?
     WHERE id=?
@@ -349,7 +363,7 @@ router.put('/pieces/:id', upload.fields([{ name: 'photo' }, { name: 'worn_photo'
     recommendation_status||'trusted', fit_confidence||'unknown', role_permission||'auto', occasion_permissions||'[]', engine_notes||'',
     pattern_type||null, pattern_scale||null, pattern_complexity||null, reads_as||null, background_color||null, hem_finish||null,
     neckline||null, sleeve_length||null, sleeve_shape||null, length_hits_at||null, silhouette||null,
-    fabric_category||null, fabric_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype),
+    fabric_category||null, fabric_weight||null, visual_weight||null, fiber_content||'[]', normalizeFormality(formality), normalizeHeelHeight(heel_height), normalizeWalkSupport(walk_support), opacity||null, stretch||null, fit_on_body||null, tuck_behavior||null, waistband_type||null, needs_base||null, normalizeAccessorySubtype(accessory_subtype), normalizeJewelryType(jewelry_type), normalizeNecklaceLength(necklace_length), normalizeBottomSubtype(bottom_subtype), shoe_type||null, toe_shape||null,
     styling_rules_learned||'[]', pairs_well_with||'[]', tried_and_rejected||'[]', JSON.stringify(finalStyleProfile),
     final_tagger_version, finalTagState, JSON.stringify(finalManualOverrides), req.params.id)
   const resolvedSuggestionIds = safeJsonParse(resolved_retag_suggestion_ids, []).map(Number).filter(Boolean)
