@@ -899,7 +899,16 @@ export default function PieceForm({ piece, onSave, onCancel }) {
                 hint={isEdit ? 'Ready to update with AI' : 'AI can fill the first draft'}
                 preview={hangerPrev}
                 onChange={e => { const f = e.target.files[0]; if (f) { setDirty(true); setHangerFile(f); setHangerPrev(URL.createObjectURL(f)); setClearHanger(false) } }}
-                onClear={() => { setDirty(true); setHangerFile(null); setClearHanger(true) }}
+                onClear={() => {
+                  setDirty(true)
+                  // Clearing a freshly-picked, not-yet-saved file is not the same as removing an
+                  // already-saved photo — there's nothing on the server to mark for removal or
+                  // offer to "restore." Only set clearHanger (the pending-removal/Restore
+                  // affordance) when the photo actually being cleared is the saved one.
+                  setHangerFile(null)
+                  if (hangerFile) setHangerPrev(piece?.photo ? `/uploads/${piece.photo}` : null)
+                  else setClearHanger(true)
+                }}
                 pendingRemoval={clearHanger}
                 onRestore={() => { setClearHanger(false); setHangerPrev(piece?.photo ? `/uploads/${piece.photo}` : null) }}
                 onPreview={() => hangerPrev && setPreviewImage({ src: hangerPrev, title: form.name || 'Piece', meta: 'Hanger photo' })}
@@ -922,7 +931,14 @@ export default function PieceForm({ piece, onSave, onCancel }) {
               hint="Adds fit and drape context for the stylist"
               preview={wornPrev}
               onChange={e => { const f = e.target.files[0]; if (f) { setDirty(true); setWornFile(f); setWornPrev(URL.createObjectURL(f)); setClearWorn(false) } }}
-              onClear={() => { setDirty(true); setWornFile(null); setClearWorn(true) }}
+              onClear={() => {
+                setDirty(true)
+                // Same reasoning as the hanger slot above: clearing a freshly-picked file that
+                // was never saved is not a removal of anything real.
+                setWornFile(null)
+                if (wornFile) setWornPrev(piece?.worn_photo ? `/uploads/${piece.worn_photo}` : null)
+                else setClearWorn(true)
+              }}
               pendingRemoval={clearWorn}
               onRestore={() => { setClearWorn(false); setWornPrev(piece?.worn_photo ? `/uploads/${piece.worn_photo}` : null) }}
               onPreview={() => wornPrev && setPreviewImage({ src: wornPrev, title: form.name || 'Piece', meta: 'Worn photo' })}
