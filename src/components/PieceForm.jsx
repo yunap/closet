@@ -604,15 +604,24 @@ export default function PieceForm({ piece, onSave, onCancel }) {
   // Auto-tag from a new hanger photo. In edit mode, retag from saved hanger + worn photos when available.
   const handleTagThis = async () => {
     const hasExistingPhoto = isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn))
-    if (!hangerFile && !hasExistingPhoto) return
+    if (!hangerFile && !wornFile && !hasExistingPhoto) return
     setTagging(true); setTagError(null)
     try {
       let res
-      if (hangerFile) {
-        const fd = new FormData(); fd.append('photo', hangerFile)
-        res = await fetch('/api/ai/tag-piece', { method: 'POST', body: fd })
+      if (isEdit) {
+        // Always retag through tag-piece-existing so ground-truth overrides and the
+        // wardrobe anchor block still apply, even when a new hanger photo is picked —
+        // /tag-piece has neither. Any newly-selected (not yet saved) photo is sent
+        // along; a field left unsent falls back to whatever's already saved on the piece.
+        const fd = new FormData()
+        if (hangerFile) fd.append('photo', hangerFile)
+        if (wornFile) fd.append('worn_photo', wornFile)
+        res = await fetch(`/api/ai/tag-piece-existing/${piece.id}`, { method: 'POST', body: fd })
       } else {
-        res = await fetch(`/api/ai/tag-piece-existing/${piece.id}`, { method: 'POST' })
+        const fd = new FormData()
+        fd.append('photo', hangerFile)
+        if (wornFile) fd.append('worn_photo', wornFile)
+        res = await fetch('/api/ai/tag-piece', { method: 'POST', body: fd })
       }
       const tags = await res.json()
       if (tags.error) throw new Error(tags.error)
@@ -912,7 +921,7 @@ export default function PieceForm({ piece, onSave, onCancel }) {
           </div>
 
           {/* Tag This button */}
-          {isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn) || hangerFile) && (
+          {isEdit && ((piece?.photo && hangerPrev && !clearHanger) || (piece?.worn_photo && wornPrev && !clearWorn) || hangerFile || wornFile) && (
             <div>
               <button type="button" onClick={handleTagThis} disabled={tagging || saving} className="piece-form-ai-button">
                 {tagging

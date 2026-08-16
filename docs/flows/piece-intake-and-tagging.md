@@ -88,6 +88,20 @@ Three separate flows share the "photo in, structure out" shape:
   immediately on file selection, before the piece was even saved — this was
   causing issues and was removed). Selecting a worn photo now behaves exactly
   like selecting a hanger photo: it just sets local file/preview state.
+  **A follow-up bug from that same change, fixed same day**: `handleTagThis`
+  never actually sent a newly-picked (not-yet-saved) worn photo to either
+  endpoint — it only ever appended `photo`, and in edit mode with no new hanger
+  file it POSTed `tag-piece-existing` with an *empty* body, relying entirely on
+  whatever `worn_photo` was already saved on disk. A worn photo added in the
+  same edit session as the tag request was silently invisible to the model (the
+  response says so: `"Only one photo provided... no worn photo is available"`
+  even when the user had just picked one). Fixed by always sending a `FormData`
+  body with `photo`/`worn_photo` whenever a new file is pending, and by always
+  routing edit-mode retags through `tag-piece-existing` (not `/tag-piece`) even
+  when a new hanger photo is picked, since only `tag-piece-existing` carries the
+  ground-truth-override/anchor-block calibration — `/tag-piece` has neither. The
+  "Update details with AI" button's visibility condition also didn't account for
+  a pending (unsaved) worn photo with no existing saved one; fixed alongside.
 - **Evaluate a piece** (`ai.js:1030`) has two sub-modes: a general `evaluate_piece`
   critique, and `STYLE_SELECTED_ITEM` (when the question is a "style this" ask),
   which composes outfit ideas anchored on the piece and then runs a **second
