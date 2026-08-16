@@ -250,7 +250,11 @@ export default function PieceDetail({
         <div className="detail-body piece-detail-body">
           <div className="piece-detail-scroll-content" ref={scrollContentRef}>
           <section className="piece-detail-section garment-identity" aria-label="Garment identity">
-            <div className="garment-detail-eyebrow">{formattedCategory}</div>
+            {/* The piece ID is shown deliberately (owner ruling, 2026-08-16): it is how a garment
+                is referred to in the stylist, in feedback rows and in diagnostics, so it has to be
+                readable from the garment itself. It was dropped by the V1 surface audit (d10f49a)
+                and restored here. */}
+            <div className="garment-detail-eyebrow">#{piece.id} · {formattedCategory}</div>
             <div className="detail-title" id="garment-detail-title">
               {piece.name}
             </div>

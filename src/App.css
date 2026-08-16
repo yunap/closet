@@ -1249,7 +1249,7 @@ img { display: block; max-width: 100%; }
 }
 
 .guidance-explainer-tag {
-  font-size: 10.5px;
+  font-size: var(--type-caption); /* was 10.5px; sub-12px floor, typographySystem.test.js */
   font-weight: 650;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -2120,7 +2120,7 @@ img { display: block; max-width: 100%; }
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--type-caption); /* was 10px; sub-12px floor, typographySystem.test.js */
   text-align: center;
 }
 
@@ -12764,7 +12764,7 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 
 .foundation-tile span:last-child {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--type-caption); /* was 11px; sub-12px floor, typographySystem.test.js */
   line-height: 1.45;
 }
 
@@ -12839,7 +12839,7 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 
 .foundation-layer-status {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--type-caption); /* was 11px; sub-12px floor, typographySystem.test.js */
 }
 
 .foundation-layer-chevron {
@@ -12877,7 +12877,7 @@ button.outfit-styling-outfit-name { cursor: pointer; }
 .foundation-layer-footer {
   margin: 15px 0 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--type-caption); /* was 11px; sub-12px floor, typographySystem.test.js */
 }
 
 .foundation-layer-link {

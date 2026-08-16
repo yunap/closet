@@ -2345,7 +2345,9 @@ test('StylistChat preserves generated board image urls for critique previews', (
   assert.match(src, /value\.startsWith\('generated-boards\/'\)/)
   assert.match(src, /displayPrev = resolveUploadImageSrc\(outfitToSend\.photo\)/)
   assert.match(src, /const messageImageSrc = resolveUploadImageSrc\(m\.imagePrev\)/)
-  assert.match(src, /const pendingPhotoSrc = resolveUploadImageSrc\(pendingPhoto\)/)
+  // Intent: the pending photo goes through the URL resolver, never used raw. Tolerant of the
+  // null-guard the expression has since grown (`pendingPhoto ? resolve... : null`).
+  assert.match(src, /const pendingPhotoSrc = [^\n]*resolveUploadImageSrc\(pendingPhoto\)/)
   assert.match(src, /src: resolveUploadImageSrc\(board\.imageUrl\)/)
   assert.doesNotMatch(src, /displayPrev = `\\\/uploads\\\/\$\{outfitToSend\.photo\}`/)
   assert.doesNotMatch(src, /<img src=\{m\.imagePrev\}/)
@@ -2377,7 +2379,10 @@ test('StylistChat new-chat empty state prioritizes the freeform composer', () =>
   assert.match(src, /const suppressNextMessageScrollRef = useRef\(false\)/)
   assert.match(src, /suppressNextMessageScrollRef\.current = true/)
   assert.match(src, /if \(suppressNextMessageScrollRef\.current\)/)
-  assert.match(src, /\{messages\.length > 1 && messages\.map\(\(m, i\) =>/)
+  // Intent: the message list renders only past the greeting, so the empty state is the composer.
+  // The list is now windowed (messages.slice(visibleMessageStart)), which is why this is tolerant
+  // of the slice and of the map's parameter names.
+  assert.match(src, /\{messages\.length > 1 && messages\.slice\([^)]*\)\.map\(/)
   assert.match(src, /\{messages\.length > 1 && renderComposerDock\(\)\}/)
   assert.match(src, /messages\.length > 1 \? 'is-existing-chat' : 'is-empty-chat'/)
   assert.match(css, /\.stylist-empty-intro h2/)
@@ -2410,8 +2415,11 @@ test('StylistChat new-chat empty state prioritizes the freeform composer', () =>
   assert.match(src, /className="outfit-styling-workflow"/)
   assert.match(src, /className="outfit-styling-entry"/)
   assert.match(src, /<div className="piece-styling-eyebrow">Outfit styling<\/div>/)
-  assert.match(src, /title="Review this outfit"/)
-  assert.match(src, /title="Find similar looks"/)
+  // Intent: the outfit action is labelled for hover/assistive tech. The title is now conditional
+  // on a loading state ("Reviewing…" while in flight), so match the resting label wherever it sits.
+  assert.match(src, /title=\{[^}]*'Review this outfit'\}|title="Review this outfit"/)
+  // Same conditional-title change as "Review this outfit" above (loading state added).
+  assert.match(src, /title=\{[^}]*'Find similar looks'\}|title="Find similar looks"/)
   assert.match(src, /className="outfit-question-shell"/)
   assert.doesNotMatch(src, /accent\s+title="Critique outfit"/)
   assert.match(css, /\.outfit-styling-options[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
@@ -2453,7 +2461,9 @@ test('Primary app navigation uses full-row accessible sidebar items with shared 
   assert.match(app, /usePendingWardrobeTaskCount/)
   assert.match(inventory, /usePendingWardrobeTaskCount/)
   assert.match(hook, /window\.addEventListener\('todos-changed', refreshPendingCount\)/)
-  assert.match(css, /\.primary-nav__item\.active::before/)
+  // Intent: the active nav item is visually marked, not conveyed by text alone. The marker was a
+  // ::before bar; it is now an accent colour + tinted background + border on the item itself.
+  assert.match(css, /\.primary-nav__item\.active\s*\{[\s\S]*?background:\s*var\(--accent-light\)[\s\S]*?border-color:/)
   assert.match(css, /\.primary-nav__item:focus-visible/)
   assert.match(css, /@media \(min-width: 768px\) and \(max-width: 1040px\)/)
   assert.doesNotMatch(app, /icon:\s*'◈'|icon:\s*'✦'|icon:\s*'◇'|icon:\s*'⌾'/)
@@ -2464,16 +2474,25 @@ test('Wardrobe page keeps primary filters visible and collapses color and fabric
   const inventory = fs.readFileSync(path.join(process.cwd(), 'src/views/PieceInventory.jsx'), 'utf8')
   const pieceCard = fs.readFileSync(path.join(process.cwd(), 'src/components/PieceCard.jsx'), 'utf8')
   const css = fs.readFileSync(path.join(process.cwd(), 'src/App.css'), 'utf8')
-  assert.match(inventory, /className="filter-row" aria-label="Wardrobe categories"/)
+  // Intent: the category filters are a labelled row, visible (not collapsed behind a menu). The
+  // className became a template literal carrying an open-menu modifier; the labelled row is intact.
+  assert.match(inventory, /className=(?:"filter-row"|\{`filter-row[^`]*`\}) aria-label="Wardrobe categories"/)
   assert.doesNotMatch(inventory, /className="wardrobe-filter-label">Category/)
   assert.match(inventory, /filterOcc \? `Occasion: \$\{occasionLabel\}` : 'Occasion'/)
   assert.match(inventory, /filterSeason \? `Season: \$\{seasonLabel\}` : 'Season'/)
-  assert.match(inventory, /filterColor \? `Color: \$\{filterColor\}` : 'Color'/)
+  // Intent: colour is one of the collapsed filter controls, carrying the current selection.
+  // The bespoke chip list + `Color: ${filterColor}` label were replaced by the shared
+  // ColorFamilyFilter (family -> exact shade), per docs/wardrobe-color-controls-spec.md.
+  // filterColor remains the exact-shade state it reads.
+  assert.match(inventory, /<ColorFamilyFilter/)
+  assert.match(inventory, /valueColor=\{filterColor\}/)
+  assert.match(inventory, /valueFamily=\{activeColorFamily\}/)
   assert.match(inventory, /filterFabric \? `Fabric: \$\{filterFabric\}` : 'Fabric'/)
   assert.match(inventory, /className="filter-menu-chevron"/)
-  assert.match(inventory, /className="wardrobe-color-list"/)
-  assert.match(inventory, /className="wardrobe-color-name"/)
-  assert.match(inventory, />Any color<\/span>/)
+  // The three assertions that used to pin the bespoke colour chip list markup
+  // (.wardrobe-color-list / .wardrobe-color-name / the "Any color" reset) now live with the
+  // shared component in test/outfitLookbook.test.js — the markup moved there wholesale.
+  assert.match(inventory, /import \{ ColorFamilyFilter \} from '\.\.\/components\/ColorSelector'/)
   assert.match(inventory, /className="wardrobe-sort-info"/)
   assert.match(inventory, /className="wardrobe-fabric-search"/)
   assert.match(inventory, /document\.addEventListener\('pointerdown', handlePointerDown\)/)
@@ -3068,7 +3087,10 @@ test('StylistChat announces stylist activity and replies to assistive tech', () 
 test('StylistChat small accessibility/product batch: post-send focus, contrast, labels, badge placement', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
   // Clearing input disables the send button; refocus the textarea so focus doesn't drop to <body>.
-  assert.match(src, /setInput\(''\); setImageFile\(null\); setImagePrev\(null\)\s*\n\s*\/\/ Clearing input disables the send button[\s\S]*?textRef\.current\?\.focus\(\)/)
+  // Intent: after send, the composer is cleared AND focus is moved to the textarea so it does not
+  // drop to <body> when the send button disables. Tolerant of additional state setters on the
+  // clear line (setPendingCapsuleExpansion was added there).
+  assert.match(src, /setInput\(''\);[^\n]*setImagePrev\(null\)\s*\n\s*\/\/ Clearing input disables the send button[\s\S]*?textRef\.current\?\.focus\(\)/)
   // "Suggested additions" caption no longer uses --accent (4.48:1, marginal) — uses the
   // documented lowest-contrast readable token instead.
   assert.match(src, /Suggested additions: \{visual\.missingPieces\.join\(' \+ '\)\}<\/div>\}/)
@@ -3096,8 +3118,10 @@ test('ThreadRail mobile history drawer behaves as a dialog rather than a static 
 
 test('StylistChat selected-piece season menu keeps spring and summer separate', () => {
   const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
-  assert.match(src, /\{ value: 'spring', label: 'Spring' \}/)
-  assert.match(src, /\{ value: 'summer', label: 'Summer' \}/)
+  // Intent: spring and summer stay SEPARATE options (never collapsed into "Spring / summer").
+  // The options were refactored from objects to [value, label] tuples; the intent is unchanged.
+  assert.match(src, /\['spring', 'Spring'\]/)
+  assert.match(src, /\['summer', 'Summer'\]/)
   assert.doesNotMatch(src, /Spring \/ summer/)
   assert.doesNotMatch(src, /spring \/ summer/)
 })
