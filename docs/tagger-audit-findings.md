@@ -594,6 +594,71 @@ real pieces they were found on (135, 141, 996780) — confirmed against the ward
 
 ---
 
+## Model-tier A/B — design only, not yet run (2026-08-16)
+
+The biggest remaining cost lever (67% cheaper input/output per `engine-behaviour-map.md`'s
+*Tagging cost* section) and, per today's latency finding, plausibly the biggest remaining
+**latency** lever too — but it needs a real quality check before anyone acts on it, and that
+check needs new billed calls. Designed here, gated on explicit go-ahead before running, same rule
+as everywhere else in this document.
+
+**1. Cold-start is the config that has to be tested — not the current wardrobe.**
+`engine-behaviour-map.md` already flagged this: the real adoption question is *"does a cheap tier
+tag well enough for a brand-new user with zero calibration anchors,"* not *"does it tag well
+against this wardrobe's 19 owner-corrected anchors."* Testing warm would measure a configuration
+no new user ever sees. So the primary run strips the anchor block entirely — `buildAnchorBlock`
+called with `fields: []`, matching what a real day-one signup gets.
+
+**2. Paired, same-photo, read-only — the same design Q1's corpus used.** For each sampled piece,
+call `tagPieceWithProvider` twice on the *same* photo(s): once with the current model
+(`ACTIVE_STYLIST_MODEL`, currently `claude-sonnet-4-6`), once with a `model` override to
+`claude-haiku-4-5`. Never call `applyTaggerResult` or write to the DB — this stays a pure
+comparison, same as the originally-proposed (and superseded) synthetic Q1 batch. Model choice is
+the only variable; everything else (photo, prompt, schema) is identical between the two calls.
+
+**3. Sample selection: prioritize pieces with existing owner corrections.** Model-vs-model
+agreement alone only shows that they differ, not which one is right. Pieces with populated
+`manual_overrides` give real ground truth — for those specific fields, both models' outputs can
+be scored against what the owner actually confirmed, not just against each other. Stratify across
+categories the way Q1's corpus did (top/bottom/dress/outerwear/shoes/accessory), preferring pieces
+with the most manual corrections so the ground-truth signal is as strong as possible per piece
+sampled.
+
+**4. Four evaluation dimensions — not a single pass/fail:**
+
+| dimension | method | cost |
+|---|---|---|
+| structured-field agreement vs. owner ground truth | automated diff against `manual_overrides` fields | free (uses the paired outputs already collected) |
+| confidence calibration | reuse Q2's `tagger_version`-split methodology — does haiku's `_confidence` discriminate, or collapse to reflexively high? | free |
+| free-text quality (`garment_intelligence`/`style_notes`) | small side-by-side sample, human-read — doesn't scale like structured diffing | free, but bounded to ~5-8 pieces since it needs a person |
+| real cost and latency | read directly off the paired calls, using this session's own logging (`commit 36b16de`) | free, byproduct of the paired calls |
+
+**5. A decision rule, stated before running, not fitted after seeing results.** Proposed bar:
+adopt haiku (at minimum for cold-start/new-user tagging, not necessarily as a wholesale
+replacement) if structured-field agreement against owner ground truth clears roughly 90%,
+confidence calibration isn't degenerate, and free-text quality survives owner spot-check.
+Otherwise keep the current model. Open for the owner to adjust before running — the point is
+having a stated bar at all, not this specific number.
+
+**Real pricing, not estimated** (`styling-engine/provider.js`'s own `ANTHROPIC_PRICING_PER_MILLION`
+table), cold-start config (no anchors, one photo, ~7,808 input tokens):
+
+| model | cost/garment (realistic ~1,600 out) | cost/garment (2,500 cap) |
+|---|---|---|
+| sonnet (current) | $0.0474 | $0.0609 |
+| haiku-4.5 (candidate) | $0.0158 | $0.0203 |
+
+| N garments (paired, both models) | total cost |
+|---|---|
+| 15 | ~$0.95–$1.22 |
+| 20 | ~$1.26–$1.62 |
+
+**Not run.** Needs: (a) the owner's go-ahead on N and confirmation cold-start is the right primary
+condition, (b) agreement on the decision-rule threshold, (c) the actual billed batch. All three
+open.
+
+---
+
 ## Synthesis — is the tagger the best it can be?
 
 **Not yet, but seven free, no-quality-risk items shipped the same session this was written, and the
@@ -701,6 +766,12 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    small — cutting the wait for real still needs either trimming actual `garment_intelligence`
    content (a real quality tradeoff, not a freebie) or a faster-decoding model tier — both bigger,
    undecided questions, not something this pass resolves on its own.
+8. **The model-tier A/B is designed, not run.** See *Model-tier A/B* above for the full plan:
+   cold-start (no-anchor) primary condition, paired same-photo read-only calls, ground-truth
+   scoring against `manual_overrides`, a stated decision rule, and real pricing (~$0.95–$1.62 for
+   15-20 paired garments). This is the biggest single lever left on this list — 67% cheaper, and
+   plausibly faster given today's latency finding — but needs the owner's go-ahead on sample size
+   and the decision threshold before any of it runs.
 
 Nothing here overrides `docs/engine-behaviour-map.md`'s existing findings — every number either
 confirmed them on fresher data (Q2, Q5's caching/`cross_photo_agreement_note` claims) or extended
