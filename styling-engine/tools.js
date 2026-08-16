@@ -1,3 +1,7 @@
+// The /ask tool schemas and their executors — search_wardrobe's roster and gating included.
+// DOCUMENTED IN: docs/freeform-rearchitecture-handoff.md (what has already been tried, and why)
+// and docs/engine-behaviour-map.md. A tool schema change must amend the handoff in the same
+// commit: the schema text is what the model actually reads. See AGENTS.md.
 import path from 'path'
 import fs from 'fs'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'

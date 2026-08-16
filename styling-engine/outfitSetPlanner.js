@@ -1,3 +1,5 @@
+// DOCUMENTED IN: docs/capsule-index-and-plan.md (start there for anything capsule-related) and
+// docs/engine-behaviour-map.md. Amend in the same commit as any change. See AGENTS.md.
 // Outfit-set planning engine — multi-outfit composition under shared constraints.
 //
 // Step 6 of the freeform re-architecture (docs/flows/freeform-stylist-chat.md,

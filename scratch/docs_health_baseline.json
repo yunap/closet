@@ -1,0 +1,11 @@
+{
+  "warningCount": 54,
+  "recordedAt": "2026-08-16",
+  "note": "Ratchet baseline for scratch/check_docs_health.js, same pattern as ratchet_baseline.json. Errors always fail the build; warnings may not INCREASE past this number. Lower it whenever the count drops so the gain is locked in.",
+  "composition": {
+    "missingStatusHeader": "~40 — docs predate the Status/Last-verified convention. Backfilling them is the planned next commit; each one that gets a header lowers this number.",
+    "staleFunctionCitations": "~9 — docs citing `someFunction()` that no longer exists in tracked source (e.g. rehydrateOutfitPieces, tripScopeClarificationEnabled, followupPrerouteEnabled). Each is either a rename to chase or a genuinely dead reference to fix.",
+    "missingCitedScript": "2 — docs/cleanup-inventory.md and docs/freeform-rearchitecture-handoff.md both cite scratch/diagnose_anchor_selectivity.js, which does not exist anywhere. Real doc rot: the claim it supports cannot be checked.",
+    "statusVocabulary": "a few docs whose **Status:** line predates the vocabulary"
+  }
+}

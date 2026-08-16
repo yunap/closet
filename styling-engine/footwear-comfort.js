@@ -1,3 +1,7 @@
+// Activity profiles (walking / hiking) and the footwear comfort gate.
+// DOCUMENTED IN: docs/engine-behaviour-map.md and docs/occasion_profiles_ratification.md
+// (ratified — register ceilings and occasion rules; not a draft despite its history).
+// Activity is a STRUCTURED axis: only the resolved enum reaches these gates, never request prose.
 import { pieceMatchesFootwear, pieceOccasionScore, pieceMatchesMaterial, wardrobeCategoryGroup } from './attributes.js'
 import { resolveOccasionProfile } from './occasions.js'
 

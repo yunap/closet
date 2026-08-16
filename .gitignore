@@ -60,3 +60,25 @@ scratch/*
 !scratch/measure_confidence_by_photo_set.js
 !scratch/backfill_pinned_confidence.js
 !scratch/trace_stretch_consumption.js
+
+# Doc integrity, run by `npm test`. The checker and its ratchet baseline must be tracked or a
+# clean checkout cannot run the test suite.
+!scratch/check_docs_health.js
+!scratch/docs_health_baseline.json
+!scratch/add_spec_banners.js
+# Cited by docs/engine-behaviour-map.md. They were untracked until 2026-08-16, so that map's
+# numbers could not be regenerated from a clean checkout — the exact hole check_docs_health.js
+# now fails the build on. feedback-and-memory-map.md §0 had already flagged it in prose.
+!scratch/measure_provenance.js
+!scratch/measure_plural_gap.js
+# Measurement scripts cited by docs/engine-behaviour-map.md, docs/cleanup-inventory.md and
+# docs/board-feedback-desync-spec.md. Allowlisted 2026-08-16 so those documents' numbers can
+# actually be regenerated from a clean checkout, which is the claim they make.
+!scratch/measure_scoring_terms.js
+!scratch/measure_open_questions.js
+!scratch/measure_gate_impact.js
+!scratch/measure_diversity_classifiers.js
+!scratch/measure_image_path.js
+!scratch/measure_roles.js
+!scratch/diagnose_capsule_shoe_roster.js
+!scratch/recall_at_cap_report.json

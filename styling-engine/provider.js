@@ -1,3 +1,7 @@
+// Provider abstraction, the tool loop, and the turn-contract output guards.
+// DOCUMENTED IN: docs/freeform-rearchitecture-handoff.md — every guard here exists because of a
+// specific live failure recorded there. Read it before loosening or removing one.
+// See AGENTS.md.
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'

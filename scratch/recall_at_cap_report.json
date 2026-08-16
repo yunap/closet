@@ -1,0 +1,430 @@
+{
+  "generatedAt": "2026-08-16T21:14:29.453Z",
+  "confirmedOutfitCount": 34,
+  "flows": {
+    "whole_wardrobe_visual": {
+      "overall": {
+        "hits": 62,
+        "total": 68,
+        "recall": 0.9118
+      },
+      "byOccasion": {
+        "casual": {
+          "hits": 62,
+          "total": 68,
+          "recall": 0.9118
+        }
+      },
+      "byWeather": {
+        "neutral": {
+          "hits": 62,
+          "total": 68,
+          "recall": 0.9118
+        }
+      },
+      "misses": [
+        {
+          "outfitId": 2,
+          "outfitName": "Indoor Weather Agnostic Outfit",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 3,
+          "missedPieceName": "Indoor Wool Shell",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": null,
+          "anchorPieceName": null
+        },
+        {
+          "outfitId": 3,
+          "outfitName": "Gate Miss Outfit",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 6,
+          "missedPieceName": "Gate Blocked Top",
+          "layer": "gate",
+          "reason": "AI profile blocks auto-use",
+          "anchorPieceId": null,
+          "anchorPieceName": null
+        },
+        {
+          "outfitId": 31,
+          "outfitName": "Competing Top History 36",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 36,
+          "missedPieceName": "Cap Pool Top 28",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": null,
+          "anchorPieceName": null
+        },
+        {
+          "outfitId": 32,
+          "outfitName": "Competing Top History 37",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 37,
+          "missedPieceName": "Cap Pool Top 29",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": null,
+          "anchorPieceName": null
+        },
+        {
+          "outfitId": 33,
+          "outfitName": "Competing Top History 38",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 38,
+          "missedPieceName": "Cap Pool Top 30",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": null,
+          "anchorPieceName": null
+        },
+        {
+          "outfitId": 34,
+          "outfitName": "Cap Miss Outfit",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 106,
+          "missedPieceName": "Cap Pool Top 98",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": null,
+          "anchorPieceName": null
+        }
+      ],
+      "accessories": {
+        "overall": {
+          "hits": 0,
+          "total": 1,
+          "recall": 0
+        },
+        "byOccasion": {
+          "casual": {
+            "hits": 0,
+            "total": 1,
+            "recall": 0
+          }
+        },
+        "byWeather": {
+          "neutral": {
+            "hits": 0,
+            "total": 1,
+            "recall": 0
+          }
+        },
+        "misses": [
+          {
+            "outfitId": 3,
+            "outfitName": "Gate Miss Outfit",
+            "occasion": "casual",
+            "weather": "neutral",
+            "missedPieceId": 7,
+            "missedPieceName": "Gate Outfit Necklace",
+            "layer": "gate",
+            "reason": "accessories excluded from visual composer",
+            "anchorPieceId": null,
+            "anchorPieceName": null
+          }
+        ]
+      }
+    },
+    "anchor_visual": {
+      "overall": {
+        "hits": 52,
+        "total": 70,
+        "recall": 0.7429
+      },
+      "byOccasion": {
+        "casual": {
+          "hits": 52,
+          "total": 70,
+          "recall": 0.7429
+        }
+      },
+      "byWeather": {
+        "neutral": {
+          "hits": 52,
+          "total": 70,
+          "recall": 0.7429
+        }
+      },
+      "misses": [
+        {
+          "outfitId": 2,
+          "outfitName": "Indoor Weather Agnostic Outfit",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 3,
+          "missedPieceName": "Indoor Wool Shell",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 4,
+          "anchorPieceName": "Indoor Dinner Pants"
+        },
+        {
+          "outfitId": 18,
+          "outfitName": "Competing Top History 23",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 23,
+          "missedPieceName": "Cap Pool Top 15",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 19,
+          "outfitName": "Competing Top History 24",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 24,
+          "missedPieceName": "Cap Pool Top 16",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 20,
+          "outfitName": "Competing Top History 25",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 25,
+          "missedPieceName": "Cap Pool Top 17",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 21,
+          "outfitName": "Competing Top History 26",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 26,
+          "missedPieceName": "Cap Pool Top 18",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 22,
+          "outfitName": "Competing Top History 27",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 27,
+          "missedPieceName": "Cap Pool Top 19",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 23,
+          "outfitName": "Competing Top History 28",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 28,
+          "missedPieceName": "Cap Pool Top 20",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 24,
+          "outfitName": "Competing Top History 29",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 29,
+          "missedPieceName": "Cap Pool Top 21",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 25,
+          "outfitName": "Competing Top History 30",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 30,
+          "missedPieceName": "Cap Pool Top 22",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 26,
+          "outfitName": "Competing Top History 31",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 31,
+          "missedPieceName": "Cap Pool Top 23",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 27,
+          "outfitName": "Competing Top History 32",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 32,
+          "missedPieceName": "Cap Pool Top 24",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 28,
+          "outfitName": "Competing Top History 33",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 33,
+          "missedPieceName": "Cap Pool Top 25",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 29,
+          "outfitName": "Competing Top History 34",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 34,
+          "missedPieceName": "Cap Pool Top 26",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 30,
+          "outfitName": "Competing Top History 35",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 35,
+          "missedPieceName": "Cap Pool Top 27",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 31,
+          "outfitName": "Competing Top History 36",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 36,
+          "missedPieceName": "Cap Pool Top 28",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 32,
+          "outfitName": "Competing Top History 37",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 37,
+          "missedPieceName": "Cap Pool Top 29",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 33,
+          "outfitName": "Competing Top History 38",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 38,
+          "missedPieceName": "Cap Pool Top 30",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        },
+        {
+          "outfitId": 34,
+          "outfitName": "Cap Miss Outfit",
+          "occasion": "casual",
+          "weather": "neutral",
+          "missedPieceId": 106,
+          "missedPieceName": "Cap Pool Top 98",
+          "layer": "cap",
+          "reason": "roster cap: category limit",
+          "anchorPieceId": 8,
+          "anchorPieceName": "Cap Outfit Bottom"
+        }
+      ],
+      "accessories": {
+        "overall": {
+          "hits": 0,
+          "total": 2,
+          "recall": 0
+        },
+        "byOccasion": {
+          "casual": {
+            "hits": 0,
+            "total": 2,
+            "recall": 0
+          }
+        },
+        "byWeather": {
+          "neutral": {
+            "hits": 0,
+            "total": 2,
+            "recall": 0
+          }
+        },
+        "misses": [
+          {
+            "outfitId": 3,
+            "outfitName": "Gate Miss Outfit",
+            "occasion": "casual",
+            "weather": "neutral",
+            "missedPieceId": 7,
+            "missedPieceName": "Gate Outfit Necklace",
+            "layer": "gate",
+            "reason": "accessories excluded from visual composer",
+            "anchorPieceId": 5,
+            "anchorPieceName": "Gate Outfit Top"
+          },
+          {
+            "outfitId": 3,
+            "outfitName": "Gate Miss Outfit",
+            "occasion": "casual",
+            "weather": "neutral",
+            "missedPieceId": 7,
+            "missedPieceName": "Gate Outfit Necklace",
+            "layer": "gate",
+            "reason": "accessories excluded from visual composer",
+            "anchorPieceId": 6,
+            "anchorPieceName": "Gate Blocked Top"
+          }
+        ]
+      }
+    }
+  },
+  "conclusion": "Misses are dominated by cap cuts: soft-score order may be costing real outfits and is worth tuning or replacing.",
+  "layerCounts": {
+    "cap": 23,
+    "gate": 1
+  },
+  "accessoryLayerCounts": {
+    "gate": 3
+  }
+}

@@ -1,3 +1,7 @@
+// Composition, prompt assembly, formatting and rendering pipelines.
+// DOCUMENTED IN: docs/engine-behaviour-map.md, docs/flows/ (per-flow model-call diagrams), and
+// docs/feedback-and-memory-map.md for buildStylistConversationPayload's memory blocks.
+// Amend the matching doc in the same commit. See AGENTS.md.
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'

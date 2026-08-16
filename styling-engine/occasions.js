@@ -1,3 +1,6 @@
+// AUTHORITY: docs/occasion_profiles_ratification.md is the ratified source for these profiles
+// and their register ceilings. Changing a profile here without amending it there desynchronizes
+// a ratified decision from the code that implements it. See AGENTS.md.
 // Occasion Profiles and Rules
 // Taste-adjacent lists governed by the Style Constitution amendment rule.
 // AI models may add only entries marked `// [proposed]`, with no force until ratified by Yuna.

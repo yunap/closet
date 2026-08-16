@@ -1,3 +1,8 @@
+// Gates, ceilings, scores and the owner-constraint hard gate live here.
+// DOCUMENTED IN: docs/engine-behaviour-map.md (gate/score behaviour) and
+// docs/feedback-and-memory-map.md (getStylistFeedbackMemory, owner_constraints, and the
+// AUTHORITY each store carries). Intent lives there, not here — read it before deciding a
+// missing gate is a bug, and amend it in the same commit as any change. See AGENTS.md.
 import { db, safeJsonParse, parsePiece } from '../db.js'
 import { confidenceFromProfile } from './taggerMerge.js'
 export { parsePiece }
