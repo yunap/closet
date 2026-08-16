@@ -139,6 +139,32 @@ and pairing-advice in the same sentence, which the schema doesn't structurally s
 conflation is *why* an automated contradiction detector is a stretch goal per the plan, not a first
 step: the free text doesn't cleanly say what it's describing.
 
+**[fixed 2026-08-15]** Traced to the actual root cause: **the schema instructed the mixing.**
+`style_notes.risk`'s own worked example in `prompts.js` was *"can look shapeless if not paired
+with fitted bottom"* — a pairing-conditional sentence, in the field explicitly meant to describe
+the piece alone. Checked all six `garment_intelligence` free-text fields against what they're
+supposed to describe: four are clean (`failure_risks`, `real_wear_notes` self-describe;
+`pairing_requirements`, `do_not_pair_rules`, `formula_compatibility` are partner-facing by name and
+content). Only `style_notes.risk` actively instructed the conflation its own example demonstrated;
+`style_notes.best_use` is a softer, inherent case (a "styling role" is relational by definition —
+not fixed, out of scope for this pass).
+
+Rewrote `style_notes.risk`'s instruction to be strictly intrinsic (true of the garment worn alone
+— *"shows every crease after sitting"*, *"reads busy up close despite reading solid from a
+distance"*), explicitly prohibited pairing-conditional phrasing, and redirected displaced
+pairing-conditional statements to the two existing fields whose phrasing already fits them
+(`pairing_requirements` for "needs X", `do_not_pair_rules` for "avoid Y") — no new field, no schema
+shape change, matching the smallest-change option discussed. Regenerated the frozen prompt
+snapshot (`scratch/regen_prompt_snapshot.mjs`), diffed to confirm only `TAG_PIECE_PROMPT` moved,
+and confirmed the old pairing-conditional example string is gone from the new prompt. Full test
+suite compared before/after: same 10 pre-existing baseline failures either way.
+
+**Not done:** `style_notes.best_use`'s softer conflation, and re-running Q3's audit script against
+freshly-tagged pieces to confirm the fix actually changes tagger *output* (today's wardrobe was
+tagged under the old instruction, so this fix only affects pieces tagged or re-tagged from now on
+— it cannot retroactively clean existing free text, same non-retroactivity as every other prompt
+change in this document).
+
 ---
 
 ## Q2 — Confidence calibration, split by `tagger_version`
@@ -366,6 +392,11 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    Also fixed a second, adjacent bug found while verifying this reaches the wardrobe at all: the
    endpoint's one live caller (`OutfitLookbook.jsx`) had its own field-forwarding list that was
    already silently dropping 7 pre-existing fields before this session touched anything.
+6. **`style_notes.risk` no longer instructs the self/pairing conflation** (Q3) — traced the free-
+   text consistency problem to its root: the field's own worked example was a pairing-conditional
+   sentence. Rewrote the instruction to be strictly intrinsic and redirected displaced
+   pairing-conditional statements to the two existing fields already shaped for them. Only affects
+   pieces tagged from now on — not retroactive to the wardrobe's existing free text.
 
 **Still open, ranked by leverage:**
 
@@ -385,12 +416,16 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
 4. **Confidence calibration works where the current prompt has actually run** (Q2) — the mechanism
    is sound; the gap is coverage. 161/245 pieces (66%) are still unversioned. This reframes "fix
    confidence calibration" as "finish rolling out the prompt that already fixed it."
-5. **Free-text/structured contradictions keep recurring on new pieces** (Q3), and the reason a full
-   detector isn't step one is now demonstrated, not assumed: the free-text schema itself conflates
-   self-description and pairing-advice in the same fields.
-6. **The consumer-count method works and found a new candidate** (`stretch`, Q4) for the same class
+5. **`style_notes.best_use`'s softer self/pairing conflation is still open** (Q3) — a "styling
+   role" is relational by definition, so unlike `risk` it can't be fully separated by an instruction
+   rewrite alone. Not addressed this session.
+6. **The fix to `style_notes.risk` hasn't been confirmed against real output yet** (Q3) — verified
+   the prompt text changed as intended, not that a freshly-tagged piece actually stops mixing.
+   Re-running `scratch/audit_freetext_structured_consistency.js` against newly-tagged pieces would
+   close that loop.
+7. **The consumer-count method works and found a new candidate** (`stretch`, Q4) for the same class
    of finding `fiber_content` already got — worth the same trace before, not after, prompt work.
-7. **Q1's core question — is one photo enough — remains genuinely open.** The free proxy was too
+8. **Q1's core question — is one photo enough — remains genuinely open.** The free proxy was too
    confounded to answer it; only a controlled, billed corpus can, and that's the one piece of this
    audit still waiting on a go-ahead.
 

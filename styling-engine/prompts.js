@@ -926,7 +926,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "bareness": "normal|high (high if sleeveless, tank, short shorts, or mini skirt/dress)",
     "style_notes": {
       "best_use": "stylist role description based on design weight (e.g. 'standalone structural top to highlight clipboard geometry', 'soft supporting layer', 'texture-contrast focus piece'). Avoid generic 'casual wear' or 'daily casual' phrases.",
-      "risk": "styling or aesthetic risk (e.g. 'can look shapeless if not paired with fitted bottom', 'double texture competition with corduroy'). Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint."
+      "risk": "an INTRINSIC styling or aesthetic risk — true of this garment worn alone, not conditional on what it's paired with (e.g. 'shows every crease after sitting', 'reads busy up close despite reading solid from a distance', 'hem curls after washing'). Do not put 'needs fit review' here; risk must be a styling/aesthetic constraint. Do NOT phrase this as pairing-conditional ('if not paired with X', 'competes with Y') — a risk that only exists in combination with another piece belongs in pairing_requirements (e.g. 'needs structured bottom to avoid reading shapeless') or do_not_pair_rules (e.g. 'avoid another loud pattern'), not here."
     },
     "garment_intelligence": {
       "auto_use_trust": "trusted|support_only|experimental|needs_fit_review|do_not_auto_use",
