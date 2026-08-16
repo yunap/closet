@@ -48,6 +48,46 @@ Reverse direction: `/extract-pieces` asks for nothing tag-piece doesn't already 
 `pieces`, the array wrapper). Not a two-way drift — extract-pieces is a strict, incompletely-synced
 subset.
 
+**[fixed 2026-08-15]** All seven fields added to `/extract-pieces`'s schema
+(`routes/ai.js`), verified against the audit script: the gap list is now empty except for the
+already-known whole-subsystem omissions. Chose **patch, not unification** — the two schemas stay
+independent literals, which is the smaller, faster fix; the drift-proofing move (importing a
+shared field list so this can't recur) was discussed and deliberately deferred, see below.
+`fit_on_body`/`tuck_behavior`/`waistband_type`'s instruction text was written specifically for this
+endpoint rather than copied verbatim from `tag-piece`: `/extract-pieces` always receives a *worn*
+outfit photo, which is exactly the evidence `tag-piece`'s own photo-authority map says those three
+fields need and often lack — so the wording says so explicitly ("This photo IS a worn photo —
+judge fit and drape directly...") rather than hedging the way `tag-piece`'s conditional worn-photo
+wording does.
+
+**[bug, found while verifying the fix would actually reach the wardrobe, fixed 2026-08-15]**
+`/extract-pieces` has exactly one live UI caller — `OutfitLookbook.jsx`'s `OutfitForm` "scan for
+pieces in this photo" feature (confirmed by grep; **not** used anywhere in the onboarding
+batch-add or bulk-import paths, which both call the real tagger directly). That caller has its
+**own** hardcoded field-forwarding list in `handleSubmit`, separate from the schema, and it was
+already silently dropping `opacity`, `stretch`, `needs_base`, `fiber_content`, `formality`,
+`heel_height`, `walk_support` — fields the schema already asked for, paid for, and computed —
+before this session touched anything. Without fixing this too, the schema fix above would have
+been real but inert: the model would emit the 7 new fields and the frontend would discard them
+before the piece was ever created, same as it already did to the 7 pre-existing ones. Fixed by
+adding all 14 field names to the forwarding list, plus a `fiber_content`-specific
+`JSON.stringify` line (it's an array field, needs the same treatment as `colors`/`occasions`
+already get). This is the third occurrence of the documented "enumerate and silently drop unknown
+fields" pattern (`PieceForm`/`BatchAdd` are the other two) — worth remembering as a class, not
+just this one instance, next time a field is added anywhere in the tagger schema.
+
+**Verified:** `scratch/audit_tagger_schema_drift.js` re-run clean; a static JSON-parse check on the
+edited schema block; `npx vite build` succeeds; full test suite compared — same 10 pre-existing
+baseline failures before and after (verified via `git stash`), nothing new.
+
+**Deliberately not done this session — put on the TODO list per owner decision:** whether
+`OutfitForm`'s scan feature should still exist in its current form. Its only consumer creates a new
+wardrobe piece whenever match confidence isn't `high`, which is the duplicate-creation behavior the
+owner already stepped away from once. The schema-drift fix makes the endpoint's *output* more
+complete; it does not address whether the feature's *auto-create* behavior is still the right
+design. Research this before touching that flow again — do not assume the schema fix implicitly
+endorses continuing to use it as-is.
+
 ---
 
 ## Q6 — Manual override frequency, all fields (ground-truth proxy)
@@ -321,25 +361,36 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    not a live code bug, fixed with a generalized, reusable script rather than a one-off patch.
 4. **`cross_photo_agreement_note` dropped from the schema** (Q5/Q7) — stopped paying for a field
    nothing consumed; frozen prompt snapshot regenerated and diffed to confirm nothing else moved.
+5. **Schema drift patched** (Q7) — all 7 missing fields added to `/extract-pieces`, with
+   worn-photo-specific instruction text for the 3 fit-related ones rather than copied verbatim.
+   Also fixed a second, adjacent bug found while verifying this reaches the wardrobe at all: the
+   endpoint's one live caller (`OutfitLookbook.jsx`) had its own field-forwarding list that was
+   already silently dropping 7 pre-existing fields before this session touched anything.
 
 **Still open, ranked by leverage:**
 
 1. **The `occasions`-anchor expansion is still not recommended as-is** (Q5) — the cap now bounds
    its worst case, but the underlying cost/benefit question (does anchoring occasions actually
    improve tagging quality enough to justify the tokens) was never answered, only bounded.
-2. **Schema drift between the two tagger prompts is live, not hypothetical, and worse than
-   previously documented** (Q7) — four subtype fields are silently absent with no review flag at
-   all, and `fit_on_body` was missing from every prior drift list. Not touched this session —
-   fixing `/extract-pieces` is a larger, more deliberate change than the four free items above.
-3. **Confidence calibration works where the current prompt has actually run** (Q2) — the mechanism
+2. **Whether the two tagger schemas should be unified, not just patched** (Q7) — the drift itself
+   is fixed, but nothing prevents the next field added to `tag-piece` from drifting the same way
+   again. Deliberately deferred as a bigger, separate decision (import a shared field list vs. keep
+   two literals in sync by hand) rather than folded into the patch.
+3. **Whether `OutfitLookbook.jsx`'s scan-for-pieces feature should still exist in its current
+   form** — its only consumer, and the reason `/extract-pieces` exists at all. Auto-creates a new
+   wardrobe piece whenever match confidence isn't `high`, the duplicate-creation behavior already
+   stepped away from once. **On the TODO list, not researched this session** — the schema/forwarding
+   fixes make the endpoint's output more complete; they say nothing about whether the feature's
+   design is still right.
+4. **Confidence calibration works where the current prompt has actually run** (Q2) — the mechanism
    is sound; the gap is coverage. 161/245 pieces (66%) are still unversioned. This reframes "fix
    confidence calibration" as "finish rolling out the prompt that already fixed it."
-4. **Free-text/structured contradictions keep recurring on new pieces** (Q3), and the reason a full
+5. **Free-text/structured contradictions keep recurring on new pieces** (Q3), and the reason a full
    detector isn't step one is now demonstrated, not assumed: the free-text schema itself conflates
    self-description and pairing-advice in the same fields.
-5. **The consumer-count method works and found a new candidate** (`stretch`, Q4) for the same class
+6. **The consumer-count method works and found a new candidate** (`stretch`, Q4) for the same class
    of finding `fiber_content` already got — worth the same trace before, not after, prompt work.
-6. **Q1's core question — is one photo enough — remains genuinely open.** The free proxy was too
+7. **Q1's core question — is one photo enough — remains genuinely open.** The free proxy was too
    confounded to answer it; only a controlled, billed corpus can, and that's the one piece of this
    audit still waiting on a go-ahead.
 
