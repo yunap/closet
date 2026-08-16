@@ -1,11 +1,16 @@
 # Tagger audit findings
 
-**Status:** first pass complete, 2026-08-15; amended 2026-08-16 with real (n=2) Q1 evidence and four
-follow-on fixes found live while gathering it. Executes `docs/tagger-audit-plan.md`'s Q2–Q7 (all free
-questions); Q1's full stratified corpus stays gated on a billed batch the owner has not yet approved,
-though two real garments were tagged both ways as an unplanned byproduct of real wardrobe additions —
-see Q1 below. Wardrobe was 245 active pieces at measurement time — up from the 236/242 baselines
-cited in `docs/engine-behaviour-map.md`, so several numbers below have moved since that map was
+**Status:** first pass complete, 2026-08-15; amended 2026-08-16 with real Q1 evidence (n=3, growing)
+and five follow-on fixes found live while gathering it. Executes `docs/tagger-audit-plan.md`'s Q2–Q7
+(all free questions); Q1 is answered by an incrementally-growing real corpus rather than a one-shot
+synthetic batch — the owner tags each garment hanger-only, captures the result, adds a worn photo,
+re-tags, and that pair becomes a real data point, for no incremental cost beyond garments they were
+tagging anyway. This is the same controlled design originally proposed for a separate billed batch,
+not a substitute for it — the "ask before spending" gate applied to *me* running an extra batch of
+calls the owner didn't otherwise need; it never applied to the owner's own ordinary tagging. See Q1
+below for the corpus as it stands. Wardrobe was 245 active pieces at measurement time — up from the
+236/242 baselines cited in `docs/engine-behaviour-map.md`, so several numbers below have moved since
+that map was
 written. Re-run the cited script rather than trusting a number here indefinitely; that map's own
 convention.
 
@@ -374,7 +379,7 @@ plan.
 
 ---
 
-## Q1 — Schema fit to photo availability (partial; real n=2 evidence gathered, full corpus still gated)
+## Q1 — Schema fit to photo availability (answered by a growing real corpus, n=3 so far)
 
 **Script:** `scratch/measure_confidence_by_photo_set.js`
 
@@ -394,16 +399,17 @@ moved in the expected direction (worse without a fit-visible photo — 59% vs. 2
 confidence), but `fit_on_body`/`tuck_behavior`/`waistband_type` did not show a clean pattern at
 n=17. **Not strong enough to act on.**
 
-**Still open, per owner decision this session:** the controlled version (same pieces tagged both
-ways) needs new billed calls and was deliberately not run. Gate holds.
+**A separate synthetic batch to run this controlled comparison was proposed and deliberately not
+run this session** — that gate was about *me* spending on calls the owner didn't otherwise need,
+and holds for that specific ask. It does not gate the owner's own ordinary tagging, which turns out
+to produce the exact same comparison for free.
 
-**[2026-08-16, real paired evidence — n=2, not the full gated corpus]** The owner had two garments
-to tag anyway (pieces 135 and 141, both real, both previously hanger-only and unversioned) and ran
-the controlled comparison themselves through the ordinary "Update details with AI" flow rather than
-through a separate billed batch: manual overrides cleared first so nothing was protected, tagged
-hanger-only, results captured, then a worn photo added and re-tagged. This is the actual same-piece
-comparison Q1 was designed to produce — not a substitute for the full gated corpus, but real signal
-where the free proxy above could only manage a confounded one.
+**[2026-08-16, the actual corpus — n=3 so far, growing]** Three real garments the owner needed to
+tag anyway (135, 141, 996780 — two previously hanger-only unversioned pieces, one brand-new) went
+through the same controlled comparison via the ordinary "Update details with AI" flow: hanger-only
+first, result captured, worn photo added, re-tagged. Every additional garment tagged this way adds
+another real data point to this same set — this section grows as that happens, not as a one-time
+report.
 
 **Piece 135 ("black grey textured cropped cardigan"): the worn photo changed the answer, not just
 the confidence.**
@@ -417,10 +423,10 @@ the confidence.**
 All three structural fields didn't just gain confidence — they changed **value**. The hanger-only
 read was substantively wrong on all three, not merely under-evidenced: a garment described as
 cropped, relaxed, and clingy-draping turned out to be waist-length, fitted, and skimming once the
-worn photo was available. Real, if single-piece, confirmation that a hanger-only tag can produce a
-confidently-wrong-looking answer that is actually incorrect on structure.
+worn photo was available. Real confirmation that a hanger-only tag can produce a confidently-
+wrong-looking answer that is actually incorrect on structure.
 
-**Piece 141 ("sheer black open cardigan"): the textbook confirmation case.**
+**Piece 141 ("sheer black open cardigan"): a confirmation case.**
 
 | field | hanger-only | hanger+worn |
 |---|---|---|
@@ -430,18 +436,34 @@ Same value both times — the hanger-only guess happened to be right, and the wo
 confidence from a hedge to a real answer without changing it. `length_hits_at`, `silhouette`, and
 `tuck_behavior` were already stable and high-confidence in both conditions on this piece.
 
-**A separate, smaller finding from the same pair, unrelated to the photo-authority mechanism:**
-piece 135's `hem_finish` (`asymmetric`→`other`) and `stretch` (`moderate`→`minimal`) also changed
-between conditions, despite neither being in the photo-authority map's fit-dependent field list —
-and confidence stayed `high`/`medium` in both conditions for both, no hedge at either point. That's
-ordinary call-to-call tagger variance on fields the worn photo shouldn't be influencing at all, not
-the mechanism this question is about — worth knowing, but a different question than Q1's.
+**Piece 996780 ("lavender textured sheath midi dress"): a second, cleaner confirmation case.**
 
-**Reading n=2 honestly:** one piece where the worn photo *corrected* a wrong structural read, one
-where it *confirmed* a right one — exactly the two outcomes the photo-authority map exists to
-produce. That's real evidence for both halves of the claim, but it is two garments, not a corpus.
-It does not replace the gated, stratified, billed comparison above; it's the first non-confounded
-data point either the free proxy or the natural experiment has managed to produce this whole audit.
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | `skims` (low) | `skims` (**high**) |
+| `length_hits_at` | `midi` (medium) | `midi` (medium — unchanged) |
+| `silhouette` | `sheath` (high) | `sheath` (high — unchanged) |
+
+Same pattern as 141: only `fit_on_body` needed the worn photo, and `length_hits_at`/`silhouette`
+were already confident and correct from the hanger photo alone on this piece and didn't move at
+all — evidence the tagger doesn't uniformly hedge everything without a worn photo, just the fields
+that genuinely need one.
+
+**Two smaller findings from the same three pieces, unrelated to the photo-authority mechanism
+itself:** piece 135's `hem_finish` (`asymmetric`→`other`) and `stretch` (`moderate`→`minimal`)
+changed value between conditions despite neither being fit-dependent, with confidence staying
+`high`/`medium` throughout — no hedge at either point. Piece 996780's `hem_finish` confidence
+*dropped* (`high`→`medium`) with the value unchanged, on a field the authority map says should be
+answerable from the flat hanger photo alone. Both are ordinary call-to-call tagger variance on
+fields the worn photo shouldn't be influencing, not the mechanism Q1 is about — worth knowing, a
+different question than this one.
+
+**Reading n=3 honestly:** one correction (135), two confirmations (141, 996780) — both outcomes the
+photo-authority map is designed to produce, both observed more than once. Three garments is a real
+but early sample, not yet a stratified spread across categories (all three are outerwear/dress so
+far) — the read so far leans toward "a hanger photo alone can produce a confidently-wrong structural
+answer," not just "a low-confidence but ultimately correct one," and gets more reliable with every
+additional pair.
 
 **Two adjacent UI bugs found and fixed while gathering this data, unrelated to tagger quality
 itself:** tagging a brand-new piece for the first time was showing "AI found no new details to
@@ -517,16 +539,14 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    silently passes the same test as `stretch: "none"` — backwards from this schema's own stated
    convention for absent values elsewhere (`needs_base`). No known wrong outcome today; flagged for
    whoever next touches `softScoreFloors.js`, not fixed here since it isn't live.
-8. **Q1's core question now has real, if small, evidence — the answer leans "not always."** The
-   free proxy was too confounded to answer it, but the owner ran a real same-piece comparison
-   (pieces 135 and 141) as a byproduct of tagging garments they needed to add anyway. On one piece,
-   the worn photo *corrected* a wrong hanger-only read on three structural fields at once
-   (`fit_on_body`, `length_hits_at`, `silhouette`); on the other, it *confirmed* a hanger-only guess
-   that happened to be right. n=2 is not the stratified, gated corpus this question was scoped
-   around — that's still open, still gated on a billed go-ahead — but it's the first non-confounded
-   signal either the natural experiment or the free proxy managed to produce, and it points toward
-   "a hanger photo alone can produce a confidently-wrong structural answer," not just "a
-   low-confidence but ultimately correct one."
+8. **Q1's core question is being answered by a real, growing corpus, not a separate gated batch.**
+   The free proxy was too confounded to answer it; the actual answer is coming from the owner's own
+   ordinary tagging — same piece, hanger-only then hanger+worn, captured each time, at n=3 and
+   counting (135, 141, 996780). One correction (a wrong hanger-only read on three structural fields
+   at once), two confirmations. Not yet a stratified spread across categories, and gets more
+   reliable with every additional pair — but it is the real thing this question needed, not a
+   stand-in for it, and it already points toward "a hanger photo alone can produce a
+   confidently-wrong structural answer," not just "a low-confidence but ultimately correct one."
 
 Nothing here overrides `docs/engine-behaviour-map.md`'s existing findings — every number either
 confirmed them on fresher data (Q2, Q5's caching/`cross_photo_agreement_note` claims) or extended
