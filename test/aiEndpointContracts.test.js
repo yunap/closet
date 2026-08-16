@@ -4364,6 +4364,14 @@ test('buildWholeWardrobeCandidateOutfits generates candidates tagged with Outfit
     candidateLimit: 12
   })
   assert.ok(layeredTopMainCandidates.some(candidate => candidate.pieceIds.includes(14) && candidate.pieces.filter(piece => piece.category === 'top').length >= 2), 'layer-capable top Main should be able to preserve a two-top saved formula without being recategorized as outerwear')
+  // The structural fallback appends the Main piece to a slot combination. When the Main IS the
+  // slot (a top/bottom/dress Main, where that slot list is [requiredPiece]), appending blindly
+  // put the same garment in the outfit twice. No candidate may list a piece more than once.
+  for (const candidateSet of [layeredTopMainCandidates, requiredDressCandidates, requiredShoeCandidates]) {
+    for (const candidate of candidateSet) {
+      assert.equal(new Set(candidate.pieceIds).size, candidate.pieceIds.length, `candidate must not repeat a piece: ${candidate.pieceIds.join(', ')}`)
+    }
+  }
 })
 
 test('Visual composer occasion profile prompt block and wardrobe coverage contract tests', async () => {

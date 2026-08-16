@@ -887,6 +887,38 @@ the next section. None of those are piece-eligibility questions, which is why th
 
 ---
 
+## Candidate generation with a Main piece — the structural fallback
+
+**Amended 2026-08-16.** `buildWholeWardrobeCandidateOutfits` (`rules.js`) composes candidates per
+Outfit Mission. When the caller pins a Main piece (`requiredPieceId` / `mainPieceId` — saved-outfit
+"Similar variants" does, via `routes/ai.js`), every candidate must contain it, and a mission that
+does not qualify for the resulting combination yields nothing.
+
+**[by design] A Main piece that no mission can place falls back to structural candidates.**
+`addStructuralCandidate` skips mission qualification and the `-18` score floor, so the person still
+gets outfits built around the garment they picked.
+
+**[bug, fixed 2026-08-16] That fallback used to run only for an add-on Main.** It was gated on
+`requiredIsAddOn` (outerwear/accessory). A top, bottom or dress Main in the same situation produced
+**zero candidates** — the missions rejected every combination and nothing caught it. Live shape: a
+saved two-top outfit asking for Similar variants returned nothing, and its layer-capable top could
+not keep its base top. The gate is now `requiredPieceId && !hasRequiredCandidate()`, with the same
+role guards the mission path uses (no dress appended onto a complete top+bottom+shoes look), and a
+layer-capable top Main tries the two-top formula before falling back to a single-top look.
+
+**[by design] The Main piece is appended only when a slot has not already supplied it.**
+For an add-on the slot lists never contain it; for a top/bottom/dress Main the slot list *is*
+`[requiredPiece]`, and appending unconditionally put the same garment in the outfit twice.
+`withRequiredPiece` is that check. Covered by a no-repeated-piece assertion in
+`test/aiEndpointContracts.test.js`.
+
+**Measured effect on the live wardrobe (30 scenarios: 5 occasions × {no Main, 5 Main pieces}):**
+28 identical, including **every** no-Main scenario — the default whole-wardrobe path is untouched.
+Two changed, both with a Main whose `color_anchor` mission previously starved: `casual` gained one
+candidate and removed none; `outdoor` stayed at its cap of 60, gaining the intended `color_anchor`
+candidate and displacing two lower-ranked tail entries (adding to a capped list evicts the tail,
+and the cross-mission `seenKeys` dedupe then admits a combination it had previously suppressed).
+
 ## After the gate — the outfit-level pass
 
 `locallyGateWholeWardrobeOutfits` (`rules.js`) is where assembled outfits are repaired,

@@ -4029,6 +4029,13 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
       missionCandidates.push({ key, pieces: clean, score: scored.score, missionId })
     }
     const hasRequiredCandidate = () => !requiredPieceId || missionCandidates.some(candidate => candidate.pieces.some(piece => Number(piece.id) === requiredPieceId))
+    // Append the Main piece only when a slot has not already supplied it. For an add-on Main
+    // (outerwear/accessory) the slot lists never contain it, so this is a no-op; for a top/bottom
+    // Main the slot list IS [requiredPiece], and appending blindly would duplicate the garment.
+    const withRequiredPiece = pieces => {
+      const clean = pieces.filter(Boolean)
+      return clean.some(piece => Number(piece.id) === requiredPieceId) ? clean : [...clean, requiredPiece]
+    }
     
     if (requiredGroup !== 'dress') {
       separateCandidates:
@@ -4066,21 +4073,45 @@ export function buildWholeWardrobeCandidateOutfits(allPieces, options = {}) {
         }
       }
     }
-    if (requiredIsAddOn && !hasRequiredCandidate()) {
-      structuralSeparate:
-      for (const top of tops) {
-        for (const bottom of bottoms) {
-          for (const shoe of shoes) {
-            addStructuralCandidate([top, bottom, shoe, requiredPiece])
-            if (hasRequiredCandidate()) break structuralSeparate
+    // Structural fallback for the Main piece. This used to be gated on `requiredIsAddOn`, so an
+    // outerwear/accessory Main fell back to structurally-valid outfits when no mission qualified,
+    // but a top/bottom/dress Main in the same situation produced NOTHING — the saved-outfit
+    // "Similar variants" path (routes/ai.js) then returned zero candidates for a perfectly
+    // ordinary garment. Gated on `!hasRequiredCandidate()`, so it is additive by construction:
+    // it can only add outfits where there were none, never replace or reorder existing ones.
+    if (requiredPieceId && !hasRequiredCandidate()) {
+      // A layer-capable top Main keeps its base top: preserve the saved two-top formula before
+      // falling back to a single-top look, so the layer is not flattened into the only top.
+      if (requiredIsLayerableTop) {
+        structuralLayeredTop:
+        for (const baseTop of baseTopsForRequiredLayer) {
+          for (const bottom of bottoms) {
+            for (const shoe of shoes) {
+              addStructuralCandidate([baseTop, bottom, shoe, requiredPiece])
+              if (hasRequiredCandidate()) break structuralLayeredTop
+            }
           }
         }
       }
-      if (!hasRequiredCandidate()) {
+      // Same role guards the mission path above uses. Without them a dress Main gets appended to a
+      // complete top+bottom+shoes look, which is not an outfit anyone can wear.
+      if (requiredGroup !== 'dress') {
+        structuralSeparate:
+        for (const top of tops) {
+          for (const bottom of bottoms) {
+            for (const shoe of shoes) {
+              if (hasRequiredCandidate()) break structuralSeparate
+              addStructuralCandidate(withRequiredPiece([top, bottom, shoe]))
+              if (hasRequiredCandidate()) break structuralSeparate
+            }
+          }
+        }
+      }
+      if (!['top', 'bottom'].includes(requiredGroup) && !hasRequiredCandidate()) {
         structuralDress:
         for (const dress of dresses) {
           for (const shoe of shoes) {
-            addStructuralCandidate([dress, shoe, requiredPiece])
+            addStructuralCandidate(withRequiredPiece([dress, shoe]))
             if (hasRequiredCandidate()) break structuralDress
           }
         }
