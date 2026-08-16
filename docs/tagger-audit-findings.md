@@ -1,10 +1,13 @@
 # Tagger audit findings
 
-**Status:** first pass complete, 2026-08-15. Executes `docs/tagger-audit-plan.md`'s Q2–Q7 (all free
-questions); Q1's controlled version stays gated on a billed corpus the owner has not yet approved.
-Wardrobe was 245 active pieces at measurement time — up from the 236/242 baselines cited in
-`docs/engine-behaviour-map.md`, so several numbers below have moved since that map was written.
-Re-run the cited script rather than trusting a number here indefinitely; that map's own convention.
+**Status:** first pass complete, 2026-08-15; amended 2026-08-16 with real (n=2) Q1 evidence and four
+follow-on fixes found live while gathering it. Executes `docs/tagger-audit-plan.md`'s Q2–Q7 (all free
+questions); Q1's full stratified corpus stays gated on a billed batch the owner has not yet approved,
+though two real garments were tagged both ways as an unplanned byproduct of real wardrobe additions —
+see Q1 below. Wardrobe was 245 active pieces at measurement time — up from the 236/242 baselines
+cited in `docs/engine-behaviour-map.md`, so several numbers below have moved since that map was
+written. Re-run the cited script rather than trusting a number here indefinitely; that map's own
+convention.
 
 Same tag vocabulary as the other maps: **[by design]**, **[bug]**, **[unverified]**,
 **[owner check wanted]**. Every finding cites the script that produced it — all are new, committed
@@ -371,7 +374,7 @@ plan.
 
 ---
 
-## Q1 — Schema fit to photo availability (partial; controlled version still gated)
+## Q1 — Schema fit to photo availability (partial; real n=2 evidence gathered, full corpus still gated)
 
 **Script:** `scratch/measure_confidence_by_photo_set.js`
 
@@ -393,6 +396,63 @@ n=17. **Not strong enough to act on.**
 
 **Still open, per owner decision this session:** the controlled version (same pieces tagged both
 ways) needs new billed calls and was deliberately not run. Gate holds.
+
+**[2026-08-16, real paired evidence — n=2, not the full gated corpus]** The owner had two garments
+to tag anyway (pieces 135 and 141, both real, both previously hanger-only and unversioned) and ran
+the controlled comparison themselves through the ordinary "Update details with AI" flow rather than
+through a separate billed batch: manual overrides cleared first so nothing was protected, tagged
+hanger-only, results captured, then a worn photo added and re-tagged. This is the actual same-piece
+comparison Q1 was designed to produce — not a substitute for the full gated corpus, but real signal
+where the free proxy above could only manage a confounded one.
+
+**Piece 135 ("black grey textured cropped cardigan"): the worn photo changed the answer, not just
+the confidence.**
+
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | `clings_drapey` (low) | `skims` (**high**) |
+| `length_hits_at` | `cropped` (medium) | `waist` (**high**) |
+| `silhouette` | `relaxed` (medium) | `fitted` (**high**) |
+
+All three structural fields didn't just gain confidence — they changed **value**. The hanger-only
+read was substantively wrong on all three, not merely under-evidenced: a garment described as
+cropped, relaxed, and clingy-draping turned out to be waist-length, fitted, and skimming once the
+worn photo was available. Real, if single-piece, confirmation that a hanger-only tag can produce a
+confidently-wrong-looking answer that is actually incorrect on structure.
+
+**Piece 141 ("sheer black open cardigan"): the textbook confirmation case.**
+
+| field | hanger-only | hanger+worn |
+|---|---|---|
+| `fit_on_body` | `drapes` (low) | `drapes` (**high**) |
+
+Same value both times — the hanger-only guess happened to be right, and the worn photo raised
+confidence from a hedge to a real answer without changing it. `length_hits_at`, `silhouette`, and
+`tuck_behavior` were already stable and high-confidence in both conditions on this piece.
+
+**A separate, smaller finding from the same pair, unrelated to the photo-authority mechanism:**
+piece 135's `hem_finish` (`asymmetric`→`other`) and `stretch` (`moderate`→`minimal`) also changed
+between conditions, despite neither being in the photo-authority map's fit-dependent field list —
+and confidence stayed `high`/`medium` in both conditions for both, no hedge at either point. That's
+ordinary call-to-call tagger variance on fields the worn photo shouldn't be influencing at all, not
+the mechanism this question is about — worth knowing, but a different question than Q1's.
+
+**Reading n=2 honestly:** one piece where the worn photo *corrected* a wrong structural read, one
+where it *confirmed* a right one — exactly the two outcomes the photo-authority map exists to
+produce. That's real evidence for both halves of the claim, but it is two garments, not a corpus.
+It does not replace the gated, stratified, billed comparison above; it's the first non-confounded
+data point either the free proxy or the natural experiment has managed to produce this whole audit.
+
+**Two adjacent UI bugs found and fixed while gathering this data, unrelated to tagger quality
+itself:** tagging a brand-new piece for the first time was showing "AI found no new details to
+apply. Your protected edits were preserved." even when every field had actually been filled in
+correctly — `PieceForm.jsx` read a `changedCount` variable before React had actually run the state
+updater that computed it, so the count was stuck at its initial `0` essentially every time
+(`commit 8fae4fa`). Separately, deleting a just-picked (never-saved) photo before saving showed a
+false "will be removed when you save" + a "Restore" button with nothing real to restore, because
+the removal handler didn't distinguish a not-yet-saved local file pick from an actually-saved photo
+(`commit 85d2740`). Both verified live in the sandbox; neither caused any actual data loss on the
+real pieces they were found on (135, 141, 996780) — confirmed against the wardrobe directly.
 
 ---
 
@@ -457,9 +517,16 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    silently passes the same test as `stretch: "none"` — backwards from this schema's own stated
    convention for absent values elsewhere (`needs_base`). No known wrong outcome today; flagged for
    whoever next touches `softScoreFloors.js`, not fixed here since it isn't live.
-8. **Q1's core question — is one photo enough — remains genuinely open.** The free proxy was too
-   confounded to answer it; only a controlled, billed corpus can, and that's the one piece of this
-   audit still waiting on a go-ahead.
+8. **Q1's core question now has real, if small, evidence — the answer leans "not always."** The
+   free proxy was too confounded to answer it, but the owner ran a real same-piece comparison
+   (pieces 135 and 141) as a byproduct of tagging garments they needed to add anyway. On one piece,
+   the worn photo *corrected* a wrong hanger-only read on three structural fields at once
+   (`fit_on_body`, `length_hits_at`, `silhouette`); on the other, it *confirmed* a hanger-only guess
+   that happened to be right. n=2 is not the stratified, gated corpus this question was scoped
+   around — that's still open, still gated on a billed go-ahead — but it's the first non-confounded
+   signal either the natural experiment or the free proxy managed to produce, and it points toward
+   "a hanger photo alone can produce a confidently-wrong structural answer," not just "a
+   low-confidence but ultimately correct one."
 
 Nothing here overrides `docs/engine-behaviour-map.md`'s existing findings — every number either
 confirmed them on fresher data (Q2, Q5's caching/`cross_photo_agreement_note` claims) or extended
