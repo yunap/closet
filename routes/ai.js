@@ -370,11 +370,14 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     ...input,
     ...(await prepareImageForClaude(input.path))
   })))
-  const content = []
-  for (const input of prepared) {
-    content.push({ type: 'text', text: `IMAGE INPUT - [${input.label}]:\nGuidance: ${input.guidance || ''}` })
-    content.push({ type: 'image', source: { type: 'base64', media_type: input.mime, data: input.base64 } })
-  }
+  // Stable prefix first: the fully static instructions (~5,290 tok), then the wardrobe-calibration
+  // anchors (wardrobe-state-dependent, but stable across an entire tagging session/import batch).
+  // Anthropic prompt caching only helps a contiguous prefix from position 0, so this must come
+  // before any per-piece content (photo, ground-truth overrides) — previously the photo was
+  // pushed first, which meant nothing in this call was ever cacheable no matter what carried
+  // cache_control. See docs/tagger-audit-findings.md Q5.
+  const content = [{ type: 'text', text: prompts.TAG_PIECE_PROMPT }]
+
   const anchorBlock = buildAnchorBlock({
     pieces: db.prepare("SELECT * FROM pieces WHERE status = 'active' ORDER BY id").all().map(parsePiece),
     fields: ['formality', 'fabric_weight']
@@ -386,6 +389,16 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
       { type: 'text', text: `${thumb.label}: ${thumb.guidance}` },
       { type: 'image', detail: 'low', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } }
     ]))
+  }
+
+  // Mark the end of the stable prefix: everything above must stay byte-identical across calls in
+  // the same session for a cache hit; everything below is per-piece and always volatile.
+  // toAnthropicContentBlocks (provider.js) preserves cache_control on text/image blocks verbatim.
+  content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: 'ephemeral' } }
+
+  for (const input of prepared) {
+    content.push({ type: 'text', text: `IMAGE INPUT - [${input.label}]:\nGuidance: ${input.guidance || ''}` })
+    content.push({ type: 'image', source: { type: 'base64', media_type: input.mime, data: input.base64 } })
   }
 
   // Inject Ground Truth context from user overrides on the existing piece
@@ -406,7 +419,6 @@ export async function tagPieceWithProvider(photoInputs, existingPiece = null, { 
     }
   }
 
-  content.push({ type: 'text', text: prompts.TAG_PIECE_PROMPT })
   const payload = {
     // Cache structure belongs to the provider request, not the frozen semantic
     // prompt constant guarded by prompt_equivalence.test.js.

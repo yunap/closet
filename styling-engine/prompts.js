@@ -753,9 +753,9 @@ Conflict resolution and context-insulation rules:
 2. Insulate style identity and occasion potential from TRY-ON context. A polished shell photographed at home with shorts is still a polished shell; home setting, shorts, bare legs, or casual styling must not drag its lanes or occasion confidence toward casual.
 3. Use real-wear context only as positive occasion evidence when present. Absence of real_context is neutral; it must not penalize city, smart-casual, or evening potential.
 4. Never infer fit, drape, or length from a photo that is not fit_visible. A hanger-only or cropped/seated/non-fit-visible image must leave fit fields empty/default or low-confidence.
-5. Color authority goes to the best-lit, closest, least-shadowed garment view. If photos disagree materially on color, lower "colors" and "background_color" confidence and explain in cross_photo_agreement_note; do not blindly prefer worn or hanger.
+5. Color authority goes to the best-lit, closest, least-shadowed garment view. If photos disagree materially on color, lower "colors" and "background_color" confidence; do not blindly prefer worn or hanger.
 6. When photos conflict within one authority domain, lower the affected field's confidence rather than silently picking.
-7. Always emit a brief cross-photo agreement note in the JSON where photos disagreed on any field, and emit '_confidence' for every field.
+7. Emit '_confidence' for every field.
 
 === PHYSICAL PROPERTY FRAMEWORK (VOLUME vs. STRUCTURE) ===
 Evaluate the garment's visual structure and weight along these two axes:
@@ -989,8 +989,7 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "photo_properties": {
     "HANGER PHOTO": { "fit_visible": false, "real_context": false, "notes": "short reason" },
     "WORN PHOTO": { "fit_visible": true, "real_context": false, "notes": "home try-on; fit-visible but not occasion evidence" }
-  },
-  "cross_photo_agreement_note": "detailed notes explaining conflict resolutions, or empty string if no conflicts"
+  }
 }`
 
 // ── Dedicated EDITORIAL_NEW_PIECES prompt ───────────────────────────────────
