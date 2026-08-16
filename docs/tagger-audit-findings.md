@@ -647,6 +647,22 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
     non-stretchy; unset correctly fails the check. Verified directly: unset → `false` (was `true`),
     `stretch: "none"` → still `true` (unchanged), `stretch: "stretchy"` → still `false`
     (unchanged). Existing `test/softScoreFloors.test.js` unaffected.
+11. **`photo_properties.<PHOTO>.notes` dropped from the schema** — measured first: across the 7
+    real v2-tagged pieces, `garment_intelligence`'s free-text fields (`real_wear_notes`,
+    `do_not_pair_rules`, `pairing_requirements`, `formula_compatibility`, `failure_risks`,
+    `occasion_confidence`) account for 34% of output and are all genuinely consumed downstream —
+    not safe to cut. The `_confidence` map (18%) drives real UI review badges across all 32
+    tracked fields per `garment-field-reference.md` — also not a clean cut despite its size. Only
+    `photo_properties.notes` (~218 chars/piece, 72% of that section, ~5-6% of total output)
+    checked out as genuinely unread by anything outside the normalization functions themselves —
+    same shape as `cross_photo_agreement_note`. It also comes *after* the `fit_visible`/
+    `real_context` judgments it would ostensibly justify in the schema, so it's post-hoc
+    rationalization, not reasoning the model uses on its way to those judgments — removing it
+    shouldn't affect their quality. Verified: schema JSON parses, snapshot regenerated and diffed
+    to confirm only `TAG_PIECE_PROMPT` moved. This is a real but small win — maybe 80-95 of the
+    ~1,615 output tokens — not a fix for the ~33-second latency measured earlier; the two levers
+    that would actually move that number (trimming real `garment_intelligence` content, or a
+    faster model tier) remain open, bigger decisions.
 
 **Still open, ranked by leverage:**
 
@@ -678,12 +694,13 @@ rest is now a ranked worklist rather than a feeling.** Shipped:
    predictably on a small number of fields. It is the real thing this question needed, not a
    stand-in for it, and the read has sharpened from "leans toward" to a specific, actionable
    claim: hanger-only tagging is least trustworthy on `silhouette` and `length_hits_at`.
-7. **Tag-call latency is real and measured for the first time — ~33 seconds on the first call
-   after a restart** — and caching (shipped earlier this session) is not expected to fix most of
-   it. The dominant cost is output-generation time (~1,615 tokens), which caching cannot touch;
-   caching only helps input reprocessing and cost. Cutting the wait for real needs either a
-   shorter output schema or a faster-decoding model tier — both bigger, undecided questions, not
-   something this pass can resolve on its own.
+7. **Tag-call latency is real and measured — ~33 seconds on the first call after a restart** —
+   and caching (shipped earlier this session) is not expected to fix most of it. The output-schema
+   side got one free, measured cut (`photo_properties.notes`, item 11 above, ~5-6% of output) after
+   confirming the rest of the schema's size is genuinely consumed, not decorative. That's real but
+   small — cutting the wait for real still needs either trimming actual `garment_intelligence`
+   content (a real quality tradeoff, not a freebie) or a faster-decoding model tier — both bigger,
+   undecided questions, not something this pass resolves on its own.
 
 Nothing here overrides `docs/engine-behaviour-map.md`'s existing findings — every number either
 confirmed them on fresher data (Q2, Q5's caching/`cross_photo_agreement_note` claims) or extended

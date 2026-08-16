@@ -987,8 +987,8 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
     "needs_base": "high|medium|low"
   },
   "photo_properties": {
-    "HANGER PHOTO": { "fit_visible": false, "real_context": false, "notes": "short reason" },
-    "WORN PHOTO": { "fit_visible": true, "real_context": false, "notes": "home try-on; fit-visible but not occasion evidence" }
+    "HANGER PHOTO": { "fit_visible": false, "real_context": false },
+    "WORN PHOTO": { "fit_visible": true, "real_context": false }
   }
 }`
 
