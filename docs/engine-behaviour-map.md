@@ -919,6 +919,14 @@ grip from garment names. Within a tier, shoes now order by support when an activ
 shoes used to tie at `preferred` in id order, ballet flats indistinguishable from trail sneakers.
 Ordering never removes.
 
+**[by design] The tag discouragement is the LAST check in `profileRuleFit`, after every hard gate.**
+A soft signal must never pre-empt a hard one. An earlier revision returned from it before the
+register ceiling, and measuring the composer against the recorded live run `thread_1786908644157`
+showed elevated/dressy pieces losing their suppression for a casual hike — 45 register exclusions
+collapsing to 8, admitting 20 pieces that should not have been in the roster. Caught only because
+that run's `suppressedReasonCounts` was on record to compare against; the freeform tests were green
+throughout. Pinned by a test that passes a `registerCeiling` explicitly.
+
 **[by design] `required_occasion_tags` reaches the freeform path as a DISCOURAGEMENT.** Enforced only
 in the composer before, so a correct hike gated the shoes and left city-only tops untouched. It is
 deliberately not a hard gate: that would contradict the 2026-06-12 ratification keeping a day dress

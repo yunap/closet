@@ -2223,32 +2223,6 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     }
     if (fw.verdict === 'unknown') unknownLabel = 'footwear comfort not tagged'
   }
-  // docs/activity-and-roster-spec.md §5.4(2) — gate parity. The activity's required occasion tags
-  // were enforced only in the composer's roster path, so a correctly-declared hike still gated the
-  // shoes and left city-only tops and bottoms untouched on the freeform path.
-  //
-  // Scoped to garments the structured footwear fields cannot speak for: a shoe's fitness for a
-  // trail is carried by walk_support / heel_height / shoe_type, which hold on any instance, while a
-  // top's is carried only by the owner's own tagging. Accessories and outerwear are not gated, as
-  // in the composer. Callers must pair this with a supply-aware fallback (search_wardrobe does):
-  // per §5.0 this rule cannot assume a well-tagged wardrobe.
-  const requiredOccasionTags = (activityProfile?.rules?.required_occasion_tags || [])
-    .map(value => String(value).toLowerCase().replace(/[-_]+/g, ' ').trim())
-    .filter(Boolean)
-  if (requiredOccasionTags.length && ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) {
-    const pieceTags = (Array.isArray(piece?.occasions) ? piece.occasions : [])
-      .map(value => String(value).toLowerCase().replace(/[-_]+/g, ' ').trim())
-    if (!pieceTags.some(tag => requiredOccasionTags.includes(tag))) {
-      // DISCOURAGED, not prohibited. A hard gate here would contradict the 2026-06-12 ratification
-      // that a day dress stays allowed for outdoor-active as a soft discouragement
-      // (test/hot_weather_ranking.test.js), and would make the roster depend on how thoroughly this
-      // particular user tagged their wardrobe — §5.0. Discouraged still sorts below preferred and
-      // is labelled for the model, which is the "permitted, not preferred" contract the prompt
-      // already describes, and it starves nothing.
-      const label = `not tagged for ${activityProfile.label || activityProfile.id}`
-      return { tier: 'discouraged', label, reason: `activity profile: ${label}` }
-    }
-  }
   if (registerCeiling) {
     const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling), { occasion: occasionProfile?.id })
     if (rv.verdict === 'exclude') {
@@ -2304,6 +2278,34 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
 
   for (const item of (mergedRules.discouraged_pieces || [])) {
     if (pieceMatchesPieceName(piece, item)) return { tier: 'discouraged', label: 'discouraged piece' }
+  }
+
+  // docs/activity-and-roster-spec.md §5.4(2) — gate parity, and deliberately the LAST word.
+  //
+  // Placed after every prohibitive check on purpose. An earlier revision returned from here before
+  // the register ceiling, and measuring the composer against a recorded live run
+  // (thread_1786908644157) showed elevated/dressy pieces losing their hard suppression for a casual
+  // hike: 45 register exclusions collapsed to 8. A soft signal must never pre-empt a hard gate.
+  //
+  // Scoped to garments the structured footwear fields cannot speak for: a shoe's fitness for a
+  // trail is carried by walk_support / heel_height / shoe_type, which hold on any instance, while a
+  // top's is carried only by how this particular user tagged it. The composer enforces its own
+  // required-tag gate separately (applyActivityTagGate); this exists for the freeform path, and by
+  // sitting here it changes ranking without changing what either path suppresses.
+  //
+  // DISCOURAGED, never prohibited: a hard gate would contradict the 2026-06-12 ratification keeping
+  // a day dress allowed for outdoor-active, and would make the roster depend on tagging density
+  // (§5.0).
+  const requiredOccasionTags = (activityProfile?.rules?.required_occasion_tags || [])
+    .map(value => String(value).toLowerCase().replace(/[-_]+/g, ' ').trim())
+    .filter(Boolean)
+  if (requiredOccasionTags.length && ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) {
+    const pieceTags = (Array.isArray(piece?.occasions) ? piece.occasions : [])
+      .map(value => String(value).toLowerCase().replace(/[-_]+/g, ' ').trim())
+    if (!pieceTags.some(tag => requiredOccasionTags.includes(tag))) {
+      const label = `not tagged for ${activityProfile.label || activityProfile.id}`
+      return { tier: 'discouraged', label, reason: `activity profile: ${label}` }
+    }
   }
 
   for (const mat of (mergedRules.preferred_materials || [])) {

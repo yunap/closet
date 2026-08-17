@@ -462,12 +462,22 @@ test('an activity tag requirement discourages rather than starves', async () => 
   const fit = piece => profileRuleFit(piece, merged, { weatherProfile: {}, occasionProfile: op, activityProfile: ap })
 
   const outdoorTop = { category: 'top', name: 'graphic tee', occasions: ['casual', 'outdoor'], formality: 'everyday' }
-  const cityTop = { category: 'top', name: 'silk shell', occasions: ['city'], formality: 'everyday' }
+  // Cotton, not silk: hiking discourages silk on MATERIAL grounds, which reaches the piece first
+  // and is the better reason. This fixture has to isolate the tag rule.
+  const cityTop = { category: 'top', name: 'cotton city shell', occasions: ['city'], formality: 'everyday', fabric_category: 'cotton' }
 
   // Discouraged, NOT prohibited: a hard gate here would contradict the 2026-06-12 ratification that
   // a day dress stays allowed for outdoor-active, and would make the roster depend on how
   // thoroughly this particular user tagged their wardrobe.
   assert.notEqual(fit(outdoorTop).tier, 'discouraged')
+  // The tag rule is the LAST word: it must not pre-empt a hard gate. An earlier revision returned
+  // from it before the register ceiling and silently un-suppressed 45 elevated pieces in the
+  // composer — measured against a recorded live run.
+  const elevatedUntagged = { category: 'top', name: 'cotton blouse', occasions: ['city'], formality: 'dressy', fabric_category: 'cotton' }
+  const withCeiling = profileRuleFit(elevatedUntagged, merged,
+    { weatherProfile: {}, occasionProfile: op, activityProfile: ap, registerCeiling: 'everyday' })
+  assert.equal(withCeiling.tier, 'prohibited', 'the register ceiling still wins over the tag discouragement')
+  assert.match(withCeiling.label, /exceeds everyday ceiling/)
   assert.equal(fit(cityTop).tier, 'discouraged')
   assert.match(fit(cityTop).label, /not tagged for/)
   assert.notEqual(fit(cityTop).tier, 'prohibited', 'an untagged wardrobe must not be starved of tops')
