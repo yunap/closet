@@ -895,6 +895,37 @@ the next section. None of those are piece-eligibility questions, which is why th
 
 ---
 
+## What a search result carries — judgment, not a re-description
+
+**Added 2026-08-17.** [search-payload-spec.md](search-payload-spec.md).
+
+**[by design] The wardrobe manifest is the one home for stable garment truth.** It sits in the
+cached stable prefix and is paid for once per turn. `search_wardrobe` used to re-transmit most of the
+same facts per call: one tops search measured **~13,764 tokens against the entire 251-piece
+manifest's ~12,506** — and unlike the manifest it was written to cache at 1.25× input every time,
+then re-read by every later iteration.
+
+**[by design] A search result now returns only what cannot be cached** — which pieces passed, and how
+they were judged for *this* occasion/activity/weather (`ruleFit`, `ruleFitLabel`, `weatherFit`), plus
+`id`/`name`/`category` as the join key, `notes` (the one free-text field the manifest lacks), and the
+thumbnail. Measured on `thread_1786954464459`'s three searches: **25,747 → 9,613 tokens, −63%**,
+roster identity unchanged.
+
+**[by design] Trimming is conditional on the manifest actually being in the prompt.** Above
+`WARDROBE_MANIFEST_MAX_PIECES` (400) the manifest is omitted, and a trimmed row would then be the
+model's only view of a garment; `wardrobeManifestIncluded` carries that fact from the payload builder
+to the tool. Pinned by a test.
+
+**The invariant that keeps this safe:** no field may be absent from *both* surfaces. A field in
+neither is invisible to the model, and the failure is silent — worse composition, no error.
+`test/wardrobeAiContext.test.js` asserts the union covers every stable field for a fully-populated
+piece, and fails loudly if either side drops one.
+
+**Two incidental fixes.** The manifest printed the tagger's literal `'none'` for inapplicable fields
+(`silhouette none` on every shoe), and it showed `reads_as` **or** the colour list but never both, so
+most pieces had no palette in the manifest at all. Both corrected; the manifest grew 12,506 → 16,063
+tokens, a cache read costing ~$0.001 per iteration against ~16,100 tokens removed from cache writes.
+
 ## Activity — how it is resolved, and what it can do to a roster
 
 **Added 2026-08-17.** [activity-and-roster-spec.md](activity-and-roster-spec.md).

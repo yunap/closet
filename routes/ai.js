@@ -3705,6 +3705,7 @@ router.post('/ask', async (req, res) => {
     })
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.
+    toolContext.wardrobeManifestIncluded = Boolean(payload.wardrobeManifestIncluded)
     toolContext.currentOutfitSet = payload.threadState?.current_outfit_set || []
     toolContext.knownOutfitPieceIds = [...new Set(
       [

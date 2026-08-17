@@ -5580,3 +5580,31 @@ test('freeform ask retries the model once when prose cites unverified ids', asyn
     : String(correction?.content || '')
   assert.match(correctionText, /without verifying them this turn/)
 })
+
+// docs/search-payload-spec.md §5 — the fallback that keeps trimming safe on a wardrobe above the
+// manifest cap, where the manifest is omitted entirely and a trimmed row would be the model's ONLY
+// view of a garment.
+test('search_wardrobe trims to judgment only when the manifest is actually in the prompt', async () => {
+  const withManifest = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual' },
+    { wardrobeManifestIncluded: true, freeformDiagnostics: {} })
+  const withoutManifest = await executeTool('search_wardrobe', { category: 'shoes', occasion: 'casual' },
+    { wardrobeManifestIncluded: false, freeformDiagnostics: {} })
+
+  const trimmed = withManifest.find(p => p.id)
+  const full = withoutManifest.find(p => p.id)
+  assert.ok(trimmed && full)
+
+  // Trimmed: judgment plus the join key into the manifest.
+  assert.ok('ruleFit' in trimmed && 'weatherFit' in trimmed, 'per-request judgment always survives')
+  assert.equal(trimmed.silhouette, undefined, 'stable truth is left to the cached manifest')
+  assert.equal(trimmed.fabric_category, undefined)
+  assert.equal(trimmed.occasions, undefined)
+
+  // Without a manifest to join against, the full row is the model's only view and must survive.
+  assert.ok('silhouette' in full && 'fabric_category' in full && 'occasions' in full,
+    'above the manifest cap the full row is the only description the model gets')
+
+  // Either way the roster itself is identical — this changes description, never selection.
+  assert.deepEqual(withManifest.filter(p => p.id).map(p => p.id), withoutManifest.filter(p => p.id).map(p => p.id))
+  assert.deepEqual(withManifest.filter(p => p.id).map(p => p.ruleFit), withoutManifest.filter(p => p.id).map(p => p.ruleFit))
+})

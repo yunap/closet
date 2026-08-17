@@ -1,6 +1,6 @@
 # Spec — stop re-sending the wardrobe the model already has
 
-**Status:** active — measured 2026-08-17 against `thread_1786954464459`, not implemented
+**Status:** active — option B IMPLEMENTED 2026-08-17; §8.2 (`notes`) settled, live A/B outstanding
 **Last verified:** 2026-08-17 — every number below regenerates from the live wardrobe
 
 Route: [docs/README.md](README.md). Sources this spec must not restate:
@@ -128,6 +128,28 @@ judgment-shaped search result is closer to the workbench that design hands over.
 
 ## 8. Open
 
-1. **A, or straight to B.** Recommendation is B, gated on the §5 manifest-size measurement.
-2. **`notes` (120 chars).** Per-piece free text, in search only. It may be genuinely useful to the
-   model or it may be noise duplicating `reads_as` — measure its share of the payload and decide.
+1. ~~A, or straight to B~~ **RULED: B, implemented 2026-08-17.** Measured outcome, the three searches
+   of `thread_1786954464459`: **25,747 → 9,613 tokens, −63%**, worth ~$0.08 of a $0.380 turn once
+   cache-write and four downstream re-reads are counted. Roster identity verified unchanged — same
+   IDs, same `ruleFit`, same order.
+2. ~~`notes`~~ **KEPT in the search row.** It is per-piece free text that the manifest does not carry
+   at all, so dropping it would have violated §4's constraint. It stays capped at 120 chars.
+3. **Live A/B outstanding** (§6.6) — one real turn against `thread_1786954464459` for cost, iteration
+   count, and whether the model still names the right trail shoe unprompted. Everything above is
+   offline measurement; the quality question needs a live turn.
+
+## 9. What implementing it cost
+
+The manifest grew **12,506 → 16,063 tokens** (+3,557, +28%; ~64 tokens/piece, projected ~25,600 at
+the 400-piece cap). That growth is a cache **read** at $0.30/M — about **$0.001 per iteration** —
+against ~16,100 tokens removed from cache **writes** at $3.75/M plus their re-reads. The trade is
+roughly 80:1 in favour.
+
+Two things fell out of doing it that were not in the plan:
+
+- **`silhouette none`, `neck none`, `hem none`.** The tagger stores a literal `'none'` for fields
+  that do not apply to a garment, and the manifest printed them — a token per field per piece, and
+  worse, they read as real values. Now suppressed, which paid back ~400 tokens of the growth.
+- **`colors` were invisible for most pieces.** The line showed `reads_as` **or** the colour list,
+  never both, so any piece with a `reads_as` had no palette in the manifest at all and search had to
+  re-send it every time. Now both, which is why the enriched line is worth more than its size.

@@ -4280,6 +4280,10 @@ export async function buildStylistConversationPayload(body) {
     ],
     maxTokens: 1500,
     automaticallySavedCorrection,
-    threadState
+    threadState,
+    // docs/search-payload-spec.md §5. search_wardrobe trims its rows to per-request judgment only
+    // when the model can actually see the manifest. Above WARDROBE_MANIFEST_MAX_PIECES the manifest
+    // is omitted entirely, and a trimmed row would then be the model's ONLY view of a garment.
+    wardrobeManifestIncluded: Boolean(wardrobeManifestText)
   }
 }

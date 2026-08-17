@@ -1156,6 +1156,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
           }
         }
         
+        // Trim only when the manifest is genuinely in the prompt to join against. Above the piece
+        // cap it is omitted and the full rows are the model's only view of a garment.
+        const trimToJudgment = toolContext?.wardrobeManifestIncluded === true
         console.log(`🔍 [Agent Tool Call] search_wardrobe returned ${results.length} items.`)
         const resultList = await Promise.all(results.map(async (p, index) => {
           let image = null
@@ -1174,6 +1177,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
                   console.error(`Error loading thumbnail for piece ${p.id}:`, err)
                 }
               }
+            }
+          }
+          // docs/search-payload-spec.md option B. The wardrobe manifest is in the cached stable
+          // prefix and already carries this garment's stable truth — name, colours, fabric,
+          // silhouette, length, neckline, sleeve, hem, pattern, formality, occasions, shoe type,
+          // toe, heel, support, opacity, needs-base, season and trust flags. Re-sending all of it
+          // per search cost more per call than the entire 251-piece manifest (~13.8k vs ~12.5k
+          // tokens) and, unlike the manifest, was written to cache at 1.25x input every time.
+          //
+          // What a search is actually FOR is the part that cannot be cached: which pieces passed,
+          // and how they were judged for THIS occasion/activity/weather. That is what comes back.
+          // `id` is the join key into the manifest the model is already reading.
+          if (trimToJudgment) {
+            return {
+              id: p.id,
+              name: p.name,          // kept: the model cites pieces by name in its prose
+              category: p.category,  // kept: cheap, and searches are often cross-category
+              weatherFit: p.weatherFit,
+              ruleFit: p.ruleFit,
+              ruleFitLabel: p.ruleFitLabel,
+              notes: p.notes ? p.notes.slice(0, 120) : '',
+              ...(image ? { image } : {})
             }
           }
           return {
