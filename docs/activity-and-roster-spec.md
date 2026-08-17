@@ -174,36 +174,37 @@ structured garment fact, or a supply-aware fallback that discloses — not a hea
 Escalation is one-directional because the failure is asymmetric: treating a city walk as a hike costs
 comfortable shoes the person did not need; treating a hike as a city walk costs grip on a trail.
 
-### 5.3a The hiking profile itself — ruled 2026-08-17
+### 5.3a The hiking profile — RULED, then CORRECTED: unchanged
 
-*"A nature walk is a hike — not climbing a mountain, but a hike."* One profile, not a new enum value:
-a third activity would add exactly the classification choice that caused this bug.
+*"A nature walk is a hike — not climbing a mountain, but a hike."* **That ruling is about which
+ACTIVITY a nature walk resolves to. It is not a licence to change what hiking demands once
+resolved.** Owner correction, 2026-08-17: *"nothing should have changed for the definition of
+hiking."*
 
-**Relax the support floor.** `excluded_walk_support` goes from `['low', 'medium']` to `['low']`.
-Medium-support sneakers and slip-ons are right for a nature walk and for most day hikes. On the
-owner's wardrobe this moves 3 eligible shoes to 10; the general claim is about what a hike needs,
-not about that count.
+An earlier revision of this spec proposed relaxing `excluded_walk_support` from `['low','medium']`
+to `['low']`, and it shipped and was reverted the same day. It was wrong: *"walk_support: medium is
+correct and makes it eligible for outdoor social or museum with lots of walking, NOT a hike."*
+Medium is the right tag for ballet flats, canvas slip-ons and knit sneakers, and none of them is
+trail footwear. Only 213, 214, 215 and 990397 in the reference wardrobe are `high`.
 
-**And close the hole that relaxation exposes.** The support floor was masking a dead rule. Hiking
-declares `discouraged_footwear: ["sandal", "sandals", "mule", …]` and `prohibited_footwear:
-["heel", "wedge", "dress shoe", "flip-flop"]`, and **both lists sit behind `if (isShoe &&
-!activityProfile)` — skipped exactly when an activity IS set.** The enum gate replaced them and never
-absorbed their content. Measured consequence of relaxing support without fixing this: on an instance
-with no owner constraints, `brown leather strap sandals` scores **`neutral`** for a hike.
+**The hiking profile is byte-identical to its pre-2026-08-17 state**, verified by re-running the
+composer against the recorded `suppressedReasonCounts` of `thread_1786908644157`: 150 suppressed,
+all seventeen reason counts matching.
 
-Fix it structurally, not by reviving the phrase lists. `shoe_type` is a populated enum
-(`sandal` 8, `sneaker` 5, `pump` 5, `slip_on` 3, `loafer` 3, `flat` 3, `mule` 2, `boot` 2). Add
-**`excluded_shoe_types`** to the activity profiles and enforce it in the enum gate beside
-`heel_height` and `walk_support`. For hiking: `sandal`, `mule`, `pump`, `flip_flop`.
+**What that revert leaves open — one garment-truth question, not a rule question.**
+`990397 grey/orange mesh athletic sneakers` (`walk_support: high`) is excluded from hiking by
+`heel_height: 'low'`, and the owner is explicit it should not be: *"should not be excluded from
+hiking even if the sole looks like it's elevated."* Since the definition of hiking is not to change,
+the candidate fix is the TAG — a mesh athletic sneaker's raised sole is a sole profile, not a heel —
+and that is the owner's data to correct, per flag-not-guess. **Open: confirm before changing.**
 
-This is the next room in a renovation already in progress — chapter 6 replaced leaky footwear
-phrase-matching with structured `heel_height` / `walk_support` enums, and `shoe_type` never got the
-same treatment. It holds for a wardrobe nobody has seen and a user who has given no instructions,
-which is the §5.0 test.
-
-**Ranking, not exclusion, carries the rest.** A steep hike is better served by surfacing
-`walk_support` (§5.3(1)) and ordering on it (§5.3(2)) than by excluding every medium-support shoe
-from every outdoor request.
+**Also found and deliberately NOT acted on.** Hiking's own `discouraged_footwear` (sandals, mules)
+and `prohibited_footwear` (heels, wedges, flip-flops) sit behind `if (isShoe && !activityProfile)`
+in `profileRuleFit` — skipped precisely when an activity IS set. Today nothing depends on it, because
+`excluded_walk_support: ['low','medium']` catches those shoes anyway. It only bites if the support
+floor is ever relaxed, and a structured `excluded_shoe_types` was written, measured and then removed
+along with the relaxation rather than shipped unused. Recorded here so the next person who considers
+relaxing that floor knows what it is masking.
 
 ### 5.3 Part 2 — the roster must be able to promote, not only remove
 

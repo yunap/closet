@@ -421,36 +421,6 @@ test('a nature walk escalates to hiking, and escalation is one-directional', asy
   assert.equal(id({ activity: 'none', request: 'dinner downtown' }), null)
 })
 
-// §5.3a — the ruling relaxed the support floor, which exposed a rule that had been dead since the
-// structured enum gate replaced the phrase lists.
-test('hiking excludes open footwear by shoe_type, on any instance', async () => {
-  const { footwearComfortVerdict } = await import('../styling-engine/rules.js')
-  const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
-  const rules = resolveActivityProfile({ activity: 'hiking' }).rules
-  const verdict = piece => footwearComfortVerdict(piece, rules.excluded_heel_heights, rules.excluded_walk_support, rules.excluded_shoe_types)
-
-  // The measured regression: relaxing the floor alone scored a medium-support strap sandal
-  // `neutral` for a hike on an instance with no owner_constraints row. A sandal is not hiking
-  // footwear because of what it IS, not because one user wrote a rule about it.
-  assert.equal(verdict({ category: 'shoes', shoe_type: 'sandal', heel_height: 'flat', walk_support: 'medium' }).verdict, 'exclude')
-  assert.equal(verdict({ category: 'shoes', shoe_type: 'sandal', heel_height: 'flat', walk_support: 'medium' }).dimension, 'type')
-  assert.equal(verdict({ category: 'shoes', shoe_type: 'mule', heel_height: 'flat', walk_support: 'high' }).verdict, 'exclude')
-
-  // Medium support now passes — the ruling — and low still fails.
-  assert.equal(verdict({ category: 'shoes', shoe_type: 'sneaker', heel_height: 'flat', walk_support: 'medium' }).verdict, 'pass')
-  assert.equal(verdict({ category: 'shoes', shoe_type: 'sneaker', heel_height: 'flat', walk_support: 'low' }).verdict, 'exclude')
-
-  // An untagged shoe falls outside the type rule rather than being downgraded by it.
-  assert.equal(verdict({ category: 'shoes', heel_height: 'flat', walk_support: 'high' }).verdict, 'pass')
-
-  // Walking declares no type exclusions: sandals stay legal for a city day.
-  const walkRules = resolveActivityProfile({ activity: 'walking' }).rules
-  assert.equal(
-    footwearComfortVerdict({ category: 'shoes', shoe_type: 'sandal', heel_height: 'flat', walk_support: 'medium' },
-      walkRules.excluded_heel_heights, walkRules.excluded_walk_support, walkRules.excluded_shoe_types || []).verdict,
-    'pass')
-})
-
 // §5.4(2) + §5.0 — this app has per-user databases, so a rule may not assume a well-tagged wardrobe.
 test('an activity tag requirement discourages rather than starves', async () => {
   const { profileRuleFit, getMergedProfileRules } = await import('../styling-engine/rules.js')

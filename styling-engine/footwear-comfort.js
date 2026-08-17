@@ -61,23 +61,7 @@ export const ACTIVITY_PROFILES = [
       preferred_footwear: ["sneakers", "walking flats", "flat rugged boots"],
       required_footwear: ["sneaker", "sneakers", "athletic", "trail", "rugged", "lace-up", "walking flat", "walking flats"],
       excluded_heel_heights: ['low', 'mid', 'high'],
-      // Owner ruling 2026-08-17: a nature walk is a hike, "not climbing a mountain, but a hike".
-      // Medium-support sneakers and slip-ons are right for that and for most day hikes, so the
-      // floor excludes only 'low'. Ranking, not exclusion, carries the difference for a steeper
-      // outing — search_wardrobe now surfaces walk_support so the model can see it.
-      excluded_walk_support: ['low'],
-      // Relaxing the floor above exposed a rule that had been dead since the structured enum gate
-      // replaced the phrase lists: `discouraged_footwear`/`prohibited_footwear` below are only
-      // consulted when NO activity profile is set, i.e. never when hiking is actually declared.
-      // Excluding medium support was masking that. Measured on an instance with no owner
-      // constraints, relaxing the floor alone scored strap sandals `neutral` for a hike.
-      //
-      // Stated structurally rather than by reviving the name-matching lists, per AGENTS.md
-      // ("structured data over text inference") and the chapter-6 precedent that replaced leaky
-      // footwear phrase-matching with heel_height/walk_support enums. shoe_type is a populated
-      // enum and simply never got the same treatment. This holds for a wardrobe nobody has seen
-      // and a user who has given the app no instructions.
-      excluded_shoe_types: ['sandal', 'mule', 'pump', 'flip_flop', 'flip-flop'],
+      excluded_walk_support: ['low', 'medium'],
       register_ceiling: "everyday"
     }
   }

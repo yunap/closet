@@ -899,19 +899,22 @@ explicit denial ("no hiking", "just a stroll") blocks escalation. The asymmetry 
 treating a city walk as a hike costs comfortable shoes nobody needed, treating a hike as a city walk
 costs grip on a trail. `mood` is NOT scanned — it is the vibe axis, and a test pins that.
 
-**[by design] A nature walk is a hike.** Owner ruling 2026-08-17: *"not climbing a mountain, but a
-hike."* One profile rather than a third enum value, since another value would add exactly the
-classification choice the bug came from. `excluded_walk_support` relaxed from `['low','medium']` to
-`['low']`.
+**[by design] A nature walk is a hike — and that ruling changed CLASSIFICATION only.** Owner ruling
+2026-08-17: *"not climbing a mountain, but a hike."* One profile rather than a third enum value,
+since another value would add exactly the classification choice the bug came from. **The hiking
+profile's own rules are unchanged**: a revision that relaxed `excluded_walk_support` to `['low']`
+shipped and was reverted the same day on the owner's correction — *"walk_support: medium is correct
+and makes it eligible for outdoor social or museum with lots of walking, NOT a hike"*, and *"nothing
+should have changed for the definition of hiking."* Verified by re-running the composer against the
+recorded `suppressedReasonCounts` of `thread_1786908644157`: 150 suppressed, all seventeen counts
+matching.
 
-**[bug, fixed 2026-08-17] Relaxing that floor exposed a dead rule.** Hiking declares
-`discouraged_footwear` (sandals, mules) and `prohibited_footwear` (heels, wedges, flip-flops), and
-both lists sit behind `if (isShoe && !activityProfile)` — skipped exactly when an activity IS set.
-Excluding medium support had been masking it. Measured: on an instance with **no owner constraints**,
-relaxing the floor alone scored strap sandals `neutral` for a hike. Now stated structurally as
-`excluded_shoe_types` inside `footwearComfortVerdict`, the one primitive every footwear caller uses,
-so search, the composer roster and the trust gate inherit it together. Chapter 6 did this for
-`heel_height`/`walk_support`; `shoe_type` had never had its turn.
+**[latent inconsistency] Hiking's footwear name-lists are unreachable.** `discouraged_footwear`
+(sandals, mules) and `prohibited_footwear` (heels, wedges, flip-flops) sit behind
+`if (isShoe && !activityProfile)` — skipped precisely when an activity IS set. Nothing depends on it
+today because `excluded_walk_support: ['low','medium']` catches those shoes anyway. It bites only if
+that floor is ever relaxed: measured on an instance with no owner constraints, relaxing it alone
+scored strap sandals `neutral` for a hike. See activity-and-roster-spec.md §5.3a.
 
 **[by design] Activity can now promote, not only remove.** `search_wardrobe` returns `walk_support`
 and `heel_height` — the gate read them to exclude and showed them to nobody, so the model inferred
