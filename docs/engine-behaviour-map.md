@@ -921,6 +921,13 @@ neither is invisible to the model, and the failure is silent — worse compositi
 `test/wardrobeAiContext.test.js` asserts the union covers every stable field for a fully-populated
 piece, and fails loudly if either side drops one.
 
+**Live-verified 2026-08-17** (`thread_1786954464459` → `thread_1786994644421`, identical prompt):
+cache creation 71,611 → 58,723, cost **$0.380 → $0.325 (−14.6%)**, iterations unchanged at 6, and the
+model still names the right trail shoe unprompted from `walk_support` now that it arrives via the
+manifest. **Note the multiplier this exposed:** anything added to the cached prefix is re-read on
+every iteration, so the manifest's +3,557 tokens cost ~21,300 reads across six of them and ate a
+third of the saving. Prefix size × iteration count is the real term.
+
 **Two incidental fixes.** The manifest printed the tagger's literal `'none'` for inapplicable fields
 (`silhouette none` on every shoe), and it showed `reads_as` **or** the colour list but never both, so
 most pieces had no palette in the manifest at all. Both corrected; the manifest grew 12,506 → 16,063
