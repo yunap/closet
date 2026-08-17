@@ -391,3 +391,84 @@ test('8. Plumbing: generateWholeWardrobeOutfitsVisualInternal propagates activit
     globalThis.__WARDROBE_AI_TEST_HANDLER__ = defaultHandler
   }
 })
+
+// docs/activity-and-roster-spec.md Part 1 — the activity must be able to become 'hiking'.
+// Live case (thread_1786908272853): the model declared `walking` for a nature walk while its own
+// prose said "if the trail has any rocky or uneven sections", and only the structured value reaches
+// the gates. resolveActivityProfile used to return immediately on a supplied activity, so nothing
+// downstream could correct it.
+test('a nature walk escalates to hiking, and escalation is one-directional', async () => {
+  const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
+  const id = opts => resolveActivityProfile(opts)?.id ?? null
+
+  // Owner ruling 2026-08-17: "it's not climbing a mountain hike, but it's a hike."
+  assert.equal(id({ activity: 'none', request: 'nature walk today at San Anselmo, CA' }), 'hiking')
+  // The declared activity no longer ends the question — text may escalate it.
+  assert.equal(id({ activity: 'walking', request: 'nature walk today at San Anselmo, CA' }), 'hiking')
+  assert.equal(id({ activity: 'walking', request: 'a walk on the trail' }), 'hiking')
+
+  // ONE-DIRECTIONAL: text may lift walking -> hiking, never lower hiking -> walking. The failure is
+  // asymmetric — treating a city walk as a hike costs comfortable shoes nobody needed; treating a
+  // hike as a city walk costs grip on a trail.
+  assert.equal(id({ activity: 'hiking', request: 'a gentle walk around the city' }), 'hiking')
+  assert.equal(id({ activity: 'walking', request: 'a walk around the city' }), 'walking')
+
+  // An explicit denial blocks escalation (hasAffirmedActivityKeyword's negation handling).
+  assert.equal(id({ activity: 'walking', request: 'just a gentle stroll on a paved path, no hiking' }), 'walking')
+
+  // mood is the vibe axis, not an activity channel — unchanged.
+  assert.equal(id({ activity: 'none', mood: 'lots of walking' }), null)
+  assert.equal(id({ activity: 'none', request: 'dinner downtown' }), null)
+})
+
+// §5.3a — the ruling relaxed the support floor, which exposed a rule that had been dead since the
+// structured enum gate replaced the phrase lists.
+test('hiking excludes open footwear by shoe_type, on any instance', async () => {
+  const { footwearComfortVerdict } = await import('../styling-engine/rules.js')
+  const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
+  const rules = resolveActivityProfile({ activity: 'hiking' }).rules
+  const verdict = piece => footwearComfortVerdict(piece, rules.excluded_heel_heights, rules.excluded_walk_support, rules.excluded_shoe_types)
+
+  // The measured regression: relaxing the floor alone scored a medium-support strap sandal
+  // `neutral` for a hike on an instance with no owner_constraints row. A sandal is not hiking
+  // footwear because of what it IS, not because one user wrote a rule about it.
+  assert.equal(verdict({ category: 'shoes', shoe_type: 'sandal', heel_height: 'flat', walk_support: 'medium' }).verdict, 'exclude')
+  assert.equal(verdict({ category: 'shoes', shoe_type: 'sandal', heel_height: 'flat', walk_support: 'medium' }).dimension, 'type')
+  assert.equal(verdict({ category: 'shoes', shoe_type: 'mule', heel_height: 'flat', walk_support: 'high' }).verdict, 'exclude')
+
+  // Medium support now passes — the ruling — and low still fails.
+  assert.equal(verdict({ category: 'shoes', shoe_type: 'sneaker', heel_height: 'flat', walk_support: 'medium' }).verdict, 'pass')
+  assert.equal(verdict({ category: 'shoes', shoe_type: 'sneaker', heel_height: 'flat', walk_support: 'low' }).verdict, 'exclude')
+
+  // An untagged shoe falls outside the type rule rather than being downgraded by it.
+  assert.equal(verdict({ category: 'shoes', heel_height: 'flat', walk_support: 'high' }).verdict, 'pass')
+
+  // Walking declares no type exclusions: sandals stay legal for a city day.
+  const walkRules = resolveActivityProfile({ activity: 'walking' }).rules
+  assert.equal(
+    footwearComfortVerdict({ category: 'shoes', shoe_type: 'sandal', heel_height: 'flat', walk_support: 'medium' },
+      walkRules.excluded_heel_heights, walkRules.excluded_walk_support, walkRules.excluded_shoe_types || []).verdict,
+    'pass')
+})
+
+// §5.4(2) + §5.0 — this app has per-user databases, so a rule may not assume a well-tagged wardrobe.
+test('an activity tag requirement discourages rather than starves', async () => {
+  const { profileRuleFit, getMergedProfileRules } = await import('../styling-engine/rules.js')
+  const { resolveActivityProfile } = await import('../styling-engine/footwear-comfort.js')
+  const { resolveOccasionProfile } = await import('../styling-engine/occasions.js')
+  const op = resolveOccasionProfile('casual', '')
+  const ap = resolveActivityProfile({ activity: 'hiking' })
+  const merged = getMergedProfileRules(op, ap)
+  const fit = piece => profileRuleFit(piece, merged, { weatherProfile: {}, occasionProfile: op, activityProfile: ap })
+
+  const outdoorTop = { category: 'top', name: 'graphic tee', occasions: ['casual', 'outdoor'], formality: 'everyday' }
+  const cityTop = { category: 'top', name: 'silk shell', occasions: ['city'], formality: 'everyday' }
+
+  // Discouraged, NOT prohibited: a hard gate here would contradict the 2026-06-12 ratification that
+  // a day dress stays allowed for outdoor-active, and would make the roster depend on how
+  // thoroughly this particular user tagged their wardrobe.
+  assert.notEqual(fit(outdoorTop).tier, 'discouraged')
+  assert.equal(fit(cityTop).tier, 'discouraged')
+  assert.match(fit(cityTop).label, /not tagged for/)
+  assert.notEqual(fit(cityTop).tier, 'prohibited', 'an untagged wardrobe must not be starved of tops')
+})

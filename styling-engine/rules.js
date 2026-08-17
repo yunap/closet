@@ -2127,11 +2127,25 @@ export function getMergedProfileRules(occasionProfile, activityProfile) {
 
 // Shared footwear-comfort decision — one implementation consumed by both the composer roster gate
 // (footwearGateReason) and profileRuleFit. Pure: returns a verdict; callers format their own labels.
-export function footwearComfortVerdict(piece = {}, excludedHeels = [], excludedSupport = []) {
+// docs/activity-and-roster-spec.md §5.3a adds the third dimension. Open footwear is wrong for a
+// trail because of WHAT IT IS, not because of how much support it happens to be tagged with — and
+// the profiles' own `discouraged_footwear`/`prohibited_footwear` name-lists say exactly that, but
+// sit behind `if (isShoe && !activityProfile)`, i.e. are skipped precisely when an activity IS set.
+// Stated here against the structured `shoe_type` enum, in the one primitive every footwear caller
+// already goes through, so search, the composer roster and the trust gate inherit it together
+// rather than one path at a time — the parity gap this spec exists to close.
+const normalizeShoeTypeValue = value => String(value || '').toLowerCase().replace(/[-_\s]+/g, '')
+export function footwearComfortVerdict(piece = {}, excludedHeels = [], excludedSupport = [], excludedShoeTypes = []) {
   const isShoe = piece.category === 'shoes' || wardrobeCategoryGroup(piece) === 'shoes'
-  if (!isShoe || (!excludedHeels.length && !excludedSupport.length)) return { verdict: 'pass' }
+  if (!isShoe || (!excludedHeels.length && !excludedSupport.length && !excludedShoeTypes.length)) return { verdict: 'pass' }
+  const shoeType = normalizeShoeTypeValue(piece?.shoe_type)
+  if (shoeType && excludedShoeTypes.map(normalizeShoeTypeValue).includes(shoeType)) {
+    return { verdict: 'exclude', dimension: 'type', value: String(piece.shoe_type).replace(/[_-]+/g, ' ') }
+  }
   const heel = pieceHeelHeight(piece)
   const support = pieceWalkSupport(piece)
+  // An untagged shoe falls outside the type rule rather than being downgraded by it; heel and
+  // support already carry the unknown-metadata signal.
   if (heel === null && support === null) return { verdict: 'unknown' }
   if (heel !== null && excludedHeels.includes(heel)) return { verdict: 'exclude', dimension: 'heel', value: heel }
   if (support !== null && excludedSupport.includes(support)) return { verdict: 'exclude', dimension: 'support', value: support }
@@ -2198,13 +2212,42 @@ export function profileRuleFit(piece = {}, mergedRules = {}, { weatherProfile = 
     const fw = footwearComfortVerdict(
       piece,
       activityProfile.rules?.excluded_heel_heights || [],
-      activityProfile.rules?.excluded_walk_support || []
+      activityProfile.rules?.excluded_walk_support || [],
+      activityProfile.rules?.excluded_shoe_types || []
     )
     if (fw.verdict === 'exclude') {
-      const label = fw.dimension === 'heel' ? `${fw.value} heel unsuitable` : `${fw.value} support unsuitable`
+      const label = fw.dimension === 'heel' ? `${fw.value} heel unsuitable`
+        : fw.dimension === 'type' ? `${fw.value} unsuitable for ${activityProfile.label || activityProfile.id}`
+        : `${fw.value} support unsuitable`
       return { tier: 'prohibited', label, reason: `activity profile: ${label}` }
     }
     if (fw.verdict === 'unknown') unknownLabel = 'footwear comfort not tagged'
+  }
+  // docs/activity-and-roster-spec.md §5.4(2) — gate parity. The activity's required occasion tags
+  // were enforced only in the composer's roster path, so a correctly-declared hike still gated the
+  // shoes and left city-only tops and bottoms untouched on the freeform path.
+  //
+  // Scoped to garments the structured footwear fields cannot speak for: a shoe's fitness for a
+  // trail is carried by walk_support / heel_height / shoe_type, which hold on any instance, while a
+  // top's is carried only by the owner's own tagging. Accessories and outerwear are not gated, as
+  // in the composer. Callers must pair this with a supply-aware fallback (search_wardrobe does):
+  // per §5.0 this rule cannot assume a well-tagged wardrobe.
+  const requiredOccasionTags = (activityProfile?.rules?.required_occasion_tags || [])
+    .map(value => String(value).toLowerCase().replace(/[-_]+/g, ' ').trim())
+    .filter(Boolean)
+  if (requiredOccasionTags.length && ['top', 'bottom', 'dress'].includes(wardrobeCategoryGroup(piece))) {
+    const pieceTags = (Array.isArray(piece?.occasions) ? piece.occasions : [])
+      .map(value => String(value).toLowerCase().replace(/[-_]+/g, ' ').trim())
+    if (!pieceTags.some(tag => requiredOccasionTags.includes(tag))) {
+      // DISCOURAGED, not prohibited. A hard gate here would contradict the 2026-06-12 ratification
+      // that a day dress stays allowed for outdoor-active as a soft discouragement
+      // (test/hot_weather_ranking.test.js), and would make the roster depend on how thoroughly this
+      // particular user tagged their wardrobe — §5.0. Discouraged still sorts below preferred and
+      // is labelled for the model, which is the "permitted, not preferred" contract the prompt
+      // already describes, and it starves nothing.
+      const label = `not tagged for ${activityProfile.label || activityProfile.id}`
+      return { tier: 'discouraged', label, reason: `activity profile: ${label}` }
+    }
   }
   if (registerCeiling) {
     const rv = registerCeilingVerdict(piece, formalityRank(registerCeiling), { occasion: occasionProfile?.id })
@@ -2688,12 +2731,14 @@ export function buildVisualComposerRoster(allowedPieces = [], {
   const footwearGateReason = (piece) => {
     const rules = resolvedActivityProfile?.rules
     if (!rules) return null
-    const fw = footwearComfortVerdict(piece, rules.excluded_heel_heights || [], rules.excluded_walk_support || [])
+    const fw = footwearComfortVerdict(piece, rules.excluded_heel_heights || [], rules.excluded_walk_support || [], rules.excluded_shoe_types || [])
     if (fw.verdict === 'unknown') return 'metadata missing: footwear comfort (activity gate active)'
     if (fw.verdict === 'exclude') {
       return fw.dimension === 'heel'
         ? `footwear: ${fw.value} heel unsuitable for ${resolvedActivityProfile.label}`
-        : `footwear: ${fw.value} support unsuitable for ${resolvedActivityProfile.label}`
+        : fw.dimension === 'type'
+          ? `footwear: ${fw.value} unsuitable for ${resolvedActivityProfile.label}`
+          : `footwear: ${fw.value} support unsuitable for ${resolvedActivityProfile.label}`
     }
     return null
   }

@@ -887,6 +887,51 @@ the next section. None of those are piece-eligibility questions, which is why th
 
 ---
 
+## Activity — how it is resolved, and what it can do to a roster
+
+**Added 2026-08-17.** [activity-and-roster-spec.md](activity-and-roster-spec.md).
+
+**[by design] The declared activity is no longer final; request text may escalate it — one way.**
+`resolveActivityProfile` used to return immediately on a supplied activity, so a model that declared
+`walking` for a nature walk could not be corrected, even though its own reply discussed the trail.
+Text may now lift `none`/`walking` → `hiking` and may **never** lower `hiking` → `walking`; an
+explicit denial ("no hiking", "just a stroll") blocks escalation. The asymmetry is deliberate:
+treating a city walk as a hike costs comfortable shoes nobody needed, treating a hike as a city walk
+costs grip on a trail. `mood` is NOT scanned — it is the vibe axis, and a test pins that.
+
+**[by design] A nature walk is a hike.** Owner ruling 2026-08-17: *"not climbing a mountain, but a
+hike."* One profile rather than a third enum value, since another value would add exactly the
+classification choice the bug came from. `excluded_walk_support` relaxed from `['low','medium']` to
+`['low']`.
+
+**[bug, fixed 2026-08-17] Relaxing that floor exposed a dead rule.** Hiking declares
+`discouraged_footwear` (sandals, mules) and `prohibited_footwear` (heels, wedges, flip-flops), and
+both lists sit behind `if (isShoe && !activityProfile)` — skipped exactly when an activity IS set.
+Excluding medium support had been masking it. Measured: on an instance with **no owner constraints**,
+relaxing the floor alone scored strap sandals `neutral` for a hike. Now stated structurally as
+`excluded_shoe_types` inside `footwearComfortVerdict`, the one primitive every footwear caller uses,
+so search, the composer roster and the trust gate inherit it together. Chapter 6 did this for
+`heel_height`/`walk_support`; `shoe_type` had never had its turn.
+
+**[by design] Activity can now promote, not only remove.** `search_wardrobe` returns `walk_support`
+and `heel_height` — the gate read them to exclude and showed them to nobody, so the model inferred
+grip from garment names. Within a tier, shoes now order by support when an activity is set; nine
+shoes used to tie at `preferred` in id order, ballet flats indistinguishable from trail sneakers.
+Ordering never removes.
+
+**[by design] `required_occasion_tags` reaches the freeform path as a DISCOURAGEMENT.** Enforced only
+in the composer before, so a correct hike gated the shoes and left city-only tops untouched. It is
+deliberately not a hard gate: that would contradict the 2026-06-12 ratification keeping a day dress
+allowed for outdoor-active, and would make the roster depend on how well one user tagged their
+wardrobe. Untagged garments still appear, ranked below tagged ones and labelled.
+
+**[by design] Owner constraints reach the roster, not only the proposal.** `search_wardrobe`'s
+occasion filter passed `occasion` alone, so an `owner_constraints` row scoped to activity, season or
+weather could never apply to what the model composes from. It now receives all four — but rejects at
+that stage **only** for the owner's own standing decisions. Letting the full profile gate reject
+there would move exclusions ahead of the pass that counts, labels and re-exposes them under
+`intent:'explain'`, and a piece would vanish with no number and no way to ask why.
+
 ## A card must describe the card — the consistency clause
 
 **Added 2026-08-16.** [card-consistency-spec.md](card-consistency-spec.md) Part 1. The turn

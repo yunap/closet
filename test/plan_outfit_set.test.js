@@ -3346,7 +3346,11 @@ function seedShoeReserveFixture() {
   }
   insertPiece({ category: 'dress', name: 'olive day dress', colors: ['olive'], reads_as: 'easy day dress', occasions: ['casual', 'city'], formality: 'everyday' })
   insertPiece({ category: 'outerwear', name: 'light cotton jacket', colors: ['navy'], reads_as: 'light casual jacket', occasions: ['casual', 'city'], formality: 'everyday' })
-  insertPiece({ category: 'shoes', name: 'tan canvas slip-on shoes', colors: ['tan'], reads_as: 'easy slip-on shoes', occasions: ['casual', 'city'], formality: 'everyday', heel_height: 'flat', walk_support: 'medium' })
+  // walk_support 'low', not 'medium': this shoe's job in the fixture is to satisfy NO shoe demand,
+  // and the 2026-08-17 ruling relaxed hiking's floor to exclude only 'low' ("a nature walk is a
+  // hike, not climbing a mountain"), so a medium-support slip-on now legitimately answers the
+  // activity demand and the fixture would stop isolating the eviction bug it exists to pin.
+  insertPiece({ category: 'shoes', name: 'tan canvas slip-on shoes', colors: ['tan'], reads_as: 'easy slip-on shoes', occasions: ['casual', 'city'], formality: 'everyday', heel_height: 'flat', walk_support: 'low' })
   insertPiece({ category: 'shoes', name: 'black wedge sandals', colors: ['black'], reads_as: 'polished wedge sandals', occasions: ['city', 'smart casual'], formality: 'elevated', heel_height: 'high', walk_support: 'medium' })
   insertPiece({ category: 'shoes', name: 'grey athletic trail sneakers', colors: ['grey'], reads_as: 'rugged trail sneakers', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
   return db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)

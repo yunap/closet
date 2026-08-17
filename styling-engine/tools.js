@@ -8,6 +8,7 @@ import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { parsePiece, buildPieceText, pieceOccasionCompatible, wholeWardrobePieceTrustDecision, weatherFitForPiece, getMergedProfileRules, profileRuleFit, resolveRegisterCeiling, weatherProfileFromContext, getOwnerRuleNotes, getProvisionalWrongChoiceMemory } from './rules.js'
 import { prepareImageForClaude, prepareWardrobeThumb } from './provider.js'
 import { resolveOccasionProfile } from './occasions.js'
+import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { getCurrentWeatherProfile } from './weather.js'
 import {
@@ -495,7 +496,7 @@ export const STYLIST_TOOLS = [
         neckline: { type: "string", description: "Filter by neckline style, e.g. V, scoop, crew, boat, mock, cowl, off-shoulder, square, wrap, other, none" },
         weather: { type: "string", description: "Established conditions (e.g. hot, highs 80-90F, cold). Ranks and flags results by weather fit; pass it whenever conditions are known." },
         location: { type: "string", description: "City/place if a real destination is known (e.g. a trip). When set, weather is resolved from a live forecast for that place instead of the text-heuristic fallback — pass it whenever a concrete location is established in the conversation." },
-        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Established activity (walking/hiking). With occasion, flags pieces by profile-rule fit; pass it whenever known." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical demand of the outing. 'hiking' = trails, nature walks, woods, uneven or unpaved ground — a nature walk IS hiking even when it is gentle. 'walking' = pavement: city days, sightseeing, all-day errands on foot. 'none' = no sustained walking. With occasion, flags pieces by profile-rule fit; pass it whenever known." },
         visual: { type: "boolean", description: "When true, attach low-detail thumbnails for the top ranked matches so you can judge color, texture, print, and proportion by sight. Use before proposing or refining outfits; leave false for quick text lookups." },
         intent: { type: "string", enum: ["compose", "explain"], description: "Default 'compose': pieces that are prohibited for the given occasion/activity are filtered OUT of results, so you compose only from wearable pieces (no need to self-reject anything). Set 'explain' ONLY when the user is asking ABOUT a constraint rather than for outfit material (e.g. 'why can't I wear heels hiking', 'what's wrong with these shoes here') — then prohibited pieces ARE returned, each with its ruleFitLabel, so you can show and explain them." }
       }
@@ -978,12 +979,28 @@ async function executeToolInternal(name, args, toolContext = {}) {
           filtered = filtered.filter(piece => pieceHasStructuredColor(piece, color))
         }
         let fallbackNote = ''
+        let gateSupplyFallbackNote = ''
         if (occasion) {
           const beforeOccasionFilter = filtered
           const occasionFiltered = filtered.filter(p => {
             if (!pieceOccasionCompatible(p, occasion)) return false
-            const trust = wholeWardrobePieceTrustDecision(p, { occasion })
-            return trust.allowed
+            // docs/activity-and-roster-spec.md §5.4. This passed `occasion` alone, so an
+            // owner_constraints row scoped to an activity, season or weather could never apply to
+            // the roster the model composes from — only to the proposal afterwards. Both stored
+            // constraints in the development wardrobe are activity- or season-scoped.
+            const trust = wholeWardrobePieceTrustDecision(p, {
+              occasion,
+              season: args?.season || toolContext.season || '',
+              activity: activity !== undefined && activity !== null && activity !== '' ? normalizeActivity(activity) : (toolContext.activity || ''),
+              weatherProfile: weatherProfileFromContext({ weather: weatherText || toolContext.weather || '', season: args?.season || toolContext.season || '' })
+            })
+            if (trust.allowed) return true
+            // Reject HERE only for the owner's own standing decisions. Passing activity/season above
+            // also makes this call evaluate the full profile gate, and letting that reject at this
+            // stage would move profile exclusions ahead of the ruleFit pass that counts them, annotates
+            // them, and hands them back under intent:'explain' — the piece would vanish with no
+            // number, no label and no way to ask why. Profile fit is judged once, below.
+            return !trust.reasons.some(reason => /^(owner constraint |user-excluded for )/.test(String(reason)))
           })
           if (occasionFiltered.length) {
             filtered = occasionFiltered
@@ -1095,12 +1112,24 @@ async function executeToolInternal(name, args, toolContext = {}) {
             activityProfile
           })
           const tierRank = { preferred: 0, neutral: 1, discouraged: 2, prohibited: 3 }
+          // Within a tier the order used to fall back to id, so nine shoes tied at `preferred`
+          // arrived in an order carrying no information — ballet flats indistinguishable from
+          // trail sneakers. When an activity is set, rank its own axis first: more support is
+          // better for walking and hiking. This reorders; it never removes.
+          const supportRank = { high: 0, medium: 1, low: 2 }
+          const activityFitness = piece => {
+            if (!activityProfile || wardrobeCategoryGroup(piece) !== 'shoes') return 1
+            const support = String(piece?.walk_support || '').toLowerCase()
+            return supportRank[support] ?? 1.5
+          }
           results = results
             .map(p => {
               const fit = profileRuleFit(p, mergedRules, { weatherProfile: resolvedWeather, occasionProfile, activityProfile, registerCeiling })
               return { ...p, ruleFit: fit.tier, ruleFitLabel: fit.label }
             })
-            .sort((a, b) => (tierRank[a.ruleFit] ?? 1) - (tierRank[b.ruleFit] ?? 1))
+            .sort((a, b) =>
+              ((tierRank[a.ruleFit] ?? 1) - (tierRank[b.ruleFit] ?? 1)) ||
+              (activityFitness(a) - activityFitness(b)))
 
           // Compose mode (default): exclude prohibited-tier pieces entirely so the model composes
           // only from wearable pieces (matching the composer roster's discipline). Explain mode keeps
@@ -1108,8 +1137,21 @@ async function executeToolInternal(name, args, toolContext = {}) {
           // discouraged/unknown stay in both modes — legitimate judgment calls, not hard exclusions.
           if (intent !== 'explain') {
             const beforeGate = results.length
-            results = results.filter(p => p.ruleFit !== 'prohibited')
-            gateExcludedCount = beforeGate - results.length
+            const kept = results.filter(p => p.ruleFit !== 'prohibited')
+            // docs/activity-and-roster-spec.md §5.4(2) + §5.0. Enforcement must not assume a
+            // well-tagged wardrobe: this app has per-user databases, and an instance where no
+            // garment carries an `outdoor` tag would otherwise get an empty roster and no
+            // explanation. Same shape as the occasion-filter fallback above, and as capsule's
+            // supply-gap disclosure — degrade to annotated guidance, and say why.
+            // Count what the gate found either way: the diagnostic is about what the gate judged,
+            // not about what survived, and a fallback that silently reports zero exclusions would
+            // hide exactly the case worth knowing about.
+            gateExcludedCount = beforeGate - kept.length
+            if (!kept.length && beforeGate > 0) {
+              gateSupplyFallbackNote = `No active pieces fully satisfy ${activityProfile?.label || 'this activity'}${occasion ? ` for ${occasion}` : ''}; showing the closest available pieces instead, annotated with ruleFit so you can judge and say what is missing.`
+            } else {
+              results = kept
+            }
           }
         }
         
@@ -1146,6 +1188,12 @@ async function executeToolInternal(name, args, toolContext = {}) {
             silhouette: p.silhouette,
             shoe_type: p.shoe_type,
             toe_shape: p.toe_shape,
+            // docs/activity-and-roster-spec.md Part 2. footwearComfortVerdict reads these to
+            // exclude pieces and they appeared in no result row, so the model could not tell a
+            // high-support trail shoe from a medium-support ballet flat and inferred grip from
+            // garment names — exactly what structured tags exist to prevent.
+            walk_support: p.walk_support,
+            heel_height: p.heel_height,
             fabric_category: p.fabric_category,
             fabric_weight: p.fabric_weight,
             visual_weight: p.visual_weight,
@@ -1166,6 +1214,9 @@ async function executeToolInternal(name, args, toolContext = {}) {
 
         if (fallbackNote) {
           resultList.push({ note: fallbackNote })
+        }
+        if (gateSupplyFallbackNote) {
+          resultList.push({ note: gateSupplyFallbackNote })
         }
 
         if (excludedCount > 0) {

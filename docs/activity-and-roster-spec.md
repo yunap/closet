@@ -1,6 +1,6 @@
 # Spec — activity fidelity, and what the roster tells the model
 
-**Status:** active — diagnosed 2026-08-16 from live threads, not implemented
+**Status:** active — Parts 1, 2, 3, 4 and §5.3a IMPLEMENTED 2026-08-17; §5.3(3) open
 **Last verified:** 2026-08-17 — every claim below re-checked against current code and the live wardrobe
 
 Route: [docs/README.md](README.md). Sources this spec must not restate:

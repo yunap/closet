@@ -570,7 +570,12 @@ test('Visual Composer Roster - athletic shoes survive walking and hiking activit
   assert.deepEqual(hiking.roster.map(piece => piece.id), [athletic.id])
 })
 
-test('Visual Composer Roster - medium walk support survives walking but not hiking', () => {
+// Owner ruling 2026-08-17: "a nature walk is a hike — not climbing a mountain, but a hike."
+// hiking's excluded_walk_support went from ['low','medium'] to ['low'], so medium-support sneakers
+// and slip-ons now survive both. Ranking carries the difference instead: search_wardrobe surfaces
+// walk_support and orders high above medium. Low support still fails hiking, and open footwear is
+// excluded structurally by shoe_type. See docs/activity-and-roster-spec.md §5.3a.
+test('Visual Composer Roster - medium walk support survives walking AND a nature-walk-grade hike', () => {
   const mediumSupportFlat = {
     id: 990331,
     name: 'Medium support flat',
@@ -593,11 +598,22 @@ test('Visual Composer Roster - medium walk support survives walking but not hiki
   })
 
   assert.deepEqual(walking.roster.map(piece => piece.id), [mediumSupportFlat.id])
-  assert.deepEqual(hiking.roster, [])
+  assert.deepEqual(hiking.roster.map(piece => piece.id), [mediumSupportFlat.id], 'medium support now survives a hike')
+
+  // Low support still fails it — the floor moved, it did not disappear.
+  const lowSupportFlat = { ...mediumSupportFlat, id: 990332, name: 'Low support flat', walk_support: 'low' }
+  const lowHiking = buildVisualComposerRoster([lowSupportFlat], { occasion: 'travel', activity: 'hiking', maxImages: 90 })
+  assert.deepEqual(lowHiking.roster, [])
   assert.equal(
-    hiking.excluded.find(item => item.pieceId === mediumSupportFlat.id)?.reason,
-    'footwear: medium support unsuitable for Hiking / Outdoor active'
+    lowHiking.excluded.find(item => item.pieceId === lowSupportFlat.id)?.reason,
+    'footwear: low support unsuitable for Hiking / Outdoor active'
   )
+
+  // And open footwear is excluded on what it IS, not on how it happens to be support-tagged —
+  // the rule that must hold on an instance with no owner_constraints row.
+  const strapSandal = { ...mediumSupportFlat, id: 990333, name: 'Strap sandals', shoe_type: 'sandal' }
+  const sandalHiking = buildVisualComposerRoster([strapSandal], { occasion: 'travel', activity: 'hiking', maxImages: 90 })
+  assert.deepEqual(sandalHiking.roster, [], 'a sandal is not hiking footwear regardless of its support tag')
 })
 
 test('Visual Composer Roster - active footwear gate requires comfort metadata only when both shoe enums are missing', () => {
