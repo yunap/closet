@@ -129,9 +129,11 @@ export function extractPieceIdsFromProse(answerText = '') {
 // want:'image' has no delivery clause on purpose: in-chat rendering does not
 // exist yet (step 2 postponed) and declare_intent's ack already instructs the
 // honest capability-gap answer.
-export function applyFreeformOutputChecks(answerText, toolContext, retried = new Set()) {
+export function applyFreeformOutputChecks(answerText, toolContext, retried = new Set(), { record = true } = {}) {
   const fail = (blockType, diagnostic, correctionMessage) => {
-    bumpFreeformDiagnostic(toolContext, diagnostic)
+    // `record: false` is the disclosure pass below re-running the same predicates to see what is
+    // STILL failing after its one retry. It must not double-count the diagnostics.
+    if (record) bumpFreeformDiagnostic(toolContext, diagnostic)
     return { block: true, blockType, correctionMessage }
   }
 
@@ -944,6 +946,40 @@ export function joinAssistantNarration(narration = [], finalText = '') {
     .trim()
 }
 
+// Capsule's ending, adopted for the turn contract (owner, 2026-08-17: the capsule way is better).
+//
+// Each clause gets exactly one retry — after that `retried` suppresses it and the answer was
+// returned unchanged and unremarked, so a guard that fired and did not get fixed left the person
+// holding a flawed answer with no sign anything had happened. Capsule does the opposite: a bounded
+// attempt that cannot satisfy a rule ships as `model_repaired_with_gaps` with the unmet thing
+// stated. Same principle here — deliver, and say what is unresolved.
+//
+// Deliberately not another retry: the budget is one per clause on purpose, and spending a second
+// paid iteration to chase the same failure is the retry spiral the budget exists to prevent.
+const FREEFORM_CHECK_DISCLOSURES = {
+  zeroResultContradiction: 'One note on the above: I mentioned a piece I could not actually find in your wardrobe. Treat that suggestion as a gap rather than something you own.',
+  unverifiedCitation: 'One note: some piece IDs above were not verified against your wardrobe this turn, so check those before acting on them.',
+  cardProseInconsistent: 'One note: a look above pairs a top with a dress and I did not explain why. Treat the extra top as optional.',
+  outfitProse: 'One note: I described an outfit in text rather than proposing it as a verified card, so its pieces have not been checked against your wardrobe.',
+  cardsNotDelivered: 'One note: I was not able to turn this into verified outfit cards — what is above is advice, not a checked proposal.',
+  outfitCount: 'One note: this is fewer outfits than you asked for. Ask me to continue if you want the rest.',
+  imageNotDelivered: 'One note: I was not able to render the image for this one.',
+  destinationClarification: '',
+}
+
+// Runs the same clause predicates once more, without recording diagnostics, and appends a short
+// disclosure when something that already spent its retry is still failing.
+export function discloseUnresolvedFreeformChecks(answerText, toolContext = {}, retried = new Set()) {
+  if (!retried.size || toolContext.skipFreeformOutputChecks) return answerText
+  const recheck = applyFreeformOutputChecks(answerText, toolContext, new Set(), { record: false })
+  if (!recheck.block || !retried.has(recheck.blockType)) return answerText
+  const note = FREEFORM_CHECK_DISCLOSURES[recheck.blockType]
+  if (!note) return answerText
+  if (String(answerText || '').includes(note)) return answerText
+  bumpFreeformDiagnostic(toolContext, 'unresolvedCheckDisclosures')
+  return `${String(answerText || '').trim()}\n\n${note}`.trim()
+}
+
 export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
@@ -1106,7 +1142,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
         }
-        return { answer: finalText, savedCorrections }
+        return { answer: discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks), savedCorrections }
       }
     } else {
       const client = new Anthropic({ apiKey: resolveAnthropicKey() })
@@ -1201,7 +1237,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
           currentMessages.push({ role: 'user', content: check.correctionMessage })
           continue
         }
-        return { answer: finalText, savedCorrections }
+        return { answer: discloseUnresolvedFreeformChecks(finalText, toolContext, retriedChecks), savedCorrections }
       }
     }
   }

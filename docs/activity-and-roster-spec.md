@@ -213,12 +213,10 @@ relaxing that floor knows what it is masking.
    currently reconstructs the judgment from names.
 2. **Order within tier by activity fitness** when an activity is set, instead of the current
    effectively-by-id ordering. Ordering is not filtering — nothing is removed.
-3. **Give the activity profiles real `preferred_footwear` / `preferred_materials`**, so `preferred`
-   means something different on a trail than on a coffee run. Walking's are empty today.
+3. ~~Give the activity profiles real `preferred_footwear` / `preferred_materials`~~ — **withdrawn**,
+   see §8.3. Items 1 and 2 turned out to be sufficient.
 
-Items 1 and 2 are mechanical. **Item 3 needs owner input**: these are styling constants, and
-`capsule-index-and-plan.md` §1 is explicit that *"a constant that shapes output needs a source, an
-owner ruling, or a measurement — a comment explaining the reasoning is not one of those."*
+Items 1 and 2 are mechanical.
 
 ### 5.4 Part 3 — reachability
 
@@ -288,8 +286,11 @@ loop — see §9.
    shoes agree exactly with the independent footwear gate). But per §5.0 that measures feasibility on
    one database, not safety on all of them, so enforcement ships with the supply-aware fallback in
    §5.4 rather than on the strength of that count.
-3. **§5.3(3)** — the activity profiles' `preferred_footwear` / `preferred_materials`. Still open, and
-   still styling content: it must be stated for any wardrobe, not fitted to this one.
+3. ~~§5.3(3) — the activity profiles' preferred lists~~ **CLOSED 2026-08-17, not doing it.** Owner:
+   *"why are we changing the Activity profiles? they have been worked on and tested."* Correct — this
+   was proposed before §5.3(2) existed, and ordering by `walk_support` already fixes the complaint it
+   was for (athletic shoes ranking level with ballet flats) without touching tested profiles. A
+   change to worked-on behaviour needs a demonstrated need, and this one no longer has one.
 
 ## 9. Deferred — the cost argument this shares a root with
 

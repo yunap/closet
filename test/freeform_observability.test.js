@@ -38,6 +38,8 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     // docs/card-consistency-spec.md Part 1 — cards whose prose did not account for a top worn with
     // a dress, sent back for one correction round.
     cardProseInconsistentBlocks: 0,
+    // Capsule's ending: a clause that spent its retry and is still failing ships with a note.
+    unresolvedCheckDisclosures: 0,
     destinationClarificationRetries: 0,
     planSlotEnvironmentInferred: 0,
     planSlotActivityInferred: 0,
@@ -1111,4 +1113,42 @@ test('narration written beside tool calls is joined ahead of the closing message
   assert.equal(joinAssistantNarration(['Here are three looks.'], 'Here are three looks. Enjoy.'), 'Here are three looks. Enjoy.')
   assert.equal(joinAssistantNarration([], ''), '')
   assert.equal(joinAssistantNarration(['', null], 'only this'), 'only this')
+})
+
+// Capsule's ending, adopted for the turn contract (owner, 2026-08-17). Each clause gets one retry;
+// after that it was suppressed and the answer returned unchanged and unremarked, so a guard that
+// fired and did not get fixed left the person holding a flawed answer with no sign of it. Capsule
+// ships `model_repaired_with_gaps` with the unmet thing stated — same here.
+test('a clause that spent its retry and still fails ships with the gap stated', async () => {
+  const { discloseUnresolvedFreeformChecks } = await import('../styling-engine/provider.js')
+
+  // A card pairing a top with a dress whose prose never mentions the top — the cardProseInconsistent
+  // clause. Pretend it already had its one retry.
+  const toolContext = {
+    generatedOutfits: [{
+      label: 'Layered Look',
+      reason: 'The navy cotton midi dress carries the column.',
+      pieces: [
+        { id: 1, name: 'ivory silk shell', category: 'top' },
+        { id: 2, name: 'navy cotton midi dress', category: 'dress' },
+        { id: 3, name: 'tan sandals', category: 'shoes' },
+      ],
+    }],
+  }
+  const answer = 'Here is a look for tonight.'
+  const disclosed = discloseUnresolvedFreeformChecks(answer, toolContext, new Set(['cardProseInconsistent']))
+  assert.match(disclosed, /Here is a look for tonight/, 'the answer is still delivered, not withheld')
+  assert.match(disclosed, /treat the extra top as optional/i, 'and it says what is unresolved')
+
+  // Not double-counted, and not appended twice.
+  assert.equal(discloseUnresolvedFreeformChecks(disclosed, toolContext, new Set(['cardProseInconsistent'])), disclosed)
+
+  // A clause that never fired gets no note; nor does a turn with nothing retried.
+  assert.equal(discloseUnresolvedFreeformChecks(answer, toolContext, new Set()), answer)
+  assert.equal(discloseUnresolvedFreeformChecks(answer, { generatedOutfits: [] }, new Set(['cardProseInconsistent'])), answer)
+
+  // The disclosure pass must not re-record diagnostics — it is a re-run of the same predicates.
+  const counted = { generatedOutfits: toolContext.generatedOutfits, freeformDiagnostics: { cardProseInconsistentBlocks: 0 } }
+  discloseUnresolvedFreeformChecks(answer, counted, new Set(['cardProseInconsistent']))
+  assert.equal(counted.freeformDiagnostics.cardProseInconsistentBlocks, 0, 'the recheck must not double-count the block')
 })

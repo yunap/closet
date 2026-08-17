@@ -128,11 +128,13 @@ that nothing was added on the other side.
    bite. Minimum viable set: the existing grounded/one-piece formula, plus a layered-dress formula,
    plus a statement/print-led one.
 
-**5.2(2) needs owner sign-off before implementation.** Archetype definitions are styling content —
-label, intended silhouette, preferred and avoided roles — and inventing styling formulas in code is
-the exact failure `capsule-index-and-plan.md` §1 documents: *"a constant that shapes output needs a
-source, an owner ruling, or a measurement — a comment explaining the reasoning is not one of those."*
-The names and definitions come from the owner or from cited research, not from this spec.
+**5.2(2) — question withdrawn 2026-08-17.** It asked the owner to author archetype definitions, which
+is not a reasonable thing to ask (*"I know nothing about archetypes"*), and it is largely moot: since
+the authored-text fix the model's own label survives repair, so the archetype name now appears only
+on cards where no model label exists at all. What remains is a code-only change needing no styling
+input — when a dress outfit carries extra layers and the model gave no label, derive one from the
+pieces (`wholeWardrobeLabelFromPieces`, which already exists) instead of using the archetype's name.
+Low value; listed, not scheduled.
 
 ## 6. Acceptance
 
@@ -159,11 +161,13 @@ Hard-gating dress+top. Scoring pressure on layering. Retagging. Changing
 
 ## 8. Open — needs an owner ruling before this ships
 
-1. **The terminal ending for a new clause.** Capsule's coachable floor **ships with the gap
-   disclosed**; freeform's turn contract **blocks, retries, then falls through to a generic answer**
-   with no cards and no explanation of what was rejected. For a taste dimension capsule's ending is
-   clearly right, and §4.4 assumes it. Neither document says which ending a *new* clause inherits.
-2. **The dress archetype definitions** — §5.2(2).
+1. ~~The terminal ending for a new clause~~ **RULED 2026-08-17: capsule's ending, for all of them.**
+   Owner: *"didn't we say the capsule way is better?"* — yes, and it was already the answer. The turn
+   contract now discloses: a clause that has spent its one retry and is still failing appends a short
+   statement of what is unresolved rather than returning the answer unchanged and unremarked. It is
+   deliberately not a second retry — the one-per-clause budget exists to prevent exactly that spiral.
+   `discloseUnresolvedFreeformChecks`, counted as `unresolvedCheckDisclosures`.
+2. ~~The dress archetype definitions~~ — withdrawn, see §5.2(2).
 
 ## Appendix — the cost measurement behind the philosophy discussion
 

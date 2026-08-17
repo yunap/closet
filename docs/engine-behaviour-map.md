@@ -123,6 +123,14 @@ history: the disciplined flow — declare, search, view supports, view layers, p
 legitimately needs 6–8, and *"the old cap of 7 left no margin for a single corrective bounce and
 live turns died with zero cards."* So 10 is a deliberate margin, raised after live failures.
 
+**[by design, 2026-08-17] A guard that spends its retry and still fails now says so.** Each clause
+gets exactly one retry; after that `retriedChecks` suppressed it and the answer was returned
+unchanged and unremarked, so a fired-but-unfixed guard left the person holding a flawed answer with
+no sign of it. The turn contract now adopts capsule's ending — deliver, and state the unmet thing,
+the way a bounded capsule ships as `model_repaired_with_gaps`. Not a second retry: the one-per-clause
+budget exists to prevent that spiral. `discloseUnresolvedFreeformChecks` re-runs the same predicates
+without recording diagnostics; counted as `unresolvedCheckDisclosures`.
+
 **[by design] Output guards retry up to 6 times, one retry per guard.** `applyFreeformOutputChecks`
 inspects the finished answer; if it violates a guard, the model is re-prompted with a correction
 message. `retriedChecks` ensures each distinct guard only triggers one retry, so the loop cannot
