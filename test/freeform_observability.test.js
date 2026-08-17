@@ -35,6 +35,9 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     planOutfitSetCalls: 0,
     outfitProseWithoutToolCall: 0,
     zeroResultContradictionBlocks: 0,
+    // docs/card-consistency-spec.md Part 1 — cards whose prose did not account for a top worn with
+    // a dress, sent back for one correction round.
+    cardProseInconsistentBlocks: 0,
     destinationClarificationRetries: 0,
     planSlotEnvironmentInferred: 0,
     planSlotActivityInferred: 0,

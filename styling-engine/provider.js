@@ -6,6 +6,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
+import { unexplainedLayeredTops } from './rules.js'
+import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
 import { getCurrentUserId } from '../lib/requestContext.js'
 
@@ -155,6 +157,28 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
         return fail('unverifiedCitation', 'unverifiedCitationBlocks',
           `You cited piece ID(s) ${unverifiedCited.join(', ')} without verifying them this turn — the wardrobe manifest is an index, not garment truth. Call view_pieces for ${unverifiedCited.map(id => `ID ${id}`).join(', ')} to confirm each piece (photo + truth line), then answer again (or drop the unverified references).`)
       }
+    }
+  }
+
+  // docs/card-consistency-spec.md Part 1 — the internal-consistency clause. The other truth clauses
+  // ask whether the card's pieces are real and verified; this one asks whether the card's own words
+  // describe the card it is attached to. A live response proposed a blouse and a floral tank with a
+  // lace midi dress and explained neither, under a label ("one-piece column") implying no top was
+  // there — every existing clause passed it, because every piece was real, verified and delivered.
+  //
+  // Not a gate: a top with a dress stays legal (owner ruling 2026-08-16), and if the retry produces
+  // no explanation the card ships with the top and a visible flag rather than losing it —
+  // routes/ai.js owns that ending. Only the retry lives here.
+  if (!retried.has('cardProseInconsistent')) {
+    const cards = Array.isArray(toolContext?.generatedOutfits) ? toolContext.generatedOutfits : []
+    for (const card of cards) {
+      if (card?.broken) continue
+      const unexplained = unexplainedLayeredTops(card, card?.pieces || [])
+      if (!unexplained.length) continue
+      const dress = (card.pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'dress')
+      const names = unexplained.map(piece => piece.name).join(', ')
+      return fail('cardProseInconsistent', 'cardProseInconsistentBlocks',
+        `Your outfit "${card.label || card.title || 'this look'}" puts ${names} together with ${dress?.name || 'a dress'}, and your explanation never mentions ${unexplained.length > 1 ? 'them' : 'it'}. Wearing a top with a dress is a real styling choice and you may absolutely make it — but say what it is doing (worn over, layered under, belted, knotted) so it does not read as a stray garment. Call propose_outfit again for that outfit with a why_it_works that accounts for ${unexplained.length > 1 ? 'those pieces' : 'that piece'}, or propose it without ${unexplained.length > 1 ? 'them' : 'it'}.`)
     }
   }
 

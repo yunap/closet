@@ -887,6 +887,40 @@ the next section. None of those are piece-eligibility questions, which is why th
 
 ---
 
+## A card must describe the card — the consistency clause
+
+**Added 2026-08-16.** [card-consistency-spec.md](card-consistency-spec.md) Part 1. The turn
+contract's clauses ask whether a card's pieces are real (*truth*), whether context is settled
+(*context*), and whether cards arrived (*delivery*). None asks whether the card's **own words
+describe the card**, so an internally inconsistent card passed every one of them.
+
+**[by design] A top worn with a dress is legal and is never removed.** Owner ruling 2026-08-16: a
+styling decision, not a hard ban. `isOutfitStructurallyValid` is unchanged — with a dress present it
+still rejects only a bottom, a second dress, or a second pair of shoes.
+
+**[by design] What is enforced is that the card accounts for it.** `outfitLayersTopWithDress` is a
+category-group fact; `unexplainedLayeredTops` then checks whether the card's own prose names the
+top. Deliberately weak — a substring match against a name already known to be in the card, in the
+spirit of `findZeroResultContradiction`: checking a known fact, not fact-checking prose. It cannot
+judge whether an explanation is *good*; that is taste, and taste stays with the model.
+
+A word shared with another garment in the same outfit does not count as naming the piece. "black
+blouson v-neck top" beside "black brown lace floral midi dress" share *black*, so prose about the
+dress would otherwise read as prose about the top — the exact false negative of the live case.
+
+**[by design] Freeform retries once; the card ships either way.** `cardProseInconsistent` is a
+fourth turn-contract clause in the truth family, using the existing per-`blockType` retry budget,
+counted as `card_prose_inconsistent_blocks`. If the retry produces no explanation the top is
+**kept** and the card carries a visible flag. It is never silently dropped: capsule ships
+`model_repaired_with_gaps` with the gap stated, advisor mode exists so code does not censor composer
+output, and Decision B (2026-06-25) ruled against filtering results down.
+
+**[by design] The archetype no longer asserts a shape it did not check.** Because every dress outfit
+is forced into `dress_grounded_sharp`, its "one-piece column" silhouette was being stamped onto
+outfits carrying extra tops; that text is now replaced with what the pieces actually are. The
+remaining half — giving the dress family more than one archetype so the label discriminates and the
+`avoidRoles` penalty can bite — is styling content and **needs owner sign-off** (spec §5.2).
+
 ## Who writes the words on a card — the model, or the archetype template
 
 **Amended 2026-08-16.** Two producers can author a card's `label`, `dominantDirection`,

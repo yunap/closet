@@ -4316,9 +4316,18 @@ export function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePi
     ? `${archetype.labelSuggestion}: ${modifier}`
     : archetype.labelSuggestion || wholeWardrobeLabelFromPieces({ ...outfit, pieces })
   const silhouetteVariant = wholeWardrobeSilhouetteFromPieces({ ...outfit, pieces })
-  const silhouette = silhouetteVariant && silhouetteVariant !== archetype.direction
+  let silhouette = silhouetteVariant && silhouetteVariant !== archetype.direction
     ? silhouetteVariant
     : archetype.silhouette
+  // docs/card-consistency-spec.md Part 2 (mechanical half). The archetype's own silhouette text is
+  // a claim about shape, and it was being copied onto outfits that contradict it: every outfit
+  // containing a dress is forced into `dress_grounded_sharp` (inferOutfitArchetype skips all other
+  // archetypes when a dress is present), so a dress carrying two extra tops was still described as
+  // a "one-piece column". Describe what is there, not what the archetype assumes.
+  if (outfitLayersTopWithDress(pieces) && /\b(one[- ]piece|column|single garment)\b/i.test(String(silhouette || ''))) {
+    const layerCount = pieces.filter(piece => wardrobeCategoryGroup(piece) === 'top').length
+    silhouette = `dress layered with ${layerCount > 1 ? `${layerCount} additional tops` : 'an additional top'}`
+  }
   const authored = field => {
     const value = String(outfit?.[field] || '').trim()
     if (!value) return null
@@ -4693,6 +4702,54 @@ export function applyWholeWardrobeDiversity(outfits = [], limit = 5, options = {
 
   return { outfits: selected, rejected }
 }
+// docs/card-consistency-spec.md Part 1. A top worn with a dress is a legitimate styling decision
+// (owner ruling 2026-08-16) and is deliberately NOT gated — isOutfitStructurallyValid still permits
+// it. But it is an unusual enough choice that the card has to account for it: a live response
+// paired a blouse and a floral tank with a lace midi dress and explained neither.
+//
+// Structural fact only: category groups, no keywords, no text classification.
+export function outfitLayersTopWithDress(pieces = []) {
+  const groups = (Array.isArray(pieces) ? pieces : []).map(p => wardrobeCategoryGroup(p))
+  return groups.includes('dress') && groups.includes('top')
+}
+
+// Returns the tops a dress outfit's own prose never mentions. Deliberately weak: a substring match
+// on a piece name we already know is in the card, in the spirit of findZeroResultContradiction —
+// checking a known fact, not fact-checking prose. It cannot judge whether the explanation is any
+// good; that is taste, and taste belongs to the model. It only enforces that the choice was
+// accounted for. A false positive costs one retry; the miss costs an unexplained garment.
+export function unexplainedLayeredTops(outfit = {}, pieces = []) {
+  const resolved = Array.isArray(pieces) && pieces.length ? pieces : (outfit.pieces || [])
+  if (!outfitLayersTopWithDress(resolved)) return []
+  const prose = [outfit.reason, outfit.why, outfit.stylingInstructions, outfit.watchFor]
+    .filter(Boolean).join(' ').toLowerCase()
+  if (!prose.trim()) return resolved.filter(p => wardrobeCategoryGroup(p) === 'top')
+  const words = piece => String(piece?.name || '').toLowerCase().split(/[^a-z0-9-]+/).filter(Boolean)
+  return resolved.filter(piece => {
+    if (wardrobeCategoryGroup(piece) !== 'top') return false
+    const name = String(piece?.name || '').toLowerCase().trim()
+    if (!name) return false
+    if (prose.includes(name)) return false
+    // A distinctive word counts as naming the piece — "the blouson smooths the line" is not silence
+    // about "black blouson v-neck top". But a word shared with another garment in the SAME outfit
+    // cannot distinguish it: "black blouson v-neck top" beside "black brown lace floral midi dress"
+    // both contain "black", and prose about the dress would otherwise read as prose about the top.
+    // That false negative is exactly the live case this check exists to catch.
+    const others = new Set(resolved.filter(other => Number(other?.id) !== Number(piece?.id)).flatMap(words))
+    const distinctive = words(piece).filter(word =>
+      word.length >= 4 && !GENERIC_GARMENT_WORDS.has(word) && !others.has(word))
+    return !distinctive.some(word => prose.includes(word))
+  })
+}
+
+const GENERIC_GARMENT_WORDS = new Set([
+  'top', 'tops', 'sleeve', 'sleeves', 'sleeveless', 'short', 'shorts', 'long',
+  'print', 'printed', 'color', 'colour', 'light', 'dark', 'with', 'this', 'that'
+])
+
+export const LAYERED_TOP_UNEXPLAINED_FLAG =
+  'This look layers a top with the dress and the stylist did not say why — treat the top as optional.'
+
 export function isOutfitStructurallyValid(pieces = [], { requireShoes = true } = {}) {
   const groups = pieces.map(p => wardrobeCategoryGroup(p))
   const shoeCount = groups.filter(g => g === 'shoes').length
@@ -4801,6 +4858,14 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     if (seen.has(key)) {
       reject(repaired, 'duplicate formula')
       continue
+    }
+    // docs/card-consistency-spec.md Part 1, terminal case. A top with a dress is a legitimate
+    // styling choice and is never removed here — that would be code censoring the composer, which
+    // Decision B (owner, 2026-06-25) ruled against and which advisor mode exists to prevent. If the
+    // card's own words do not account for the top, the card ships with the top and says so.
+    const unexplainedTops = unexplainedLayeredTops(repaired, wholeWardrobeFullPieces(repaired, candidatePieces))
+    if (unexplainedTops.length) {
+      repaired = appendSystemFlag(repaired, 'layering', LAYERED_TOP_UNEXPLAINED_FLAG)
     }
     if (/\b(flattering|elongating|slimming|confidence|draws attention upward|balance the body)\b/.test(text)) {
       if (advisorMode) {

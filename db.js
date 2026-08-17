@@ -747,7 +747,10 @@ function initDb(dbPath) {
     'provider_input_tokens INTEGER DEFAULT 0',
     'provider_output_tokens INTEGER DEFAULT 0',
     'provider_cache_read_input_tokens INTEGER DEFAULT 0',
-    'provider_cache_creation_input_tokens INTEGER DEFAULT 0'
+    'provider_cache_creation_input_tokens INTEGER DEFAULT 0',
+    // docs/card-consistency-spec.md Part 1 — cards whose own prose did not account for a top worn
+    // with a dress, and were sent back for one correction round.
+    'card_prose_inconsistent_blocks INTEGER DEFAULT 0'
   ].forEach(col => {
     try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
   })

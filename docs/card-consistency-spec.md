@@ -1,6 +1,6 @@
 # Spec — card/prose consistency, and the dress archetype
 
-**Status:** active — owner-ruled 2026-08-16, not implemented
+**Status:** active — Part 1 and Part 2's mechanical half IMPLEMENTED 2026-08-16; §5.2(2) and §8 open
 **Last verified:** 2026-08-16 — measured against the live wardrobe and two captured threads
 
 Route: [docs/README.md](README.md). Sources this spec must not restate:
@@ -135,6 +135,13 @@ source, an owner ruling, or a measurement — a comment explaining the reasoning
 The names and definitions come from the owner or from cited research, not from this spec.
 
 ## 6. Acceptance
+
+**Implemented 2026-08-16.** Criteria 1, 2, 4, 5 and 6 met and covered by tests in
+`test/outfit_structure.test.js`; the 30-scenario candidate A/B is byte-identical, confirming this
+work touched description and validation and never selection. Criterion 3 (two dress outfits must not
+share a label) depends on §5.2(2) and remains open with it.
+
+### Original criteria
 
 1. `thread_1786659896815`'s two cards, replayed: each either names the top in its reason or carries
    the flag. Neither loses the top.

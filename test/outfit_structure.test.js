@@ -228,3 +228,84 @@ test('whole wardrobe mission qualification abstains from unearned labels', () =>
   ]
   assert.equal(qualifiesWholeWardrobeMission(controlledPrint, 'controlled_print'), true)
 })
+
+// docs/card-consistency-spec.md Part 1 — a card and its own words must agree.
+// A top worn with a dress stays legal (owner ruling 2026-08-16); what is enforced is that the
+// card accounts for it. Live case: thread_1786659896815 paired a blouse and a floral tank with a
+// lace midi dress and explained neither, under a label implying no top was present.
+test('a top with a dress is detected, permitted, and required to be explained', async () => {
+  const { outfitLayersTopWithDress, unexplainedLayeredTops, isOutfitStructurallyValid } =
+    await import('../styling-engine/rules.js')
+
+  const pieces = [
+    { id: 136, name: 'black blouson v-neck top', category: 'top' },
+    { id: 990360, name: 'black brown lace floral midi dress', category: 'dress' },
+    { id: 184, name: 'patchwork knit buttoned top', category: 'outerwear' },
+    { id: 198, name: 'taupe knit lace-up sneakers', category: 'shoes' },
+  ]
+
+  // Never gated: this is a styling decision, not a structural error.
+  assert.ok(isOutfitStructurallyValid(pieces, { requireShoes: true }))
+  assert.ok(outfitLayersTopWithDress(pieces))
+  assert.ok(!outfitLayersTopWithDress(pieces.filter(p => p.category !== 'top')))
+
+  // The live prose: describes the dress and the layer, never the blouse.
+  const ignores = 'black brown lace floral midi dress carries the column, and patchwork knit buttoned top adds the structure around it.'
+  assert.deepEqual(unexplainedLayeredTops({ reason: ignores }, pieces).map(p => p.id), [136])
+
+  // Naming it — in full, or by a word that distinguishes it — satisfies the check.
+  assert.equal(unexplainedLayeredTops({ reason: 'The black blouson v-neck top smooths the line under the lace midi dress.' }, pieces).length, 0)
+  assert.equal(unexplainedLayeredTops({ reason: 'The blouson underneath keeps the lace from reading as sheer.' }, pieces).length, 0)
+
+  // A word shared with another garment in the same outfit cannot distinguish it. "black" appears
+  // in both the blouse and the dress, so prose about the dress must not read as prose about the
+  // top — that false negative is the live case this check exists to catch.
+  assert.deepEqual(unexplainedLayeredTops({ reason: 'The black brown lace floral midi dress carries the look.' }, pieces).map(p => p.id), [136])
+
+  // No prose at all cannot explain anything.
+  assert.deepEqual(unexplainedLayeredTops({ reason: '' }, pieces).map(p => p.id), [136])
+})
+
+test('an unexplained layered top is flagged and KEPT, never dropped', async () => {
+  const { locallyGateWholeWardrobeOutfits, LAYERED_TOP_UNEXPLAINED_FLAG } =
+    await import('../styling-engine/rules.js')
+
+  const pieces = [
+    { id: 1, name: 'ivory silk shell', category: 'top', formality: 'everyday' },
+    { id: 2, name: 'navy cotton midi dress', category: 'dress', formality: 'everyday' },
+    { id: 3, name: 'tan leather sandals', category: 'shoes', formality: 'everyday' },
+  ]
+  const run = reason => locallyGateWholeWardrobeOutfits(
+    [{ label: 'Layered Look', reason, pieceIds: [1, 2, 3], pieces }], 5,
+    { candidatePieces: pieces, occasion: 'casual', requireShoes: true, advisorMode: true })
+
+  const unexplained = run('The navy cotton midi dress carries the column.').outfits[0]
+  assert.ok(unexplained, 'the outfit is kept — removing it would be code censoring the composer (Decision B)')
+  assert.ok(unexplained.pieceIds.includes(1), 'the top is never silently dropped')
+  assert.ok((unexplained.systemFlags || []).some(f => f.message === LAYERED_TOP_UNEXPLAINED_FLAG), 'and the card says so')
+
+  const explained = run('The ivory silk shell layers under the navy cotton midi dress to soften the neckline.').outfits[0]
+  assert.ok(explained.pieceIds.includes(1))
+  assert.equal((explained.systemFlags || []).filter(f => f.message === LAYERED_TOP_UNEXPLAINED_FLAG).length, 0, 'an explained choice is not flagged')
+})
+
+// docs/card-consistency-spec.md Part 2 (mechanical half).
+test('a dress carrying an extra top is not described as a one-piece column', async () => {
+  const { rewriteWholeWardrobeOutfitWithArchetype } = await import('../styling-engine/rules.js')
+  const pieces = [
+    { id: 1, name: 'ivory silk shell', category: 'top', formality: 'everyday' },
+    { id: 2, name: 'navy cotton midi dress', category: 'dress', formality: 'everyday' },
+    { id: 3, name: 'tan leather sandals', category: 'shoes', formality: 'everyday' },
+  ]
+  const layered = rewriteWholeWardrobeOutfitWithArchetype({ pieceIds: [1, 2, 3], pieces }, pieces, 'casual')
+  assert.doesNotMatch(String(layered.silhouette || ''), /one[- ]piece|column/i,
+    'every dress outfit is forced into the dress archetype, so its "one-piece column" silhouette was being asserted onto outfits that are not one')
+  assert.match(String(layered.silhouette || ''), /layered/i)
+
+  // A plain dress outfit is untouched.
+  const plain = rewriteWholeWardrobeOutfitWithArchetype(
+    { pieceIds: [2, 3], pieces: pieces.filter(p => p.category !== 'top') },
+    pieces, 'casual')
+  assert.ok(String(plain.silhouette || '').trim())
+  assert.doesNotMatch(String(plain.silhouette || ''), /layered with/i)
+})
