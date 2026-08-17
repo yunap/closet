@@ -195,6 +195,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
       capsuleRosterModelRepairs: 0,
       capsuleRosterModelFallbacks: 0,
       capsuleRosterFailureCodes: '',
+      toolSequence: '',
       providerIterations: 0,
       providerInputTokens: 0,
       providerOutputTokens: 0,
@@ -208,6 +209,20 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
 
 // Spec 4: records whether weather resolved live or fell back to the text heuristic, for spec 3's
 // per-turn observability (freeform_generation_runs.weather_source).
+// docs/activity-and-roster-spec.md §9 / the iteration question. The run row records that a turn
+// took 6 provider iterations and made 7 tool calls, and never which call happened in which — so the
+// shape of a turn had to be inferred from the model's own prose. That is the same provenance gap
+// that hid a composer regression from 1,192 tests. One compact string, iterations separated by ';'
+// and the calls within an iteration by ',', turns "roughly this shape" into a query.
+export function recordFreeformToolIteration(toolContext, toolNames = []) {
+  if (!toolContext) return
+  bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
+  const names = (Array.isArray(toolNames) ? toolNames : []).filter(Boolean)
+  if (!names.length) return
+  const existing = toolContext.freeformDiagnostics.toolSequence || ''
+  toolContext.freeformDiagnostics.toolSequence = existing ? `${existing};${names.join(',')}` : names.join(',')
+}
+
 export function setFreeformWeatherSource(toolContext, source) {
   if (!toolContext) return
   bumpFreeformDiagnostic(toolContext, 'searchCalls', 0)
@@ -487,7 +502,7 @@ export const STYLIST_TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "Search query matching against name or notes" },
-        category: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear", "accessory"], description: "Filter by category. Use the exact singular values shown (the manifest's group headers are plural display labels; the data values are these)." },
+        category: { oneOf: [{ type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear", "accessory"] }, { type: "array", items: { type: "string", enum: ["top", "bottom", "dress", "shoes", "outerwear", "accessory"] } }], description: "Filter by category, or by SEVERAL AT ONCE — pass an array like ['top','bottom','shoes'] to cover a whole outfit in ONE call instead of one call per category. Every separate call is another round-trip that re-sends the whole conversation, so batch categories that share the same occasion/activity/weather. Use the exact singular values shown (the manifest's group headers are plural display labels; the data values are these)." },
         color: { type: "string", description: "Filter by color description or reads_as tag" },
         occasion: { type: "string", description: "Filter by occasion (e.g. city, casual, evening)" },
         pattern_type: { type: "string", description: "Filter by pattern type, e.g. solid, floral, stripe, botanical, geometric, abstract, animal, graphic, plaid, other" },
@@ -817,6 +832,24 @@ const CATEGORY_ALIASES = {
   accessory: 'accessory', accessories: 'accessory',
 }
 
+// docs/search-payload-spec.md §7 lever 2. Three searches that differ only by category cost three
+// full provider round-trips, and each round-trip re-reads the whole conversation AND the cached
+// prefix — the A/B on thread_1786994644421 showed prefix size is multiplied by iteration count. So
+// the fix is structural rather than a prompt asking the model to batch: accept the categories it
+// wants in one call. Prompt-only guidance has failed every time it has been tried here.
+export function normalizeCategoryFilters(value) {
+  const raw = Array.isArray(value) ? value : (value === undefined || value === null || value === '' ? [] : [value])
+  const categories = []
+  const unknown = []
+  for (const entry of raw) {
+    const { category, unknown: isUnknown } = normalizeCategoryFilter(entry)
+    if (!category) continue
+    if (isUnknown) { unknown.push(String(entry)); continue }
+    if (!categories.includes(category)) categories.push(category)
+  }
+  return { categories, unknown }
+}
+
 export function normalizeCategoryFilter(value) {
   const key = String(value || '').toLowerCase().trim()
   if (!key) return { category: null, unknown: false }
@@ -943,15 +976,18 @@ async function executeToolInternal(name, args, toolContext = {}) {
       }
       case 'search_wardrobe': {
         const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, weather: weatherText, activity, visual, intent, location } = args
-        const { category, unknown: unknownCategory } = normalizeCategoryFilter(args.category)
-        if (unknownCategory) {
-          return [{ note: `Unknown category "${args.category}" — no filter applied would lie about the wardrobe. Valid categories: top, bottom, dress, shoes, outerwear, accessory. Re-run the search with one of these.` }]
+        const { categories, unknown: unknownCategories } = normalizeCategoryFilters(args.category)
+        if (unknownCategories.length) {
+          return [{ note: `Unknown category "${unknownCategories.join('", "')}" — no filter applied would lie about the wardrobe. Valid categories: top, bottom, dress, shoes, outerwear, accessory. Re-run the search with one of these.` }]
         }
         let sql = "SELECT * FROM pieces WHERE status = 'active'"
         const params = []
-        if (category) {
+        if (categories.length === 1) {
           sql += " AND category = ?"
-          params.push(category)
+          params.push(categories[0])
+        } else if (categories.length > 1) {
+          sql += ` AND category IN (${categories.map(() => '?').join(',')})`
+          params.push(...categories)
         }
         if (pattern_type) {
           sql += " AND pattern_type = ?"
@@ -1160,9 +1196,23 @@ async function executeToolInternal(name, args, toolContext = {}) {
         // cap it is omitted and the full rows are the model's only view of a garment.
         const trimToJudgment = toolContext?.wardrobeManifestIncluded === true
         console.log(`🔍 [Agent Tool Call] search_wardrobe returned ${results.length} items.`)
+        // Rank within each category so the per-category image budget is independent.
+        const visualRankByPiece = new Map()
+        const seenPerCategory = new Map()
+        for (const p of results) {
+          const key = wardrobeCategoryGroup(p) || p.category || 'other'
+          const rank = seenPerCategory.get(key) ?? 0
+          visualRankByPiece.set(p.id, rank)
+          seenPerCategory.set(key, rank + 1)
+        }
         const resultList = await Promise.all(results.map(async (p, index) => {
           let image = null
-          if (visual && index < SEARCH_WARDROBE_VISUAL_CAP) {
+          // The cap is per CATEGORY, not per call: batching three category searches into one must
+          // not hand the model a third of the photos it used to get. Visual grounding is a founding
+          // principle of this app, and quietly starving it to save a round-trip would be the wrong
+          // trade.
+          const visualRank = visualRankByPiece.get(p.id) ?? index
+          if (visual && visualRank < SEARCH_WARDROBE_VISUAL_CAP) {
             const photoFile = p.worn_photo || p.photo || ''
             if (photoFile) {
               const filePath = path.join(userUploadsDir(), photoFile)

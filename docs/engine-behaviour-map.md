@@ -895,6 +895,32 @@ the next section. None of those are piece-eligibility questions, which is why th
 
 ---
 
+## The shape of a turn, and how many round-trips it takes
+
+**Added 2026-08-17.**
+
+**[by design] `tool_sequence` records which tools ran in which provider iteration.** Iterations are
+`;`-separated, the calls within one `,`-separated, so a turn's structure is a query rather than an
+inference. Before it, `freeform_generation_runs` recorded that a turn took 6 iterations and made 7
+tool calls and never which call sat where — the shape had to be read out of the model's own prose.
+Same provenance gap that hid a composer regression from 1,192 passing tests.
+
+**[by design] `search_wardrobe` accepts several categories in one call.** Three searches differing
+only by category cost three round-trips, and each one re-reads the entire conversation *and* the
+cached prefix — the `thread_1786994644421` A/B established that prefix size is multiplied by
+iteration count, so a round-trip is not cheap merely because the prompt is cached. Verified: one
+batched call returns exactly what three separate calls did, 117 pieces, same tokens.
+
+Stated structurally rather than as prompt guidance asking the model to batch, because prompt-only
+instruction has failed every time it has been tried here (capsule criterion 8; freeform specs 3, 7
+and 11).
+
+**[by design] The image budget is per CATEGORY, not per call.** `SEARCH_WARDROBE_VISUAL_CAP` applied
+per call, so collapsing three searches into one would have handed the model a third of the photos it
+used to get. Visual grounding is a founding principle of this app and starving it to save a
+round-trip would be the wrong trade; the cap now ranks within each category. Measured identical:
+shoes 4, tops 16, bottoms 16, both ways.
+
 ## What a search result carries — judgment, not a re-description
 
 **Added 2026-08-17.** [search-payload-spec.md](search-payload-spec.md).

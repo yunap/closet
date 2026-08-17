@@ -750,7 +750,10 @@ function initDb(dbPath) {
     'provider_cache_creation_input_tokens INTEGER DEFAULT 0',
     // docs/card-consistency-spec.md Part 1 — cards whose own prose did not account for a top worn
     // with a dress, and were sent back for one correction round.
-    'card_prose_inconsistent_blocks INTEGER DEFAULT 0'
+    'card_prose_inconsistent_blocks INTEGER DEFAULT 0',
+    // Which tools ran in which provider iteration, ';'-separated per iteration. Without it a turn's
+    // shape can only be inferred from the model's prose.
+    'tool_sequence TEXT DEFAULT \'\''
   ].forEach(col => {
     try { db.exec(`ALTER TABLE freeform_generation_runs ADD COLUMN ${col}`) } catch {}
   })

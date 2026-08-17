@@ -5608,3 +5608,54 @@ test('search_wardrobe trims to judgment only when the manifest is actually in th
   assert.deepEqual(withManifest.filter(p => p.id).map(p => p.id), withoutManifest.filter(p => p.id).map(p => p.id))
   assert.deepEqual(withManifest.filter(p => p.id).map(p => p.ruleFit), withoutManifest.filter(p => p.id).map(p => p.ruleFit))
 })
+
+// docs/search-payload-spec.md §7 lever 2 — batching categories into one call.
+// Three searches differing only by category cost three provider round-trips, and each re-reads the
+// whole conversation AND the cached prefix. Stated structurally rather than as a prompt asking the
+// model to batch, because prompt-only guidance has failed every time it has been tried here.
+test('search_wardrobe accepts several categories in one call, with the image budget per category', async () => {
+  const ctx = () => ({ wardrobeManifestIncluded: true, freeformDiagnostics: {}, retrievedPieceIds: new Set(), visuallySeenPieceIds: new Set() })
+  const args = extra => ({ occasion: 'casual', visual: true, ...extra })
+
+  const separate = []
+  for (const category of ['top', 'bottom', 'shoes']) {
+    separate.push(...(await executeTool('search_wardrobe', args({ category }), ctx())).filter(p => p.id))
+  }
+  const batched = (await executeTool('search_wardrobe', args({ category: ['top', 'bottom', 'shoes'] }), ctx())).filter(p => p.id)
+
+  assert.deepEqual(batched.map(p => p.id).sort((a, b) => a - b), separate.map(p => p.id).sort((a, b) => a - b),
+    'one batched call returns exactly what three separate calls did')
+
+  // Visual grounding is a founding principle: batching must not hand the model a third of the
+  // photos. The cap applies per category, not per call.
+  const imagesPerCategory = {}
+  for (const p of batched.filter(p => p.image)) imagesPerCategory[p.category] = (imagesPerCategory[p.category] || 0) + 1
+  const separatePerCategory = {}
+  for (const p of separate.filter(p => p.image)) separatePerCategory[p.category] = (separatePerCategory[p.category] || 0) + 1
+  assert.deepEqual(imagesPerCategory, separatePerCategory, 'each category keeps its own image budget')
+
+  // A bad value in the array is reported rather than silently widening the search.
+  const bad = await executeTool('search_wardrobe', args({ category: ['top', 'hats'] }), ctx())
+  assert.match(bad[0].note || '', /Unknown category "hats"/)
+
+  // A single string still works unchanged.
+  const single = (await executeTool('search_wardrobe', args({ category: 'shoes' }), ctx())).filter(p => p.id)
+  assert.ok(single.length && single.every(p => p.category === 'shoes'))
+})
+
+// The turn's shape, not just its size. The run row recorded 6 iterations and 7 tool calls and never
+// which call happened in which, so a turn's structure had to be inferred from the model's prose.
+test('the tool sequence records which tools ran in which provider iteration', async () => {
+  const { recordFreeformToolIteration } = await import('../styling-engine/tools.js')
+  const toolContext = {}
+  recordFreeformToolIteration(toolContext, ['declare_intent', 'search_wardrobe'])
+  recordFreeformToolIteration(toolContext, ['search_wardrobe'])
+  recordFreeformToolIteration(toolContext, ['propose_outfit', 'propose_outfit', 'propose_outfit'])
+  assert.equal(toolContext.freeformDiagnostics.toolSequence,
+    'declare_intent,search_wardrobe;search_wardrobe;propose_outfit,propose_outfit,propose_outfit')
+  // Iterations are ';'-separated and calls within one are ','-separated, so the number of provider
+  // round-trips is countable from the string alone.
+  assert.equal(toolContext.freeformDiagnostics.toolSequence.split(';').length, 3)
+  recordFreeformToolIteration(toolContext, [])
+  assert.equal(toolContext.freeformDiagnostics.toolSequence.split(';').length, 3, 'an empty iteration adds nothing')
+})

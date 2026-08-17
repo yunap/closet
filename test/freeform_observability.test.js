@@ -56,6 +56,8 @@ test('bumpFreeformDiagnostic initializes and accumulates counters on toolContext
     // String, like weatherSource: a fallback that records only its own count
     // sends the next question to a paid run instead of a query.
     capsuleRosterFailureCodes: '',
+    // Which tools ran in which iteration — the shape of a turn, not just its size.
+    toolSequence: '',
     providerIterations: 0,
     providerInputTokens: 0,
     providerOutputTokens: 0,

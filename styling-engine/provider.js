@@ -5,7 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { prompts } from './promptRuntime.js'
-import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets } from './tools.js'
+import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration } from './tools.js'
 import { unexplainedLayeredTops } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
 import { resolveAnthropicKey, resolveOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
@@ -1088,6 +1088,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       if (!message) return { answer: '', savedCorrections }
 
       if (message.tool_calls && message.tool_calls.length) {
+        recordFreeformToolIteration(toolContext, message.tool_calls.map(tc => tc?.function?.name))
         const interim = String(message.content || '').trim()
         if (interim) narration.push(interim)
         currentMessages.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls })
@@ -1175,6 +1176,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
 
       if (response.stop_reason === 'tool_use') {
         const toolUses = response.content.filter(block => block.type === 'tool_use')
+        recordFreeformToolIteration(toolContext, toolUses.map(tu => tu.name))
         const interim = collectText(response.content)
         if (interim) narration.push(interim)
         currentMessages.push({ role: 'assistant', content: response.content })
