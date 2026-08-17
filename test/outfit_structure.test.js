@@ -104,7 +104,15 @@ test('locallyGateWholeWardrobeOutfits - filters invalid outfits', () => {
   })
 
   assert.equal(result.outfits.length, 1)
-  assert.equal(result.outfits[0].label, 'Grounded Dress Edit: standard wear')
+  // 2026-08-16: an authored label now survives repair. It used to be overwritten with the
+  // archetype name, which collapsed distinct model outfits into one label — a live response
+  // returned two different cards both called "Grounded Dress Edit: standard wear". The
+  // whole-wardrobe advisor path already keeps model labels (it skips repair), so this is the
+  // selected-piece path catching up rather than a new convention.
+  assert.equal(result.outfits[0].label, 'Valid Dress Outfit')
+  // The archetype template is still the fallback: this fixture supplies no reason, so one is
+  // generated for it.
+  assert.ok(String(result.outfits[0].reason || '').trim(), 'an outfit with no authored reason still gets the generated one')
   assert.ok(result.rejected.some(r => r.reason === 'not a complete wardrobe outfit'))
 })
 

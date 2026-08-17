@@ -4292,7 +4292,23 @@ export function sortByStylisticStrength(outfits = [], selectedPiece = null) {
   })
 }
 
-export function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePieces = [], occasion = 'casual') {
+// `preserveAuthoredText` keeps a model's own label/description/reason when it wrote one, and falls
+// back to the archetype template only when that text is missing, a placeholder, or generic — the
+// same predicate repairWholeWardrobeOutfit already applies further down.
+//
+// Why this option exists (2026-08-16): the whole-wardrobe and capsule paths keep the model's own
+// notes because advisor mode skips repair entirely, which is why their cards read in the model's
+// voice and end with its skipped-directions and saveable-learning lines. The selected-piece path
+// (routes/ai.js) repairs unconditionally, and repair's FIRST step called this function, which
+// overwrote `reason` before the guard written to protect it could ever run. The template is meant
+// to be the fallback, and on that path it had become the default: a live card paired a blouse and
+// a tank with a lace midi dress and described it as "the dress carries the column" — the generated
+// prose has no branch for a top alongside a dress, so it silently omitted the garment the person
+// was being told to wear.
+//
+// The post-substitution call site deliberately does NOT preserve: once a piece has been swapped,
+// the model's sentences describe an outfit that no longer exists.
+export function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePieces = [], occasion = 'casual', { preserveAuthoredText = false } = {}) {
   const pieces = wholeWardrobeFullPieces(outfit, candidatePieces)
   const archetype = wholeWardrobeArchetypeFor({ ...outfit, pieces }, candidatePieces, occasion)
   const modifier = wholeWardrobeGarmentModifier(pieces)
@@ -4303,15 +4319,22 @@ export function rewriteWholeWardrobeOutfitWithArchetype(outfit = {}, candidatePi
   const silhouette = silhouetteVariant && silhouetteVariant !== archetype.direction
     ? silhouetteVariant
     : archetype.silhouette
+  const authored = field => {
+    const value = String(outfit?.[field] || '').trim()
+    if (!value) return null
+    if (hasWholeWardrobePlaceholder(outfit) || hasGenericWholeWardrobeText(outfit)) return null
+    return value
+  }
+  const keep = (field, generated) => (preserveAuthoredText ? (authored(field) ?? generated) : generated)
   return {
     ...outfit,
     archetypeId: archetype.archetypeId,
     formulaFamily: archetype.formulaFamily,
-    label,
-    dominantDirection: archetype.direction,
-    silhouette,
-    reason: buildOutfitMechanicsReason(outfit, pieces, archetype),
-    watchFor: wholeWardrobeWatchFromPieces({ ...outfit, pieces })
+    label: keep('label', label),
+    dominantDirection: keep('dominantDirection', archetype.direction),
+    silhouette: keep('silhouette', silhouette),
+    reason: keep('reason', buildOutfitMechanicsReason(outfit, pieces, archetype)),
+    watchFor: keep('watchFor', wholeWardrobeWatchFromPieces({ ...outfit, pieces }))
   }
 }
 
@@ -4326,8 +4349,10 @@ export function hasGenericWholeWardrobeText(outfit = {}) {
 }
 
 export function repairWholeWardrobeOutfit(outfit = {}, candidatePieces = [], occasion = 'casual', mood = '', options = {}) {
-  const repaired = rewriteWholeWardrobeOutfitWithArchetype({ ...outfit }, candidatePieces, occasion)
-  
+  // Nothing has been changed yet, so anything the model wrote still describes this exact outfit.
+  // Keep its words; the archetype template fills only what it left empty or generic.
+  const repaired = rewriteWholeWardrobeOutfitWithArchetype({ ...outfit }, candidatePieces, occasion, { preserveAuthoredText: true })
+
   // Footwear gate & repair
   const occasionProfile = resolveOccasionProfile(occasion, mood)
   const activityProfile = resolveActivityProfile({
@@ -4921,6 +4946,12 @@ export function buildOutfitMechanicsReason(outfit = {}, pieces = [], archetype =
   if (dress) {
     const support = layer ? `${layer.name} adds the structure around it` : shoe ? `${shoe.name} gives the one-piece line a grounded finish` : 'the supporting pieces need to stay clean'
     sentences.push(`${dress.name} carries the column, and ${support}.`)
+    // A top alongside a dress used to be omitted from this sentence entirely: the card told the
+    // person to wear a garment the prose never mentioned, under a label ("one-piece column") that
+    // implied it was not there. Name it, and say what it is doing.
+    if (top) {
+      sentences.push(`${top.name} is worn with the dress rather than instead of it — layered over or under, it has to read as a deliberate second layer, not a spare garment.`)
+    }
   } else if (bottom) {
     const columnVerb = /\b(black|charcoal|dark|navy|denim|straight|trouser|column)\b/.test(pieceNameBlob(bottom)) ? 'creates the long base' : 'sets the lower proportion'
     const upperJob = top ? `${top.name} ${/\b(fitted|sleeveless|tank|shell|compact)\b/.test(pieceNameBlob(top)) ? 'keeps the upper half compact' : 'sets the upper shape'}` : 'the upper piece needs to stay controlled'

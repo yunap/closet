@@ -887,6 +887,42 @@ the next section. None of those are piece-eligibility questions, which is why th
 
 ---
 
+## Who writes the words on a card — the model, or the archetype template
+
+**Amended 2026-08-16.** Two producers can author a card's `label`, `dominantDirection`,
+`silhouette`, `reason` and `watchFor`: the composing model, or the archetype template
+(`rewriteWholeWardrobeOutfitWithArchetype` → `buildOutfitMechanicsReason`).
+
+**[by design] The model's own notes are preferred, and the template is the fallback.** The
+whole-wardrobe and capsule paths get this for free: advisor mode sets `shouldRepair = !advisorMode`,
+so repair never runs and the model's text is untouched. That is why those cards read in the model's
+voice, keep its creative labels, and close with its `*Skipped directions:*` and
+`**Saveable learning:**` lines.
+
+**[bug, fixed 2026-08-16] The selected-piece path threw that away.** `routes/ai.js` repairs
+unconditionally, and `repairWholeWardrobeOutfit`'s **first** step called the archetype rewriter,
+which overwrote `reason` and `label` unconditionally — before the guard 100 lines below it
+(`hasWholeWardrobePlaceholder || hasGenericWholeWardrobeText || !reason`) that exists to preserve
+authored text could ever apply. That guard was dead code on this path, so the template was the
+default rather than the fallback. Two visible consequences:
+
+- Distinct model outfits collapsed into one name. A live response returned two different cards
+  both labelled *"Grounded Dress Edit: standard wear"*.
+- The prose omitted a garment the card contained. `buildOutfitMechanicsReason` had no branch for a
+  top alongside a dress, so a card pairing a blouse with a lace midi dress described only the dress
+  and the layer — the person was told to wear a piece the explanation never mentioned.
+
+`rewriteWholeWardrobeOutfitWithArchetype` now takes `preserveAuthoredText`. The entry call passes
+it (nothing has changed yet, so the model's words still describe this outfit); the call **after a
+footwear substitution** deliberately does not, because the model's sentences then describe an
+outfit that no longer exists. The template also names a top when a dress is present.
+
+**[by design] Any outfit containing a dress is labelled `dress_grounded_sharp` ("Grounded Dress
+Edit").** `inferOutfitArchetype` skips every other archetype when a dress is present, so this is
+the only label a dress outfit can receive — it is not selected on fit. Its `avoidRoles:
+['extra_pattern']` scores −12 but cannot disqualify, since no competing archetype survives. Worth
+knowing before reading such a label as a judgment about the outfit. **[owner check wanted]**
+
 ## Candidate generation with a Main piece — the structural fallback
 
 **Amended 2026-08-16.** `buildWholeWardrobeCandidateOutfits` (`rules.js`) composes candidates per
