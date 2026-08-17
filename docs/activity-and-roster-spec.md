@@ -127,6 +127,26 @@ activity would gate the shoes and leave city-only garments untouched.
 
 ## 5. Design
 
+### 5.0 Design constraint — this app has more than one wardrobe
+
+**Owner correction, 2026-08-17: "mine is not the only wardrobe this app is for."** Since spec 33 the
+app is a multiuser platform with per-user databases, so every rule here ships to instances whose
+tagging density, owner constraints and garment mix are unknown.
+
+This has a specific methodological consequence, and an earlier draft of this spec got it wrong twice:
+
+- **A measurement on the owner's wardrobe is evidence of FEASIBILITY, never of SAFETY.** "15 of 88
+  tops are tagged outdoor, so enforcement is fine" is an argument about one database. Another
+  instance may have zero.
+- **A rule may not lean on a per-user record to be correct.** The first draft justified relaxing the
+  footwear gate on the grounds that the owner's `owner_constraints` row keeps sandals out of hikes.
+  A new instance has no such row, and the relaxation was measured to make sandals `neutral` — fully
+  legal — for a hike there. Related: [[owner-rules-must-be-per-user-not-global]].
+
+**Test for every change below: state it for a wardrobe you have never seen, and for a user who has
+never given the app a single instruction.** Where a rule cannot hold on its own, it needs a
+structured garment fact, or a supply-aware fallback that discloses — not a healthy wardrobe.
+
 ### 5.1 Principles this inherits, not invents
 
 - **Structured data over text inference** (AGENTS.md). `walk_support` exists precisely so grip is not
@@ -154,6 +174,37 @@ activity would gate the shoes and leave city-only garments untouched.
 Escalation is one-directional because the failure is asymmetric: treating a city walk as a hike costs
 comfortable shoes the person did not need; treating a hike as a city walk costs grip on a trail.
 
+### 5.3a The hiking profile itself — ruled 2026-08-17
+
+*"A nature walk is a hike — not climbing a mountain, but a hike."* One profile, not a new enum value:
+a third activity would add exactly the classification choice that caused this bug.
+
+**Relax the support floor.** `excluded_walk_support` goes from `['low', 'medium']` to `['low']`.
+Medium-support sneakers and slip-ons are right for a nature walk and for most day hikes. On the
+owner's wardrobe this moves 3 eligible shoes to 10; the general claim is about what a hike needs,
+not about that count.
+
+**And close the hole that relaxation exposes.** The support floor was masking a dead rule. Hiking
+declares `discouraged_footwear: ["sandal", "sandals", "mule", …]` and `prohibited_footwear:
+["heel", "wedge", "dress shoe", "flip-flop"]`, and **both lists sit behind `if (isShoe &&
+!activityProfile)` — skipped exactly when an activity IS set.** The enum gate replaced them and never
+absorbed their content. Measured consequence of relaxing support without fixing this: on an instance
+with no owner constraints, `brown leather strap sandals` scores **`neutral`** for a hike.
+
+Fix it structurally, not by reviving the phrase lists. `shoe_type` is a populated enum
+(`sandal` 8, `sneaker` 5, `pump` 5, `slip_on` 3, `loafer` 3, `flat` 3, `mule` 2, `boot` 2). Add
+**`excluded_shoe_types`** to the activity profiles and enforce it in the enum gate beside
+`heel_height` and `walk_support`. For hiking: `sandal`, `mule`, `pump`, `flip_flop`.
+
+This is the next room in a renovation already in progress — chapter 6 replaced leaky footwear
+phrase-matching with structured `heel_height` / `walk_support` enums, and `shoe_type` never got the
+same treatment. It holds for a wardrobe nobody has seen and a user who has given no instructions,
+which is the §5.0 test.
+
+**Ranking, not exclusion, carries the rest.** A steep hike is better served by surfacing
+`walk_support` (§5.3(1)) and ordering on it (§5.3(2)) than by excluding every medium-support shoe
+from every outdoor request.
+
 ### 5.3 Part 2 — the roster must be able to promote, not only remove
 
 1. **Surface the discriminating tags.** Add `walk_support` and `heel_height` to `search_wardrobe`
@@ -172,8 +223,15 @@ owner ruling, or a measurement — a comment explaining the reasoning is not one
 
 1. Pass `activity`, `season` and `weatherProfile` into `search_wardrobe`'s trust call so owner
    constraints apply to the roster, not only to the proposal.
-2. **Gate parity for `required_occasion_tags`** — open question 2 below; do not implement on
-   assumption.
+2. **Gate parity for `required_occasion_tags`, with a supply-aware fallback.** `profileRuleFit` should
+   apply the activity's required tags on the freeform path as the composer already does — but it must
+   not depend on the wardrobe being well tagged (§5.0). `search_wardrobe` already has the pattern: when
+   an occasion filter empties the result set it falls back to the unfiltered pool and says so
+   (*"No active pieces are explicitly tagged for X; showing flexible active wardrobe pieces instead,
+   with ruleFit/weatherFit annotations"*). Reuse it verbatim — enforce, and when enforcement would
+   leave a role unfillable, fall back and disclose, so a sparsely-tagged instance degrades to
+   annotated guidance instead of an empty roster. Capsule's `describeCapsuleLayerSupplyGap` is the
+   same shape.
 
 ### 5.5 Part 4 — the reply that lost its narration (independent)
 
@@ -201,6 +259,13 @@ can ship alone.
    not escalated.
 5. **No-op proof:** the 30-scenario candidate A/B and the whole-wardrobe scenario matrix are
    byte-identical for every request that names no activity.
+5b. **Wardrobe-independence (§5.0), proved on fixtures, not on the owner's database:**
+   - an instance with **zero** `owner_constraints` rows still excludes sandals, mules and heels from a
+     hike — the §5.3a regression that motivated `excluded_shoe_types`;
+   - an instance where **no garment** carries an `outdoor` tag still returns a usable roster, via the
+     §5.4 fallback, and says why;
+   - an instance where every shoe is untagged for `walk_support` degrades to `unknown` and annotates,
+     rather than emptying the roster.
 6. `npm test` green; `docs/engine-behaviour-map.md` amended in the same commit.
 7. Part 4: a reply whose narration was written beside its tool calls arrives complete, with no
    orphan leading `---`.
@@ -213,15 +278,17 @@ loop — see §9.
 
 ## 8. Open — owner rulings needed
 
-1. **Is a nature walk a hike?** Provisionally **yes**, on the evidence that the owner set the builder
-   dropdown to *Hiking / Outdoor active* for this exact request. Worth confirming, because the hiking
-   profile is strict — it also discourages suede, dresses and skirts, and caps the register at
-   `everyday`.
-2. **Gate parity for `required_occasion_tags` (§4f).** Enforcing it on the freeform path would restrict
-   tops and bottoms to garments tagged `outdoor` — correct-looking, but it could starve an
-   under-tagged wardrobe. Measure the roster sizes first; the composer-only enforcement may be
-   deliberate.
-3. **§5.3(3)** — the activity profiles' preferred lists.
+1. ~~Is a nature walk a hike?~~ **RULED 2026-08-17: yes.** *"It's not climbing a mountain hike, but
+   it's a hike."* Implemented as §5.3a — one `hiking` profile, with the support floor relaxed and the
+   open-footwear exclusion made structural.
+2. ~~Gate parity for `required_occasion_tags`~~ **RESOLVED 2026-08-17 — but not the way it was
+   asked.** The question was whether an enforced tag requirement would starve the roster. On the
+   owner's wardrobe it would not (15/88 tops, 17/61 bottoms, 3/33 shoes tagged outdoor — and the
+   shoes agree exactly with the independent footwear gate). But per §5.0 that measures feasibility on
+   one database, not safety on all of them, so enforcement ships with the supply-aware fallback in
+   §5.4 rather than on the strength of that count.
+3. **§5.3(3)** — the activity profiles' `preferred_footwear` / `preferred_materials`. Still open, and
+   still styling content: it must be stated for any wardrobe, not fitted to this one.
 
 ## 9. Deferred — the cost argument this shares a root with
 
