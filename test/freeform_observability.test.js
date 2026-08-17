@@ -1070,3 +1070,45 @@ test('executeTool propose_outfit inherits toolContext.activity when this call re
     db.prepare('DELETE FROM pieces WHERE id IN (?, ?, ?)').run(topId, bottomId, shoesId)
   }
 })
+
+// docs/activity-and-roster-spec.md Part 4 — narration written beside tool calls must reach the user.
+// Live shape (thread_1786908272853): the model wrote each look's prose in the same assistant
+// messages as its propose_outfit calls and closed with "---\n\nA few quick notes…". Only that
+// closing message survived, so the reply began with an orphan horizontal rule and referred to
+// "Look 1/2/3" — labels no card carries.
+test('assistant text is collected from every block, not just the first', async () => {
+  const { collectAssistantText } = await import('../styling-engine/provider.js')
+
+  // The old code read content[0].text. A final message can carry more than one text block, and
+  // a tool-use message interleaves prose with tool_use blocks.
+  assert.equal(collectAssistantText([{ type: 'text', text: 'one' }, { type: 'text', text: 'two' }]), 'one\n\ntwo')
+  assert.equal(collectAssistantText([
+    { type: 'text', text: 'Look 1 — Earthy Trail Ease' },
+    { type: 'tool_use', id: 'tu1', name: 'propose_outfit', input: {} },
+  ]), 'Look 1 — Earthy Trail Ease')
+  assert.equal(collectAssistantText([{ type: 'tool_use', id: 'tu1', name: 'x', input: {} }]), '')
+  assert.equal(collectAssistantText('plain string  '), 'plain string')
+  assert.equal(collectAssistantText(null), '')
+})
+
+test('narration written beside tool calls is joined ahead of the closing message', async () => {
+  const { joinAssistantNarration } = await import('../styling-engine/provider.js')
+
+  const looks = '**Look 1 — Earthy Trail Ease**\nThe striped tank and cargo capris read as one palette.'
+  const closing = '---\n\nA few quick notes:\n- Shoes: go with the sneakers.'
+
+  const joined = joinAssistantNarration([looks], closing)
+  assert.match(joined, /Earthy Trail Ease/, 'prose written beside a tool call survives')
+  assert.match(joined, /A few quick notes/, 'and so does the closing message')
+  assert.ok(joined.indexOf('Earthy Trail Ease') < joined.indexOf('A few quick notes'), 'in the order written')
+
+  // The orphan rule is the visible symptom: with nothing above it, it is not a separator.
+  assert.doesNotMatch(joinAssistantNarration([], closing), /^\s*---/)
+  // With narration restored it IS a separator and stays.
+  assert.match(joined, /---/)
+
+  // A model that repeats itself in the closing message must not be printed twice.
+  assert.equal(joinAssistantNarration(['Here are three looks.'], 'Here are three looks. Enjoy.'), 'Here are three looks. Enjoy.')
+  assert.equal(joinAssistantNarration([], ''), '')
+  assert.equal(joinAssistantNarration(['', null], 'only this'), 'only this')
+})

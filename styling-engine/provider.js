@@ -912,6 +912,38 @@ export async function askStylistStructuredWithUsage({
 }
 
 
+// docs/activity-and-roster-spec.md Part 4. Every text block of an assistant message, not just the
+// first — a final message can carry more than one, and content[0] silently dropped the rest.
+export function collectAssistantText(content) {
+  if (typeof content === 'string') return content.trim()
+  return (Array.isArray(content) ? content : [])
+    .filter(block => block?.type === 'text')
+    .map(block => String(block.text || ''))
+    .join('\n\n')
+    .trim()
+}
+
+// The model writes its conversational prose in the SAME assistant messages as its tool calls,
+// because prompts.js explicitly asks it to ("write your conversational prose — intro, the 'why it
+// works' framing, transitions — around those calls"). The tool loop used to return only the last,
+// tool-call-free message, so all of that was discarded. A live reply (thread_1786908272853) reached
+// the owner as a bare "---" followed by notes referring to "Look 1/2/3" — labels no card carries,
+// because the looks had been described beside the propose_outfit calls and thrown away.
+export function joinAssistantNarration(narration = [], finalText = '') {
+  const closing = String(finalText || '').trim()
+  const kept = (Array.isArray(narration) ? narration : [])
+    .map(part => String(part || '').trim())
+    // Drop anything the model repeated verbatim in its closing message rather than printing twice.
+    .filter(part => part && !closing.includes(part))
+  return [...kept, closing]
+    .filter(Boolean)
+    .join('\n\n')
+    // A leading horizontal rule separated the closing notes from prose that used to be discarded.
+    // With that prose restored it is a real separator; with nothing above it, it is an orphan.
+    .replace(/^\s*-{3,}\s*\n+/, '')
+    .trim()
+}
+
 export async function askStylistWithTools({ system, messages, maxTokens = 1500, toolContext = {} }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
@@ -951,6 +983,15 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   let currentMessages = [...messages]
   const savedCorrections = []
   const retriedChecks = new Set()
+  // docs/activity-and-roster-spec.md Part 4. The model writes its conversational prose — intro, the
+  // per-look framing, transitions — in the SAME assistant messages as its tool calls, because
+  // prompts.js explicitly asks it to ("write your conversational prose … around those calls"). This
+  // loop used to return only the last, tool-call-free message, so all of that was discarded: a live
+  // reply arrived as a bare "---" followed by notes referring to "Look 1/2/3", labels no card
+  // carries, because the looks themselves had been written beside the propose_outfit calls.
+  const narration = []
+  const collectText = collectAssistantText
+  const joinAnswer = finalText => joinAssistantNarration(narration, finalText)
 
   // 10 iterations: the disciplined flow (declare, search, view supports, view
   // layers, propose xN) legitimately needs 6-8; the old cap of 7 left no margin
@@ -1011,6 +1052,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       if (!message) return { answer: '', savedCorrections }
 
       if (message.tool_calls && message.tool_calls.length) {
+        const interim = String(message.content || '').trim()
+        if (interim) narration.push(interim)
         currentMessages.push({ role: 'assistant', content: message.content || '', tool_calls: message.tool_calls })
         
         const toolOutputs = []
@@ -1051,7 +1094,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         }
         continue
       } else {
-        const finalText = message.content || ''
+        const finalText = joinAnswer(String(message.content || '').trim())
         const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
         if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
         const check = toolContext.skipFreeformOutputChecks
@@ -1096,6 +1139,8 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
 
       if (response.stop_reason === 'tool_use') {
         const toolUses = response.content.filter(block => block.type === 'tool_use')
+        const interim = collectText(response.content)
+        if (interim) narration.push(interim)
         currentMessages.push({ role: 'assistant', content: response.content })
 
         const toolResponses = []
@@ -1144,7 +1189,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         currentMessages.push(...toolResponses)
         continue
       } else {
-        const finalText = response.content?.[0]?.text || ''
+        const finalText = joinAnswer(collectText(response.content))
         const capsuleFinal = boundedCapsuleFinalAnswer(finalText, toolContext)
         if (capsuleFinal.replaced) return { answer: capsuleFinal.answer, savedCorrections }
         const check = toolContext.skipFreeformOutputChecks
