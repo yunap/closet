@@ -76,6 +76,7 @@ proposal is not evidence the capability is absent.
 | [freeform-rearchitecture-handoff.md](freeform-rearchitecture-handoff.md) | The `/ask` "router → stylist" migration, spec by spec, with the live failures that motivated each. **The record of what has already been tried and why** |
 | [feedback-routing-proposal.md](feedback-routing-proposal.md) | Five destinations, one primary reader each. Proposes; cites the feedback map rather than restating it |
 | [capsule-index-and-plan.md](capsule-index-and-plan.md) | Capsule index and sequence → [current behaviour](capsule-current-behaviour.md), [roster selection](capsule-roster-selection-spec.md), [real-world rules](capsule-real-world-rules.md), [palette rules](capsule-palette-rules.md), [lifestyle contract](capsule-lifestyle-contract-2026-08-06.md), [step 5 evaluation](capsule-step5-evaluation.md), [bench brief](capsule-bench-implementation-brief.md) |
+| [card-consistency-spec.md](card-consistency-spec.md) | A card and its own words disagreeing — the fourth turn-contract clause, and the single dress archetype. Owner-ruled 2026-08-16, not implemented |
 | [active-memory-surface-spec.md](active-memory-surface-spec.md) · [guidance-applicability-review.md](guidance-applicability-review.md) | Owner-guidance surface and applicability |
 | [feedback-audit-backlog.md](feedback-audit-backlog.md) | Hardening the verification tooling itself |
 | [cleanup-inventory.md](cleanup-inventory.md) | Dead-code / duplicate-authority sweep (spec 20), with an explicit scope note |

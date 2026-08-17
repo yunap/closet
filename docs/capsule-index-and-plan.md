@@ -56,7 +56,7 @@ a comment explaining the reasoning is not one of those.**
 | [occasion_profiles_ratification.md](occasion_profiles_ratification.md) | **Authoritative for occasion behaviour.** The register ceilings (ratified 2026-07-05, a month of testing), the occasion profiles, and the amendments since. **Read before changing any ceiling, profile keyword, or slot-occasion guidance.** |
 | [stylist-session-handoff.md](stylist-session-handoff.md) | Running record of owner rulings. **Read before overturning anything.** |
 | [engine-behaviour-map.md](engine-behaviour-map.md) | Measured behaviour of the engine's paths, including the editorial-prompt findings. |
-| [spec-archive-index.md](spec-archive-index.md) | 35 **historical** specs in `~/Downloads/spec_*.md`. The app has been redesigned several times since; most describe an architecture that no longer exists. Useful as *provenance* when live code does something no comment explains — not a design authority. |
+| [spec-archive-index.md](spec-archive-index.md) | 35 **historical** specs in [`docs/specs/`](specs/) (moved in-repo 2026-08-16). The app has been redesigned several times since; most describe an architecture that no longer exists. Useful as *provenance* when live code does something no comment explains — not a design authority. |
 
 ## 3. Findings from the live run that are in no other document
 
